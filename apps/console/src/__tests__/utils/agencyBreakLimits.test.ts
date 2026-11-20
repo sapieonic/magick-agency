@@ -7,6 +7,8 @@ import {
   breakReasonsIssueCode,
   breakReasonsPayload,
   sameBreakLimits,
+  breakReasonsFieldCode,
+  withBreakIcon,
   withBreakLimit,
 } from '../../utils/agency/breakLimits';
 
@@ -132,5 +134,37 @@ describe('breakReasonsIssueCode (the server’s 400, on the right row)', () => {
   it('is null when the message names no row on the form', () => {
     expect(breakReasonsIssueCode('break_reasons may not list "soft_phone": it is reserved for the soft phone.', form)).toBeNull();
     expect(breakReasonsIssueCode('break_reasons must be an array', form)).toBeNull();
+  });
+});
+
+describe('a break reason’s picture (agent station BE-13)', () => {
+  const form = breakReasonsFormOf([
+    { code: 'tea', label: 'Tea', limit_minutes: 15 },
+    { code: 'soft_phone', label: 'Soft phone' },
+    { code: 'lunch', label: 'Lunch', icon: 'lunch' },
+  ]);
+
+  it('sets one, and removes one by leaving its key out, every other field kept', () => {
+    const withTea = withBreakIcon(form, 'tea', 'tea');
+    expect(breakReasonsPayload(withTea)).toEqual([
+      { code: 'tea', label: 'Tea', limit_minutes: 15, icon: 'tea' },
+      { code: 'lunch', label: 'Lunch', icon: 'lunch' },
+    ]);
+    const noLunch = withBreakIcon(form, 'lunch', undefined);
+    expect(breakReasonsPayload(noLunch)[1]).toEqual({ code: 'lunch', label: 'Lunch' });
+    expect(Object.hasOwn(noLunch.rows[2]!.reason, 'icon')).toBe(false);
+  });
+
+  it('is a change to the reasons, as a limit is', () => {
+    expect(sameBreakLimits(form, withBreakIcon(form, 'tea', 'tea'))).toBe(false);
+    expect(sameBreakLimits(form, withBreakIcon(form, 'lunch', undefined))).toBe(false);
+    expect(sameBreakLimits(form, withBreakIcon(form, 'lunch', 'lunch'))).toBe(true);
+  });
+
+  it('finds the row a refusal keyed by the sent index is about, reserved rows not sent', () => {
+    expect(breakReasonsFieldCode('break_reasons[1].icon', form)).toBe('lunch');
+    expect(breakReasonsFieldCode('break_reasons[0].icon', form)).toBe('tea');
+    expect(breakReasonsFieldCode('break_reasons[2].icon', form)).toBeNull();
+    expect(breakReasonsFieldCode('break_reasons', form)).toBeNull();
   });
 });

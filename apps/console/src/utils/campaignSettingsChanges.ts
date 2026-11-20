@@ -2,6 +2,7 @@ import type { CampaignConfigState } from './agencyCampaignConfigForm';
 import type { CampaignRecordingState } from './agencyCampaignRecording';
 import { sameCarrier, type CarrierChoice } from './agencyCarriers';
 import { sameBreakLimits, type BreakReasonsForm } from './agency/breakLimits';
+import { stationChanges, type StationSettingsForm } from './agency/stationSettings';
 
 /**
  * Everything the campaign Settings form holds, as of the last load or save (the baseline) or
@@ -18,6 +19,12 @@ export interface CampaignSettingsForm {
    * as the outcome catalogue is. Optional: the campaign builder does not edit them.
    */
   breakReasons?: BreakReasonsForm;
+  /**
+   * The agent station's settings (AS6, AS9, BE-6, BE-8): the daily target, the number display,
+   * the script and the customer facts, each a setting of its own. Optional: the campaign builder
+   * does not edit them.
+   */
+  station?: StationSettingsForm;
 }
 
 /** Whether two caller-ID pools hold the same numbers (the picker appends, so order is incidental). */
@@ -87,5 +94,6 @@ export function changedSettings(saved: CampaignSettingsForm, now: CampaignSettin
   if (saved.breakReasons && now.breakReasons && !sameBreakLimits(saved.breakReasons, now.breakReasons)) {
     changed.push('breakReasons');
   }
+  if (saved.station && now.station) changed.push(...stationChanges(saved.station, now.station));
   return changed;
 }

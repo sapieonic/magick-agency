@@ -179,6 +179,7 @@ export function CampaignBehaviourSection({
       errors={errors}
       overrides={assignment !== undefined}
       promises
+      icons
     />
   );
   const retryTable = (
