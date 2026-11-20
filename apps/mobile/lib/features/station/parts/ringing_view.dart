@@ -7,6 +7,7 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
+import '../widgets/read_aloud_button.dart';
 import '../widgets/state_band.dart';
 import 'call_band.dart';
 import 'contact_details.dart';
@@ -61,7 +62,7 @@ class RingingView extends ConsumerWidget {
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),
-          const OpeningLineCard(),
+          OpeningLineCard(trailing: (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line)),
         ],
       ],
       actions: const ConnectsByItself(),

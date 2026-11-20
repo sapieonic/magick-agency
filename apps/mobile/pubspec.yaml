@@ -45,6 +45,7 @@ dependencies:
   collection: ^1.19.1
   meta: ^1.19.0
   posthog_flutter: ^5.58.3
+  flutter_tts: ^4.2.5
 
 dev_dependencies:
   flutter_test:

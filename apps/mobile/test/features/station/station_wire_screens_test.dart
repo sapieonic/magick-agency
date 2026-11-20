@@ -174,6 +174,26 @@ void main() {
     });
   });
 
+  group('read aloud (AS13)', () {
+    testWidgets('each What happened? tile reads its label, without picking it', (tester) async {
+      final h = await pumpStation(tester, station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup()));
+      await tester.tap(find.byKey(const Key('read-aloud-callback')));
+      await tester.pump();
+      expect(h.readAloud.said, ['Callback']);
+      expect(find.byIcon(Icons.check_circle), findsNothing, reason: 'reading a tile does not pick it');
+      expect(find.byKey(const Key('read-aloud-dnc')), findsOneWidget);
+    });
+
+    testWidgets('the opening line and the current step read the filled line', (tester) async {
+      final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts), script: script));
+      await tester.tap(find.byKey(const Key('read-aloud-opening')));
+      await tester.pump();
+      await pumpStation(tester, station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, facts: facts), script: script));
+      expect(find.byKey(const Key('read-aloud-step')), findsOneWidget, reason: 'the current step only');
+      expect(h.readAloud.said, ['Namaste Sunita Patil, I am Sunita calling from Q4 Card Renewals.']);
+    });
+  });
+
   group('the supervisor\'s tile pictures (BE-13)', () {
     testWidgets('an outcome\'s and a break\'s own picture replace the guesses', (tester) async {
       await pumpStation(

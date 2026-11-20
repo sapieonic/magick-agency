@@ -12,6 +12,7 @@ import '../logic/wrapup_math.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
 import '../widgets/action_buttons.dart';
+import '../widgets/read_aloud_button.dart';
 import '../widgets/ticking.dart';
 import '../widgets/tile_pictures.dart';
 import 'banners.dart';
@@ -722,6 +723,14 @@ class _OutcomeTile extends StatelessWidget {
                 ),
                 if (selected)
                   Positioned(top: 4, right: 4, child: Icon(Icons.check_circle, size: 22, color: s.ready.deep)),
+                // Read the label aloud (AS13); a screen reader reads the tile itself.
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: ExcludeSemantics(
+                    child: ReadAloudButton(key: Key('read-aloud-${option.code}'), text: option.label),
+                  ),
+                ),
               ],
             ),
           ),
