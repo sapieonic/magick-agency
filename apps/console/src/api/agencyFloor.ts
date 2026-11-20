@@ -1,6 +1,10 @@
 import { ENDPOINTS } from '../config';
 import { apiFetch } from './client';
-import type { AgencyFloorQuery, AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
+import type {
+  AgencyFloorAlertsResponse,
+  AgencyFloorQuery,
+  AgencyFloorResponse,
+} from '@magick-agency/contracts/api/agency/floor';
 import type {
   AgencyPromisesSummaryQuery,
   AgencyPromisesSummaryResponse,
@@ -29,4 +33,15 @@ export function getAgencyPromisesSummary(
 ): Promise<AgencyPromisesSummaryResponse> {
   const params = new URLSearchParams({ from: query.from, to: query.to });
   return apiFetch<AgencyPromisesSummaryResponse>(`${ENDPOINTS.proxy.agency.promisesSummary}?${params.toString()}`, {}, tenantId, accountId);
+}
+
+/**
+ * The account's open supervisor alerts, `GET /proxy/agency/floor/alerts` (agent station AS16; the
+ * wire is `contracts/api/agency/floor.ts`): Need help requests, breaks over their reason's limit
+ * and working agents whose station has been gone 20 s or more, oldest first, each with a stable
+ * `id`. `agency.supervise`; never cached. The console's shell polls it every 5 s on every page
+ * (`useFloorAlerts`).
+ */
+export function getAgencyFloorAlerts(tenantId: string, accountId: string): Promise<AgencyFloorAlertsResponse> {
+  return apiFetch<AgencyFloorAlertsResponse>(ENDPOINTS.proxy.agency.floorAlerts, {}, tenantId, accountId);
 }

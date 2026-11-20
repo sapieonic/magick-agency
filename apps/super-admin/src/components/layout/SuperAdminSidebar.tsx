@@ -1,8 +1,9 @@
 import { NavLink } from 'react-router-dom';
-import { Building2, Users, ShieldCheck, ScrollText, Phone, BarChart3, Flag, KeyRound, X } from 'lucide-react';
+import { Building2, Users, ShieldCheck, ScrollText, Phone, BarChart3, Flag, KeyRound, X, Moon, Sun } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
+import { useTheme } from '../../theme';
 import styles from './SuperAdminSidebar.module.css';
 
 interface Props {
@@ -48,6 +49,9 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 export function SuperAdminSidebar({ onClose }: Props) {
+  // AS14: light by default; the operator's choice is kept in this browser.
+  const { theme, toggle } = useTheme();
+  const dark = theme === 'dark';
   return (
     <aside className={styles.sidebar}>
       <div className={styles.logoSection}>
@@ -85,6 +89,17 @@ export function SuperAdminSidebar({ onClose }: Props) {
           </div>
         ))}
       </nav>
+
+      <button
+        type="button"
+        className={styles.themeBtn}
+        onClick={toggle}
+        aria-pressed={dark}
+        data-testid="theme-toggle"
+      >
+        {dark ? <Moon size={16} aria-hidden="true" /> : <Sun size={16} aria-hidden="true" />}
+        Dark theme
+      </button>
 
       <AppVersion version={__APP_VERSION__} />
     </aside>

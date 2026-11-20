@@ -3,6 +3,7 @@ import {
   AGENCY_BREAK_LIMIT_MAX_MINUTES,
   AGENCY_BREAK_LIMIT_MIN_MINUTES,
   isAgencyBreakLimitMinutes,
+  type AgencyTileIcon,
 } from '@magick-agency/contracts/agency';
 import type { AgencyBreakReason } from '../../types/agency';
 
@@ -117,15 +118,55 @@ export function breakReasonsPayload(form: BreakReasonsForm): AgencyBreakReason[]
     });
 }
 
-/** Whether two forms would save the same limits (the unsaved-changes bar's one "break limits" setting). */
+/** A reason's tile picture as stored (BE-13), or null for none. */
+function iconOf(reason: AgencyBreakReason): unknown {
+  return (reason as { icon?: unknown }).icon ?? null;
+}
+
+/**
+ * Whether two forms would save the same limits and pictures (the unsaved-changes bar's one
+ * "break reasons" setting).
+ */
 export function sameBreakLimits(a: BreakReasonsForm, b: BreakReasonsForm): boolean {
   if (a.rows.length !== b.rows.length) return false;
-  return a.rows.every((row, i) => row.reason.code === b.rows[i]!.reason.code && row.limit.trim() === b.rows[i]!.limit.trim());
+  return a.rows.every((row, i) => {
+    const other = b.rows[i]!;
+    return row.reason.code === other.reason.code
+      && row.limit.trim() === other.limit.trim()
+      && iconOf(row.reason) === iconOf(other.reason);
+  });
 }
 
 /** A copy of `form` with the limit of the reason `code` typed as `limit`. */
 export function withBreakLimit(form: BreakReasonsForm, code: string, limit: string): BreakReasonsForm {
   return { ...form, rows: form.rows.map((row) => (row.reason.code === code ? { ...row, limit } : row)) };
+}
+
+/**
+ * A copy of `form` with the tile picture of the reason `code` set to `icon` (agent station BE-13),
+ * or removed for none: the key is left out, which is how the server stores "no picture".
+ */
+export function withBreakIcon(form: BreakReasonsForm, code: string, icon: AgencyTileIcon | undefined): BreakReasonsForm {
+  return {
+    ...form,
+    rows: form.rows.map((row) => {
+      if (row.reason.code !== code) return row;
+      const { icon: _old, ...rest } = row.reason;
+      return { ...row, reason: icon === undefined ? rest : { ...rest, icon } };
+    }),
+  };
+}
+
+/**
+ * The code of the row a server refusal keyed `break_reasons[<i>].<field>` is about: `i` counts the
+ * entries the save sent ({@link breakReasonsPayload}: reserved rows left out). Null when the
+ * field is not of that form or names no row.
+ */
+export function breakReasonsFieldCode(field: string, form: BreakReasonsForm): string | null {
+  const match = /^break_reasons\[(\d+)\]/.exec(field);
+  if (!match) return null;
+  const sent = form.rows.filter((row) => !row.reserved);
+  return sent[Number(match[1])]?.reason.code ?? null;
 }
 
 /**

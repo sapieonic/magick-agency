@@ -12,6 +12,7 @@ import { ConsoleTopBar } from './ConsoleTopBar';
 import { PageCrumbsProvider } from './PageCrumbs';
 import { ListenProvider } from '../listen/ListenProvider';
 import { ListenBar } from '../listen/ListenBar';
+import { SupervisorAlerts } from './SupervisorAlerts';
 import styles from './ConsoleLayout.module.css';
 
 export const MOBILE_SIDEBAR_ID = 'console-mobile-sidebar';
@@ -156,6 +157,8 @@ export function ConsoleLayout() {
               phone={isMobile}
             />
           </div>
+          {/* AS16: the account's open supervisor alerts, on every page; its own polls re-render it alone. */}
+          <SupervisorAlerts />
           <main id="main-content" className={styles.content}>
             {/*
               Keyed by account, so a switch REMOUNTS the page rather than re-rendering it: every

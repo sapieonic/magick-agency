@@ -56,7 +56,19 @@ import {
   sameBreakLimits,
   type BreakReasonsForm,
 } from '../../utils/agency/breakLimits';
-import { focusFirstFieldError } from '../campaigns/agency/configFieldErrors';
+import { focusFirstFieldError, useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
+import { AgentScreenFields } from '../campaigns/agency/AgentScreenFields';
+import { CustomerFactsEditor } from '../campaigns/agency/CustomerFactsEditor';
+import { ScriptEditor } from '../campaigns/agency/ScriptEditor';
+import { useCampaignColumns } from '../../hooks/useCampaignColumns';
+import {
+  campaignColumns,
+  hiddenColumns,
+  stationErrors,
+  stationPayload,
+  stationSettingsOf,
+  type StationSettingsForm,
+} from '../../utils/agency/stationSettings';
 import { CallerIdPicker } from './CallerIdPicker';
 import { CampaignCarrierField } from '../../components/agency/CampaignCarrierField';
 import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
@@ -123,6 +135,7 @@ function formOfCampaign(record: AgencyCampaign): CampaignSettingsForm {
     recording: recordingStateFromCampaign(record),
     config: configFromCampaign(record),
     breakReasons: breakReasonsFormOf(record.break_reasons),
+    station: stationSettingsOf(record),
   };
 }
 
@@ -145,6 +158,8 @@ export function AgencyCampaignSettingsPage() {
   const [recording, setRecording] = useState<CampaignRecordingState | null>(null);
   /** The break reasons' limits (Settings › Agents, LF27). */
   const [breakReasons, setBreakReasons] = useState<BreakReasonsForm | null>(null);
+  /** The agent station's settings (What agents see and Script: AS6, AS9, BE-6, BE-8). */
+  const [station, setStation] = useState<StationSettingsForm | null>(null);
   /** The form as last loaded or saved: what Discard puts back and the bar counts against. */
   const [saved, setSaved] = useState<CampaignSettingsForm | null>(null);
   /** Bumped by Discard, to remount the fields (the caller-ID picker prunes on a carrier change). */
@@ -218,6 +233,7 @@ export function AgencyCampaignSettingsPage() {
     setCarrier(form.carrier);
     setRecording(form.recording);
     setBreakReasons(form.breakReasons ?? null);
+    setStation(form.station ?? null);
     setAssignmentResetPending(false);
   }, []);
 
@@ -334,6 +350,8 @@ export function AgencyCampaignSettingsPage() {
     }
     // A break limit the rule refuses is said on its row as it is typed, and holds Save the same way.
     if (breakReasons && Object.keys(breakReasonsErrors(breakReasons)).length > 0) return;
+    // The same for the station's settings (a target, the script, the facts), said on their fields.
+    if (station && saved?.station && Object.keys(stationErrors(saved.station, station, hiddenColumns(campaign?.context_display))).length > 0) return;
 
     setSaving(true);
     setSaveError(null);
@@ -401,6 +419,13 @@ export function AgencyCampaignSettingsPage() {
           ...recordingFields,
           ...(sendName ? { name: trimmedName } : {}),
           ...(sendBreakReasons ? { break_reasons: breakReasonsPayload(breakReasons) } : {}),
+          /*
+            The station's settings only where they changed against `saved` (as the break reasons):
+            an untouched script or target is never sent back over someone else's newer edit. The
+            facts are merged into the campaign's `context_display` as last read, whose hero, order
+            and hidden columns the roster import sets (a PATCH replaces the object whole).
+          */
+          ...(station && saved?.station ? stationPayload(saved.station, station, campaign?.context_display) : {}),
           ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
@@ -493,7 +518,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons,
+    breakReasons, station,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -530,15 +555,39 @@ export function AgencyCampaignSettingsPage() {
   /* What is unsaved, setting by setting; it drives the bar and the guard on leaving. */
   const changes = useMemo(
     () => (saved && config && recording
-      ? changedSettings(saved, { name, callerIds, carrier, recording, config, ...(breakReasons ? { breakReasons } : {}) })
+      ? changedSettings(saved, {
+        name, callerIds, carrier, recording, config,
+        ...(breakReasons ? { breakReasons } : {}),
+        ...(station ? { station } : {}),
+      })
       : []),
-    [saved, name, callerIds, carrier, recording, config, breakReasons],
+    [saved, name, callerIds, carrier, recording, config, breakReasons, station],
+  );
+
+  /*
+    The station's settings (What agents see, Script). Their findings as typed hold Save and are
+    said on their fields, quietly, ahead of the server's answer to the last save (which is about
+    what was sent, and may be fixed since), as the break limits do.
+  */
+  const hidden = useMemo(() => hiddenColumns(campaign?.context_display), [campaign?.context_display]);
+  const stationLive = useMemo(
+    () => (canEdit && station && saved?.station ? stationErrors(saved.station, station, hidden) : {}),
+    [canEdit, station, saved, hidden],
+  );
+  const stationFieldErrors = useMemo(() => ({ ...fieldErrors, ...stationLive }), [fieldErrors, stationLive]);
+  const stationQuiet = useMemo(() => new Set(Object.keys(stationLive)), [stationLive]);
+  const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
+  // The customer list's columns, for the facts' pickers: read by an editor only (`agency.supervise` floors the read).
+  const imported = useCampaignColumns(id, campaign?.root_campaign_id, tenantId, accountId, canEdit && canSupervise);
+  const columns = useMemo(
+    () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
+    [imported.columns, campaign?.context_display, station],
   );
   const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
   if (loading) return <LoadingSpinner />;
   if (loadError && !campaign) return <ErrorAlert message={loadError} onRetry={() => void load()} />;
-  if (!campaign || !config || !recording) return null;
+  if (!campaign || !config || !recording || !station) return null;
 
   const block = configBlockReason(config);
   // A name or caller ID taken away is said on its field as soon as it happens, and holds Save,
@@ -547,7 +596,8 @@ export function AgencyCampaignSettingsPage() {
   const breakLimitsInvalid = canEdit && breakReasons !== null && Object.keys(breakReasonsErrors(breakReasons)).length > 0;
   const nameError = missing['name'] ?? fieldErrors['name'];
   const callerIdsError = missing['caller_ids'] ?? fieldErrors['caller_ids'];
-  const saveBlock = block ?? (Object.keys(missing).length > 0 || breakLimitsInvalid ? 'invalid_fields' : null);
+  const stationInvalid = Object.keys(stationLive).length > 0;
+  const saveBlock = block ?? (Object.keys(missing).length > 0 || breakLimitsInvalid || stationInvalid ? 'invalid_fields' : null);
   /*
     Contact assignment turned off after a campaign was set up with it: pacing still
     follows what the campaign stores (CA9 gates the surface, never the runtime), and
@@ -874,10 +924,48 @@ export function AgencyCampaignSettingsPage() {
                     onChange={setBreakReasons}
                     serverError={fieldErrors['break_reasons'] ?? null}
                     readOnly={!canEdit}
+                    icons
+                    fieldErrors={fieldErrors}
                   />
                 ) : null}
               </ComposerSection>
             )}
+
+            <ComposerSection
+              id="agent-screen"
+              title="What agents see"
+              helper="The day’s target, how the customer’s number is shown, and which columns of the customer list are the name, place, amount due and due date."
+            >
+              <AgentScreenFields
+                dailyTarget={station.dailyTarget}
+                phoneDisplay={station.phoneDisplay}
+                onChange={(patch) => setStation({ ...station, ...patch })}
+                errors={stationErrorsView}
+                readOnly={!canEdit}
+              />
+              <CustomerFactsEditor
+                value={station.facts}
+                onChange={(facts) => setStation({ ...station, facts })}
+                columns={columns}
+                hidden={hidden}
+                loading={imported.loading}
+                errors={stationErrorsView}
+                readOnly={!canEdit}
+              />
+            </ComposerSection>
+
+            <ComposerSection
+              id="script"
+              title="Script"
+              helper="What agents say on a call, step by step. A change reaches agents the next time they start work."
+            >
+              <ScriptEditor
+                value={station.script}
+                onChange={(script) => setStation({ ...station, script })}
+                errors={stationErrorsView}
+                readOnly={!canEdit}
+              />
+            </ComposerSection>
           </Fragment>
 
           {canEdit && (

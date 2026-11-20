@@ -48,6 +48,7 @@ import {
   fieldErrorsFromResponse,
   type CampaignConfigState,
 } from '../../../utils/agencyCampaignConfigForm';
+import { isCollectionsStarter, withCollectionsStarter } from '../../../utils/agency/collectionsStarter';
 import {
   BUILDER_STEPS,
   basicsBlockReason,
@@ -141,6 +142,12 @@ export default function CampaignBuilderPage() {
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
+  /**
+   * Bumped when the Collections set replaces the outcomes (AS4): the behaviour editors remount, so
+   * no row keeps state from the list it replaced (which added rows follow their label, which mapped
+   * rows the automatic outcomes follow).
+   */
+  const [catalogEpoch, setCatalogEpoch] = useState(0);
   /**
    * Analytics-only: the disposition order the wizard started with, to detect
    * whether the row arrows moved anything before the one save this page makes.
@@ -878,7 +885,36 @@ export default function CampaignBuilderPage() {
                   <p className={styles.recommend}>
                     Recommended settings are already in place. Continue if they look right.
                   </p>
+                  {/* AS4: the Collections set, offered in place of the outcomes below; edited like any list. */}
+                  <div className={styles.starter} data-testid="collections-starter">
+                    {isCollectionsStarter(config.dispositions) ? (
+                      <p className={styles.starterText} role="status">
+                        The Collections set is in place: Will pay, Call later, No one spoke, Refused, Wrong number and
+                        Don’t call again. Change any outcome below before you save.
+                      </p>
+                    ) : (
+                      <>
+                        <p className={styles.starterText}>
+                          Collecting payments? Start with six outcomes made for it: Will pay, Call later, No one spoke,
+                          Refused, Wrong number and Don’t call again. They replace the outcomes below.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            setConfig((current) => withCollectionsStarter(current));
+                            setConfigSaved(false);
+                            setCatalogEpoch((n) => n + 1);
+                          }}
+                          data-testid="collections-starter-apply"
+                        >
+                          Start with the Collections set
+                        </button>
+                      </>
+                    )}
+                  </div>
                   <CampaignBehaviourSection
+                    key={catalogEpoch}
                     state={config}
                     onChange={(next) => {
                       setConfig(next);

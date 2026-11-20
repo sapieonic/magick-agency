@@ -2,10 +2,13 @@ import { useId } from 'react';
 import { FieldError } from '../../../components/common/FieldError';
 import {
   breakLimitError,
+  breakReasonsFieldCode,
   breakReasonsIssueCode,
+  withBreakIcon,
   withBreakLimit,
   type BreakReasonsForm,
 } from '../../../utils/agency/breakLimits';
+import { TileIconPicker } from '../../../components/agency/TileIconPicker';
 import { reservedBreakReasonLabel } from '../../../utils/agency/reservedBreakReason';
 import { AGENCY_BREAK_DEFAULT_LIMIT_MINUTES } from '@magick-agency/contracts/agency';
 import styles from './BreakLimitsEditor.module.css';
@@ -24,27 +27,47 @@ import styles from './BreakLimitsEditor.module.css';
  *
  * A campaign that lists no reasons of its own is offered the built-ins (Tea 15, Lunch 30), as its
  * agents are; the list is saved, and becomes the campaign's own, only once a limit is changed.
+ *
+ * Each reason also takes its tile picture on the station's Which break? screen (agent station
+ * BE-13, `icon`; `TileIconPicker`), or none, when the page passes `icons`. A refusal of one
+ * (`break_reasons[<i>].icon`, the index counting what was sent) is shown on its row.
  */
 export function BreakLimitsEditor({
   value,
   onChange,
   serverError,
   readOnly = false,
+  icons = false,
+  fieldErrors,
 }: {
   value: BreakReasonsForm;
   onChange: (next: BreakReasonsForm) => void;
   /** The server's `break_reasons` refusal from the last save, if any. */
   serverError?: string | null;
   readOnly?: boolean;
+  /** Offer each reason's tile picture (BE-13). */
+  icons?: boolean;
+  /** The last save's refusals by field, for the pictures' (`break_reasons[<i>].icon`). */
+  fieldErrors?: Readonly<Record<string, string>>;
 }) {
   const idBase = useId();
   const serverRow = serverError ? breakReasonsIssueCode(serverError, value) : null;
+  // A picture's refusal, by the row it is about.
+  const iconErrors = new Map<string, string>();
+  for (const [field, message] of Object.entries(fieldErrors ?? {})) {
+    if (!/^break_reasons\[\d+\]\.icon$/.test(field)) continue;
+    const code = breakReasonsFieldCode(field, value);
+    if (code !== null) iconErrors.set(code, message);
+  }
   return (
     <div className={styles.editor} data-testid="break-limits">
       <h3 className={styles.title} id={`${idBase}-title`}>Break limits</h3>
       <p className={styles.hint}>
         {`How long a break for each reason may last. Agents see the time left; past it, the Live floor flags the break. A reason with no limit is flagged after ${AGENCY_BREAK_DEFAULT_LIMIT_MINUTES} minutes.`}
-        {value.builtIn ? ' This campaign uses the standard reasons; changing a limit saves them as its own.' : ''}
+        {icons ? ' The picture is what agents see on the reason’s button.' : ''}
+        {value.builtIn
+          ? ` This campaign uses the standard reasons; changing a limit${icons ? ' or a picture' : ''} saves them as its own.`
+          : ''}
       </p>
       <ul className={styles.rows} aria-labelledby={`${idBase}-title`}>
         {value.rows.map((row) => {
@@ -54,12 +77,24 @@ export function BreakLimitsEditor({
           const label = row.reason.label || reservedBreakReasonLabel(code) || code;
           const typed = row.reserved ? null : breakLimitError(row.limit);
           // The live finding first: the server's answer is about what was sent, and may be fixed since.
-          const error = typed ?? (serverRow === code ? serverError ?? null : null);
+          const error = typed ?? (serverRow === code ? serverError ?? null : null) ?? iconErrors.get(code) ?? null;
           return (
             <li key={code} className={styles.row} data-testid={`break-limit-row-${code}`}>
-              <label className={styles.reason} htmlFor={row.reserved ? undefined : inputId}>
-                {label}
-              </label>
+              <span className={styles.named}>
+                {icons && !row.reserved ? (
+                  <TileIconPicker
+                    value={(row.reason as { icon?: string }).icon}
+                    name={label}
+                    disabled={readOnly}
+                    onChange={(icon) => onChange(withBreakIcon(value, code, icon))}
+                    describedBy={iconErrors.has(code) ? errorId : undefined}
+                    testId={`break-icon-${code}`}
+                  />
+                ) : null}
+                <label className={styles.reason} htmlFor={row.reserved ? undefined : inputId}>
+                  {label}
+                </label>
+              </span>
               {row.reserved ? (
                 <span className={styles.reserved}>Reserved for the dialler: no limit, and not offered to agents</span>
               ) : (
