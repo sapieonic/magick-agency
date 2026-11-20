@@ -14,14 +14,18 @@ import { randomUUID } from 'node:crypto';
  *    `Cache-Control: no-store` on every answer.
  *  - the counts: this agent's attempts on this campaign in the campaign's day, by the floor's
  *    conversation rule (a redialled conversation once), talk time on the agent's leg, successes,
- *    the promises written today; never yesterday's, another agent's or another campaign's.
+ *    the promises written today on the agent's dialler, soft-phone and inbound calls of the campaign
+ *    (AS7); never yesterday's, another agent's or another campaign's.
  *  - `will_pay` null on a campaign whose outcomes record no pay date; the target.
- *  - the call-laters: the agent's own booked ones (and, on strict, the ones assigned to them) due
- *    before the day's end, oldest first, the overdue ones counted apart; never tomorrow's, another
+ *  - the call-laters: on pool, the agent's own booked ones; on strict, the ones assigned to them
+ *    (a booked one handed to another agent or returned to the pool leaves the booker's list and
+ *    the new owner sees it), due before the day's end, oldest first, the overdue ones counted apart; never tomorrow's, another
  *    agent's, a closed or DNC contact's; `comes_to_me` and `left_today_goes_to` by the routing; the
  *    name, never the number; at most 20 rows, the counts uncapped.
- *  - the plan: the booked half on `idx_agency_contacts_my_callbacks` (0058), the assigned half on
- *    `idx_agency_contacts_assignee`, never the roster.
+ *  - the plans: the booked half on `idx_agency_contacts_my_callbacks` (0058, its predicate kept byte
+ *    for byte and the assignment a separate AND), the assigned half on `idx_agency_contacts_assignee`,
+ *    never the roster; the counts on the agent's sessions, their attempts and the 0050 promise
+ *    indexes, never a whole call table.
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -40,10 +44,12 @@ import {
   insertTenant,
   insertUser,
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
-import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession } from '../agency/agency-factories.js';
+import {
+  insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession, insertManualCall, insertSoftphoneSession,
+} from '../agency/agency-factories.js';
 import { buildApp } from '../../../src/app.js';
 import { myDayWindow } from '../../../src/agency/my-day.js';
-import { MY_CALLBACKS_INDEX_PREDICATE_SQL, myCallLaterStatement } from '../../../src/db/repositories/agency.repository.js';
+import { MY_CALLBACKS_INDEX_PREDICATE_SQL, MY_DAY_COUNTS_SQL, myCallLaterStatement } from '../../../src/db/repositories/agency.repository.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -75,7 +81,7 @@ const ZONE = zoneNearNoon(now);
 const DAY = myDayWindow(ZONE, now);
 const at = (minutesFromNow: number) => new Date(now.getTime() + minutesFromNow * MIN);
 
-let w: { tenant: string; account: string; otherAccount: string; uid: string; me: string; other: string };
+let w: { tenant: string; account: string; otherAccount: string; uid: string; otherUid: string; me: string; other: string };
 const c: Record<string, string> = {};
 const names: Record<string, string> = {};
 
@@ -86,8 +92,8 @@ function headers(over: Record<string, string> = {}): Record<string, string> {
 const myDay = (campaignId: string, h: Record<string, string> = {}) =>
   app.inject({ method: 'GET', url: `/proxy/agency/my-day?campaign_id=${campaignId}`, headers: headers(h) });
 
-async function ok(campaignId: string): Promise<AgencyMyDay> {
-  const res = await myDay(campaignId);
+async function ok(campaignId: string, h: Record<string, string> = {}): Promise<AgencyMyDay> {
+  const res = await myDay(campaignId, h);
   expect(res.statusCode, res.body).toBe(200);
   expect(res.headers['cache-control']).toBe('no-store');
   return res.json();
@@ -150,12 +156,16 @@ beforeAll(async () => {
   const me = await insertUser({ display_name: 'Asha Agent' });
   const other = await insertUser({ display_name: 'Ravi Agent' });
   await insertMembership({ user_id: me.id, tenant_id: tenant.id, account_id: account.id, role: 'agent' });
+  await insertMembership({ user_id: other.id, tenant_id: tenant.id, account_id: account.id, role: 'agent' });
   await getTestPool().query(
     `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, value)
      VALUES ('agency_dialer_enabled', 'tenant', $1, 'true'::jsonb)`,
     [tenant.id],
   );
-  w = { tenant: tenant.id, account: account.id, otherAccount: otherAccount.id, uid: me.firebase_uid, me: me.id, other: other.id };
+  w = {
+    tenant: tenant.id, account: account.id, otherAccount: otherAccount.id, uid: me.firebase_uid, otherUid: other.firebase_uid,
+    me: me.id, other: other.id,
+  };
 
   const campaign = async (key: string, over: Record<string, unknown>) => {
     c[key] = (await insertAgencyCampaign({
@@ -171,6 +181,7 @@ beforeAll(async () => {
   await campaign('X', { name: 'Not mine' });
   await campaign('Y', { name: 'Other account', account_id: otherAccount.id });
   for (const k of ['Q', 'S', 'R']) await staff(c[k]!, me.id);
+  await staff(c['S']!, other.id);
   await getTestPool().query(
     'INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)',
     [w.tenant, otherAccount.id, c['Y'], me.id],
@@ -203,6 +214,31 @@ beforeAll(async () => {
   // The agent's own on another campaign, today.
   await attempt(c['Q']!, sq.id, -105, talked('sale', -105, 45));
 
+  // AS7: promises the agent saved today on a soft-phone call and on an inbound call, on P, count
+  // too; one on another campaign, another agent's, yesterday's and an outcome with no promise do
+  // not. A soft-phone session that ended earlier today (one live session per agent).
+  const phone = await insertSoftphoneSession({ ...scope(), agent_user_id: me.id, state: 'offline', joined_at: at(-200), left_at: at(-190) });
+  const theirPhone = await insertSoftphoneSession({ ...scope(), agent_user_id: other.id, state: 'offline', joined_at: at(-200), left_at: at(-190) });
+  const softPromise = (session: typeof phone, campaignId: string | null, when: Date, promise: string | null = '2099-01-01') =>
+    insertManualCall(session as { id: string; tenant_id: string; account_id: string; agent_user_id: string }, {
+      campaign_id: campaignId, state: 'ended', ended_at: when, disposition_code: 'ptp', dispositioned_at: when,
+      promise_date: promise, settled_at: when,
+    });
+  await softPromise(phone, c['P']!, at(-195));
+  await softPromise(phone, c['Q']!, at(-195));
+  await softPromise(phone, c['P']!, at(-194), null);
+  await softPromise(theirPhone, c['P']!, at(-195));
+  await softPromise(phone, c['P']!, new Date(DAY.start.getTime() - 60 * MIN));
+  const inboundPromise = (answeredBy: string, campaignId: string, when: Date) => getTestPool().query(
+    `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, to_e164, state, ended_at, outcome, bridged_at,
+                                       answered_by_user_id, settled_at, matched_campaign_id, disposition_code, disposition_source,
+                                       dispositioned_at, promise_date)
+     VALUES ($1, $2, $3, '+919000000002', 'ended', $4, 'answered', $4, $5, $4, $6, 'ptp', 'campaign', $4, '2099-01-01')`,
+    [w.tenant, w.account, `ptp-${randomUUID()}`, when, answeredBy, campaignId]);
+  await inboundPromise(me.id, c['P']!, at(-50));
+  await inboundPromise(other.id, c['P']!, at(-50));
+  await inboundPromise(me.id, c['Q']!, at(-50));
+
   // ── Call-laters ──────────────────────────────────────────────────────────────
   // S (strict): booked by me, assigned to me, or both; overdue first.
   await callLater('overdue', c['S']!, -30, { ...booked(me.id), assigned_user_id: me.id, assigned_at: at(-60) });
@@ -210,8 +246,12 @@ beforeAll(async () => {
     assigned_user_id: me.id, assigned_at: at(-60), last_outcome: null, last_disposition: null, attempt_count: 0,
     callback_source: 'inbound', callback_due_at: at(60),
   });
-  await callLater('booked', c['S']!, 90, booked(me.id));
+  await callLater('booked', c['S']!, 90, { ...booked(me.id), assigned_user_id: me.id, assigned_at: at(-60) });
   await callLater('handedOver', c['S']!, 120, { assigned_user_id: me.id, assigned_at: at(-60) });
+  // Booked by me, then a supervisor gave it to Ravi (LF21): it comes to him, not me.
+  await callLater('givenAway', c['S']!, 100, { ...booked(me.id), assigned_user_id: other.id, assigned_at: at(-10) });
+  // Booked by me, then the callback fallback returned it to the pool (CA5): it comes to nobody in particular.
+  await callLater('pooled', c['S']!, -20, booked(me.id));
   await callLater('tomorrow', c['S']!, (DAY.end.getTime() - now.getTime()) / MIN + 60, booked(me.id));
   await callLater('theirs', c['S']!, 30, booked(other.id));
   await callLater('done', c['S']!, 30, { ...booked(me.id), state: 'completed' });
@@ -279,7 +319,8 @@ describe('GET /proxy/agency/my-day — the agent\'s numbers', () => {
     const day = await ok(c['P']!);
     expect(day).toMatchObject({
       campaign_id: c['P'], timezone: ZONE, day_start: DAY.start.toISOString(), day_end: DAY.end.toISOString(),
-      dialed: 4, calls: 2, successes: 1, talk_seconds: 120 + 60 + 30, will_pay: 1,
+      // will_pay: the dialler's promise, the soft phone's and the inbound call's, all on P today.
+      dialed: 4, calls: 2, successes: 1, talk_seconds: 120 + 60 + 30, will_pay: 3,
       target: { metric: 'calls', value: 80 },
     });
   });
@@ -293,13 +334,22 @@ describe('GET /proxy/agency/my-day — the agent\'s numbers', () => {
 describe('GET /proxy/agency/my-day — the agent\'s call-laters', () => {
   const rowNames = (day: AgencyMyDay) => day.call_later.rows.map((r) => names[r.contact_id]);
 
-  it('strict: booked by me or assigned to me, due before midnight, oldest first, the overdue apart; they come to me', async () => {
+  it('strict: assigned to me (booked by me or not), due before midnight, oldest first, the overdue apart; they come to me', async () => {
     const day = await ok(c['S']!);
+    // Not `givenAway` (booked by me, handed to Ravi) nor `pooled` (booked by me, returned to the
+    // pool by the fallback): neither will come to me, so neither is listed as coming to me.
     expect(rowNames(day)).toEqual(['overdue', 'inbound', 'booked', 'handedOver']);
     expect(day.call_later).toMatchObject({ today: 3, overdue: 1, comes_to_me: true, left_today_goes_to: 'waits_for_me' });
     expect(day.call_later.rows[0]).toMatchObject({ customer_name: 'Customer overdue', overdue: true });
     expect(day.call_later.rows[1]).toMatchObject({ overdue: false });
     expect(JSON.stringify(day)).not.toContain('+9198');
+  });
+
+  it('strict: a call-later handed to another agent is in their list, through their assigned half, and in no one else\'s', async () => {
+    const theirs = await ok(c['S']!, { authorization: `Bearer tok:${w.otherUid}` });
+    // `givenAway` is now Ravi's; `theirs` (booked by Ravi, never assigned to him) does not come to him.
+    expect(rowNames(theirs)).toEqual(['givenAway']);
+    expect(theirs.call_later).toMatchObject({ today: 1, overdue: 0, comes_to_me: true });
   });
 
   it('pool: only the ones I booked; another agent may get them', async () => {
@@ -347,31 +397,117 @@ describe('the call-later read\'s plan, on a seeded roster', () => {
     await getTestPool().query('ANALYZE agency_contacts');
   }, 120_000);
 
-  async function plan(includeAssigned: boolean): Promise<Array<Record<string, unknown>>> {
+  async function plan(ownerMode: boolean): Promise<Array<Record<string, unknown>>> {
     const { text, values } = myCallLaterStatement({
-      campaignId: c['S']!, agentUserId: w.me, includeAssigned, callbackCodes: ['call_later'],
+      campaignId: c['S']!, agentUserId: w.me, ownerMode, callbackCodes: ['call_later'],
       dueBefore: DAY.end, now: new Date(), limit: 20,
     });
     const { rows } = await getTestPool().query<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${text}`, values);
     return nodes(rows[0]!['QUERY PLAN']);
   }
 
+  it('on strict and preferred the booked half keeps 0058\'s predicate and adds the assignment as its own AND', () => {
+    const text = (ownerMode: boolean) => myCallLaterStatement({
+      campaignId: c['S']!, agentUserId: w.me, ownerMode, callbackCodes: [], dueBefore: DAY.end, now, limit: 20,
+    }).text;
+    expect(text(true)).toContain(`AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}\n           AND assigned_user_id = $2::uuid`);
+    expect(text(false)).not.toContain('assigned_user_id');
+  });
+
   it('repeats 0058\'s predicate byte for byte', () => {
     expect(MY_CALLBACKS_INDEX_PREDICATE_SQL).toBe(`state = 'pending' AND callback_booked_by_user_id IS NOT NULL`);
     expect(myCallLaterStatement({
-      campaignId: c['S']!, agentUserId: w.me, includeAssigned: false, callbackCodes: [], dueBefore: DAY.end, now, limit: 20,
+      campaignId: c['S']!, agentUserId: w.me, ownerMode: false, callbackCodes: [], dueBefore: DAY.end, now, limit: 20,
     }).text).toContain(MY_CALLBACKS_INDEX_PREDICATE_SQL);
   });
 
-  it.each([false, true])('the booked half on idx_agency_contacts_my_callbacks (assigned half: %s), never the roster', async (includeAssigned) => {
-    const p = await plan(includeAssigned);
+  it.each([false, true])('pool: the booked half on idx_agency_contacts_my_callbacks; strict (%s): the agent\'s own contacts on idx_agency_contacts_assignee; never the roster', async (ownerMode) => {
+    const p = await plan(ownerMode);
     const used = p.map((n) => [n['Node Type'], n['Index Name'] ?? n['Relation Name']]);
-    expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_my_callbacks'), JSON.stringify(used)).toBe(true);
-    if (includeAssigned) expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_assignee'), JSON.stringify(used)).toBe(true);
+    // On pool the booked half is the list, on its own index. On strict / preferred both halves
+    // need the agent as the assignee, so the planner may read the booked half on the assignee
+    // index too (the agent's own contacts, which the assigned half reads anyway): either way a
+    // read the size of the agent's contacts, never the roster.
+    if (!ownerMode) expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_my_callbacks'), JSON.stringify(used)).toBe(true);
+    if (ownerMode) expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_assignee'), JSON.stringify(used)).toBe(true);
     expect(p.some((n) => n['Node Type'] === 'Seq Scan' && n['Relation Name'] === 'agency_contacts'), JSON.stringify(used)).toBe(false);
     const read = p
       .filter((n) => typeof n['Actual Rows'] === 'number' && String(n['Node Type']).includes('Scan'))
       .reduce((s, n) => s + (n['Actual Rows'] as number) * ((n['Actual Loops'] as number) ?? 1), 0);
     expect(read).toBeLessThan(500);
+  });
+});
+
+describe('the counts read\'s plan, on seeded call tables', () => {
+  function scans(plan: unknown, out: Array<{ type: string; index?: string; relation?: string }> = []) {
+    if (Array.isArray(plan)) for (const p of plan) scans(p, out);
+    else if (plan && typeof plan === 'object') {
+      const node = plan as Record<string, unknown>;
+      if (typeof node['Node Type'] === 'string' && String(node['Node Type']).includes('Scan')) {
+        out.push({
+          type: node['Node Type'] as string,
+          ...(typeof node['Index Name'] === 'string' ? { index: node['Index Name'] } : {}),
+          ...(typeof node['Relation Name'] === 'string' ? { relation: node['Relation Name'] } : {}),
+        });
+      }
+      for (const v of Object.values(node)) if (v && typeof v === 'object') scans(v, out);
+    }
+    return out;
+  }
+
+  beforeAll(async () => {
+    // 3,000 other agents' sessions of the day, 20,000 of their dialled attempts, and 20,000
+    // soft-phone and 20,000 inbound calls of the account written up today without a promise.
+    const pool = getTestPool();
+    const contact = await insertAgencyContact(c['P']!, { ...scope(), state: 'completed', attempt_count: 1 });
+    await pool.query(
+      `INSERT INTO agency_agent_sessions (id, tenant_id, account_id, campaign_id, agent_user_id, state, joined_at, left_at)
+       SELECT gen_random_uuid(), $1, $2, $3, gen_random_uuid(), 'offline', $4::timestamptz, $4::timestamptz + interval '1 minute'
+         FROM generate_series(1, 3000) g`, [w.tenant, w.account, c['P'], at(-300)]);
+    await pool.query(
+      `INSERT INTO agency_call_attempts (id, campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state,
+                                         reserved_agent_id, dialed_at, created_at, ended_at, outcome)
+       SELECT gen_random_uuid(), $1, $2, $3, $4, g + 10, '+919000000001', 'ended', s.id, $5::timestamptz, $5::timestamptz,
+              $5::timestamptz + interval '20 seconds', 'no_answer'
+         FROM generate_series(1, 20000) g
+         JOIN LATERAL (SELECT id FROM agency_agent_sessions WHERE agent_user_id <> $6 ORDER BY id OFFSET (g % 3000) LIMIT 1) s ON true`,
+      [c['P'], contact.id, w.tenant, w.account, at(-290), w.me]);
+    const phone = await insertSoftphoneSession({ ...scope(), agent_user_id: randomUUID(), state: 'offline', joined_at: at(-300), left_at: at(-200) });
+    await pool.query(
+      `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id, state, ended_at,
+                                        disposition_code, dispositioned_at, settled_at, campaign_id)
+       SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, '+1555' || lpad(g::text, 7, '0'), '+15550000000', 'ended', $5::timestamptz, 'sale',
+              $5::timestamptz, $5::timestamptz, $6::uuid
+         FROM generate_series(1, 20000) g`, [w.tenant, w.account, phone.id, phone.agent_user_id, at(-250), c['P']]);
+    await pool.query(
+      `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, to_e164, state, ended_at, outcome, bridged_at,
+                                         answered_by_user_id, settled_at, disposition_code, disposition_source, dispositioned_at)
+       SELECT $1::uuid, $2::uuid, 'plan-' || g, '+15550000001', 'ended', $3::timestamptz, 'answered', $3::timestamptz, gen_random_uuid(),
+              $3::timestamptz, 'sale', 'route', $3::timestamptz FROM generate_series(1, 20000) g`, [w.tenant, w.account, at(-250)]);
+    await pool.query('ANALYZE agency_agent_sessions, agency_call_attempts, agency_manual_calls, agency_inbound_calls');
+  }, 120_000);
+
+  it('the agent\'s sessions first, their attempts by session, the soft-phone and inbound promises on their 0050 indexes; never a whole table', async () => {
+    const values = [w.me, w.tenant, w.account, c['P'], DAY.start, DAY.end];
+    const { rows } = await getTestPool().query<{ 'QUERY PLAN': unknown }>(`EXPLAIN (FORMAT JSON) ${MY_DAY_COUNTS_SQL}`, values);
+    const used = scans(rows[0]!['QUERY PLAN']);
+    const names = used.map((u) => u.index ?? `${u.type}:${u.relation}`);
+    // Each table on an index of its own: the agent's sessions, their attempts, the agent's own
+    // soft-phone calls (or the account's promises of the day, whichever the planner finds smaller)
+    // and the account's inbound promises of the day.
+    const expected: Array<readonly string[]> = [
+      ['idx_agency_agent_sessions_agent'],
+      ['idx_agency_attempts_agent_dialed'],
+      ['idx_agency_manual_calls_agent', 'idx_agency_manual_calls_promise_written'],
+      ['idx_agency_inbound_calls_promise_written'],
+    ];
+    for (const anyOf of expected) {
+      expect(anyOf.some((index) => names.includes(index)), `${anyOf.join(' | ')}: ${JSON.stringify(names)}`).toBe(true);
+    }
+    for (const table of ['agency_agent_sessions', 'agency_call_attempts', 'agency_manual_calls', 'agency_inbound_calls']) {
+      expect(used.some((u) => u.type === 'Seq Scan' && u.relation === table), `${table}: ${JSON.stringify(names)}`).toBe(false);
+    }
+    // And the answer is unchanged by them.
+    expect(await ok(c['P']!)).toMatchObject({ dialed: 4, calls: 2, will_pay: 3 });
   });
 });

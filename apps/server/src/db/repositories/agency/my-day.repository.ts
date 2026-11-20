@@ -7,21 +7,36 @@
  *    agent record's own frozen metrics ({@link AGENCY_ATTEMPT_METRICS_SQL}, `my-stats`'s
  *    statement: attempts dialled by the agent's sessions, `dialed_at` in the window), so My day,
  *    the agent's scorecard and the floor's `calls_today` count the same conversations. Plus the
- *    promises to pay (AS7) written in the window on those sessions' attempts (`dispositioned_at`:
- *    every outcome write stamps it with `promise_date`, and a replay that corrects a promise
- *    re-stamps the same row, so it is counted once).
+ *    promises to pay (AS7) written in the window on the agent's calls of the campaign, every kind
+ *    of call that can carry one (the Live floor's promises summary reads the same three tables):
+ *    the dialler's attempts of those sessions, the agent's soft-phone calls tagged to the campaign
+ *    (`agency_manual_calls.agent_user_id`) and the inbound calls the agent answered that matched a
+ *    contact of the campaign (`answered_by_user_id`, `matched_campaign_id`). Each by
+ *    `dispositioned_at` (every outcome write stamps it with `promise_date`, and a replay that
+ *    corrects a promise re-stamps the same row, so it is counted once), whoever saved the outcome
+ *    (a supervisor's on-behalf save of the agent's call is the agent's, as on the dialler).
  *    The agent's sessions are read first (`idx_agency_agent_sessions_agent`, 0023: the few that
- *    were open during the day), then their attempts by session (`idx_agency_attempts_agent_dialed`).
+ *    were open during the day), then their attempts by session (`idx_agency_attempts_agent_dialed`);
+ *    the soft-phone promises on the agent's own calls (`idx_agency_manual_calls_agent`) or the
+ *    account's promises of the window (`idx_agency_manual_calls_promise_written`, 0050), whichever
+ *    the planner finds smaller, and the inbound ones on `idx_agency_inbound_calls_promise_written`.
  *  - {@link myCallLaterStatement}: the agent's own pending call-laters on the campaign, due before
  *    the day's end (the overdue included), oldest due first, at most `limit`, with the counts.
  *    Two halves: the ones this agent booked (0057's booker), read on
  *    `idx_agency_contacts_my_callbacks` (0058), whose predicate {@link MY_CALLBACKS_INDEX_PREDICATE_SQL}
  *    repeats byte for byte; and, on `strict` / `preferred` campaigns, the callbacks assigned to the
  *    agent (a supervisor's hand-off, LF7, and those booked before the booker was recorded), read on
- *    `idx_agency_contacts_assignee` (0010). A contact in both is one row. A callback is
+ *    `idx_agency_contacts_assignee` (0010). On those campaigns the list holds only what will really
+ *    come to the agent (the lead's ruling on AS8): a call-later they booked that a supervisor has
+ *    since given to someone else (LF21) or that the callback fallback returned to the pool (CA5)
+ *    is not theirs any more, so the booked half also requires `assigned_user_id` to be the agent,
+ *    a separate AND after 0058's predicate (the new owner sees it through their assigned half;
+ *    the planner may then read the booked half on the assignee index, the agent's own contacts,
+ *    which the assigned half reads anyway). On
+ *    `pool` the booked half is the whole list. A contact in both halves is one row. A callback is
  *    `isCallbackSql`'s, the one definition.
  *
- * `test/integration/agency/my-day.test.ts` pins the counts, the halves and the plans.
+ * `test/integration/api/agent-station-my-day.test.ts` pins the counts, the halves and the plans.
  */
 import { getPool } from '@magick-agency/db';
 import { AGENCY_ATTEMPT_METRICS_SQL, readAttemptMetrics } from './sql-fragments.js';
@@ -50,13 +65,29 @@ export const MY_DAY_COUNTS_SQL = `
        AND (s.left_at IS NULL OR s.left_at >= $5::timestamptz)
   )
   SELECT ${AGENCY_ATTEMPT_METRICS_SQL},
-         (SELECT COUNT(*)
-            FROM my_sessions mp
-            JOIN agency_call_attempts p ON p.reserved_agent_id = mp.id
-           WHERE p.campaign_id = $4::uuid
-             AND p.promise_date IS NOT NULL
-             AND p.dispositioned_at >= $5::timestamptz
-             AND p.dispositioned_at < $6::timestamptz)::text AS promises
+         ((SELECT COUNT(*)
+             FROM my_sessions mp
+             JOIN agency_call_attempts p ON p.reserved_agent_id = mp.id
+            WHERE p.campaign_id = $4::uuid
+              AND p.promise_date IS NOT NULL
+              AND p.dispositioned_at >= $5::timestamptz
+              AND p.dispositioned_at < $6::timestamptz)
+          + (SELECT COUNT(*)
+               FROM agency_manual_calls m
+              WHERE m.tenant_id = $2::uuid AND m.account_id = $3::uuid
+                AND m.promise_date IS NOT NULL
+                AND m.dispositioned_at >= $5::timestamptz
+                AND m.dispositioned_at < $6::timestamptz
+                AND m.campaign_id = $4::uuid
+                AND m.agent_user_id = $1::uuid)
+          + (SELECT COUNT(*)
+               FROM agency_inbound_calls i
+              WHERE i.tenant_id = $2::uuid AND i.account_id = $3::uuid
+                AND i.promise_date IS NOT NULL
+                AND i.dispositioned_at >= $5::timestamptz
+                AND i.dispositioned_at < $6::timestamptz
+                AND i.matched_campaign_id = $4::uuid
+                AND i.answered_by_user_id = $1::uuid))::text AS promises
     FROM my_sessions ms
     JOIN agency_call_attempts a ON a.reserved_agent_id = ms.id
     JOIN agency_campaigns c ON c.id = a.campaign_id
@@ -79,8 +110,11 @@ export interface MyDayCountsInput {
 export interface MyCallLatersInput {
   campaignId: string;
   agentUserId: string;
-  /** `strict` / `preferred`: the callbacks assigned to the agent are theirs too. */
-  includeAssigned: boolean;
+  /**
+   * `strict` / `preferred`: the callbacks assigned to the agent are theirs too, and a call-later
+   * they booked is theirs only while it is still assigned to them. `pool`: the booked ones.
+   */
+  ownerMode: boolean;
   /** `callbackCodes(campaign.disposition_catalog)`. */
   callbackCodes: readonly string[];
   /** The day's end: due before it (the overdue included). */
@@ -91,7 +125,7 @@ export interface MyCallLatersInput {
 
 /** The call-later read's statement. Exported for its plan test. */
 export function myCallLaterStatement(input: MyCallLatersInput): { text: string; values: unknown[] } {
-  const owned = input.includeAssigned
+  const owned = input.ownerMode
     ? `
        UNION
        SELECT o.id, o.next_attempt_at
@@ -110,7 +144,8 @@ export function myCallLaterStatement(input: MyCallLatersInput): { text: string; 
           FROM agency_contacts
          WHERE campaign_id = $1::uuid
            AND callback_booked_by_user_id = $2::uuid
-           AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}
+           AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}${input.ownerMode ? `
+           AND assigned_user_id = $2::uuid` : ''}
            AND next_attempt_at < $3::timestamptz
            AND suppressed_reason IS DISTINCT FROM 'dnc'
            AND ${isCallbackSql('agency_contacts', '$4')}${owned}
