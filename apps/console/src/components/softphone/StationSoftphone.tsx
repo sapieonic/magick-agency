@@ -23,6 +23,7 @@ import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { DIAL_KEYS, DIAL_KEY_LETTERS, formatDialNumber } from '../../utils/softphone/phoneInput';
 import { catalogForCall } from '../../utils/softphone/callLabels';
+import { callEndSummary } from '../../utils/softphone/callState';
 import { dispositionLabel } from '../../utils/agencySpineCopy';
 import { findDisposition } from '../../utils/agencyDispositionForm';
 import { ATTEMPT_OUTCOME_WORDS, STATION_COPY } from '../../utils/agency/stationCopy';
@@ -73,7 +74,66 @@ export function StationSoftphone({
   frame: SideFrameProps;
   shortcutsEnabled?: boolean;
 }) {
-  const sp = softphone.sp;
+  // Back to my calls, and why it is not offered while a call is live or owes what happened.
+  const returnReason = softphone.returnFailure ?? softphone.returnBlockedReason;
+  return (
+    <SoftphoneScreen
+      sp={softphone.sp}
+      connection={connection}
+      clock={clock}
+      frame={frame}
+      shortcutsEnabled={shortcutsEnabled}
+      inboundNote={SIDE_COPY.inboundNotHere}
+      testId="station-softphone"
+      wayOut={{
+        reason: returnReason ? (
+          <span className={styles.footHint} id="return-to-campaign-reason" role={softphone.returnFailure ? 'alert' : undefined} data-testid="return-to-campaign-reason">
+            {returnReason}
+          </span>
+        ) : null,
+        button: softphone.returnBlockedReason === null ? (
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnBig} ${styles.btnGo}`}
+            onClick={() => !softphone.returning && softphone.returnToCampaign()}
+            aria-disabled={softphone.returning || undefined}
+            aria-describedby={returnReason ? 'return-to-campaign-reason' : undefined}
+            data-testid="return-to-campaign"
+          >
+            {softphone.returning ? STATION_COPY.backingToCalls : STATION_COPY.backToCalls}
+          </button>
+        ) : null,
+      }}
+    />
+  );
+}
+
+/**
+ * The soft phone's screen in the station's look, for either host: the campaign station
+ * (`StationSoftphone`) and `/dialer/phone` (`SoftphonePage`). The host gives the frame's top bar
+ * and banners, its way out (Back to my calls, Close soft phone: bottom right while nothing is
+ * dialled, its reason bottom left while a call holds it) and the note on where customers who call
+ * us go.
+ */
+export function SoftphoneScreen({
+  sp,
+  connection,
+  clock,
+  frame,
+  wayOut,
+  inboundNote,
+  testId,
+  shortcutsEnabled = true,
+}: {
+  sp: SoftphoneState;
+  connection: StationConnection;
+  clock: ServerClock;
+  frame: SideFrameProps;
+  wayOut: { button: ReactNode; reason: ReactNode };
+  inboundNote: string;
+  testId: string;
+  shortcutsEnabled?: boolean;
+}) {
   const call = sp.call;
   const bodyRef = useRef<HTMLElement>(null);
   const numberInputRef = useRef<HTMLInputElement>(null);
@@ -150,6 +210,8 @@ export function StationSoftphone({
   );
 
   // ── The call's own banner (one), before the page's ──────────────────────────
+  // How the last call ended, once the soft phone is ready again (a call with nothing to save).
+  const lastEnded = sp.lastCall && sp.lastCall.state === 'ended' && !sp.lastCall.requires_disposition && call === null ? sp.lastCall : null;
   const callBanner: ReactNode = sp.hangupFailure ? (
     <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="softphone-hangup-failure">{SIDE_COPY.endCallFailed}</StationBanner>
   ) : sp.dncFailure ? (
@@ -158,34 +220,21 @@ export function StationSoftphone({
     <StationBanner tone="ready" icon={<Ban size={22} />} role="status" testId="softphone-dnc-outcome">{SIDE_COPY.stoppedCalls}</StationBanner>
   ) : phase === 'on_call' && sp.muted ? (
     <StationBanner tone="break" icon={<MicOff size={22} />} testId="softphone-on-mute">{STATION_COPY.onMute}</StationBanner>
+  ) : phase === 'idle' && lastEnded ? (
+    <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="softphone-last-call">
+      {SIDE_COPY.lastCallLine(formatDialNumber(lastEnded.destination_e164), callEndSummary(lastEnded))}
+    </StationBanner>
   ) : sp.finishOnly && call ? (
-    <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="softphone-finish-notice">{SIDE_COPY.finishCall}</StationBanner>
+    <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="softphone-finish-notice">{sp.finishNotice ?? SIDE_COPY.finishCall}</StationBanner>
   ) : null;
 
   // ── The footer: one main button bottom right (AS1) ──────────────────────────
-  // Back to my calls, and why it is not offered while a call is live or owes its outcome: as the
-  // station's frame has always had it.
-  const returnReason = softphone.returnFailure ?? softphone.returnBlockedReason;
-  const returnLine = returnReason ? (
-    <span className={styles.footHint} id="return-to-campaign-reason" role={softphone.returnFailure ? 'alert' : undefined} data-testid="return-to-campaign-reason">
-      {returnReason}
-    </span>
-  ) : null;
+  // The host's way out, bottom right while nothing is dialled; its reason while a call holds it.
+  const returnLine = wayOut.reason;
   let footLeft: ReactNode = returnLine;
   let footRight: ReactNode = null;
   if (phase === 'idle') {
-    footRight = softphone.returnBlockedReason === null ? (
-      <button
-        type="button"
-        className={`${styles.btn} ${styles.btnBig} ${styles.btnGo}`}
-        onClick={() => !softphone.returning && softphone.returnToCampaign()}
-        aria-disabled={softphone.returning || undefined}
-        aria-describedby={returnReason ? 'return-to-campaign-reason' : undefined}
-        data-testid="return-to-campaign"
-      >
-        {softphone.returning ? STATION_COPY.backingToCalls : STATION_COPY.backToCalls}
-      </button>
-    ) : null;
+    footRight = wayOut.button;
   } else if (phase === 'coming' || phase === 'on_call') {
     footLeft = (
       <>
@@ -233,7 +282,8 @@ export function StationSoftphone({
       needed={Boolean(selected?.requires_note)}
     />
   );
-  const detailsCard = sp.fields.length > 0 ? (
+  // Shown while the account's fields load (a reload mid-call), and once there are fields to fill.
+  const detailsCard = sp.fields.length > 0 || sp.bootstrap === null ? (
     <section className={`${styles.card} ${side.details}`} data-testid="call-details">
       <h2 className={styles.cardTitle}><ListChecks size={20} aria-hidden="true" />{SIDE_COPY.callDetails}</h2>
       <CallFieldsForm
@@ -241,7 +291,7 @@ export function StationSoftphone({
         values={sp.fieldValues}
         errors={sp.fieldErrors}
         disabled={sp.placing || (sp.finishOnly && !call)}
-        loading={false}
+        loading={sp.bootstrap === null}
         onChange={sp.setFieldValue}
       />
     </section>
@@ -262,10 +312,10 @@ export function StationSoftphone({
       <>
         {sp.finishOnly ? (
           <section className={styles.card}>
-            <p className={side.reason} role="status" data-testid="softphone-finish-notice">{SIDE_COPY.finishIdle}</p>
+            <p className={side.reason} role="status" data-testid="softphone-finish-notice">{sp.finishNotice ?? SIDE_COPY.finishIdle}</p>
           </section>
         ) : (
-          <DialCard sp={sp} connection={connection} numberInputRef={numberInputRef} callButtonRef={callButtonRef} />
+          <DialCard sp={sp} connection={connection} numberInputRef={numberInputRef} callButtonRef={callButtonRef} inboundNote={inboundNote} />
         )}
         <div className={styles.col}>
           {sp.finishOnly ? null : <SetupCard sp={sp} />}
@@ -284,9 +334,9 @@ export function StationSoftphone({
         </div>
         <div className={styles.col}>
           {sp.phase === 'ringing' && call.can_cancel_ringing !== true ? (
-            <section className={`${styles.card} ${side.warnCard}`} data-testid="ringing-warning">
+            <section className={`${styles.card} ${side.warnCard}`}>
               <h2 className={styles.cardTitle}><TriangleAlert size={20} aria-hidden="true" />{SIDE_COPY.ringing}</h2>
-              <p>{SIDE_COPY.ringingWarning}</p>
+              <p data-testid="ringing-warning">{SIDE_COPY.ringingWarning}</p>
             </section>
           ) : null}
           {call.contact ? <LastCallsCard rows={lastCalls} /> : null}
@@ -359,7 +409,7 @@ export function StationSoftphone({
         bodyRef={bodyRef}
         footLeft={footLeft}
         footRight={footRight}
-        testId="station-softphone"
+        testId={testId}
       >
         {/* The assertive region: the direct result of a button the agent just pressed. */}
         <div className={styles.srOnly} role="alert" aria-live="assertive">{sp.announcement}</div>
@@ -396,6 +446,7 @@ export function StationSoftphone({
 
 /** Why Call cannot dial yet, keyed on what the soft phone says is missing; null when it can. */
 function dialReason(sp: SoftphoneState, connection: StationConnection): string | null {
+  if (connection === 'connecting' || connection === 'idle') return SIDE_COPY.connectingPhone;
   if (connection !== 'open') return SIDE_COPY.notConnected;
   if (!sp.bootstrap) return SIDE_COPY.loading;
   if (sp.callerIdOptions.length === 0) return SIDE_COPY.noCallerId;
@@ -413,11 +464,13 @@ function DialCard({
   connection,
   numberInputRef,
   callButtonRef,
+  inboundNote,
 }: {
   sp: SoftphoneState;
   connection: StationConnection;
   numberInputRef: RefObject<HTMLInputElement>;
   callButtonRef: RefObject<HTMLButtonElement>;
+  inboundNote: string;
 }) {
   const reasonId = useId();
   const reason = dialReason(sp, connection);
@@ -510,7 +563,7 @@ function DialCard({
       {inboundOn ? (
         <p className={side.note} role="note" data-testid="softphone-inbound-notice">
           <Info size={18} aria-hidden="true" />
-          {SIDE_COPY.inboundNotHere}
+          {inboundNote}
         </p>
       ) : null}
     </form>
@@ -522,6 +575,7 @@ function SetupCard({ sp }: { sp: SoftphoneState }) {
   const tagId = useId();
   const fromId = useId();
   const editable = sp.setupEditable;
+  const hint = callFromHint(sp);
   return (
     <section className={styles.card} data-testid="log-to">
       <div className={side.field}>
@@ -559,9 +613,22 @@ function SetupCard({ sp }: { sp: SoftphoneState }) {
             <option key={id} value={id}>{formatDialNumber(id)}</option>
           ))}
         </select>
+        {hint ? <p className={side.hint} data-testid="caller-id-hint">{hint}</p> : null}
       </div>
     </section>
   );
+}
+
+/**
+ * The line under Call from (DN4): Automatic's while it is the choice; a picked number's only while
+ * the call can still change. Once placed, the number is the call's own: no line.
+ */
+export function callFromHint(
+  sp: Pick<SoftphoneState, 'callerIdAutomatic' | 'callerId' | 'setupEditable' | 'campaign'>,
+): string | null {
+  if (sp.callerIdAutomatic && sp.callerId === null) return SIDE_COPY.automaticHint;
+  if (!sp.setupEditable) return null;
+  return sp.campaign ? SIDE_COPY.pickedHintWork(sp.campaign.campaign_name) : SIDE_COPY.pickedHintOwn;
 }
 
 /** On a placed call: the number it goes from and the work it is saved to, fixed now. */
@@ -603,7 +670,7 @@ function RecentCallsCard({ sp }: { sp: SoftphoneState }) {
               <li key={row.id} className={side.recentRow} data-testid={`recent-${row.id}`}>
                 <span className={side.recentText}>
                   <b>{shown}</b>
-                  <span>{[recentOutcome(row, sp), row.tag?.campaign_name ?? null, when].filter(Boolean).join(' · ')}</span>
+                  <span>{[recentOutcome(row, sp), row.tag?.campaign_name ?? SIDE_COPY.noWork, when].filter(Boolean).join(' · ')}</span>
                 </span>
                 <button
                   type="button"

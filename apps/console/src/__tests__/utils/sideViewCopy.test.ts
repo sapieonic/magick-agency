@@ -9,11 +9,36 @@ import {
 } from '../../utils/agency/sideViewCopy';
 import { inboundCustomerCard, inboundLastCalls, softphoneCustomerCard, softphoneLastCalls } from '../../utils/agency/sideViewCustomer';
 import { connected, inboundCall } from '../helpers/inbound';
+import { refusalCopy, PROMISE_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
+import {
+  SAVE_BLOCK_COPY,
+  SOFTPHONE_FINISH_CALL_COPY,
+  SOFTPHONE_FINISH_IDLE_COPY,
+  SOFTPHONE_MUTED_AT_ANSWER_COPY,
+  SOFTPHONE_NOTES_DISABLED_COPY,
+  SOFTPHONE_PAD_DISABLED_COPY,
+} from '../../hooks/useSoftphone';
+import {
+  INBOUND_DISPOSITION_RULE_COPY,
+  INBOUND_MUTED_AT_CONNECT_COPY,
+  INBOUND_SAVE_BLOCK_COPY,
+  dispositionRefusalCopy,
+} from '../../hooks/useInboundCall';
+import { INBOUND_PAD_DISABLED_COPY } from '../../utils/inbound/inboundCall';
+import { MANUAL_END_REASON_COPY } from '../../utils/softphone/callState';
+import { OVERRIDE_NOTE_BLOCK_COPY, describeDncRefusal, describeHoursRefusal } from '../../utils/softphone/overrides';
+import { SOFTPHONE_LEAVE_BLOCKED_COPY, SOFTPHONE_STAYS_OPEN_COPY } from '../../components/softphone/SoftphoneHeader';
+import { SOFTPHONE_CLOSE_CONFIRM_MESSAGE } from '../../pages/agency/SoftphonePage';
+import { AGENCY_SOFTPHONE_ERROR_CODES } from '../../types/softphone';
+import { AGENCY_INBOUND_ERROR_CODES } from '../../types/inbound';
+import type { SoftphoneRefusal } from '../../api/softphone';
+import type { InboundRefusal } from '../../api/inbound';
 import { CAMPAIGN, manualCall } from '../helpers/softphone';
 
 /**
- * The station's side views (an inbound call, the soft phone) in their own words (AS15, spec
- * §6.6), and the customer card they build by the outbound card's rules.
+ * The station's side views (an inbound call, the soft phone, `/dialer/phone`) in their own words
+ * (AS15, spec §6.6), the lines their hooks say included, and the customer card they build by the
+ * outbound card's rules.
  */
 const BANNED = [
   /disposition/i,
@@ -31,9 +56,11 @@ const BANNED = [
   /\boffline\b/i,
   /reconnecting/i,
   /\broute\b/i,
-  /soft ?phone/i,
   /\binbound\b/i,
   /\boutcome\b/i,
+  /\broster\b/i,
+  /caller ID/i,
+  /\bdialer\b/i,
 ];
 
 function everyString(value: unknown, out: string[] = []): string[] {
@@ -48,16 +75,78 @@ const BLOCKS: SideSaveBlock[] = [
   'promise_amount_invalid', 'call_live', 'fields_required',
 ];
 
+const DNC_REFUSAL = {
+  code: 'dnc_listed' as const,
+  status: 409,
+  message: 'The server’s campaign words',
+  entry: { id: 'd', scope: 'campaign' as const, reason: null, created_at: '2026-10-12T09:00:00Z' },
+};
+const HOURS_REFUSAL = {
+  code: 'outside_calling_hours' as const,
+  status: 409,
+  message: 'The server’s campaign words',
+  window: { start: '09:00', end: '20:00', days: [1, 2, 3], timezone: 'Asia/Kolkata' },
+  timezone_source: 'campaign_default' as const,
+  next_open_at: null,
+};
+const describedOverride = (d: { title: string; facts: Array<{ label: string; value: string }>; consequence: string; noteLabel: string; confirmLabel: string }) =>
+  [d.title, d.consequence, d.noteLabel, d.confirmLabel, ...d.facts.flatMap((f) => [f.label, f.value])];
+
+/**
+ * The lines the side views' hooks and helpers say (AS15): the soft phone's and an inbound call's
+ * refusals by every code, in both contexts, their pad and Save words, their announcements, the
+ * override dialog, how a call ended and the way out. Collected here so a new one that says
+ * "campaign" or "outcome", or passes on the server's sentence, goes red.
+ */
+const HOOK_LINES = [
+  ...AGENCY_SOFTPHONE_ERROR_CODES.flatMap((code) => [
+    refusalCopy({ code, status: 409, message: 'The server’s campaign words' } as SoftphoneRefusal),
+    refusalCopy({ code, status: 409, message: 'The server’s campaign words' } as SoftphoneRefusal, 'status'),
+  ]),
+  refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s campaign words' }),
+  ...Object.values(PROMISE_REFUSAL_COPY),
+  ...Object.values(SAVE_BLOCK_COPY),
+  SOFTPHONE_MUTED_AT_ANSWER_COPY,
+  SOFTPHONE_NOTES_DISABLED_COPY,
+  SOFTPHONE_FINISH_CALL_COPY,
+  ...Object.values(SOFTPHONE_FINISH_IDLE_COPY),
+  SOFTPHONE_PAD_DISABLED_COPY,
+  ...Object.values(INBOUND_SAVE_BLOCK_COPY),
+  ...Object.values(INBOUND_DISPOSITION_RULE_COPY),
+  INBOUND_MUTED_AT_CONNECT_COPY,
+  INBOUND_PAD_DISABLED_COPY,
+  ...AGENCY_INBOUND_ERROR_CODES.map((code) => dispositionRefusalCopy({ code, status: 409, message: 'The server’s campaign words', reason: null } as InboundRefusal)),
+  dispositionRefusalCopy({ code: 'unknown', status: 500, message: 'The server’s campaign words', reason: null } as InboundRefusal),
+  ...Object.values(MANUAL_END_REASON_COPY),
+  ...Object.values(OVERRIDE_NOTE_BLOCK_COPY),
+  ...describedOverride(describeDncRefusal(DNC_REFUSAL, { number: '+919820461733', campaignName: null })),
+  ...(['tenant', 'account'] as const).flatMap((scope) =>
+    describedOverride(describeDncRefusal({ ...DNC_REFUSAL, entry: { ...DNC_REFUSAL.entry, scope } }, { number: '+919820461733', campaignName: null }))),
+  ...describedOverride(describeHoursRefusal(HOURS_REFUSAL, { campaignName: null })),
+  ...describedOverride(describeHoursRefusal({ ...HOURS_REFUSAL, timezone_source: 'contact' }, { campaignName: null })),
+  SOFTPHONE_LEAVE_BLOCKED_COPY,
+  SOFTPHONE_STAYS_OPEN_COPY,
+  SOFTPHONE_CLOSE_CONFIRM_MESSAGE,
+];
+
 const ALL = [
   ...everyString(SIDE_COPY),
   ...everyString(STICKY_WORDS),
   ...everyString(DIAL_BLOCK_WORDS),
   ...BLOCKS.map(sideSaveBlockLine),
+  ...HOOK_LINES,
 ];
 
 describe('the side views’ own words (AS15, spec §6.6)', () => {
   it('collects a real body of copy, so the checks below cannot pass on nothing', () => {
-    expect(ALL.length).toBeGreaterThan(60);
+    expect(ALL.length).toBeGreaterThan(200);
+  });
+
+  it('never passes on the server’s sentence: a code without words gets a safe line of ours', () => {
+    expect(ALL.filter((line) => line.includes('The server’s'))).toEqual([]);
+    expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s campaign words' })).toBe(
+      'That did not go through. Try again in a moment.',
+    );
   });
 
   it.each(BANNED.map((re) => [re.source, re] as const))('never says %s', (_name, re) => {

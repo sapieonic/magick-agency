@@ -42,8 +42,8 @@ export function overrideNoteBlock(note: string): OverrideNoteBlock | null {
 }
 
 export const OVERRIDE_NOTE_BLOCK_COPY: Record<OverrideNoteBlock, string> = {
-  too_short: `Write at least ${SOFTPHONE_OVERRIDE_NOTE_MIN} characters — say why this call has to go ahead.`,
-  too_long: `Keep the note to ${SOFTPHONE_OVERRIDE_NOTE_MAX} characters.`,
+  too_short: `Write at least ${SOFTPHONE_OVERRIDE_NOTE_MIN} letters. Say why you must call now.`,
+  too_long: `Keep the note to ${SOFTPHONE_OVERRIDE_NOTE_MAX} letters.`,
 };
 
 /** The overrides to retry with: what was already given, plus this note under its kind's key. */
@@ -96,22 +96,36 @@ export function dncEntryFacts(
   return facts;
 }
 
+/** How far an entry reaches, in the agent's words (AS15): the dialog the agent reads. */
+function agentReach(entry: Pick<SoftphoneDncListedRefusal['entry'], 'scope'>, workName: string | null): string {
+  switch (entry.scope) {
+    case 'tenant':
+      return 'All our work';
+    case 'account':
+      return 'All work in this account';
+    case 'campaign':
+      return workName?.trim() || 'One of this account’s lists';
+  }
+}
+
 export function describeDncRefusal(
   refusal: SoftphoneDncListedRefusal,
   context: { number: string; campaignName: string | null },
 ): OverrideDescription {
   const { entry } = refusal;
+  const added = formatDate(entry.created_at);
   const facts = [
     { label: 'Number', value: formatDialNumber(context.number) || context.number },
-    { label: 'Listed for', value: dncEntryReach(entry, context.campaignName) },
-    ...dncEntryFacts(entry),
+    { label: 'Not to be called for', value: agentReach(entry, context.campaignName) },
+    { label: 'Why', value: entry.reason?.trim() ? entry.reason.trim() : 'No reason was written' },
+    ...(added ? [{ label: 'Since', value: added }] : []),
   ];
   return {
-    title: 'This number is on the Do Not Call list',
+    title: 'This customer asked us not to call them',
     facts,
     consequence:
-      'If you call anyway, the call is logged with your name, this entry and your note, and your supervisor can see it. The number stays on the list.',
-    noteLabel: 'Why does this call have to go ahead?',
+      'If you call anyway, your name, this entry and your note are saved with the call. Your supervisor can see it. The number stays on the list.',
+    noteLabel: 'Why must you call now?',
     confirmLabel: 'Call anyway',
   };
 }
@@ -148,32 +162,31 @@ export function describeHoursRefusal(
 ): OverrideDescription {
   const { window } = refusal;
   const days = describeIsoDays(window.days);
-  const campaign = context.campaignName ?? 'This campaign';
+  const work = context.campaignName ?? 'This work';
   const facts = [
     {
       label: 'Calling hours',
       value: `${hhmm(window.start)}–${hhmm(window.end)}${days ? `, ${days}` : ''}`,
     },
     {
-      label: 'Timezone',
+      label: 'Time zone',
       value:
         refusal.timezone_source === 'contact'
-          ? `${window.timezone} — the customer’s, from the roster`
-          : `${window.timezone} — the campaign’s default; this number isn’t on the roster`,
+          ? `${window.timezone}, the customer’s`
+          : `${window.timezone}, the work’s own (this number is not on its list)`,
     },
     {
       label: 'Opens again',
       value:
         formatNextOpening(refusal.next_open_at, window.timezone)
-        ?? 'Never — the campaign has no calling days set',
+        ?? 'Never: no calling days are set',
     },
   ];
   return {
-    title: `${campaign} is outside its calling hours`,
+    title: `${work}: outside calling hours`,
     facts,
-    consequence:
-      'If you call anyway, the call is logged with your name and your note, and your supervisor can see it.',
-    noteLabel: 'Why does this call have to go ahead now?',
+    consequence: 'If you call anyway, your name and your note are saved with the call. Your supervisor can see it.',
+    noteLabel: 'Why must you call now?',
     confirmLabel: 'Call anyway',
   };
 }

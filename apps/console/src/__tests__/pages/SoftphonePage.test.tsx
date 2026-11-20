@@ -128,9 +128,14 @@ describe('/dialer/phone', () => {
     await mount();
     expect(mocks.openSoftphoneSession).toHaveBeenCalledWith('t-1', 'a-1', { takeOver: true });
     expect(latestSocket().url).toContain('/proxy/agency/station/sess-sp?token=t1');
-    expect(screen.getByTestId('rail-label').textContent).toBe('Connecting your phone…');
+    // The station's frame and band (the soft phone in the station's look); Call says why it waits.
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.getByTestId('dial-reason').textContent).toBe('Connecting your phone…');
     await act(async () => latestSocket().open());
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.queryByTestId('dial-reason')).toBeNull();
+    // The way out is bottom right while nothing is dialled.
+    expect(screen.getByTestId('softphone-close').textContent).toBe('Close soft phone');
     // The agent's screens, with the soft phone as the current one.
     expect(screen.getByTestId('agent-nav-phone').getAttribute('aria-current')).toBe('page');
   });
@@ -147,8 +152,10 @@ describe('/dialer/phone', () => {
     await mount();
     await act(async () => latestSocket().open());
     await act(async () => latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) }));
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ringing +91 98204 61733');
-    expect((screen.getByTestId('softphone-close') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('band-title').textContent).toBe('Calling +91 98204 61733');
+    // Hidden while a call holds the page (AS1), with the reason where it was.
+    expect(screen.queryByTestId('softphone-close')).toBeNull();
+    expect(screen.getByTestId('softphone-close-reason').textContent).toBe('Finish your call and save what happened first.');
     expect(screen.getByTestId('agent-nav-attempts').getAttribute('data-locked')).toBe('true');
     expect(screen.getByTestId('agent-nav-attempts').closest('a')).toBeNull();
     // Shown as an icon alone at laptop width, so the tooltip names the screen before why it is locked.
@@ -159,7 +166,7 @@ describe('/dialer/phone', () => {
     await act(async () =>
       latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) }),
     );
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
   });
 
   describe('a reload mid-call keeps the call details the agent typed', () => {
@@ -172,7 +179,7 @@ describe('/dialer/phone', () => {
 
     async function typeNote(text: string) {
       mocks.updateManualCall.mockClear();
-      fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: text } });
+      fireEvent.change(screen.getByRole('textbox', { name: /note/i }), { target: { value: text } });
       await waitFor(() => expect(mocks.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
       return mocks.updateManualCall.mock.calls[0]![1] as Record<string, unknown>;
     }
@@ -187,7 +194,7 @@ describe('/dialer/phone', () => {
       await mount();
       await act(async () => latestSocket().open());
       await act(async () => latestSocket().emit({ event: 'manual_call', call: live }));
-      expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+      expect(screen.getByTestId('band-title').textContent).toBe('On call');
       expect(screen.getByTestId('call-fields-loading')).toBeTruthy();
 
       // No field set yet: `fields` would replace the stored values, so it is not sent.
@@ -219,7 +226,7 @@ describe('/dialer/phone', () => {
     const link = screen.getByTestId('agent-nav-attempts');
     expect(link.closest('a')).not.toBeNull();
     const hint = document.getElementById(link.getAttribute('aria-describedby')!)!;
-    expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you’re done.');
+    expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you are done.');
     // The header shows the entry as an icon alone at laptop width, so its tooltip names it first.
     expect(link.getAttribute('title')).toBe(`My calls — ${hint.textContent}`);
   });
@@ -250,8 +257,8 @@ describe('/dialer/phone', () => {
       await mount();
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
       await act(async () => latestSocket().open());
-      expect(screen.getByTestId('rail-label').textContent).toBe('Outcome needed');
-      expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/Finish this call; you can’t start new ones\./);
+      expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
+      expect(screen.getByTestId('softphone-finish-notice').textContent).toBe('The soft phone is turned off. Finish this call and save it. You cannot dial new calls.');
       expect(screen.queryByTestId('dial-number')).toBeNull();
     });
 
@@ -305,7 +312,7 @@ describe('/dialer/phone', () => {
     fireEvent.click(screen.getByTestId('softphone-close'));
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toMatch(/Close the soft phone\?/);
-    expect(dialog.textContent).toMatch(/takes you to My campaigns\. To call again, choose Soft phone at the top of the page\./);
+    expect(dialog.textContent).toMatch(/You will go back to My work\. To dial again, choose Soft phone at the top of the page\./);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Close soft phone' }));
     });
@@ -363,7 +370,7 @@ describe('/dialer/phone', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
     });
-    expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/Couldn’t change your status/);
+    expect(screen.getByTestId('softphone-switch-failure').textContent).toBe('Your status did not change. Try again.');
     expect(screen.queryByTestId('where')).toBeNull();
   });
 

@@ -16,7 +16,7 @@ import {
 } from '../../utils/softphone/fieldSettings';
 import { draftFromSettings, payloadFromDraft, validateSettingsDraft } from '../../utils/softphone/settingsForm';
 import { overrideNoteBlock, overrideNoteLength, withOverride } from '../../utils/softphone/overrides';
-import { refusalCopy, SOFTPHONE_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
+import { refusalCopy, SOFTPHONE_REFUSAL_COPY, SOFTPHONE_UNKNOWN_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
 import { summariseCalls, queryFromDraft, EMPTY_SOFTPHONE_CALLS_DRAFT } from '../../utils/softphone/callStats';
 import { AGENCY_SOFTPHONE_ERROR_CODES, type AgencyCallField } from '../../types/softphone';
 import { manualCall } from '../helpers/softphone';
@@ -163,24 +163,26 @@ describe('override notes', () => {
 
 describe('refusal copy', () => {
   it('gives the refusals an agent can hit by mistake a next step, not just a fact', () => {
-    expect(SOFTPHONE_REFUSAL_COPY.wrong_session_kind).toMatch(/Close the soft phone, then join the campaign/);
-    expect(SOFTPHONE_REFUSAL_COPY.call_not_found).toMatch(/Reload the page/);
+    expect(SOFTPHONE_REFUSAL_COPY.wrong_session_kind).toMatch(/Close the soft phone, then open today’s work/);
+    expect(SOFTPHONE_REFUSAL_COPY.call_not_found).toMatch(/Open the page again/);
     expect(SOFTPHONE_REFUSAL_COPY.fields_invalid).toMatch(/marked in Call details/);
   });
 
   it('a status change Redis did not take is not a call that was not placed', () => {
     const refusal = { code: 'dial_failed', status: 503, message: 'x' } as const;
-    expect(refusalCopy(refusal)).toMatch(/call couldn’t be placed/);
-    expect(refusalCopy(refusal, 'status')).toBe('Couldn’t change your status just now; nothing changed. Try again.');
+    expect(refusalCopy(refusal)).toMatch(/The call did not go through/);
+    expect(refusalCopy(refusal, 'status')).toBe('Your status did not change. Try again.');
     expect(refusalCopy(refusal, 'status')).not.toMatch(/call|dialled/i);
     // Codes the status context does not reword keep their one sentence.
     expect(refusalCopy({ code: 'session_not_found', status: 404, message: 'x' }, 'status')).toBe(SOFTPHONE_REFUSAL_COPY.session_not_found);
-    expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s words' }, 'status')).toBe('The server’s words');
+    // A code the console has no words for: a safe line of ours, never the server's sentence (AS15).
+    expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s words' }, 'status')).toBe(SOFTPHONE_UNKNOWN_REFUSAL_COPY);
+    expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s words' })).toBe('That did not go through. Try again in a moment.');
   });
 
   it('a carrier account that cannot dial says support, not "try again", and names no vendor', () => {
     const copy = refusalCopy({ code: 'carrier_account_unavailable', status: 409, message: 'x' });
-    expect(copy).toMatch(/carrier account.*Contact support/);
+    expect(copy).toMatch(/Calls cannot go out from this number.*support/);
     expect(copy).not.toMatch(/try again|in a moment|plivo|voicelink|administrator/i);
     // A calls-per-second limit answers concurrency_limit: retry in a moment.
     expect(SOFTPHONE_REFUSAL_COPY.concurrency_limit).toMatch(/Try again in a moment/);

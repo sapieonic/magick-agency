@@ -171,10 +171,10 @@ describe('the Contacts filter (PT7)', () => {
 describe('a soft-phone refusal names the promise rule', () => {
   it('in the pad\'s own words', () => {
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x', reason: 'promise_required' }))
-      .toBe(DISPOSITION_BLOCK_COPY.promise_required);
+      .toBe('Choose the pay date.');
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x', reason: 'promise_needs_contact' }))
-      .toMatch(/isn’t an open contact on the campaign’s list/);
+      .toMatch(/this number is not on the work’s list/);
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x' }))
-      .toBe('That outcome can’t be saved. Check the outcome, its note and its callback time.');
+      .toBe('That did not save. Check what you chose, the note and the time.');
   });
 });

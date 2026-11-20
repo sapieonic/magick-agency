@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   contactName,
-  describeSoftphoneRail,
+  callEndSummary,
   isCallLive,
   isCallUnsettled,
   newerCall,
@@ -117,53 +117,12 @@ describe('audioTarget — an inbound call on a campaign session (P2)', () => {
   });
 });
 
-describe('describeSoftphoneRail', () => {
-  const rail = (over: Partial<Parameters<typeof describeSoftphoneRail>[0]>) =>
-    describeSoftphoneRail({ connection: 'open', call: null, lastCall: null, fromCampaign: false, contactName: null, ...over });
-
-  it('Ready, with the campaign sentence only when switched from one', () => {
-    expect(rail({}).label).toBe('Ready to dial');
-    expect(rail({}).detail).not.toMatch(/paced/);
-    expect(rail({ fromCampaign: true }).detail).toMatch(/not paced, and the campaign's dialler does not reserve you/);
-  });
-
-  it('Dialing and Ringing name the number and time from dialed_at', () => {
-    const ringing = manualCall({ state: 'ringing' });
-    const r = rail({ call: ringing });
-    expect(r.label).toBe('Ringing +91 98204 61733');
-    expect(r.detail).toMatch(/ringback tone plays in your browser/);
-    expect(r.timerFrom).toBe(ringing.dialed_at);
-    expect(rail({ call: manualCall() }).label).toBe('Dialling +91 98204 61733');
-  });
-
-  it('On call names the contact and times from bridged_at alone', () => {
-    const answered = manualCall({ state: 'answered' });
-    expect(rail({ call: answered }).timerFrom).toBeNull();
-    const bridged = manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' });
-    const r = rail({ call: bridged, contactName: 'Rahul Verma' });
-    expect(r.tone).toBe('success');
-    expect(r.label).toBe('On call with Rahul Verma');
-    expect(r.timerFrom).toBe('2026-10-30T10:00:05Z');
-  });
-
-  it('Outcome needed after an answered call ends', () => {
-    const ended = manualCall({ state: 'ended', requires_disposition: true, end_reason: 'remote_hangup', ended_at: '2026-10-30T10:04:00Z' });
-    const r = rail({ call: ended });
-    expect(r.label).toBe('Outcome needed');
-    expect(r.detail).toMatch(/The customer hung up\./);
-  });
-
-  it('says how the last unanswered call ended on the Ready rail', () => {
-    const last = manualCall({ state: 'ended', end_reason: 'no_answer', settled_at: '2026-10-30T10:01:00Z' });
-    expect(rail({ lastCall: last }).detail).toMatch(/^Last call to \+91 98204 61733: No answer\./);
-  });
-
-  it('lets connection failures outrank the call', () => {
-    const live = manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' });
-    expect(rail({ connection: 'disconnected', call: live }).detail).toMatch(/customer can’t hear you/);
-    expect(rail({ connection: 'reconnecting', call: live }).label).toBe('Reconnecting');
-    expect(rail({ connection: 'superseded' }).tone).toBe('danger');
-    expect(rail({ connection: 'connecting' }).label).toBe('Connecting your phone…');
+describe('callEndSummary — how a call ended, in the station’s words', () => {
+  it('says the end reason when known, else what the line did', () => {
+    expect(callEndSummary(manualCall({ state: 'ended', end_reason: 'no_answer' }))).toBe('No answer.');
+    expect(callEndSummary(manualCall({ state: 'ended', end_reason: 'agent_hangup' }))).toBe('You ended the call.');
+    expect(callEndSummary(manualCall({ state: 'ended', end_reason: null, outcome: 'busy' }))).toBe('Busy.');
+    expect(callEndSummary(manualCall({ state: 'ended', end_reason: null, outcome: null }))).toBe('The call ended.');
   });
 });
 

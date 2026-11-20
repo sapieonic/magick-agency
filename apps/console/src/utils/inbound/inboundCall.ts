@@ -120,7 +120,7 @@ export function inboundCallerLabel(call: AgencyInboundCall): string {
 }
 
 /** Why the outcome pad is closed, by phase. */
-export const INBOUND_PAD_DISABLED_COPY = 'Outcomes open when you’re connected to the caller.';
+export const INBOUND_PAD_DISABLED_COPY = 'You can choose once you are talking to the customer.';
 
 /** The "Your customer is waiting" pill's words. */
 export function customerWaitingLine(frame: AgencyStationCustomerWaitingFrame): string {

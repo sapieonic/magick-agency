@@ -13,12 +13,8 @@ const api = vi.hoisted(() => ({
 vi.mock('../../api/softphone', () => api);
 
 import { SOFTPHONE_MUTED_AT_ANSWER_COPY } from '../../hooks/useSoftphone';
-import {
-  AUTOMATIC_CALLER_ID_HINT,
-  RINGING_HANGUP_WARNING,
-  callerIdHint,
-  pickedCallerIdHint,
-} from '../../components/softphone/DialPad';
+import { callFromHint } from '../../components/softphone/StationSoftphone';
+import { SIDE_COPY } from '../../utils/agency/sideViewCopy';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
 import type { AgencyManualCall } from '../../types/softphone';
 import { BOOTSTRAP, CAMPAIGN, manualCall, step } from '../helpers/softphone';
@@ -36,7 +32,7 @@ let ringback: ReturnType<typeof fakeRingback>;
 
 const mount = (props: Partial<Omit<HarnessProps, 'frameCall'>> = {}) => mountSoftphone({ ringback, ...props });
 
-const rail = () => screen.getByTestId('rail-label').textContent;
+const rail = () => screen.getByTestId('band-title').textContent;
 const press = (key: string) => fireEvent.keyDown(window, { key });
 
 beforeEach(() => {
@@ -58,10 +54,11 @@ afterEach(cleanup);
 describe('Ready', () => {
   it('opens on the dial pad with recent calls, the account’s default caller ID and Call disabled', async () => {
     await mount();
-    expect(rail()).toBe('Ready to dial');
-    expect(screen.getByTestId('recent-old-1').textContent).toMatch(/No answer · Not logged to a campaign/);
+    expect(rail()).toBe('Dial a number');
+    expect(screen.getByTestId('recent-old-1').textContent).toMatch(/No answer · Not in any work/);
     expect((screen.getByTestId('caller-id') as HTMLSelectElement).value).toBe('+912248908888');
-    expect((screen.getByTestId('dial-call') as HTMLButtonElement).disabled).toBe(true);
+    // Call stays in place, faded, until there is a number to call.
+    expect(screen.getByTestId('dial-call').getAttribute('aria-disabled')).toBe('true');
     // The recent list is the caller's own, whatever their role.
     expect(api.listManualCalls).toHaveBeenCalledWith({ limit: 8, agent_user_id: 'u-1' }, 't-1', 'a-1');
   });
@@ -89,7 +86,7 @@ describe('Ready', () => {
     await mount();
     for (const key of '9820') fireEvent.click(screen.getByTestId(`dial-key-${key}`));
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('9820');
-    expect(screen.getByTestId('dial-reason').textContent).toBe('That number is too short to call.');
+    expect(screen.getByTestId('dial-reason').textContent).toBe('This number is too short.');
   });
 
   it('cleans a pasted number: +91, a trunk 0, spaces', async () => {
@@ -174,7 +171,7 @@ describe('Ready', () => {
       fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
       expect(caller().value).toBe('');
       expect(caller().selectedOptions[0]!.textContent).toBe('Automatic');
-      expect(screen.getByTestId('caller-id-hint').textContent).toBe(AUTOMATIC_CALLER_ID_HINT);
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(SIDE_COPY.automaticHint);
       fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
       await act(async () => {
         fireEvent.click(screen.getByTestId('dial-call'));
@@ -191,11 +188,11 @@ describe('Ready', () => {
       fireEvent.change(caller(), { target: { value: '+912248901121' } });
       expect(caller().value).toBe('+912248901121');
       expect(screen.getByTestId('caller-id-hint').textContent).toBe(
-        'From Home Loan Renewals’s caller IDs. The contact’s agent number wins; another agent’s number gives way to the rotation.',
+        'One of Home Loan Renewals’s numbers. If the customer has their own agent’s number, the call goes from that one.',
       );
-      expect(pickedCallerIdHint(CAMPAIGN.campaign_name)).toBe(screen.getByTestId('caller-id-hint').textContent);
+      expect(SIDE_COPY.pickedHintWork(CAMPAIGN.campaign_name)).toBe(screen.getByTestId('caller-id-hint').textContent);
       fireEvent.change(caller(), { target: { value: '' } });
-      expect(screen.getByTestId('caller-id-hint').textContent).toBe(AUTOMATIC_CALLER_ID_HINT);
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(SIDE_COPY.automaticHint);
       fireEvent.change(caller(), { target: { value: '+912248901121' } });
       fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
       await act(async () => {
@@ -212,7 +209,7 @@ describe('Ready', () => {
       await mount();
       fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
       fireEvent.change(caller(), { target: { value: '+912248901121' } });
-      expect(screen.getByTestId('caller-id-hint').textContent).toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(SIDE_COPY.pickedHintWork(CAMPAIGN.campaign_name));
       fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
       // In flight: the pick is no longer the agent's to change, so no "wins / gives way".
       act(() => {
@@ -222,16 +219,16 @@ describe('Ready', () => {
       await act(async () => {
         answer({ ok: true, value: tagged({ caller_id: '+912248901121' }) });
       });
-      expect(screen.queryByText(/gives way to the rotation/)).toBeNull();
+      expect(screen.queryByTestId('caller-id-hint')).toBeNull();
     });
 
     it('callerIdHint: none for a placed call, whose number is final; the pick’s while editing', () => {
       const campaign = CAMPAIGN;
       // A placed tagged call: Automatic is off and the setup fixed (useSoftphone).
-      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: false, campaign })).toBeNull();
-      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: true, campaign }))
-        .toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
-      expect(callerIdHint({ callerIdAutomatic: true, callerId: null, setupEditable: true, campaign })).toBe(AUTOMATIC_CALLER_ID_HINT);
+      expect(callFromHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: false, campaign })).toBeNull();
+      expect(callFromHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: true, campaign }))
+        .toBe(SIDE_COPY.pickedHintWork(CAMPAIGN.campaign_name));
+      expect(callFromHint({ callerIdAutomatic: true, callerId: null, setupEditable: true, campaign })).toBe(SIDE_COPY.automaticHint);
     });
 
     it('once placed, shows the number the server dialled, not the draft', async () => {
@@ -243,7 +240,7 @@ describe('Ready', () => {
       await act(async () => {
         fireEvent.click(screen.getByTestId('dial-call'));
       });
-      expect(screen.getByText(`From ${formatDialNumber('+912248901121')}`)).toBeTruthy();
+      expect(within(screen.getByTestId('calling-from')).getByText(formatDialNumber('+912248901121'))).toBeTruthy();
     });
 
     it('back to untagged, the account’s default returns and no Automatic is offered', async () => {
@@ -253,7 +250,7 @@ describe('Ready', () => {
       fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: '' } });
       expect(caller().value).toBe('+912248908888');
       expect([...caller().options].map((o) => o.value)).toEqual(BOOTSTRAP.untagged.caller_ids);
-      expect(screen.getByTestId('caller-id-hint').textContent).toBe('From the numbers assigned to your account');
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(SIDE_COPY.pickedHintOwn);
       fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
       await act(async () => {
         fireEvent.click(screen.getByTestId('dial-call'));
@@ -280,10 +277,10 @@ describe('Ready', () => {
         limit: 8,
       });
       await mount();
-      fireEvent.click(screen.getByRole('button', { name: 'Redial +91 98204 61733' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Put \+91 98204 61733 in/ }));
       expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
       expect(caller().value).toBe('+912248901121');
-      fireEvent.click(screen.getByRole('button', { name: 'Redial +91 98204 61744' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Put \+91 98204 61744 in/ }));
       expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('');
       expect(caller().value).toBe('+912248909999');
     });
@@ -293,9 +290,7 @@ describe('Ready', () => {
     api.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, taggable_campaigns: [{ ...CAMPAIGN, calling_window_open: false }] });
     await mount();
     fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
-    expect(screen.getByTestId('window-closed-hint').textContent).toBe(
-      'Outside this campaign’s calling hours (campaign time). Calling may need a reason.',
-    );
+    expect(screen.getByTestId('window-closed-hint').textContent).toBe(SIDE_COPY.outsideHours);
   });
 
   it('preselects the station’s campaign as the tag (SP7)', async () => {
@@ -343,7 +338,7 @@ describe('Ready', () => {
 
   it('redials a recent call into the pad and moves focus to Call, without dialling', async () => {
     await mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Redial +91 98204 61733' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Put \+91 98204 61733 in/ }));
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+919820461733');
     expect(document.activeElement).toBe(screen.getByTestId('dial-call'));
     expect(api.placeManualCall).not.toHaveBeenCalled();
@@ -388,8 +383,8 @@ describe('refusals and overrides (SP1, SP2)', () => {
     await dialTo();
 
     const dialog = screen.getByTestId('override-dialog-dnc');
-    expect(screen.getByRole('dialog').textContent).toMatch(/This number is on the Do Not Call list/);
-    expect(dialog.textContent).toMatch(/Listed forEvery campaign/);
+    expect(screen.getByRole('dialog').textContent).toMatch(/This customer asked us not to call them/);
+    expect(dialog.textContent).toMatch(/Not to be called forAll our work/);
     // Typed without a country code, the number is named as dialled: with the account's.
     expect(dialog.textContent).toMatch(/Number\+91 98204 61733/);
     expect(dialog.textContent).toMatch(/Asked not to be called/);
@@ -429,11 +424,11 @@ describe('refusals and overrides (SP1, SP2)', () => {
     expect(screen.getByTestId('override-confirm').className).toBe('btn-secondary');
   });
 
-  it('a campaign entry an untagged call met is named as one of the account’s campaigns', async () => {
+  it('a campaign entry an untagged call met is named as one of the account’s lists', async () => {
     api.placeManualCall.mockResolvedValueOnce({ ...DNC, refusal: { ...DNC.refusal, entry: { ...DNC.refusal.entry, scope: 'campaign' } } });
     await mount();
     await dialTo();
-    expect(screen.getByTestId('override-dialog-dnc').textContent).toMatch(/Listed forOne of this account’s campaigns/);
+    expect(screen.getByTestId('override-dialog-dnc').textContent).toMatch(/Not to be called forOne of this account’s lists/);
   });
 
   it('Don’t call closes the dialog and places nothing', async () => {
@@ -448,14 +443,15 @@ describe('refusals and overrides (SP1, SP2)', () => {
   it('a refused note comes back inside the dialog', async () => {
     api.placeManualCall
       .mockResolvedValueOnce(DNC)
-      .mockResolvedValueOnce({ ok: false, refusal: { code: 'override_note_invalid', status: 400, message: 'The note needs 10 to 500 characters.' } });
+      .mockResolvedValueOnce({ ok: false, refusal: { code: 'override_note_invalid', status: 400, message: 'Server: note invalid' } });
     await mount();
     await dialTo();
     fireEvent.change(screen.getByTestId('override-note'), { target: { value: 'Customer asked us to' } });
     await act(async () => {
       fireEvent.click(screen.getByTestId('override-confirm'));
     });
-    expect(screen.getByTestId('override-error').textContent).toBe('The note needs 10 to 500 characters.');
+    // The station's words, never the server's sentence (AS15).
+    expect(screen.getByTestId('override-error').textContent).toBe('Write a note of 10 to 500 letters.');
   });
 
   it('fields_invalid at Call marks the fields the server named, either path form', async () => {
@@ -474,7 +470,7 @@ describe('refusals and overrides (SP1, SP2)', () => {
     await mount();
     await dialTo();
     expect(screen.getByTestId('dial-error').textContent).toBe(
-      'Some call details need fixing. The fields are marked in Call details.',
+      'Some call details need fixing. They are marked in Call details.',
     );
     const name = screen.getByTestId('call-field-customer_name');
     expect(name.getAttribute('aria-invalid')).toBe('true');
@@ -488,10 +484,10 @@ describe('refusals and overrides (SP1, SP2)', () => {
     await mount();
     await dialTo();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByTestId('dial-error').textContent).toMatch(/couldn’t check the Do Not Call list/);
+    expect(screen.getByTestId('dial-error').textContent).toMatch(/could not check the do-not-call list/);
   });
 
-  it('contact_in_flight says the campaign is calling that customer right now', async () => {
+  it('contact_in_flight says another call to that customer is going on now', async () => {
     api.placeManualCall.mockResolvedValueOnce({
       ok: false,
       refusal: { code: 'contact_in_flight', status: 409, message: 'x', campaign_id: 'camp-1', contact_id: 'c-1' },
@@ -500,7 +496,7 @@ describe('refusals and overrides (SP1, SP2)', () => {
     fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
     await dialTo();
     expect(screen.getByTestId('dial-error').textContent).toBe(
-      'Home Loan Renewals is calling this customer right now. Wait for that call to finish, then try again.',
+      'Another call to this customer is going on now. Wait for it to end, then try again.',
     );
   });
 
@@ -516,7 +512,7 @@ describe('refusals and overrides (SP1, SP2)', () => {
     });
     await mount();
     await dialTo();
-    expect(rail()).toBe('Outcome needed');
+    expect(rail()).toBe('What happened?');
   });
 });
 
@@ -530,24 +526,24 @@ describe('the call, driven by manual_call frames', () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
     // The HTTP answer is enough to show the call before any frame lands.
-    expect(rail()).toBe('Dialling +91 98204 61733');
-    expect(document.activeElement).toBe(screen.getByTestId('softphone-body'));
+    expect(rail()).toBe('Calling +91 98204 61733');
+    expect(document.activeElement).toBe(screen.getByTestId('station-body'));
 
     const ringing = step(queued, 2, { state: 'ringing', can_cancel_ringing: false });
     await view.frame(ringing);
-    expect(rail()).toBe('Ringing +91 98204 61733');
-    expect(screen.getByTestId('ringing-warning').textContent).toBe(RINGING_HANGUP_WARNING);
+    expect(rail()).toBe('Calling +91 98204 61733');
+    expect(screen.getByTestId('ringing-warning').textContent).toBe(SIDE_COPY.ringingWarning);
     expect(ringback.start).toHaveBeenCalled();
-    // Outcomes open when the customer answers, not before.
-    expect(screen.getByText('Outcomes open when the customer answers.')).toBeTruthy();
+    // What happened? opens when the call ends; nothing to choose from while it rings.
+    expect(screen.queryByTestId('outcome-tiles')).toBeNull();
 
     const bridged = step(queued, 8, { state: 'bridged', answered_at: '2026-10-30T10:00:07Z', bridged_at: '2026-10-30T10:00:08Z' });
     await view.frame(bridged);
     expect(rail()).toBe('On call');
     expect(ringback.stop).toHaveBeenCalled();
-    // Save waits for the end of the call even with an outcome picked.
+    // A key picks on the call; Save waits for its end: End call is the one main button now.
     press('1');
-    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Save unlocks when the call ends.');
+    expect(screen.queryByTestId('softphone-save')).toBeNull();
 
     const ended = step(queued, 60, {
       state: 'ended',
@@ -559,12 +555,15 @@ describe('the call, driven by manual_call frames', () => {
       bridged_at: '2026-10-30T10:00:08Z',
     });
     await view.frame(ended);
-    expect(rail()).toBe('Outcome needed');
-    // Required call details block the save until they are filled.
-    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Fill in the required call details first.');
+    expect(rail()).toBe('What happened?');
+    // The pick made on the call is kept.
+    expect(screen.getByTestId('outcome-resolved').getAttribute('aria-pressed')).toBe('true');
+    // Required call details block the save until they are filled: Save says so, and sends nothing.
+    fireEvent.click(screen.getByTestId('softphone-save'));
+    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Fill in the call details first.');
+    expect(api.dispositionManualCall).not.toHaveBeenCalled();
     fireEvent.change(screen.getByTestId('call-field-customer_name'), { target: { value: 'Rahul Verma' } });
     fireEvent.change(screen.getByTestId('call-field-reason'), { target: { value: 'Rate query' } });
-    expect(screen.queryByTestId('softphone-save-reason')).toBeNull();
 
     const settled = step(queued, 70, { ...ended, disposition_code: 'resolved', settled_at: '2026-10-30T10:01:10Z', requires_disposition: false });
     api.dispositionManualCall.mockResolvedValue({
@@ -580,7 +579,7 @@ describe('the call, driven by manual_call frames', () => {
       't-1',
       'a-1',
     );
-    expect(rail()).toBe('Ready to dial');
+    expect(rail()).toBe('Dial a number');
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
   });
 
@@ -593,7 +592,7 @@ describe('the call, driven by manual_call frames', () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
     await view.frame(step(queued, 2, { state: 'ringing', can_cancel_ringing: true }));
-    expect(rail()).toBe('Ringing +91 98204 61733');
+    expect(rail()).toBe('Calling +91 98204 61733');
     expect(screen.queryByTestId('ringing-warning')).toBeNull();
   });
 
@@ -608,12 +607,12 @@ describe('the call, driven by manual_call frames', () => {
     const ringing = step(queued, 2, { state: 'ringing' });
     expect(ringing).not.toHaveProperty('can_cancel_ringing');
     await view.frame(ringing);
-    expect(screen.getByTestId('ringing-warning').textContent).toBe(RINGING_HANGUP_WARNING);
+    expect(screen.getByTestId('ringing-warning').textContent).toBe(SIDE_COPY.ringingWarning);
   });
 
   it('the ringing hang-up warning names no carrier', () => {
-    expect(RINGING_HANGUP_WARNING).toMatch(/^This carrier cannot stop a ringing call\./);
-    expect(RINGING_HANGUP_WARNING).not.toMatch(/voicelink|plivo/i);
+    expect(SIDE_COPY.ringingWarning).toMatch(/phone may keep ringing/);
+    expect(SIDE_COPY.ringingWarning).not.toMatch(/voicelink|plivo|carrier/i);
   });
 
   it('notes cleared just before Save are saved cleared, not left as the old text', async () => {
@@ -634,10 +633,10 @@ describe('the call, driven by manual_call frames', () => {
     });
     const view = await mount();
     await view.frame(ended);
-    expect((screen.getByLabelText(/Notes/) as HTMLTextAreaElement).value).toBe('Wants it in writing');
+    expect((screen.getByRole('textbox', { name: /note/i }) as HTMLTextAreaElement).value).toBe('Wants it in writing');
     press('1');
     // Cleared and saved inside the 700 ms autosave window: the PATCH never goes.
-    fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: '' } });
+    fireEvent.change(screen.getByRole('textbox', { name: /note/i }), { target: { value: '' } });
     await act(async () => {
       fireEvent.click(screen.getByTestId('softphone-save'));
     });
@@ -673,8 +672,8 @@ describe('the call, driven by manual_call frames', () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'ringing' }));
     await view.frame(step(manualCall(), 30, { state: 'ended', outcome: 'no_answer', end_reason: 'no_answer', settled_at: '2026-10-30T10:00:30Z' }));
-    expect(rail()).toBe('Ready to dial');
-    expect(screen.getByTestId('rail-detail').textContent).toMatch(/Last call to \+91 98204 61733: No answer\./);
+    expect(rail()).toBe('Dial a number');
+    expect(screen.getByTestId('softphone-last-call').textContent).toBe('Last call to +91 98204 61733: No answer.');
   });
 
   it('hangs up with the hold gesture (E twice) on the live call', async () => {
@@ -694,17 +693,14 @@ describe('the call, driven by manual_call frames', () => {
     api.markManualCallDnc.mockResolvedValue({ ok: true, value: { call_id: 'mc-1', phone_e164: '+919820461733', scope: 'account', dnc_recorded: true, contact_state: null } });
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
-    fireEvent.click(screen.getByTestId('softphone-dnc'));
-    const confirm = screen.getByRole('dialog');
-    expect(confirm.textContent).toMatch(/won’t be called again from this account/);
-    expect(confirm.textContent).not.toMatch(/workspace/);
+    press('d');
+    const confirm = screen.getByTestId('stop-calling');
+    expect(confirm.textContent).toMatch(/We will not call this number again for any work in this account\./);
     await act(async () => {
-      fireEvent.click(within(confirm).getByRole('button', { name: 'Add to Do Not Call' }));
+      fireEvent.click(within(confirm).getByTestId('stop-calling-yes'));
     });
     expect(api.markManualCallDnc).toHaveBeenCalledWith('mc-1', undefined, 't-1', 'a-1');
-    expect(screen.getByTestId('softphone-dnc-outcome').textContent).toBe(
-      '+91 98204 61733 is on the Do Not Call list for this account.',
-    );
+    expect(screen.getByTestId('softphone-dnc-outcome').textContent).toBe('We will not call this number again.');
   });
 
   it('D opens the same Mark DNC confirmation, only once a call is placed', async () => {
@@ -714,24 +710,25 @@ describe('the call, driven by manual_call frames', () => {
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
     press('d');
-    expect(screen.getByRole('dialog').textContent).toMatch(/Add this number to Do Not Call\?/);
+    expect(screen.getByTestId('stop-calling').textContent).toMatch(/Stop calling this customer\?/);
     expect(api.markManualCallDnc).not.toHaveBeenCalled();
   });
 
-  it('lays the action bar out in the station’s order: Save, Mark DNC, Mute, Hang up', async () => {
-    await mount();
-    const bar = screen.getByTestId('softphone-action-bar');
-    const order = [...bar.querySelectorAll('button')]
-      .map((b) => b.getAttribute('data-testid') ?? b.textContent?.trim() ?? '')
-      .filter((id) => id !== '');
-    expect(order.slice(0, 3)).toEqual(['softphone-save', 'softphone-dnc', 'softphone-mute']);
-    expect(order[3]).toMatch(/Hold to hang up/);
+  it('one main button bottom right (AS1): End call held on the call, Save once it ends', async () => {
+    const view = await mount();
+    const foot = () => [...(document.querySelector('footer')?.querySelectorAll('button') ?? [])].map((b) => b.getAttribute('data-testid') ?? b.textContent ?? '');
+    expect(foot()).toEqual([]);
+    await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
+    expect(foot().at(-1)).toMatch(/Hold to end call/);
+    await view.frame(step(manualCall(), 60, { state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z', ended_at: '2026-10-30T10:01:00Z' }));
+    expect(foot().at(-1)).toBe('softphone-save');
+    expect(screen.queryByRole('button', { name: /Hold to end call/ })).toBeNull();
   });
 
   it('autosaves the notes onto the live call', async () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
-    fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: 'Wants it in writing' } });
+    fireEvent.change(screen.getByRole('textbox', { name: /note/i }), { target: { value: 'Wants it in writing' } });
     await waitFor(() => expect(api.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
     expect(api.updateManualCall.mock.calls[0]![1]).toEqual({ fields: {}, notes: 'Wants it in writing' });
   });
@@ -760,7 +757,7 @@ describe('finish mode: the soft phone turned off for the account', () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:08Z', fields: ended.fields }));
     expect(screen.getByTestId('softphone-finish-notice').textContent).toBe(
-      'The soft phone has been turned off for this account. Finish this call; you can’t start new ones.',
+      'The soft phone is turned off. Finish this call and save it. You cannot dial new calls.',
     );
     act(() => press('e'));
     await act(async () => {
@@ -775,24 +772,25 @@ describe('finish mode: the soft phone turned off for the account', () => {
     });
     expect(api.dispositionManualCall).toHaveBeenCalled();
     // Settled, in finish mode: no number field to land on, so focus is the body's.
-    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/can’t start new calls/);
-    expect(document.activeElement).toBe(screen.getByTestId('softphone-body'));
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/You cannot dial new calls/);
+    expect(document.activeElement).toBe(screen.getByTestId('station-body'));
   });
 
   it('once nothing is left to finish there is no dial pad: no number field, keypad, Call or redial', async () => {
     api.getSoftphoneBootstrap.mockResolvedValue(OFF);
     await mount();
-    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/so you can’t start new calls\. Close the soft phone when you’re done\./);
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toBe(
+      'The soft phone is turned off. You cannot dial new calls. Close the soft phone when you are done.',
+    );
     expect(screen.queryByTestId('dial-number')).toBeNull();
     expect(screen.queryByTestId('dial-key-1')).toBeNull();
     expect(screen.queryByTestId('dial-call')).toBeNull();
     for (const key of '9820461733') press(key);
     press('Enter');
     expect(api.placeManualCall).not.toHaveBeenCalled();
-    expect((screen.getByRole('button', { name: 'Redial +91 98204 61733' }) as HTMLButtonElement).disabled).toBe(true);
-    // The columns beside it keep their places.
-    expect(screen.getByTestId('log-to')).toBeTruthy();
-    expect(screen.getByTestId('softphone-action-bar')).toBeTruthy();
+    // Nothing that starts a call is offered: no choices, no recent calls to put back.
+    expect(screen.queryByRole('button', { name: /^Put \+91 98204 61733 in/ })).toBeNull();
+    expect(screen.queryByTestId('log-to')).toBeNull();
   });
 
   it('a host that knows the flag is off starts in finish mode before any bootstrap says so', async () => {
@@ -834,10 +832,9 @@ describe('the outcome window', () => {
         outcome_due_at: due,
       }),
     );
-    expect(rail()).toBe('Outcome needed');
-    expect(screen.getByTestId('outcome-closes').textContent).toMatch(
-      /^Dialling is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
-    );
+    expect(rail()).toBe('What happened?');
+    expect(screen.getByTestId('softphone-outcome-due-digits').textContent).toMatch(/^1:(29|30)$/);
+    expect(screen.getByTestId('softphone-outcome-due').textContent).toMatch(/If you do not choose, this call closes at \d{1,2}:\d\d (AM|PM)\./);
   });
 });
 
@@ -855,12 +852,14 @@ describe('keys on a focused select', () => {
   it('a digit typed into a choice field does not pick an outcome', async () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
+    const ended = step(manualCall(), 60, { state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z', ended_at: '2026-10-30T10:01:00Z' });
+    await view.frame(ended);
     const reason = screen.getByTestId('call-field-reason');
     reason.focus();
     fireEvent.keyDown(reason, { key: '1' });
-    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Pick an outcome to save this call.');
+    expect(screen.getByTestId('outcome-resolved').getAttribute('aria-pressed')).toBe('false');
     fireEvent.keyDown(window, { key: '1' });
-    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Save unlocks when the call ends.');
+    expect(screen.getByTestId('outcome-resolved').getAttribute('aria-pressed')).toBe('true');
   });
 });
 
@@ -925,11 +924,11 @@ describe('reconnect', () => {
     await view.frame(live);
     expect(rail()).toBe('On call');
     await view.frame(live, 'reconnecting');
-    expect(rail()).toBe('Reconnecting');
+    expect(rail()).toBe('Call problem');
     api.getSoftphoneBootstrap.mockResolvedValueOnce({ ...BOOTSTRAP, call: null });
     await view.frame(live, 'open');
     expect(api.getSoftphoneBootstrap).toHaveBeenCalledTimes(2);
-    expect(rail()).toBe('Ready to dial');
+    expect(rail()).toBe('Dial a number');
   });
 
   it('shows the live call again when the bootstrap still holds it', async () => {
@@ -941,7 +940,7 @@ describe('reconnect', () => {
     });
     await view.frame(null, 'open');
     expect(rail()).toBe('On call');
-    expect((screen.getByLabelText(/Notes/) as HTMLTextAreaElement).value).toBe('From before the drop');
+    expect((screen.getByRole('textbox', { name: /note/i }) as HTMLTextAreaElement).value).toBe('From before the drop');
   });
 });
 
@@ -964,7 +963,7 @@ describe('a tagged call whose campaign can no longer be tagged', () => {
         contact_state: null, next_attempt_at: null, callback_requested_at: null },
     });
     await mount();
-    expect(rail()).toBe('Outcome needed');
+    expect(rail()).toBe('What happened?');
     expect(screen.getByText('Interested, renewing')).toBeTruthy();
     expect(screen.queryByText('Query resolved')).toBeNull();
     press('1');
@@ -995,7 +994,7 @@ describe('promise outcomes need a contact the call claimed (PT13)', () => {
   ])('hides them on a tagged call with %s', async (_name, contact) => {
     api.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, call_fields: [], taggable_campaigns: [PTP_CAMPAIGN], call: owed(contact) });
     await mount();
-    expect(rail()).toBe('Outcome needed');
+    expect(rail()).toBe('What happened?');
     expect(screen.getByText('Interested, renewing')).toBeTruthy();
     expect(screen.queryByText('Promised to pay')).toBeNull();
   });

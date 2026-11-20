@@ -42,10 +42,10 @@ describe('the calling-hours override says when the window opens, in its own zone
 
   it('describes the window, whose zone it is and the next opening', () => {
     const d = describeHoursRefusal(HOURS, { campaignName: 'Home Loan Renewals' });
-    expect(d.title).toBe('Home Loan Renewals is outside its calling hours');
+    expect(d.title).toBe('Home Loan Renewals: outside calling hours');
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
     expect(facts['Calling hours']).toBe('09:00–20:00, Mon–Fri');
-    expect(facts['Timezone']).toMatch(/customer’s, from the roster/);
+    expect(facts['Time zone']).toBe('Asia/Kolkata, the customer’s');
     expect(facts['Opens again']).toMatch(/09:00/);
   });
 
@@ -56,7 +56,8 @@ describe('the calling-hours override says when the window opens, in its own zone
     );
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
     expect(facts['Opens again']).toMatch(/Never/);
-    expect(facts['Timezone']).toMatch(/campaign’s default/);
+    expect(facts['Time zone']).toMatch(/the work’s own \(this number is not on its list\)/);
+    expect(d.title).toBe('This work: outside calling hours');
   });
 });
 
@@ -72,10 +73,10 @@ describe('the DNC override says exactly what matched', () => {
     const d = describeDncRefusal(DNC, { number: '+919820461733', campaignName: 'Home Loan Renewals' });
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
     expect(facts['Number']).toBe('+91 98204 61733');
-    expect(facts['Listed for']).toBe('Campaign: Home Loan Renewals');
-    expect(facts['Reason']).toBe('Asked not to be called');
-    expect(facts['Added']).toBe('12 Oct 2026');
-    expect(d.consequence).toMatch(/logged with your name/);
+    expect(facts['Not to be called for']).toBe('Home Loan Renewals');
+    expect(facts['Why']).toBe('Asked not to be called');
+    expect(facts['Since']).toBe('12 Oct 2026');
+    expect(d.consequence).toMatch(/your name, this entry and your note are saved with the call/);
   });
 
   it('says when no reason was recorded, and a workspace-wide entry as such', () => {
@@ -84,7 +85,7 @@ describe('the DNC override says exactly what matched', () => {
       { number: '+919820461733', campaignName: null },
     );
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
-    expect(facts['Listed for']).toBe('Every campaign');
-    expect(facts['Reason']).toBe('No reason was recorded');
+    expect(facts['Not to be called for']).toBe('All our work');
+    expect(facts['Why']).toBe('No reason was written');
   });
 });

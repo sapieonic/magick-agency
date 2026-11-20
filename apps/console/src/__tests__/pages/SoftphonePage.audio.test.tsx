@@ -96,7 +96,7 @@ afterEach(() => {
 describe('/dialer/phone audio preflight', () => {
   it('waits for a gesture, then warms and probes once — on the first key, before the Call', async () => {
     await mount();
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
     // Nothing on open: a context made without a gesture starts suspended.
     expect(mocks.audio.preflight).not.toHaveBeenCalled();
 
@@ -116,9 +116,9 @@ describe('/dialer/phone audio preflight', () => {
 
   it('a pointer press anywhere on the page counts as the first gesture', async () => {
     await mount();
-    fireEvent.pointerDown(screen.getByTestId('softphone-body'));
+    fireEvent.pointerDown(screen.getByTestId('station-body'));
     expect(mocks.audio.preflight).toHaveBeenCalledTimes(1);
-    fireEvent.pointerDown(screen.getByTestId('softphone-body'));
+    fireEvent.pointerDown(screen.getByTestId('station-body'));
     expect(mocks.audio.preflight).toHaveBeenCalledTimes(1);
   });
 

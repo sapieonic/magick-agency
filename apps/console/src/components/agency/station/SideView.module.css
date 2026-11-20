@@ -149,3 +149,10 @@
   .key { min-height: 64px; }
   .keyDigit { font-size: 26px; }
 }
+
+/* ── /dialer/phone: the agent nav in the top bar, and Close soft phone ── */
+.pageNav { display: flex; align-items: center; min-width: 0; }
+.wayOut { border: 2px solid var(--border-strong) !important; background: var(--bg-secondary); }
+@media (max-width: 720px) {
+  .pageNav { order: 2; flex: 1 1 100%; overflow-x: auto; }
+}
