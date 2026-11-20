@@ -18,11 +18,13 @@ export function useTeam() {
     (): Promise<TenantMember[] | null> => listTenantMembers(tenantId!),
     [tenantId],
   );
+  // Waiting for the scope is still loading here: the page shows its spinner, never an empty list.
+  const ready = tenantId !== null;
   const { data, loading, error, reload } = useAsyncResource(fetchMembers, {
     initialData: null,
     errorMessage: 'Failed to load team',
-    enabled: tenantId !== null,
+    enabled: ready,
   });
 
-  return { members: data ?? [], loaded: data !== null, loading, error, reload };
+  return { members: data ?? [], loaded: data !== null, loading: loading || !ready, error, reload };
 }

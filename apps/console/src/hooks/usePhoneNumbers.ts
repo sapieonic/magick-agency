@@ -11,13 +11,15 @@ export function usePhoneNumbers() {
     (): Promise<TenantPhoneAssignment[]> => listMyPhoneNumbers(tenantId!, accountId!),
     [tenantId, accountId],
   );
+  // Waiting for the scope is still loading here: the page shows its spinner, never an empty list.
+  const ready = tenantId !== null && accountId !== null;
   const { data: phoneNumbers, loading, error, reload } = useAsyncResource(fetchNumbers, {
     initialData: [],
     errorMessage: 'Failed to load phone numbers',
-    enabled: tenantId !== null && accountId !== null,
+    enabled: ready,
   });
 
   const defaultNumber = phoneNumbers.find(pn => pn.is_default)?.phone_number ?? phoneNumbers[0]?.phone_number ?? '';
 
-  return { phoneNumbers, loading, error, reload, defaultNumber };
+  return { phoneNumbers, loading: loading || !ready, error, reload, defaultNumber };
 }
