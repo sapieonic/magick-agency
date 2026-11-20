@@ -275,14 +275,14 @@ class _EventRow extends StatelessWidget {
   }
 }
 
-/// Until the agent chooses, the switch shows what the phone's own setting gives.
+/// Until the agent chooses, the app is light whatever the phone says (AS14), and the switch says so.
 class _AppearanceCard extends ConsumerWidget {
   const _AppearanceCard();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chosen = ref.watch(localPreferencesProvider.select((p) => p.darkTheme));
-    final dark = chosen ?? MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    final dark = chosen ?? false;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: SwitchListTile(
