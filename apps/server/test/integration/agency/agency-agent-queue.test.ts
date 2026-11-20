@@ -125,10 +125,13 @@ describe('the agent queue (strict / preferred)', () => {
     expect(await readAgentQueueState(c, A)).toEqual({ due: true, reason: null, next_due_at: null });
   });
 
-  it('pool mode has no per-agent queue', async () => {
+  // Agent station BE-5: pool mode has no per-agent queue; every agent reads the campaign's shared
+  // one (an owner on a contact counts for nothing there). Cases: `pool-queue.test.ts`.
+  it('pool mode has no per-agent queue: the campaign\'s shared one, the same for every agent', async () => {
     const c = await insertAgencyCampaign({ status: 'running', assignment_mode: 'pool' });
     await open(c.id, A, -60);
-    expect(await readAgentQueueState(c, A)).toBeUndefined();
+    expect(await readAgentQueueState(c, A)).toEqual({ due: true, reason: null, next_due_at: null });
+    expect(await readAgentQueueState(c, B)).toEqual({ due: true, reason: null, next_due_at: null });
   });
 
   it('one probe for many agents: who has own work due, and the pool due count bounded by the cap', async () => {
