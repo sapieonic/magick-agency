@@ -538,24 +538,32 @@ route's hours, and is false on a deployment with no connector (nothing is put th
 **The console (built, WP-D).** The campaign station takes the `inbound_call` frame (the whole
 `AgencyInboundCall`, kept newest by `utils/inbound/inboundCall.ts`'s `newerInboundCall`: a later
 offer wins, then settled over unsettled, then progress within one offer; the row has no
-`updated_at`) and shows the caller's panel in place of the campaign's, under the station's header
-and in its frozen geometry (`components/agency/inbound/InboundCallView.tsx`): the rail (incoming,
-on a call with the talk timer, outcome needed with "Without one, it closes in m:ss" from
-`outcome_due_at`), Caller / Contact / Outcome, and Save outcome → Mark DNC → Mute → Hang up in
-every state. The panel renders on the offer frame and the chime (IB1, the cue `inbound_ring`)
+`updated_at`) and shows the caller in place of the campaign's call, in the station's frame, band
+and look (`components/agency/inbound/InboundCallView.tsx`, the agent station redesign's AS1):
+**Customer is calling** (no button; "The call connects by itself"), **On call** with the talk timer
+and **What happened?** with the time left before `outcome_due_at`; the outbound customer card
+(the matched contact's name, place and facts, the number as the station's `phone_display` says,
+"Number hidden" when withheld), About this call (the number they called, the line, how long they
+waited, their work, whether they are the agent's own customer, asked not to be called), Last calls
+and the note; one main button bottom right (End call held, then Save, faded until it can save), the
+station's outcome tiles and follow-ups, and Don't call again asked first. Controls are hidden, not
+disabled. A call-later for a matched caller says who will make it by the matched campaign's
+routing (AS8, as on an outbound call): strict or preferred, "This call will come to you …"; pool,
+or a routing the console could not read (`GET /my-contacts/summary` for a campaign other than the
+station's), "Another agent may get the call."; a caller on no list, "call back … yourself". The panel renders on the offer frame and the chime (IB1, the cue `inbound_ring`)
 plays from the frame handler, before the server binds audio at `connects_at`. It is chimed once
 per offer (call id and `offered_at`, so a restatement is silent and a re-offer after a requeue
 rings again); connect and disconnect follow, keyed on the call id; a call already under way on a
 reload is silent. The microphone arms on the offer and the uplink opens on `bridged_at`
-(`audioTarget`). Hang up (hold-to-confirm, or `E` twice) is offered only once connected. Pad
+(`audioTarget`). End call (hold-to-confirm, or `E` twice) is offered only once connected. The tiles
 (the call's resolved `disposition_catalog`, rebuilt from `allowed_codes` on a refusal), notes
-autosave (`PATCH`, 700 ms), callback time, Mark DNC (campaign scope when matched, else the
-account) and the keys are the soft phone's. A `ready` keeps the call (the server restates it right
+autosave (`PATCH`, 700 ms), the call-later time, Don't call again (the row under the tiles or `D`:
+campaign scope when matched, else the account) and the keys are the soft phone's. A `ready` keeps the call (the server restates it right
 after); a reconnect asks `GET /inbound/calls/:id` and retires a copy the server no longer holds
 for this session (`inbound_call_not_found`, another `session_id`). A call that leaves without the
 agent's outcome says why on the station for 30 s (the caller hung up first; it went back to the
-queue, also when a reconnect finds a call that was on offer no longer this station's). At phone width the panel's columns stack and the body scrolls. "Your customer is
-waiting" (`customer_waiting`) is a pill in the station's action bar; it goes on the server's
+queue, also when a reconnect finds a call that was on offer no longer this station's). Under 1060 px the columns stack and the body scrolls. "Your customer is
+waiting" (`customer_waiting`) is a banner under the station's band; it goes on the server's
 `customer_waiting` with `cleared: true` for that caller, and as a backstop on an offer, a `ready`
 (re-sent while they wait) and the agent leaving reserved / on a call / wrap-up. Supervisors: `InboundQueueTiles` (`GET /inbound/queue`, every 5 s,
 visible-only, last numbers kept and marked stale on a failed read) on the agency home and the

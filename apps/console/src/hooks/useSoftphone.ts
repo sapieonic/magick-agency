@@ -22,14 +22,14 @@ import {
 } from '../analytics/events';
 import { resyncCatalog } from '../utils/agencyCatalogSync';
 import {
-  DISPOSITION_BLOCK_COPY,
   EMPTY_DISPOSITION_FORM,
   blockReason,
   buildSubmitPayload,
   type DispositionBlockReason,
   type DispositionFormState,
 } from '../utils/agencyDispositionForm';
-import { CATALOG_CHANGED_COPY } from '../components/agency/DispositionPad';
+import { STATION_BLOCK_COPY, STATION_COPY } from '../utils/agency/stationCopy';
+import { SIDE_COPY } from '../utils/agency/sideViewCopy';
 import type { NotesStatus } from '../utils/agencyNotes';
 import {
   appendDialKey,
@@ -161,26 +161,25 @@ export interface OverridePrompt {
 
 export type SaveBlock = DispositionBlockReason | 'call_live' | 'fields_required';
 
+/** Why Save cannot save yet, in the station's words (AS15). */
 export const SAVE_BLOCK_COPY: Record<SaveBlock, string> = {
-  ...DISPOSITION_BLOCK_COPY,
-  no_selection: 'Pick an outcome to save this call.',
-  call_live: 'Save unlocks when the call ends.',
-  fields_required: 'Fill in the required call details first.',
+  ...STATION_BLOCK_COPY,
+  call_live: SIDE_COPY.saveOpensAfterCall,
+  fields_required: SIDE_COPY.fillCallDetails,
 };
 
-export const SOFTPHONE_MUTED_AT_ANSWER_COPY = 'You are muted. The customer can’t hear you — press M to unmute.';
+export const SOFTPHONE_MUTED_AT_ANSWER_COPY = SIDE_COPY.mutedAtAnswer;
 
-export const SOFTPHONE_NOTES_DISABLED_COPY = 'Notes open when a call starts.';
+export const SOFTPHONE_NOTES_DISABLED_COPY = SIDE_COPY.notesOpenOnCall;
 
 /** Finish mode with a call on screen: what still works, and what does not. */
-export const SOFTPHONE_FINISH_CALL_COPY =
-  'The soft phone has been turned off for this account. Finish this call; you can’t start new ones.';
+export const SOFTPHONE_FINISH_CALL_COPY = SIDE_COPY.finishCallFull;
 /** Finish mode with nothing left to finish, by host: the way out is theirs. */
 export const SOFTPHONE_FINISH_IDLE_COPY: Record<UseSoftphoneOptions['surface'], string> = {
-  softphone_page: 'The soft phone has been turned off for this account, so you can’t start new calls. Close the soft phone when you’re done.',
-  station: 'The soft phone has been turned off for this account, so you can’t start new calls. Return to your campaign when you’re ready.',
+  softphone_page: SIDE_COPY.finishIdlePage,
+  station: SIDE_COPY.finishIdle,
 };
-export const SOFTPHONE_PAD_DISABLED_COPY = 'Outcomes open when the customer answers.';
+export const SOFTPHONE_PAD_DISABLED_COPY = SIDE_COPY.padOpensOnAnswer;
 
 export interface SoftphoneState {
   bootstrap: AgencySoftphoneBootstrap | null;
@@ -374,7 +373,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       })
       .catch((err: unknown) => {
         if (seq !== bootstrapSeq.current) return;
-        setBootstrapError(err instanceof Error ? err.message : 'We couldn’t load the soft phone.');
+        setBootstrapError(SIDE_COPY.softphoneDidNotLoad);
       });
   }, [enabled, tenantId, accountId, adoptCall]);
 
@@ -604,7 +603,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       })
       .catch((err: unknown) => {
         if (seq !== recentSeq.current) return;
-        setRecentError(err instanceof Error ? err.message : 'We couldn’t load your recent calls.');
+        setRecentError(SIDE_COPY.recentDidNotLoad);
       })
       .finally(() => {
         if (seq === recentSeq.current) setRecentLoading(false);
@@ -676,15 +675,15 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const dialBlock = dialBlockReason(number);
   const dialUnavailableReason = finishNotice ?? (
     connection !== 'open'
-      ? 'Wait until your phone is connected.'
+      ? SIDE_COPY.notConnected
       : !bootstrap || !sessionId
-        ? 'Loading the soft phone…'
+        ? SIDE_COPY.loading
         : call
           ? phase === 'outcome'
-            ? 'Save this call’s outcome before you dial again.'
-            : 'A call is in progress.'
+            ? SOFTPHONE_REFUSAL_COPY.outcome_pending
+            : SIDE_COPY.callGoingOn
           : callerIdOptions.length === 0
-            ? 'There’s no caller ID to call from. Ask your supervisor to assign a number.'
+            ? SIDE_COPY.noCallerId
             : null);
   const canDial = dialUnavailableReason === null && dialBlock === null && !placing;
 
@@ -768,7 +767,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         });
         return;
       case 'override_note_invalid':
-        if (overridePromptRef.current) setOverrideError(refusal.message || SOFTPHONE_REFUSAL_COPY.override_note_invalid);
+        if (overridePromptRef.current) setOverrideError(SOFTPHONE_REFUSAL_COPY.override_note_invalid);
         else setDialError(SOFTPHONE_REFUSAL_COPY.override_note_invalid);
         return;
       case 'outcome_pending':
@@ -779,11 +778,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         return;
       case 'contact_in_flight':
         setOverridePrompt(null);
-        setDialError(
-          campaignName
-            ? `${campaignName} is calling this customer right now. Wait for that call to finish, then try again.`
-            : SOFTPHONE_REFUSAL_COPY.contact_in_flight,
-        );
+        setDialError(SOFTPHONE_REFUSAL_COPY.contact_in_flight);
         return;
       case 'fields_invalid':
         // The details typed before Call are on screen: mark the ones the server
@@ -997,7 +992,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     setSaving(false);
     if (result.ok) {
       adoptCall(result.value.call);
-      setAnnouncement('Outcome saved.');
+      setAnnouncement(SIDE_COPY.savedAnnounce);
       trackAgencySoftphoneOutcomeSaved({
         tagged: Boolean(target.tag),
         selection_method: selectionMethodRef.current,
@@ -1010,7 +1005,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     const refusal = result.refusal;
     if (refusal.code === 'disposition_invalid' && refusal.allowed_codes?.length) {
       setCatalogOverride({ callId: target.id, catalog: resyncCatalog(catalog, refusal.allowed_codes) });
-      setPadRejection(CATALOG_CHANGED_COPY);
+      setPadRejection(STATION_COPY.catalogChanged);
     } else if (refusal.code === 'fields_invalid') {
       if (refusal.details) setFieldErrors(fieldErrorsFromDetails(refusal.details));
       setPadRejection(SOFTPHONE_REFUSAL_COPY.fields_invalid);
@@ -1022,7 +1017,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     } else {
       setPadRejection(refusalCopy(refusal));
     }
-    setAnnouncement(`The outcome wasn’t saved. ${refusalCopy(refusal)}`);
+    setAnnouncement(SIDE_COPY.notSaved(refusalCopy(refusal)));
   }, [call, saving, tenantId, accountId, clock, fields, fieldsKnown, fieldValues, saveBlockAt, catalog, fullForm, adoptCall, loadBootstrap, cancelSave]);
 
   // ── Hang up ───────────────────────────────────────────────────────────────
@@ -1043,7 +1038,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       loadBootstrap();
       return;
     }
-    setHangupFailure(`We couldn’t end the call — you may still be connected. ${refusalCopy(result.refusal)}`);
+    setHangupFailure(`${SIDE_COPY.endCallFailed} ${refusalCopy(result.refusal)}`);
   }, [call, tenantId, accountId, adoptCall, loadBootstrap]);
 
   // ── Mute ──────────────────────────────────────────────────────────────────
@@ -1074,15 +1069,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     setDncConfirmOpen(false);
     trackAgencySoftphoneDncMarked({ tagged: Boolean(target.tag), accepted: result.ok });
     if (result.ok) {
-      const where = result.value.scope === 'campaign' && target.tag
-        ? `for ${target.tag.campaign_name}`
-        : 'for this account';
-      const text = `${formatDialNumber(result.value.phone_e164)} is on the Do Not Call list ${where}.`;
-      setDncOutcome(text);
-      setAnnouncement(text);
+      setDncOutcome(SIDE_COPY.stoppedCalls);
+      setAnnouncement(SIDE_COPY.stoppedCalls);
       return;
     }
-    const text = `We couldn’t add the number to Do Not Call. ${refusalCopy(result.refusal)}`;
+    const text = `${SIDE_COPY.stopFailed} ${refusalCopy(result.refusal)}`;
     setDncFailure(text);
     setAnnouncement(text);
   }, [call, tenantId, accountId]);

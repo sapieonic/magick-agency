@@ -239,7 +239,7 @@ describe('the outcome', () => {
     await act(async () => h.result.current.saveOutcome());
     expect(api.dispositionInboundCall).toHaveBeenCalledWith('ib-1', { code: 'resolved', notes: 'Sorted the address' }, 't-1', 'a-1');
     expect(h.result.current.call).toBeNull();
-    expect(h.result.current.announcement).toBe('Outcome saved.');
+    expect(h.result.current.announcement).toBe('Saved.');
   });
 
   it('sends a callback time for a callback outcome', async () => {
@@ -250,7 +250,7 @@ describe('the outcome', () => {
     const body = api.dispositionInboundCall.mock.calls[0]![1] as { code: string; callback_at?: string };
     expect(body.code).toBe('callback');
     expect(body.callback_at).toBe(new Date('2099-01-02T10:00').toISOString());
-    expect(h.result.current.padRejection).toMatch(/can’t take an outcome/);
+    expect(h.result.current.padRejection).toBe('You can choose what happened only after you have talked to the customer.');
   });
 
   it('a changed outcome list rebuilds the pad from allowed_codes', async () => {
@@ -263,7 +263,7 @@ describe('the outcome', () => {
     act(() => h.result.current.setNotes('note'));
     await act(async () => h.result.current.saveOutcome());
     expect(h.result.current.catalog.map((d) => d.code)).toEqual(['resolved', 'escalated']);
-    expect(h.result.current.padRejection).toMatch(/outcome list for this call changed/);
+    expect(h.result.current.padRejection).toBe('This list changed. Choose one of these.');
   });
 
   it('an outcome already saved elsewhere asks the server for the call', async () => {
@@ -283,7 +283,7 @@ describe('the outcome', () => {
     picked(h, 'resolved');
     await act(async () => h.result.current.saveOutcome());
     expect(h.result.current.padRejection).toBe(INBOUND_OUTCOME_WINDOW_ENDED_COPY);
-    expect(h.result.current.announcement).toBe(`The outcome wasn’t saved. ${INBOUND_OUTCOME_WINDOW_ENDED_COPY}`);
+    expect(h.result.current.announcement).toBe(`It did not save. ${INBOUND_OUTCOME_WINDOW_ENDED_COPY}`);
   });
 
   it('inside the window, “already saved” is what it says', async () => {
@@ -292,7 +292,7 @@ describe('the outcome', () => {
     const h = render({ frameCall: owing(), clock: serverClock(0, () => Date.parse('2026-11-09T10:20:00Z')) });
     picked(h, 'resolved');
     await act(async () => h.result.current.saveOutcome());
-    expect(h.result.current.padRejection).toBe('This call’s outcome is already saved.');
+    expect(h.result.current.padRejection).toBe('This call is saved already.');
   });
 });
 
@@ -310,11 +310,11 @@ describe('call controls', () => {
     expect(h.result.current.phase).toBe('outcome');
   });
 
-  it('a hang-up that fails says the caller may still be on the line', async () => {
+  it('a hang-up that fails says the call did not end, in the station’s words', async () => {
     api.hangupInboundCall.mockResolvedValue({ ok: false, refusal: refusal({ code: 'unknown', message: 'Network' }) });
     const h = render({ frameCall: connected() });
     await act(async () => h.result.current.hangup());
-    expect(h.result.current.hangupFailure).toMatch(/you may still be connected/);
+    expect(h.result.current.hangupFailure).toMatch(/^The call did not end\. Try again\./);
   });
 
   it('mute is the microphone, and only with the caller connected and the uplink open', () => {
@@ -328,7 +328,7 @@ describe('call controls', () => {
     expect(h.result.current.muteEnabled).toBe(false);
   });
 
-  it('marks DNC with the campaign’s scope when the call matched one', async () => {
+  it('marks the number not to be called, and says so in the station’s words', async () => {
     api.markInboundCallDnc.mockResolvedValue({
       ok: true,
       value: { call_id: 'ib-1', phone_e164: '+919820461733', scope: 'campaign', dnc_recorded: true, contact_state: 'suppressed' },
@@ -338,7 +338,7 @@ describe('call controls', () => {
     expect(h.result.current.dncConfirmOpen).toBe(true);
     await act(async () => h.result.current.confirmDnc());
     expect(api.markInboundCallDnc).toHaveBeenCalledWith('ib-1', undefined, 't-1', 'a-1');
-    expect(h.result.current.dncOutcome).toMatch(/on the Do Not Call list for Card Renewals\.$/);
+    expect(h.result.current.dncOutcome).toBe('We will not call this number again.');
   });
 
   it('offers no DNC for a withheld number, before the caller is connected, or without the permission', () => {

@@ -533,9 +533,11 @@ describe('supervisor messages on a phone', () => {
     const after = (control: Element) =>
       Boolean(control.compareDocumentPosition(screen.getByTestId('supervisor-message')) & Node.DOCUMENT_POSITION_FOLLOWING);
     await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
-    await frame({ event: 'inbound_call', call: inboundCall() });
-    const bar = screen.getByTestId('inbound-action-bar');
-    for (const control of within(bar).getAllByRole('button')) expect(after(control)).toBe(true);
+    await frame({ event: 'inbound_call', call: inboundCall({ state: 'connected', connects_at: null, bridged_at: '2026-11-19T10:03:01.500Z' }) });
+    const foot = screen.getByTestId('station-inbound').querySelector('footer') as HTMLElement;
+    const controls = within(foot).getAllByRole('button');
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls) expect(after(control)).toBe(true);
     expect(after(screen.getByTestId('inbound-body'))).toBe(true);
   });
 });

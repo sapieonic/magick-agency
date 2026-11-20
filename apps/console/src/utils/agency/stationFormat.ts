@@ -27,6 +27,14 @@ export function rupees(raw: string | number): string | null {
   return parsed.frac === '00' ? `₹${whole}` : `₹${whole}.${parsed.frac}`;
 }
 
+/**
+ * A promised amount (PT5): Indian grouping with no symbol, `12,500`, `1,25,000`, `6,250.50`. No
+ * currency is stored with a promise, so it never carries ₹; null when the text is not an amount.
+ */
+export function promisedAmount(raw: string | number): string | null {
+  return rupees(raw)?.replace(/^₹/, '') ?? null;
+}
+
 /** Half of an amount as a plain decimal string, for the "Half" chip; null when not an amount. */
 export function halfAmount(raw: string): string | null {
   const parsed = parseAmount(raw);

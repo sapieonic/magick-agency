@@ -325,7 +325,7 @@ describe('on the soft phone, in the station', () => {
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
     // No ordinary break (whose End break would skip the soft phone's return).
     expect(screen.queryByRole('button', { name: /End break/ })).toBeNull();
-    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/Return to your campaign when you’re ready\./);
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toBe('Dialling is turned off. Press Back to my calls when you are ready.');
     expect(screen.queryByTestId('dial-call')).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByTestId('return-to-campaign'));
@@ -380,7 +380,7 @@ describe('on the soft phone, in the station', () => {
 
     async function typeNote(text: string) {
       mocks.updateManualCall.mockClear();
-      fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: text } });
+      fireEvent.change(screen.getByRole('textbox', { name: /note/i }), { target: { value: text } });
       await waitFor(() => expect(mocks.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
       return mocks.updateManualCall.mock.calls[0]![1] as Record<string, unknown>;
     }
@@ -429,6 +429,146 @@ describe('on the soft phone, in the station', () => {
     await frame({ event: 'agent_state', state: 'break', break_reason: 'lunch', since: SINCE });
     expect(screen.queryByTestId('station-softphone')).toBeNull();
     expect(screen.getByRole('button', { name: /Start calls again/ })).toBeTruthy();
+  });
+});
+
+describe('the soft phone in the station’s look (AS1)', () => {
+  const TAG = { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' };
+  const CONTACT = {
+    contact_id: 'ct-9',
+    state: 'in_flight' as const,
+    claimed: true,
+    context: { Name: 'Asha Rao', 'Loan account': 'HL-4471' },
+    prior_attempts: [
+      {
+        attempt_number: 1,
+        outcome: 'no_answer' as const,
+        disposition_code: null,
+        notes: 'Rang after six',
+        ended_at: '2026-10-29T09:00:30.000Z',
+        dialed_at: '2026-10-29T09:00:00.000Z',
+        campaign_id: 'camp-1',
+        campaign_name: 'Home Loan Renewals',
+      },
+    ],
+  };
+  const placed = manualCall({ session_id: 'sess-1', tag: TAG, contact: CONTACT, recording_requested: true });
+  const ringing = step(placed, 3, { state: 'ringing' });
+  const onCall = step(placed, 9, { state: 'bridged', answered_at: '2026-10-30T10:00:09Z', bridged_at: '2026-10-30T10:00:09Z' });
+  const owed = step(placed, 60, {
+    state: 'ended',
+    outcome: 'connected',
+    requires_disposition: true,
+    bridged_at: '2026-10-30T10:00:09Z',
+    ended_at: '2026-10-30T10:01:00Z',
+    outcome_due_at: '2026-10-30T10:31:00Z',
+  });
+
+  async function onSoftphone() {
+    await mounted();
+    await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
+  }
+  function footButtons(): string[] {
+    const foot = screen.getByTestId('station-softphone').querySelector('footer') as HTMLElement | null;
+    return foot ? within(foot).queryAllByRole('button').map((b) => b.getAttribute('data-testid') ?? b.textContent ?? '') : [];
+  }
+
+  it('ready: a big keypad, Call faded until it can dial and saying why, where the call is saved, recent calls', async () => {
+    await onSoftphone();
+    for (const key of ['1', '5', '9', '*', '0', '#']) expect(screen.getByTestId(`dial-key-${key}`)).toBeTruthy();
+    const callButton = screen.getByTestId('dial-call');
+    expect(callButton.textContent).toMatch(/^Call/);
+    expect(callButton.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByLabelText('Save this call to')).toBe(screen.getByTestId('log-to-select'));
+    expect(screen.getByLabelText('Call from')).toBe(screen.getByTestId('caller-id'));
+    expect(screen.getByTestId('recent-empty').textContent).toBe('Numbers you dial show here. Press one to dial it again.');
+    // Back to my calls is the main button, bottom right, as the frame has always had it.
+    expect(footButtons()).toEqual(['return-to-campaign']);
+    // Too short a number is said in the station's words, and Call places nothing.
+    fireEvent.click(screen.getByTestId('dial-key-1'));
+    fireEvent.click(screen.getByTestId('dial-key-2'));
+    expect(screen.getByTestId('dial-reason').textContent).toBe('This number is too short.');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(mocks.placeManualCall).not.toHaveBeenCalled();
+  });
+
+  it('calling: the customer’s card when the number is on the list, the ringing warning, End call held bottom right', async () => {
+    await onSoftphone();
+    await frame({ event: 'manual_call', call: ringing });
+    expect(screen.getByTestId('band-title').textContent).toBe('Calling +91 98204 61733');
+    expect(screen.getByTestId('customer-name').textContent).toBe('Asha Rao');
+    expect(within(screen.getByTestId('customer-card')).getByText('HL-4471')).toBeTruthy();
+    expect(screen.getByTestId('softphone-recording').textContent).toBe('Call is recorded');
+    expect(screen.getByTestId('ringing-warning').textContent).toMatch(/customer’s phone may keep ringing/);
+    expect(screen.getByTestId('log-to-fixed').textContent).toBe('Home Loan Renewals');
+    // No keypad, no Call, no Back to my calls: End call is the one main button (AS1, AS3).
+    expect(screen.queryByTestId('dial-call')).toBeNull();
+    expect(screen.queryByTestId('return-to-campaign')).toBeNull();
+    expect(footButtons().at(-1)).toMatch(/Hold to end call/);
+    // While ringing, Mute is the ring's.
+    expect(screen.getByTestId('softphone-mute').textContent).toMatch(/^Mute ring/);
+  });
+
+  it('on call: the card, Last calls, the note and the call details; E twice ends the call', async () => {
+    mocks.hangupManualCall.mockResolvedValue({ ok: true, value: onCall });
+    await onSoftphone();
+    await frame({ event: 'manual_call', call: onCall });
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Asha Rao');
+    expect(screen.getByTestId('last-calls').textContent).toMatch(/No answer/);
+    expect(screen.getByRole('textbox', { name: /note/i })).toBeTruthy();
+    expect(screen.getByTestId('call-field-customer_name')).toBeTruthy();
+    expect(screen.queryByTestId('ringing-warning')).toBeNull();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'e' });
+    });
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'e' });
+    });
+    expect(mocks.hangupManualCall).toHaveBeenCalledWith('mc-1', 't-1', 'a-1');
+  });
+
+  it('What happened?: the station’s tiles; Save says what is missing, in order, and then saves', async () => {
+    mocks.dispositionManualCall.mockResolvedValue({ ok: true, value: step(owed, 70, { settled_at: '2026-10-30T10:01:10Z', disposition_code: 'interested' }) });
+    mocks.updateManualCall.mockResolvedValue({ ok: true, value: owed });
+    await onSoftphone();
+    await frame({ event: 'manual_call', call: owed });
+    expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
+    expect(screen.getByTestId('softphone-outcome-due')).toBeTruthy();
+    expect(footButtons().at(-1)).toBe('softphone-save');
+    expect(screen.getByTestId('outcome-interested')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('softphone-save'));
+    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Choose one first.');
+    fireEvent.keyDown(window, { key: '1' });
+    expect(screen.getByTestId('outcome-interested').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByTestId('softphone-save'));
+    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Fill in the call details first.');
+    expect(mocks.dispositionManualCall).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId('call-field-customer_name'), { target: { value: 'Asha Rao' } });
+    fireEvent.change(screen.getByTestId('call-field-reason'), { target: { value: 'Rate query' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-save'));
+    });
+    expect(mocks.dispositionManualCall).toHaveBeenCalled();
+    expect(mocks.dispositionManualCall.mock.calls[0]![1]).toMatchObject({ code: 'interested' });
+  });
+
+  it('an outcome that stops calls asks first; D asks to mark the number, for the call’s work', async () => {
+    await onSoftphone();
+    await frame({ event: 'manual_call', call: owed });
+    fireEvent.click(screen.getByTestId('outcome-do_not_call'));
+    expect(screen.getByTestId('stop-calling')).toBeTruthy();
+    expect(screen.getByTestId('outcome-do_not_call').getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByTestId('stop-calling-yes'));
+    expect(screen.getByTestId('outcome-do_not_call').getAttribute('aria-pressed')).toBe('true');
+    expect(mocks.markManualCallDnc).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'd' });
+    expect(screen.getByTestId('stop-calling').textContent).toMatch(/We will not call this number again for Home Loan Renewals\./);
+    fireEvent.click(screen.getByTestId('stop-calling-no'));
+    expect(screen.queryByTestId('stop-calling')).toBeNull();
+    expect(mocks.markManualCallDnc).not.toHaveBeenCalled();
   });
 });
 

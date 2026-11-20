@@ -24,10 +24,10 @@ import { ScriptOpeningCard, ScriptStepsCard } from '../../components/agency/stat
 import { fillScript, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
 import { FloorAssistAnnouncer, useFloorAssistAnnouncer } from '../../components/agency/SupervisorMessages';
 import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
-import { SoftphoneView } from '../../components/softphone/SoftphoneView';
-import { InboundCallView, LapseCountdown, TalkTimer } from '../../components/agency/inbound/InboundCallView';
+import { StationSoftphone } from '../../components/softphone/StationSoftphone';
+import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
+import type { SideFrameProps } from '../../components/agency/station/SideCall';
 import { useInboundCall } from '../../hooks/useInboundCall';
-import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
 import { CueFlashBand } from '../../components/agency/CueFlashBand';
 import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
 import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
@@ -83,10 +83,7 @@ import {
 } from '../../utils/agency/stationCopy';
 import { clockTime, runningClock } from '../../utils/agency/stationFormat';
 import { customerCard, lastCallRows } from '../../utils/agency/stationCustomer';
-import { MAIN_ACTION_KEY, sideViewBand, stationView, type MoreItem, type SideCallPhase, type StationView } from '../../utils/agency/stationView';
-import { contactName, softphonePhase } from '../../utils/softphone/callState';
-import { formatDialNumber } from '../../utils/softphone/phoneInput';
-import { inboundCallerLabel } from '../../utils/inbound/inboundCall';
+import { MAIN_ACTION_KEY, stationView, type MoreItem, type StationView } from '../../utils/agency/stationView';
 
 /**
  * The agent's station (`/station?campaign=…`), redesigned (AS1–AS18, `docs/agent-station.md`;
@@ -1176,7 +1173,7 @@ function StationScreen({
         : null}
     </>
   );
-  const sideMenu = (items: MoreItem[]) => (
+  const sideMenu = (items: MoreItem[]): ReactNode => (
     <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={MY_CALLS_PATH} />
   );
   const cueFlashNode = cons.cueFlash ? <CueFlashBand key={`${cons.cueFlash.cue}:${cons.cueFlash.attemptId}`} flash={cons.cueFlash} /> : null;
@@ -1202,101 +1199,51 @@ function StationScreen({
   ) : null;
   const sideBanners = <>{micBannerNode}{connectionBanner}{supervisorBanner}<StationListenFirstNotice /></>;
 
+  const sideFrameProps: SideFrameProps = {
+    agentName,
+    workName,
+    brandMark: brand.shortName,
+    needHelp: null,
+    menu: sideMenu,
+    banners: null,
+    cueFlash: cueFlashNode,
+    phoneDisplay: bootstrap?.phone_display ?? 'full',
+    readAloud,
+  };
+
   let sideFrame: ReactNode = null;
   if (inbound.call) {
     const call = inbound.call;
-    const phase: SideCallPhase = inbound.phase === 'offered' ? 'coming' : inbound.phase === 'connected' ? 'on_call' : 'happened';
-    const band = sideViewBand({ kind: 'inbound', connection, phase, who: inboundCallerLabel(call) });
-    const live = connection === 'open';
     sideFrame = (
-      <StationFrame
-        view={band}
-        agentName={agentName}
-        workName={workName}
-        brandMark={brand.shortName}
-        needHelp={sideNeedHelp(phase === 'on_call' || phase === 'happened')}
-        menu={sideMenu(['sound', 'theme'])}
-        bandSide={
-          <span className={stationStyles.bandSide}>
-            {cueFlashNode}
-            {live && call.bridged_at && phase === 'on_call' ? <span className={stationStyles.bandClock}><TalkTimer from={call.bridged_at} clock={clock} /></span> : null}
-            {live && call.outcome_due_at && phase === 'happened' ? <span className={stationStyles.pill}><LapseCountdown due={call.outcome_due_at} clock={clock} /></span> : null}
-          </span>
-        }
-        banners={<>{inbound.notice ? <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner> : null}{sideBanners}</>}
+      <InboundCallView
+        ib={inbound}
+        call={call}
+        connection={connection}
+        clock={clock}
+        frame={{
+          ...sideFrameProps,
+          needHelp: sideNeedHelp(inbound.phase !== 'offered'),
+          banners: <>{inbound.notice ? <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner> : null}{sideBanners}</>,
+        }}
         connectFlash={cons.connectFlashAttemptId === call.id}
-        bodyClassName={stationStyles.bodySide}
-        testId="station-inbound"
-      >
-        <InboundCallView
-          ib={inbound}
-          call={call}
-          connection={connection}
-          clock={clock}
-          cueFlash={cons.cueFlash}
-          onReconnect={station.reconnect}
-          shortcutsEnabled={!soundOpen}
-          rail={false}
-        />
-      </StationFrame>
+        station={{ campaignId: bootstrap?.campaign_id ?? null, assignmentMode: bootstrap?.assignment_mode ?? null }}
+        shortcutsEnabled={!soundOpen}
+      />
     );
   } else if (softphone.active && !finishOpen) {
-    const call = softphone.sp.call;
-    const spPhase = softphonePhase(call);
-    const phase: SideCallPhase = spPhase === 'dialing' || spPhase === 'ringing' ? 'coming' : spPhase === 'on_call' ? 'on_call' : spPhase === 'outcome' ? 'happened' : 'idle';
-    const named = contactName(call, softphone.sp.campaign?.context_display);
-    const number = call ? formatDialNumber(call.destination_e164) : null;
-    const band = sideViewBand({ kind: 'softphone', connection, phase, who: phase === 'on_call' ? (named ?? number) : number });
-    const timerFrom = phase === 'on_call' ? call?.bridged_at ?? null : phase === 'coming' ? call?.dialed_at ?? null : null;
-    const returnReason = softphone.returnFailure ?? softphone.returnBlockedReason;
+    const spPhase = softphone.sp.phase;
     sideFrame = (
-      <StationFrame
-        view={band}
-        agentName={agentName}
-        workName={workName}
-        brandMark={brand.shortName}
-        needHelp={sideNeedHelp(phase === 'on_call' || phase === 'happened')}
-        // Finish work while nothing is dialled; during a call only Sound and the colour, as on 04.
-        menu={sideMenu(phase === 'idle' ? ['sound', 'theme', 'finish'] : ['sound', 'theme'])}
-        bandSide={
-          <span className={stationStyles.bandSide}>
-            {cueFlashNode}
-            <SoftphoneDisclosures sp={softphone.sp} showMuted={false} />
-            {timerFrom && connection === 'open' ? <SinceClock anchor={timerFrom} clock={clock} className={stationStyles.bandClock} testId="softphone-timer" /> : null}
-          </span>
-        }
-        banners={<>{cons.softphoneRejection ? <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="status" testId="switch-to-softphone-refused">{cons.softphoneRejection}</StationBanner> : null}{sideBanners}</>}
-        bodyClassName={stationStyles.bodySide}
-        testId="station-softphone"
-        footLeft={returnReason ? (
-          <span className={stationStyles.footHint} id="return-to-campaign-reason" role={softphone.returnFailure ? 'alert' : undefined} data-testid="return-to-campaign-reason">
-            {returnReason}
-          </span>
-        ) : null}
-        // AS1: hidden while a call is live or owes its outcome; the reason says why.
-        footRight={softphone.returnBlockedReason === null ? (
-          <button
-            type="button"
-            className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`}
-            onClick={() => !softphone.returning && softphone.returnToCampaign()}
-            aria-disabled={softphone.returning || undefined}
-            aria-describedby={returnReason ? 'return-to-campaign-reason' : undefined}
-            data-testid="return-to-campaign"
-          >
-            {softphone.returning ? STATION_COPY.backingToCalls : STATION_COPY.backToCalls}
-          </button>
-        ) : null}
-      >
-        <SoftphoneView
-          sp={softphone.sp}
-          connection={connection}
-          clock={clock}
-          fromCampaign
-          onReconnect={station.reconnect}
-          shortcutsEnabled={!soundOpen}
-          rail={false}
-        />
-      </StationFrame>
+      <StationSoftphone
+        softphone={softphone}
+        connection={connection}
+        clock={clock}
+        frame={{
+          ...sideFrameProps,
+          needHelp: sideNeedHelp(spPhase === 'on_call' || spPhase === 'outcome'),
+          banners: <>{cons.softphoneRejection ? <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="status" testId="switch-to-softphone-refused">{cons.softphoneRejection}</StationBanner> : null}{sideBanners}</>,
+        }}
+        shortcutsEnabled={!soundOpen}
+      />
     );
   }
 

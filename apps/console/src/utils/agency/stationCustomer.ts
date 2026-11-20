@@ -9,7 +9,7 @@ import type {
 import { resolveContextFields } from '../agencyContext';
 import { priorDispositionLabel } from '../agencyPriorAttempts';
 import { ATTEMPT_OUTCOME_WORDS } from './stationCopy';
-import { calendarDay, clockTime, dayMonth, initials, rupees } from './stationFormat';
+import { calendarDay, clockTime, dayMonth, initials, promisedAmount, rupees } from './stationFormat';
 
 /**
  * The customer card on Call coming, On call and What happened? (spec §3 03/04, §5.3), from the
@@ -136,9 +136,17 @@ export function callLaterTagFor(callback: AgencyReservedAttempt['callback']): st
     : `Call later · Booked for ${clockTime(at)}`;
 }
 
+/**
+ * What the card reads off a call: the reserved attempt on an outbound call, and the same fields
+ * built from an inbound caller's matched contact or a soft-phone call's roster contact (the
+ * station's side views, `sideViewCustomer.ts`).
+ */
+export type CustomerSource = Pick<AgencyReservedAttempt, 'phone_e164' | 'context' | 'prior_attempts'>
+  & Partial<Pick<AgencyReservedAttempt, 'facts' | 'callback' | 'redial'>>;
+
 /** Name, place, hero facts and the Full / Half amount: typed facts when sent, else phase 0's guesses. */
 function customerFacts(
-  attempt: AgencyReservedAttempt,
+  attempt: CustomerSource,
   display: AgencyContextDisplay | undefined,
 ): { name: string | null; place: string | null; heroFacts: CustomerFact[]; amountDue: string | null } {
   const facts = attempt.facts;
@@ -171,7 +179,7 @@ function customerFacts(
 }
 
 export function customerCard(
-  attempt: AgencyReservedAttempt,
+  attempt: CustomerSource,
   display: AgencyContextDisplay | undefined,
   options: { phoneDisplay?: 'full' | 'masked' } = {},
 ): CustomerCard {
@@ -211,7 +219,7 @@ export interface LastCallRow {
 
 /** Up to `limit` earlier calls, newest first, in the station's words. */
 export function lastCallRows(
-  attempt: AgencyReservedAttempt,
+  attempt: Pick<AgencyReservedAttempt, 'campaign_id' | 'prior_attempts'>,
   catalog: readonly AgencyDisposition[] | undefined,
   limit = 3,
 ): LastCallRow[] {
@@ -228,7 +236,7 @@ export function lastCallRows(
         ? ATTEMPT_OUTCOME_WORDS[p.outcome] ?? p.outcome
         : 'Not finished';
     const promise = p.promise_date
-      ? `${p.promise_amount ? `${rupees(p.promise_amount) ?? p.promise_amount} on ` : 'On '}${calendarDay(p.promise_date)}`
+      ? `${p.promise_amount ? `${promisedAmount(p.promise_amount) ?? p.promise_amount} on ` : 'On '}${calendarDay(p.promise_date)}`
       : null;
     const note = p.notes?.trim() ? `“${p.notes.trim()}”` : null;
     return {

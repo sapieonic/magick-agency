@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { LogOut, MicOff, WifiOff } from 'lucide-react';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useTenant } from '../../contexts/TenantContext';
@@ -27,8 +28,17 @@ import { agentLandingPath } from '../../utils/agencyStationExit';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
 import { StationEscape } from '../../components/agency/StationEscape';
-import { SoftphoneView } from '../../components/softphone/SoftphoneView';
-import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
+import { SoftphoneScreen } from '../../components/softphone/StationSoftphone';
+import { SOFTPHONE_LEAVE_BLOCKED_COPY, SOFTPHONE_STAYS_OPEN_COPY } from '../../components/softphone/SoftphoneHeader';
+import { AgentNav } from '../../components/agency/AgentNav';
+import { StationBanner } from '../../components/agency/station/StationFrame';
+import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
+import { useReadAloud } from '../../hooks/useSpeech';
+import { SIDE_COPY } from '../../utils/agency/sideViewCopy';
+import { SOFTPHONE_CLOSE_COPY, STATION_COPY } from '../../utils/agency/stationCopy';
+import { brand } from '../../brand';
+import stationStyles from '../../components/agency/station/Station.module.css';
+import side from '../../components/agency/station/SideView.module.css';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { useSoftphoneSession } from './softphone/useSoftphoneSession';
 import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
@@ -38,7 +48,7 @@ import station from '../../components/agency/AgentStation.module.css';
 
 /** The Close soft phone confirmation: where it lands, and how to come back. */
 export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
-  'This ends your soft-phone session and takes you to My campaigns. To call again, choose Soft phone at the top of the page.';
+  'You will go back to My work. To dial again, choose Soft phone at the top of the page.';
 
 /**
  * `/dialer/phone` — the soft phone for an agent who is not on a campaign
@@ -251,70 +261,111 @@ function SoftphoneConsole({
       await leaveAgencySession(session.session_id, tenantId ?? undefined, accountId ?? undefined);
       navigate(agentLandingPath('station'));
     } catch (err) {
-      setCloseFailure(err instanceof Error ? err.message : 'Try again in a moment.');
+      void err;
+      setCloseFailure(SOFTPHONE_CLOSE_COPY.stillOpen);
       setClosing(false);
     }
   };
 
   const micNotice = agencyAudioNotice(audio.error);
+  const readAloud = useReadAloud();
+  const recoverable = connection === 'disconnected' || connection === 'superseded';
+  const leaveReason = sp.call ? STATION_COPY.finishCallFirst : null;
 
   return (
-    <div className={station.shell}>
-      <SoftphoneHeader
-        user={user}
-        sp={sp}
-        connection={connection}
-        missedPings={stationState.missedPings}
-        actions={
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setCloseOpen(true)}
-            disabled={sp.call !== null}
-            title={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : 'End your soft-phone session'}
-            data-testid="softphone-close"
-          >
-            Close soft phone
-          </button>
-        }
-      />
-
-      {micNotice ? (
-        <p className={station.micFailure} role="alert" data-testid="mic-failure">
-          <strong>{micNotice.headline}</strong> {micNotice.remedy}
-          {micNotice.action ? (
-            <button type="button" className={station.micFailureAction} onClick={audio.resume}>
-              {micNotice.action}
-            </button>
-          ) : null}
-        </p>
-      ) : null}
-
-      <SoftphoneView
+    <>
+      <SoftphoneScreen
         sp={sp}
         connection={connection}
         clock={clock}
-        fromCampaign={false}
-        onReconnect={stationState.reconnect}
         shortcutsEnabled={!closeOpen}
+        testId="softphone-page"
+        inboundNote={SIDE_COPY.inboundNotHerePage}
+        frame={{
+          agentName: user?.display_name?.trim() || user?.email || 'Agent',
+          workName: SIDE_COPY.softphonePageWork,
+          brandMark: brand.shortName,
+          needHelp: (
+            <>
+              <span className={side.pageNav}>
+                <AgentNav current="phone" variant="header" lockedReason={leaveReason ? SOFTPHONE_LEAVE_BLOCKED_COPY : null} leaveHint={SOFTPHONE_STAYS_OPEN_COPY} />
+              </span>
+              {/* That a supervisor may listen (LS2), behind the same info button as the station's. */}
+              <StationListenNotice />
+            </>
+          ),
+          menu: () => null,
+          banners: (
+            <>
+              {micNotice ? (
+                <StationBanner
+                  tone="problem"
+                  icon={<MicOff size={22} />}
+                  role="alert"
+                  testId="mic-failure"
+                  action={micNotice.action ? (
+                    <button type="button" className={stationStyles.btn} onClick={audio.resume}>{micNotice.action}</button>
+                  ) : undefined}
+                >
+                  <b>{micNotice.headline}</b> <small>{micNotice.remedy}</small>
+                </StationBanner>
+              ) : null}
+              {recoverable ? (
+                <StationBanner
+                  tone={connection === 'superseded' ? 'quiet' : 'problem'}
+                  icon={<WifiOff size={22} />}
+                  testId="softphone-reconnect"
+                  action={
+                    <button type="button" className={stationStyles.btn} onClick={stationState.reconnect} data-testid="try-again">
+                      {connection === 'superseded' ? STATION_COPY.useThisComputer : STATION_COPY.tryAgainNow}
+                    </button>
+                  }
+                >
+                  {connection === 'superseded' ? STATION_COPY.otherDeviceSubtitle : STATION_COPY.internetGaveUpSubtitle}
+                </StationBanner>
+              ) : null}
+              <StationListenFirstNotice />
+            </>
+          ),
+          cueFlash: null,
+          phoneDisplay: 'full',
+          readAloud,
+        }}
+        wayOut={{
+          reason: leaveReason ? (
+            <span className={stationStyles.footHint} data-testid="softphone-close-reason">{leaveReason}</span>
+          ) : null,
+          // Close soft phone, the way out: the screen shows it only while nothing is dialled (AS1).
+          button: (
+            <button
+              type="button"
+              className={`${stationStyles.btn} ${stationStyles.btnBig} ${side.wayOut}`}
+              onClick={() => setCloseOpen(true)}
+              data-testid="softphone-close"
+            >
+              <LogOut size={24} aria-hidden="true" />
+              {SIDE_COPY.closeSoftphone}
+            </button>
+          ),
+        }}
       />
 
       <ConfirmDialog
         open={closeOpen}
-        title="Close the soft phone?"
+        title={SIDE_COPY.closeSoftphoneTitle}
         message={
           closeFailure
-            ? `Your soft phone is still open — ${closeFailure}`
+            ? SOFTPHONE_CLOSE_COPY.stillOpen
             : SOFTPHONE_CLOSE_CONFIRM_MESSAGE
         }
-        confirmLabel={closing ? 'Closing…' : 'Close soft phone'}
+        confirmLabel={closing ? SIDE_COPY.closingSoftphone : SIDE_COPY.closeSoftphone}
         disabled={closing}
         onConfirm={() => void confirmClose()}
         onCancel={() => {
           if (!closing) setCloseOpen(false);
         }}
       />
-    </div>
+    </>
   );
 }
 

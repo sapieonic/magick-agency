@@ -1,7 +1,5 @@
-import { formatDialNumber } from './phoneInput';
 import { resolveContextFields } from '../agencyContext';
-import { attemptOutcomeLabel } from '../../types/agency-spine';
-import type { StationConnection } from '../../hooks/agencyStation/types';
+import { ATTEMPT_OUTCOME_WORDS } from '../agency/stationCopy';
 import type { AgencyContextDisplay } from '../../types/agency';
 import type { AgencyManualCall, AgencyManualCallEndReason } from '../../types/softphone';
 
@@ -88,19 +86,19 @@ export const MANUAL_END_REASON_COPY: Record<AgencyManualCallEndReason, string> =
   completed: 'The call ended.',
   no_answer: 'No answer.',
   busy: 'The line was busy.',
-  failed: 'The call didn’t go through.',
-  invalid: 'That number can’t be called.',
-  agent_disconnected: 'Your connection dropped and the call ended.',
-  agent_hangup: 'You hung up.',
+  failed: 'The call did not go through.',
+  invalid: 'This number cannot be called.',
+  agent_disconnected: 'Your internet dropped and the call ended.',
+  agent_hangup: 'You ended the call.',
   remote_hangup: 'The customer hung up.',
   supervisor_released: 'A supervisor ended the call.',
-  orphaned: 'Something went wrong on our side and the call was cleaned up.',
+  orphaned: 'Something went wrong on our side and the call ended.',
 };
 
-/** One line for how a call finished: the end reason when known, else the telephony outcome. */
+/** One line for how a call finished, in the station's words: the end reason when known, else what the line did. */
 export function callEndSummary(call: AgencyManualCall): string {
-  if (call.end_reason) return MANUAL_END_REASON_COPY[call.end_reason] ?? attemptOutcomeLabel(call.outcome);
-  return call.outcome ? `${attemptOutcomeLabel(call.outcome)}.` : 'The call ended.';
+  if (call.end_reason && MANUAL_END_REASON_COPY[call.end_reason]) return MANUAL_END_REASON_COPY[call.end_reason];
+  return call.outcome ? `${ATTEMPT_OUTCOME_WORDS[call.outcome]}.` : 'The call ended.';
 }
 
 /**
@@ -133,123 +131,4 @@ export function contextName(
     (field) => !field.isEmpty && /(^|[\s_-])(full[\s_-]?)?name$|^name$|customer|contact[\s_-]?name/i.test(field.label),
   );
   return named?.value ?? null;
-}
-
-export type RailTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
-
-export interface SoftphoneRailDescription {
-  tone: RailTone;
-  label: string;
-  detail: string | null;
-  /** Which instant the rail's timer counts from, or null for no timer. */
-  timerFrom: string | null;
-}
-
-/**
- * The soft phone's rail, as a pure function of the connection and the call.
- *
- * Connection failures outrank the call for the station's reason: an agent whose
- * socket is gone must not be told they are ready to dial, and an agent mid-call
- * must be told whether the customer can hear them.
- */
-export function describeSoftphoneRail(input: {
-  connection: StationConnection;
-  call: AgencyManualCall | null;
-  /** The call that just settled, for "Last call: no answer" on the Ready rail. */
-  lastCall: AgencyManualCall | null;
-  /** Whether the agent came from a campaign (SP7) — changes the Ready sentence. */
-  fromCampaign: boolean;
-  contactName: string | null;
-}): SoftphoneRailDescription {
-  const { connection, call, lastCall, fromCampaign } = input;
-  const phase = softphonePhase(call);
-  const live = phase === 'dialing' || phase === 'ringing' || phase === 'on_call';
-
-  if (connection === 'superseded') {
-    return {
-      tone: 'danger',
-      label: 'Your soft phone moved to another device',
-      detail: 'You opened it on your phone or in another window. Only one can make calls.',
-      timerFrom: null,
-    };
-  }
-  if (connection === 'session_gone') {
-    return { tone: 'danger', label: 'Session ended', detail: 'Reload the page to open the soft phone again.', timerFrom: null };
-  }
-  if (connection === 'disconnected') {
-    return live
-      ? {
-          tone: 'danger',
-          label: 'Connection lost',
-          detail: 'The customer can’t hear you right now. Reconnect to get back on the call.',
-          timerFrom: null,
-        }
-      : { tone: 'danger', label: 'Disconnected', detail: 'Reconnect to make calls.', timerFrom: null };
-  }
-  if (connection === 'reconnecting') {
-    return {
-      tone: 'warning',
-      label: 'Reconnecting',
-      detail: live ? 'Stay on the line — we’re reconnecting you.' : 'Calls are paused until your phone reconnects.',
-      timerFrom: null,
-    };
-  }
-
-  const number = call ? formatDialNumber(call.destination_e164) : '';
-  const from = call ? `from ${formatDialNumber(call.caller_id)}` : '';
-
-  switch (phase) {
-    case 'dialing':
-      return {
-        tone: 'warning',
-        label: `Dialling ${number}`,
-        detail: `${capitalise(from)} · connecting your line first`,
-        timerFrom: call?.dialed_at ?? null,
-      };
-    case 'ringing':
-      return {
-        tone: 'warning',
-        label: `Ringing ${number}`,
-        detail: `${capitalise(from)} · the ringback tone plays in your browser`,
-        timerFrom: call?.dialed_at ?? null,
-      };
-    case 'on_call': {
-      const bridged = call?.bridged_at ?? null;
-      return {
-        tone: 'success',
-        label: input.contactName ? `On call with ${input.contactName}` : 'On call',
-        detail: bridged ? `${number} · ${from}` : `${number} · connecting audio…`,
-        timerFrom: bridged,
-      };
-    }
-    case 'outcome':
-      return {
-        tone: 'warning',
-        label: 'Outcome needed',
-        detail: `${call ? callEndSummary(call) : 'The call ended.'} Pick an outcome and save it — the next call unlocks when you do.`,
-        timerFrom: call?.ended_at ?? null,
-      };
-    case 'ready':
-    default: {
-      if (connection !== 'open') {
-        return { tone: 'neutral', label: 'Connecting your phone…', detail: null, timerFrom: null };
-      }
-      const last = lastCall && lastCall.id !== call?.id ? lastCall : (call ?? null);
-      const lastLine = last && last.state === 'ended' && !last.requires_disposition
-        ? `Last call to ${formatDialNumber(last.destination_e164)}: ${callEndSummary(last)} `
-        : '';
-      return {
-        tone: 'info',
-        label: 'Ready to dial',
-        detail: fromCampaign
-          ? `${lastLine}Type a number or redial a recent call. Soft-phone calls are not paced, and the campaign's dialler does not reserve you here.`
-          : `${lastLine}Type a number or redial a recent call.`,
-        timerFrom: null,
-      };
-    }
-  }
-}
-
-function capitalise(text: string): string {
-  return text ? text[0]!.toUpperCase() + text.slice(1) : text;
 }
