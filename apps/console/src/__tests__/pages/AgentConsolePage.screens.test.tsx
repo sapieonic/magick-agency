@@ -300,7 +300,7 @@ describe('05 What happened?', () => {
     // own chips (a typed money fact) keep theirs.
     expect(screen.getByTestId('promise-resolved').textContent).toMatch(/^Will pay on \d+ \w{3} · 6,250$/);
     expect(screen.getByTestId('promise-amount').textContent).not.toMatch(/₹/);
-    expect((within(row).getByLabelText('Promised amount') as HTMLInputElement).placeholder).toBe('12,500');
+    expect((within(row).getByLabelText('Amount') as HTMLInputElement).placeholder).toBe('12,500');
     expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
     expect(screen.getByTestId('promise-follow-up').textContent).toMatch(/^We will call again on \d+ \w{3}\.$/);
     act(() => {
