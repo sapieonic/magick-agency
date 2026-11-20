@@ -477,9 +477,11 @@ Rules that apply to every item (root `CLAUDE.md`):
    - Update decision LF13 in `docs/decisions.md`.
 3. **Edge cases.**
    - Offline with no socket: cannot be sent. BE-11 covers it.
-   - Spam: raise is idempotent while open, but raise, cancel, raise chimes each time. Add a
-     server rule: at most one new request per session per 30 seconds, else
-     `429 help_too_soon` (a new code: union, list and snapshot in `errors.ts`). To decide.
+   - Spam: raise is idempotent while open, but raise, cancel, raise is a new request each time.
+     **Decided: no throttle, no `429 help_too_soon`** (`docs/decisions.md` LF41): a raise while
+     open changes nothing, a new one needs the agent's Cancel first (both audited), supervisors'
+     consoles chime at most once per 5 s alerts poll, and the per-user rate limit bounds the
+     writes. A new error code would reach every older build as an unknown refusal (AS18).
    - Mobile on `device_away`: the app is in the background and cannot press it. Fine.
    - Media workers: the route is session-owned (`api/core-owners.ts`), unchanged.
    - Old mobile builds show Need help only on call and wrap-up. They keep working.
@@ -799,7 +801,7 @@ migration.
 | `src/agency/station.ts` | `AgencyReservedAttempt.callback`, `.facts`; capabilities `ai_assist` (and `queue_pool` if needed); frames `outcome_suggestion`, `ai_line`; `ready.outcome_suggestion` | Optional fields, new frames behind a capability |
 | `src/agency/session.ts` | `AgencyContextDisplay.roles`, `.types`; `AgencySessionBootstrap.script`; `AgencyDisposition.icon`; `AgencyBreakReason.icon`; `AGENCY_TILE_ICONS` | Optional fields, one new closed list |
 | `src/agency/floor-assist.ts` | `AgencySessionHelp.state_at_raise` | Optional field |
-| `src/errors.ts` | `help_too_soon` (if adopted) | Union, list and snapshot |
+| `src/errors.ts` | ~~`help_too_soon`~~ not adopted (LF41) | None |
 | `src/flags.ts` | `agency_station_ai_enabled` | New flag, plus the server registry |
 | `src/api/agency/agency-campaign.ts` | `daily_target_calls`, `agent_script`, `ai_assist` on the campaign wire types | Optional fields |
 | `fixtures/agent/*.json` | `session.json`, `station.json`, `floor-assist.json`, `reads.json`, `literals.json` | Regenerate with `tooling/contracts-literals.mjs` |
