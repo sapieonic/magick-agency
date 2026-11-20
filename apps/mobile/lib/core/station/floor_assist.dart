@@ -207,7 +207,7 @@ final class FloorAssistState {
   FloorAssistState dismissNotice() => notice == null ? this : _with(notice: null);
 
   /// The station's help card, with what the controller holds beside it (a request in flight, a refusal).
-  HelpView helpView({required HelpBusy busy, String? error, required DateTime Function(DateTime server) toDevice}) {
+  HelpView helpView({required HelpBusy busy, String? error, required DateTime Function(DateTime server) toDevice, bool onlyOnCall = false}) {
     final open = help;
     final stage = switch (busy) {
       HelpBusy.raising => HelpStage.raising,
@@ -221,6 +221,7 @@ final class FloorAssistState {
       notice: n?.text,
       noticeTone: n == null ? null : (n.expired ? HelpNoticeTone.warning : HelpNoticeTone.success),
       error: error,
+      onlyOnCall: onlyOnCall,
     );
   }
 

@@ -175,6 +175,50 @@ class StationViewMapper {
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
       help: help,
+      script: _scriptFor(bootstrap?.script),
+      maskPhone: bootstrap?.masksPhone ?? false,
+    );
+  }
+
+  wire.AgentScript? _scriptSource;
+  ScriptView? _script;
+
+  /// The campaign's script (BE-8), as plain lines; null without one.
+  ScriptView? _scriptFor(wire.AgentScript? script) {
+    if (identical(script, _scriptSource)) return _script;
+    _scriptSource = script;
+    if (script == null) return _script = null;
+    return _script = ScriptView(
+      opening: script.opening?.trim(),
+      steps: List.unmodifiable([for (final s in script.steps) s.text.trim()]),
+    );
+  }
+
+  /// A supervisor's tile picture (BE-13) by its name; null for none.
+  static TilePicture? pictureOf(wire.TileIcon? icon) => icon == null ? null : TilePicture.values.asNameMap()[icon.name];
+
+  /// The panel's typed facts (BE-6) as the card shows them; null when the server sent none.
+  static FactsView? factsOf(wire.CustomerFacts? facts) {
+    if (facts == null) return null;
+    String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+    return FactsView(
+      name: clean(facts.name),
+      place: clean(facts.place),
+      tiles: List.unmodifiable([
+        for (final t in facts.tiles)
+          FactTileView(
+            label: t.column,
+            raw: t.raw,
+            kind: switch (t.type) {
+              wire.ContextFieldType.money => FactKind.money,
+              wire.ContextFieldType.date => FactKind.date,
+              _ => FactKind.text,
+            },
+            parsed: t.value,
+            amountDue: t.role == wire.FactTileRole.amountDue,
+            dueDate: t.role == wire.FactTileRole.dueDate,
+          ),
+      ]),
     );
   }
 
@@ -357,7 +401,7 @@ class StationViewMapper {
   List<BreakOption> _breakOptionsFor(List<wire.BreakReason> reasons) {
     if (identical(reasons, _breakSource)) return _breakOptions;
     _breakSource = reasons;
-    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label, limitMinutes: r.limitMinutes)));
+    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label, limitMinutes: r.limitMinutes, icon: pictureOf(r.icon))));
   }
 
   List<DispositionOption> _dispositionsFor(List<wire.Disposition> catalog) {
@@ -373,6 +417,7 @@ class StationViewMapper {
         suppresses: d.suppress ?? false,
         requiresPromise: d.promiseRequired,
         promiseFollowUpDays: d.promiseFollowUpDays,
+        icon: pictureOf(d.icon),
       ),
     ));
   }
@@ -432,6 +477,8 @@ class StationViewMapper {
         redialNumber: previous.redialNumber,
         redialLimit: previous.redialLimit,
         promise: previous.promise,
+        callback: previous.callback,
+        facts: previous.facts,
       );
     }
     _callOffset = _offset;
@@ -460,6 +507,10 @@ class StationViewMapper {
       redialNumber: attempt.redial?.number,
       redialLimit: attempt.redial?.limit,
       promise: promiseViewFor(attempt.promise),
+      callback: attempt.callback == null
+          ? null
+          : CallLaterTag(dueAt: correctedInstant(attempt.callback!.dueAt, _offset)!, bookedByMe: attempt.callback!.bookedByMe),
+      facts: factsOf(attempt.facts),
     );
   }
 
