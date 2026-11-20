@@ -2835,7 +2835,7 @@ Files: `inbound_call_api.dart`, `inbound_call_rules.dart`, `inbound_copy.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/core/inbound/inbound_call_api_test.dart` | ~9 |
+| `apps/mobile/test/core/inbound/inbound_call_api_test.dart` (with the refusals, rules, notices and notifications in the station's words, an unknown code's safe line never the server's sentence, AS15) | 10 |
 | `apps/mobile/test/core/inbound/inbound_call_rules_test.dart` | ~19 |
 
 ### `apps/mobile/lib/core/ring/` (with `features/ring/` and the Me card)
@@ -2953,10 +2953,10 @@ Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `p
 | `apps/mobile/test/features/performance/performance_screen_test.dart` | ~9 |
 | `apps/mobile/test/features/performance/readouts_test.dart` | ~21 |
 | `apps/mobile/test/features/performance/stats_windows_test.dart` | ~16 |
-| `apps/mobile/test/features/calls/attempt_copy_test.dart` | ~5 |
+| `apps/mobile/test/features/calls/attempt_copy_test.dart` (with each row's number masked from its `phone_display`, AS9) | 7 |
 | `apps/mobile/test/features/calls/attempt_filters_test.dart` | ~11 |
 | `apps/mobile/test/features/calls/calls_controller_test.dart` | ~15 |
-| `apps/mobile/test/features/calls/calls_screen_test.dart` | ~11 |
+| `apps/mobile/test/features/calls/calls_screen_test.dart` (with a masked row in the list and its detail, AS9) | 13 |
 | `apps/mobile/test/features/calls/debouncer_test.dart` | ~2 |
 | `apps/mobile/test/features/calls/softphone_calls_controller_test.dart` | ~18 |
 | `apps/mobile/test/features/calls/softphone_calls_screen_test.dart` | ~18 |
@@ -2977,7 +2977,7 @@ Files: `my_contacts_api.dart`, `my_contacts_controller.dart`, `my_contacts_copy.
 |---|---|
 | `apps/mobile/test/features/contacts/my_contacts_controller_test.dart` | ~31 |
 | `apps/mobile/test/features/contacts/my_contacts_copy_test.dart` | ~8 |
-| `apps/mobile/test/features/contacts/my_contacts_screen_test.dart` | ~16 |
+| `apps/mobile/test/features/contacts/my_contacts_screen_test.dart` (with a contact's number masked from its `phone_display`, on screen and in the Call button's label, AS9) | 17 |
 
 ### `apps/mobile/lib/features/customers/`
 
@@ -3035,7 +3035,7 @@ Start of day after the join, Ready and No calls right now (My day, `MyDayCard`; 
 (`CustomerCard`, no button, AS11) and `LastCallsCard`; `parts/on_call_view.dart` On call (04c, Mute,
 Speaker); `parts/wrapup_view.dart` What happened? (`OutcomeTiles` with More past nine, `FollowUpRow`
 and `showFollowUpSheet` with the call-later line it is given, `SpeakNoteButton`, Save & take break,
-Call again; `DispositionGrid` stays for the soft phone); `parts/on_call_view.dart`'s
+Call again; the soft phone's What happened? uses the same `OutcomeTiles`, with `readAloud` off while the call is live); `parts/on_call_view.dart`'s
 `DontCallAgainRow` on On call and What happened? when the list has no stop tile; `parts/sheets.dart` Which break?,
 Finish work and the Don't call again confirm (`confirmSheet`); `parts/link_screens.dart` Internet
 problem (09) and Open on another device (12); `parts/call_band.dart` the call's band (Call problem, 10).
@@ -3060,11 +3060,11 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/features/preflight/device_preflight_checks_test.dart` | ~15 |
-| `apps/mobile/test/features/preflight/preflight_screen_test.dart` (Start of day: the tiles, 01b's band, steps and fix where Start work was, Start work's press handed to the station) | ~22 |
+| `apps/mobile/test/features/preflight/preflight_screen_test.dart` (Start of day: the tiles, 01b's band, steps and fix where Start work was, Start work's press handed to the station; the join screens in the station's words, as the console's `StationJoinScreens`) | 22 |
 | `apps/mobile/test/features/station/station_a11y_test.dart` (Slide to end call: short slides, one fire, haptics, a call ending under it, none on Call coming, the screen reader's confirm; announcements; 200% text) | ~16 |
 | `apps/mobile/test/features/station/station_contrast_test.dart` (with every `StationTone`, light and dark: band ink, deep on card and tint, go and stop) | ~5 |
 | `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help in the top bar behind the flag, on every working screen (on calls only after an older server's `help_not_on_call`), asking, "Help asked · 0:42" ticking and cancelling, only the status a live region (never the ticking age), Cancel's semantics, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break against its limit: left rounded up (never "0:00 left"), Break over in red-orange with how late, none without a limit or on a reserved code, 200% text) | 20 |
-| `apps/mobile/test/features/station/station_copy_jargon_test.dart` (AS15, spec §6.6: every literal of `StationCopy`, `InboundCopy` and `FloorAssistCopy`, read from the source, says none of the jargon list in `test/support/station_jargon.dart`) | 4 |
+| `apps/mobile/test/features/station/station_copy_jargon_test.dart` (AS15, spec §6.6: every literal of `StationCopy`, `InboundCopy`, `FloorAssistCopy` and `PreflightCopy`, read from the source, and the soft phone's What happened? lines with the shared block and promise lines, say none of the jargon list in `test/support/station_jargon.dart`) | 6 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (Ready's "Dialling a customer…", the count line, ringing over No calls right now, stopped calls unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` (Internet problem and Call problem, Try again now only once the retries gave up, Need help offline, another device, work ended) | ~12 |
 | `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: Monitoring and recording under ⋮ More and on both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; Start of day's line; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 15 |
@@ -3094,7 +3094,7 @@ Files: `phone_screen.dart`, `softphone_copy.dart`, `softphone_panel.dart`, `part
 |---|---|
 | `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~30 |
 | `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~18 |
-| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | 57 |
+| `apps/mobile/test/features/softphone/softphone_panel_test.dart` (with What happened? in the station's look and words: the tiles, no badges, no speaker while the call is live, Call when? and who makes the call) | 58 |
 
 ### `apps/mobile/packages/agency_wire/`
 
