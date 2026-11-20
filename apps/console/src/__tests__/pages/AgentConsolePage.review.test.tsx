@@ -44,7 +44,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import { STATION_COPY, breakRefusedLine } from '../../utils/agency/stationCopy';
+import { STATION_COPY } from '../../utils/agency/stationCopy';
 import { FakeSocket, latestSocket as latest } from '../helpers/fakeSocket';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { ApiError } from '../../api/client';
@@ -204,7 +204,7 @@ describe('a refused break is said (item 1)', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('break-tea'));
     });
-    expect(screen.getByTestId('break-rejection').textContent).toBe(breakRefusedLine('manual_call_live'));
+    expect(screen.getByTestId('break-rejection').textContent).toBe('Finish your call on the soft phone and save it first.');
     fireEvent.click(screen.getByTestId('which-break-cancel'));
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByTestId('take-break'));
