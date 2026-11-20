@@ -75,6 +75,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // "hang up without an apology" — so this key must survive `v === undefined`
   // filtering in `update()`, which it does, and must not be defaulted anywhere.
   'abandon_announcement_id',
+  // Agent station (0056, BE-2): each agent's daily target, patchable at any status. `null`
+  // clears it (no target), so it must survive the `v === undefined` filter, which it does.
+  'daily_target_calls',
 ]);
 
 /**
@@ -134,6 +137,8 @@ export class AgencyCampaignRepository {
     outcome_dispositions?: unknown;
     /** Omitted ⇒ `true`, the column DEFAULT (0024). */
     inbound_sticky_enabled?: boolean;
+    /** Agent station (0056, BE-2). Omitted or null ⇒ NULL, no target. */
+    daily_target_calls?: number | null;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -168,7 +173,7 @@ export class AgencyCampaignRepository {
     // If you change a default here, change it in the schema too.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
-         (${CAMPAIGN_INSERT_COLUMNS_SQL})
+         (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls)
        VALUES ($1,$2,$3,$4,COALESCE($5,'voicelink'),
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
@@ -176,7 +181,8 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true))
+               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true),
+               $32::integer)
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -209,6 +215,9 @@ export class AgencyCampaignRepository {
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
         // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
         input.inbound_sticky_enabled ?? null,
+        // Agent station (0056, BE-2): outside the shared column list, so the retry create's
+        // positions do not move (it copies the parent's itself). NULL: no target.
+        input.daily_target_calls ?? null,
       ],
     );
     return rows[0]!;

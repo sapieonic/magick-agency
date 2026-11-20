@@ -29,6 +29,8 @@ import type {
   AgencyOutcomeDispositions,
   AgencyOverrideKind,
   CarrierAccountPauseReason,
+  AgencyAgentScript,
+  AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -120,6 +122,15 @@ export interface AgencyCampaignRecord {
   agent_retry_cooldown_minutes: number;
   /** Inbound calls (0024, docs/inbound.md §4.1): this campaign's customers who ring in are put through to their own agent. */
   inbound_sticky_enabled: boolean;
+  /**
+   * Agent station (0056, BE-2, AS6): each agent's daily target in connected calls, 1 to
+   * `AGENCY_DAILY_TARGET_CALLS_MAX`; null: no target. Served on the campaign and in My day.
+   */
+  daily_target_calls: number | null;
+  /** Agent station (0056, AS9): how the station shows the customer's number. Copied by a retry. */
+  phone_display: AgencyPhoneDisplay;
+  /** Agent station (0056, BE-8): the agents' script; `{}` is none. Copied by a retry. */
+  agent_script: AgencyAgentScript | Record<string, never>;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
@@ -426,6 +437,19 @@ export interface AgencyContactRecord {
   promise_due_until: Date | null;
   promise_call_at: Date | null;
   promise_followed_up_at: Date | null;
+  /**
+   * Inbound calls (0024, docs/inbound.md §7): `'inbound'` while the customer's call-back after
+   * an inbound call that reached nobody is booked; NULL otherwise. Cleared by the next settled call.
+   */
+  callback_source: string | null;
+  /**
+   * Agent station (0057, BE-3): the agent whose own outcome (or promise follow-up) booked the
+   * pending call-later, and when; both NULL when none is recorded. Stamped by the disposition's
+   * contact write (`releaseFromDisposition`), never on a supervisor's on-behalf save; cleared by
+   * the contact's next settled call.
+   */
+  callback_booked_by_user_id: string | null;
+  callback_booked_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
