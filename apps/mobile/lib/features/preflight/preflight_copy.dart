@@ -55,7 +55,7 @@ abstract final class PreflightCopy {
 
   // Network.
   static const network = 'Internet';
-  static const offline = 'No connection — you can’t take calls offline.';
+  static const offline = 'No internet — you can’t take calls without it.';
   static const unreachable = 'We couldn’t reach Magick Agency.';
   static String noAnswer(String? transport) =>
       'Too slow for calls — you’re connected${transport == null ? '' : ' ($transport)'}, but Magick Agency took too long to answer. Move to better signal or Wi-Fi.';
@@ -84,26 +84,28 @@ abstract final class PreflightCopy {
   static const blockedMic = 'Allow the microphone to take calls.';
   static const blockedNetwork = 'You need a working connection to take calls.';
 
-  // Join outcomes.
-  static const elsewhereTitle = 'You’re still at another station';
-  static String elsewhereDetail(String campaign, String state, String? account) =>
-      'You’re joined to $campaign${account == null || account.trim().isEmpty ? '' : ' in $account'} — ${state.toLowerCase()}. You can only be at one station at a time.';
-  static String elsewhereRemedyMidCall(String campaign) =>
-      'Finish what you’re doing on $campaign, leave that station, then come back here.';
-  static String elsewhereRemedy(String campaign) => 'Leave $campaign first, then come back here.';
-  static String switchAction(String campaign) => 'Leave $campaign and join here';
-  static const switchConfirmTitle = 'Leave that station?';
-  static String switchConfirmMessage(String campaign) => 'This closes your session on $campaign and joins this campaign right after.';
-  static const switchConfirmAction = 'Leave & join here';
+  // Join outcomes: the station's own words (AS15), as the console's join screens say them
+  // (`StationJoinScreens.tsx`, `stationCopy.ts`'s `otherWork…`, `softphoneJoin…`, `joinFailed…`).
+  // [doing] is what the agent is doing there, in words (`joinDoingWords`).
+  static const elsewhereTitle = 'You are working somewhere else';
+  static const elsewhereSubtitle = 'You can work on only one list at a time.';
+  static String elsewhereDetail(String work, String doing, String? account) =>
+      'You are on $work${account == null || account.trim().isEmpty ? '' : ' in ${account.trim()}'}, $doing.';
+  static String elsewhereRemedyMidCall(String work) => 'Finish the call on $work first, then come back here.';
+  static String elsewhereRemedy(String work) => 'Leave $work first, then come back here.';
+  static String switchAction(String work) => 'Leave $work and work here';
+  static String switchConfirmTitle(String work) => 'Leave $work?';
+  static String switchConfirmMessage(String work) => 'We will close your work on $work and start it here.';
+  static const switchConfirmAction = 'Leave and work here';
 
-  static const softphoneTitle = 'You’re on the soft phone';
-  static const softphoneDetail = 'You can only have one session at a time, and yours is the soft phone.';
-  static const softphoneRemedy = 'Close it to join this campaign.';
-  static const softphoneCloseAndJoin = 'Close the soft phone and join';
+  static const softphoneTitle = 'You are on the soft phone';
+  static const softphoneDetail = 'Your soft phone is still open.';
+  static const softphoneRemedy = 'You can use one at a time. Close the soft phone to start work here.';
+  static const softphoneCloseAndJoin = 'Close the soft phone and start here';
   static const tryAgain = 'Try again';
 
-  static const refusedTitle = 'Can’t open the station';
-  static const startFailed = 'Couldn’t open the station. Check your connection and try again.';
-  static const backToCampaigns = 'Back to campaigns';
-  static const cancel = 'Cancel';
+  static const refusedTitle = 'Your work did not open';
+  static const startFailed = 'We could not open your work just now. Check your internet and try again.';
+  static const backToCampaigns = 'Back to my work list';
+  static const cancel = 'No, stay';
 }

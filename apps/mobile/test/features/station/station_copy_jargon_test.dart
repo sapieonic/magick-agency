@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../support/station_jargon.dart';
 
 /// AS15, spec §6.6: the station's own words never use the jargon on the spec's list. Every string
-/// literal in `StationCopy`, `InboundCopy` and `FloorAssistCopy` is read from the source (Dart has
-/// no reflection to call each one) and checked, so a new line that says "campaign" or "outcome"
+/// literal in `StationCopy`, `InboundCopy`, `FloorAssistCopy` and `PreflightCopy` (Start of day and
+/// its join screens) is read from the source (Dart has no reflection to call each one) and checked, so a new line that says "campaign" or "outcome"
 /// goes red, used or not.
 void main() {
   /// The body of `abstract final class [name]` in [path], comments taken out.
@@ -56,6 +56,7 @@ void main() {
     ('lib/features/station/station_copy.dart', 'StationCopy'),
     ('lib/features/station/station_copy.dart', 'InboundCopy'),
     ('lib/core/station/floor_assist.dart', 'FloorAssistCopy'),
+    ('lib/features/preflight/preflight_copy.dart', 'PreflightCopy'),
   ]) {
     test('$name says none of the jargon', () {
       final found = literals(classBody(path, name));

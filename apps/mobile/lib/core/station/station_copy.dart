@@ -95,6 +95,19 @@ const Map<AgentState, String> agentStateLabels = {
 
 String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[state] ?? (raw ?? 'Unknown');
 
+/// What the agent is doing on another list, in the station's words (the console's `DOING_WORDS`):
+/// "You are on Renewals, on a call."
+const Map<AgentState, String> joinDoingWords = {
+  AgentState.offline: 'not started yet',
+  AgentState.available: 'ready for calls',
+  AgentState.reserved: 'with a call coming',
+  AgentState.onCall: 'on a call',
+  AgentState.wrapup: 'choosing what happened',
+  AgentState.onBreak: 'on a break',
+};
+
+String joinDoing(AgentState state) => joinDoingWords[state] ?? 'working';
+
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
 

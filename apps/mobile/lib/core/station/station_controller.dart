@@ -498,7 +498,7 @@ class StationController extends Notifier<StationView?>
           sessionId: c.canLeave ? c.sessionId! : (ownThere ? own.id : ''),
           campaignId: c.campaignId,
           campaignName: c.campaignName,
-          stateLabel: agentStateLabel(c.state, c.stateRaw),
+          stateLabel: joinDoing(c.state),
           canLeave: !conflictIsMidCall(c.state),
           accountId: c.canLeave ? c.accountId : null,
           accountName: c.accountName,

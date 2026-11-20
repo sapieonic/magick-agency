@@ -87,7 +87,7 @@ void main() {
     test('409 session_on_other_campaign → StationElsewhere, leavable unless mid-call', () {
       fakeAsync((async) {
         final app = App(async);
-        for (final (state, label, canLeave) in [('break', 'On break', true), ('on_call', 'On a call', false)]) {
+        for (final (state, label, canLeave) in [('break', 'on a break', true), ('on_call', 'on a call', false)]) {
           app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {
                 'error': 'Conflict',
                 'code': 'session_on_other_campaign',
