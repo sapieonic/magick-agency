@@ -49,6 +49,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     allow_agent_retry: false, agent_retry_rounds: 1, agent_retry_cooldown_minutes: 30, inbound_sticky_enabled: true,
     retry_policy: {} as never, disposition_catalog: [], outcome_dispositions: {}, break_reasons: [],
     context_display: {} as never, record_calls: false, analysis_profile_id: null,
+    agent_script: {},
     status: 'running',
     abandonment_ceiling_pct: 3, pause_reason: null, paused_at: null,
     pause_abandonment_rate_pct: null,
