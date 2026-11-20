@@ -164,9 +164,6 @@ const END_CALL_COPY: HoldToConfirmCopy = {
   analyticsControl: 'hangup',
 };
 
-/** Read aloud where it must not speak: a live call, whose customer could hear it. */
-const NO_READ_ALOUD = { available: false, say: () => {}, stop: () => {} };
-
 /** 02b's "The last call did not connect": how long it stays (or until the next call). */
 export const LAST_CALL_BANNER_MS = 6_000;
 
@@ -1084,8 +1081,8 @@ function StationScreen({
           {card ? <CustomerCardView card={card} /> : <section className={stationStyles.card} />}
           {filledScript?.opening ? (
             <div className={stationStyles.col}>
-              {/* Its speaker only before the customer is on the line (the speech could reach them). */}
-              <ScriptOpeningCard line={filledScript.opening} readAloud={live?.bridgedAt ? NO_READ_ALOUD : readAloud} />
+              {/* Its speaker is safe here: Call coming is never on screen once the customer is on the line (that is On call). */}
+              <ScriptOpeningCard line={filledScript.opening} readAloud={readAloud} />
               {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
             </div>
           ) : panelAttempt ? (
