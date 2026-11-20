@@ -1940,7 +1940,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts` (a
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
 | `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
 | `apps/console/src/__tests__/api/reports.test.ts` | 13 |
-| `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
+| `apps/console/src/__tests__/api/softphone.test.ts` | 15 |
 | `apps/console/src/__tests__/api/stationDevice.test.ts` | 5 |
 | `apps/console/src/__tests__/api/tenants.test.ts` | 6 |
 
@@ -1999,7 +1999,7 @@ Agent station redesign, supervisor side (`docs/agent-station.md`): `layout/Super
 | `apps/console/src/__tests__/components/DialerUnavailable.test.tsx` | 3 |
 | `apps/console/src/__tests__/components/DispositionOverrideGroup.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/OutcomeDispositionMap.test.tsx` | 13 |
-| `apps/console/src/__tests__/components/PromiseToPay.test.tsx` (What happened?'s pay date row, Full and Half with no ₹, its date bounds, the refusal copy) | 10 |
+| `apps/console/src/__tests__/components/PromiseToPay.test.tsx` (What happened?'s pay date row, Full and Half with no ₹, its date bounds, the refusal copy) | 11 |
 | `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
@@ -2007,7 +2007,7 @@ Agent station redesign, supervisor side (`docs/agent-station.md`): `layout/Super
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/InsightsHeadline.test.tsx` | ~26 |
 | `apps/console/src/__tests__/components/InsightsSections.test.tsx` | ~39 |
-| `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 21 |
+| `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 23 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
 | `apps/console/src/__tests__/components/PhoneFilterInput.test.tsx` | 8 |
@@ -2193,7 +2193,7 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/contexts/ThemeContext.test.tsx` (AS14: light unless the user chose dark; the old key ignored; only a choice stored) | 4 |
+| `apps/console/src/__tests__/contexts/ThemeContext.test.tsx` (AS14: light unless the user chose dark; the old key ignored; only a choice stored) | 6 |
 | `apps/console/src/__tests__/contexts/AuthContext.lazyInit.test.tsx` | 2 |
 | `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 46 |
 | `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 16 |
@@ -2277,7 +2277,7 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 57 |
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.softphone.test.tsx` | 3 |
-| `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 47 |
+| `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 48 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 10 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 54 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.dialActivity.test.tsx` (late binding's hidden dials on Ready and in the band, from the server's frame sequences: "Calling a customer…", the unanswered count, the gap hold, `reserved`, `ready`, paused, break, No calls right now, early binding unchanged) | 20 |
@@ -2286,7 +2286,7 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/AgentConsolePage.redial.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` (with the soft phone in the station's look: the keypad and Call faded with its reason, the customer's card while calling, the ringing warning, End call held, On call, What happened?'s tiles and Save's reasons, Don't call again asked first) | 35 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` (with the soft phone in the station's look: the keypad and Call faded with its reason, the customer's card while calling, the ringing warning, End call held, On call, What happened?'s tiles and Save's reasons, Don't call again asked first) | 36 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` (one state, one screen; the keyboard path through a whole call; focus once per call; the hang-up, the refusal, the missed release, the queued break, 12 and 10) | 42 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.screens.test.tsx` (the redesign's screens the older files do not reach: Start of day's checks and 01b, Enter as the main action, My day from my-day and its fallback, the call-later list and Finish work's line, the tiles and follow-up, Save before a tile is picked, Save & take break, Which break?'s limits, read aloud and Speak a note, 04's card; 03 and 04 with typed facts, the call-later tag, the masked number and the script; the supervisor's tile pictures drawn with the shared `TileIcon`) | 25 |
@@ -2311,7 +2311,7 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/SettingsHub.test.tsx` | 37 |
 | `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 5 |
-| `apps/console/src/__tests__/pages/SoftphonePage.test.tsx` (its screens before the soft phone opens in the station's frame, with no jargon and no server sentence) | 31 |
+| `apps/console/src/__tests__/pages/SoftphonePage.test.tsx` (its screens before the soft phone opens in the station's frame, with no jargon and no server sentence) | 32 |
 | `apps/console/src/__tests__/pages/SoftphoneSettingsPage.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
 | `apps/console/src/__tests__/pages/TeamPage.accountLabel.test.ts` | 3 |
@@ -2429,11 +2429,11 @@ Agent station redesign, supervisor side: `agency/stationSettings.ts` (campaign S
 | `apps/console/src/__tests__/utils/agencyStationLiveness.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/agencyStationQueue.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` (with `dialActivity`) | 32 |
-| `apps/console/src/__tests__/utils/stationView.test.ts` (one screen per input, the bands, one main action per screen, Need help on every working screen (BE-9), ⋮ More's items by screen, the band over an inbound call and the soft phone) | 54 |
-| `apps/console/src/__tests__/utils/stationParts.test.ts` (₹ and dates, the tile layout and pictures (the supervisor's pick first), the customer card from typed facts and from guesses, the call-later tag, the masked number, Last calls, my-day's shapes and the fallback list, the script's placeholders, the device checks, the release and help words, the `en-IN` voice; a promised amount with no ₹ (PT5)) | 28 |
+| `apps/console/src/__tests__/utils/stationView.test.ts` (one screen per input, the bands, one main action per screen, Need help on every working screen (BE-9), ⋮ More's items by screen, the band over an inbound call and the soft phone) | 57 |
+| `apps/console/src/__tests__/utils/stationParts.test.ts` (₹ and dates, the tile layout and pictures (the supervisor's pick first), the customer card from typed facts and from guesses, the call-later tag, the masked number, Last calls, my-day's shapes and the fallback list, the script's placeholders, the device checks, the release and help words, the `en-IN` voice; a promised amount with no ₹ (PT5)) | 29 |
 | `apps/console/src/__tests__/utils/agentHome.test.ts` (the work picker: each status in plain words, which lists open, the call-later line, the bands, no jargon) | 20 |
 | `apps/console/src/__tests__/utils/sideViewCopy.test.ts` (the side views' words never use spec §6.6's jargon or "route", "soft phone", "inbound", "outcome"; Save's blocks; the customer card for an inbound caller, a withheld one and a soft-phone call; the hooks' lines too: every soft-phone and inbound refusal code, the pad, Save and announcement words, the override dialog, how a call ended, the way out; never the server's sentence) | 29 |
-| `apps/console/src/__tests__/utils/stationCopy.test.ts` (the station's words never use spec §6.6's jargon, and spell the British way; every refusal line for every server code, the microphone, inbound and save lines included; why work did not open, by code then status, and the switch's three failures; Need help's, the break's and the soft phone switch's and return's lines) | 21 |
+| `apps/console/src/__tests__/utils/stationCopy.test.ts` (the station's words never use spec §6.6's jargon, and spell the British way; every refusal line for every server code, the microphone, inbound and save lines included; why work did not open, by code then status, and the switch's three failures; Need help's, the break's and the soft phone switch's and return's lines) | 22 |
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 41 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 35 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 23 |
@@ -2488,7 +2488,7 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` (and Need help's rows, order and chip, break rows on the reason's limit, LF28, LF33) | 32 |
 | `apps/console/src/__tests__/utils/floorAssist.test.ts` (messages and their refusals, Send reminder's words, Need help's keys, the chime's setting without storage, its silence and one play at most waiting on a suspended context, the hand-off's offer and words (its receivers the plan's, not every free agent), the Callbacks page's words and paging) | 21 |
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 7 |
-| `apps/console/src/__tests__/utils/stationSettings.test.ts` (the station's campaign settings, AS6, AS9, BE-6, BE-8: read from the campaign, malformed as unset; the target's 1–2,000 and `null`; the mask; the script's placeholders, bounds by code point, 12 steps, the trimmed payload and the caret insert; the facts' two-roles and hidden rules, the merge into the stored display, Text as no entry, the offered columns; the changes counted, only changed settings sent, only changed ones judged) | 20 |
+| `apps/console/src/__tests__/utils/stationSettings.test.ts` (the station's campaign settings, AS6, AS9, BE-6, BE-8: read from the campaign, malformed as unset; the target's 1–2,000 and `null`; the mask; the script's placeholders, bounds by code point, 12 steps, the trimmed payload and the caret insert; the facts' two-roles and hidden rules, the merge into the stored display, Text as no entry, the offered columns; the changes counted, only changed settings sent, only changed ones judged) | 19 |
 | `apps/console/src/__tests__/utils/floorAlerts.test.ts` (AS16: each kind in words, minutes over on the server's clock, the fallback name, unknown kinds left out, Need help quiet on Live floor only) | 5 |
 | `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 83 |
 
