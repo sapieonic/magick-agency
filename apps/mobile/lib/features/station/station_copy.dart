@@ -626,12 +626,13 @@ abstract final class InboundCopy {
   // ── Who rang ──
   static const numberWithheld = 'Number withheld';
 
-  /// Who is on the line, in the fewest words: the name, else the number, else "Number withheld".
-  static String who(InboundCallView call) {
+  /// Who is on the line, in the fewest words: the name, else the number (masked when the campaign
+  /// masks numbers, AS9), else "Number withheld".
+  static String who(InboundCallView call, {required bool masked}) {
     final name = call.displayName?.trim();
     if (name != null && name.isNotEmpty) return name;
     final from = call.fromE164;
-    return from == null ? numberWithheld : formatPhone(from);
+    return from == null ? numberWithheld : stationPhone(from, masked: masked);
   }
   static const inboundCall = 'Inbound call';
 

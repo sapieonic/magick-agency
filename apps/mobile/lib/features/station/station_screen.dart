@@ -331,7 +331,7 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
           away: v?.onBreak?.isDeviceAway ?? false,
           softphone: onSoftphoneBreak(v),
           label: v?.onBreak?.label,
-          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!, masked: v.maskPhone),
           callless: v?.phase == AgentPhase.reserved && v?.call == null && v?.inbound == null,
         ),
       ),

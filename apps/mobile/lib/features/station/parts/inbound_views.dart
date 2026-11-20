@@ -103,6 +103,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
     final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved));
     final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
     final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     if (call == null) return const SizedBox.shrink();
     final text = Theme.of(context).textTheme;
     final selected = findDisposition(options, _form.code);
@@ -110,7 +111,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
 
     return CallPage(
       body: [
-        Semantics(header: true, child: Text(StationCopy.howDidItGo(InboundCopy.who(call)), style: text.labelMedium)),
+        Semantics(header: true, child: Text(StationCopy.howDidItGo(InboundCopy.who(call, masked: masked)), style: text.labelMedium)),
         const SizedBox(height: Space.xs),
         Text(
           InboundCopy.catalogHint(call.catalogKind, campaignName: call.campaignName, routeName: call.routeName),
@@ -185,7 +186,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
         title: StationCopy.suppressConfirmTitle,
         message: InboundCopy.suppressConfirmBody(
           option.label,
-          number: formatPhone(from),
+          number: stationPhone(from, masked: view.maskPhone),
           campaignName: call.matched ? call.campaignName : null,
         ),
         confirm: StationCopy.suppressConfirmAction,
@@ -263,19 +264,21 @@ class _InboundSaveArea extends ConsumerWidget {
 // ─── The caller ─────────────────────────────────────────────────────────────
 
 /// "Rahul Deshpande" over "+91 87654 32109 · Inbound call"; the number leads when no contact
-/// matched, and "Number withheld" when the caller hid it.
-class InboundHeadline extends StatelessWidget {
+/// matched, and "Number withheld" when the caller hid it. Masked when the campaign masks numbers
+/// (AS9).
+class InboundHeadline extends ConsumerWidget {
   const InboundHeadline({super.key, required this.call});
 
   final InboundCallView call;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     final name = call.displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
     final from = call.fromE164;
-    final number = from == null ? InboundCopy.numberWithheld : formatPhone(from);
+    final number = from == null ? InboundCopy.numberWithheld : stationPhone(from, masked: masked);
     return MergeSemantics(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -657,7 +660,7 @@ Future<void> markInboundDnc(BuildContext context) async {
   final ok = await confirmDialog(
     context,
     title: InboundCopy.dncTitle,
-    message: InboundCopy.dncMessage(formatPhone(from), call.campaignName),
+    message: InboundCopy.dncMessage(stationPhone(from, masked: view.maskPhone), call.campaignName),
     confirm: InboundCopy.dncAction,
     danger: true,
     scope: scope,
@@ -694,7 +697,7 @@ Future<void> showInboundDetailsSheet(BuildContext context, InboundCallView call)
             children: [
               Semantics(header: true, child: Text(InboundCopy.detailsTitle, style: text.titleLarge)),
               const SizedBox(height: Space.xs),
-              Text(InboundCopy.who(call), style: text.bodySmall),
+              Text(InboundCopy.who(call, masked: view?.maskPhone ?? false), style: text.bodySmall),
               const SizedBox(height: Space.md),
               InboundFacts(call: call),
               const SizedBox(height: Space.md),

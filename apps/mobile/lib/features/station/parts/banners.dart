@@ -367,6 +367,7 @@ class StationTopNotices extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final waiting = ref.watch(stationViewProvider.select((v) => v?.customerWaiting));
     final notice = ref.watch(stationViewProvider.select((v) => v?.inboundNotice));
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     if (waiting == null && notice == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.md),
@@ -374,7 +375,7 @@ class StationTopNotices extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (waiting != null) CustomerWaitingBanner(waiting: waiting),
+          if (waiting != null) CustomerWaitingBanner(waiting: waiting, masked: masked),
           if (waiting != null && notice != null) const SizedBox(height: Space.sm),
           if (notice != null) InboundNoticeLine(text: notice),
         ],
@@ -386,16 +387,19 @@ class StationTopNotices extends ConsumerWidget {
 /// "Your customer is waiting: Rahul Deshpande": a caller who usually speaks to this agent rang
 /// in while they were busy, and is put through to them when this call's work is done.
 class CustomerWaitingBanner extends StatelessWidget {
-  const CustomerWaitingBanner({super.key, required this.waiting});
+  const CustomerWaitingBanner({super.key, required this.waiting, this.masked = false});
 
   final CustomerWaitingView waiting;
+
+  /// The campaign masks numbers (AS9): a caller with no name is `98••• ••321`.
+  final bool masked;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     final from = waiting.fromE164;
-    final who = waiting.name ?? (from == null ? null : formatPhone(from));
+    final who = waiting.name ?? (from == null ? null : stationPhone(from, masked: masked));
     final line = InboundCopy.customerWaiting(who);
     // A live region: said (politely) when it appears and when the caller waiting changes (the
     // label names them), never again on a rebuild with the same words.

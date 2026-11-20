@@ -94,6 +94,7 @@ StationView inboundStation({
   NotesView notes = const NotesView(),
   StationBusy busy = StationBusy.none,
   String? actionError,
+  bool maskPhone = false,
 }) =>
     StationView(
       campaignId: 'c1',
@@ -111,6 +112,7 @@ StationView inboundStation({
       inbound: inbound,
       customerWaiting: waiting,
       inboundNotice: notice,
+      maskPhone: maskPhone,
     );
 
 void main() {
@@ -223,6 +225,30 @@ void main() {
       expect(find.text('Not recorded'), findsOneWidget);
       expect(find.byKey(const Key('inbound-sticky')), findsNothing);
       expect(find.text(InboundCopy.notOnCampaign), findsOneWidget);
+    });
+
+    testWidgets('a campaign that masks numbers (AS9) masks an inbound caller\'s too, on every screen and aloud',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final waitingByNumber = CustomerWaitingView(callId: 'ib-2', since: t0, fromE164: '+919812300321');
+      final views = [
+        inboundStation(inbound: caller(matched: false), waiting: waitingByNumber, maskPhone: true),
+        inboundStation(inbound: caller(matched: false, stage: InboundStage.connected), waiting: waitingByNumber, maskPhone: true),
+        inboundStation(inbound: caller(matched: false, stage: InboundStage.outcome), waiting: waitingByNumber, maskPhone: true),
+      ];
+      final h = await pumpStation(tester, inboundStation(maskPhone: true));
+      for (final v in views) {
+        await h.setView(v);
+        final shown = [
+          for (final w in tester.widgetList<Text>(find.byType(Text))) w.data ?? w.textSpan?.toPlainText() ?? '',
+          tester.getSemantics(find.byKey(const Key('phase-live-region'))).label,
+        ];
+        expect(shown.where((t) => t.contains('87654') || t.contains('8765432109') || t.contains('98123')), isEmpty,
+            reason: '${v.inbound!.stage}: $shown');
+        expect(shown.any((t) => t.contains('87••• ••109')), isTrue, reason: '${v.inbound!.stage}');
+        expect(find.text('Your customer is waiting: 98••• ••321'), findsOneWidget);
+      }
+      semantics.dispose();
     });
 
     testWidgets('a caller on Do Not Call: the badge and why they are still taken; another agent\'s customer',
