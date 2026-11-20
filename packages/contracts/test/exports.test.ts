@@ -4,6 +4,7 @@ import { AgencyApi, PlatformApi } from '../src/index';
 import {
   AGENCY_ABANDON_REASONS,
   AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR,
+  AGENCY_COLLECTIONS_STARTER_CATALOG,
   AGENCY_DEFAULT_DISPOSITION_CATALOG,
   AGENCY_DEFAULT_DISPOSITION_RETRY,
   AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
@@ -209,6 +210,22 @@ describe('package surface', () => {
     // The console wire layer re-exports the same objects rather than copies.
     expect(AgencyApi.AGENCY_DEFAULT_DISPOSITION_CATALOG).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
     expect(AgencyApi.AGENCY_OUR_FAULT_RETRY_DEFAULT).toBe(AGENCY_OUR_FAULT_RETRY_DEFAULT);
+  });
+
+  it('declares the Collections starter set once (AS4; SNAPSHOT, written out by hand)', () => {
+    // New campaign offers it; the server's validators pass it (its own test). A change here is a
+    // deliberate contract change: the six outcomes and their words are the station's (AS15).
+    expect(AGENCY_COLLECTIONS_STARTER_CATALOG).toEqual([
+      { code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true, icon: 'rupee' },
+      { code: 'callback', label: 'Call later', requires_datetime: true, icon: 'clock' },
+      { code: 'no_one_spoke', label: 'No one spoke', retry: { delay_minutes: 240, max_attempts: 2 }, icon: 'phone_missed' },
+      { code: 'refused', label: 'Refused', requires_note: true, icon: 'thumbs_down' },
+      { code: 'wrong_number', label: 'Wrong number', terminal: true, icon: 'wrong_number' },
+      { code: 'do_not_call', label: "Don't call again", suppress: true, icon: 'stop' },
+    ]);
+    expect(Object.isFrozen(AGENCY_COLLECTIONS_STARTER_CATALOG)).toBe(true);
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(Object.isFrozen(entry)).toBe(true);
+    expect(AgencyApi.AGENCY_COLLECTIONS_STARTER_CATALOG).toBe(AGENCY_COLLECTIONS_STARTER_CATALOG);
   });
 
   it('declares the soft-phone constants and vocabularies once (SNAPSHOT, written out by hand)', () => {

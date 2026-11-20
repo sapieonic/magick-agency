@@ -102,7 +102,10 @@ package root.
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
   `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null),
-  `AgencyCampaignConcurrency` (the `concurrency` block on the campaign stats, decisions MC7).
+  `AgencyCampaignConcurrency` (the `concurrency` block on the campaign stats, decisions MC7); the
+  campaign config defaults (`AGENCY_DEFAULT_DISPOSITION_CATALOG` and its neighbours from
+  `../../agency/campaign-defaults.ts`) and, for New campaign (AS4), the "Collections" starter set
+  `AGENCY_COLLECTIONS_STARTER_CATALOG`, the same frozen objects.
 - `agency-spine.ts`: `AgencyContactState`, `AgencyRetrySelector`, `RETRY_NO_OUTCOME`,
   `AgencyKeysetPage`, `AgencyContactDetail`.
 - `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,
