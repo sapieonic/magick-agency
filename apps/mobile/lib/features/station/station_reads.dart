@@ -6,8 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/decode_body.dart';
+import '../../core/auth/app_gate.dart' show agentWorkspaceProvider;
 import '../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
-import '../../core/station/station_view.dart' show stationViewProvider;
+import '../../core/station/station_view.dart' show InboundCallView, stationViewProvider;
 import '../contacts/my_contacts_api.dart';
 import '../performance/logic/stats_windows.dart';
 import '../performance/performance_api.dart';
@@ -219,6 +220,30 @@ bool watchComesToMe(WidgetRef ref) {
   final assigns = ref.watch(stationViewProvider.select((v) => v?.assignsContacts ?? false));
   if (key == null) return false;
   return ref.watch(stationCallLaterProvider(key)).value?.comesToMe ?? assigns;
+}
+
+/// AS8 for an inbound caller matched to another campaign than this station's: whether that campaign
+/// assigns contacts, from its My contacts summary (the console's `useMatchedComesToMe`). False when
+/// it cannot be read: "Another agent may get the call" is never a false promise.
+final matchedAssignsContactsProvider = FutureProvider.family<bool, String>((ref, campaignId) async {
+  ref.watch(agentWorkspaceProvider);
+  try {
+    final summary = await ref.read(myContactsApiProvider).summary(campaignId);
+    return summary.assignmentModeRaw != AssignmentMode.pool.wire;
+  } catch (_) {
+    return false;
+  }
+});
+
+/// Who makes a call-later booked for an inbound caller (AS8): true, it comes to this agent (the
+/// matched campaign is `strict` or `preferred`); false, another agent may (`pool`, or not known yet);
+/// null, the caller is on no list, so nobody calls back by themselves.
+bool? watchInboundComesToMe(WidgetRef ref, InboundCallView call) {
+  final id = call.campaignId;
+  if (!call.matched || id == null) return null;
+  final own = ref.watch(stationViewProvider.select((v) => v != null && v.campaignId == id ? v.assignsContacts : null));
+  if (own != null) return own;
+  return ref.watch(matchedAssignsContactsProvider(id)).value ?? false;
 }
 
 /// Reads My day and the call-later list again (Ready opened again after a call or a break); what

@@ -590,7 +590,7 @@ void main() {
         async.flushMicrotasks();
         expect(app.requests('POST', availablePath), hasLength(1));
         expect(app.view!.onBreak!.isDeviceAway, isTrue);
-        expect(app.view!.actionError, 'Try again in a moment.');
+        expect(app.view!.actionError, 'One moment. Try again.', reason: 'the station\'s words for state_changing (AS15)');
         async.elapse(const Duration(minutes: 1));
         expect(app.requests('POST', availablePath), hasLength(1), reason: 'asked once; the tap is the agent’s');
         app.dispose();

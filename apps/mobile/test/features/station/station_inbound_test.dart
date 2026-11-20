@@ -45,6 +45,7 @@ InboundCallView caller({
   bool recording = true,
   InboundSticky? sticky = InboundSticky.owner,
   bool isYou = true,
+  String? campaignId,
   DateTime? bridgedAt,
   DateTime? outcomeDueAt,
   String? hangupFailure,
@@ -62,6 +63,7 @@ InboundCallView caller({
       recording: recording,
       waitedSeconds: 65,
       campaignName: matched ? 'Q4 Renewals — Pune' : null,
+      campaignId: matched ? (campaignId ?? 'c-pune') : null,
       contactState: matched ? 'Waiting to be called' : null,
       heroFields: matched
           ? const [
@@ -95,6 +97,8 @@ StationView inboundStation({
   StationBusy busy = StationBusy.none,
   String? actionError,
   bool maskPhone = false,
+  bool assigns = false,
+  List<DispositionOption> dispositions = _catalog,
 }) =>
     StationView(
       campaignId: 'c1',
@@ -103,7 +107,7 @@ StationView inboundStation({
       link: StationLink.open,
       phase: phase ?? (inbound == null ? AgentPhase.available : _phaseOf(inbound.stage)),
       breakOptions: breaks,
-      dispositions: _catalog,
+      dispositions: dispositions,
       dispositionSaved: dispositionSaved,
       dncOutcome: dncOutcome,
       notes: notes,
@@ -113,6 +117,7 @@ StationView inboundStation({
       customerWaiting: waiting,
       inboundNotice: notice,
       maskPhone: maskPhone,
+      assignsContacts: assigns,
     );
 
 void main() {
@@ -135,7 +140,7 @@ void main() {
             expect(find.byKey(const Key('station-incoming')), findsOneWidget);
             expect(find.text(StationCopy.callComingThrough), findsOneWidget);
             expect(find.text(InboundCopy.connecting), findsOneWidget);
-            expect(find.text(InboundCopy.incomingCall), findsNothing, reason: 'no inbound offer is held yet');
+            expect(find.text('Incoming call'), findsNothing, reason: 'no inbound offer is held yet');
             expect(find.byKey(const Key('hang-up')), findsNothing, reason: 'no call to hang up yet');
             expect(find.byKey(const Key('call-headline')), findsNothing, reason: 'not the campaign\'s ringing pop');
             expect(h.announcements, isEmpty, reason: '"Ringing" for nobody would be the wrong word');
@@ -180,7 +185,7 @@ void main() {
     String said() => tester.getSemantics(find.byKey(const Key('phase-live-region'))).label;
     await h.setView(callless);
     expect(find.text(StationCopy.callComingThrough), findsOneWidget);
-    expect(find.text(InboundCopy.incomingCall), findsNothing, reason: 'it is not an inbound call');
+    expect(find.text('Incoming call'), findsNothing, reason: 'it is not an inbound call');
     expect(said(), StationCopy.callComingThrough);
     await h.setView(callless);
     expect(h.announcements, isEmpty, reason: 'said politely, once');
@@ -221,10 +226,10 @@ void main() {
       );
       expect(find.text('Number withheld'), findsWidgets);
       expect(find.byKey(const Key('inbound-no-match')), findsOneWidget);
-      expect(find.textContaining('there is no number to match'), findsOneWidget);
+      expect(find.text(InboundCopy.noMatch(withheld: true)), findsOneWidget);
       expect(find.text('Not recorded'), findsOneWidget);
       expect(find.byKey(const Key('inbound-sticky')), findsNothing);
-      expect(find.text(InboundCopy.notOnCampaign), findsOneWidget);
+      expect(find.text(InboundCopy.notInAnyWork), findsOneWidget);
     });
 
     testWidgets('a campaign that masks numbers (AS9) masks an inbound caller\'s too, on every screen and aloud',
@@ -279,13 +284,14 @@ void main() {
       expect(h.actions.count('hangUp'), 1);
     });
 
-    testWidgets('Mark DNC confirms the number and its scope, then marks this call', (tester) async {
+    testWidgets('Don\'t call again names the caller and the list, then marks this call', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.connected)));
       await tester.tap(find.byKey(const Key('control-dnc')));
       await settle(tester);
-      expect(find.text(InboundCopy.dncTitle), findsOneWidget);
-      expect(find.textContaining('+91 87654 32109 won’t be called again for Q4 Renewals — Pune'), findsOneWidget);
-      await tester.tap(find.text(InboundCopy.dncAction));
+      expect(find.text(StationCopy.stopCallingTitle), findsOneWidget);
+      expect(find.text('Rahul Deshpande · +91 87654 32109'), findsOneWidget);
+      expect(find.text(InboundCopy.stopCallingBody('Q4 Renewals — Pune')), findsOneWidget);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
       await settle(tester);
       expect(h.actions.args['markDnc'], [null, 'ib-1']);
     });
@@ -299,13 +305,13 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('control-dnc')));
       await settle(tester);
-      expect(find.text(InboundCopy.dncTitle), findsNothing);
+      expect(find.text(StationCopy.stopCallingTitle), findsNothing);
       expect(find.byKey(const Key('inbound-hangup-failure')), findsOneWidget);
     });
   });
 
-  group('the outcome', () {
-    testWidgets('"Without one, it closes in" counts to outcome_due_at; the call\'s own list; Save', (tester) async {
+  group('the outcome (What happened?, as the outbound call has it)', () {
+    testWidgets('"Without one, it closes in" counts to outcome_due_at; the tiles, the note, and Save', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome)));
       expect(find.byKey(const Key('band-inbound-outcome')), findsOneWidget);
       expect(find.text(StationCopy.whatHappened), findsOneWidget);
@@ -313,13 +319,22 @@ void main() {
       expect(find.text('29:41'), findsOneWidget);
       await h.advance(const Duration(seconds: 2));
       expect(find.text('29:39'), findsOneWidget);
-      expect(find.text('From Q4 Renewals — Pune’s outcome list'), findsOneWidget);
-      expect(find.text(StationCopy.chooseOneFirst), findsOneWidget);
+      // The station's tiles, with their pictures; none of the old pad's words.
+      expect(find.byKey(const Key('outcome-interested')), findsOneWidget);
+      expect(find.byIcon(Icons.thumb_up_outlined), findsOneWidget);
+      for (final old in ['Success', 'Stops calling', 'Mark DNC', 'On Do Not Call', 'Save outcome']) {
+        expect(find.text(old), findsNothing, reason: old);
+      }
+      expect(find.textContaining('How did it go'), findsNothing);
+      expect(find.textContaining('outcome list'), findsNothing);
+      expect(find.byKey(const Key('speak-note')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('outcome-callback')));
-      await settle(tester);
-      expect(find.byKey(const Key('callback-picker')), findsOneWidget);
-      expect(find.text(StationCopy.chooseWhen), findsOneWidget);
+      // Save is faded, not hidden, until a tile is picked; its press says why.
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
+      await tester.tap(find.byKey(const Key('save-outcome')));
+      await tester.pump();
+      expect(find.text(StationCopy.chooseOneFirst), findsOneWidget);
+      expect(h.actions.args['submitDisposition'], isNull);
 
       await tester.tap(find.byKey(const Key('outcome-interested')));
       await settle(tester);
@@ -327,54 +342,118 @@ void main() {
       await tester.tap(find.byKey(const Key('save-outcome')));
       await settle(tester);
       expect(h.actions.args['submitDisposition'], ['interested', null, null]);
+      expect(find.text(StationCopy.save), findsOneWidget);
     });
 
-    testWidgets('a code that stops calling asks first; saved shows what was saved', (tester) async {
+    group('Call later follows the matched campaign\'s routing (AS8)', () {
+      Future<void> pickTonight(WidgetTester tester) async {
+        await tester.tap(find.byKey(const Key('outcome-callback')));
+        await settle(tester);
+        expect(find.byKey(const Key('follow-up-sheet')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('callback-todayEvening')));
+        await tester.pump();
+      }
+
+      const when = 'Sat 31 Oct at 6:00 PM';
+
+      testWidgets('matched to this station\'s campaign, which assigns contacts: it comes to you', (tester) async {
+        await pumpStation(
+          tester,
+          inboundStation(inbound: caller(stage: InboundStage.outcome, campaignId: 'c1'), assigns: true),
+          now: DateTime(2026, 10, 31, 11, 20),
+        );
+        await pickTonight(tester);
+        expect(find.text(StationCopy.callWillComeToYou(when)), findsOneWidget);
+      });
+
+      testWidgets('matched to a pool campaign: another agent may get the call', (tester) async {
+        await pumpStation(
+          tester,
+          inboundStation(inbound: caller(stage: InboundStage.outcome, campaignId: 'c1')),
+          now: DateTime(2026, 10, 31, 11, 20),
+        );
+        await pickTonight(tester);
+        expect(find.text(StationCopy.callWillBeMade(when)), findsOneWidget);
+      });
+
+      testWidgets('matched to another campaign: its own mode, read from its summary', (tester) async {
+        for (final (mode, line) in [('strict', StationCopy.callWillComeToYou(when)), ('pool', StationCopy.callWillBeMade(when))]) {
+          await pumpStation(
+            tester,
+            inboundStation(inbound: caller(stage: InboundStage.outcome, campaignId: 'other')),
+            now: DateTime(2026, 10, 31, 11, 20),
+            matchedAssigns: {'other': mode != 'pool'},
+          );
+          await tester.pump();
+          await pickTonight(tester);
+          expect(find.text(line), findsOneWidget, reason: mode);
+        }
+      });
+
+      testWidgets('a caller on no list: the agent calls back themselves', (tester) async {
+        await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome, matched: false)), now: DateTime(2026, 10, 31, 11, 20));
+        await pickTonight(tester);
+        expect(find.text(StationCopy.callBackYourself(when)), findsOneWidget);
+        expect(find.textContaining('Goes back to'), findsNothing);
+      });
+    });
+
+    testWidgets('a tile that stops calling asks first, naming the matched list; saved shows what was saved', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome)));
       await tester.tap(find.byKey(const Key('outcome-do_not_call')));
       await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
       await tester.tap(find.byKey(const Key('save-outcome')));
       await settle(tester);
-      expect(find.text(StationCopy.suppressConfirmTitle), findsOneWidget);
-      expect(
-        find.text('“Do not call” adds +91 87654 32109 to the Do Not Call list for Q4 Renewals — Pune. '
-            'You can’t undo this from the app — an admin has to remove it.'),
-        findsOneWidget,
-        reason: 'a matched caller: the matched campaign\'s list',
-      );
-      await tester.tap(find.text(StationCopy.suppressConfirmAction));
+      expect(find.text(StationCopy.stopCallingTitle), findsOneWidget);
+      expect(find.text(InboundCopy.stopCallingBody('Q4 Renewals — Pune')), findsOneWidget);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
       await settle(tester);
       expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
       await h.setView(inboundStation(inbound: caller(stage: InboundStage.outcome), dispositionSaved: 'do_not_call'));
       expect(find.byKey(const Key('outcome-saved')), findsOneWidget);
     });
 
-    testWidgets('an unmatched caller: the account\'s Do Not Call list, never "this campaign"', (tester) async {
+    testWidgets('an unmatched caller: every list in the account, never "this campaign"', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome, matched: false)));
       await tester.tap(find.byKey(const Key('outcome-do_not_call')));
       await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
       await tester.tap(find.byKey(const Key('save-outcome')));
       await settle(tester);
-      expect(
-        find.text('“Do not call” adds +91 87654 32109 to this account’s Do Not Call list. '
-            'You can’t undo this from the app — an admin has to remove it.'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('this campaign'), findsNothing);
-      await tester.tap(find.text(StationCopy.suppressConfirmAction));
+      expect(find.text(InboundCopy.stopCallingBody(null)), findsOneWidget);
+      expect(find.textContaining('campaign'), findsNothing);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
       await settle(tester);
       expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
     });
 
-    testWidgets('a withheld caller: nothing is added to Do Not Call, so nothing to confirm', (tester) async {
+    testWidgets('a withheld caller: nothing is added, so nothing to confirm', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome, from: null, matched: false)));
       await tester.tap(find.byKey(const Key('outcome-do_not_call')));
       await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
       await tester.tap(find.byKey(const Key('save-outcome')));
       await settle(tester);
-      expect(find.text(StationCopy.suppressConfirmTitle), findsNothing);
-      expect(find.textContaining('Do Not Call list'), findsNothing);
+      expect(find.text(StationCopy.stopCallingTitle), findsNothing);
       expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
+    });
+
+    testWidgets('a list with no stop tile offers Don\'t call again under the tiles, until it is done', (tester) async {
+      final noStop = _catalog.where((o) => !o.suppresses).toList();
+      final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome), dispositions: noStop));
+      await tester.ensureVisible(find.byKey(const Key('control-dnc')));
+      await tester.tap(find.byKey(const Key('control-dnc')));
+      await settle(tester);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
+      await settle(tester);
+      expect(h.actions.args['markDnc'], [null, 'ib-1']);
+      await h.setView(inboundStation(inbound: caller(stage: InboundStage.outcome), dispositions: noStop, dncOutcome: 'We will not call this number again.'));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
+      expect(find.text('We will not call this number again.'), findsOneWidget);
+      // With a stop tile, the tile is the one way.
+      await h.setView(inboundStation(inbound: caller(stage: InboundStage.outcome)));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
     });
   });
 

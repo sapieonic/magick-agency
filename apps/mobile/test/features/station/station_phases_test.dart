@@ -255,14 +255,13 @@ void main() {
       expect(find.text(StationCopy.lastCallNotConnected), findsNothing);
     });
 
-    testWidgets('missed release: "While you were away" until dismissed', (tester) async {
+    testWidgets('missed release: one line, said once, until dismissed', (tester) async {
       final h = await pumpStation(
         tester,
-        station(
-          missedRelease: const MissedReleaseView(headline: 'The customer hung up', detail: 'The call ended.'),
-        ),
+        station(missedRelease: const MissedReleaseView(headline: 'While your internet was down, the customer hung up.')),
       );
-      expect(find.text('While you were away: The customer hung up'), findsOneWidget);
+      expect(find.text('While your internet was down, the customer hung up.'), findsOneWidget);
+      expect(find.textContaining('While you were away'), findsNothing);
       await tester.tap(find.descendant(of: find.byKey(const Key('missed-release')), matching: find.byTooltip('Dismiss')));
       expect(h.actions.calls, ['dismissMissedRelease']);
     });

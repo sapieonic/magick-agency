@@ -208,7 +208,7 @@ void main() {
         station(
           phaseSince: t0,
           dialing: false,
-          missedRelease: const MissedReleaseView(headline: 'The customer hung up', detail: 'The call ended.'),
+          missedRelease: const MissedReleaseView(headline: 'While your internet was down, the customer hung up.'),
         ),
         station(phase: AgentPhase.offline, link: StationLink.disconnected),
         station(

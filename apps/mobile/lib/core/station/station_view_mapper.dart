@@ -273,6 +273,7 @@ class StationViewMapper {
       recording: call.recording,
       waitedSeconds: call.waitedSeconds,
       campaignName: match?.campaignName,
+      campaignId: match?.campaignId,
       contactState: match == null ? null : (inboundContactStateLabels[match.contactState] ?? humaniseCode(match.contactStateRaw)),
       heroFields: same ? previous.heroFields : (resolved == null ? const [] : List.unmodifiable(resolved.hero.map(field))),
       heroesConfigured: heroesWereConfigured(display),
@@ -524,7 +525,7 @@ class StationViewMapper {
     if (identical(frame, _releaseSource)) return _release;
     _releaseSource = frame;
     if (frame == null) return _release = null;
-    final copy = releaseCopy(frame.reason, frame.message);
+    final copy = releaseCopy(frame.reason);
     return _release = ReleaseView(
       headline: copy.headline,
       detail: copy.subtext,
@@ -537,8 +538,8 @@ class StationViewMapper {
     if (identical(missed, _missedSource)) return _missed;
     _missedSource = missed;
     if (missed == null) return _missed = null;
-    final copy = releaseCopy(missed.reason, missed.message);
-    return _missed = MissedReleaseView(headline: '$missedReleasePrefix: ${copy.headline}', detail: copy.subtext);
+    // One sentence, already saying "while your internet was down": the card adds no prefix.
+    return _missed = MissedReleaseView(headline: missedReleaseCopy(missed.reason), detail: '');
   }
 
   /// [redial]: what a refused redial taught the core about this wrap-up's

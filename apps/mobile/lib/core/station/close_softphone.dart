@@ -78,7 +78,7 @@ Future<({SoftphoneCloseResult result, String? closedId})> closeSoftphoneSession(
       return (result: SoftphoneCloseCallPending(call: call), closedId: null);
     }
     final gone = e is ApiHttpError && (e.status == 404 || e.code == AgencyErrorCode.sessionEnded.wire);
-    if (!gone) return (result: SoftphoneCloseFailed(softphoneStillOpenCopy(errorDetail(e))), closedId: null);
+    if (!gone) return (result: const SoftphoneCloseFailed(softphoneStillOpenCopy), closedId: null);
   }
   return (result: const SoftphoneClosed(), closedId: id);
 }

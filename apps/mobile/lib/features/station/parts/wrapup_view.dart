@@ -72,7 +72,13 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
   Future<void> _followUp(DispositionOption option) async {
     final attemptId = ref.read(stationViewProvider)?.call?.attemptId;
     final own = _comesToMe;
-    final next = await showFollowUpSheet(context, option: option, form: _form, attemptId: attemptId, ownQueue: own);
+    final next = await showFollowUpSheet(
+      context,
+      option: option,
+      form: _form,
+      attemptId: attemptId,
+      callLaterLine: own ? StationCopy.callWillComeToYou : StationCopy.callWillBeMade,
+    );
     if (next != null && mounted) setState(() => _form = next);
   }
 
@@ -86,7 +92,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     final cut = ref.watch(stationViewProvider.select((v) => v?.release?.tone == ReleaseTone.danger && (v?.release?.requiresDisposition ?? false)));
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
-    final own = _comesToMe = watchComesToMe(ref);
+    _comesToMe = watchComesToMe(ref);
 
     return CallPage(
       body: [
@@ -102,14 +108,14 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         ),
         if (selected != null && saved == null && (selected.requiresCallbackTime || selected.requiresPromise)) ...[
           const SizedBox(height: Space.md),
-          LinkGate(child: _FollowUpRow(option: selected, form: _form, ownQueue: own, onChange: () => _followUp(selected))),
+          LinkGate(child: FollowUpRow(option: selected, form: _form, onChange: () => _followUp(selected))),
         ],
         const SizedBox(height: Space.md),
         StationNotesField(
           controller: widget.notes,
           required: selected?.requiresNote ?? false,
           focusNode: _noteFocus,
-          trailing: _SpeakNoteButton(focus: _noteFocus),
+          trailing: SpeakNoteButton(focus: _noteFocus),
         ),
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip(offer: false)),
@@ -202,8 +208,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 }
 
 /// Speak a note (AS13): puts the cursor in the note, so the keyboard's own microphone dictates.
-class _SpeakNoteButton extends StatelessWidget {
-  const _SpeakNoteButton({required this.focus});
+class SpeakNoteButton extends StatelessWidget {
+  const SpeakNoteButton({super.key, required this.focus});
 
   final FocusNode focus;
 
@@ -297,12 +303,11 @@ String? amountDueOf(CallView? call) {
 
 /// The follow-up's one summary row: "Will pay on Fri 20 Nov · 12,500 · Change", "Call later · Fri 20
 /// Nov at 10:00 AM · Change", or, before it is given, what is still needed and Choose.
-class _FollowUpRow extends StatelessWidget {
-  const _FollowUpRow({required this.option, required this.form, required this.ownQueue, required this.onChange});
+class FollowUpRow extends StatelessWidget {
+  const FollowUpRow({super.key, required this.option, required this.form, required this.onChange});
 
   final DispositionOption option;
   final DispositionForm form;
-  final bool ownQueue;
   final VoidCallback onChange;
 
   @override
@@ -359,12 +364,16 @@ class _FollowUpRow extends StatelessWidget {
 /// Call when? for an outcome that books a call later, the pay date and amount for one that records
 /// a promise to pay. Returns the form with what was chosen, or null for Back (the tile stays picked,
 /// and Save says what is still needed). Closes with this call's What happened?.
+///
+/// [callLaterLine] says who makes a call-later at the time picked (AS8): "This call will come to
+/// you on …", "We will call on … Another agent may get the call.", or for a caller on no list,
+/// that the agent calls back themselves.
 Future<DispositionForm?> showFollowUpSheet(
   BuildContext context, {
   required DispositionOption option,
   required DispositionForm form,
   required String? attemptId,
-  required bool ownQueue,
+  required String Function(String when) callLaterLine,
 }) {
   final scope = sameCall(attemptId, const {AgentPhase.wrapup});
   return showModalBottomSheet<DispositionForm>(
@@ -373,18 +382,18 @@ Future<DispositionForm?> showFollowUpSheet(
     useSafeArea: true,
     builder: (context) => StationModalGuard(
       scope: scope,
-      child: _FollowUpSheet(option: option, form: form, attemptId: attemptId, ownQueue: ownQueue),
+      child: _FollowUpSheet(option: option, form: form, attemptId: attemptId, callLaterLine: callLaterLine),
     ),
   );
 }
 
 class _FollowUpSheet extends ConsumerStatefulWidget {
-  const _FollowUpSheet({required this.option, required this.form, required this.attemptId, required this.ownQueue});
+  const _FollowUpSheet({required this.option, required this.form, required this.attemptId, required this.callLaterLine});
 
   final DispositionOption option;
   final DispositionForm form;
   final String? attemptId;
-  final bool ownQueue;
+  final String Function(String when) callLaterLine;
 
   @override
   ConsumerState<_FollowUpSheet> createState() => _FollowUpSheetState();
@@ -447,7 +456,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
                   const SizedBox(width: Space.xs),
                   Expanded(
                     child: Text(
-                      widget.ownQueue ? StationCopy.callWillComeToYou(formatWhen(at)) : StationCopy.callWillBeMade(formatWhen(at)),
+                      widget.callLaterLine(formatWhen(at)),
                       key: const Key('call-later-who'),
                       style: text.bodyMedium,
                     ),

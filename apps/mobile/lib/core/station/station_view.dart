@@ -565,11 +565,11 @@ class AudioView {
   int get hashCode => Object.hash(muted, route, routes.length, micProblem, interruption);
 }
 
-/// What happened while the station could not reach the agent ("While you
-/// were away: the customer hung up").
+/// What happened while the station could not reach the agent, in one sentence that says so
+/// ("While your internet was down, the customer hung up."), with an optional [detail] line.
 @immutable
 class MissedReleaseView {
-  const MissedReleaseView({required this.headline, required this.detail});
+  const MissedReleaseView({required this.headline, this.detail = ''});
   final String headline;
   final String detail;
 
@@ -678,6 +678,7 @@ class InboundCallView {
     this.sticky,
     this.stickyIsYou = false,
     this.campaignName,
+    this.campaignId,
     this.contactState,
     this.heroFields = const [],
     this.heroesConfigured = false,
@@ -715,6 +716,9 @@ class InboundCallView {
 
   /// The matched contact's campaign, or null when the number matched nobody.
   final String? campaignName;
+
+  /// The matched campaign's id (its routing decides who makes a call-later, AS8); null with no match.
+  final String? campaignId;
 
   /// The matched contact's state, in words.
   final String? contactState;
@@ -759,6 +763,7 @@ class InboundCallView {
       other.recording == recording &&
       other.waitedSeconds == waitedSeconds &&
       other.campaignName == campaignName &&
+      other.campaignId == campaignId &&
       other.contactState == contactState &&
       _eqF.equals(other.heroFields, heroFields) &&
       other.heroesConfigured == heroesConfigured &&

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_theme.dart';
@@ -10,16 +11,16 @@ import '../logic/disposition_form.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
+import '../station_reads.dart' show watchInboundComesToMe;
+import '../widgets/action_buttons.dart';
 import '../widgets/slide_to_confirm.dart';
 import 'banners.dart';
 import 'call_band.dart';
-import 'callback_picker.dart';
 import 'contact_details.dart';
 import 'notes_field.dart';
 import 'on_call_view.dart' show ControlTile, QueuedBreakChip;
-import 'promise_picker.dart';
 import 'sheets.dart';
-import 'wrapup_view.dart' show DispositionGrid;
+import 'wrapup_view.dart' show FollowUpRow, OutcomeTiles, SpeakNoteButton, showFollowUpSheet;
 
 /// An inbound caller on the station (`docs/inbound.md` §6): the console's inbound panel
 /// (`InboundCallView.tsx`) in the station's own phone geometry. The three screens follow the
@@ -81,9 +82,15 @@ class InboundOnCallView extends ConsumerWidget {
   }
 }
 
-/// The call ended after it was answered: pick the outcome (from the call's own list), a
-/// callback time when it needs one, notes, Mark DNC, save. The band counts down to when the
-/// call closes without one. Keyed on the call by the station screen.
+/// The call ended after it was answered: What happened?, as the outbound call has it (05): one
+/// picture tile per outcome of the call's own list, the follow-up (pay date, call when) in a bottom
+/// sheet then one summary row, the note with Speak a note, Don't call again when the list has no
+/// such tile, and Save. The band counts down to when the call closes without one. Keyed on the call
+/// by the station screen.
+///
+/// A call-later follows the matched campaign's routing (AS8): "This call will come to you" on a
+/// `strict` or `preferred` one, "Another agent may get the call." on `pool`, and for a caller on no
+/// list, the agent calls back themselves (the console's `useMatchedComesToMe`).
 class InboundOutcomeView extends ConsumerStatefulWidget {
   const InboundOutcomeView({super.key, required this.notes});
 
@@ -96,6 +103,41 @@ class InboundOutcomeView extends ConsumerStatefulWidget {
 class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
   DispositionForm _form = const DispositionForm();
 
+  /// Save was pressed before the form was ready: the reason shows (spec §6.1).
+  bool _tried = false;
+  final _noteFocus = FocusNode(debugLabel: 'inbound-note');
+
+  /// AS8, as last built (null: the caller is on no list).
+  bool? _comesToMe;
+
+  @override
+  void dispose() {
+    _noteFocus.dispose();
+    super.dispose();
+  }
+
+  String Function(String when) get _callLaterLine => switch (_comesToMe) {
+        true => StationCopy.callWillComeToYou,
+        false => StationCopy.callWillBeMade,
+        null => StationCopy.callBackYourself,
+      };
+
+  Future<void> _pick(String code) async {
+    setState(() {
+      _form = _form.select(code);
+      _tried = false;
+    });
+    final option = findDisposition(ref.read(stationViewProvider)?.dispositions ?? const [], code);
+    if (option == null) return;
+    if (option.requiresCallbackTime || option.requiresPromise) await _followUp(option);
+  }
+
+  Future<void> _followUp(DispositionOption option) async {
+    final callId = ref.read(stationViewProvider)?.inbound?.callId;
+    final next = await showFollowUpSheet(context, option: option, form: _form, attemptId: callId, callLaterLine: _callLaterLine);
+    if (next != null && mounted) setState(() => _form = next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final call = ref.watch(stationViewProvider.select(_inbound));
@@ -103,65 +145,49 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
     final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved));
     final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
     final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
-    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     if (call == null) return const SizedBox.shrink();
-    final text = Theme.of(context).textTheme;
+    _comesToMe = watchInboundComesToMe(ref, call);
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
+    // Don't call again as its own row only when the list has no such tile (spec §6.2), never for a
+    // withheld number (nothing to add), and not once it is done.
+    final dontCallAgain = !options.any((o) => o.suppresses) && !call.withheld && dnc == null && saved == null;
 
     return CallPage(
       body: [
-        Semantics(header: true, child: Text(StationCopy.howDidItGo(InboundCopy.who(call, masked: masked)), style: text.labelMedium)),
-        const SizedBox(height: Space.xs),
-        Text(
-          InboundCopy.catalogHint(call.catalogKind, campaignName: call.campaignName, routeName: call.routeName),
-          key: const Key('inbound-catalog-hint'),
-          style: text.bodySmall,
-        ),
-        const SizedBox(height: Space.sm),
+        if (dnc != null) ...[_DncOutcomeLine(text: dnc), const SizedBox(height: Space.md)],
         LinkGate(
-          child: DispositionGrid(
-            options: options,
-            selected: saved ?? _form.code,
-            enabled: !locked,
-            onSelect: (code) => setState(() => _form = _form.select(code)),
-          ),
+          child: OutcomeTiles(options: options, selected: saved ?? _form.code, enabled: !locked, onSelect: _pick),
         ),
-        if (selected != null && selected.requiresCallbackTime && saved == null) ...[
-          const SizedBox(height: Space.lg),
-          LinkGate(
-            child: CallbackPicker(
-              form: _form,
-              attemptId: call.callId,
-              enabled: !locked,
-              onPick: (at, choice) => setState(() => _form = _form.withCallback(at, choice)),
-            ),
-          ),
+        if (selected != null && saved == null && (selected.requiresCallbackTime || selected.requiresPromise)) ...[
+          const SizedBox(height: Space.md),
+          LinkGate(child: FollowUpRow(option: selected, form: _form, onChange: () => _followUp(selected))),
         ],
-        if (selected != null && selected.requiresPromise && saved == null) ...[
-          const SizedBox(height: Space.lg),
-          LinkGate(
-            child: PromisePicker(
-              form: _form,
-              option: selected,
-              attemptId: call.callId,
-              enabled: !locked,
-              onDate: (day) => setState(() => _form = _form.withPromiseDate(day)),
-              onAmount: (amount) => setState(() => _form = _form.withPromiseAmount(amount)),
-            ),
-          ),
-        ],
-        const SizedBox(height: Space.lg),
-        StationNotesField(controller: widget.notes, required: selected?.requiresNote ?? false),
+        if (dontCallAgain) LinkGate(child: _InboundDontCallAgain(busy: ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none)))),
         const SizedBox(height: Space.md),
-        LinkGate(child: _InboundDncButton(withheld: call.withheld, marked: dnc != null)),
-        if (dnc != null) ...[const SizedBox(height: Space.sm), _DncOutcomeLine(text: dnc)],
+        StationNotesField(
+          controller: widget.notes,
+          required: selected?.requiresNote ?? false,
+          focusNode: _noteFocus,
+          trailing: SpeakNoteButton(focus: _noteFocus),
+        ),
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip(offer: false)),
         // IQ48: the customers waiting to be called back, a tap from the list.
         const MissedToCallBackLine(),
       ],
-      actions: LinkGate(child: _InboundSaveArea(form: _form, notes: widget.notes, onSave: _save)),
+      actions: LinkGate(
+        child: _InboundSaveArea(
+          form: _form,
+          notes: widget.notes,
+          tried: _tried,
+          onBlocked: () {
+            HapticFeedback.heavyImpact();
+            setState(() => _tried = true);
+          },
+          onSave: _save,
+        ),
+      ),
     );
   }
 
@@ -172,7 +198,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
     final now = ref.read(stationClockProvider)();
     final submit = buildSubmit(view.dispositions, _form, widget.notes.text, now);
     if (submit == null) {
-      setState(() {});
+      setState(() => _tried = true);
       return;
     }
     final option = findDisposition(view.dispositions, submit.code)!;
@@ -181,16 +207,15 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
     final from = call.fromE164;
     if (option.suppresses && from != null) {
       final scope = sameCall(call.callId, const {AgentPhase.wrapup});
-      final ok = await confirmDialog(
+      final ok = await confirmSheet(
         context,
-        title: StationCopy.suppressConfirmTitle,
-        message: InboundCopy.suppressConfirmBody(
-          option.label,
-          number: stationPhone(from, masked: view.maskPhone),
-          campaignName: call.matched ? call.campaignName : null,
-        ),
-        confirm: StationCopy.suppressConfirmAction,
-        danger: true,
+        title: StationCopy.stopCallingTitle,
+        detail: InboundCopy.who(call, masked: view.maskPhone) == stationPhone(from, masked: view.maskPhone)
+            ? stationPhone(from, masked: view.maskPhone)
+            : '${InboundCopy.who(call, masked: view.maskPhone)} · ${stationPhone(from, masked: view.maskPhone)}',
+        message: InboundCopy.stopCallingBody(call.matched ? call.campaignName : null),
+        confirm: StationCopy.yesStopCalls,
+        cancel: StationCopy.noGoBack,
         scope: scope,
       );
       if (!ok || !mounted || !scope(ref.read(stationViewProvider))) return;
@@ -205,12 +230,15 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
   }
 }
 
-/// "Save outcome" with the reason it is disabled beside it, or what was saved.
+/// Save: faded, not hidden, until the form is ready (spec §6.1), and its press then says what is
+/// missing; or what was saved.
 class _InboundSaveArea extends ConsumerWidget {
-  const _InboundSaveArea({required this.form, required this.notes, required this.onSave});
+  const _InboundSaveArea({required this.form, required this.notes, required this.tried, required this.onBlocked, required this.onSave});
 
   final DispositionForm form;
   final TextEditingController notes;
+  final bool tried;
+  final VoidCallback onBlocked;
   final Future<void> Function() onSave;
 
   @override
@@ -220,43 +248,77 @@ class _InboundSaveArea extends ConsumerWidget {
     final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
     final clock = ref.watch(stationClockProvider);
     final t = context.tokens;
+    final s = context.stateTokens;
     final text = Theme.of(context).textTheme;
     if (saved != null) {
       final label = findDisposition(options, saved)?.label ?? saved;
-      return Row(
-        key: const Key('outcome-saved'),
-        children: [
-          Icon(Icons.check_circle, color: t.success),
-          const SizedBox(width: Space.sm),
-          Expanded(child: Text(StationCopy.outcomeSaved(label), style: text.titleSmall!.copyWith(color: t.success))),
-        ],
+      return Semantics(
+        container: true,
+        child: Row(
+          key: const Key('outcome-saved'),
+          children: [
+            Icon(Icons.check_circle, color: s.ready.deep),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(StationCopy.savedAs(label), style: text.titleMedium!.copyWith(color: s.ready.deep))),
+          ],
+        ),
       );
     }
     return ListenableBuilder(
       listenable: notes,
       builder: (context, _) {
         final block = dispositionBlock(options, form, notes.text, clock());
+        final say = block != null && (tried || block != DispositionBlock.noSelection) && !saving;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (block != null && !saving) ...[
-              Text(
-                StationCopy.blockCopy(block),
-                key: const Key('save-blocked'),
-                style: text.bodySmall!.copyWith(color: block == DispositionBlock.callbackInPast ? t.danger : t.textSecondary),
+            if (say) ...[
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  StationCopy.blockCopy(block),
+                  key: const Key('save-blocked'),
+                  style: text.titleSmall!.copyWith(color: block == DispositionBlock.callbackInPast || tried ? t.danger : t.textSecondary),
+                ),
               ),
               const SizedBox(height: Space.sm),
             ],
-            FilledButton(
+            MainActionButton(
               key: const Key('save-outcome'),
-              onPressed: block == null && !saving ? onSave : null,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: BusyLabel(label: saving ? StationCopy.savingOutcome : StationCopy.saveOutcome, busy: saving, color: t.onAccent),
+              label: saving ? StationCopy.savingOutcome : StationCopy.save,
+              icon: Icons.check,
+              busy: saving,
+              dimmed: block != null,
+              onPressed: block == null ? onSave : onBlocked,
             ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Don't call again, under the tiles, when the list has no such tile (spec §6.2): the caller's
+/// number, in the matched campaign's list, else the account's, with the same confirm.
+class _InboundDontCallAgain extends StatelessWidget {
+  const _InboundDontCallAgain({required this.busy});
+
+  final StationBusy busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final red = context.stateTokens.problem.deep;
+    final marking = busy == StationBusy.markingDnc;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.sm),
+      child: TextButton.icon(
+        key: const Key('control-dnc'),
+        style: TextButton.styleFrom(foregroundColor: red, minimumSize: const Size.fromHeight(48)),
+        onPressed: busy == StationBusy.none ? () => markInboundDnc(context) : null,
+        icon: const Icon(Icons.block),
+        label: Text(marking ? StationCopy.markingDnc : StationCopy.dontCallAgain),
+      ),
     );
   }
 }
@@ -382,8 +444,8 @@ class InboundFacts extends StatelessWidget {
           FieldRow(label: InboundCopy.beforeYou, value: InboundCopy.waited(call.waitedSeconds)),
           const SizedBox(height: Space.sm),
           FieldRow(
-            label: InboundCopy.campaign,
-            value: campaign == null ? InboundCopy.notOnCampaign : InboundCopy.matchLine(campaign, call.contactState),
+            label: InboundCopy.work,
+            value: campaign == null ? InboundCopy.notInAnyWork : InboundCopy.matchLine(campaign, call.contactState),
           ),
         ],
       ),
@@ -489,7 +551,7 @@ class _InboundInterruption extends ConsumerWidget {
 
 // ─── Controls ───────────────────────────────────────────────────────────────
 
-/// Mute · Audio · Details · Mark DNC: the campaign call's row, for the caller.
+/// Mute · Audio · Details · Don't call again: the campaign call's row, for the caller.
 class InboundControlRow extends ConsumerWidget {
   const InboundControlRow({super.key});
 
@@ -532,8 +594,8 @@ class InboundControlRow extends ConsumerWidget {
       ControlTile(
         key: const Key('control-dnc'),
         icon: Icons.block,
-        label: marking ? StationCopy.markingDnc : (marked ? InboundCopy.dncBadge : StationCopy.markDnc),
-        semanticLabel: withheld ? '${StationCopy.markDnc}: ${InboundCopy.dncWithheld}' : null,
+        label: marking ? StationCopy.markingDnc : (marked ? InboundCopy.dncBadge : StationCopy.dontCallAgain),
+        semanticLabel: withheld ? '${StationCopy.dontCallAgain}: ${InboundCopy.dncWithheld}' : null,
         color: t.danger,
         onPressed: busy == StationBusy.none && !withheld && !marked ? () => markInboundDnc(context) : null,
       ),
@@ -549,35 +611,6 @@ class InboundControlRow extends ConsumerWidget {
           children: [for (final tile in tiles) SizedBox(width: w, child: tile)],
         );
       },
-    );
-  }
-}
-
-/// Mark DNC on the outcome screen, where there is no control row.
-class _InboundDncButton extends ConsumerWidget {
-  const _InboundDncButton({required this.withheld, required this.marked});
-
-  final bool withheld;
-  final bool marked;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        OutlinedButton.icon(
-          key: const Key('inbound-dnc'),
-          onPressed: busy == StationBusy.none && !withheld && !marked ? () => markInboundDnc(context) : null,
-          icon: Icon(Icons.block, color: withheld || marked ? t.textMuted : t.danger),
-          label: Text(
-            busy == StationBusy.markingDnc ? StationCopy.markingDnc : (marked ? InboundCopy.dncBadge : StationCopy.markDnc),
-          ),
-        ),
-        if (withheld) Text(InboundCopy.dncWithheld, key: const Key('inbound-dnc-withheld'), style: text.bodySmall),
-      ],
     );
   }
 }
@@ -646,8 +679,9 @@ class InboundHangUpBar extends ConsumerWidget {
 
 // ─── Dialogs and sheets ─────────────────────────────────────────────────────
 
-/// Mark the caller's number Do Not Call: the console's dialog, scoped to the call it was opened
-/// on (it closes when that call leaves, and a "yes" after that marks nothing).
+/// Don't call again for the caller's number: the station's sheet, scoped to the call it was opened
+/// on (it closes when that call leaves, and a "yes" after that marks nothing). The matched
+/// campaign's list, else the account's.
 Future<void> markInboundDnc(BuildContext context) async {
   final container = ProviderScope.containerOf(context, listen: false);
   final actions = container.read(stationActionsProvider);
@@ -657,12 +691,15 @@ Future<void> markInboundDnc(BuildContext context) async {
   final from = call?.fromE164;
   if (view == null || call == null || from == null) return;
   final scope = sameCall(call.callId, {AgentPhase.onCall, AgentPhase.wrapup});
-  final ok = await confirmDialog(
+  final who = InboundCopy.who(call, masked: view.maskPhone);
+  final phone = stationPhone(from, masked: view.maskPhone);
+  final ok = await confirmSheet(
     context,
-    title: InboundCopy.dncTitle,
-    message: InboundCopy.dncMessage(stationPhone(from, masked: view.maskPhone), call.campaignName),
-    confirm: InboundCopy.dncAction,
-    danger: true,
+    title: StationCopy.stopCallingTitle,
+    detail: who == phone ? phone : '$who · $phone',
+    message: InboundCopy.stopCallingBody(call.matched ? call.campaignName : null),
+    confirm: StationCopy.yesStopCalls,
+    cancel: StationCopy.noGoBack,
     scope: scope,
   );
   if (scope(container.read(stationViewProvider))) {

@@ -50,7 +50,7 @@ void main() {
       expect(find.byKey(const Key('end-break')), findsNothing);
       expect(find.byKey(const Key('take-break')), findsNothing);
       expect(find.byKey(const Key('switch-softphone')), findsNothing);
-      expect(find.text(StationCopy.endBreak), findsNothing);
+      expect(find.text('End break'), findsNothing);
 
       await tester.tap(find.byKey(const Key('softphone-return')));
       await settle(tester);

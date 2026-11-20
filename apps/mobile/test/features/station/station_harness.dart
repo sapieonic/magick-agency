@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show agentWorkspaceProvider;
 import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
@@ -348,6 +349,7 @@ Future<StationHarness> pumpStation(
   bool? callLaterGoesToPool,
   void Function()? onMyDayRead,
   bool readAloudAvailable = true,
+  Map<String, bool> matchedAssigns = const {},
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -399,6 +401,9 @@ Future<StationHarness> pumpStation(
         onMyDayRead?.call();
         return myDay;
       }),
+      // An inbound caller matched to another campaign: that campaign's routing (AS8), by its id.
+      matchedAssignsContactsProvider.overrideWith((ref, id) async => matchedAssigns[id] ?? false),
+      agentWorkspaceProvider.overrideWithValue('u1:t1:a1'),
       stationCallLaterProvider.overrideWith(
         (ref, key) async => CallLaterList(items: callLater, comesToMe: callLaterComesToMe, leftGoesToPool: callLaterGoesToPool),
       ),

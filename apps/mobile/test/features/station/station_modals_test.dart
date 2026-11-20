@@ -149,7 +149,7 @@ void main() {
       await settle(tester);
       expect(find.text(StationCopy.stopCallingTitle), findsNothing);
       expect(h.actions.calls, isNot(contains('markDnc')));
-      expect(find.text('The call ended before Do Not Call was marked, so nothing was recorded.'), findsOneWidget);
+      expect(find.text(StationCopy.dncNotMarked), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

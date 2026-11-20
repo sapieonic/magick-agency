@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show agentWorkspaceProvider;
 import 'package:magick_agency_agent/core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/contacts/my_contacts_api.dart';
@@ -16,13 +17,16 @@ import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
 import '../../core/inbound/inbound_fixtures.dart' show contractSample;
-import '../contacts/support.dart' show FakeMyContactsApi, contact;
+import '../contacts/support.dart' show FakeMyContactsApi, contact, summaryOf;
 import '../performance/support.dart' show FakePerformanceApi, stats, totals;
 import 'station_harness.dart';
 
 /// The redesign's own pieces (AS1–AS15, phase 0): which screen a state is, Start work in one press,
 /// the reads Ready shows beside the live view, and the pictures and chips What happened? and Which
 /// break? use until the server sends its own.
+/// The signed-in agent the reads are scoped to (`agentWorkspaceProvider`).
+final _workspace = agentWorkspaceProvider.overrideWithValue('u1:t1:a1');
+
 void main() {
   group('one state, one screen (stationStageOf)', () {
     test('the line down with nothing on screen to keep is Internet problem (09)', () {
@@ -123,6 +127,7 @@ void main() {
       final myDay = FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day')));
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           myDayApiProvider.overrideWithValue(myDay),
           performanceApiProvider.overrideWithValue(stats),
           myContactsApiProvider.overrideWithValue(contacts),
@@ -143,7 +148,8 @@ void main() {
 
     test('my-day on a pool campaign with no target: no bar, and another agent may make them', () async {
       final container = ProviderContainer(
-        overrides: [myDayApiProvider.overrideWithValue(FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day_pool_no_target'))))],
+        overrides: [
+          _workspace,myDayApiProvider.overrideWithValue(FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day_pool_no_target'))))],
       );
       addTearDown(container.dispose);
       final day = await container.read(stationMyDayProvider('c1').future);
@@ -157,6 +163,7 @@ void main() {
       final now = DateTime(2026, 10, 31, 11, 20);
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           performanceApiProvider.overrideWithValue(api),
           statsClockProvider.overrideWithValue(() => now),
           myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
@@ -184,6 +191,7 @@ void main() {
         );
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           myContactsApiProvider.overrideWithValue(api),
           contactAssignmentEnabledProvider.overrideWithValue(true),
           statsClockProvider.overrideWithValue(() => now),
@@ -199,11 +207,28 @@ void main() {
       expect(api.queries.single.buckets, [MyContactBucket.callback]);
     });
 
+    test('an inbound caller matched to another campaign: its routing from its summary (AS8), false when unread', () async {
+      final api = FakeMyContactsApi();
+      for (final (answer, expected) in <(Object, bool)>[
+        (summaryOf(mode: AssignmentMode.strict), true),
+        (summaryOf(mode: AssignmentMode.preferred), true),
+        (summaryOf(mode: AssignmentMode.pool), false),
+        (const ApiNetworkError('offline'), false),
+      ]) {
+        api.summaryAnswer = answer;
+        final container = ProviderContainer(overrides: [_workspace, myContactsApiProvider.overrideWithValue(api)]);
+        addTearDown(container.dispose);
+        expect(await container.read(matchedAssignsContactsProvider('c9').future), expected, reason: '$answer');
+      }
+      expect(api.summaries, ['c9', 'c9', 'c9', 'c9']);
+    });
+
     test('no call-later read where My contacts does not serve it', () async {
       final api = FakeMyContactsApi();
       for (final (flag, offered) in [(false, true), (true, false)]) {
         final container = ProviderContainer(
           overrides: [
+            _workspace,
             myContactsApiProvider.overrideWithValue(api),
             contactAssignmentEnabledProvider.overrideWithValue(flag),
             myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),

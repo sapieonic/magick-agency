@@ -247,9 +247,11 @@ class MissedReleaseCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(StationCopy.whileAway(missed.headline), style: text.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(missed.detail, style: text.bodySmall),
+                    Text(missed.headline, key: const Key('missed-release-line'), style: text.titleSmall),
+                    if (missed.detail.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(missed.detail, style: text.bodySmall),
+                    ],
                   ],
                 ),
               ),
