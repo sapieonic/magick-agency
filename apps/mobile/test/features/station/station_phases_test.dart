@@ -436,14 +436,18 @@ void main() {
       expect(identical(tester.widget<Text>(find.text('Priya Raman')), before), isTrue);
     });
 
-    testWidgets('a tap on the card opens every field and the caller ID', (tester) async {
+    testWidgets('a tap on the card opens every field, without the caller ID or the attempt (spec §8)', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(otherFields: 12)));
       await tester.tap(find.byKey(const Key('control-details')));
       await settle(tester);
       expect(find.text('Contact details'), findsOneWidget);
       expect(find.text('Field 0'), findsOneWidget);
-      await tester.dragUntilVisible(find.text('+91 80471 82200'), find.byKey(const Key('details-sheet')), const Offset(0, -200));
-      expect(find.text('+91 80471 82200'), findsOneWidget);
+      await tester.dragUntilVisible(find.text('Field 11'), find.byKey(const Key('details-sheet')), const Offset(0, -200));
+      await tester.drag(find.byKey(const Key('details-sheet')), const Offset(0, -2000));
+      await settle(tester);
+      expect(find.text('+91 80471 82200'), findsNothing);
+      expect(find.text('Calling from'), findsNothing);
+      expect(find.textContaining('Attempt 2'), findsNothing);
     });
   });
 
@@ -870,6 +874,38 @@ void main() {
       expect(live.label, 'Saved');
       expect(find.byKey(const Key('dnc-outcome')), findsNothing);
       expect(find.byKey(const Key('time-over')), findsNothing);
+    });
+
+    testWidgets('ten or more outcomes: the first eight and a More tile that opens the rest (spec §6.2)', (tester) async {
+      final many = [for (var i = 1; i <= 11; i++) DispositionOption(code: 'o$i', label: 'Outcome $i')];
+      final h = await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: many),
+      );
+      for (var i = 1; i <= 8; i++) {
+        expect(find.byKey(Key('outcome-o$i')), findsOneWidget, reason: 'o$i');
+      }
+      expect(find.byKey(const Key('outcome-o9')), findsNothing);
+      expect(find.text('3 more'), findsNothing, reason: 'the hint rides with More');
+      await tester.ensureVisible(find.byKey(const Key('outcome-more')));
+      await tester.tap(find.byKey(const Key('outcome-more')));
+      await tester.pump();
+      expect(find.byKey(const Key('outcome-more')), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('outcome-o11')));
+      await tester.tap(find.byKey(const Key('outcome-o11')));
+      await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
+      await tester.tap(find.byKey(const Key('save-outcome')));
+      await tester.pump();
+      expect(h.actions.args['submitDisposition'], ['o11', null, null]);
+
+      // Nine fit without More.
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: many.sublist(0, 9)),
+      );
+      expect(find.byKey(const Key('outcome-more')), findsNothing);
+      expect(find.byKey(const Key('outcome-o9')), findsOneWidget);
     });
 
     testWidgets('a saved suppress outcome whose number could not go on the list says so (DS8)', (tester) async {

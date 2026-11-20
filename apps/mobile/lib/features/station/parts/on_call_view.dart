@@ -15,7 +15,8 @@ import 'ringing_view.dart' show CustomerCard, LastCallsCard;
 import 'script_cards.dart' show ScriptStepsCard;
 import 'sheets.dart';
 
-/// On call (04, in its `04c` form, AS2: no AI anywhere): the customer card, Last calls, the note,
+/// On call (04, AS2: no AI anywhere): the customer card, then the script when the campaign has one,
+/// else (04c) Last calls; the note,
 /// and the controls in thumb reach: Mute and Speaker side by side, Slide to end call under them.
 /// No break button (AS10: Save & break on the next screen), no Mark DNC (Don't call again is on the
 /// next screen). A customer's hang-up moves the screen on by itself.
@@ -30,6 +31,7 @@ class OnCallView extends ConsumerWidget {
     final call = ref.watch(stationViewProvider.select((v) => v?.call));
     final muted = ref.watch(stationViewProvider.select((v) => v?.audio.muted ?? false));
     final lineDown = ref.watch(stationViewProvider.select((v) => v != null && v.link != StationLink.open));
+    final hasScript = ref.watch(stationViewProvider.select((v) => (v?.script?.steps ?? const <String>[]).isNotEmpty));
     final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
     return CallPage(
       body: [
@@ -38,11 +40,11 @@ class OnCallView extends ConsumerWidget {
         if (muted && interrupted == AudioInterruption.none) const _MutedBanner(),
         if (call != null) CustomerCard(call: call),
         const SizedBox(height: Space.md),
-        // The script (BE-8), above Last calls; without one, 04c's Last calls and note. No read
-        // aloud here: the customer is on the line, and the phone's speaker can reach them through
-        // the microphone (AS13).
-        if (call != null) ScriptStepsCard(callId: call.attemptId),
-        if (call != null && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
+        // AS2: the script (BE-8) when the campaign has one; else 04c's Last calls and the note. No
+        // read aloud here: the customer is on the line, and the phone's speaker can reach them
+        // through the microphone (AS13).
+        if (call != null && hasScript) ScriptStepsCard(callId: call.attemptId),
+        if (call != null && !hasScript && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
         const SizedBox(height: Space.md),
         StationNotesField(controller: notes),
         const SizedBox(height: Space.md),

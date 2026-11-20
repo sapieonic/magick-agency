@@ -161,8 +161,9 @@ void main() {
       await tester.pump();
       expect(find.text('4 of 4 done'), findsOneWidget);
       expect(find.text(StationCopy.allStepsDone), findsOneWidget);
-      // Last calls and the note stay under it.
-      expect(find.text(StationCopy.lastCalls), findsOneWidget);
+      // AS2: the script when there is one, not Last calls; the note stays.
+      expect(find.text(StationCopy.lastCalls), findsNothing);
+      expect(find.byKey(const Key('notes-field')), findsOneWidget);
     });
 
     testWidgets('a new call starts the steps afresh', (tester) async {

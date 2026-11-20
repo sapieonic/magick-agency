@@ -154,6 +154,8 @@ abstract final class StationCopy {
       'This time is saved with the call. No one will call by themselves, so call back on $when yourself.';
   static String weWillCallAgain(String date) => 'We will call again on $date.';
   static const dontCallAgain = 'Don’t call again';
+  static const moreOutcomes = 'More';
+  static String moreOutcomesHint(int n) => '$n more';
   static const stopCallingTitle = 'Stop calling this customer?';
   static const stopCallingBody = 'We will not call this number again for this work. You cannot change this later.';
   static const noGoBack = 'No, go back';
@@ -339,7 +341,6 @@ abstract final class StationCopy {
   static const cancelSwitch = 'Cancel the switch';
 
   // ── Ringing ──
-  static String attempt(int n) => 'Attempt $n';
   static const autoSelected = 'auto-selected';
   static const autoSelectedHint = 'Picked automatically from the contact’s details.';
   static String priorAttempts(int n) => 'Prior attempts ($n)';
@@ -354,7 +355,6 @@ abstract final class StationCopy {
   static String noFieldMatches(String q) => 'No fields match “$q”.';
   static const noExtraDetails = 'No extra details were uploaded for this contact.';
   static String emptyFields(int n) => '$n empty field${n == 1 ? '' : 's'}';
-  static const callingFrom = 'Calling from';
 
   // ── On call ──
   static const mute = 'Mute';

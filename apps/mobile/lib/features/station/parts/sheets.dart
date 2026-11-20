@@ -381,7 +381,8 @@ IconData routeIcon(AudioRouteKind? kind) => switch (kind) {
   null => Icons.hearing,
 };
 
-/// Every contact field, the caller ID and the history: the on-call "Details".
+/// Every contact field and the history: the on-call "Details". No "Attempt N" and no "Calling
+/// from" (spec §8: not needed to do the call).
 /// About [call] only: it closes when that call ends or another one arrives,
 /// so it never shows one customer's details over the next one's call.
 Future<void> showDetailsSheet(BuildContext context, CallView call) {
@@ -408,7 +409,7 @@ Future<void> showDetailsSheet(BuildContext context, CallView call) {
               Semantics(header: true, child: Text(StationCopy.detailsTitle, style: text.titleLarge)),
               const SizedBox(height: Space.xs),
               Text(
-                '${call.facts?.name ?? call.displayName ?? stationPhone(call.phoneE164, masked: view?.maskPhone ?? false)} · ${StationCopy.attempt(call.attemptNumber)}',
+                call.facts?.name ?? call.displayName ?? stationPhone(call.phoneE164, masked: view?.maskPhone ?? false),
                 style: text.bodySmall,
               ),
               const SizedBox(height: Space.md),
@@ -416,8 +417,6 @@ Future<void> showDetailsSheet(BuildContext context, CallView call) {
               HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
               const SizedBox(height: Space.md),
               ContactFieldList(fields: call.otherFields, alwaysFilter: call.otherFields.length > 8),
-              const SizedBox(height: Space.md),
-              FieldRow(label: StationCopy.callingFrom, value: formatPhone(call.callerId), mono: true),
               const SizedBox(height: Space.md),
               PriorAttemptsCard(attempts: call.priorAttempts),
             ],

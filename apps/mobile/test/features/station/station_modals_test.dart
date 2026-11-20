@@ -123,7 +123,10 @@ void main() {
       await tester.tap(find.byKey(const Key('control-details')));
       await settle(tester);
       expect(find.byKey(const Key('details-sheet')), findsOneWidget);
-      expect(find.text('Priya Raman · Attempt 2'), findsOneWidget);
+      expect(find.text('Priya Raman'), findsWidgets);
+      // Spec §8: not needed to do the call.
+      expect(find.textContaining('Attempt'), findsNothing);
+      expect(find.text('Calling from'), findsNothing);
       await h.setView(onCall(attemptId: 'a2'));
       await settle(tester);
       expect(find.byKey(const Key('details-sheet')), findsNothing);

@@ -630,7 +630,7 @@ int? _redialRemaining(StationView? v) {
 /// promise to pay, a clock for call later, a stop sign for don't call again, a thumbs-up for a
 /// success, a dot otherwise. The picked tile has a green border and a tick, never colour alone.
 /// The speaker that reads a tile aloud (AS13) is not here: see `docs/mobile.md`.
-class OutcomeTiles extends StatelessWidget {
+class OutcomeTiles extends StatefulWidget {
   const OutcomeTiles({super.key, required this.options, required this.selected, required this.enabled, required this.onSelect});
 
   final List<DispositionOption> options;
@@ -638,15 +638,36 @@ class OutcomeTiles extends StatelessWidget {
   final bool enabled;
   final ValueChanged<String> onSelect;
 
+  /// Up to nine fit; past that the first eight and a More tile that opens the rest (spec §6.2, the
+  /// console's `outcomeTileLayout`).
+  static const maxWithoutMore = 9;
+  static const beforeMore = 8;
+
+  @override
+  State<OutcomeTiles> createState() => _OutcomeTilesState();
+}
+
+class _OutcomeTilesState extends State<OutcomeTiles> {
+  bool _showAll = false;
+
   @override
   Widget build(BuildContext context) {
+    final all = widget.options;
+    final overflowing = all.length > OutcomeTiles.maxWithoutMore;
+    // An outcome behind More that is picked keeps the rest open.
+    final pickedBehind = all.indexWhere((o) => o.code == widget.selected) >= OutcomeTiles.beforeMore;
+    final expanded = !overflowing || _showAll || pickedBehind;
+    final options = expanded ? all : all.sublist(0, OutcomeTiles.beforeMore);
+    final selected = widget.selected;
+    final enabled = widget.enabled;
+    final onSelect = widget.onSelect;
     return LayoutBuilder(
       builder: (context, c) {
         final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
         final columns = scale > 1.6 || c.maxWidth < 280 ? 1 : 2;
         final w = ((c.maxWidth - Space.sm * (columns - 1)) / columns).floorToDouble();
         // 1–6: big tiles; 7 or more: smaller ones (spec §6.2).
-        final big = options.length <= 6;
+        final big = all.length <= 6;
         return Wrap(
           spacing: Space.sm,
           runSpacing: Space.sm,
@@ -661,9 +682,69 @@ class OutcomeTiles extends StatelessWidget {
                   onTap: enabled ? () => onSelect(o.code) : null,
                 ),
               ),
+            if (!expanded)
+              SizedBox(
+                width: w,
+                child: _MoreTile(hidden: all.length - OutcomeTiles.beforeMore, onTap: () => setState(() => _showAll = true)),
+              ),
           ],
         );
       },
+    );
+  }
+}
+
+/// The More tile: the outcomes past the first eight, opened in place.
+class _MoreTile extends StatelessWidget {
+  const _MoreTile({required this.hidden, required this.onTap});
+
+  final int hidden;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      label: '${StationCopy.moreOutcomes}, ${StationCopy.moreOutcomesHint(hidden)}',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: t.bgSecondary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          side: BorderSide(color: t.borderStrong, width: 1.5),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('outcome-more'),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 64),
+            child: Padding(
+              padding: const EdgeInsets.all(Space.sm),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.more_horiz, color: t.textSecondary),
+                  const SizedBox(width: Space.xs),
+                  Flexible(
+                    child: Text.rich(
+                      TextSpan(
+                        text: StationCopy.moreOutcomes,
+                        style: text.titleMedium,
+                        children: [TextSpan(text: ' · ${StationCopy.moreOutcomesHint(hidden)}', style: text.bodySmall)],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
