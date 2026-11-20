@@ -45,9 +45,7 @@ vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
 const { agencyAgentSessionRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
 const EVENTS_TABLE = 'agency_agent_session_events';
-// The INSERT, not any mention: the transition statement reads the event log too (0062: the drop's
-// event of a suspended break it ends).
-const isEventInsert = (sql: unknown): boolean => String(sql).includes(`INSERT INTO ${EVENTS_TABLE}`);
+const isEventInsert = (sql: unknown): boolean => String(sql).includes(EVENTS_TABLE);
 
 const mutationSql = (): string =>
   String(pool.query.mock.calls.find((c) => !isEventInsert(c[0]))?.[0] ?? '');

@@ -159,13 +159,12 @@ interface AgencySessionTransitionRow {
   from_break_reasons?: AgencyBreakReason[] | null;
   /**
    * 0062: a break a station drop suspended that this write ended without resuming it: its start
-   * (`suspended_break_since` before the write) and the event of the drop that suspended it, as
-   * `{ id, at }` (null when that event was never written). {@link breakOverrun} judges it as ended at
-   * the drop, and the overrun goes on the drop's event, which is the transition out of `break`
-   * (0060's CHECK). Absent or null otherwise. See {@link sessionTransitionSql}.
+   * (`suspended_break_since` before the write). {@link breakOverrun} judges it as ended at the drop,
+   * and the overrun goes on the drop's event, the transition out of `break` (0060's CHECK), which
+   * `recordTransitions` looks up in a statement of its own. Absent or null otherwise. See
+   * {@link sessionTransitionSql}.
    */
   suspended_since?: Date | string | null;
-  suspended_drop?: { id: string; at: string } | null;
 }
 
 /**
@@ -199,8 +198,10 @@ const TRANSITION_AT_SQL = `to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-M
  *    the same named break, `AgencyRuntime.rehydrateAgent`). Nothing is judged now; the break is
  *    judged once, from its start, when it really ends;
  *  - or ENDS it at the drop (anything else: the agent's next choice, a rehydrate that does not carry
- *    the start, the session's end): projected as `suspended_since` and `suspended_drop`, judged
- *    from the start to the drop's own event and written on that event by `recordTransitions`.
+ *    the start, the session's end): projected as `suspended_since`, judged from the
+ *    start to the drop's own event and written on that event by `recordTransitions`, which reads
+ *    that event in a statement of its own: the transition never reads the event log, so the log's
+ *    absence can never fail it.
  * A row back on `break` with the column still set was promoted by the join upsert
  * (`offline → break`, `state_since` untouched) and its break is the suspended one: a write that
  * moves it off that break judges it from the suspended start, and one that keeps the break with a
@@ -224,18 +225,12 @@ function sessionTransitionSql(input: {
                  AND (prev.state <> 'break' OR (s.state = 'break' AND s.break_reason IS NOT DISTINCT FROM prev.break_reason))`;
   const judged = input.judgeBreak === false
     ? `NULL::timestamptz AS from_state_since, NULL::jsonb AS from_break_reasons,
-                 NULL::timestamptz AS suspended_since, NULL::jsonb AS suspended_drop`
+                 NULL::timestamptz AS suspended_since`
     : `CASE WHEN s.suspended_break_since IS NULL
                       THEN COALESCE(prev.suspended_break_since, prev.state_since) END AS from_state_since,
                  CASE WHEN prev.state = 'break' OR prev.suspended_break_since IS NOT NULL
                       THEN (SELECT c.break_reasons FROM agency_campaigns c WHERE c.id = s.campaign_id) END AS from_break_reasons,
-                 CASE WHEN ${endsSuspended} THEN prev.suspended_break_since END AS suspended_since,
-                 CASE WHEN ${endsSuspended}
-                      THEN (SELECT jsonb_build_object('id', e.id, 'at', ${eventAtSql('e.at')})
-                              FROM agency_agent_session_events e
-                             WHERE e.agent_user_id = s.agent_user_id AND e.at >= prev.suspended_break_since
-                               AND e.session_id = s.id AND e.from_state = 'break' AND e.to_state = 'offline'
-                             ORDER BY e.at DESC LIMIT 1) END AS suspended_drop`;
+                 CASE WHEN ${endsSuspended} THEN prev.suspended_break_since END AS suspended_since`;
   return `WITH prev AS (
          SELECT id, state, break_reason, away_ring_since, state_since, suspended_break_since FROM agency_agent_sessions
           WHERE ${input.prevWhere} FOR UPDATE
@@ -249,11 +244,6 @@ function sessionTransitionSql(input: {
                  s.state AS to_state, s.break_reason,
                  ${TRANSITION_AT_SQL},
                  ${judged}`;
-}
-
-/** `col` (a timestamptz) as {@link TRANSITION_AT_SQL}'s text: UTC ISO-8601 with microseconds. */
-function eventAtSql(col: string): string {
-  return `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 /** The absence a ring's end restored `away_ring` on ({@link AgencyAgentSessionRepository.restoreAwayRing}). */
@@ -450,18 +440,34 @@ export class AgencyAgentSessionRepository {
    * The `break_overrun_seconds IS NULL` guard keeps a retried write from counting it twice.
    */
   private async recordSuspendedBreakOverruns(rows: AgencySessionTransitionRow[]): Promise<void> {
-    const judged = rows.flatMap((r) => {
-      if (!r.suspended_since || !r.suspended_drop) return [];
-      const o = breakOverrun({
-        code: r.from_break_reason,
-        configured: r.from_break_reasons ?? null,
-        startedAt: new Date(r.suspended_since),
-        endedAt: new Date(r.suspended_drop.at),
-      });
-      return o ? [{ row: r, eventId: r.suspended_drop.id, ...o }] : [];
-    });
-    if (judged.length === 0) return;
+    const ended = rows.filter((r) => r.suspended_since);
+    if (ended.length === 0) return;
     try {
+      // The drop's event: the session's latest `break → offline` since the break began (on the
+      // agent's (agent_user_id, at) index). None when its insert never ran: then nothing is judged.
+      const { rows: drops } = await getPool().query<{ session_id: string; id: string; at: Date }>(
+        `SELECT d.session_id, e.id, e.at
+           FROM UNNEST($1::uuid[], $2::uuid[], $3::timestamptz[]) AS d(session_id, agent_user_id, since)
+           CROSS JOIN LATERAL (
+             SELECT ev.id, ev.at FROM agency_agent_session_events ev
+              WHERE ev.agent_user_id = d.agent_user_id AND ev.at >= d.since AND ev.session_id = d.session_id
+                AND ev.from_state = 'break' AND ev.to_state = 'offline'
+              ORDER BY ev.at DESC LIMIT 1) e`,
+        [ended.map((r) => r.session_id), ended.map((r) => r.agent_user_id), ended.map((r) => r.suspended_since)],
+      );
+      const dropOf = new Map(drops.map((d) => [d.session_id, d]));
+      const judged = ended.flatMap((r) => {
+        const drop = dropOf.get(r.session_id);
+        if (!drop) return [];
+        const o = breakOverrun({
+          code: r.from_break_reason,
+          configured: r.from_break_reasons ?? null,
+          startedAt: new Date(r.suspended_since!),
+          endedAt: new Date(drop.at),
+        });
+        return o ? [{ row: r, eventId: drop.id, ...o }] : [];
+      });
+      if (judged.length === 0) return;
       const { rows: written } = await getPool().query<{ id: string }>(
         `UPDATE agency_agent_session_events e
             SET break_limit_minutes = j.limit_minutes, break_overrun_seconds = j.overrun_seconds
@@ -476,7 +482,7 @@ export class AgencyAgentSessionRepository {
         try { trackBreakOverrun(j.row.tenant_id); } catch { /* a metric never fails a transition */ }
       }
     } catch (err) {
-      log.warn({ err, sessions: judged.map((j) => j.row.session_id) },
+      log.warn({ err, sessions: ended.map((r) => r.session_id) },
         'Could not record a suspended break\'s overrun on the event of its drop');
     }
   }
