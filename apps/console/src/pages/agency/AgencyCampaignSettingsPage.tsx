@@ -577,8 +577,12 @@ export function AgencyCampaignSettingsPage() {
   const stationFieldErrors = useMemo(() => ({ ...fieldErrors, ...stationLive }), [fieldErrors, stationLive]);
   const stationQuiet = useMemo(() => new Set(Object.keys(stationLive)), [stationLive]);
   const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
-  // The customer list's columns, for the facts' pickers: read by an editor only (`agency.supervise` floors the read).
-  const imported = useCampaignColumns(id, campaign?.root_campaign_id, tenantId, accountId, canEdit && canSupervise);
+  // The customer list's columns, for the facts' pickers: read by an editor only (`agency.supervise`
+  // floors the read), once THIS campaign is loaded, so its lineage root is known at the one read.
+  const imported = useCampaignColumns(
+    id, campaign?.root_campaign_id ?? null, tenantId, accountId,
+    canEdit && canSupervise && campaign?.id === id,
+  );
   const columns = useMemo(
     () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
     [imported.columns, campaign?.context_display, station],

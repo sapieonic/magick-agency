@@ -310,10 +310,28 @@ export function contextDisplayPayload(stored: AgencyContextDisplay | null | unde
   };
 }
 
+/** Whether two column names are the same column, as the server compares them (ignoring case). */
+export function sameColumn(a: string, b: string): boolean {
+  return fold(a) === fold(b);
+}
+
+/** The column of `columns` that is `name` (ignoring case), or undefined. */
+export function columnNamed(columns: readonly string[], name: string): string | undefined {
+  return columns.find((column) => sameColumn(column, name));
+}
+
+/** How `column` is read (ignoring case, as the server matches it): absent is text. */
+export function columnType(facts: FactsForm, column: string): AgencyContextFieldType {
+  const key = columnNamed(Object.keys(facts.types), column);
+  return key === undefined ? 'text' : facts.types[key]!;
+}
+
 /**
- * The columns the role and type pickers offer: the roster's columns as imported, then any column
- * the campaign names in its display or facts settings that they leave out (a column set before,
- * kept so the setting is not lost from view), each once (ignoring case), in that order.
+ * The columns the role and type pickers offer: the roster's columns as imported (the newest
+ * imports'), then any column the campaign names in its display, its stored roles and types, or
+ * the facts on the form that they leave out, each once (ignoring case), in that order. A stored
+ * role or type is offered as a column like any other: the server took it when it was saved, and it
+ * still takes it (the lineage's every import counts there, not only the newest the console reads).
  */
 export function campaignColumns(imported: readonly string[], display: AgencyContextDisplay | null | undefined, facts: FactsForm): string[] {
   const seen = new Set<string>();
@@ -327,6 +345,8 @@ export function campaignColumns(imported: readonly string[], display: AgencyCont
   imported.forEach(add);
   const shown = isRecord(display) ? display : {};
   for (const list of [shown.hero, shown.order]) if (Array.isArray(list)) list.forEach(add);
+  if (isRecord(shown.roles)) Object.values(shown.roles).forEach(add);
+  if (isRecord(shown.types)) Object.keys(shown.types).forEach(add);
   Object.values(facts.roles).forEach(add);
   Object.keys(facts.types).forEach(add);
   return out;
@@ -338,11 +358,16 @@ export function hiddenColumns(display: AgencyContextDisplay | null | undefined):
   return Array.isArray(hidden) ? hidden.filter((c): c is string => typeof c === 'string') : [];
 }
 
-/** A copy of `facts` with `column` read as `type` (`text` takes it off the map: absent is text). */
+/**
+ * A copy of `facts` with `column` read as `type` (`text` takes it off the map: absent is text). One
+ * key per column: a key that is the same column in another case is replaced, and its spelling kept
+ * (the stored one), so the map never names one column twice.
+ */
 export function withColumnType(facts: FactsForm, column: string, type: AgencyContextFieldType): FactsForm {
-  const { [column]: _old, ...rest } = facts.types;
-  void _old;
-  return { ...facts, types: type === 'text' ? rest : { ...rest, [column]: type } };
+  const keys = Object.keys(facts.types);
+  const key = columnNamed(keys, column) ?? column;
+  const rest = Object.fromEntries(Object.entries(facts.types).filter(([name]) => !sameColumn(name, column)));
+  return { ...facts, types: type === 'text' ? rest : { ...rest, [key]: type } };
 }
 
 // ─── The unsaved-changes bar and the save ───────────────────────────────────

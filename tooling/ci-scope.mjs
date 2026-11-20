@@ -55,6 +55,8 @@ export const READ_BY = [
   { prefix: 'tooling/contracts-literals.', packages: ['packages/contracts'] },
   // insightsDrilldowns.test.tsx holds the console to the server's drill-down fixture.
   { prefix: 'apps/server/test/fixtures/', packages: ['apps/console'] },
+  // agencyActivityCopy.test.ts holds the Activity trail's setting labels to the server's patchable columns.
+  { prefix: 'apps/server/src/db/repositories/agency/campaign.repository.ts', packages: ['apps/console'] },
   // saRoutes.test.ts holds SA_ROUTES to the server's super-admin route files, both ways.
   { prefix: 'apps/server/src/api/routes/', packages: ['apps/super-admin'] },
   // brandAssets.test.ts holds the super-admin logo and favicon to the console's, byte for byte.

@@ -1,4 +1,5 @@
-import type { AgencyFloorAgent, AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
+import { AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS, type AgencyFloorAgent, type AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
+import type { AgencyAgentState } from '../../types/agency';
 import type { AgencyPromisesSummaryResponse } from '@magick-agency/contracts/api/agency/promises';
 import type { AgencyLiveCall } from '@magick-agency/contracts/api/agency/live-calls';
 import type { AgencySupervisorAgent } from '../../types/agency-campaign';
@@ -19,7 +20,7 @@ import type { ListenCall } from '../listen/liveCallsTable';
 import { formatAmountShort, sumPromiseAmounts } from '../format/promise';
 import { formatCount, plural } from '../format/number';
 import { elapsedSince } from '../agencyClock';
-import { HELP_KIND_PREFIX, type HomeAttentionItem, type HomeCampaignRead, type HomeCampaignRef } from './home';
+import { DISCONNECTED_KIND_PREFIX, HELP_KIND_PREFIX, type HomeAttentionItem, type HomeCampaignRead, type HomeCampaignRef } from './home';
 import type { AgentsWorking } from './liveFloor';
 import { helpAgo, reminderText } from './floorAssist';
 
@@ -441,12 +442,52 @@ export function breakOverrunItems(
   });
 }
 
-// ── Needs you now: Need help (LF4, LF28) ────────────────────────────────────
+// ── What an agent was doing, in words ───────────────────────────────────────
 
-/** What the agent was doing when they asked: "on a call with Ramesh Goud", "after the call". */
-function helpDetail(card: FloorCard): string {
+/** "on a call with Ramesh Goud", or "on a call" once that call is gone from the row. */
+function onACallWords(row: Pick<AgencyFloorAgent, 'call'>): string {
+  return row.call
+    ? `on a call with ${customerLabel({ customer_name: row.call.customer_name, origin: row.call.origin })}`
+    : 'on a call';
+}
+
+/**
+ * What the agent was doing in `state`, to end "asked for help …" or "lost the connection …" (AS15:
+ * plain words, never a state's wire name): "while waiting for a call", "on a break", "after the
+ * call". A break on the soft phone is the soft phone (its wire state is `break`, `docs/softphone.md`
+ * §2); the row's call names the customer while it is still on the row.
+ */
+function doingWords(state: AgencyAgentState, row: AgencyFloorAgent): string {
+  switch (state) {
+    case 'on_call':
+      return onACallWords(row);
+    case 'reserved':
+      return 'as a call was connecting';
+    case 'wrapup':
+      return owesInboundOutcome(row) ? 'after an inbound call' : 'after the call';
+    case 'available':
+      return 'while waiting for a call';
+    case 'break':
+      return isOnSoftphone({ state: row.state, break_reason: row.break_reason }) ? 'on the soft phone' : 'on a break';
+    case 'offline':
+      return 'before starting calls';
+  }
+}
+
+// ── Needs you now: Need help (LF4, LF28; BE-9) ──────────────────────────────
+
+/**
+ * What the agent was doing when they asked, on the help row and the card ("Asked for help …"):
+ * the request's own `state_at_raise` (BE-9: help can be raised in every state of a live session),
+ * "while waiting for a call", "on a break", "on a call with Ramesh Goud". A request from an older
+ * server carries none: then what the row shows now, as before ("on a call with Ramesh Goud",
+ * "after the call", else "on the floor").
+ */
+export function helpDetail(card: Pick<FloorCard, 'row' | 'state'>): string {
   const { row } = card;
-  if (row.call) return `on a call with ${customerLabel({ customer_name: row.call.customer_name, origin: row.call.origin })}`;
+  const raisedIn = row.help?.state_at_raise;
+  if (raisedIn !== undefined && raisedIn !== null) return doingWords(raisedIn, row);
+  if (row.call) return onACallWords(row);
   if (card.state === 'wrapup') return owesInboundOutcome(row) ? 'after an inbound call' : 'after the call';
   return 'on the floor';
 }
@@ -485,6 +526,67 @@ export function helpItems(
       count: null,
       ackable: false,
       agent: { sessionId: row.session_id, name: card.displayName, call: liveCallOf(row) },
+    }];
+  });
+}
+
+// ── Disconnected (BE-11) ────────────────────────────────────────────────────
+
+/**
+ * How long the agent's screen has been disconnected, in plain words, from the row's
+ * `disconnected_since` (BE-11) on the server's clock: "Disconnected for 2 min", "Disconnected for
+ * under a minute". "Disconnected" alone when the server does not know since when (an older server,
+ * or right after a restart: the time is held in its memory only).
+ */
+export function disconnectedWords(since: string | null | undefined, nowMs: number): string {
+  const time = disconnectedFor(since, nowMs);
+  return time === null ? 'Disconnected' : `Disconnected ${time}`;
+}
+
+/** "for 2 min", "for under a minute": how long since `since` at `nowMs`; null when it cannot be read. */
+export function disconnectedFor(since: string | null | undefined, nowMs: number): string | null {
+  const at = since ? Date.parse(since) : Number.NaN;
+  if (!Number.isFinite(at)) return null;
+  const minutes = Math.floor(Math.max(0, nowMs - at) / 60_000);
+  return minutes < 1 ? 'for under a minute' : `for ${formatCount(minutes)} min`;
+}
+
+/**
+ * One row per working agent whose screen has been disconnected for at least
+ * `AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS` (BE-11, the alerts read's own rule: not on a break or
+ * the soft phone, not offline, `connected === false`, `disconnected_since` known), so Live floor,
+ * where the shell's banner is not shown, lists what the banner lists: "Ravi Kumar is disconnected
+ * for 2 min", "Lost the connection while waiting for a call." Danger tone, ranked `disconnected`.
+ *
+ * - **Kind** `disconnected@<since>`: a second drop is a new row. Not put aside with "Got it": it
+ *   clears itself when the screen is back (or the session ends).
+ * - No Talk or reminder: a message cannot reach a screen that is not connected.
+ * - From the page's cards, on its one 5 s clock (the server's), as the break and help rows; marked
+ *   not refreshed with the floor; never on the sidebar badge (the floor is Live floor's read alone).
+ */
+export function disconnectedItems(
+  cards: readonly FloorCard[],
+  campaigns: readonly HomeCampaignRef[],
+  now: number,
+  stale = false,
+): HomeAttentionItem[] {
+  return cards.flatMap((card) => {
+    const { row } = card;
+    if (row.session_id === null || row.connected !== false) return [];
+    if (row.state === 'break' || row.state === 'offline') return [];
+    const since = row.disconnected_since ? Date.parse(row.disconnected_since) : Number.NaN;
+    if (!Number.isFinite(since) || now - since < AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS) return [];
+    return [{
+      id: `disconnected:${row.agent_user_id}`,
+      tone: 'danger' as const,
+      title: `${card.displayName} is disconnected ${disconnectedFor(row.disconnected_since, now) ?? ''}`.trimEnd(),
+      detail: `Lost the connection ${doingWords(row.state, row)}.`,
+      at: null,
+      ...floorRowCampaign(row, campaigns),
+      stale,
+      kind: `${DISCONNECTED_KIND_PREFIX}${row.disconnected_since}`,
+      count: null,
+      ackable: false,
     }];
   });
 }

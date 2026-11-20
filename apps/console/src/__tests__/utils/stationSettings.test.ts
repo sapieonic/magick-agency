@@ -15,6 +15,9 @@ import {
   stationSettingsOf,
   unknownPlaceholders,
   withColumnType,
+  columnNamed,
+  columnType,
+  sameColumn,
   type FactsForm,
   type StationSettingsForm,
 } from '../../utils/agency/stationSettings';
@@ -165,6 +168,25 @@ describe('the customer facts (BE-6)', () => {
       { hero: ['due', 'Branch'], order: ['Notes'] },
       facts({ roles: { ...noRoles, place: 'Town' }, types: { When: 'date' } }),
     )).toEqual(['Name', 'Due', 'Branch', 'Notes', 'Town', 'When']);
+  });
+
+  it('offers the stored roles and types too, even once the form has moved off them (the server still takes them)', () => {
+    // `Region` and `Paid On` came from an import older than the ones read; the form no longer names them.
+    expect(campaignColumns(
+      ['Name'],
+      { roles: { place: 'Region' }, types: { 'Paid On': 'date', name: 'text' } },
+      facts(),
+    )).toEqual(['Name', 'Region', 'Paid On']);
+  });
+
+  it('keeps one key per column whatever its case, with the stored spelling', () => {
+    const stored = facts({ types: { amount: 'money', Other: 'date' } });
+    expect(withColumnType(stored, 'Amount', 'date').types).toEqual({ amount: 'date', Other: 'date' });
+    expect(withColumnType(stored, 'AMOUNT', 'text').types).toEqual({ Other: 'date' });
+    expect(columnType(stored, 'Amount')).toBe('money');
+    expect(columnType(stored, 'Nothing')).toBe('text');
+    expect(sameColumn(' Due Amount ', 'due amount')).toBe(true);
+    expect(columnNamed(['Name', 'Due Amount'], 'DUE AMOUNT')).toBe('Due Amount');
   });
 });
 

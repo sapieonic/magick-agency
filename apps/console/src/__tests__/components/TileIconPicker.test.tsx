@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { AGENCY_TILE_ICONS } from '@magick-agency/contracts/agency';
@@ -14,6 +16,13 @@ describe('the tile picture map', () => {
     expect(Object.keys(TILE_ICONS).sort()).toEqual([...AGENCY_TILE_ICONS].sort());
     expect(Object.keys(TILE_ICON_LABELS).sort()).toEqual([...AGENCY_TILE_ICONS].sort());
     for (const key of AGENCY_TILE_ICONS) expect(TILE_ICON_LABELS[key].trim()).not.toBe('');
+  });
+
+  it('is the guard web-ui’s map names: the test file its comment points at exists, and is this one', () => {
+    const source = readFileSync(resolve(__dirname, '../../../../../packages/web-ui/src/components/TileIcon.tsx'), 'utf-8');
+    const named = [...source.matchAll(/`([^`\s]+\.test\.tsx?)`/g)].map((m) => m[1]!);
+    expect(named).toEqual(['apps/console/src/__tests__/components/TileIconPicker.test.tsx']);
+    expect(existsSync(__filename) && __filename.endsWith(named[0]!)).toBe(true);
   });
 
   it('draws nothing for a key it does not know', () => {

@@ -4,7 +4,8 @@ import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 /**
  * `useTeam`, `useAccounts` and `usePhoneNumbers` sit on `useAsyncResource`.
  * These pin the two things each hook adds on top of it: no request before the
- * tenant (and account) resolve — `loading` stays true, as before — and, for
+ * tenant (and account) resolve, with `loading` true meanwhile (the hook's own
+ * `loading || !ready`: `useAsyncResource` says false while disabled) and, for
  * `useTeam`, a `loaded` flag a page can use to keep its table during a reload.
  * The stale-response guard itself is `useAsyncResource`'s and tested there.
  */
@@ -80,6 +81,19 @@ describe('useTeam', () => {
 });
 
 describe('useAccounts', () => {
+  it('waits for a tenant without requesting, loading meanwhile', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: null });
+    mocks.listAccounts.mockResolvedValue([{ id: 'a1' }]);
+    const { result, rerender } = renderHook(() => useAccounts());
+    expect(result.current.loading).toBe(true);
+    expect(mocks.listAccounts).not.toHaveBeenCalled();
+
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1' });
+    rerender();
+    await waitFor(() => expect(result.current.accounts).toHaveLength(1));
+    expect(result.current.loading).toBe(false);
+  });
+
   it('loads the tenant’s accounts', async () => {
     mocks.listAccounts.mockResolvedValue([{ id: 'a1' }]);
     const { result } = renderHook(() => useAccounts());

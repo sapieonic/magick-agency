@@ -11,11 +11,13 @@ export function useAccounts() {
     (): Promise<Account[]> => listAccounts(tenantId!),
     [tenantId],
   );
+  // Waiting for the scope is still loading here: the page shows its spinner, never an empty list.
+  const ready = tenantId !== null;
   const { data: accounts, loading, error, reload } = useAsyncResource(fetchAccounts, {
     initialData: [],
     errorMessage: 'Failed to load accounts',
-    enabled: tenantId !== null,
+    enabled: ready,
   });
 
-  return { accounts, loading, error, reload };
+  return { accounts, loading: loading || !ready, error, reload };
 }

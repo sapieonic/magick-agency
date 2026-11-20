@@ -26,17 +26,19 @@ import {
   Users,
   Volume2,
   VolumeX,
+  WifiOff,
   type LucideIcon,
 } from 'lucide-react';
 import { useHomeAcks } from '../../../hooks/useHomeAcks';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useListen } from '../../../components/listen/ListenProvider';
-import { HELP_KIND_PREFIX, homeNeeds, homeWaiting, type HomeAttentionItem } from '../../../utils/agency/home';
+import { DISCONNECTED_KIND_PREFIX, HELP_KIND_PREFIX, homeNeeds, homeWaiting, type HomeAttentionItem } from '../../../utils/agency/home';
 import type { MessageTarget } from '../../../utils/agency/floorAssist';
 import { listenToLabel } from '../../../utils/listen/listenCopy';
 import { attentionFor } from '../../../utils/agency/liveFloor';
 import { formatTimeOrDate } from '../../../utils/format/date';
 import { formatCount, plural } from '../../../utils/format/number';
+import { ComingToDeskButton } from './ComingToDesk';
 import { FloorPane } from './FloorPane';
 import styles from './LiveFloor.module.css';
 
@@ -68,6 +70,7 @@ export interface NeedsYouNowHandOff {
 function rowIcon(item: HomeAttentionItem): LucideIcon {
   const { kind } = item;
   if (kind.startsWith(HELP_KIND_PREFIX)) return LifeBuoy;
+  if (kind.startsWith(DISCONNECTED_KIND_PREFIX)) return WifiOff;
   if (kind.startsWith('stall:auto_paused')) return CirclePause;
   if (kind === 'stall:dnc_unavailable') return ShieldAlert;
   if (kind === 'stall:no_dialable_caller_ids') return PhoneOff;
@@ -91,8 +94,9 @@ export const HELP_CHIME_LABEL = 'Need help sound';
  * (`homeAttention`), so the sidebar badge counts this list: the dangers and warnings, never an
  * information row, never a row put aside with "Got it". Live floor changes three things, each a
  * pure rule: one row for every campaign on the default calling hours (`groupCallingHours`), the
- * order (`HOME_RANKS`), and the floor's own rows (Need help, breaks over their limit) with their
- * actions: Listen, Talk to agent and Send reminder while floor assist is on (`assist`), and on late
+ * order (`HOME_RANKS`), and the floor's own rows (Need help, agents disconnected past 20 s, breaks
+ * over their limit) with their actions: Listen, Talk to agent, I’m coming (on Need help, BE-9) and
+ * Send reminder while floor assist is on (`assist`), and on late
  * callbacks whose owner is away, "Give to free agents" where it is offered (`handOff`). With a
  * campaign picked it shows that campaign's rows and says how many it leaves out
  * (not counting rows put aside). Never an all-clear from a read it could not refresh, nor while the
@@ -327,6 +331,10 @@ function AttentionRow({ item, now, onAcknowledge, assist = null, handOff = null 
             {agent.reminder !== undefined ? <BellRing size={14} aria-hidden="true" /> : <MessageCircle size={14} aria-hidden="true" />}
             {agent.reminder !== undefined ? 'Send reminder' : 'Talk'}
           </button>
+        )}
+        {/* BE-9: Need help's one-press answer when the supervisor walks over, call or none. */}
+        {agent && assist && item.kind.startsWith(HELP_KIND_PREFIX) && (
+          <ComingToDeskButton sessionId={agent.sessionId} name={agent.name} />
         )}
         {giveTo && handOff && (
           <button

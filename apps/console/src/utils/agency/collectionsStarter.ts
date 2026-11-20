@@ -32,6 +32,16 @@ export function withCollectionsStarter(config: CampaignConfigState): CampaignCon
   return { ...config, dispositions, outcomeDispositions };
 }
 
+/**
+ * The set's outcomes named in a sentence, "Will pay, Call later, … and Don't call again": their
+ * labels exactly as the set writes them (so the offer never spells one differently from the tile
+ * it puts on the form).
+ */
+export function collectionsStarterNames(): string {
+  const labels = AGENCY_COLLECTIONS_STARTER_CATALOG.map((entry) => entry.label);
+  return labels.length <= 1 ? labels.join('') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
 /** Whether the outcomes on the form are the set as offered, untouched (the offer then says so). */
 export function isCollectionsStarter(dispositions: readonly AgencyDispositionEntry[]): boolean {
   return JSON.stringify(dispositions) === JSON.stringify(collectionsStarterOutcomes());

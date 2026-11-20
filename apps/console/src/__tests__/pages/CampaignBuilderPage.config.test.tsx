@@ -23,9 +23,14 @@ const mocks = vi.hoisted(() => ({
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
   isCapabilityEnabled: vi.fn(),
+  trackConfigSaved: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../analytics/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../analytics/events')>()),
+  trackAgencyCampaignConfigSaved: mocks.trackConfigSaved,
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: mocks.isCapabilityEnabled, map: {}, loading: false, refresh: vi.fn() }),
 }));
@@ -784,6 +789,29 @@ describe('call recording in the builder', () => {
 
 
 describe('the Collections set (agent station AS4)', () => {
+  it('names the six in the offer exactly as their tiles are labelled', async () => {
+    const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
+    await openBehaviour();
+    const offer = () => screen.getByTestId('collections-starter').textContent ?? '';
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
+    expect(offer()).toContain("Wrong number and Don't call again.");
+    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
+  });
+
+  it('reports a reorder against the set as applied, not the outcomes it replaced', async () => {
+    await openBehaviour();
+    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(1));
+    expect(mocks.trackConfigSaved.mock.calls[0]![0]).toMatchObject({ reordered: false });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move Will pay down' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(2));
+    expect(mocks.trackConfigSaved.mock.calls[1]![0]).toMatchObject({ reordered: true });
+  });
+
   it('replaces the outcomes with the six, each with its picture, editable, and saves them', async () => {
     const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
     await openBehaviour();

@@ -94,7 +94,7 @@ describe('useAsyncResource', () => {
     await waitFor(() => expect(result.current.data).toBe('b'));
   });
 
-  it('while disabled, makes no request, stays loading and settles `reload`; enabling loads', async () => {
+  it('while disabled, makes no request, is not loading and settles `reload`; enabling loads at once', async () => {
     const fetcher = vi.fn().mockResolvedValue('v');
     const { result, rerender } = renderHook(
       ({ enabled }) => useAsyncResource(fetcher, { initialData: '', enabled }),
@@ -102,10 +102,13 @@ describe('useAsyncResource', () => {
     );
     await act(async () => { await result.current.reload(); });
     expect(fetcher).not.toHaveBeenCalled();
-    expect(result.current.loading).toBe(true);
+    // Nothing is loading while disabled, so a "Loading…" line never sticks on it.
+    expect(result.current.loading).toBe(false);
     expect(result.current.data).toBe('');
 
     rerender({ enabled: true });
+    // Loading from the first render it is on: no frame of "loaded, empty" before the request.
+    expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.data).toBe('v'));
     expect(result.current.loading).toBe(false);
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -121,7 +124,7 @@ describe('useAsyncResource', () => {
 
     rerender({ enabled: false });
     expect(result.current.data).toEqual([]);
-    expect(result.current.loading).toBe(true);
+    expect(result.current.loading).toBe(false);
   });
 
   it('disabling drops a load still in flight', async () => {
@@ -136,6 +139,6 @@ describe('useAsyncResource', () => {
     rerender({ enabled: false });
     await act(async () => { pending.resolve('stale'); await pending.promise; });
     expect(result.current.data).toBe('');
-    expect(result.current.loading).toBe(true);
+    expect(result.current.loading).toBe(false);
   });
 });
