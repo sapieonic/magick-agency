@@ -71,9 +71,15 @@ void main() {
 
     testWidgets('a campaign that assigns contacts keeps the agent\'s call-laters theirs', (tester) async {
       final items = [CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'K. Venkatesh')];
-      await pumpStation(tester, station(myContactsOffered: true, queue: const QueueView(due: true)), callLater: items);
+      await pumpStation(tester, station(myContactsOffered: true, assignsContacts: true), callLater: items);
       expect(find.text('K. Venkatesh'), findsOneWidget);
       expect(find.text(StationCopy.callLaterComesToYou), findsOneWidget);
+    });
+
+    testWidgets('a pool campaign\'s queue frame (BE-5) does not make them the agent\'s', (tester) async {
+      final items = [CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'K. Venkatesh')];
+      await pumpStation(tester, station(myContactsOffered: true, queue: const QueueView(due: true)), callLater: items);
+      expect(find.text(StationCopy.callLaterPool), findsOneWidget);
     });
 
     testWidgets('no call-later list when the read has none', (tester) async {
@@ -584,8 +590,10 @@ void main() {
       String? dnc,
       ReleaseView release = hungUpRelease,
       QueueView? queue,
+      bool assigns = false,
     }) => station(
       phase: AgentPhase.wrapup,
+      assignsContacts: assigns,
       call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
       release: release,
       wrapup: w ?? wrapup(),
@@ -688,7 +696,28 @@ void main() {
     });
 
     testWidgets('Call later on a campaign that assigns contacts: "This call will come to you"', (tester) async {
+      await pumpStation(tester, wrap(assigns: true), now: DateTime(2026, 10, 31, 11, 20, 30));
+      await tester.tap(find.byKey(const Key('outcome-callback')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('callback-todayEvening')));
+      await tester.pump();
+      expect(find.text(StationCopy.callWillComeToYou('Sat 31 Oct at 6:00 PM')), findsOneWidget);
+    });
+
+    testWidgets('Call later on a pool campaign that sends a queue (BE-5): another agent may get the call', (tester) async {
       await pumpStation(tester, wrap(queue: const QueueView(due: true)), now: DateTime(2026, 10, 31, 11, 20, 30));
+      await tester.tap(find.byKey(const Key('outcome-callback')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('callback-todayEvening')));
+      await tester.pump();
+      expect(find.text(StationCopy.callWillBeMade('Sat 31 Oct at 6:00 PM')), findsOneWidget);
+      expect(find.text(StationCopy.callWillComeToYou('Sat 31 Oct at 6:00 PM')), findsNothing);
+      await tester.tap(find.byKey(const Key('follow-up-ok')));
+      await settle(tester);
+    });
+
+    testWidgets('Call later: my-day\'s comes_to_me wins over the campaign\'s mode', (tester) async {
+      await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20, 30), callLaterComesToMe: true);
       await tester.tap(find.byKey(const Key('outcome-callback')));
       await settle(tester);
       await tester.tap(find.byKey(const Key('callback-todayEvening')));

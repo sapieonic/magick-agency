@@ -144,6 +144,26 @@ void main() {
       }
     });
 
+    test('a call-later comes back to the agent on a campaign that assigns contacts, never on pool (AS8)', () {
+      for (final (extra, assigns) in <(Map<String, Object?>, bool)>[
+        ({}, false),
+        ({'assignment_mode': 'pool'}, false),
+        // Agent retry offers My contacts, but a pool campaign still gives a call-later to anyone.
+        ({'assignment_mode': 'pool', 'allow_agent_retry': true}, false),
+        ({'assignment_mode': 'strict'}, true),
+        ({'assignment_mode': 'preferred'}, true),
+        ({'assignment_mode': 'round_robin'}, true),
+      ]) {
+        fakeAsync((async) {
+          final app = App(async);
+          app.routes['POST /proxy/agency/sessions'] = (_) => json(200, {...bootstrapJson(), ...extra});
+          app.start();
+          expect(app.view!.assignsContacts, assigns, reason: '$extra');
+          app.dispose();
+        });
+      }
+    });
+
     test('a pool campaign has no queue, and the waiting screen keeps its words', () {
       fakeAsync((async) {
         final app = App(async)..start();

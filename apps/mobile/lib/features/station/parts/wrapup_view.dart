@@ -11,6 +11,7 @@ import '../logic/format.dart';
 import '../logic/wrapup_math.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
+import '../station_reads.dart' show stationComesToMeProvider;
 import '../widgets/action_buttons.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/ticking.dart';
@@ -67,7 +68,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 
   Future<void> _followUp(DispositionOption option) async {
     final attemptId = ref.read(stationViewProvider)?.call?.attemptId;
-    final own = ref.read(stationViewProvider)?.queue != null;
+    final own = ref.read(stationComesToMeProvider);
     final next = await showFollowUpSheet(context, option: option, form: _form, attemptId: attemptId, ownQueue: own);
     if (next != null && mounted) setState(() => _form = next);
   }
@@ -82,7 +83,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     final cut = ref.watch(stationViewProvider.select((v) => v?.release?.tone == ReleaseTone.danger && (v?.release?.requiresDisposition ?? false)));
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
-    final own = ref.watch(stationViewProvider.select((v) => v?.queue != null));
+    final own = ref.watch(stationComesToMeProvider);
 
     return CallPage(
       body: [

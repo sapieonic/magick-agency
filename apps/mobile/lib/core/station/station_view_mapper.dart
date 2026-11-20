@@ -171,6 +171,7 @@ class StationViewMapper {
       queue: _queueFor(s.queue),
       dialActivity: dialActivityOf(s, gapHeld: dialGapHeld),
       myContactsOffered: myContactsOfferedBy(bootstrap),
+      assignsContacts: assignsContactsBy(bootstrap),
       inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
@@ -319,6 +320,11 @@ class StationViewMapper {
   static bool myContactsOfferedBy(wire.SessionBootstrap? bootstrap) =>
       bootstrap != null &&
       (bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire || bootstrap.allowAgentRetry);
+
+  /// AS8: the campaign assigns contacts (`strict`, `preferred`, or a mode this build does not
+  /// know), so a call-later comes back to the agent who booked it; `pool` (or no mode) does not.
+  static bool assignsContactsBy(wire.SessionBootstrap? bootstrap) =>
+      bootstrap != null && bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire;
 
   /// Late binding's hidden dials as the waiting screen shows them: only in
   /// [StationState.dialSlotOpen], and only with something to say. [gapHeld]:

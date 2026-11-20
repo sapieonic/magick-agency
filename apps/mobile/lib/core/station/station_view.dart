@@ -921,6 +921,7 @@ class StationView {
     this.queue,
     this.dialActivity,
     this.myContactsOffered = false,
+    this.assignsContacts = false,
     this.inbound,
     this.customerWaiting,
     this.inboundNotice,
@@ -979,8 +980,9 @@ class StationView {
   /// The station cannot open at all (join refused); shown full-screen with a way back.
   final String? fatal;
 
-  /// The agent's own queue (contact assignment): null on a `pool` campaign,
-  /// where the waiting screen keeps its usual words.
+  /// The agent's own queue, from the `queue` frame: sent on every assignment mode since BE-5
+  /// (a `pool` campaign included, for No calls right now's reasons), so it says nothing about
+  /// who makes a call-later. Null before the first frame, or from a server older than it.
   final QueueView? queue;
 
   /// Late binding's hidden dials, when the waiting screen has something to say
@@ -992,6 +994,11 @@ class StationView {
   /// `pool`) or lets agents retry the ones they did not reach. The
   /// console's rule for its header button; the flag is checked on top.
   final bool myContactsOffered;
+
+  /// The campaign assigns contacts (`strict` or `preferred`, as the join bootstrap says; an
+  /// absent mode reads `pool`): a call-later booked here comes back to this agent (AS8). On a
+  /// `pool` campaign another agent may make it. The console's `assigns` (`AgentConsolePage`).
+  final bool assignsContacts;
 
   /// The inbound caller on the station (offered, on the call, or owing the outcome), or null.
   /// While it is set, [call] is null, and [notes], [dispositions], [dispositionSaved] and
@@ -1057,6 +1064,7 @@ class StationView {
       other.queue == queue &&
       other.dialActivity == dialActivity &&
       other.myContactsOffered == myContactsOffered &&
+      other.assignsContacts == assignsContacts &&
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&
       other.inboundNotice == inboundNotice &&

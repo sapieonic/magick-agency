@@ -7,6 +7,7 @@ import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/decode_body.dart';
 import '../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
+import '../../core/station/station_view.dart' show stationViewProvider;
 import '../contacts/my_contacts_api.dart';
 import '../performance/logic/stats_windows.dart';
 import '../performance/performance_api.dart';
@@ -205,6 +206,19 @@ final stationCallLaterProvider = FutureProvider.family<CallLaterList, CallLaterK
         .sorted((a, b) => a.at.compareTo(b.at))
         .toList(growable: false),
   );
+});
+
+/// AS8: whether a call-later booked on this station comes back to this agent. my-day's
+/// `comes_to_me` when the server sends it; else whether the campaign assigns contacts
+/// ([StationView.assignsContacts]: `strict` or `preferred` yes, `pool` no), as the console decides
+/// (`AgentConsolePage`'s `assigns`). Never the `queue` frame: since BE-5 it comes on `pool` too.
+final stationComesToMeProvider = Provider<bool>((ref) {
+  final key = ref.watch(
+    stationViewProvider.select((v) => v == null ? null : (campaignId: v.campaignId, offered: v.myContactsOffered)),
+  );
+  final assigns = ref.watch(stationViewProvider.select((v) => v?.assignsContacts ?? false));
+  if (key == null) return false;
+  return ref.watch(stationCallLaterProvider(key)).value?.comesToMe ?? assigns;
 });
 
 /// Reads My day and the call-later list again (Ready opened again after a call or a break); what
