@@ -970,6 +970,7 @@ field on an existing shape is optional (AS18); nothing was renamed or removed. W
 | `0058_contact_callback_booker_index.sql` | `agency_contacts` | `idx_agency_contacts_my_callbacks (campaign_id, callback_booked_by_user_id, next_attempt_at) WHERE state = 'pending' AND callback_booked_by_user_id IS NOT NULL`; validates 0057's CHECK. A read that wants the index repeats that predicate byte for byte |
 | `0059_session_help_state.sql` | `agency_agent_sessions` | `help_state VARCHAR(20) NULL` (`ck_agency_agent_sessions_help_state`, NOT VALID: one of the six agent states, and only while `help_raised_at` is set, so **clear it in every statement that clears `help_raised_at`**) |
 | `0060_session_event_break_overrun.sql` | `agency_agent_session_events` | `break_limit_minutes SMALLINT NULL`, `break_overrun_seconds INTEGER NULL` on the transition out of `break` that ended a break past its limit (`ck_agency_session_event_break_overrun`, NOT VALID: set together, `from_state = 'break'`, limit 1–240, overrun > 0) |
+| `0061_session_event_break_limit_comment.sql` | `agency_agent_session_events` | No schema change (fix stream): `break_limit_minutes`'s comment says the limit as the campaign's catalog stood when the break ENDED, which is what the server writes (0060's said "when the break began") |
 
 No column was added to the server's row models (`apps/server/src/db/models/agency.model.ts`): the
 stream that first reads or writes a column adds it there. `context_display.roles` / `.types` and the
@@ -1077,10 +1078,15 @@ Built on branch `station/sc` (stream S3, 2026-11-20). Where this list and §3 di
 what was built.
 
 - **BE-6 parse rule** (`packages/domain/src/context-facts.ts`): `parseMoneyFact` (rupee sign or
-  word, `/-`, `only`, spaces; Indian or western grouping; at most two decimals; a minus sign,
-  brackets, a decimal comma or words are `null`), `parseDateFact` (year first, day first, a month
-  name either side; a time of day after the date is ignored, a time with a zone is `null`; never
-  month first with numbers), `parseContextFact`.
+  word, `/-`, `only`; Indian or western grouping; a space may stand for a grouping comma only where
+  the comma would stand, so `1 25 000` is read and `5000 2500` is `null`, never 50002500; spaces and
+  commas mixed are `null`; at most two decimals; a minus sign, brackets, a decimal comma or words are
+  `null`), `parseDateFact` (year first, day first, a month name either side; a time of day after the
+  date is ignored, a time with a zone is `null`; never month first with numbers; a two-digit year is
+  the century that puts the date nearest today, within 50 years either side, so `15/08/85` is 1985
+  and `25/11/26` is 2026, `now` a parameter defaulting to the clock), `parseContextFact`. *(Fixed
+  2026-11-20 by the server review's fix stream; before, spaces were dropped and a two-digit year was
+  always 20YY.)*
 - **BE-6 facts** (`apps/server/src/agency/customer-facts.ts`, `customerFacts`, called in
   `buildPanel`, so the `reserved` frame and every resume of it carry `attempt.facts`): `name` and
   `place` by their roles, else a guess from name columns (the inbound match's list) and place
@@ -1097,12 +1103,15 @@ what was built.
   imports, never a check; a retry campaign's lineage root's too), ignoring case, and the 400 lists
   them. A campaign with no import yet is not checked against a roster. A create is shape-checked
   only. The `matchName` callers (callbacks list, floor, inbound) do not read the `name` role yet.
+  The refusals are sentences for a supervisor with no field name or wire code (fix stream: "Choose
+  how to read 'City': as text, money or a date."); `field` names the setting.
 - **BE-8** (`apps/server/src/agency/agent-script.ts`): `agent_script` is patchable (JSONB) and
   audited by name only (`agency_campaign.config_changed`). Refused: not an object, a key other than
   `opening` / `steps`, a step other than `{ text }`, an opening over 300 or a step over 200 code
   points after trimming (or empty), more than 12 steps, and any `{word}` (letters, digits and
   underscores in braces, spaces allowed inside) that is not exactly one of the six placeholders, so
-  `{Name}` and `{ name }` are refused; braces round anything else are plain text. Stored trimmed.
+  `{Name}` and `{ name }` are refused; braces round anything else are plain text. Refusals in a
+  supervisor's words ("Step 2 must have its words."), naming only the placeholders a supervisor types. Stored trimmed.
   `{}` clears it. The bootstrap's `script` is absent when there is no opening and no step; a
   malformed stored part is left out, never a failed join. A create does not store `agent_script`
   (`CAMPAIGN_INSERT_COLUMNS_SQL` is shared with the retry create): New campaign sets it with a
@@ -1132,17 +1141,35 @@ what was built.
     `AGENCY_ATTEMPT_METRICS_SQL` (`my-stats`' numbers), over the attempts of the agent's sessions on
     the campaign (sessions open during the day first), `dialed_at` in the day. `calls` is
     `CONVERSATION_ATTEMPT_SQL` (a redialled conversation once); talk time is every bridged leg.
-  - `will_pay`: attempts of those sessions with `promise_date` whose `dispositioned_at` is in the
-    day (a corrected promise re-stamps the same row, so it counts once). Null when the campaign's
-    catalog (the default one when empty) has no `requires_promise` entry. Soft-phone and inbound
-    promises are not counted, as the contract says.
+  - `will_pay`: the agent's promises (`promise_date` set) whose `dispositioned_at` is in the day, on
+    every call that can carry one (AS7): attempts of those sessions, the agent's soft-phone calls
+    tagged to the campaign (`agency_manual_calls.agent_user_id`), and inbound calls the agent
+    answered that matched a contact of the campaign (`answered_by_user_id`, `matched_campaign_id`),
+    whoever saved the outcome (a corrected promise re-stamps the same row, so it counts once). Null
+    when the campaign's catalog (the default one when empty) has no `requires_promise` entry. *(Fix
+    stream: before, soft-phone and inbound promises were not counted.)* The read's plan is pinned
+    (`agent-station-my-day.test.ts`, "the counts read's plan"): the agent's sessions on
+    `idx_agency_agent_sessions_agent`, their attempts on `idx_agency_attempts_agent_dialed`, the
+    soft-phone promises on `idx_agency_manual_calls_agent` or the 0050 index, the inbound ones on
+    `idx_agency_inbound_calls_promise_written`, never a whole table.
   - `target`: `daily_target_calls`, null without one.
   - `call_later`: the booked half (`callback_booked_by_user_id` = the caller, on
     `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
     `MY_CALLBACKS_INDEX_PREDICATE_SQL`) union, on `strict` / `preferred`, the assigned half
     (`assigned_user_id` = the caller, on `idx_agency_contacts_assignee`); each pending, not DNC, a
     call-later by `isCallbackSql`, due before the day's end; oldest first, at most 20 rows; `today`
-    and `overdue` uncapped. `customer_name`: the campaign's `name` role column, else `matchName`.
+    and `overdue` uncapped. **On `strict` / `preferred` only what will come to the agent** (the
+    lead's ruling, fix stream): the booked half also needs `assigned_user_id` = the caller, a separate
+    AND after 0058's predicate (kept byte for byte), so a call-later the agent booked that a
+    supervisor gave to another agent (LF21) or that the CA5 fallback returned to the pool leaves their
+    list, and the new owner sees it through their assigned half; the planner may then read the
+    booked half on the assignee index. On `pool` the booked half is the list. `customer_name`: the
+    campaign's `name` role column, else `matchName`, never a column in `context_display.hidden`
+    (matched ignoring case; fix stream).
+  - The day (`myDayWindow`, `localDayStart` / `localDayEnd`): the first instant of the local day to
+    the first instant of the next, so on a day whose midnight the clocks skip (America/Santiago,
+    6 Sep 2026) the day starts and ends at the jump and `start <= now < end` always holds (fix
+    stream; before, the end could fall an hour before `now`).
     `comes_to_me`: `strict` / `preferred`. `left_today_goes_to`: `waits_for_me` only on
     `strict` / `preferred` with `callback_fallback = 'wait'`, else `pool`.
 - **BE-2 write**: `daily_target_calls` on PATCH (patchable at any status, `null` clears) and on
@@ -1151,15 +1178,18 @@ what was built.
   also stores `phone_display` (S2's `phoneDisplayIssues`, `full` / `masked`) and `agent_script` (S3's `agentScriptIssues`,
   stored through `normalizeAgentScript`), outside `CAMPAIGN_INSERT_COLUMNS_SQL` so the retry create's
   positions do not move. A retry copies all three from the parent (not `config_overrides` keys).
-- **BE-3 booker**: `callbackBookerOf` (`agency/call-later.ts`) in the disposition route: the agent's
-  own call-later (`requires_datetime`) or promise follow-up (PT2) stamps the reserved agent and
-  now; a supervisor's on-behalf save stamps nothing, and on a replay keeps the agent's booker only
+- **BE-3 booker**: `callbackBookerOf` (`agency/call-later.ts`) in the disposition route, the soft
+  phone's outcome (`settleFromManual`, the call's agent) and an inbound call's (`settleFromInbound`'s
+  `callback` arm, the agent who answered), and their replays (`rescheduleFromManualReplay`,
+  `rescheduleFromInboundReplay`; fix stream: before, those two paths only cleared it): the agent's
+  own call-later (`requires_datetime`) or promise follow-up (PT2) stamps the agent and now; a supervisor's on-behalf save stamps nothing, and on a replay keeps the agent's booker only
   while the due time does not move (cleared when the supervisor moves it); anything else clears.
   Written by `releaseFromDisposition`'s guarded UPDATE (`$13`, `$14`), never on a contact left
   anything but `pending` nor a DNC-suppressed one. Cleared, as `callback_source` is, by
   `chargeAttempt` (the next placed dialler call), `settleFromManual` (a placed soft-phone call that
-  held the contact) and `settleFromInbound` (the customer reached inbound). An `unclaim` and an
-  our-fault redial keep it. `bookInboundCallback` leaves it.
+  held the contact) and `settleFromInbound` (the customer reached inbound), unless that call's own
+  outcome books the agent's call-later. An `unclaim` and an our-fault redial keep it.
+  `bookInboundCallback` (the customer's own missed call) leaves it and never stamps one.
 - **BE-4**: `attemptCallbackOf`, called in `buildPanel`: `inbound` (never `booked_by_me`) when
   `callback_source` is set; else `outcome` / `promise` when the last outcome connected and its code
   is a callback code of the campaign's catalog; `due_at` is the claimed contact's
@@ -1177,9 +1207,98 @@ what was built.
   probe sends nothing and never changes the tick. Who is dialled is unchanged. `readAgentQueueState`
   answers it for `pool`, so the bootstrap, `ready` (the campaign read now happens for every campaign
   session) and the My contacts summary carry it; `station_ready` is published for pool sessions too.
-  No capability: every build already decodes `queue`.
+  ~~No capability: every build already decodes `queue`.~~ **Gated behind `queue_pool` (AS18, fix
+  stream):** a build before the redesign words queue state for an owner's own contacts, so on a
+  `pool` campaign the queue state goes only to a station that declared `caps=queue_pool`
+  (`AGENCY_STATION_QUEUE_POOL_CAPABILITY`; unlike `inbound` and `floor_assist`, a console must
+  declare it too, `stationHas`): pacing sends the `queue` frame only to those stations (and reads
+  nothing when none declared it; the media workers' directory keeps each station's reported
+  capabilities, never `inbound`), `ready.queue` only to them, and the session bootstrap (read before
+  any socket) carries `queue` on `strict` / `preferred` only again. The console's station
+  (`withStationCapsQuery`) and the app's (`StationCapability.queuePool`) declare it. An older build
+  gets no queue state on `pool`, exactly as before BE-5.
+- **Known costs, accepted as is** (server review, 2026-11-20): 0058's index build holds SHARE on
+  `agency_contacts` across two scans (the build and the CHECK's validation); a `pool` station's
+  reconnect does two reads (the campaign and its queue probe).
 
 
+
+## S2. Help, alerts, breaks and tiles: as built
+
+Built on branch `station/sb` (stream S2, 2026-11-20), with the server review's fixes (fix stream
+`station/fix-server`, 2026-11-20) folded in. Where this list and §3 differ, this list is what was
+built.
+
+- **BE-9 Need help in every state** (`agency/floor-assist.ts`, `floor-assist.repository.ts`, 0059):
+  a raise is accepted in any state of a live session (joined, not left); the agent's state at the
+  raise is stored (`agency_agent_sessions.help_state`, cleared in every statement that clears
+  `help_raised_at`) and served as `AgencySessionHelp.state_at_raise` (a live soft-phone call is
+  `on_call`, one owing its outcome `wrapup`, a connected inbound call `on_call`).
+  `agency_help_requests_raised_total` gained its `state` label. `help_not_on_call` stays in the
+  union and is no longer sent. With no call, a supervisor's message answers it (LF14). No throttle,
+  no `429 help_too_soon` (LF41, decided by the fix stream: raising while open is idempotent, a new
+  request needs the agent's Cancel, consoles chime at most once per poll, the user rate limit bounds
+  the writes).
+- **AS16 the alerts read** (`GET /proxy/agency/floor/alerts`, `agency.supervise`, the account scope,
+  the dialer flag, never cached; public layer `proxy-agency-floor.routes.ts` names the agents and
+  drops `help` alerts while `agency_floor_assist_enabled` is off or unreadable; the internal
+  `GET /floor/alerts`, owner `none`, `api/routes/agency/floor.ts`, judges them with
+  `agency/floor-alerts.ts` `buildFloorAlerts`): `help` (every open request), `break_over` (a break
+  past its reason's own `limit_minutes`, strictly; never a reserved break or a reason with no limit),
+  `disconnected` (a working agent's station gone 20 s or more and still gone, liveness unknown never
+  alerts). Ids `<kind>:<session>:<instant the condition began>`, oldest `since` first. Two small
+  SQL statements (`floor-alerts.repository.ts`): the account's open help on 0052's index, and the
+  account's open sessions on a break or among the gone ones, each with the state its last `→ offline`
+  left and, on the soft phone's break, whether a soft-phone call is live.
+- **BE-11 the detach times** (`agency/station-detach-times.ts`, memory only): kept by the
+  `StationRegistry` in one process and by the primary's `StationDirectory` with media workers; the
+  floor's `disconnected_since` and the `disconnected` alert read them. **Fix stream:** each detach is
+  recorded with the session's tenant and account, so the 5 s alerts poll filters its own account in
+  memory and the SQL gets a handful of ids, never every station that ever went; an entry is forgotten
+  when its session ends (the leave, `leaveSession` → `StationRegistry.sessionEnded`, over IPC
+  `station.ended` to the primary's directory) and by the alerts read itself for its account's gone
+  sessions the database no longer holds open; `STATION_DETACH_TIMES_MAX` (10 000) is only a backstop.
+  A worker's `station.snapshot` that no longer lists a station now records it gone (before, it was
+  dropped with no time). The IPC `station.attached` / `.snapshot` carry the tenant, account and
+  capabilities.
+- **BE-11 working** (`agency/working-state.ts` `workingState`, shared by the alert and the metric):
+  `available`, `reserved`, `on_call`, `wrapup`; **and `break` while a soft-phone call is live** (fix
+  stream: the soft phone sits on `break`/`soft_phone`, during its calls too, and the station's close
+  keeps that state while the call is live, so a soft-phone agent dropped mid-call is a `disconnected`
+  alert with `state: 'break'`). Any other break, an app paused on `device_away` included, never is.
+- **BE-11 metrics** (fix stream): `agency_station_disconnects_total{tenant_id, client_kind, state}`,
+  counted by the process that held the socket when it closes while its agent was working (the state
+  read is issued before the release's offline write on the same Redis connection, so it reads the
+  state the drop interrupted; a supersede and a Leave never count; total: a metric never fails a
+  close); `agency_station_reconnect_seconds{client_kind}`, observed by the registry when a station
+  that went attaches again to the same session in the same process. The dashboard's Agent station row
+  draws both, and `agy-station-drops-burst` warns on five or more drops of one tenant's working agents
+  in 5 minutes (by tenant, the dialer's label convention; the account is in the floor's alerts).
+- **BE-12 break over time** (0060; `packages/domain/src/break-manager.ts` `breakOverrun`;
+  `agent-session.repository.ts` `recordTransitions`): when a break ends past its reason's limit, the
+  event that ends it carries `break_limit_minutes` and `break_overrun_seconds`, and
+  `agency_break_overruns_total{tenant_id}` counts it; a reserved break, a reason with no limit and a
+  break with no recorded reason (after a restart) never count; a break that ends with the session is
+  measured to its end. **The limit is the campaign's catalog as it stands when the break ends** (the
+  transition reads it in the same statement; a limit changed during the break is the one judged),
+  accepted by the lead; 0060's comment said "when the break began" and **0061** re-comments the column
+  to say so (fix stream). The agent report's `presence.break_overruns` sums them; the PDF prints
+  "Breaks over their limit: …" under the break reasons, the workbook two Summary rows with their
+  definition (`break_overruns`, fix stream). The dashboard has a panel for the counter (fix stream).
+- **BE-13 tile icons** (`agency/station-tiles.ts`): `disposition_catalog[i].icon` and
+  `break_reasons[i].icon` are optional, one of `AGENCY_TILE_ICONS`, refused otherwise by both
+  campaign-config validators; every read that reaches an agent drops an icon it does not know: the
+  session bootstrap (`dispositionsWithKnownIcons`), the break menu (`resolveBreakReasons`) and,
+  **fix stream**, the inbound call's catalog (`inboundCallToWire`) and the soft phone's catalogs
+  (its bootstrap's tagged and untagged ones).
+- **AS9 number display** (`phone_display`, 0056): `full` (default) or `masked`, patchable and set on
+  create; served on the bootstrap (`phoneDisplayOf`, anything unexpected reads as `full`); the
+  number itself is still sent (BE-7 step 2 is not built).
+- **The settings' refusals** (fix stream, item 14): every refusal the redesign added (the daily
+  target, the number display, tile pictures, the script, the customer facts' roles and types) is a
+  sentence for a supervisor with no field name or wire code, for example "Daily target must be a
+  whole number from 1 to 2,000. Leave it empty for no target." (`station-settings-copy.test.ts`
+  pins it for every one). The machine-readable `field` is unchanged.
 
 ## C2. Console supervisor side: as built
 
