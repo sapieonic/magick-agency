@@ -13,6 +13,7 @@ import type {
 import type { DialCommand } from '../dial-dispatcher.js';
 import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 import { contactPromise } from '../../db/repositories/agency/projections.js';
+import { customerFacts } from '../customer-facts.js';
 
 /** An attempt this replica is currently driving, and what a reconnect needs to know. */
 export interface LiveAttempt {
@@ -212,6 +213,8 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
     caller_id: cmd.callerId,
     attempt_number: cmd.attemptNumber,
     context: cmd.contact.context,
+    // BE-6: the customer's name, place and fact tiles, parsed once here for both clients.
+    facts: customerFacts(cmd.contact.context, cmd.campaign.context_display),
     prior_attempts: priors,
     // PT9: the contact's latest promise, so the agent sees it as they reach the customer. Only
     // when there is one: a panel without a promise is what it was before.

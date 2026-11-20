@@ -13,6 +13,8 @@ import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
+import { contextDisplayIssues, namesContextColumns } from '../../../agency/customer-facts.js';
+import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 
 /**
  * Every route is behind the flag — **except the two that reduce activity**.
@@ -259,4 +261,27 @@ export async function analysisProfileRejected(
     return true;
   }
   return false;
+}
+
+/**
+ * Agent station (BE-6): refuse `context_display.roles` / `.types` naming a column the campaign's
+ * customer list does not have, listing the columns it does. The columns are the imports' (the
+ * campaign's own, and its lineage root's for a retry); with none yet, nothing is checked against a
+ * roster (the shape rules ran in `configRejected`). Read only when the body sets roles or types.
+ * Returns false only when it has already replied.
+ */
+export async function contextColumnsRejected(
+  reply: FastifyReply,
+  body: Record<string, unknown>,
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>,
+): Promise<boolean> {
+  if (!namesContextColumns(body)) return false;
+  const lineage = campaign.root_campaign_id && campaign.root_campaign_id !== campaign.id
+    ? [campaign.id, campaign.root_campaign_id]
+    : [campaign.id];
+  const known = await agencyIngestJobRepository.knownContextColumns(lineage);
+  const issues = contextDisplayIssues(body, known);
+  if (issues.length === 0) return false;
+  replyValidationFailed(reply, issuesToDetails(issues));
+  return true;
 }
