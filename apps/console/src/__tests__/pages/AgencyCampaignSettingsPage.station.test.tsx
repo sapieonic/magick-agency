@@ -184,6 +184,10 @@ describe('Settings › What agents see: the customer’s number (AS9)', () => {
   it('previews both, and sends masked when chosen', async () => {
     renderPage();
     await screen.findByTestId('phone-display-full');
+    // One word for each choice, as the activity log says it (never "Masked").
+    expect(screen.getByRole('radio', { name: /^Full number/ })).toBe(screen.getByTestId('phone-display-full'));
+    expect(screen.getByRole('radio', { name: /^Hidden number/ })).toBe(screen.getByTestId('phone-display-masked'));
+    expect(screen.getByTestId('phone-display-masked').closest('fieldset')!.textContent).not.toMatch(/mask/i);
     expect(screen.getByTestId('phone-display-preview-masked').textContent).toBe('98••• ••321');
     expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('98765 43321');
     expect((screen.getByTestId('phone-display-full') as HTMLInputElement).checked).toBe(true);

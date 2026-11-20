@@ -343,6 +343,11 @@ describe('a dropped screen (BE-11)', () => {
   const campaigns = [campaign('c1', 'running', 'Q4 collections')];
   const down = (seconds: number) => new Date(NOW - seconds * 1000).toISOString();
 
+  it('hands the drawer since when the screen has been down', () => {
+    expect(supervisorAgentOf(floorRow('r', { connected: false, disconnected_since: down(90) })).disconnected_since).toBe(down(90));
+    expect(supervisorAgentOf(floorRow('r')).disconnected_since).toBeNull();
+  });
+
   it('says for how long, in words, from disconnected_since', () => {
     expect(disconnectedWords(down(150), NOW)).toBe('Disconnected for 2 min');
     expect(disconnectedWords(down(25), NOW)).toBe('Disconnected for under a minute');

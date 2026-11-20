@@ -1202,7 +1202,10 @@ contract or migration change beyond the route table's reason text.
   the agent was doing when they asked, from `state_at_raise` ("while waiting for a call", "on a
   break"); a dropped screen says "Disconnected for 2 min" from `disconnected_since`; BE-9's
   "I am coming to your desk" is a one-press I'm coming on the help row and card
-  (`live-floor/ComingToDesk.tsx`, the supervisor-message route).
+  (`live-floor/ComingToDesk.tsx`, the supervisor-message route). The campaign Agents tab and the
+  agent drawer say "Disconnected" too (the drawer "Disconnected for 2 min" when opened from Live
+  floor, whose rows carry `disconnected_since`), and the number display reads "Full number" /
+  "Hidden number" in Settings and the activity log (`PHONE_DISPLAY_LABELS`).
 - **Campaign Settings** (`AgencyCampaignSettingsPage.tsx`): two sections after Agents, `#agent-screen`
   "What agents see" (daily target, number display with its `98••• ••321` preview, customer facts) and
   `#script` "Script". Rules in `utils/agency/stationSettings.ts`; each setting is sent only when it
