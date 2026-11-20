@@ -424,3 +424,140 @@ describe('04 On call', () => {
     expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
   });
 });
+
+describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8, AS9)', () => {
+  const TYPED: AgencyReservedAttempt = {
+    ...ATTEMPT,
+    // Column names that would guess otherwise: the typed facts win.
+    context: { 'Customer Name': 'Sunita Patil', City: 'Pune', 'Amount Due': 'Rs 12,500/-', 'Due Date': '20/11/2026', EMI: '4500' },
+    facts: {
+      name: 'Sunita Patil',
+      place: 'Pune',
+      tiles: [
+        { column: 'EMI', type: 'text', raw: '4500', value: null },
+        { column: 'Amount Due', role: 'amount_due', type: 'money', raw: 'Rs 12,500/-', value: '12500.00' },
+        { column: 'Due Date', role: 'due_date', type: 'date', raw: '20/11/2026', value: '2026-11-20' },
+      ],
+    },
+    callback: { due_at: '2026-11-20T15:00:00.000Z', booked_by_me: true, source: 'outcome' },
+  };
+  const SCRIPTED: AgencySessionBootstrap = {
+    ...BOOTSTRAP,
+    phone_display: 'masked',
+    script: {
+      opening: 'Namaste {name}, I am {agent_name} calling from {campaign_name}.',
+      steps: [
+        { text: 'Tell them the amount due: {amount_due}, due on {due_date}.' },
+        { text: 'Ask when they can pay.' },
+        { text: 'If they agree, confirm the date and the amount. {mood}' },
+      ],
+    },
+  };
+
+  async function coming(attempt: AgencyReservedAttempt = TYPED) {
+    await frames(
+      { event: 'reserved', attempt },
+      { event: 'agent_state', state: 'reserved', since: '2026-11-20T10:00:00.000Z' },
+    );
+  }
+
+  it('03: the card shows the typed facts, the call-later tag and the masked number; First, say this is filled', async () => {
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    const card = screen.getByTestId('customer-card');
+    expect(within(card).getByTestId('customer-name').textContent).toBe('Sunita Patil');
+    expect(within(card).getByTestId('call-later-tag').textContent).toBe('Call later · You said you will call at 3:00 PM');
+    expect(within(card).getByTestId('customer-phone').textContent).toBe('98••• ••321');
+    expect(screen.getByTestId('station').textContent).not.toContain('+919876543321');
+    expect(within(card).getAllByTestId('customer-fact').map((f) => f.textContent)).toEqual([
+      'Amount Due₹12,500',
+      'Due Date20 Nov',
+      'Last call12 Nov',
+    ]);
+    expect(screen.getByTestId('script-opening-line').textContent).toBe('“Namaste Sunita Patil, I am Sunita calling from EMI collections.”');
+  });
+
+  it('04: What to say fills each step, counts what is done, marks steps on a click, and starts afresh with the next call', async () => {
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    const steps = () => within(screen.getByTestId('script-steps')).getAllByTestId('script-step');
+    expect(steps().map((s) => s.textContent)).toEqual([
+      '1Tell them the amount due: ₹12,500, due on 20 Nov.',
+      '2Ask when they can pay.',
+      // An unknown {word} stays as written.
+      '3If they agree, confirm the date and the amount. {mood}',
+    ]);
+    expect(screen.getByTestId('script-progress').textContent).toBe('0 of 3 done');
+    expect(steps()[0]!.getAttribute('data-state')).toBe('current');
+    fireEvent.click(within(steps()[1]!).getByRole('button', { name: /Ask when/ }));
+    expect(screen.getByTestId('script-progress').textContent).toBe('2 of 3 done');
+    expect(steps().map((s) => s.getAttribute('data-state'))).toEqual(['done', 'done', 'current']);
+    fireEvent.click(within(steps()[2]!).getByRole('button', { name: /confirm/ }));
+    expect(screen.getByTestId('script-all-done').textContent).toBe('All steps done');
+    // The note is still on the call screen beside the steps.
+    expect(screen.getByTestId('note-card')).toBeTruthy();
+
+    // The next call starts at the first step.
+    await frames(
+      { event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: false, message: 'x' },
+      { event: 'agent_state', state: 'available', since: '2026-11-20T10:03:00.000Z' },
+    );
+    await coming({ ...TYPED, attempt_id: 'att-2' });
+    await frames({ event: 'bridged', attempt_id: 'att-2', bridged_at: '2026-11-20T10:04:04.000Z' });
+    expect(screen.getByTestId('script-progress').textContent).toBe('0 of 3 done');
+  });
+
+  it('each line has a speaker that reads it aloud', async () => {
+    const speak = vi.fn();
+    class Utterance {
+      voice: unknown = null;
+      lang = '';
+      rate = 1;
+      constructor(public text: string) {}
+    }
+    vi.stubGlobal('SpeechSynthesisUtterance', Utterance);
+    vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn(), getVoices: () => [{ lang: 'en-IN', name: 'Heera' }] });
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    fireEvent.click(screen.getByTestId('script-opening-say'));
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    fireEvent.click(screen.getByRole('button', { name: 'Read step 2 aloud' }));
+    expect(speak.mock.calls.map((c) => (c[0] as Utterance).text)).toEqual([
+      'Namaste Sunita Patil, I am Sunita calling from EMI collections.',
+      'Ask when they can pay.',
+    ]);
+  });
+
+  it('without a script, 03 shows the last calls and 04 the last calls and the note (04c)', async () => {
+    await mounted();
+    await coming();
+    expect(screen.queryByTestId('script-opening')).toBeNull();
+    expect(screen.getByTestId('last-calls')).toBeTruthy();
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    expect(screen.queryByTestId('script-steps')).toBeNull();
+    expect(screen.getByTestId('last-calls')).toBeTruthy();
+    expect(screen.getByTestId('note-card')).toBeTruthy();
+    // Full number by default (AS9).
+    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+919876543321');
+  });
+
+  it('Will pay offers Full and Half of the typed amount due', async () => {
+    await mounted();
+    await coming();
+    await frames(
+      { event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' },
+      { event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: true, message: 'x' },
+      { event: 'agent_state', state: 'wrapup', since: '2026-11-20T10:02:00.000Z' },
+    );
+    act(() => {
+      fireEvent.keyDown(document.body, { key: '1' });
+    });
+    const row = screen.getByTestId('promise-row');
+    expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Half · ₹6,250' })).toBeTruthy();
+  });
+});

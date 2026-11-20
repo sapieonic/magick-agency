@@ -7,6 +7,7 @@ import { helpAnsweredLine, releaseBanner, STATION_COPY } from '../../utils/agenc
 import { pickVoice } from '../../hooks/useSpeech';
 import { callLaterRowsFor, fromMyDay } from '../../pages/agency/station/useMyDay';
 import { agentReadsFixture } from '../helpers/agentReads';
+import { fillScript, fillScriptPlaceholders, firstName, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
 import type { AgencyMyContact } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
 
@@ -281,5 +282,45 @@ describe('My day and the call-later list (BE-1 to BE-3)', () => {
     expect(STATION_COPY.leftForToday(1, '3:00 PM', 'pool')).toBe('1 call later is left for today (3:00 PM). Another agent will make it.');
     expect(STATION_COPY.leftForToday(2, '3:00 PM', 'waits_for_me')).toBe('2 call-laters are left for today (first at 3:00 PM). They wait for you.');
     expect(STATION_COPY.leftForToday(2, '3:00 PM', null)).toBe('2 call-laters are left for today (first at 3:00 PM).');
+  });
+});
+
+describe('the script’s placeholders (BE-8, the contract’s fill rule)', () => {
+  it('fills a known placeholder, leaves out one with no value, and keeps an unknown {word} as written', () => {
+    // The same case as the app's wire test (agency_wire agent_station_test.dart).
+    const valueOf = (p: string) => (p === 'name' ? 'Sunita' : p === 'amount_due' ? '₹12,500' : null);
+    expect(fillScriptPlaceholders('Namaste {name}, {amount_due} due on {due_date}. {mood}', valueOf)).toBe(
+      'Namaste Sunita, ₹12,500 due on . {mood}',
+    );
+    expect(fillScriptPlaceholders('No placeholders here.', valueOf)).toBe('No placeholders here.');
+    // Upper case is not a placeholder.
+    expect(fillScriptPlaceholders('{Name}', valueOf)).toBe('{Name}');
+  });
+
+  it('fills from the typed facts as the card writes them, the agent’s first name and the work’s name', () => {
+    const attempt: AgencyReservedAttempt = {
+      ...ATTEMPT,
+      facts: {
+        name: 'Sunita Patil',
+        place: 'Pune',
+        tiles: [
+          { column: 'Balance', role: 'amount_due', type: 'money', raw: '12500', value: '12500.00' },
+          { column: 'Due on', role: 'due_date', type: 'date', raw: '20/11/2026', value: '2026-11-20' },
+        ],
+      },
+    };
+    const values = scriptValuesFor(attempt, { name: 'Sunita Patil', place: 'Pune' }, { agentName: '  Ravi Kumar ', campaignName: 'EMI' });
+    expect(values).toEqual({ name: 'Sunita Patil', place: 'Pune', amount_due: '₹12,500', due_date: '20 Nov', agent_name: 'Ravi', campaign_name: 'EMI' });
+    expect(fillScript('Namaste {name}, I am {agent_name} from {campaign_name}. {amount_due} by {due_date}.', values)).toBe(
+      'Namaste Sunita Patil, I am Ravi from EMI. ₹12,500 by 20 Nov.',
+    );
+    expect(firstName('')).toBeNull();
+  });
+
+  it('reads a script with no opening and no steps as none (04c)', () => {
+    expect(scriptOrNone(undefined)).toBeNull();
+    expect(scriptOrNone({})).toBeNull();
+    expect(scriptOrNone({ opening: '  ', steps: [{ text: ' ' }] })).toBeNull();
+    expect(scriptOrNone({ steps: [{ text: 'Ask when.' }] })).toEqual({ opening: null, steps: ['Ask when.'] });
   });
 });

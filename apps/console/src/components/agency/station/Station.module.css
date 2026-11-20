@@ -627,3 +627,50 @@
   .clock .num { font-size: 72px; }
   .band { flex-wrap: wrap; }
 }
+
+/* ── The script: "First, say this" (03) and "What to say" (04) ── */
+.scriptOpening { background: var(--st-soft-c); border: 2px solid var(--st-deep-c); }
+.scriptOpening .cardTitle { color: var(--st-deep-c); }
+.scriptOpeningLine { margin: 0; font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1.35; color: var(--text-primary); }
+.scriptSay {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.scriptSay:hover, .scriptSay:focus-visible { background: var(--bg-tertiary); color: var(--text-primary); }
+.scriptProgress { padding: 4px 12px; border-radius: 999px; background: var(--st-ready-soft); color: var(--st-ready-deep); font-size: 15px; font-weight: 700; white-space: nowrap; }
+.scriptSteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.scriptStep { display: flex; align-items: flex-start; gap: 4px; border-radius: var(--radius-lg); }
+.scriptStep[data-state='current'] { background: var(--st-soft-c); }
+.scriptStepButton {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.scriptStepButton:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.scriptStep[data-state='current'] .scriptStepButton { color: var(--text-primary); font-size: 20px; font-weight: 700; }
+.scriptStep[data-state='done'] .scriptText { text-decoration: line-through; color: var(--text-muted); }
+.scriptNumber { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 800; font-size: 15px; }
+.scriptStep[data-state='current'] .scriptNumber { background: var(--st); color: var(--st-ink-c); }
+.scriptStep[data-state='done'] .scriptNumber { background: var(--st-go); color: #fff; }
+.scriptText { padding-top: 3px; min-width: 0; overflow-wrap: anywhere; }
+.scriptStep .scriptSay { margin-top: 6px; }

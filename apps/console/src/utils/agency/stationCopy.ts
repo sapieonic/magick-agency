@@ -163,6 +163,14 @@ export const STATION_COPY = {
   heldBySupervisor: 'Your supervisor is holding this screen. Choose one when you are ready.',
   callWasCut: 'The call was cut. Choose what happened, or call again.',
   readAloud: (label: string) => `Read “${label}” aloud`,
+  readLineAloud: 'Read this aloud',
+  readStepAloud: (n: number) => `Read step ${n} aloud`,
+
+  // 03 / 04 the script (BE-8)
+  firstSayThis: 'First, say this',
+  whatToSay: 'What to say',
+  stepsDone: (done: number, of: number) => `${done} of ${of} done`,
+  allStepsDone: 'All steps done',
   moreOutcomes: 'More',
   moreOutcomesHint: (n: number) => `${n} more`,
   dontCallAgain: 'Don’t call again',

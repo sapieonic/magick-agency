@@ -20,6 +20,8 @@ import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp, type StationHelp } from './station/useStationHelp';
 import { useDeviceChecks } from './station/useDeviceChecks';
 import { useMyDay } from './station/useMyDay';
+import { ScriptOpeningCard, ScriptStepsCard } from '../../components/agency/station/StationScript';
+import { fillScript, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
 import {
   FloorAssistAnnouncer,
   SupervisorMessages,
@@ -245,6 +247,12 @@ function StationScreen({
         : null,
     [panelAttempt, bootstrap?.context_display, bootstrap?.phone_display],
   );
+  const script = useMemo(() => scriptOrNone(bootstrap?.script), [bootstrap?.script]);
+  const filledScript = useMemo(() => {
+    if (!script || !panelAttempt || !card) return null;
+    const values = scriptValuesFor(panelAttempt, card, { agentName: user?.display_name, campaignName: bootstrap?.campaign_name });
+    return { opening: script.opening ? fillScript(script.opening, values) : null, steps: script.steps.map((line) => fillScript(line, values)) };
+  }, [script, panelAttempt, card, user?.display_name, bootstrap?.campaign_name]);
   const lastCalls = useMemo(
     () => (panelAttempt ? lastCallRows(panelAttempt, bootstrap?.disposition_catalog) : []),
     [panelAttempt, bootstrap?.disposition_catalog],
@@ -1152,13 +1160,33 @@ function StationScreen({
       body = (
         <>
           {card ? <CustomerCardView card={card} /> : <section className={stationStyles.card} />}
-          {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+          {filledScript?.opening ? (
+            <div className={stationStyles.col}>
+              <ScriptOpeningCard line={filledScript.opening} readAloud={readAloud} />
+              {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+            </div>
+          ) : panelAttempt ? (
+            <LastCallsCard rows={lastCalls} />
+          ) : null}
         </>
       );
       break;
     case 'on_call':
       bodyClass = stationStyles.bodyEven;
-      body = (
+      // With the campaign's steps: the card and the last calls left, What to say and the note right.
+      // Without (04c): the card left, the last calls and the note right.
+      body = filledScript && filledScript.steps.length > 0 ? (
+        <>
+          <div className={stationStyles.col}>
+            {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
+            {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+          </div>
+          <div className={stationStyles.col}>
+            <ScriptStepsCard key={panelAttempt?.attempt_id ?? ''} steps={filledScript.steps} readAloud={readAloud} />
+            {noteCard}
+          </div>
+        </>
+      ) : (
         <>
           {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
           <div className={stationStyles.col}>
