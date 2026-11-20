@@ -66,7 +66,6 @@ import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
 import { trackAgencyStationNothingDue } from '../../analytics/events';
-import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
 import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
 import { findDisposition } from '../../utils/agencyDispositionForm';
@@ -79,6 +78,7 @@ import {
   STATION_COPY,
   helpAnsweredLine,
   helpRefusedLine,
+  micProblemLine,
   missedReleaseLine,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
@@ -199,7 +199,8 @@ function StationScreen({
 
   const { station, clock, audio } = cons;
   const { connection, agentState, live, release, dialing } = station;
-  const micNotice = agencyAudioNotice(audio.error);
+  // The station's own words for the microphone, keyed on what went wrong (AS15).
+  const micNotice = audio.error ? micProblemLine(audio.error.kind) : null;
 
   useLiveSessionTouch({ tenantId, bootstrap, agentState, connection });
 

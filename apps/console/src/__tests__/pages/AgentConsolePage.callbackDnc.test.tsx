@@ -285,9 +285,9 @@ describe('the confirmation after a callback is saved', () => {
     });
 
     const live = await assertiveRegion();
-    await waitFor(() => expect(live.textContent).toMatch(/We['’]ll call back/));
+    await waitFor(() => expect(live.textContent).toMatch(/We will call again on /));
     expect(live.textContent).toContain('Ring me later');
-    expect(live.textContent).not.toMatch(/\bI['’]ll\b/);
+    expect(live.textContent).not.toMatch(/\bI['’]ll\b|\bI will\b/);
   });
 
   // The response's `callback_requested_at`
@@ -313,7 +313,7 @@ describe('the confirmation after a callback is saved', () => {
     });
 
     const live = await assertiveRegion();
-    await waitFor(() => expect(live.textContent).toContain('the next time inside calling hours'));
+    await waitFor(() => expect(live.textContent).toContain('the first time we are allowed to call'));
   });
 
   it('still says “we” when the API scheduled something but named no time', async () => {
@@ -369,15 +369,14 @@ describe('the confirmation after a suppress outcome is saved (DS8)', () => {
   it('says the number could not go on the list when the server wrote no entry', async () => {
     mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: false }));
     const live = await saveDoNotCall();
-    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
-    expect(live.textContent).toContain('It couldn’t go on this campaign’s Do Not Call list');
+    await waitFor(() => expect(live.textContent).toContain('Saved: Do not call.'));
+    expect(live.textContent).toContain('Ask your supervisor to check the number.');
   });
 
   it('adds nothing when the entry is on the list', async () => {
     mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: true }));
     const live = await saveDoNotCall();
-    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
-    expect(live.textContent).not.toContain('couldn’t go on');
+    await waitFor(() => expect(live.textContent).toBe('Saved: Do not call.'));
   });
 });
 
@@ -540,8 +539,9 @@ describe('Don’t call again, with no outcome that stops calls (today’s mark)'
       fireEvent.click(yes());
     });
     const outcome = await screen.findByTestId('dnc-outcome');
-    expect(outcome.textContent).toContain('this campaign');
-    expect(outcome.textContent).not.toContain('No campaign in this organisation');
+    // The station's own words (AS15), never wider than the mark.
+    expect(outcome.textContent).toBe('Done. We will not call this number again.');
+    expect(outcome.textContent).not.toMatch(/organisation|any campaign/);
   });
 
   it('reports a failure inline, in words, on the question it answers', async () => {
@@ -641,7 +641,7 @@ async function nextCallArrives() {
 }
 
 describe('the mark’s result survives the hangup it was made before', () => {
-  it('keeps the confirmation, naming the customer it is about, through What happened?', async () => {
+  it('keeps the confirmation through What happened?, beside the customer it is about', async () => {
     await onCallNoSuppress();
     await markDnc();
     await screen.findByTestId('dnc-outcome');
@@ -649,8 +649,7 @@ describe('the mark’s result survives the hangup it was made before', () => {
     await whatHappened();
 
     const outcome = screen.getByTestId('dnc-outcome');
-    expect(outcome.textContent).toContain('+919820041772');
-    expect(outcome.textContent).toContain('Do Not Call list');
+    expect(outcome.textContent).toBe('Done. We will not call this number again.');
     expect(within(screen.getByTestId('customer-card')).getByText('Asha')).toBeTruthy();
   });
 
@@ -680,7 +679,7 @@ describe('the mark’s result survives the hangup it was made before', () => {
     });
 
     const outcome = await screen.findByTestId('dnc-outcome');
-    expect(outcome.textContent).toContain('+919820041772');
+    expect(outcome.textContent).toBe('Done. We will not call this number again.');
     // …and nothing is left wedged: the question is answered and gone.
     expect(question()).toBeNull();
   });
@@ -695,7 +694,7 @@ describe('the mark’s result survives the hangup it was made before', () => {
       dnc.reject(Object.assign(new Error('Forbidden'), { details: { code: 'unknown_attempt' } }));
     });
 
-    expect(within(question()!).getByRole('alert').textContent).toContain('Nothing was marked');
+    expect(within(question()!).getByRole('alert').textContent).toBe('That call has already ended. Nothing was changed.');
     expect(yes().textContent).toBe(STATION_COPY.yesStopCalls);
   });
 

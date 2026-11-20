@@ -9,6 +9,7 @@ import {
   redialRefusalCopy,
   redialRemainingCopy,
 } from '../utils/agencyRedialCopy';
+import { redialRefusedLine } from '../utils/agency/stationCopy';
 import { trackAgencyRedialRefused, trackAgencyRedialRequested } from '../analytics/events';
 import type { RedialCarryRecorder } from './useRedialCarry';
 import type { LiveAttempt, StationConnection } from './agencyStation/types';
@@ -198,7 +199,7 @@ export function useWrapupRedial(options: {
             ? {
                 ...prev,
                 inFlight: false,
-                refusal: redialRefusalCopy(err),
+                refusal: redialRefusedLine(errorCode(err), errorStatus(err)),
                 exhausted: prev.exhausted || code === 'redial_limit_reached',
                 blocked: prev.blocked || (code !== null && PERMANENT_REDIAL_REFUSALS.has(code)),
               }

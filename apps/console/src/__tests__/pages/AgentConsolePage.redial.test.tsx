@@ -39,9 +39,8 @@ import {
   PAD_REDIALING_COPY,
   REDIAL_DISABLED_COPY,
   REDIAL_IN_FLIGHT_COPY,
-  REDIAL_REFUSAL_COPY,
-  REDIAL_UNCERTAIN_COPY,
 } from '../../utils/agencyRedialCopy';
+import { redialRefusedLine } from '../../utils/agency/stationCopy';
 import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
@@ -399,25 +398,27 @@ describe('pressing Redial', () => {
 
 describe('a refused redial leaves the agent in wrap-up with the pad usable', () => {
   const CAMPAIGN_STOPPED = 'The campaign is not running, so the customer cannot be redialled. Save the outcome.';
-  // [code, the server's message, what the agent reads, what the button then says (null: enabled)]
+  // [code, the server's message, what the agent reads, what the button then says (null: enabled)].
+  // The station says its own words keyed on the code, never the server's sentence (AS15).
   it.each([
-    ['redial_not_allowed', CAMPAIGN_STOPPED, CAMPAIGN_STOPPED, REDIAL_DISABLED_COPY.blocked],
-    ['redial_limit_reached', 'x', REDIAL_REFUSAL_COPY.redial_limit_reached, 'No redials left'],
+    ['redial_not_allowed', CAMPAIGN_STOPPED, redialRefusedLine('redial_not_allowed', 409), REDIAL_DISABLED_COPY.blocked],
+    ['redial_limit_reached', 'x', redialRefusedLine('redial_limit_reached', 409), 'No redials left'],
     [
       'disposition_already_submitted',
       'x',
-      REDIAL_REFUSAL_COPY.disposition_already_submitted,
+      redialRefusedLine('disposition_already_submitted', 409),
       REDIAL_DISABLED_COPY.blocked,
     ],
-    ['redial_blocked_dnc', 'x', REDIAL_REFUSAL_COPY.redial_blocked_dnc, REDIAL_DISABLED_COPY.blocked],
-    ['redial_blocked_calling_hours', 'x', REDIAL_REFUSAL_COPY.redial_blocked_calling_hours, null],
-    ['redial_blocked', 'The number is not valid.', 'Couldn’t redial: The number is not valid.', null],
+    ['redial_blocked_dnc', 'x', redialRefusedLine('redial_blocked_dnc', 409), REDIAL_DISABLED_COPY.blocked],
+    ['redial_blocked_calling_hours', 'x', redialRefusedLine('redial_blocked_calling_hours', 409), null],
+    ['redial_blocked', 'The number is not valid.', redialRefusedLine('redial_blocked', 409), null],
   ])('%s', async (code, message, copy, disabledLine) => {
     mocks.redialFromWrapup.mockRejectedValue(apiError(409, { error: 'Conflict', code, message }));
     await inWrapup({ redial_remaining: 2 });
     await pressRedial();
 
     await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(copy));
+    if (message !== 'x') expect(screen.getByTestId('station').textContent).not.toContain(message);
     expect(screen.getByTestId('wrapup-redial-refusal').getAttribute('role')).toBe('alert');
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code });
 
@@ -450,7 +451,7 @@ describe('a refused redial leaves the agent in wrap-up with the pad usable', () 
     await inWrapup({ redial_remaining: 1 });
     await pressRedial();
     await waitFor(() =>
-      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(REDIAL_UNCERTAIN_COPY),
+      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(redialRefusedLine(null, null)),
     );
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code: null });
 

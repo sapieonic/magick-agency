@@ -1081,7 +1081,7 @@ describe('hang up actually hangs up', () => {
     await act(async () => {});
 
     const notice = await screen.findByTestId('hangup-failure');
-    expect(notice.textContent).toMatch(/still connected/i);
+    expect(notice.textContent).toMatch(/You are still on the call/);
     // `role="alert"` is the load-bearing half — a polite region would let the
     // agent keep talking to a customer they think they hung up on.
     expect(notice.getAttribute('role')).toBe('alert');
@@ -1153,7 +1153,7 @@ describe('the refusal that makes a disposition mandatory', () => {
     await act(async () => {});
 
     expect(screen.getByTestId('presence-refusal').textContent).toBe(
-      'Submit a disposition for your last call before going available.',
+      'Save what happened on your last call first.',
     );
     // A banner under the band, never IN the band — the band is the agent's state.
     expect(screen.getByTestId('band-title').textContent).toBe('Namaste, Asha');

@@ -467,7 +467,7 @@ describe('useAgencyConsole — the 3s reconciliation window', () => {
     });
 
     expect(view.result.current.presenceRefusal).toBe(
-      'Submit a disposition for your last call before going available.',
+      'Save what happened on your last call first.',
     );
     // Not an error banner and not a state change: the rail is still whatever
     // `agent_state` last said, because a refusal moves nothing.

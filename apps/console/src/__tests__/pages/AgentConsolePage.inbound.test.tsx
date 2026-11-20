@@ -279,7 +279,7 @@ describe('finishing the call', () => {
     await call(inboundCall({ state: 'ended', outcome: 'abandoned_in_queue', settled_at: '2026-11-09T10:00:01Z' }));
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
     expect(screen.queryByTestId('station-inbound')).toBeNull();
-    expect(screen.getByTestId('inbound-notice').textContent).toBe('The caller hung up before you were connected.');
+    expect(screen.getByTestId('inbound-notice').textContent).toBe('The customer hung up before you were connected.');
   });
 
   it('is restored by the frame the server sends after a reload’s ready', async () => {
