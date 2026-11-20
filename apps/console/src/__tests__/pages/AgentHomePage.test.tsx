@@ -253,7 +253,7 @@ describe('AgentHomePage — several assignments', () => {
     await screen.findByText('Collections');
     expect(openLinks()).toHaveLength(2);
     expect(screen.getByText('Paused by your supervisor')).toBeTruthy();
-    expect(screen.getByText('Calls are waiting')).toBeTruthy();
+    expect(screen.getByText('Calling is on')).toBeTruthy();
   });
 
   it('renders a name-less campaign without a hole where the name should be', async () => {

@@ -55,7 +55,7 @@ export interface WorkStatus {
 export function workStatus(status: string | null | undefined): WorkStatus | null {
   switch (status) {
     case 'running':
-      return { tone: 'ready', icon: 'phone', line: 'Calls are waiting' };
+      return { tone: 'ready', icon: 'phone', line: 'Calling is on' };
     case 'paused':
       return { tone: 'quiet', icon: 'pause', line: 'Paused by your supervisor' };
     case 'draft':

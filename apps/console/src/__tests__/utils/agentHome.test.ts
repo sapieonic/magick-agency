@@ -25,7 +25,7 @@ const STATUSES = ['running', 'paused', 'draft', 'stopping', 'stopped', 'complete
 
 describe('workStatus', () => {
   it.each([
-    ['running', 'ready', 'Calls are waiting'],
+    ['running', 'ready', 'Calling is on'],
     ['paused', 'quiet', 'Paused by your supervisor'],
     ['draft', 'quiet', 'Not started yet'],
     ['stopping', 'quiet', 'No calls right now'],
