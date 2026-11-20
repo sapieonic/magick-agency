@@ -2444,17 +2444,19 @@ one branch; the plan, rulings and per-stream evidence are in [`agent-station.md`
 
 | Part | What | Evidence (on the merged branch) |
 |---|---|---|
-| Wire | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display; the Dart mirror in `agency_wire` | contracts 617, db unit 457, db integration 877, `agency_wire` 761 |
-| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons (BE-5); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` (AS9) | server unit 10,656 passed (3 failures in `inbound-recordings.test.ts`); integration rest 3,178 passed (11 failures, all `inbound-clips-routes.test.ts`); wall-clock 31. Both sets of failures are this build container's missing audio decoders, in an area the redesign did not touch |
-| Console station | Every screen of the spec on today's data, then wired to the new fields; hold to end call; the agent's work picker as big tiles; the inbound call, the soft phone (in the station and on `/dialer/phone`) and the join screens in the same look; station words keyed on codes, never a server sentence; the agent nav's "My work"; no ₹ on promised amounts (PT5 stands) | console 7,872, web-ui 244, lint clean |
+| Wire | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display; the Dart mirror in `agency_wire` | contracts 617, db unit 457, db integration 880, `agency_wire` 763 |
+| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons (BE-5); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` (AS9) | server unit and the rest lane: no failures except 3 in `inbound-recordings.test.ts` and 11 in `inbound-clips-routes.test.ts`, both for this build container's missing audio decoders, in areas the redesign did not touch; wall-clock lane 31 passed; domain 378, observability 23, renderer 97 |
+| Console station | Every screen of the spec on today's data, then wired to the new fields; hold to end call; the agent's work picker as big tiles; the inbound call, the soft phone (in the station and on `/dialer/phone`) and the join screens in the same look; station words keyed on codes, never a server sentence; the agent nav's "My work"; no ₹ on promised amounts (PT5 stands) | console 7,926, web-ui 244, lint clean |
 | Console supervisor | Alerts banner and chime on every page; campaign Settings for target, number display, script, customer facts and tile pictures; the Collections set in New campaign (AS4); super-admin light by default | included in the console count; super-admin 514 |
-| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice (AS13) | `flutter analyze` clean; `flutter test` 2152 |
+| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice (AS13) | `flutter analyze` clean; `flutter test` 2,204 |
 
-Guards: `test:release` 10, `test:tooling` 20, `test:grafana` 34. Not built: `/dialer/phone`'s refusal,
-stranded and elsewhere screens keep their old look; supervisor inbound screens can still show a
-server sentence for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17).
-Not verified: nothing has run on a real phone, a real carrier or with real agents; read aloud has
-not run on a device.
+Guards: `test:release` 10, `test:tooling` 20, `test:grafana` 34. A review by five fresh-context
+reviewers and four fix streams followed the build on the same day (the "Review" row of
+[`agent-station.md`](agent-station.md) §3); the counts above are from the final run after it. Not
+built: supervisor inbound screens (the route editor, Missed calls) can still show a server sentence
+for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17). Not verified:
+nothing has run on a real phone, a real carrier or with real agents; read aloud has not run on a
+device.
 
 ## Test counts
 
