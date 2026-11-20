@@ -76,10 +76,43 @@ void main() {
       expect(find.text(StationCopy.callLaterComesToYou), findsOneWidget);
     });
 
-    testWidgets('no call-later list where My contacts does not serve it', (tester) async {
-      final items = [CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'K. Venkatesh')];
-      await pumpStation(tester, station(), callLater: items);
+    testWidgets('no call-later list when the read has none', (tester) async {
+      await pumpStation(tester, station(myContactsOffered: true));
       expect(find.byKey(const Key('call-later-list')), findsNothing);
+    });
+
+    testWidgets('my-day\'s word on who makes them wins over the routing guess (AS8), and a late one says so', (tester) async {
+      final items = [
+        CallLaterItem(at: t0.subtract(const Duration(hours: 1)), name: 'Sunita Patil', overdue: true),
+        CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: ''),
+      ];
+      // A pool campaign (no queue), but the server says these come to this agent.
+      await pumpStation(tester, station(), callLater: items, callLaterComesToMe: true);
+      expect(find.text(StationCopy.callLaterComesToYou), findsOneWidget);
+      expect(find.byKey(const Key('call-later-late')), findsOneWidget);
+      expect(find.text(StationCopy.customer), findsOneWidget, reason: 'no name: never the number');
+    });
+
+    testWidgets('Start of day shows the target and today\'s call-laters when the server sends them', (tester) async {
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.offline),
+        myDay: const MyDayView(callsToday: 0, talkSeconds: 0, dialled: 0, target: 120),
+        callLater: [CallLaterItem(at: DateTime(2026, 10, 31, 15), name: 'A'), CallLaterItem(at: DateTime(2026, 10, 31, 18), name: 'B')],
+      );
+      expect(find.text('120 calls'), findsOneWidget);
+      expect(find.text('2 today'), findsOneWidget);
+    });
+
+    testWidgets('Finish work says what is left for today, and who will make it', (tester) async {
+      await pumpStation(
+        tester,
+        station(),
+        callLater: [CallLaterItem(at: DateTime(2026, 10, 31, 18), name: 'B')],
+        callLaterGoesToPool: true,
+      );
+      await tapMore(tester, 'leave');
+      expect(find.text('1 call later is left for today (6:00 PM). Another agent will make it.'), findsOneWidget);
     });
 
     testWidgets('02c: calls stopped by the supervisor is No calls right now, slate, and callers can still ring in', (tester) async {

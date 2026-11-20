@@ -111,7 +111,8 @@ class WorkCard extends ConsumerWidget {
     final String work = campaignName ?? ref.watch(stationViewProvider.select((v) => v?.campaignName)) ?? '';
     final listen = ref.watch(stationListenNoticeProvider);
     final key = ref.watch(stationViewProvider.select((v) => v == null ? null : (campaignId: v.campaignId, offered: v.myContactsOffered)));
-    final later = callLater ?? (key == null ? null : ref.watch(stationCallLaterProvider(key)).value?.length);
+    final later = callLater ?? (key == null ? null : ref.watch(stationCallLaterProvider(key)).value?.todayCount);
+    final target = key == null ? null : ref.watch(stationMyDayProvider(key.campaignId)).value?.target;
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     return Column(
@@ -122,11 +123,13 @@ class WorkCard extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               NumberTileText(label: StationCopy.todaysWork, value: work),
-              if (later != null && later > 0) ...[
+              if ((later != null && later > 0) || target != null) ...[
                 const SizedBox(height: Space.sm),
                 TileRow(
                   children: [
-                    NumberTile(key: const Key('call-later-count'), label: StationCopy.callLater, value: StationCopy.callLaterToday(later)),
+                    if (target != null) NumberTile(key: const Key('target-tile'), label: StationCopy.target, value: StationCopy.targetCalls(target)),
+                    if (later != null && later > 0)
+                      NumberTile(key: const Key('call-later-count'), label: StationCopy.callLater, value: StationCopy.callLaterToday(later)),
                   ],
                 ),
               ],
@@ -552,12 +555,15 @@ class CallLaterCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final key = ref.watch(stationViewProvider.select((v) => v == null ? null : (campaignId: v.campaignId, offered: v.myContactsOffered)));
-    if (key == null || !key.offered) return const SizedBox.shrink();
-    final items = ref.watch(stationCallLaterProvider(key)).value ?? const <CallLaterItem>[];
+    if (key == null) return const SizedBox.shrink();
+    final list = ref.watch(stationCallLaterProvider(key)).value ?? CallLaterList.none;
+    final items = list.items;
     if (items.isEmpty) return const SizedBox.shrink();
-    // A campaign that assigns contacts keeps the agent's own call-laters theirs (strict, preferred:
-    // the station has their queue); a pool campaign may give one to another agent.
-    final own = ref.watch(stationViewProvider.select((v) => v?.queue != null));
+    // The server's word when it says (AS8, `comes_to_me`); else a campaign that assigns contacts
+    // keeps the agent's own call-laters theirs (strict, preferred: the station has their queue), and
+    // a pool campaign may give one to another agent.
+    final assigns = ref.watch(stationViewProvider.select((v) => v?.queue != null));
+    final own = list.comesToMe ?? assigns;
     final now = ref.watch(stationClockProvider);
     final s = context.stateTokens;
     final t = context.tokens;
@@ -585,7 +591,16 @@ class CallLaterCard extends ConsumerWidget {
                           soon: item.at.difference(at) <= const Duration(minutes: 5) && item.at.isAfter(at.subtract(const Duration(minutes: 1))),
                         ),
                         const SizedBox(width: Space.md),
-                        Expanded(child: Text(item.name, style: text.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        Expanded(
+                          child: Text(
+                            item.name.isEmpty ? StationCopy.customer : item.name,
+                            style: text.titleSmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (item.overdue)
+                          Text(StationCopy.late, key: const Key('call-later-late'), style: text.labelMedium!.copyWith(color: s.problem.deep, fontWeight: FontWeight.w700)),
                         if (item.at.difference(at) <= const Duration(minutes: 5) && item.at.isAfter(at.subtract(const Duration(minutes: 1))))
                           Flexible(
                             child: Text(

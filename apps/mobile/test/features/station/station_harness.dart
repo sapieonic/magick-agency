@@ -323,6 +323,8 @@ Future<StationHarness> pumpStation(
   String? agentName = 'Sunita Yadav',
   MyDayView? myDay,
   List<CallLaterItem> callLater = const [],
+  bool? callLaterComesToMe,
+  bool? callLaterGoesToPool,
   void Function()? onMyDayRead,
   List<Override> extra = const [],
 }) async {
@@ -371,7 +373,9 @@ Future<StationHarness> pumpStation(
         onMyDayRead?.call();
         return myDay;
       }),
-      stationCallLaterProvider.overrideWith((ref, key) async => callLater),
+      stationCallLaterProvider.overrideWith(
+        (ref, key) async => CallLaterList(items: callLater, comesToMe: callLaterComesToMe, leftGoesToPool: callLaterGoesToPool),
+      ),
       ...extra,
     ],
   );

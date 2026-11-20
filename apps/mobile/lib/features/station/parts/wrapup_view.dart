@@ -13,6 +13,7 @@ import '../station_copy.dart';
 import '../station_providers.dart';
 import '../widgets/action_buttons.dart';
 import '../widgets/ticking.dart';
+import '../widgets/tile_pictures.dart';
 import 'banners.dart';
 import 'call_band.dart';
 import 'callback_picker.dart';
@@ -643,8 +644,10 @@ class OutcomeTiles extends StatelessWidget {
   }
 }
 
-/// An outcome's picture (design-spec §5.4), by what it does.
+/// An outcome's picture: the supervisor's (BE-13), else one by what it does (design-spec §5.4).
 IconData outcomeIcon(DispositionOption o) {
+  final chosen = o.icon;
+  if (chosen != null) return tilePictureIcon(chosen);
   if (o.suppresses) return Icons.block;
   if (o.requiresPromise) return Icons.currency_rupee;
   if (o.requiresCallbackTime) return Icons.schedule;

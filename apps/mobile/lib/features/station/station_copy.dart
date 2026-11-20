@@ -69,6 +69,8 @@ abstract final class StationCopy {
   static const myCallLaterList = 'My call-later list';
   static const callLaterComesToYou = 'These calls will come to you on time.';
   static const callLaterPool = 'We will call them on time. Another agent may get the call.';
+  static const customer = 'Customer';
+  static const late = 'Late';
   static String inMinutes(int m) => m <= 0 ? 'now' : (m == 1 ? 'in 1 min' : 'in $m min');
   static const lastCallNotConnected = 'The last call did not connect. You do not need to do anything.';
   static const takeABreak = 'Take break';
@@ -196,6 +198,14 @@ abstract final class StationCopy {
   static const noKeepWorking = 'No, keep working';
   static const yesFinishWork = 'Yes, finish work';
   static const finishing = 'Finishing…';
+  static String leftForToday(int n, String at, {required bool? pool}) {
+    final head = n == 1 ? '1 call later is left for today ($at).' : '$n call-laters are left for today (first at $at).';
+    return switch (pool) {
+      true => '$head Another agent will make ${n == 1 ? 'it' : 'them'}.',
+      false => '$head ${n == 1 ? 'It waits' : 'They wait'} for you.',
+      null => head,
+    };
+  }
   static const finishCallFirst = 'Finish this call first. Leaving now would cut the customer off.';
 
   // 12 Open on another device.

@@ -12,6 +12,7 @@ import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_reads.dart';
 import '../widgets/action_buttons.dart';
+import '../widgets/tile_pictures.dart';
 import 'contact_details.dart';
 import 'layouts.dart' show ButtonPair, NumberTile, TileRow;
 
@@ -540,9 +541,11 @@ class _BreakTile extends StatelessWidget {
   }
 }
 
-/// A break reason's picture (design-spec §5.5): guessed from its code or name until reasons carry
-/// an icon of their own (BE-13); a cup when nothing fits.
+/// A break reason's picture: the supervisor's (BE-13), else guessed from its code or name
+/// (design-spec §5.5); a cup when nothing fits.
 IconData breakIcon(BreakOption o) {
+  final chosen = o.icon;
+  if (chosen != null) return tilePictureIcon(chosen);
   final words = '${o.code} ${o.label}'.toLowerCase();
   if (words.contains('lunch') || words.contains('meal') || words.contains('dinner')) return Icons.restaurant_outlined;
   if (words.contains('wash') || words.contains('toilet') || words.contains('rest room') || words.contains('restroom')) return Icons.wc;
@@ -572,6 +575,8 @@ class _FinishWorkSheet extends ConsumerWidget {
     final s = context.stateTokens;
     final id = ref.watch(stationViewProvider.select((v) => v?.campaignId));
     final day = id == null ? null : ref.watch(stationMyDayProvider(id)).value;
+    final offered = ref.watch(stationViewProvider.select((v) => v?.myContactsOffered ?? false));
+    final later = id == null ? null : ref.watch(stationCallLaterProvider((campaignId: id, offered: offered))).value;
     return SingleChildScrollView(
       key: const Key('finish-sheet'),
       padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
@@ -597,6 +602,14 @@ class _FinishWorkSheet extends ConsumerWidget {
               ),
             ],
           ),
+          if (later != null && later.todayCount > 0 && later.items.isNotEmpty) ...[
+            const SizedBox(height: Space.md),
+            Text(
+              StationCopy.leftForToday(later.todayCount, formatTime12(later.items.first.at), pool: later.leftGoesToPool),
+              key: const Key('finish-left-today'),
+              style: text.bodyLarge,
+            ),
+          ],
           if (day != null) ...[
             const SizedBox(height: Space.md),
             TileRow(
