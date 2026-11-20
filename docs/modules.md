@@ -2368,7 +2368,7 @@ Agent station redesign, supervisor side: `agency/stationSettings.ts` (campaign S
 | `apps/console/src/__tests__/utils/agencyAgentCallerIdCopy.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` (and the long-break risk on the reason's limit, never on the soft phone, LF33) | 71 |
 | `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
-| `apps/console/src/__tests__/utils/agencyAssignmentCopy.test.ts` | 23 |
+| `apps/console/src/__tests__/utils/agencyAssignmentCopy.test.ts` (with the agent's My customers words: never the server's sentence, no station jargon) | 24 |
 | `apps/console/src/__tests__/utils/agencyAssignmentOps.test.ts` | 21 |
 | `apps/console/src/__tests__/utils/agencyCampaignConfigAssignment.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyCarriers.test.ts` | ~6 |
