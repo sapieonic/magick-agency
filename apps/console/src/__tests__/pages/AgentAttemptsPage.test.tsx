@@ -53,7 +53,6 @@ vi.mock('../../api/agencyStats', () => ({
 }));
 
 import { AgentAttemptsPage } from '../../pages/agency/AgentAttemptsPage';
-import { myCallsPath } from '../../utils/agency/myCallsPath';
 
 /** Connected, written up, real talk time. */
 const CONNECTED: AgencyAttempt = {
@@ -233,17 +232,20 @@ describe('AgentAttemptsPage — the rows a call list cannot show', () => {
     expect(mocks.getAgentAttempts).not.toHaveBeenCalled();
   });
 
-  it('masks the numbers of the list the station said masks them (AS9), and formats the rest', async () => {
-    renderPage(myCallsPath('camp-1', 'masked'));
+  it('masks each row as the server says its list does (AS9), however the page was opened, and formats the rest', async () => {
+    // FALSIFIED: with the row's `phone_display` ignored, camp-1's number shows in full and this reds.
+    mocks.getMyAttempts.mockResolvedValue(page([{ ...CONNECTED, phone_display: 'masked' }, { ...NEVER_BRIDGED, phone_display: 'full' }]));
+    renderPage();
     await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
     expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('98••• ••001');
     // camp-2 does not mask: its number in full, in the station's one format.
     expect(screen.getByTestId(`my-attempt-phone-${NEVER_BRIDGED.id}`).textContent).toBe('+91 98765 00002');
     cleanup();
-    renderPage();
+    // An older server sends no `phone_display`: in full.
+    mocks.getMyAttempts.mockResolvedValue(page([CONNECTED, NEVER_BRIDGED]));
+    renderPage('/dialer/attempts?masked=camp-1');
     await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
     expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('+91 98765 00001');
-    expect(myCallsPath('camp-1', 'full')).toBe('/dialer/attempts');
   });
 
   it('shows a call that never bridged beside one that connected', async () => {

@@ -481,10 +481,10 @@ describe('Read aloud stays off a live call (item 22)', () => {
 });
 
 describe('My calls today from ⋮ More (AS9, item 8)', () => {
-  it('opens My calls masking this list’s numbers when the list masks them', async () => {
+  it('opens My calls, which masks each row from the server, with no URL hint', async () => {
     await mounted({ ...BOOTSTRAP, phone_display: 'masked' });
     await ready();
     fireEvent.click(screen.getByRole('button', { name: STATION_COPY.more }));
-    expect(screen.getByTestId('station-menu-my_calls').getAttribute('href')).toBe('/dialer/attempts?masked=camp-1');
+    expect(screen.getByTestId('station-menu-my_calls').getAttribute('href')).toBe('/dialer/attempts');
   });
 });

@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { useAgentAttempts, type AgentAttemptsSubject } from '../../hooks/useAgentAttempts';
 import { phoneForDisplay } from '../../utils/agency/stationFormat';
-import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import { campaignLabel } from '../../utils/agencyAgentPerformance';
 import {
   ATTEMPT_RANGE_NOTE,
@@ -148,15 +147,9 @@ export interface AgentAttemptsPanelProps {
    * Supplied by the caller because only the caller knows whose calls these are.
    */
   caption: string;
-  /**
-   * How each campaign shows a customer's number (AS9). Given on the agent's own My calls, where a
-   * campaign that masks its numbers on the station masks them here too (`phoneForDisplay`, the
-   * station's one rule); absent (a supervisor's view), the number is shown as stored.
-   */
-  phoneDisplayFor?: (campaignId: string) => AgencyPhoneDisplay;
 }
 
-export function AgentAttemptsPanel({ subject, campaignNames, caption, phoneDisplayFor }: AgentAttemptsPanelProps) {
+export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAttemptsPanelProps) {
   const mine = subject.kind === 'me';
   const { page, filters, applyFilters, reload, loadMore, loadingMore, moreError } =
     useAgentAttempts(subject);
@@ -591,7 +584,7 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption, phoneDispl
                     attempt={attempt}
                     campaignNames={campaignNames}
                     linkToCall={!mine}
-                    phoneDisplayFor={phoneDisplayFor}
+                    mine={mine}
                   />
                 ))}
               </tbody>
@@ -638,20 +631,25 @@ function AttemptRow({
   attempt,
   campaignNames,
   linkToCall,
-  phoneDisplayFor,
+  mine,
 }: {
   attempt: AgencyAttempt;
   campaignNames: ReadonlyMap<string, string | null>;
   /** Whether this reader can reach the agency call detail — see the header. */
   linkToCall: boolean;
-  phoneDisplayFor?: (campaignId: string) => AgencyPhoneDisplay;
+  /**
+   * The agent's own My calls (AS9): the number as the row's campaign shows it (the server's
+   * `phone_display` on each row, so it masks however the page was opened; `phoneForDisplay`, the
+   * station's one rule). A supervisor's view shows it as stored.
+   */
+  mine: boolean;
 }) {
   const resolved = campaignNames.get(attempt.campaign_id);
   return (
     <tr data-testid={`my-attempt-row-${attempt.id}`}>
       <td className={styles.when}>{formatSpineTimestamp(attempt.created_at)}</td>
       <td className={styles.numeric} data-testid={`my-attempt-phone-${attempt.id}`}>
-        {phoneDisplayFor ? phoneForDisplay(attempt.phone_e164, phoneDisplayFor(attempt.campaign_id)) : attempt.phone_e164}
+        {mine ? phoneForDisplay(attempt.phone_e164, attempt.phone_display ?? 'full') : attempt.phone_e164}
       </td>
       <td
         className={resolved ? undefined : styles.mutedCell}
