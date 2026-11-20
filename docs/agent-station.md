@@ -71,6 +71,6 @@ by the lead's run of lint and the touched packages' suites.
 | S1 | Merged 2026-11-20 | Server unit 10,656 passed on the merged branch (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 243 (relevant files), wall-clock lane 31; grafana 34; tooling 20; lint clean |
 | S2 | Merged 2026-11-20 | Server unit 10,617 passed on the merged branch (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); domain 364; grafana 34; renderer 94; integration rest 266, wall-clock 5 (relevant files); lint clean |
 | S3 | Merged 2026-11-20 | Domain 360 passed; contracts 617; server unit 10,590 passed (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 213, wall-clock 4 (relevant files); lint clean |
-| C2 | Not started | |
+| C2 | Merged 2026-11-20 | Console unit 7,960 passed, super-admin 514, web-ui 244 on the merged branch; lint clean |
 
 Nothing here has run on a real phone, a real carrier or with real agents.
