@@ -18,6 +18,7 @@ AttemptRow attempt(
   double? talk = 221,
   DateTime? created,
   bool onBehalf = false,
+  PhoneDisplay? display,
 }) =>
     AttemptRow(
       id: 'a$n',
@@ -33,6 +34,7 @@ AttemptRow attempt(
       dispositionedOnBehalf: onBehalf,
       talkSeconds: talk,
       createdAt: created ?? DateTime.utc(2026, 10, 14, 4, 30).subtract(Duration(minutes: n)),
+      phoneDisplay: display,
     );
 
 AttemptsPage page(Iterable<int> ids, {String? next}) =>

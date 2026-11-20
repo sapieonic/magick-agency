@@ -50,6 +50,12 @@ void main() {
     expect(outcomeTone(null), Tone.neutral);
   });
 
+  test('a row\'s number as its campaign shows it (AS9, the server\'s phone_display); in full from an older server', () {
+    expect(AttemptRowView.of(attempt(1, display: PhoneDisplay.masked)).phone, '98••• ••001');
+    expect(AttemptRowView.of(attempt(2, display: PhoneDisplay.full)).phone, '+91 98400 10002');
+    expect(AttemptRowView.of(attempt(3)).phone, '+91 98400 10003');
+  });
+
   test('a row: number, time, campaign, try, talk and the write-up preview', () {
     final today = DateTime(2026, 10, 14);
     final r = attempt(1, notes: 'Wants a call\nafter 6 pm', created: DateTime(2026, 10, 14, 11, 24));

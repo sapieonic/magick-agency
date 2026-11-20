@@ -24,6 +24,7 @@ MyContact contact(
   AgentRetryBlock? blocked,
   ContactOverride? grant,
   List<HeroField> hero = const [HeroField(name: 'Name', value: 'Asha Rao')],
+  PhoneDisplay? display,
 }) =>
     MyContact(
       id: 'k$n',
@@ -38,6 +39,7 @@ MyContact contact(
       hero: hero,
       retry: MyContactRetry(eligible: eligible, blocked: eligible ? null : blocked, roundsUsed: 0),
       overrideGrant: grant,
+      phoneDisplay: display,
     );
 
 ContactOverride grant({int extra = 0, bool early = false, bool hours = false}) => ContactOverride(

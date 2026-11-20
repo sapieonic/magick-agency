@@ -17,7 +17,7 @@ import '../campaigns/assignment_entry.dart' show campaignDisplayName;
 import '../campaigns/campaigns_providers.dart';
 import '../performance/logic/en_in_format.dart';
 import '../performance/performance_controller.dart' show statsClockProvider;
-import '../station/logic/format.dart' show formatDueAt, formatPhone;
+import '../station/logic/format.dart' show formatDueAt, stationPhone;
 import '../station/station_copy.dart';
 import 'my_contacts_controller.dart';
 import 'my_contacts_copy.dart';
@@ -632,7 +632,7 @@ class _ContactTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(formatPhone(c.phoneE164), style: text.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(stationPhone(c.phoneE164, masked: c.phoneDisplay == PhoneDisplay.masked), style: text.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
                   Text(hero, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
                   Text(
                     [MyContactsCopy.bucketLabel(c.bucket, raw: c.bucketRaw), ?when].join(' · '),
@@ -658,7 +658,7 @@ class _ContactTile extends StatelessWidget {
                 key: Key('call-${c.id}'),
                 onPressed: calling ? null : onCall,
                 child: Semantics(
-                  label: '${MyContactsCopy.call} ${formatPhone(c.phoneE164)}',
+                  label: '${MyContactsCopy.call} ${stationPhone(c.phoneE164, masked: c.phoneDisplay == PhoneDisplay.masked)}',
                   excludeSemantics: true,
                   child: Text(calling ? MyContactsCopy.calling : MyContactsCopy.call),
                 ),
