@@ -17,7 +17,7 @@ export function pickVoice(voices: readonly Pick<SpeechSynthesisVoice, 'lang'>[])
   return voices.findIndex((v) => lang(v).startsWith('en'));
 }
 
-export function useReadAloud(): { available: boolean; say: (text: string) => void } {
+export function useReadAloud(): { available: boolean; say: (text: string) => void; stop: () => void } {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   const available = Boolean(synth && typeof window.SpeechSynthesisUtterance === 'function');
   const say = useCallback(
@@ -39,7 +39,11 @@ export function useReadAloud(): { available: boolean; say: (text: string) => voi
     },
     [synth],
   );
-  return { available, say };
+  /** Stops whatever is being read (a screen change: what it read is no longer on screen). */
+  const stop = useCallback(() => {
+    if (synth && typeof synth.cancel === 'function') synth.cancel();
+  }, [synth]);
+  return { available, say, stop };
 }
 
 interface RecognitionLike {

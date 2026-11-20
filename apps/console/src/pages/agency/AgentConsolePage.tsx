@@ -15,6 +15,7 @@ import {
   type StationScreenKeys,
 } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
+import { useRingingStop } from './station/useRingingStop';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp, type StationHelp } from './station/useStationHelp';
@@ -29,14 +30,14 @@ import { InboundCallView } from '../../components/agency/inbound/InboundCallView
 import type { SideFrameProps } from '../../components/agency/station/SideCall';
 import { useInboundCall } from '../../hooks/useInboundCall';
 import { CueFlashBand } from '../../components/agency/CueFlashBand';
-import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
+import type { DispositionPadHandle } from '../../utils/agencyDispositionForm';
 import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';
 import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWaitingPill';
 import { CueSettingsFields } from '../../components/agency/CueSettings';
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
-import { MoreMenu, NeedHelpButton, StationBanner, StationFrame } from '../../components/agency/station/StationFrame';
+import { MoreMenu, NeedHelpButton, StationBanner, StationFrame, TimedBanner } from '../../components/agency/station/StationFrame';
 import { KeptCountdown, RetryCountdown, SinceClock, TimeLeftRing } from '../../components/agency/station/StationClocks';
 import { CustomerCardView, LastCallsCard, NoteCard } from '../../components/agency/station/StationCustomer';
 import { WhatHappened } from '../../components/agency/station/WhatHappened';
@@ -61,6 +62,7 @@ import stationStyles from '../../components/agency/station/Station.module.css';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useDialActivityDisplay } from '../../hooks/useDialActivityDisplay';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
+import { useRenderAt } from '../../hooks/useRenderAt';
 import { useReadAloud } from '../../hooks/useSpeech';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueReason as queueNothingDueReason } from '../../utils/agencyStationIdle';
@@ -72,9 +74,11 @@ import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { messageSender } from '../../utils/agency/stationHelp';
 import { brand } from '../../brand';
+import { myCallsPath } from '../../utils/agency/myCallsPath';
 import {
   STATION_BLOCK_COPY,
   STATION_COPY,
+  breakRefusedLine,
   helpAnsweredLine,
   helpRefusedLine,
   micProblemLine,
@@ -161,11 +165,7 @@ const END_CALL_COPY: HoldToConfirmCopy = {
   analyticsControl: 'hangup',
 };
 
-/** 02b's "The last call did not connect": how long it stays (or until the next call). */
-export const LAST_CALL_BANNER_MS = 6_000;
 
-/** The My calls page, opened in a new tab from ⋮ More. */
-const MY_CALLS_PATH = '/dialer/attempts';
 
 function StationScreen({
   campaignId,
@@ -310,11 +310,16 @@ function StationScreen({
   useEffect(() => {
     if (callOnScreen) setFinishOpen(false);
   }, [callOnScreen]);
-  // A call coming closes the Sound settings: the agent needs to see who is coming, and focus
-  // moves to the station body for it (once per call).
+  // A call coming closes the Sound settings and Which break?: the agent needs to see who is coming,
+  // focus moves to the station body for it (once per call), and M, N and D are the call's again.
+  // (B on the call opens Which break? afresh, to book one for after it, AS10.)
+  const { clearBreakRejection } = cons;
   useEffect(() => {
-    if (ringingAttemptId !== null) setSoundOpen(false);
-  }, [ringingAttemptId]);
+    if (ringingAttemptId === null) return;
+    setSoundOpen(false);
+    setBreakDialog(null);
+    clearBreakRejection();
+  }, [ringingAttemptId, clearBreakRejection]);
   // A new pick, or a new call, retires the early-Save line.
   useEffect(() => {
     setSaveBlock(null);
@@ -392,16 +397,26 @@ function StationScreen({
     }
     : view;
   const screen = shownView.screen;
+  /*
+    Read aloud stops when the screen changes (what it was reading is gone), the station's side views
+    (an inbound call, the soft phone) and their phases included.
+  */
+  const speechScreen = `${screen}:${inbound.phase ?? ''}:${softphone.active ? softphone.sp.phase : ''}`;
+  const { stop: stopReading } = readAloud;
+  useEffect(() => {
+    stopReading();
+  }, [speechScreen, stopReading]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const startWork = () => {
+  /** Start work (01): Enter, `A` and the button alike, the way of working the agent chose included. */
+  const startWork = (method: 'click' | 'shortcut' = 'click') => {
     if (cons.presenceBusy) return;
     if (workMode === 'dial_myself' && softphone.available) {
-      // The click is the gesture the audio path needs, as Start work's own preflight is.
+      // The press is the gesture the audio path needs, as Start work's own preflight is.
       audio.preflight();
       cons.requestSoftphone();
     } else {
-      cons.goAvailable('click');
+      cons.goAvailable(method);
     }
   };
   const checkAgain = () => {
@@ -428,12 +443,28 @@ function StationScreen({
     }
     setBreakDialog('after_save');
   };
-  const pickBreak = (code: string) => {
+  // Read after the break's answer lands, so the save is this render's, not the press's.
+  const trySaveRef = useRef(trySave);
+  trySaveRef.current = trySave;
+  /*
+    A tile on Which break? Save & take break (spec 5.4, backend plan G) books the break first and
+    saves only once it is booked. The dialog stays up (its tiles busy) until the answer: a refused
+    break keeps it open with the station's words and the list as the server re-read it, and nothing
+    is saved, so the agent picks again or cancels and saves on their own.
+  */
+  const pickBreak = async (code: string) => {
     const afterSave = breakDialog === 'after_save';
+    const booked = await cons.requestBreak(code);
+    if (!booked) {
+      setBreakDialog((open) => open ?? (afterSave ? 'after_save' : 'now'));
+      return;
+    }
     setBreakDialog(null);
-    // Save & take break (spec 5.4, backend plan G): book the break first, then save.
-    cons.requestBreak(code);
-    if (afterSave) trySave();
+    if (afterSave) trySaveRef.current();
+  };
+  const closeBreakDialog = () => {
+    setBreakDialog(null);
+    cons.clearBreakRejection();
   };
   const askStop = (code: string | null, origin: 'shortcut' | 'click') => {
     const suppress = code ?? cons.catalog.find((e) => e.suppress)?.code ?? null;
@@ -492,7 +523,7 @@ function StationScreen({
   };
 
   const enterFor: Partial<Record<StationView['screen'], () => void>> = {
-    start: startWork,
+    start: () => startWork('shortcut'),
     check_failed: checkAgain,
     happened: () => void trySave(),
     other_device: joinOtherDevice ? join.useThisWindow : station.reconnect,
@@ -501,22 +532,33 @@ function StationScreen({
     enter: enterFor[screen] ?? null,
     r: connection !== 'open' && connection !== 'idle' && connection !== 'connecting' ? station.reconnect : null,
     m: audio.sending ? audio.toggleMute : null,
+    // `A` on Start of day is Start work, never a bare "go available": it honours How will you
+    // work?, and on 01b (a check failed) it does nothing, as Start work is not on that screen.
+    startWork: screen === 'start' ? () => startWork('shortcut') : null,
     // While the leave is in flight the question stays: a failure must land on a screen that is there.
     escape: screen === 'finish' ? () => { if (!exit.leaving) setFinishOpen(false); } : null,
   };
 
   // Suspended under the soft phone and an inbound call (their own keyboards), under My customers,
   // and under the station's own dialogs.
+  const keysSuspended = softphone.active || inboundActive || myContactsShown || breakDialog !== null || stopAsk !== null || soundOpen;
   useStationShortcuts(
     {
       agentState,
       cons,
       bootstrap,
-      suspended: softphone.active || inboundActive || myContactsShown || breakDialog !== null || stopAsk !== null || soundOpen,
+      suspended: keysSuspended,
       screenKeys,
     },
     { breakMenuRef, notesRef, padRef: keyPadRef, dncRef },
   );
+  // AS11: E then E stops a call while it rings; Call coming shows no button for it.
+  const ringingStop = useRingingStop({
+    attemptId: ringingAttemptId,
+    enabled: screen === 'coming' && ringingAttemptId !== null,
+    suspended: keysSuspended,
+    onStop: hangup,
+  });
 
   // ── Screens the join decides, in the station's frame ────────────────────────
   const agentName = user?.display_name?.trim() || user?.email || 'Agent';
@@ -610,8 +652,11 @@ function StationScreen({
     if (inbound.notice) {
       return <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner>;
     }
-    if (screen === 'happened' && holding && !cons.dispositionSubmitted) {
-      const supervisor = wrapup?.heldReason === 'supervisor_hold';
+    // The supervisor's hold outlives Save (the screen stays until they let go); 05d's time-over
+    // goes with it (the save is on its way).
+    const supervisorHeld = wrapup?.heldReason === 'supervisor_hold';
+    if (screen === 'happened' && (supervisorHeld || (holding && !cons.dispositionSubmitted))) {
+      const supervisor = supervisorHeld;
       return (
         <StationBanner tone="over" icon={<TriangleAlert size={22} />} testId={supervisor ? 'supervisor-hold' : 'time-over'}>
           {supervisor ? STATION_COPY.heldBySupervisor : STATION_COPY.timeOverBanner}
@@ -649,7 +694,7 @@ function StationScreen({
         return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="unexplained-release">{STATION_COPY.lastCallEnded}</StationBanner>;
       }
       const line = releaseBanner(release.reason);
-      if (line) return <TimedBanner key={station.releasedAt ?? 0} at={station.releasedAt} line={line} />;
+      if (line) return <TimedBanner key={station.releasedAt ?? 0} at={station.releasedAt} icon={<Info size={22} />} testId="last-call-banner">{line}</TimedBanner>;
     }
     if (station.customerWaiting) {
       return (
@@ -759,7 +804,7 @@ function StationScreen({
   switch (shownView.main) {
     case 'start_work':
       mainButton = (
-        <button type="button" className={`${big} ${stationStyles.btnGo}`} onClick={startWork} aria-disabled={cons.presenceBusy || undefined} aria-keyshortcuts="Enter A" data-testid="start-work">
+        <button type="button" className={`${big} ${stationStyles.btnGo}`} onClick={() => startWork('click')} aria-disabled={cons.presenceBusy || undefined} aria-keyshortcuts="Enter A" data-testid="start-work">
           <Play size={24} aria-hidden="true" />{cons.presenceBusy ? STATION_COPY.starting : STATION_COPY.startWork}{keyHint('start_work')}
         </button>
       );
@@ -869,7 +914,7 @@ function StationScreen({
         type="button"
         className={stationStyles.chipClose}
         onClick={() => !cons.cancelling && cons.cancelBreak()}
-        aria-label={STATION_COPY.cancelBreakAfterCall}
+        aria-label={cons.pendingSoftphone ? STATION_COPY.cancelDialAfterCall : STATION_COPY.cancelBreakAfterCall}
         aria-disabled={cons.cancelling || undefined}
         data-testid="queued-break-cancel"
       >
@@ -882,6 +927,7 @@ function StationScreen({
   let footHint: ReactNode = shownView.footHint;
   let footRightLead: ReactNode = null;
   if (screen === 'start' && listenOn) footHint = <ListenNoticeLine />;
+  if (screen === 'coming' && ringingStop.armed) footHint = <span data-testid="ringing-stop-armed">{STATION_COPY.stopRingingArmed}</span>;
   if (screen === 'on_call' && audio.sending) {
     // Hidden while there is nothing to mute (AS1): a call whose microphone failed.
     footLeft = (
@@ -1034,6 +1080,7 @@ function StationScreen({
           {card ? <CustomerCardView card={card} /> : <section className={stationStyles.card} />}
           {filledScript?.opening ? (
             <div className={stationStyles.col}>
+              {/* Its speaker is safe here: Call coming is never on screen once the customer is on the line (that is On call). */}
               <ScriptOpeningCard line={filledScript.opening} readAloud={readAloud} />
               {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
             </div>
@@ -1054,7 +1101,7 @@ function StationScreen({
             {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
           </div>
           <div className={stationStyles.col}>
-            <ScriptStepsCard key={panelAttempt?.attempt_id ?? ''} steps={filledScript.steps} readAloud={readAloud} />
+            <ScriptStepsCard key={panelAttempt?.attempt_id ?? ''} steps={filledScript.steps} />
             {noteCard}
           </div>
         </>
@@ -1148,6 +1195,8 @@ function StationScreen({
       break;
   }
 
+  // The My calls page, opened in a new tab from ⋮ More, masking this list's numbers when it does (AS9).
+  const myCalls = myCallsPath(bootstrap?.campaign_id ?? null, bootstrap?.phone_display ?? 'full');
   const needHelp = (
     <>
       {/* LS2: the standing "a supervisor may listen" line, behind its info button (only while the flag is on). */}
@@ -1160,7 +1209,7 @@ function StationScreen({
       items={themeContext ? shownView.menu : shownView.menu.filter((item) => item !== 'theme')}
       theme={theme}
       onSelect={onMenu}
-      myCallsTo={MY_CALLS_PATH}
+      myCallsTo={myCalls}
     />
   );
 
@@ -1174,7 +1223,7 @@ function StationScreen({
     </>
   );
   const sideMenu = (items: MoreItem[]): ReactNode => (
-    <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={MY_CALLS_PATH} />
+    <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={myCalls} />
   );
   const cueFlashNode = cons.cueFlash ? <CueFlashBand key={`${cons.cueFlash.cue}:${cons.cueFlash.attemptId}`} flash={cons.cueFlash} /> : null;
   // The way back when the socket is gone or moved: the band says what, this says how.
@@ -1276,10 +1325,10 @@ function StationScreen({
         reasons={cons.breakReasons}
         busy={cons.breakBusy}
         // The station's own words, never the server's sentence (AS15).
-        rejection={cons.breakRejection ? STATION_COPY.breakRefused : null}
-        onPick={pickBreak}
+        rejection={cons.breakRejection ? breakRefusedLine(cons.breakRejection.code) : null}
+        onPick={(code) => void pickBreak(code)}
         onClose={() => {
-          setBreakDialog(null);
+          closeBreakDialog();
           // Back to Take break, never `<body>` (the dialog's own restore runs first and may land there).
           window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="take-break"]')?.focus(), 0);
         }}
@@ -1312,38 +1361,30 @@ function StationScreen({
           queue={queue}
           onClose={() => setMyContactsOpen(false)}
           onCalled={() => setMyContactsOpen(false)}
+          phoneDisplay={bootstrap.phone_display ?? 'full'}
         />
       ) : null}
     </>
   );
 }
 
-/** 02b's "The last call did not connect": shown for {@link LAST_CALL_BANNER_MS}, or until the next call. */
-function TimedBanner({ at, line }: { at: number | null; line: string }) {
-  useRepaintTick(at !== null);
-  if (at === null || Date.now() - at > LAST_CALL_BANNER_MS) return null;
-  return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="last-call-banner">{line}</StationBanner>;
-}
-
 /**
- * Renders its caller once more at `at` (a local epoch ms), and never otherwise: what turns 07 into
- * 08 without a clock on the station's root.
+ * 08's subtitle, "You are 2:05 late. Start calls now.". The band is the station's polite live
+ * region, so the counting words are `aria-hidden` (as every band clock is) and only they repaint;
+ * a screen reader hears the static line once, when 08 opens, never once a second.
  */
-function useRenderAt(at: number | null): void {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (at === null) return undefined;
-    const wait = at - Date.now();
-    if (wait <= 0) return undefined;
-    const timer = window.setTimeout(() => setTick((n) => n + 1), wait);
-    return () => window.clearTimeout(timer);
-  }, [at]);
+function LateBy({ overAt }: { overAt: number }) {
+  return (
+    <>
+      <span className={stationStyles.srOnly} data-testid="break-over-spoken">{STATION_COPY.breakOverSpoken}</span>
+      <LateByClock overAt={overAt} />
+    </>
+  );
 }
 
-/** 08's subtitle, "You are 2:05 late. Start calls now.": a leaf, because it counts. */
-function LateBy({ overAt }: { overAt: number }) {
+function LateByClock({ overAt }: { overAt: number }) {
   useRepaintTick();
-  return <>{STATION_COPY.breakOverSubtitle(runningClock(Date.now() - overAt))}</>;
+  return <span aria-hidden="true" data-testid="break-over-late">{STATION_COPY.breakOverSubtitle(runningClock(Date.now() - overAt))}</span>;
 }
 
 /**

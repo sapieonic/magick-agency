@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY } from '@magick-agency/contracts/api/platform/audit';
 import { describe, expect, it } from 'vitest';
 import { TELEPHONY_PROVIDER_ALIASES } from '@magick-agency/web-ui/telephonyProviders';
@@ -257,6 +259,24 @@ describe('activityDetailSummary', () => {
     expect(activityDetailSummary({ ...changed, detail: { fields: [] } })).toBeNull();
   });
 
+  it('names the agent station’s settings in words, and the number display by its choice (AS6, AS9, BE-6, BE-8)', () => {
+    const changed = (fields: string[], changes: Record<string, unknown> = {}) => activityDetailSummary(row({
+      action: 'agency_campaign.config_changed',
+      detail: { fields, changes },
+    }));
+    expect(changed(['daily_target_calls'], { daily_target_calls: { from: null, to: 60 } }))
+      .toBe('Changed daily target (none → 60).');
+    expect(changed(['phone_display'], { phone_display: { from: 'full', to: 'masked' } }))
+      .toBe('Changed customer’s number on screen (Full number → Hidden number).');
+    expect(changed(['phone_display'], { phone_display: { from: 'masked', to: 'full' } }))
+      .toBe('Changed customer’s number on screen (Hidden number → Full number).');
+    // The script and the facts are JSON: named only. `context_display` holds the facts too now.
+    expect(changed(['agent_script', 'context_display'])).toBe('Changed script and contact details and customer facts.');
+    // A display this console does not know yet is spelled out, never dropped.
+    expect(changed(['phone_display'], { phone_display: { from: 'full', to: 'last_four' } }))
+      .toBe('Changed customer’s number on screen (Full number → last_four).');
+  });
+
   it('reads out a roster upload: the file and its rule, then how it ended (IN8)', () => {
     const started = row({
       source: 'master',
@@ -428,6 +448,33 @@ describe('the config-change summary is vendor-free and id-free for every setting
       const alias = TELEPHONY_PROVIDER_ALIASES[slug]!;
       expect(summary).toBe(`Changed carrier (${alias} → ${alias}).`);
     }
+  });
+});
+
+/**
+ * Every setting a campaign PATCH can change is named in words: the server's own list of patchable
+ * columns (`CAMPAIGN_PATCHABLE_COLUMNS` in its campaign repository, which writes only those), read
+ * from its source, so a column added there without a label here fails this test rather than
+ * reaching the Activity trail as its wire name. (`tooling/ci-scope.mjs` READ_BY runs this suite
+ * when that file changes.)
+ */
+describe('every patchable campaign setting has a label', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../../../server/src/db/repositories/agency/campaign.repository.ts'),
+    'utf-8',
+  );
+  const list = /const CAMPAIGN_PATCHABLE_COLUMNS[^=]*=\s*new Set\(\[([\s\S]*?)\]\);/.exec(source)?.[1] ?? '';
+  // The list's string literals, comments left out.
+  const columns = [...list.replace(/\/\/.*$/gm, '').matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]!);
+
+  it('reads the server’s list', () => {
+    expect(columns.length).toBeGreaterThan(20);
+    expect(columns).toEqual(expect.arrayContaining(['name', 'daily_target_calls', 'phone_display', 'agent_script', 'context_display']));
+  });
+
+  it.each(columns)('%s', (column) => {
+    expect(Object.hasOwn(CONFIG_FIELD_LABEL, column)).toBe(true);
+    expect(CONFIG_FIELD_LABEL[column]).not.toMatch(/_/);
   });
 });
 

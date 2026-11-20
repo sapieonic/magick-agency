@@ -1,7 +1,8 @@
 import { useId } from 'react';
 import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '../../../types/agency-campaign';
-import { PHONE_DISPLAY_SAMPLE, phoneAsShown } from '../../../utils/agency/stationSettings';
+import { PHONE_DISPLAY_LABELS, PHONE_DISPLAY_SAMPLE } from '../../../utils/agency/stationSettings';
+import { phoneForDisplay } from '../../../utils/agency/stationFormat';
 import { formatCount } from '../../../utils/format/number';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './StationSettings.module.css';
@@ -9,7 +10,8 @@ import styles from './StationSettings.module.css';
 /**
  * Campaign Settings › What agents see: the day's target for each agent (AS6, `daily_target_calls`,
  * connected calls, 1–2,000, empty for none) and how the station shows the customer's number (AS9,
- * `phone_display`: full or masked, with a preview of each). Errors come keyed by the server's field
+ * `phone_display`: Full number or Hidden number, `PHONE_DISPLAY_LABELS`, the activity log's words too,
+ * with a preview of each). Errors come keyed by the server's field
  * names (`daily_target_calls`, `phone_display`), the page's live finding first.
  */
 export function AgentScreenFields({
@@ -27,8 +29,8 @@ export function AgentScreenFields({
 }) {
   const id = useId();
   const options: Array<{ value: AgencyPhoneDisplay; title: string; blurb: string }> = [
-    { value: 'full', title: 'Full number', blurb: 'Agents see the whole number.' },
-    { value: 'masked', title: 'Masked', blurb: 'Agents see only the first two and last three digits.' },
+    { value: 'full', title: PHONE_DISPLAY_LABELS.full, blurb: 'Agents see the whole number.' },
+    { value: 'masked', title: PHONE_DISPLAY_LABELS.masked, blurb: 'Agents see only the first two and last three digits.' },
   ];
   return (
     <div className={styles.stack}>
@@ -74,7 +76,7 @@ export function AgentScreenFields({
               <span className={styles.choiceText}>
                 <span className={styles.choiceTitle}>{option.title}</span>
                 <span className={styles.preview} data-testid={`phone-display-preview-${option.value}`}>
-                  {phoneAsShown(PHONE_DISPLAY_SAMPLE, option.value)}
+                  {phoneForDisplay(PHONE_DISPLAY_SAMPLE, option.value)}
                 </span>
                 <span className={styles.choiceBlurb}>{option.blurb}</span>
               </span>
@@ -82,7 +84,7 @@ export function AgentScreenFields({
           ))}
         </div>
         <p className={styles.hint}>
-          Masking changes only what the screen shows. The soft phone and customer history still have the number.
+          Hiding the number changes only what the screen shows. The soft phone and customer history still have the number.
         </p>
         {errors.render('phone_display')}
       </fieldset>

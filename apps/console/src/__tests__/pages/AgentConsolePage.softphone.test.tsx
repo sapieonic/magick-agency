@@ -182,6 +182,17 @@ describe('Switch to soft phone', () => {
     expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
   });
 
+  it('A on Start of day is Start work: it honours “I dial the number” and never goes available instead', async () => {
+    mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'break', break_reason: 'soft_phone' } });
+    await mounted();
+    fireEvent.click(screen.getByTestId('work-dial-myself'));
+    await act(async () => {
+      fireEvent.keyDown(document.body, { key: 'a' });
+    });
+    expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
+    expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
+  });
+
   it('is not offered with the flag off', async () => {
     mocks.flags = new Set();
     await mounted();
@@ -227,7 +238,9 @@ describe('Switch to soft phone', () => {
     await frame({ event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: true, message: '' });
     await frame({ event: 'agent_state', state: 'wrapup', since: SINCE, pending_state: 'break', pending_break_reason: 'soft_phone' });
     expect(screen.getByTestId('queued-break').textContent).toMatch(/Dial a number myself after this call/);
-    expect(screen.getByRole('button', { name: 'Cancel the break after this call' })).toBeTruthy();
+    // Its ✕ says what it cancels: the switch, not a break.
+    expect(screen.getByTestId('queued-break-cancel').getAttribute('aria-label')).toBe('Do not dial a number myself after this call');
+    expect(screen.queryByRole('button', { name: 'Cancel the break after this call' })).toBeNull();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
   });

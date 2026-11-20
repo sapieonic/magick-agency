@@ -31,7 +31,8 @@ export function useConfigFieldErrors(
   quiet: ReadonlySet<string> = NO_QUIET_FIELDS,
 ): ConfigFieldErrors {
   const idBase = useId();
-  const errorId = (field: string) => `${idBase}-${field.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  // Every other character spelled as its code, so two fields never share an id ("a b", "a-b").
+  const errorId = (field: string) => `${idBase}-${field.replace(/[^A-Za-z0-9_]/g, (c) => `-${c.codePointAt(0)!.toString(16)}-`)}`;
   const message = (field: string) => fieldErrors[field] ?? null;
   return {
     describedBy: (...fields) => {

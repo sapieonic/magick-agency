@@ -103,6 +103,47 @@ export const SIDE_COPY = {
   tryAgain: 'Try again',
 } as const;
 
+/**
+ * `/dialer/phone`'s screens before the soft phone opens, in the station's look and words (AS15):
+ * opening, did not open, open in another account (turned off here, or on), and the agent still on
+ * their calls. Keyed on a state or a code; the place names (`account`, `work`) are names, never a
+ * sentence the server wrote.
+ */
+export const SOFTPHONE_PAGE_COPY = {
+  openingTitle: 'Opening your soft phone',
+  openingSubtitle: 'One moment.',
+  openingBody: 'Opening your soft phone…',
+  failedTitle: 'Your soft phone did not open',
+  failedSubtitle: 'See why below.',
+  failedNoAnswer: 'We could not reach the server. Check your internet, then try again.',
+  tryAgain: 'Try again',
+  elsewhereTitle: 'Your soft phone is open in another account',
+  elsewhereSubtitle: 'You can use it in one place at a time.',
+  elsewhereBody: (account: string | null) =>
+    account ? `Your soft phone is open in ${account}.` : 'Your soft phone is open in another account of this organisation.',
+  elsewhereClose: 'Close it and open the soft phone here',
+  closing: 'Closing…',
+  elsewhereCallOpen: (account: string | null) =>
+    `Your soft phone ${account ? `in ${account}` : 'in the other account'} has a call that is not finished, so it is still open. Hang up and save what happened there first.`,
+  goThere: (account: string | null) => (account ? `Use the soft phone in ${account}` : 'Use the soft phone in that account'),
+  strandedSubtitle: 'It is turned off here. Close it to start work again.',
+  strandedBody: 'The soft phone is turned off for this account, and it is still open in another account of this organisation. Go to that account to finish there, or close it here.',
+  strandedOwed: 'Your last call there is not saved yet. A supervisor can save what happened for you.',
+  strandedClose: 'Close it here so you can start work.',
+  onCallsTitle: 'You are still on your calls',
+  onCallsSubtitle: 'You can use one at a time.',
+  onCallsDoing: (work: string, account: string | null, doing: string) =>
+    account ? `You are on ${work} in ${account}, ${doing}.` : `You are on ${work}, ${doing}.`,
+  onCallsAfterCall: 'The soft phone opens after this call, once you save what happened. You can go back to your calls from it.',
+  onCallsNow: 'Open the soft phone instead. You can go back to your calls from it.',
+  onCallsMoves: (account: string) => `This takes you to ${account}.`,
+  useSoftphone: (account: string | null) => (account ? `Use the soft phone in ${account}` : 'Use the soft phone'),
+  switching: 'Opening…',
+  goToCalls: (work: string, account: string | null) => (account ? `Open ${work} in ${account}` : `Open ${work}`),
+  onCallsCannotMove: (work: string, account: string | null) =>
+    `You are working on ${work} in ${account ?? 'another account'}. Go to that account to use the soft phone there.`,
+} as const;
+
 /** Why this caller is the agent's own customer (`sticky.reason`), in the station's words. */
 export const STICKY_WORDS: Record<AgencyInboundStickyReason, string> = {
   owner: 'Your customer. They are on your list.',

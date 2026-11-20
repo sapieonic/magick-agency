@@ -9,6 +9,7 @@ import { AGENCY_LISTEN_END_REASON_LABELS } from '../types/listen-history';
 import { AGENCY_CALL_ORIGINS, type AgencyCallOrigin, type AgencyListenEndReason } from '../types/live-calls';
 import { durationWords } from './format/duration';
 import { shortName } from './listen/listenCopy';
+import { PHONE_DISPLAY_LABELS } from './agency/stationSettings';
 import { liveCallPagePath } from './listen/liveCallsTable';
 
 /**
@@ -166,13 +167,23 @@ export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
   retry_policy: 'retry policy',
   disposition_catalog: 'call outcomes',
   outcome_dispositions: 'automatic outcomes for unanswered calls',
-  context_display: 'contact details layout',
+  // The contact details' layout and, since agent station BE-6, the customer facts (which column
+  // is the name, place, amount due and due date, and how each column is read).
+  context_display: 'contact details and customer facts',
   break_reasons: 'break reasons',
   record_calls: 'call recording',
   analysis_profile_id: 'analysis profile',
   abandon_announcement_id: 'abandon announcement',
   abandonment_ceiling_pct: 'abandonment ceiling',
+  inbound_sticky_enabled: 'putting callers through to their agent',
+  // Agent station (AS6, AS9, BE-8): campaign Settings › What agents see, and Script.
+  daily_target_calls: 'daily target',
+  phone_display: 'customer’s number on screen',
+  agent_script: 'script',
 };
+
+/** `phone_display`'s values as campaign Settings names them (AS9), never the wire's. */
+const PHONE_DISPLAY_WORDS: Readonly<Record<string, string>> = PHONE_DISPLAY_LABELS;
 
 function configFieldLabel(field: string): string {
   return CONFIG_FIELD_LABEL[field] ?? field.replace(/_/g, ' ');
@@ -210,6 +221,11 @@ function configChangeValues(field: string, change: ConfigFieldChange): string {
   if (field === 'telephony_credential_id') {
     return `${carrierAccountValue(change.from, change.from_label, 'from_label' in change)} → `
       + carrierAccountValue(change.to, change.to_label, 'to_label' in change);
+  }
+  if (field === 'phone_display') {
+    // A value this console does not know is spelled out rather than dropped (an audit row hides nothing).
+    const words = (v: unknown) => (typeof v === 'string' ? PHONE_DISPLAY_WORDS[v] ?? v : configValue(v));
+    return `${words(change.from)} → ${words(change.to)}`;
   }
   return `${configValue(change.from)} → ${configValue(change.to)}`;
 }

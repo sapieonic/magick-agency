@@ -214,7 +214,11 @@
 }
 .ring .num { font-size: 30px; line-height: 1; }
 .ring small { display: block; font-size: 13px; font-weight: 600; opacity: 0.9; }
-.ring[data-over='true'] { background: #fff; color: var(--st-problem-deep); }
+/* 05d on the band: white pill, red text. The red is the band's own (--st-problem, one value in
+   both themes, 5.6:1 on white), never --st-problem-deep, which is the dark theme's light red for
+   text on a dark page (about 3:1 on white). */
+.ring[data-over='true'] { background: #fff; color: var(--st-problem); }
+.ring[data-over='true'] small { opacity: 1; }
 .ringSvg { width: 44px; height: 44px; transform: rotate(-90deg); flex: none; }
 .ringTrack { fill: none; stroke: currentColor; opacity: 0.3; stroke-width: 5; }
 .ringFill { fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 0.25s linear; }

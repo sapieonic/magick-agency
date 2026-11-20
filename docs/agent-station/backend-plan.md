@@ -1311,11 +1311,22 @@ contract or migration change beyond the route table's reason text.
   `HOME_GATE` passes (`agency.supervise`, the `agency` capability, the dialer flag); a 403 stops it
   quietly, and failing reads drop the banner after two periods. The words are
   `utils/agency/floorAlerts.ts` ("<name> needs help", "<name>’s break is over by 6 min", "<name> is
-  disconnected"), counted to the read's `as_of`; each row links to Live floor; three are listed and
-  the rest counted. The chime is `useHelpChime` keyed on the alert ids, muted from the banner (the
-  same per-browser setting as Live floor's: every mounted chime follows a toggle). On Live floor the
-  banner is not shown and Need help is not chimed by the shell (the page's own chime plays for it);
-  the other kinds still chime there.
+  disconnected for 2 min"), counted to the read's `as_of`; each row links to Live floor; three are
+  listed and the rest counted. The chime is `useHelpChime`, muted from the banner (the same
+  per-browser setting as Live floor's: every mounted chime follows a toggle, and the page's own
+  choice is read first, so a chime mounted later agrees even where storage is blocked). One set of
+  heard alerts for the page, shared with Live floor's chime (Need help keyed by session and
+  `raised_at`, `helpChimeKey`; the rest by alert id): a request chimes once whichever read hears it
+  first. On Live floor the banner is not shown; Needs you now has a row for each kind there (Need
+  help, an agent disconnected past 20 s, a break over its limit).
+- **Live floor** (fixes after the supervisor review, 2026-11-20): Need help's row and card say what
+  the agent was doing when they asked, from `state_at_raise` ("while waiting for a call", "on a
+  break"); a dropped screen says "Disconnected for 2 min" from `disconnected_since`; BE-9's
+  "I am coming to your desk" is a one-press I'm coming on the help row and card
+  (`live-floor/ComingToDesk.tsx`, the supervisor-message route). The campaign Agents tab and the
+  agent drawer say "Disconnected" too (the drawer "Disconnected for 2 min" when opened from Live
+  floor, whose rows carry `disconnected_since`), and the number display reads "Full number" /
+  "Hidden number" in Settings and the activity log (`PHONE_DISPLAY_LABELS`).
 - **Campaign Settings** (`AgencyCampaignSettingsPage.tsx`): two sections after Agents, `#agent-screen`
   "What agents see" (daily target, number display with its `98••• ••321` preview, customer facts) and
   `#script` "Script". Rules in `utils/agency/stationSettings.ts`; each setting is sent only when it
@@ -1323,7 +1334,10 @@ contract or migration change beyond the route table's reason text.
   and hidden kept); live findings hold Save; refusals land on `daily_target_calls`, `phone_display`,
   `agent_script.opening`, `agent_script.steps[<i>].text`, `context_display.roles.<role>`,
   `context_display.types.<column>`. The facts' columns come from the campaign's newest three
-  completed imports (`useCampaignColumns`: the uploads read, then each job's `context_columns`).
+  completed imports (`useCampaignColumns`: the uploads read, then each job's `context_columns`; read
+  once, after the campaign loads, so a retry campaign's read names its root), together with the
+  campaign's stored roles and types (the server took them, and its check counts every import of the
+  lineage, not only the newest three); names compare ignoring case, as the server's do.
 - **Tile pictures** (BE-13): `packages/web-ui/src/components/TileIcon.tsx` is the one map from
   `AGENCY_TILE_ICONS` to lucide icons and names (`TILE_ICONS`, `TILE_ICON_LABELS`, `<TileIcon>`);
   the console's `TileIconPicker` offers it on outcomes (`DispositionCatalogEditor icons`) and break

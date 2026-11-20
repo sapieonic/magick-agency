@@ -96,6 +96,11 @@ export interface SoftphoneUnknownRefusal extends RefusalBase {
   code: 'unknown';
   /** The raw code when the body carried one we do not know. */
   raw_code: string | null;
+  /**
+   * The other organisation's name a `session_in_other_tenant` refusal carries (OS1, OS2): a name,
+   * for the page's own words, never a sentence. Absent on any other refusal.
+   */
+  tenant_name?: string | null;
 }
 
 export type SoftphoneRefusal =
@@ -141,6 +146,10 @@ export function parseSoftphoneRefusal(err: unknown): SoftphoneRefusal {
   const message =
     typeof details['message'] === 'string' && details['message'].trim() ? details['message'] : fallbackMessage;
   if (code === null || !KNOWN_CODES.has(code)) {
+    if (code === 'session_in_other_tenant') {
+      const tenantName = typeof details['tenant_name'] === 'string' ? details['tenant_name'] : null;
+      return { code: 'unknown', raw_code: code, status, message, tenant_name: tenantName };
+    }
     return { code: 'unknown', raw_code: code, status, message };
   }
   const known = code as AgencySoftphoneErrorCode;

@@ -333,8 +333,10 @@ describe('the list', () => {
     // Need help (LF28) tops everything, whatever its tone.
     expect(homeRank({ kind: 'help@2026-11-19T09:00:00Z', tone: 'danger' })).toBe('help');
     expect(homeRank({ kind: 'help@2026-11-19T09:00:00Z', tone: 'info' })).toBe('help');
-    // LF9's order.
-    expect(HOME_RANKS).toEqual(['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info']);
+    // A dropped screen (BE-11) is its own rank, whatever its tone.
+    expect(homeRank({ kind: 'disconnected@2026-11-20T09:00:00Z', tone: 'danger' })).toBe('disconnected');
+    // LF9's order: a dropped screen after what stopped a campaign, before a break over its limit.
+    expect(HOME_RANKS).toEqual(['help', 'stop', 'disconnected', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info']);
   });
 
   it('marks late callbacks whose owner is away, which a supervisor could give to free agents', () => {

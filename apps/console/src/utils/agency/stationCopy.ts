@@ -130,6 +130,7 @@ export const STATION_COPY = {
   inboundTitle: 'Customer is calling',
   connecting: 'Connecting',
   connectsByItself: 'The call connects by itself.',
+  stopRingingArmed: 'Press E again to stop this call.',
   whatTheySaid: 'What they said last time',
   lastCall: 'Last call',
   callAgainTag: (n: number, of: number) => `Calling again · ${n} of ${of}`,
@@ -157,6 +158,7 @@ export const STATION_COPY = {
   breakAfterCall: (label: string) => `${label} break after this call`,
   dialAfterCall: 'Dial a number myself after this call',
   cancelBreakAfterCall: 'Cancel the break after this call',
+  cancelDialAfterCall: 'Do not dial a number myself after this call',
   breakCancelFailed: 'The break could not be cancelled. Try again.',
   breakAlreadyStarted: 'Your break already started.',
   micLost: 'Microphone is blocked. The customer cannot hear you.',
@@ -172,7 +174,6 @@ export const STATION_COPY = {
   callWasCut: 'The call was cut. Choose what happened, or call again.',
   readAloud: (label: string) => `Read “${label}” aloud`,
   readLineAloud: 'Read this aloud',
-  readStepAloud: (n: number) => `Read step ${n} aloud`,
 
   // 03 / 04 the script (BE-8)
   firstSayThis: 'First, say this',
@@ -225,7 +226,6 @@ export const STATION_COPY = {
   minutes: (n: number) => `${n} min`,
   cancel: 'Cancel',
   noBreakReasons: 'No breaks are set up. Ask your supervisor.',
-  breakRefused: 'You cannot take that break now. Choose another.',
 
   // 07 / 08 Breaks
   onBreakTitle: (label: string | null) => (label ? `On break · ${label}` : 'On break'),
@@ -234,6 +234,8 @@ export const STATION_COPY = {
   longBreak: (minutes: number) => `You have been on break for ${minutes} minutes.`,
   breakOverTitle: 'Break time is over',
   breakOverSubtitle: (late: string) => `You are ${late} late. Start calls now.`,
+  /** 08's subtitle as a screen reader hears it: once, with no number that counts. */
+  breakOverSpoken: 'You are late from your break. Start calls now.',
   breakWas: (minutes: number) => `Your break was ${minutes} minutes. Your supervisor can see this.`,
   startCallsAgain: 'Start calls again',
   pausedTitle: 'Paused',
@@ -309,7 +311,6 @@ export const STATION_COPY = {
   somethingWentWrong: 'That did not go through. Try again in a moment.',
 } as const;
 
-/** 02c's subtitle, by why calls stopped (spec §3 02c; all four reasons exist today). */
 /** What the agent is doing on another list, in the station's words (the join screens). */
 export const DOING_WORDS: Record<AgencyAgentState, string> = {
   offline: 'not started yet',
@@ -320,6 +321,25 @@ export const DOING_WORDS: Record<AgencyAgentState, string> = {
   break: 'on a break',
 };
 
+/**
+ * 02c's subtitle when the list is not dialling, by why it stopped (`campaign_state.reason`). The
+ * one table of it, kept here so the app can mirror it word for word: only a real supervisor's
+ * pause or stop says the supervisor did it; the system's own pause (the abandonment ceiling,
+ * `auto_paused`) does not blame anyone; a finished list says so; and no reason yet (no
+ * `campaign_state` has said why, such as a list that has not started) gets a neutral line.
+ */
+export const NO_CALLS_STOPPED_WORDS: Record<AgencyCampaignChangeReason | 'none', string> = {
+  paused_by_supervisor: 'Your supervisor has stopped calls. Stay on this screen.',
+  stopped_by_supervisor: 'Your supervisor has stopped calls. Stay on this screen.',
+  auto_paused: 'Calls are paused for a short while. Stay on this screen.',
+  list_exhausted: 'Every customer on this list has been called.',
+  // Not dialling after a start or resume: the next `campaign_state` says more.
+  started: 'Calls have not started yet. Stay on this screen.',
+  resumed: 'Calls have not started yet. Stay on this screen.',
+  none: 'Calls have not started yet. Stay on this screen.',
+};
+
+/** 02c's subtitle (spec §3 02c): why calls stopped, else why nothing is due for this agent. */
 export function noCallsSubtitle(input: {
   campaignReason: AgencyCampaignChangeReason | null;
   dialing: boolean;
@@ -327,10 +347,7 @@ export function noCallsSubtitle(input: {
   nextDueAt: string | null;
 }): string {
   const { campaignReason, dialing, queueReason, nextDueAt } = input;
-  if (!dialing) {
-    if (campaignReason === 'list_exhausted') return 'No customers are waiting. Stay on this screen.';
-    return 'Your supervisor has stopped calls. Stay on this screen.';
-  }
+  if (!dialing) return NO_CALLS_STOPPED_WORDS[campaignReason ?? 'none'] ?? NO_CALLS_STOPPED_WORDS.none;
   const at = nextDueAt ? Date.parse(nextDueAt) : NaN;
   const time = Number.isFinite(at) ? clockTime(at) : null;
   switch (queueReason) {
@@ -567,6 +584,30 @@ export function backToCallsRefusedLine(code: string | null): string {
       return 'One moment. Try again.';
     default:
       return 'You could not go back to your calls just now. Try again in a moment.';
+  }
+}
+
+/**
+ * A break refused (`POST /sessions/:id/break`), said on Which break?, which opens again for it.
+ * `unknown_break_reason` has re-read the list, so the agent chooses again from what is there.
+ */
+export function breakRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'unknown_break_reason':
+      return 'You cannot take that break now. Choose another.';
+    case 'manual_call_live':
+    case 'outcome_pending':
+      return 'Finish your call on the soft phone and save it first.';
+    case 'session_ended':
+    case 'session_not_found':
+    case 'wrong_session_kind':
+    case 'no_station':
+      return 'Your work was closed. Open today’s work again.';
+    case 'state_changing':
+    case 'dial_failed':
+      return 'Your break did not start. Try again.';
+    default:
+      return 'Your break did not go through. Try again.';
   }
 }
 

@@ -4,7 +4,7 @@ import { isTextEntryTarget } from '../../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../../utils/agencyDispositionForm';
 import { trackAgencyShortcutUsed, trackAgencyDispositionBlocked } from '../../../analytics/events';
 import type { AgencyConsoleState } from '../useAgencyConsole';
-import type { DispositionPadHandle } from '../../../components/agency/DispositionPad';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 
 /** `B`: open Which break? (the station's break choice). */
 export interface BreakMenuHandle {
@@ -22,7 +22,6 @@ export interface StationShortcutTargets {
   breakMenuRef: RefObject<BreakMenuHandle | null>;
   notesRef: RefObject<HTMLTextAreaElement>;
   /** The old contact panel's field filter (`/`); the redesigned station has none (spec §2). */
-  fieldFilterRef?: RefObject<HTMLInputElement>;
   padRef: RefObject<DispositionPadHandle | null>;
   dncRef: RefObject<DncControlHandle | null>;
 }
@@ -37,6 +36,8 @@ export interface StationScreenKeys {
   r: (() => void) | null;
   m: (() => void) | null;
   escape: (() => void) | null;
+  /** `A` on Start of day: the screen's own Start work (its way of working included); null elsewhere. */
+  startWork?: (() => void) | null;
 }
 
 /** Elements whose own Enter press is theirs: a button, a link, a field. Enter there is never the main action. */
@@ -75,7 +76,7 @@ export function useStationShortcuts(
     /** The redesigned station's keys; absent, none of them is bound. */
     screenKeys?: StationScreenKeys;
   },
-  { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef }: StationShortcutTargets,
+  { breakMenuRef, notesRef, padRef, dncRef }: StationShortcutTargets,
 ): void {
   const shortcutStateRef = useLatestRef(state);
   useEffect(() => {
@@ -149,9 +150,14 @@ export function useStationShortcuts(
         // One key for two verbs, because the rail says which one is on offer and
         // the agent is never asked to remember.
         if (agentState === 'offline') {
-          event.preventDefault();
-          cons.goAvailable('shortcut');
-          shortcutUsed('a', true);
+          // The redesigned station: Start work as its button does it, and nothing on a screen
+          // without it (01b, a check failed). Without screen keys, the older bare go-available.
+          const start = screenKeys ? screenKeys.startWork ?? null : () => cons.goAvailable('shortcut');
+          if (start) {
+            event.preventDefault();
+            start();
+          }
+          shortcutUsed('a', start !== null);
         } else if (agentState === 'break') {
           event.preventDefault();
           cons.endBreak('shortcut');
@@ -175,20 +181,6 @@ export function useStationShortcuts(
           notesRef.current?.focus();
         }
         shortcutUsed('n', cons.notesEnabled);
-        return;
-      }
-
-      if (key === '/') {
-        // Focuses the filter input; nothing to enable/disable here — the
-        // box is present at every density and in every call state, so there is
-        // no "refuses" branch the way `C` and `N` have one. Once focus lands
-        // inside the input, `inTextField` above is what stops this branch from
-        // firing again — the second `/` types a literal slash rather than
-        // re-focusing a field that already has focus.
-        if (!fieldFilterRef?.current) return;
-        event.preventDefault();
-        fieldFilterRef.current.focus();
-        shortcutUsed('slash', true);
         return;
       }
 

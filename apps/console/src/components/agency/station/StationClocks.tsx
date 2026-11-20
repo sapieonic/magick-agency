@@ -79,11 +79,18 @@ export function TimeLeftRing({
 }) {
   useRepaintTick(anchor.deadlineMs !== null);
   const view = wrapupView(anchor, clock.now(), submitted);
-  if (view.panel === 'held' || view.remainingMs === null) return null;
-  const over = view.remainingMs === 0 && !submitted;
+  /*
+    05d: when the time runs out with nothing saved, the server ends the countdown with a wrap-up
+    frame carrying no deadline and `held_reason: 'disposition_required'`. The ring stays, red, at
+    "Time is over 0:00", rather than vanishing; any other wrap-up with no deadline has no ring.
+  */
+  const timeOver = view.panel === 'held' && anchor.heldReason === 'disposition_required' && !submitted;
+  if (!timeOver && (view.panel === 'held' || view.remainingMs === null)) return null;
+  const remainingMs = timeOver ? 0 : view.remainingMs ?? 0;
+  const over = remainingMs === 0 && !submitted;
   const r = 18;
   const c = 2 * Math.PI * r;
-  const fraction = view.fraction ?? 0;
+  const fraction = timeOver ? 0 : view.fraction ?? 0;
   return (
     <span className={styles.ring} data-over={over ? 'true' : undefined} data-testid="time-left">
       <svg className={styles.ringSvg} viewBox="0 0 44 44" aria-hidden="true">
@@ -93,7 +100,7 @@ export function TimeLeftRing({
       <span>
         <small>{over ? STATION_COPY.timeOver : STATION_COPY.timeLeft}</small>
         <span className={styles.num} aria-hidden="true" data-testid="wrapup-digits">
-          {runningClock(view.remainingMs)}
+          {runningClock(remainingMs)}
         </span>
       </span>
     </span>

@@ -2,7 +2,7 @@ import { useEffect, type RefObject } from 'react';
 import { useLatestRef } from '../../../hooks/useLatestRef';
 import { isTextEntryTarget } from '../../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../../utils/agencyDispositionForm';
-import type { DispositionPadHandle } from '../DispositionPad';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import type { InboundCallState } from '../../../hooks/useInboundCall';
 import type { ServerClock } from '../../../hooks/useServerClock';
 

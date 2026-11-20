@@ -18,10 +18,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * failure sets `error` (the thrown `Error`'s message, else `errorMessage`) and
  * also keeps the previous `data`.
  *
- * `enabled: false` is "not yet": no request, `data` goes back to `initialData`
- * (so a scope that cleared never shows the previous scope's rows), `loading`
- * stays true, any load still in flight can no longer write, and `reload`
- * settles at once. Turning it on loads.
+ * `enabled: false` is "not now": no request, `data` goes back to `initialData`
+ * (so a scope that cleared never shows the previous scope's rows), `loading` is
+ * false (nothing is loading, so a "Loading…" line can never stick on a resource
+ * that will not be read), any load still in flight can no longer write, and
+ * `reload` settles at once. Turning it on loads, and `loading` is true from the
+ * first render it is on. A caller whose disabled state means "waiting for the
+ * scope", and wants its spinner meanwhile, says so itself (`loading || !enabled`).
  */
 export interface AsyncResource<T> {
   data: T;
@@ -36,7 +39,7 @@ export interface AsyncResourceOptions<T> {
   initialData: T;
   /** The error text when the thrown value carries no message. */
   errorMessage?: string;
-  /** False while the fetcher's inputs are missing: nothing loads. Default true. */
+  /** False while the fetcher's inputs are missing: nothing loads, and `loading` is false. Default true. */
   enabled?: boolean;
 }
 
@@ -74,5 +77,7 @@ export function useAsyncResource<T>(
 
   useEffect(() => { void reload(); }, [reload]);
 
-  return { data, loading, error, reload };
+  // The state stays true while disabled, so the first render after turning it on already says
+  // loading (no frame of "loaded, empty" before the effect runs); disabled, nothing is loading.
+  return { data, loading: enabled && loading, error, reload };
 }

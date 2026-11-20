@@ -48,7 +48,12 @@ import {
   fieldErrorsFromResponse,
   type CampaignConfigState,
 } from '../../../utils/agencyCampaignConfigForm';
-import { isCollectionsStarter, withCollectionsStarter } from '../../../utils/agency/collectionsStarter';
+import {
+  collectionsStarterNames,
+  collectionsStarterOutcomes,
+  isCollectionsStarter,
+  withCollectionsStarter,
+} from '../../../utils/agency/collectionsStarter';
 import {
   BUILDER_STEPS,
   basicsBlockReason,
@@ -151,6 +156,7 @@ export default function CampaignBuilderPage() {
   /**
    * Analytics-only: the disposition order the wizard started with, to detect
    * whether the row arrows moved anything before the one save this page makes.
+   * Applying the Collections set (AS4) starts it again from the set's order.
    */
   const initialDispositionOrderRef = useRef(config.dispositions.map((d) => d.code));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -889,20 +895,20 @@ export default function CampaignBuilderPage() {
                   <div className={styles.starter} data-testid="collections-starter">
                     {isCollectionsStarter(config.dispositions) ? (
                       <p className={styles.starterText} role="status">
-                        The Collections set is in place: Will pay, Call later, No one spoke, Refused, Wrong number and
-                        Don’t call again. Change any outcome below before you save.
+                        {`The Collections set is in place: ${collectionsStarterNames()}. Change any outcome below before you save.`}
                       </p>
                     ) : (
                       <>
                         <p className={styles.starterText}>
-                          Collecting payments? Start with six outcomes made for it: Will pay, Call later, No one spoke,
-                          Refused, Wrong number and Don’t call again. They replace the outcomes below.
+                          {`Collecting payments? Start with six outcomes made for it: ${collectionsStarterNames()}. They replace the outcomes below.`}
                         </p>
                         <button
                           type="button"
                           className="btn-secondary"
                           onClick={() => {
                             setConfig((current) => withCollectionsStarter(current));
+                            // The save's `reordered` compares with the set as applied, not the defaults it replaced.
+                            initialDispositionOrderRef.current = collectionsStarterOutcomes().map((d) => d.code);
                             setConfigSaved(false);
                             setCatalogEpoch((n) => n + 1);
                           }}

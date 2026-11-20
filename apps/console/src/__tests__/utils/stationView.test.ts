@@ -78,7 +78,13 @@ describe('the band says where the agent is (spec §3)', () => {
 
   it.each<[Partial<StationViewInput>, string]>([
     [{ agentState: 'available', dialing: false, campaignReason: 'paused_by_supervisor' }, 'Your supervisor has stopped calls. Stay on this screen.'],
-    [{ agentState: 'available', dialing: false, campaignReason: 'list_exhausted' }, 'No customers are waiting. Stay on this screen.'],
+    [{ agentState: 'available', dialing: false, campaignReason: 'stopped_by_supervisor' }, 'Your supervisor has stopped calls. Stay on this screen.'],
+    // The list is finished: nobody stopped anything.
+    [{ agentState: 'available', dialing: false, campaignReason: 'list_exhausted' }, 'Every customer on this list has been called.'],
+    // The system's own pause (the abandonment ceiling) blames nobody.
+    [{ agentState: 'available', dialing: false, campaignReason: 'auto_paused' }, 'Calls are paused for a short while. Stay on this screen.'],
+    // No campaign_state has said why (a list not started yet): a neutral line.
+    [{ agentState: 'available', dialing: false, campaignReason: null }, 'Calls have not started yet. Stay on this screen.'],
     [{ agentState: 'available', queue: { due: false, reason: 'queue_empty', next_due_at: null } }, 'No customers are waiting. Stay on this screen.'],
   ])('02c says why calls stopped, in its own words', (patch, subtitle) => {
     expect(v(patch).subtitle).toBe(subtitle);
@@ -167,10 +173,18 @@ describe('Need help (AS5, phase 0)', () => {
     expect(v({ agentState: 'on_call', call: 'connected', helpOffered: false }).needHelp).toBe(false);
   });
 
-  it('BE-9 slot: shown on every working screen once the server accepts it everywhere', () => {
+  it('BE-9: shown on every screen but 11 and 12 once the server accepts it everywhere, Start of day included', () => {
     expect(v({ agentState: 'available', helpEverywhere: true }).needHelp).toBe(true);
     expect(v({ agentState: 'break', helpEverywhere: true }).needHelp).toBe(true);
-    expect(v({ helpEverywhere: true }).needHelp).toBe(false);
+    // 01 and 01b (spec §3; BE-9 accepts a raise from an agent joined but not yet working).
+    expect(v({ helpEverywhere: true }).screen).toBe('start');
+    expect(v({ helpEverywhere: true }).needHelp).toBe(true);
+    const failed = v({ helpEverywhere: true, checks: { microphone: 'blocked', headset: 'ok' } });
+    expect(failed.screen).toBe('check_failed');
+    expect(failed.needHelp).toBe(true);
+    // 11 and 12 never.
+    expect(v({ agentState: 'available', helpEverywhere: true, finishOpen: true }).needHelp).toBe(false);
+    expect(v({ helpEverywhere: true, connection: 'superseded' }).needHelp).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useLayoutEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 
 type Theme = 'light' | 'dark';
@@ -35,11 +35,21 @@ export function initialTheme(): Theme {
   return readChoice() ?? 'light';
 }
 
+/**
+ * Puts `theme` on the document (`<html data-theme>`). web-ui's `:root` block is the dark theme, so
+ * until this runs the page is dark: `main.tsx` calls it with {@link initialTheme} before the first
+ * render (no dark flash on a light console), and the provider again before each paint.
+ */
+export function applyTheme(theme: Theme): void {
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+  // Before the browser paints, never after: a passive effect would show one frame in the old theme.
+  useLayoutEffect(() => {
+    applyTheme(theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

@@ -1,15 +1,17 @@
 import type { AgencyFloorAlert, AgencyFloorAlertKind } from '@magick-agency/contracts/api/agency/floor';
 import { agentDisplayName } from '../agencyAgentFloor';
 import { formatCount } from '../format/number';
+import { helpChimeKey } from './floorAssist';
 
 /**
  * Supervisor alerts on every console page (agent station AS16): the account's open alerts from
  * `GET /proxy/agency/floor/alerts` in plain words, for the shell's banner. Pure, so each rule is
  * tested where it is made.
  *
- *  - **Words** (AS15): "Ravi needs help", "Ravi’s break is over by 6 min", "Ravi is disconnected".
+ *  - **Words** (AS15): "Ravi needs help", "Ravi’s break is over by 6 min", "Ravi is disconnected
+ *    for 2 min".
  *    An agent the server could not name is the floor's fallback (`agentDisplayName`).
- *  - **Clock**: minutes over are counted from the alert's `since` to the read's `as_of`, the
+ *  - **Clock**: minutes over (and disconnected) are counted from the alert's `since` to the read's `as_of`, the
  *    server's own clock, so a viewer's wrong clock never says a break is over by an hour.
  *  - **Kinds**: a kind this console does not know is left out (the contract says a client ignores
  *    one), so a newer server never shows a blank row.
@@ -19,10 +21,16 @@ const KNOWN_KINDS: ReadonlySet<AgencyFloorAlertKind> = new Set<AgencyFloorAlertK
 
 /** One banner row. */
 export interface FloorAlertItem {
-  /** The alert's `id`: the chime's key, stable for the alert's life. */
+  /** The alert's `id`, stable for the alert's life: the row's key and the screen reader's. */
   id: string;
   kind: AgencyFloorAlertKind;
   text: string;
+  /**
+   * The chime's key (`useHelpChime`): Need help's is built from its session and when it was raised
+   * (`helpChimeKey`), as Live floor's floor read builds it, so the two reads hear one request once;
+   * the other kinds' is the alert's `id`.
+   */
+  chimeKey: string;
 }
 
 /** Minutes from `since` to `asOf`, whole and never negative; null when either cannot be read. */
@@ -45,8 +53,12 @@ export function floorAlertText(alert: AgencyFloorAlert, asOf: string): string {
         ? `${name}’s break is over by ${formatCount(over)} min`
         : `${name}’s break is over time`;
     }
-    case 'disconnected':
-      return `${name} is disconnected`;
+    case 'disconnected': {
+      // How long, from the station's `disconnected_since` (the alert's `since`) to the read's `as_of`.
+      const down = minutesBetween(alert.since, asOf);
+      if (down === null) return `${name} is disconnected`;
+      return down < 1 ? `${name} is disconnected for under a minute` : `${name} is disconnected for ${formatCount(down)} min`;
+    }
   }
 }
 
@@ -54,17 +66,13 @@ export function floorAlertText(alert: AgencyFloorAlert, asOf: string): string {
 export function floorAlertItems(alerts: readonly AgencyFloorAlert[], asOf: string): FloorAlertItem[] {
   return alerts
     .filter((alert) => KNOWN_KINDS.has(alert.kind))
-    .map((alert) => ({ id: alert.id, kind: alert.kind, text: floorAlertText(alert, asOf) }));
+    .map((alert) => ({
+      id: alert.id,
+      kind: alert.kind,
+      text: floorAlertText(alert, asOf),
+      chimeKey: alert.kind === 'help' ? helpChimeKey(alert.session_id, alert.help?.raised_at ?? alert.since) : alert.id,
+    }));
 }
 
 /** The most rows the banner lists; the rest are counted ("and 3 more"). */
 export const FLOOR_ALERTS_SHOWN_MAX = 3;
-
-/**
- * The ids the chime notes but never plays for. On Live floor, Need help has its own chime (LF4,
- * on the floor's own read), so the shell stays quiet for it there and nothing is heard twice; it
- * still notes them, so leaving Live floor does not chime for a request already heard.
- */
-export function quietAlertIds(items: readonly FloorAlertItem[], onLiveFloor: boolean): string[] {
-  return onLiveFloor ? items.filter((item) => item.kind === 'help').map((item) => item.id) : [];
-}

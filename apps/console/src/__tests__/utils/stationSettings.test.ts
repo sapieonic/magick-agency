@@ -6,7 +6,6 @@ import {
   dailyTargetPayload,
   factsErrors,
   insertAt,
-  phoneAsShown,
   scriptErrors,
   scriptPayload,
   stationChanges,
@@ -15,6 +14,9 @@ import {
   stationSettingsOf,
   unknownPlaceholders,
   withColumnType,
+  columnNamed,
+  columnType,
+  sameColumn,
   type FactsForm,
   type StationSettingsForm,
 } from '../../utils/agency/stationSettings';
@@ -74,15 +76,6 @@ describe('the daily target (AS6)', () => {
   it('sends the number, and null to clear it', () => {
     expect(dailyTargetPayload(' 60 ')).toBe(60);
     expect(dailyTargetPayload('')).toBeNull();
-  });
-});
-
-describe('the number display (AS9)', () => {
-  it('masks to the first two and last three of the ten digits', () => {
-    expect(phoneAsShown('+919876543321', 'masked')).toBe('98••• ••321');
-    expect(phoneAsShown('9876543321', 'masked')).toBe('98••• ••321');
-    expect(phoneAsShown('+919876543321', 'full')).toBe('98765 43321');
-    expect(phoneAsShown('+1234', 'masked')).toBe('+1234');
   });
 });
 
@@ -165,6 +158,25 @@ describe('the customer facts (BE-6)', () => {
       { hero: ['due', 'Branch'], order: ['Notes'] },
       facts({ roles: { ...noRoles, place: 'Town' }, types: { When: 'date' } }),
     )).toEqual(['Name', 'Due', 'Branch', 'Notes', 'Town', 'When']);
+  });
+
+  it('offers the stored roles and types too, even once the form has moved off them (the server still takes them)', () => {
+    // `Region` and `Paid On` came from an import older than the ones read; the form no longer names them.
+    expect(campaignColumns(
+      ['Name'],
+      { roles: { place: 'Region' }, types: { 'Paid On': 'date', name: 'text' } },
+      facts(),
+    )).toEqual(['Name', 'Region', 'Paid On']);
+  });
+
+  it('keeps one key per column whatever its case, with the stored spelling', () => {
+    const stored = facts({ types: { amount: 'money', Other: 'date' } });
+    expect(withColumnType(stored, 'Amount', 'date').types).toEqual({ amount: 'date', Other: 'date' });
+    expect(withColumnType(stored, 'AMOUNT', 'text').types).toEqual({ Other: 'date' });
+    expect(columnType(stored, 'Amount')).toBe('money');
+    expect(columnType(stored, 'Nothing')).toBe('text');
+    expect(sameColumn(' Due Amount ', 'due amount')).toBe(true);
+    expect(columnNamed(['Name', 'Due Amount'], 'DUE AMOUNT')).toBe('Due Amount');
   });
 });
 

@@ -28,7 +28,7 @@ describe('workStatus', () => {
     ['running', 'ready', 'Calling is on'],
     ['paused', 'quiet', 'Paused by your supervisor'],
     ['draft', 'quiet', 'Not started yet'],
-    ['stopping', 'quiet', 'No calls right now'],
+    ['stopping', 'quiet', 'Ending now. No new calls.'],
     ['stopped', 'quiet', 'Ended by your supervisor. No more calls.'],
     ['completed', 'quiet', 'Finished. Every customer was called.'],
   ])('says what %s means in plain words', (status, tone, line) => {

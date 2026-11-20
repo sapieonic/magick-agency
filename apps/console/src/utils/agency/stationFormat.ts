@@ -5,6 +5,8 @@
  * the reader's own clock: the station has no customer time zone (spec 8, the timezone caveat).
  */
 
+import { formatPhone } from '@magick-agency/web-ui/format';
+
 const INDIAN_GROUPING = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
 const DAY_MONTH = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
 const WEEKDAY = new Intl.DateTimeFormat('en-GB', { weekday: 'short' });
@@ -101,4 +103,20 @@ export function initials(name: string | null): string {
 /** The same calendar day on the reader's clock. */
 export function sameDay(a: Date | number, b: Date | number): boolean {
   return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+/**
+ * The customer's number as every station screen and panel shows it, and as campaign Settings'
+ * preview shows it (AS9): `+91 98765 43321` in full, `98••• ••321` masked. The same rule as the
+ * agent app's `stationPhone` (`apps/mobile/lib/features/station/logic/format.dart`): full is
+ * web-ui's `formatPhone` (an Indian mobile in two groups of five, anything else as given); masked
+ * keeps the first two and the last three digits of the ten after +91 (of all the digits for any
+ * other number), and a number too short to mask shows no digit at all.
+ */
+export function phoneForDisplay(phoneE164: string, display: 'full' | 'masked' = 'full'): string {
+  if (display === 'full') return formatPhone(phoneE164);
+  const indian = /^\+91(\d{10})$/.exec(phoneE164.trim());
+  const digits = indian?.[1] ?? phoneE164.replace(/\D/g, '');
+  if (digits.length < 7) return '•••';
+  return `${digits.slice(0, 2)}••• ••${digits.slice(-3)}`;
 }

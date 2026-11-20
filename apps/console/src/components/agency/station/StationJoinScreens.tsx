@@ -16,12 +16,13 @@ import styles from './Station.module.css';
  * says why, the remedy is the main button bottom right, and the way off is bottom left.
  */
 
-interface Who {
+export interface Who {
   agentName: string;
   brandMark: string;
 }
 
-function JoinFrame({
+/** A screen before the station's work opens: the band says what, the card why, the remedy bottom right. */
+export function JoinFrame({
   who,
   view,
   testId,
@@ -53,7 +54,8 @@ function JoinFrame({
   );
 }
 
-function EscapeLink({ toCampaign, campaignId }: { toCampaign: boolean; campaignId: string }) {
+/** The way off a screen before work opens: back to the campaign, or to the agent's home screen. */
+export function EscapeLink({ toCampaign, campaignId }: { toCampaign: boolean; campaignId: string }) {
   return (
     <Link className={`${styles.btn} ${styles.btnQuiet}`} to={stationEscapePath(toCampaign, campaignId)} data-testid="station-escape">
       {toCampaign ? STATION_COPY.goBack : STATION_COPY.backHome}

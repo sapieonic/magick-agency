@@ -34,7 +34,8 @@ import {
  * exactly the picture agents see. The mobile app draws its own from the same keys.
  *
  * This package does not import the contracts, so the keys are repeated here; the console's
- * `tileIconMap.test.ts` fails when this list and `AGENCY_TILE_ICONS` differ.
+ * `apps/console/src/__tests__/components/TileIconPicker.test.tsx` fails when this list and
+ * `AGENCY_TILE_ICONS` differ.
  */
 export const TILE_ICON_KEYS = [
   'rupee',

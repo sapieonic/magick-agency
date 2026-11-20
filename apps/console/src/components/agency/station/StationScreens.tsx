@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useDialogA11y } from '../../../hooks/useDialogA11y';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
+import { useRenderAt } from '../../../hooks/useRenderAt';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import type { AgencyBreakReason } from '../../../types/agency';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
@@ -297,16 +298,37 @@ export function MyDayCard({ day }: { day: MyDay }) {
   );
 }
 
-/** My call-later list (spec 02, 02b): time chip and name; one due within 5 minutes is marked. */
+/**
+ * The next instant any row's "in N min" (or Late) changes: each row's minutes are
+ * `ceil((due − now) / 60 s)`, which steps every whole minute before or after its due time.
+ */
+export function nextCallLaterChange(rows: readonly { dueAt: number }[], present: number): number | null {
+  let next: number | null = null;
+  for (const row of rows) {
+    const rest = (((row.dueAt - present) % 60_000) + 60_000) % 60_000;
+    const at = present + (rest === 0 ? 60_000 : rest);
+    if (next === null || at < next) next = at;
+  }
+  return next;
+}
+
+/**
+ * My call-later list (spec 02, 02b): time chip and name; one due within 5 minutes is marked. Its
+ * words change at most once a minute, so it renders again only then (one timer to that instant),
+ * never on the station's quarter-second clock.
+ */
 export function CallLaterCard({ list, now }: { list: MyCallLaters; now: () => number }) {
-  useRepaintTick(list.rows.length > 0);
-  if (list.rows.length === 0) return null;
   const present = now();
+  const shown = list.rows.slice(0, 5);
+  const next = nextCallLaterChange(shown, present);
+  // On the local clock: `now` may be the server's, the timer is the browser's.
+  useRenderAt(next === null ? null : Date.now() + (next - present) + 1);
+  if (list.rows.length === 0) return null;
   return (
     <section className={styles.card} data-testid="call-later-list">
       <h2 className={styles.cardTitle}><Calendar size={20} aria-hidden="true" />{STATION_COPY.myCallLaterList}</h2>
       <ul className={styles.laterList}>
-        {list.rows.slice(0, 5).map((row) => {
+        {shown.map((row) => {
           const minutes = Math.ceil((row.dueAt - present) / 60_000);
           const late = row.overdue || minutes < 0;
           const soon = !late && minutes <= 5;

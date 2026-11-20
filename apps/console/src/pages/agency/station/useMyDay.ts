@@ -70,13 +70,23 @@ export const MY_DAY_POLL_MS = 60_000;
 const LIST_LIMIT = 50;
 const NOTHING: MyDayReads = { myDay: null, callLaters: null };
 
+/**
+ * The target My day can draw: only one whose metric the station knows (`calls`, AS6) and that is a
+ * positive number, as the app reads it (`station_reads.dart`). A metric added later is not shown
+ * as a number of calls.
+ */
+export function knownTarget(target: AgencyMyDay['target'] | undefined): number | null {
+  if (!target || target.metric !== 'calls') return null;
+  return Number.isFinite(target.value) && target.value > 0 ? target.value : null;
+}
+
 /** my-day's answer, in the station's shapes. */
 export function fromMyDay(day: AgencyMyDay): MyDayReads {
   const later = day.call_later;
   return {
     myDay: {
       calls: day.calls,
-      target: day.target?.value ?? null,
+      target: knownTarget(day.target),
       talkSeconds: day.talk_seconds,
       willPay: day.will_pay,
       dialled: day.dialed,

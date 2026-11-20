@@ -292,7 +292,7 @@ describe('the console root does not repaint on a clock', () => {
     }
 
     expect(screen.getByTestId('band-title').textContent).toBe('Break time is over');
-    expect(screen.getByTestId('band-subtitle').textContent).toMatch(/^You are 0:0\d late\. Start calls now\.$/);
+    expect(screen.getByTestId('break-over-late').textContent).toMatch(/^You are 0:0\d late\. Start calls now\.$/);
     // One render at the crossing; the rest are the heartbeat's own (socket events, not a clock):
     // a ping and its pong each move the root once.
     expect(renders.identity - before).toBeLessThanOrEqual(1 + 2 * (pings() - pingsBefore));

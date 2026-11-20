@@ -1,5 +1,5 @@
 import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
-import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
+import type { AgencyFloorAgent, AgencyFloorAlertKind } from '@magick-agency/contracts/api/agency/floor';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../agencyErrors';
 import { breakLimitMinutesOf } from '../agencyAgentFloor';
@@ -34,6 +34,12 @@ export interface MessageTarget {
 }
 
 /**
+ * The one-press answer to Need help when the supervisor walks over (BE-9): a supervisor's message,
+ * the existing answer (LF14), so it answers the request whatever the agent was doing.
+ */
+export const COMING_TO_DESK_TEXT = 'I am coming to your desk.';
+
+/**
  * Send reminder's words (LF5's "the same route with prefilled text"): friendly, naming the break
  * and its length, the reason's limit (LF6) or the floor's 30 minutes for a reason with none.
  */
@@ -66,29 +72,56 @@ export function messageRefusal(err: unknown, name: string): string {
 }
 
 /**
- * One open Need help request, as the chime tells requests apart (LF31): the agent and the moment
- * they raised it, so a request raised again after an answer is a new one.
+ * One alert as the chime tells alerts apart (LF31, AS16): what it is about and a key that is the
+ * same whichever read saw it. Live floor's floor read and the shell's alerts read both carry an
+ * open Need help request, so its key is built from what both carry ({@link helpChimeKey}); the
+ * other kinds come only from the alerts read and are keyed by the alert's `id`.
  */
-export function helpKey(row: Pick<AgencyFloorAgent, 'agent_user_id' | 'help'>): string | null {
-  return row.help ? `${row.agent_user_id}@${row.help.raised_at}` : null;
-}
-
-/** Every open request on the floor, in the floor's order. */
-export function helpKeys(rows: readonly Pick<AgencyFloorAgent, 'agent_user_id' | 'help'>[]): string[] {
-  return rows.flatMap((row) => {
-    const key = helpKey(row);
-    return key === null ? [] : [key];
-  });
+export interface ChimeKey {
+  kind: AgencyFloorAlertKind;
+  key: string;
 }
 
 /**
- * The requests to chime for (LF31): the ones not seen before on this page. Null `seen` is the page's first
- * read of the floor: what is already open then is shown (the red row and card) and not chimed for,
- * so a reload or a return to the page never plays the sound for requests the reader has seen.
+ * A Need help request's chime key: the session and the instant it was raised (as a number, so two
+ * reads that spell the same instant differently agree), so a request raised again after an answer
+ * is a new one.
  */
-export function newHelpKeys(seen: ReadonlySet<string> | null, keys: readonly string[]): string[] {
-  if (seen === null) return [];
-  return keys.filter((key) => !seen.has(key));
+export function helpChimeKey(sessionId: string, raisedAt: string): string {
+  const at = Date.parse(raisedAt);
+  return `help:${sessionId}@${Number.isFinite(at) ? at : raisedAt}`;
+}
+
+/** Every open request on the floor, in the floor's order. A row with no open session has none. */
+export function helpKeys(rows: readonly Pick<AgencyFloorAgent, 'session_id' | 'help'>[]): ChimeKey[] {
+  return rows.flatMap((row) => (row.help && row.session_id
+    ? [{ kind: 'help' as const, key: helpChimeKey(row.session_id, row.help.raised_at) }]
+    : []));
+}
+
+/**
+ * What one read changes in the page's heard alerts (LF31, AS16), pure. `covers` are the kinds the
+ * read can see (Live floor's floor read: Need help; the shell's alerts read: every kind). The first
+ * read of the page that covers a kind only notes what is open of it (`noted`: shown, never chimed
+ * for), so a reload never plays the sound for what the reader can already see. After that, a key
+ * not heard before on this page, by any read, is `fresh` (chimed once), and never again, whichever
+ * read sees it next.
+ */
+export function heardFrom(
+  heard: ReadonlySet<string>,
+  baselined: ReadonlySet<AgencyFloorAlertKind>,
+  covers: readonly AgencyFloorAlertKind[],
+  keys: readonly ChimeKey[],
+): { fresh: string[]; noted: string[]; baselines: AgencyFloorAlertKind[] } {
+  const baselines = covers.filter((kind) => !baselined.has(kind));
+  const fresh: string[] = [];
+  const noted: string[] = [];
+  for (const { kind, key } of keys) {
+    if (heard.has(key) || fresh.includes(key) || noted.includes(key)) continue;
+    if (baselines.includes(kind)) noted.push(key);
+    else fresh.push(key);
+  }
+  return { fresh, noted, baselines };
 }
 
 /** "under a minute ago", "3 min ago": how long ago a request was raised, on the floor's 5 s clock. */
@@ -104,10 +137,19 @@ export function helpAgo(raisedAt: string, nowMs: number): string {
 const CHIME_KEY = 'magick.liveFloor.helpChime.v1';
 
 /**
- * Whether Need help plays its sound in this browser: on unless turned off here. Storage that throws
- * (a private window, blocked site data) reads as the default, on.
+ * The choice made on this page, whatever storage did with it: `null` until the reader toggles. One
+ * value for the whole page, so a chime mounted after a toggle (Live floor opened after muting from
+ * the banner) agrees with every other, even where storage cannot keep the choice.
+ */
+let chosenOnThisPage: boolean | null = null;
+
+/**
+ * Whether Need help plays its sound in this browser: on unless turned off here. The choice made on
+ * this page first (so every chime agrees, storage or not), then the browser's, then on: storage
+ * that throws (a private window, blocked site data) reads as the default.
  */
 export function readHelpChimeOn(): boolean {
+  if (chosenOnThisPage !== null) return chosenOnThisPage;
   try {
     return browserStorage()?.getItem(CHIME_KEY) !== 'off';
   } catch {
@@ -115,13 +157,19 @@ export function readHelpChimeOn(): boolean {
   }
 }
 
-/** Keeps the choice for this browser; storage that throws keeps it for this page only. */
+/** Keeps the choice for this page, and for this browser where storage lets it. */
 export function writeHelpChimeOn(on: boolean): void {
+  chosenOnThisPage = on;
   try {
     const storage = browserStorage();
     if (on) storage?.removeItem(CHIME_KEY);
     else storage?.setItem(CHIME_KEY, 'off');
   } catch {
-    // Blocked or full storage: the page's own state carries the choice until it is reloaded.
+    // Blocked or full storage: the page's choice above carries it until the page is reloaded.
   }
+}
+
+/** Tests only: forget the page's choice, as a reload does. */
+export function resetHelpChimeChoiceForTests(): void {
+  chosenOnThisPage = null;
 }

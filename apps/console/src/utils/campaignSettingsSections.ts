@@ -48,7 +48,7 @@ export const CAMPAIGN_SETTINGS_SECTIONS: { id: string; label: string; keywords: 
     // Agent station (AS6, AS9, BE-6): the daily target, the number display and the customer facts.
     id: 'agent-screen',
     label: 'What agents see',
-    keywords: ['daily target', 'target', 'calls a day', 'goal', 'phone number', 'mask', 'masked', 'hide number', 'customer facts', 'customer name', 'amount due', 'due date', 'place', 'column', 'money', 'date'],
+    keywords: ['daily target', 'target', 'calls a day', 'goal', 'phone number', 'full number', 'hidden number', 'mask', 'masked', 'hide number', 'customer facts', 'customer name', 'amount due', 'due date', 'place', 'column', 'money', 'date'],
   },
   {
     // Agent station (BE-8): the opening line and the steps agents read out.
