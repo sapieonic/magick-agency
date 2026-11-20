@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/sapieonic/magick-agency/compare/web-ui-v0.3.1...web-ui-v0.4.0) (2026-11-20)
+
+
+### Features
+
+* carry every package's version in logs, traces and metrics ([#108](https://github.com/sapieonic/magick-agency/issues/108)) ([5fd83eb](https://github.com/sapieonic/magick-agency/commit/5fd83eb938d40daa92fb1bfaa43bc9cc043c6b93))
+* **server,console,mobile,contracts,db:** the agent station redesign, phases 0 to 2 ([#110](https://github.com/sapieonic/magick-agency/issues/110)) ([d3d50e2](https://github.com/sapieonic/magick-agency/commit/d3d50e295e377d42c4bb583dbce05e46dff89c92))
+
 ## [0.3.1](https://github.com/sapieonic/magick-agency/compare/web-ui-v0.3.0...web-ui-v0.3.1) (2026-11-16)
 
 

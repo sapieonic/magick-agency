@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.31.0](https://github.com/sapieonic/magick-agency/compare/console-v0.30.0...console-v0.31.0) (2026-11-20)
+
+
+### Features
+
+* carry every package's version in logs, traces and metrics ([#108](https://github.com/sapieonic/magick-agency/issues/108)) ([5fd83eb](https://github.com/sapieonic/magick-agency/commit/5fd83eb938d40daa92fb1bfaa43bc9cc043c6b93))
+* **server,console,mobile,contracts,db:** the agent station redesign, phases 0 to 2 ([#110](https://github.com/sapieonic/magick-agency/issues/110)) ([d3d50e2](https://github.com/sapieonic/magick-agency/commit/d3d50e295e377d42c4bb583dbce05e46dff89c92))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.28.0
+    * @magick-agency/domain bumped to 0.14.0
+    * @magick-agency/web-ui bumped to 0.4.0
+
 ## [0.30.0](https://github.com/sapieonic/magick-agency/compare/console-v0.29.0...console-v0.30.0) (2026-11-19)
 
 
