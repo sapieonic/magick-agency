@@ -335,8 +335,8 @@ function SoftphoneConsole({
           reason: leaveReason ? (
             <span className={stationStyles.footHint} data-testid="softphone-close-reason">{leaveReason}</span>
           ) : null,
-          // Close soft phone, the way out while nothing is dialled; hidden while a call holds the page (AS1).
-          button: leaveReason ? null : (
+          // Close soft phone, the way out: the screen shows it only while nothing is dialled (AS1).
+          button: (
             <button
               type="button"
               className={`${stationStyles.btn} ${stationStyles.btnBig} ${side.wayOut}`}
