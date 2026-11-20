@@ -14,7 +14,7 @@ import { localDayStart } from '../../../src/agency/calling-hours.js';
  * My day's pure rules (agent station BE-1, BE-2, BE-3; AS6, AS7, AS8; `src/agency/my-day.ts`):
  * the query, the campaign's day, `will_pay`'s null, the target, where the call-laters go, and the
  * customer's name on a row. The reads are pinned on Postgres in
- * `test/integration/agency/my-day.test.ts`.
+ * `test/integration/api/agent-station-my-day.test.ts`.
  */
 
 const CAMPAIGN = '11111111-1111-4111-8111-111111111111';
@@ -169,6 +169,16 @@ describe('callLaterCustomerName: the name, never the number', () => {
   it('else the floor\'s guess', () => {
     expect(callLaterCustomerName({ customer_name: 'Ravi K' }, {})).toBe('Ravi K');
     expect(callLaterCustomerName({ borrower: '' , full_name: 'Meena S' }, { roles: { name: 'borrower' } })).toBe('Meena S');
+  });
+
+  it('never a column the campaign hides from agents, by the role or by the guess (case ignored)', () => {
+    // The role names a hidden column: not used, and the guess does not fall back to it either.
+    expect(callLaterCustomerName({ borrower: 'Asha Rao', name: 'Shown Name' }, { roles: { name: 'borrower' }, hidden: ['Borrower'] }))
+      .toBe('Shown Name');
+    // The guess's column is hidden: the next visible guess, else nothing.
+    expect(callLaterCustomerName({ name: 'Hidden', full_name: 'Meena S' }, { hidden: ['NAME'] })).toBe('Meena S');
+    expect(callLaterCustomerName({ customer_name: 'Ravi K' }, { hidden: ['customer_name'] })).toBeNull();
+    expect(callLaterCustomerName({ borrower: 'Asha Rao' }, { roles: { name: 'borrower' }, hidden: [' borrower '] })).toBeNull();
   });
 
   it('null without one', () => {
