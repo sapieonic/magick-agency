@@ -547,7 +547,10 @@ and **What happened?** with the time left before `outcome_due_at`; the outbound 
 waited, their work, whether they are the agent's own customer, asked not to be called), Last calls
 and the note; one main button bottom right (End call held, then Save, faded until it can save), the
 station's outcome tiles and follow-ups, and Don't call again asked first. Controls are hidden, not
-disabled. The panel renders on the offer frame and the chime (IB1, the cue `inbound_ring`)
+disabled. A call-later for a matched caller says who will make it by the matched campaign's
+routing (AS8, as on an outbound call): strict or preferred, "This call will come to you …"; pool,
+or a routing the console could not read (`GET /my-contacts/summary` for a campaign other than the
+station's), "Another agent may get the call."; a caller on no list, "call back … yourself". The panel renders on the offer frame and the chime (IB1, the cue `inbound_ring`)
 plays from the frame handler, before the server binds audio at `connects_at`. It is chimed once
 per offer (call id and `offered_at`, so a restatement is silent and a re-offer after a requeue
 rings again); connect and disconnect follow, keyed on the call id; a call already under way on a
