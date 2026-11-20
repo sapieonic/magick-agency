@@ -13,6 +13,7 @@ import {
   validateDispositionFields,
 } from '../../../agency/disposition.js';
 import { contactPromiseWrite, promiseFollowUpAt } from '../../../agency/promise-to-pay.js';
+import { callbackBookerOf } from '../../../agency/call-later.js';
 import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import { resolveDispositionDecision } from '../../../agency/disposition-policy.js';
 import {
@@ -346,6 +347,17 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       && reservedUserId
       ? { userId: reservedUserId }
       : null;
+    // Agent station (BE-3, AS8): who booked the call-later, for the agent's own list and the
+    // panel's "You said you will call at …". The agent who took the call, only when they filed it
+    // themselves: a supervisor's on-behalf save records no booker (`callbackBookerOf`). Written by
+    // the same guarded statement, so it lands exactly when the release lands. Routing is untouched.
+    const callbackBooker = callbackBookerOf({
+      decisionReason: decision.reason,
+      entry: resolved.entry,
+      followUpBooked: followUpAt !== null,
+      onBehalf: actor.onBehalf,
+      reservedUserId,
+    });
     const landed = await agencyContactRepository.releaseFromDisposition({
       contactId: attempt.contact_id,
       attemptId: attempt.id,
@@ -357,6 +369,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       grant,
       extraAttempt,
       callbackOwner,
+      callbackBooker,
     });
     if (landed) {
       log.info(

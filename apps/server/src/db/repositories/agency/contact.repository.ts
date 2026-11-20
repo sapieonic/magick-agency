@@ -35,6 +35,7 @@ import {
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
 import type { ContactPromiseWrite } from '../../../agency/promise-to-pay.js';
+import type { CallbackBooker } from '../../../agency/call-later.js';
 import { contactBucketSql, lateCallbackSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
@@ -614,6 +615,36 @@ export class AgencyContactRepository {
   }
 
   /**
+   * Where a `pool` campaign's shared queue stands (agent station BE-5), for the `queue` frame its
+   * available agents are sent and the `queue` on their bootstrap and `ready`: the campaign's
+   * earliest open contact (due iff it is due now, on the database's clock), and, only when nothing
+   * is due, whether ANY open contact is not a callback. {@link probeAgentQueues}' pool row with
+   * every open contact of the campaign in it (a `pool` campaign pairs no contact with an owner):
+   * two probes that stop early, the head on the campaign's `(state, next_attempt_at)` order, never
+   * a count. One per campaign, never per agent. `dueCount` is 1 or 0.
+   *
+   * @param callbackCodes the campaign's `callbackCodes(catalog)`.
+   */
+  async probeCampaignQueue(campaignId: string, callbackCodes: readonly string[]): Promise<AgencyPoolQueueProbe> {
+    const p = params();
+    const campaign = p.add(campaignId);
+    const codes = p.add([...callbackCodes]);
+    const open = (alias: string) => `${alias}.campaign_id = ${campaign} AND ${openContactSql(alias)}`;
+    const { rows } = await getPool().query<{ next_at: Date | null; due: boolean | null; has_non_callback: boolean | null }>(
+      `SELECT head.next_at, head.next_at <= now() AS due,
+              CASE WHEN head.next_at > now() THEN EXISTS (
+                SELECT 1 FROM agency_contacts n
+                 WHERE ${open('n')} AND ${contactBucketSql('n', codes)} <> 'callback') END AS has_non_callback
+         FROM (SELECT (SELECT h.next_attempt_at FROM agency_contacts h
+                        WHERE ${open('h')}
+                        ORDER BY h.next_attempt_at LIMIT 1) AS next_at) head`,
+      p.values,
+    );
+    const r = rows[0];
+    return { dueCount: r?.due === true ? 1 : 0, nextAt: r?.next_at ?? null, hasNonCallback: r?.has_non_callback ?? null };
+  }
+
+  /**
    * The callback grace/fallback (CA5), one campaign, one statement: every DUE callback (bucket
    * `callback` by `contactBucketSql`, `next_attempt_at <= now() - grace`) whose owner has no
    * live session on the campaign loses its owner, and each move writes its
@@ -965,6 +996,10 @@ export class AgencyContactRepository {
                 -- A placed soft-phone call settles an inbound callback, as chargeAttempt does.
                 callback_source = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_source END,
                 callback_due_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_due_at END,
+                -- BE-3: and the call-later's booker, by the same rule (the next settled call).
+                callback_booked_by_user_id = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL
+                                                  ELSE c.callback_booked_by_user_id END,
+                callback_booked_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_booked_at END,
                 next_attempt_at = CASE
                                     WHEN c.suppressed_reason = 'dnc' OR NOT cur.held THEN c.next_attempt_at
                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at)
@@ -1150,6 +1185,9 @@ export class AgencyContactRepository {
               callback_source = NULL,
               callback_due_at = NULL,
               callback_reopened = false,
+              -- BE-3: the customer was reached, so a call-later's booker goes too.
+              callback_booked_by_user_id = NULL,
+              callback_booked_at = NULL,
               updated_at = now()
          FROM dec
         WHERE c.id = dec.id
@@ -1280,7 +1318,8 @@ export class AgencyContactRepository {
    * **It settles an inbound callback.** A placed call to the contact is the call an inbound
    * callback (`callback_source`, docs/inbound.md §7) asked for, so its source and due time are
    * cleared here, with the charge. An our-fault redial ({@link chargeOurFaultAttempt}) is not a
-   * call the customer took part in and keeps it.
+   * call the customer took part in and keeps it. A booked call-later's booker (0057, agent
+   * station BE-3) is cleared here by the same rule: the call it asked for has now been made.
    */
   async chargeAttempt(contactId: string, outcome: string | null): Promise<number> {
     const { rows } = await getPool().query<{ attempt_count: number }>(
@@ -1289,6 +1328,9 @@ export class AgencyContactRepository {
               last_outcome  = COALESCE($2, last_outcome),
               callback_source = NULL,
               callback_due_at = NULL,
+              -- BE-3: the call-later's booker goes with it (the next settled call).
+              callback_booked_by_user_id = NULL,
+              callback_booked_at = NULL,
               updated_at    = now()
         WHERE id = $1
         RETURNING attempt_count`,
@@ -1601,6 +1643,14 @@ export class AgencyContactRepository {
      * the call (the attempt's reserved agent). A contact in the pool is assigned to them.
      */
     callbackOwner?: { userId: string } | null;
+    /**
+     * Agent station (BE-3, 0057): who booked the call-later this write leaves the contact
+     * `pending` for (`callbackBookerOf`). Written by the same guarded statement as the release:
+     * `mine` stamps the agent and now; `on_behalf` (a supervisor's save) stamps nothing and keeps
+     * a booker already there only while the due time does not move; absent or null clears it.
+     * Never stamped on a contact left anything but `pending`, nor a DNC-suppressed one.
+     */
+    callbackBooker?: CallbackBooker;
   }): Promise<DispositionRelease | null> {
     return withTransaction(async (client) => {
       // ── The row, locked: everything decided below reads it as it is now ────────
@@ -1677,6 +1727,21 @@ export class AgencyContactRepository {
                 assigned_at = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN now() ELSE c.assigned_at END,
                 assigned_by_user_id = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN $12::uuid
                                            ELSE c.assigned_by_user_id END,
+                -- BE-3: who booked the call-later (0057). Both columns from one decision, so the
+                -- pair CHECK holds: the agent's own booking ($13) stamps them; a supervisor's
+                -- ($14) keeps a booker whose due time does not move; anything else clears them.
+                callback_booked_by_user_id = CASE
+                  WHEN c.suppressed_reason = 'dnc' OR $4::varchar <> 'pending' THEN NULL
+                  WHEN $13::uuid IS NOT NULL THEN $13::uuid
+                  WHEN $14::boolean AND c.next_attempt_at IS NOT DISTINCT FROM COALESCE($6::timestamptz, c.next_attempt_at)
+                    THEN c.callback_booked_by_user_id
+                  ELSE NULL END,
+                callback_booked_at = CASE
+                  WHEN c.suppressed_reason = 'dnc' OR $4::varchar <> 'pending' THEN NULL
+                  WHEN $13::uuid IS NOT NULL THEN now()
+                  WHEN $14::boolean AND c.next_attempt_at IS NOT DISTINCT FROM COALESCE($6::timestamptz, c.next_attempt_at)
+                    THEN c.callback_booked_at
+                  ELSE NULL END,
                 updated_at = now()
            FROM agency_call_attempts r
           WHERE c.id = $1
@@ -1706,6 +1771,8 @@ export class AgencyContactRepository {
           grant?.callingHours ?? false,
           extraAttempts,
           assignTo,
+          opts.callbackBooker?.kind === 'mine' ? opts.callbackBooker.userId : null,
+          opts.callbackBooker?.kind === 'on_behalf',
         ],
       );
       const landed = rows[0] ?? null;

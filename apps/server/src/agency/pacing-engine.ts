@@ -9,7 +9,7 @@ import {
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
-import type { AgencyStationCapability, AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import type { AgencyQueueState, AgencyStationCapability, AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 
 /**
  * What pacing needs from wherever the agents' station sockets are held: whether a
@@ -91,7 +91,7 @@ import { PACING_SHARE_WAIT_MS, PACING_SPLIT_DEADLINE_MS, PacingRound, ShareRotat
 import { holdBackForInbound, type InboundHold } from './pacing/inbound-hold-back.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
-import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
+import { ownerModeOf, queueStateKey, readAgentQueues, readPoolQueueState, type AgentQueueReading } from './pacing/agent-queue.js';
 import {
   CALLBACK_FALLBACK_SWEEP_MS,
   callbackFallbackApplies,
@@ -381,6 +381,12 @@ export class PacingEngine {
   /** `max_concurrent_calls` per account, invalidated by `account_limit_changed`. */
   private readonly limitCache: GenerationTtlCache<number>;
   /**
+   * A `pool` campaign's shared queue state (agent station BE-5, `readPoolQueueState`), read once
+   * per campaign and shared by every tick within the cache's TTL; invalidated by
+   * `campaign_changed` and `contacts_changed`. A forced tick reads through.
+   */
+  private readonly poolQueueCache: GenerationTtlCache<AgencyQueueState>;
+  /**
    * The dedicated caller-ID map per campaign, invalidated by `dedications_changed`, armed and
    * disarmed with the bus subscription like the two caches above. Read through on a forced tick.
    */
@@ -426,6 +432,7 @@ export class PacingEngine {
     const ttl = options.cacheTtlMs ?? PACING_CACHE_TTL_MS;
     this.campaignCache = new GenerationTtlCache(ttl, this.now);
     this.limitCache = new GenerationTtlCache(ttl, this.now);
+    this.poolQueueCache = new GenerationTtlCache(ttl, this.now);
     this.dedications = options.dedications ?? new DedicatedCallerIdCache(ttl, this.now);
     this.history = options.history ?? new PacingHistoryAccumulator();
     this.shareWaitMs = options.shareWaitMs ?? PACING_SHARE_WAIT_MS;
@@ -1018,6 +1025,7 @@ export class PacingEngine {
     if (this.unsubscribeBus) return;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.poolQueueCache.clear();
     this.dedications.arm();
     this.unsubscribeBus = this.bus.subscribe((event) => this.onInvalidation(event));
     if (this.autoRounds) this.startRoundTimer();
@@ -1037,6 +1045,7 @@ export class PacingEngine {
     this.unsubscribeBus = null;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.poolQueueCache.clear();
     this.dedications.disarm();
   }
 
@@ -1088,6 +1097,7 @@ export class PacingEngine {
     // in its own `finally`, which a revoked tick reaches like any other.
     this.demandCap.delete(campaignId);
     this.campaignCache.invalidate(campaignId);
+    this.poolQueueCache.invalidate(campaignId);
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
     this.dedicationReadFailing.delete(campaignId);
@@ -1277,9 +1287,11 @@ export class PacingEngine {
     switch (event.type) {
       case 'campaign_changed':
         this.campaignCache.invalidate(event.campaignId);
+        this.poolQueueCache.invalidate(event.campaignId);
         this.markDirty(event.campaignId);
         return;
       case 'contacts_changed':
+        this.poolQueueCache.invalidate(event.campaignId);
         this.markDirty(event.campaignId);
         return;
       case 'dedications_changed':
@@ -1618,10 +1630,10 @@ export class PacingEngine {
         candidates.push({ sessionId, agentUserId: userOf.get(sessionId)!, availableSince: live.since ?? now });
       }
     });
-    // Contact assignment: forget the queue frames of sessions that left (before the early
-    // return below, so a campaign whose agents all went away still drops them).
+    // The queue frames: forget those of sessions that left (before the early return below, so a
+    // campaign whose agents all went away still drops them). Every mode sends them (BE-5).
     const mode = ownerModeOf(campaign);
-    this.pruneQueueSent(campaign.id, mode ? sessions.map((s) => s.id) : null);
+    this.pruneQueueSent(campaign.id, sessions.map((s) => s.id));
     if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
 
     // ── Fairness: longest-idle first. ───────────────────────────────────────
@@ -1665,6 +1677,11 @@ export class PacingEngine {
       if (pickable.length === 0) {
         return { toDial: 0, candidates: [], idle: 'nothing_due', openPendingSeen: work.openPendingSeen };
       }
+    } else {
+      // `pool` (agent station BE-5): the campaign's shared queue, one reading for every available
+      // agent, each sent its `queue` frame on a change. Told, never decided on: who is dialled is
+      // the claim's, exactly as before.
+      await this.sendPoolQueueFrames(campaign, candidates, round.fresh);
     }
 
     // Both account reads are per ROUND, not per tick (`pacing/round.ts`): the limit
@@ -1895,6 +1912,32 @@ export class PacingEngine {
     let openPendingSeen = false;
     for (const reading of readings.values()) if (reading.state.next_due_at !== null) openPendingSeen = true;
     return { picked: out, openPendingSeen };
+  }
+
+  /**
+   * A `pool` campaign's `queue` frames (agent station BE-5): the campaign's shared state
+   * (`readPoolQueueState`, through {@link poolQueueCache}: one probe per campaign per TTL, never
+   * one per agent), sent to each available agent when it differs from the last they were sent.
+   * Best effort: a failed read sends nothing, warns, and costs the tick nothing.
+   */
+  private async sendPoolQueueFrames(
+    campaign: AgencyCampaignRecord,
+    agents: readonly AgentCandidate[],
+    fresh: boolean,
+  ): Promise<void> {
+    let state = fresh ? undefined : this.poolQueueCache.get(campaign.id);
+    if (!state) {
+      const generation = this.poolQueueCache.generation(campaign.id);
+      try {
+        state = await readPoolQueueState(campaign, new Date(this.now()));
+      } catch (err) {
+        log.warn({ err, campaignId: campaign.id }, 'Could not read a pool campaign\'s queue — sending no queue frame this tick');
+        return;
+      }
+      this.poolQueueCache.setIf(campaign.id, generation, state);
+    }
+    const reading: AgentQueueReading = { ownDue: false, state };
+    this.sendQueueFrames(campaign.id, agents, new Map(agents.map((a) => [a.agentUserId, reading])));
   }
 
   /** Send each agent's `queue` frame when it differs from the last one they were sent. */
@@ -2139,6 +2182,8 @@ export class PacingEngine {
     }
     const contacts = pairs.map((p) => p.contact);
     const sessions = pairs.map((p) => p.sessionId);
+    // Who each reserved session is, for the panel's call-later tag (BE-4, `booked_by_me`).
+    const agentOf = new Map(reserved.map((r) => [r.sessionId, r.agentUserId]));
     let dialed = 0;
 
     for (const [index, { sessionId, contact }] of pairs.entries()) {
@@ -2284,6 +2329,7 @@ export class PacingEngine {
           campaign,
           contact,
           clearance: gate.clearance,
+          ...(agentOf.get(sessionId) ? { agentUserId: agentOf.get(sessionId)! } : {}),
         }, {
           // The dial itself is several awaits away (flag read, priors); the dialer
           // asks this once more before it stamps the attempt dialled.

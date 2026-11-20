@@ -1,6 +1,8 @@
 /**
  * An agent's own queue on a `strict` or `preferred` campaign (contact assignment, CA3): whether
- * something is due for them now, and when nothing is, why (`AgencyQueueState`). Pacing reads it
+ * something is due for them now, and when nothing is, why (`AgencyQueueState`). On a `pool`
+ * campaign (agent station BE-5) the campaign's shared queue, one reading for all its agents
+ * ({@link readPoolQueueState}). Pacing reads it
  * for every available agent on each tick (who is worth reserving, and the `queue` frame sent
  * on a change); the session bootstrap, the station's `ready` frame and the agent's My contacts
  * summary read it for one agent. One reading for all four, so they cannot disagree.
@@ -90,11 +92,10 @@ export function queueStateFrom(
 }
 
 /**
- * The queue an agent reads on a `pool` campaign (the My contacts summary): there is no per-agent
- * queue, so it is the campaign's open contacts through the same rule, read from their earliest
- * `next_attempt_at` alone. Open pool contacts are taken to include one that is not a callback,
- * so the answer is `waiting_for_retry`, never `callbacks_later`. The station gets no `queue`
- * frame on a pool campaign, so nothing can disagree with this.
+ * The queue an agent reads on a `pool` campaign from the campaign's earliest open contact alone:
+ * the My contacts summary's fallback when the probe ({@link readPoolQueueState}) failed. Open pool
+ * contacts are taken to include one that is not a callback, so the answer is `waiting_for_retry`,
+ * never `callbacks_later`.
  */
 export function poolModeQueueState(
   campaign: Pick<AgencyCampaignRecord, 'calling_window_start' | 'calling_window_end' | 'calling_days' | 'default_timezone'>,
@@ -110,6 +111,18 @@ export function poolModeQueueState(
     },
     campaignWindowClosed(campaign, now),
   );
+}
+
+/**
+ * The shared queue of a `pool` campaign (agent station BE-5): every agent on it reads the same
+ * state, computed once per campaign (`probeCampaignQueue`), by the same rule as an owner-mode
+ * agent's ({@link queueStateFrom}) with the campaign's open contacts as the pool: due when one is
+ * due now; else `outside_calling_hours`, `queue_empty`, `callbacks_later` (every open contact is a
+ * call-later booked for later) or `waiting_for_retry`, with the earliest open contact's time.
+ */
+export async function readPoolQueueState(campaign: AgencyCampaignRecord, now: Date): Promise<AgencyQueueState> {
+  const pool = await agencyContactRepository.probeCampaignQueue(campaign.id, callbackCodes(campaign.disposition_catalog));
+  return queueStateFrom({ ownDue: false, ownNextAt: null, ownHasNonCallback: null }, pool, campaignWindowClosed(campaign, now));
 }
 
 /** Two states are the same frame (the engine sends a `queue` frame only on a change). */
@@ -153,11 +166,12 @@ export async function readAgentQueues(
 }
 
 /**
- * One agent's queue on `campaign` (the bootstrap, `ready` and the My contacts summary), or
- * undefined for a `pool` campaign, which has no per-agent queue. Read for this agent alone, so
- * in `preferred` mode a due pool contact is theirs: the answer pacing gives the agent first in
- * its fairness order. When colleagues ahead of them take every due pool contact, the station's
- * next `queue` frame says so (after a `ready` the leader sends the frame again).
+ * One agent's queue on `campaign` (the bootstrap, `ready` and the My contacts summary). On a
+ * `pool` campaign, the campaign's shared queue ({@link readPoolQueueState}, BE-5). Otherwise read
+ * for this agent alone, so in `preferred` mode a due pool contact is theirs: the answer pacing
+ * gives the agent first in its fairness order. When colleagues ahead of them take every due pool
+ * contact, the station's next `queue` frame says so (after a `ready` the leader sends the frame
+ * again).
  */
 export async function readAgentQueueState(
   campaign: AgencyCampaignRecord,
@@ -165,7 +179,7 @@ export async function readAgentQueueState(
   now = new Date(),
 ): Promise<AgencyQueueState | undefined> {
   const mode = ownerModeOf(campaign);
-  if (!mode) return undefined;
+  if (!mode) return readPoolQueueState(campaign, now);
   const { agents } = await readAgentQueues(campaign, mode, [agentUserId], now, 1);
   return agents.get(agentUserId)?.state ?? { due: false, reason: 'queue_empty', next_due_at: null };
 }

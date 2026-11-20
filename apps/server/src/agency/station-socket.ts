@@ -19,7 +19,7 @@ import {
   stationCaps,
   type StationUpgradeQuery,
 } from './station-upgrade.js';
-import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
+import { readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
 
@@ -572,15 +572,14 @@ export async function handleStationSocket(
     }
   }
 
-  // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
-  // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
-  // change, so a reconnecting station cannot wait for one). Read here, before the fence
-  // below, so no await sits between the fence and the side effects. Best effort: a failed
-  // read omits the field and the station keeps the reconnect. The mode comes with the
-  // session read, so a `pool` campaign (no per-agent queue) costs no campaign read.
+  // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, and
+  // (agent station BE-5) the campaign's shared queue on a `pool` one, so a reconnect shows
+  // "nothing due, and why" at once (pacing's `queue` frame is sent only on a change, so a
+  // reconnecting station cannot wait for one). Read here, before the fence below, so no await
+  // sits between the fence and the side effects. Best effort: a failed read omits the field and
+  // the station keeps the reconnect. A soft-phone session (no campaign) reads nothing.
   const campaignId = session.campaign_id;
-  const ownerMode = ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' });
-  const queueRead = campaignId && ownerMode
+  const queueRead = campaignId
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
       .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
@@ -689,11 +688,12 @@ export async function handleStationSocket(
     // its own is strictly worse than delivering it to nobody — the replacement
     // has already sent, or is about to send, a `ready` of its own.
   }, socket);
-  // Contact assignment (CA3): the station's queue is now this frame's (or none, when the read
-  // failed), whatever `queue` frame pacing sent it before, including one sent while this run
-  // was reading. Told to the pacing leader, which forgets what it last sent this session and
-  // sends the agent's queue again on its next tick. After the send, never before it.
-  if (readySent && campaignId && ownerMode) {
+  // Contact assignment (CA3), and pool campaigns too (BE-5): the station's queue is now this
+  // frame's (or none, when the read failed), whatever `queue` frame pacing sent it before,
+  // including one sent while this run was reading. Told to the pacing leader, which forgets what
+  // it last sent this session and sends the agent's queue again on its next tick. After the
+  // send, never before it.
+  if (readySent && campaignId) {
     publishPacingInvalidation({ type: 'station_ready', sessionId, campaignId });
   }
 
