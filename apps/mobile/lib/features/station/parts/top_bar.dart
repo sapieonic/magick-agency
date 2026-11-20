@@ -80,9 +80,10 @@ class StationTopBar extends ConsumerWidget {
   }
 }
 
-/// Need help, top right (AS5, floor assist LF4). Today's server takes a raise only on a call or
-/// while the agent finishes one, so the button is offered there (and on an inbound call's); an
-/// open request shows on any screen, as "Help asked · 0:42", and pressing it again cancels.
+/// Need help, top right, on every working screen (AS5, BE-9; floor assist LF4). A server older than
+/// BE-9 takes a raise only on a call or while the agent finishes one: once it refuses one elsewhere
+/// (`help_not_on_call`, [HelpView.onlyOnCall]) the button is offered there only. An open request
+/// shows on any screen, as "Help asked · 0:42", and pressing it again cancels.
 /// With no internet the press cannot reach anyone: it says to call the supervisor to the desk.
 ///
 /// Behind the account's `agency_floor_assist_enabled` ([stationNeedHelpProvider]). Its own stage,
@@ -96,7 +97,9 @@ class NeedHelpButton extends ConsumerWidget {
     final help = ref.watch(stationViewProvider.select((v) => v?.help ?? const HelpView()));
     final phase = ref.watch(stationViewProvider.select((v) => v?.phase));
     final open = ref.watch(stationViewProvider.select((v) => v?.link == StationLink.open));
-    final offered = phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
+    // Every working screen (AS5, BE-9); on calls only when this server refused a raise off one.
+    final onCall = phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
+    final offered = phase != null && (!help.onlyOnCall || onCall);
     if (!help.isOpen && !offered) return const SizedBox.shrink();
     final s = context.stateTokens;
     final text = Theme.of(context).textTheme;

@@ -173,8 +173,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
       // About this call's wrap-up: it closes when the wrap-up ends or another
       // call arrives, and a "yes" that lands after that saves nothing.
       final scope = sameCall(call?.attemptId, const {AgentPhase.wrapup});
-      final name = call?.displayName?.trim();
-      final phone = call == null ? '' : formatPhone(call.phoneE164);
+      final name = (call?.facts?.name ?? call?.displayName)?.trim();
+      final phone = call == null ? '' : stationPhone(call.phoneE164, masked: view.maskPhone);
       final ok = await confirmSheet(
         context,
         title: StationCopy.stopCallingTitle,

@@ -39,7 +39,9 @@ class CallStateBand extends ConsumerWidget {
           link: v?.link,
           interruption: v?.audio.interruption ?? AudioInterruption.none,
           name: v?.call?.displayName,
+          facts: v?.call?.facts,
           phone: v?.call?.phoneE164,
+          masked: v?.maskPhone ?? false,
           bridgedAt: v?.call?.bridgedAt,
           recording: v?.call?.recording ?? false,
           deadline: v?.reconnectDeadline,
@@ -159,7 +161,7 @@ class CallStateBand extends ConsumerWidget {
         );
       case AgentPhase.onCall:
         final who = [
-          if (s.name != null && s.name!.trim().isNotEmpty) s.name!.trim() else if (s.phone != null) formatPhone(s.phone!),
+          if (s.facts?.name case final n?) n else if (s.name != null && s.name!.trim().isNotEmpty) s.name!.trim() else if (s.phone != null) stationPhone(s.phone!, masked: s.masked),
         ].join(' · ');
         final bridged = s.bridgedAt;
         return StateBand(

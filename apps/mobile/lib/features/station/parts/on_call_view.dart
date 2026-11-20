@@ -12,6 +12,7 @@ import 'hang_up.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
 import 'ringing_view.dart' show CustomerCard, LastCallsCard;
+import 'script_cards.dart' show ScriptStepsCard;
 import 'sheets.dart';
 
 /// On call (04, in its `04c` form, AS2: no AI anywhere): the customer card, Last calls, the note,
@@ -36,8 +37,10 @@ class OnCallView extends ConsumerWidget {
         if (interrupted != AudioInterruption.none) ...[_InterruptionCard(kind: interrupted), const SizedBox(height: Space.md)],
         if (muted && interrupted == AudioInterruption.none) const _MutedBanner(),
         if (call != null) CustomerCard(call: call),
-        // The script ("What to say", BE-8) slots in here, above Last calls, once the campaign has one.
-        if (call != null && call.priorAttempts.isNotEmpty) ...[const SizedBox(height: Space.md), LastCallsCard(attempts: call.priorAttempts)],
+        const SizedBox(height: Space.md),
+        // The script (BE-8), above Last calls; without one, 04c's Last calls and note.
+        if (call != null) ScriptStepsCard(callId: call.attemptId),
+        if (call != null && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
         const SizedBox(height: Space.md),
         StationNotesField(controller: notes),
         const SizedBox(height: Space.md),

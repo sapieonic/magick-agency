@@ -407,7 +407,7 @@ Future<void> showDetailsSheet(BuildContext context, CallView call) {
               Semantics(header: true, child: Text(StationCopy.detailsTitle, style: text.titleLarge)),
               const SizedBox(height: Space.xs),
               Text(
-                '${call.displayName ?? formatPhone(call.phoneE164)} · ${StationCopy.attempt(call.attemptNumber)}',
+                '${call.facts?.name ?? call.displayName ?? stationPhone(call.phoneE164, masked: view?.maskPhone ?? false)} · ${StationCopy.attempt(call.attemptNumber)}',
                 style: text.bodySmall,
               ),
               const SizedBox(height: Space.md),
@@ -444,8 +444,8 @@ Future<void> markDnc(BuildContext context) async {
   final call = view?.call;
   if (view == null || call == null) return;
   final scope = sameCall(call.attemptId, {view.phase});
-  final name = call.displayName?.trim();
-  final phone = formatPhone(call.phoneE164);
+  final name = (call.facts?.name ?? call.displayName)?.trim();
+  final phone = stationPhone(call.phoneE164, masked: view.maskPhone);
   final ok = await confirmSheet(
     context,
     title: StationCopy.stopCallingTitle,

@@ -460,6 +460,8 @@ CallView call({
   int? redialLimit,
   PromiseView? promise,
   List<PriorAttempt>? priorAttempts,
+  CallLaterTag? callback,
+  FactsView? facts,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -488,6 +490,8 @@ CallView call({
   redialNumber: redialNumber,
   redialLimit: redialLimit,
   promise: promise,
+  callback: callback,
+  facts: facts,
 );
 
 StationView station({
@@ -518,6 +522,8 @@ StationView station({
   List<DispositionOption>? dispositionOptions,
   List<BreakOption> breakOptions = breaks,
   HelpView help = const HelpView(),
+  ScriptView? script,
+  bool maskPhone = false,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -548,6 +554,8 @@ StationView station({
   dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
   help: help,
+  script: script,
+  maskPhone: maskPhone,
 );
 
 const hungUpRelease = ReleaseView(

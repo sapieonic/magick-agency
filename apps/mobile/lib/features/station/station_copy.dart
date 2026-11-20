@@ -94,6 +94,13 @@ abstract final class StationCopy {
   static const amountDue = 'Amount due';
   static const lastCall = 'Last call';
   static const whatTheySaid = 'What they said last time';
+  static String youSaidYouWillCall(String at) => 'Call later · You said you will call at $at';
+  static String bookedFor(String at) => 'Call later · Booked for $at';
+  static const firstSayThis = 'First, say this';
+  static const whatToSay = 'What to say';
+  static String stepsDone(int done, int of) => '$done of $of done';
+  static const allStepsDone = 'All steps done';
+  static const readAloud = 'Read aloud';
   static String callAgainOf(int n, int? limit) => limit == null || limit < n ? 'Calling again' : 'Calling again · $n of $limit';
 
   // 04 On call.
