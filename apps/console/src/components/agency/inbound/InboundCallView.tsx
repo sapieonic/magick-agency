@@ -16,6 +16,7 @@ import {
   type SideFrameProps,
 } from '../station/SideCall';
 import { useInboundShortcuts } from './useInboundShortcuts';
+import { useMatchedComesToMe } from './useMatchedComesToMe';
 import { findDisposition } from '../../../utils/agencyDispositionForm';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
@@ -26,6 +27,7 @@ import type { InboundCallState } from '../../../hooks/useInboundCall';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import type { StationConnection } from '../../../hooks/agencyStation/types';
 import type { AgencyInboundCall } from '../../../types/inbound';
+import type { AgencyAssignmentMode } from '@magick-agency/contracts/agency';
 import type { CustomerCard } from '../../../utils/agency/stationCustomer';
 import styles from '../station/Station.module.css';
 import side from '../station/SideView.module.css';
@@ -59,6 +61,7 @@ export function InboundCallView({
   clock,
   frame,
   connectFlash,
+  station,
   shortcutsEnabled = true,
 }: {
   ib: InboundCallState;
@@ -68,6 +71,8 @@ export function InboundCallView({
   clock: ServerClock;
   frame: SideFrameProps;
   connectFlash: boolean;
+  /** The station's own campaign and its routing, for whether a matched caller's call-later comes back (AS8). */
+  station: { campaignId: string | null; assignmentMode: AgencyAssignmentMode | null };
   shortcutsEnabled?: boolean;
 }) {
   const bodyRef = useRef<HTMLElement>(null);
@@ -109,6 +114,12 @@ export function InboundCallView({
   const band = sideViewBand({ kind: 'inbound', connection, phase, who: card.name ?? card.phone });
   const live = connection === 'open';
   const selected = findDisposition(ib.catalog, ib.form.selectedCode);
+  const comesToMe = useMatchedComesToMe({
+    campaignId: call.match?.campaign_id ?? null,
+    stationCampaignId: station.campaignId,
+    stationMode: station.assignmentMode,
+    enabled: phase === 'happened',
+  });
 
   const trySave = () => {
     if (ib.saving) return;
@@ -227,8 +238,9 @@ export function InboundCallView({
           now={clock.now}
           handleRef={tilesRef}
           amountDue={card.amountDue}
-          // A matched caller's call-later goes back on their work's list: whoever is free calls.
-          comesToMe={call.match ? false : null}
+          // A matched caller's call-later follows their work's routing (AS8); a caller on no list
+          // is called back by the agent.
+          comesToMe={call.match ? comesToMe : null}
           callLaterLine={call.match ? undefined : SIDE_COPY.callBackYourself}
           rejection={ib.padRejection}
           keysRemapped={false}

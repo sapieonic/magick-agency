@@ -1228,6 +1228,7 @@ function StationScreen({
           banners: <>{inbound.notice ? <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner> : null}{sideBanners}</>,
         }}
         connectFlash={cons.connectFlashAttemptId === call.id}
+        station={{ campaignId: bootstrap?.campaign_id ?? null, assignmentMode: bootstrap?.assignment_mode ?? null }}
         shortcutsEnabled={!soundOpen}
       />
     );

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   hangupInboundCall: vi.fn(),
   dispositionInboundCall: vi.fn(),
   markInboundCallDnc: vi.fn(),
+  getMyContactsSummary: vi.fn(),
   useTenant: vi.fn(),
   flags: new Set<string>(),
 }));
@@ -38,6 +39,7 @@ vi.mock('../../api/inbound', () => ({
   dispositionInboundCall: mocks.dispositionInboundCall,
   markInboundCallDnc: mocks.markInboundCallDnc,
 }));
+vi.mock('../../api/agencyAssignment', () => ({ getMyContactsSummary: mocks.getMyContactsSummary }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'u-1', display_name: 'Priya Nair', email: 'priya@example.com', avatar_url: null } }),
@@ -113,6 +115,7 @@ beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't-1', accountId: 'a-1', role: 'agent' });
   mocks.createAgencySession.mockResolvedValue(BOOTSTRAP);
   mocks.saveAttemptNotes.mockResolvedValue({ saved: false, refusal: 'not_hydrated' });
+  mocks.getMyContactsSummary.mockReturnValue(new Promise(() => {}));
   mocks.updateInboundCallNotes.mockImplementation(async (_id: string, notes: string) => ({ ok: true, value: owing({ notes }) }));
 });
 
@@ -330,6 +333,51 @@ describe('finishing the call', () => {
     await call(owing({ notes: 'Before the reload' }));
     expect(screen.getByTestId('station-inbound')).toBeTruthy();
     expect((screen.getByRole('textbox', { name: /note/i }) as HTMLTextAreaElement).value).toBe('Before the reload');
+  });
+});
+
+describe('a call-later on an inbound call says who will make it (AS8)', () => {
+  /** Picks Call back, then In 1 hour, and reads the line under Call when?. */
+  async function callLaterLine(over: Parameters<typeof owing>[0] = {}) {
+    await call(owing(over));
+    fireEvent.click(screen.getByTestId('outcome-callback'));
+    fireEvent.click(within(screen.getByTestId('callback-row')).getByRole('button', { name: 'In 1 hour' }));
+    await act(async () => {});
+    return screen.getByTestId('callback-resolved').textContent;
+  }
+  const summary = (mode: string) => ({ campaign_id: 'camp-2', assignment_mode: mode, total: 0, counts: {}, due_now: 0 });
+
+  it('a caller on a strict or preferred work’s list: the call comes to the agent', async () => {
+    mocks.getMyContactsSummary.mockResolvedValue(summary('preferred'));
+    await mounted();
+    expect(await callLaterLine()).toMatch(/^This call will come to you today at \d{1,2}:\d\d (AM|PM)\.$/);
+    expect(mocks.getMyContactsSummary).toHaveBeenCalledWith('camp-2', 't-1', 'a-1');
+  });
+
+  it('a caller on a pool work’s list: another agent may get it', async () => {
+    mocks.getMyContactsSummary.mockResolvedValue(summary('pool'));
+    await mounted();
+    expect(await callLaterLine()).toMatch(/^We will call today at .*\. Another agent may get the call\.$/);
+  });
+
+  it('a caller on this station’s own work: its routing from the station, nothing read', async () => {
+    mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, assignment_mode: 'strict' });
+    await mounted();
+    const line = await callLaterLine({ match: { ...owing().match!, campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' } });
+    expect(line).toMatch(/^This call will come to you today/);
+    expect(mocks.getMyContactsSummary).not.toHaveBeenCalled();
+  });
+
+  it('a routing that cannot be read promises nothing: another agent may get it', async () => {
+    mocks.getMyContactsSummary.mockRejectedValue(new Error('403'));
+    await mounted();
+    expect(await callLaterLine()).toMatch(/Another agent may get the call\.$/);
+  });
+
+  it('a caller on no list: the agent calls back', async () => {
+    await mounted();
+    expect(await callLaterLine({ match: null })).toMatch(/^This time is saved with the call\. No one will call by themselves, so call back today at .* yourself\.$/);
+    expect(mocks.getMyContactsSummary).not.toHaveBeenCalled();
   });
 });
 
