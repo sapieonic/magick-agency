@@ -55,7 +55,7 @@ extends the dialer type and declares only the difference.
 |---|---|---|
 | `AgencyContactRow` | `AgencyRosterContact` | alias |
 | `AgencyAttemptRow` | `AgencyAttempt` | derived: adds `agent_name?: string \| null` (enrichment) |
-| `AgencyManualCall` (a `GET /softphone/calls` row) | `AgencyManualCallListRow` | derived: adds `analysis_status?: DialerAnalysisStatus \| null`, the media leg's summary status (the list read joins it); `AgencyManualCallsPage` is the console's page of it, so the dialer `AgencyManualCallsPage` is not re-exported |
+| `AgencyManualCall` (a `GET /softphone/calls` row) | `AgencyManualCallListRow` | derived: adds `analysis_status?: DialerAnalysisStatus \| null`, the media leg's summary status (the list read joins it), and `analysis_delay?: DialerAnalysisDelay \| null`, why a `pending` one is held up (the list read derives it from the analysis queue; the mobile app does not read it); `AgencyManualCallsPage` is the console's page of it, so the dialer `AgencyManualCallsPage` is not re-exported |
 | `AgencyLineageCampaign` | `AgencyCampaignLineageEntry` | derived: `status: string` |
 | `AgencyAgentOccupancy` | `AgencyOccupancy` | alias |
 | `AgencyStatsBucketUnit` | `AgencyStatsBucketWidth` | alias (`'day' \| 'week' \| 'month'`) |
@@ -150,7 +150,10 @@ DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), the call detail
 (`webrtc-call.ts`, `attempt-call.ts`), and the soft-phone call detail `AgencyManualCallDetail`
 (`softphone.ts`), which carries the media leg's `WebRtcCallRecord` in the attempt detail's
 envelope (`call_availability`) and the enriched `dispositioned_by_name?` (who saved the outcome,
-joined from `users`).
+joined from `users`). `WebRtcCallRecord.analysis_delay?: DialerAnalysisDelay | null` (why a
+`pending` summary is held up: `vendor_unavailable` while the AI service refuses) is derived by the
+server from the analysis queue on the attempt and soft-phone detail reads; it is never stored on
+the call and carries no vendor detail.
 
 The spine list pages (`agency-spine.ts`): `AgencySpineListPage<T>` extends the re-exported
 `AgencyKeysetPage<T>` (§3) with `total?: number`, and `AgencyAttemptsListPage` /

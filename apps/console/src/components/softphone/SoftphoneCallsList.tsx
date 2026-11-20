@@ -24,7 +24,10 @@ import {
 } from '../../utils/softphone/callStats';
 import { formatCount } from '../../utils/format/number';
 import { ATTEMPT_OUTCOME_LABELS } from '../../types/agency-spine';
-import { ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES, ANALYSIS_STATUS_TOOLTIPS, SILENT_ANALYSIS_STATUSES } from '../../utils/vocabulary';
+import {
+  ANALYSIS_DELAY_LABELS, ANALYSIS_DELAY_MESSAGES, ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES,
+  ANALYSIS_STATUS_TOOLTIPS, SILENT_ANALYSIS_STATUSES, shownAnalysisDelay,
+} from '../../utils/vocabulary';
 import {
   AGENCY_MANUAL_CALL_OUTCOMES,
   type AgencyManualCall,
@@ -455,7 +458,7 @@ export function SoftphoneCallsList({
                       <td className={styles.mono}>{formatTalkTime(call.talk_seconds)}</td>
                       {showSummary ? (
                         <td>
-                          <SummaryStatus status={call.analysis_status ?? null} />
+                          <SummaryStatus status={call.analysis_status ?? null} delay={call.analysis_delay ?? null} />
                         </td>
                       ) : null}
                       {detailPath ? (
@@ -498,8 +501,10 @@ export function SoftphoneCallsList({
  * A row's summary stage, in the call detail's own words: the short label, the
  * detail's sentence (or the one-line tooltip) on hover. No status, or one the
  * detail renders nothing for (`skipped`), is a dash — there is no summary to wait for.
+ * A `pending` one the server says is held up (`analysis_delay`) reads "Delayed" with the
+ * detail's delay sentence, as the detail's card does.
  */
-function SummaryStatus({ status }: { status: string | null }) {
+function SummaryStatus({ status, delay }: { status: string | null; delay: string | null }) {
   if (!status || SILENT_ANALYSIS_STATUSES.has(status) || !ANALYSIS_STATUS_LABELS[status]) {
     return (
       <span className={styles.muted} data-testid="summary-status" data-status="none">
@@ -507,14 +512,18 @@ function SummaryStatus({ status }: { status: string | null }) {
       </span>
     );
   }
+  const shownDelay = shownAnalysisDelay(status, delay);
   return (
     <span
       className={styles.summary}
       data-status={status}
-      title={ANALYSIS_STATUS_MESSAGES[status] ?? ANALYSIS_STATUS_TOOLTIPS[status]}
+      data-delay={shownDelay ?? undefined}
+      title={shownDelay
+        ? ANALYSIS_DELAY_MESSAGES[shownDelay]
+        : ANALYSIS_STATUS_MESSAGES[status] ?? ANALYSIS_STATUS_TOOLTIPS[status]}
       data-testid="summary-status"
     >
-      {ANALYSIS_STATUS_LABELS[status]}
+      {shownDelay ? ANALYSIS_DELAY_LABELS[shownDelay] : ANALYSIS_STATUS_LABELS[status]}
     </span>
   );
 }

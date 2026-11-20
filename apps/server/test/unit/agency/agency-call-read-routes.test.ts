@@ -68,6 +68,11 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
   webrtcCallRepository: webrtc,
 }));
+// Why a pending summary is held up (`helpers/analysis-delay.ts`): the analysis queue's read.
+const { analysisJobs } = vi.hoisted(() => ({ analysisJobs: { analysisDelayFor: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/dialer-analysis-job.repository', () => ({
+  dialerAnalysisJobRepository: analysisJobs,
+}));
 vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
   announcementRepository: { findActiveByIdScoped: vi.fn() },
 }));
@@ -186,6 +191,7 @@ beforeEach(() => {
   campaigns.findById.mockResolvedValue(CAMPAIGN);
   attempts.findForCampaign.mockResolvedValue(ATTEMPT);
   webrtc.findByIdScoped.mockResolvedValue(CALL);
+  analysisJobs.analysisDelayFor.mockResolvedValue(null);
   proxySpy.mockImplementation(async (_call, _req, reply) => reply.send({ streamed: true }));
   signSpy.mockReturnValue({
     path: '/api/v1/webrtc-recordings/call-1?sig=x',
@@ -330,6 +336,53 @@ describe('agency call read — the three availability states', () => {
     expect(res.json().call_availability).toBe('never_placed');
     expect(res.json().call).toBeNull();
     expect(webrtc.findByIdScoped).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('agency call read — why a pending summary is waiting', () => {
+  it('says the AI service is holding up a pending summary, read from the analysis queue', async () => {
+    webrtc.findByIdScoped.mockResolvedValue({ ...CALL, analysis_status: 'pending' });
+    analysisJobs.analysisDelayFor.mockResolvedValue('vendor_unavailable');
+    const app = await makeApp();
+    const res = await app.inject({ method: 'GET', url: BASE, headers: HEADERS });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().call.analysis_status).toBe('pending');
+    expect(res.json().call.analysis_delay).toBe('vendor_unavailable');
+    expect(analysisJobs.analysisDelayFor).toHaveBeenCalledWith('call-1');
+    // The category only: the vendor's words stay in the job row and the logs.
+    expect(JSON.stringify(res.json())).not.toMatch(/RATE_LIMITED|RESOURCE_EXHAUSTED|credits/i);
+    await app.close();
+  });
+
+  it('serves null for a pending summary that is simply next in line', async () => {
+    webrtc.findByIdScoped.mockResolvedValue({ ...CALL, analysis_status: 'pending' });
+    const app = await makeApp();
+    const res = await app.inject({ method: 'GET', url: BASE, headers: HEADERS });
+    expect(res.json().call.analysis_delay).toBeNull();
+    await app.close();
+  });
+
+  it.each(['completed', 'failed', 'awaiting_recording', null])(
+    'does not read the queue for a summary that is %s',
+    async (status) => {
+      webrtc.findByIdScoped.mockResolvedValue({ ...CALL, analysis_status: status });
+      analysisJobs.analysisDelayFor.mockResolvedValue('vendor_unavailable');
+      const app = await makeApp();
+      const res = await app.inject({ method: 'GET', url: BASE, headers: HEADERS });
+      expect(res.json().call.analysis_delay).toBeNull();
+      expect(analysisJobs.analysisDelayFor).not.toHaveBeenCalled();
+      await app.close();
+    },
+  );
+
+  it('answers the detail without the delay when the queue cannot be read', async () => {
+    webrtc.findByIdScoped.mockResolvedValue({ ...CALL, analysis_status: 'pending' });
+    analysisJobs.analysisDelayFor.mockRejectedValue(new Error('pool exhausted'));
+    const app = await makeApp();
+    const res = await app.inject({ method: 'GET', url: BASE, headers: HEADERS });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().call.analysis_delay).toBeNull();
     await app.close();
   });
 });

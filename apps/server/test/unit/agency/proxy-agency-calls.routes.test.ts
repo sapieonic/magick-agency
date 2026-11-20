@@ -742,6 +742,28 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
   });
 
   /**
+   * `analysis_delay` likewise: why a pending summary cannot be written yet (the AI
+   * service is refusing) is about the pipeline, not the call's content, and without it
+   * a tenant without analytics would be told nothing the console could say instead.
+   */
+  it('keeps analysis_delay, the reason a pending summary is held up', async () => {
+    setGrants({ recording: true, analytics: false });
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200,
+      body: {
+        ...availableBody(),
+        call: { ...availableBody().call, analysis_status: 'pending', analysis_delay: 'vendor_unavailable' },
+      },
+    });
+    const app = await buildApp();
+
+    const call = (await app.inject({ method: 'GET', url: DETAIL })).json().call;
+    expect(call.analysis_status).toBe('pending');
+    expect(call.analysis_delay).toBe('vendor_unavailable');
+    await app.close();
+  });
+
+  /**
    * `analysis_sentiment_label` had no coverage at all, which made it deletable in
    * silence — and this list failing open was a blocking finding earlier in this
    * work, so a field-strip entry nothing asserts is exactly the wrong thing to

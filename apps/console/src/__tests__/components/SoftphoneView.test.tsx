@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({
   getSoftphoneBootstrap: vi.fn(),
@@ -13,8 +12,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../../api/softphone', () => api);
 
-import { useSoftphone, SOFTPHONE_MUTED_AT_ANSWER_COPY, type SoftphoneAudio } from '../../hooks/useSoftphone';
-import { SoftphoneView } from '../../components/softphone/SoftphoneView';
+import { SOFTPHONE_MUTED_AT_ANSWER_COPY } from '../../hooks/useSoftphone';
 import {
   AUTOMATIC_CALLER_ID_HINT,
   RINGING_HANGUP_WARNING,
@@ -22,11 +20,9 @@ import {
   pickedCallerIdHint,
 } from '../../components/softphone/DialPad';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
-import { serverClock } from '../../hooks/useServerClock';
-import type { RingbackTone } from '../../utils/softphone/ringback';
-import type { StationConnection } from '../../hooks/agencyStation/types';
 import type { AgencyManualCall } from '../../types/softphone';
 import { BOOTSTRAP, CAMPAIGN, manualCall, step } from '../helpers/softphone';
+import { Harness, audio, fakeRingback, mount as mountSoftphone, type HarnessProps } from '../helpers/softphoneHarness';
 
 /**
  * The soft phone, end to end inside the browser: the dial pad (keys, typing,
@@ -36,73 +32,9 @@ import { BOOTSTRAP, CAMPAIGN, manualCall, step } from '../helpers/softphone';
  * finds the call already over.
  */
 
-function fakeRingback() {
-  return {
-    unlock: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
-    setMuted: vi.fn(),
-    setVolume: vi.fn(),
-    close: vi.fn(),
-    playing: false,
-  } as unknown as RingbackTone & Record<'unlock' | 'start' | 'stop' | 'setMuted' | 'close', ReturnType<typeof vi.fn>>;
-}
-
-const audio = { muted: false, sending: false, toggleMute: vi.fn(), resume: vi.fn() };
-const clock = serverClock(0);
-
-function Harness({
-  frameCall,
-  connection = 'open',
-  ringback,
-  presetCampaignId = null,
-  presetNumber = null,
-  audioState = audio,
-  startAllowed = true,
-}: {
-  frameCall: AgencyManualCall | null;
-  connection?: StationConnection;
-  ringback: RingbackTone;
-  presetCampaignId?: string | null;
-  presetNumber?: string | null;
-  audioState?: SoftphoneAudio;
-  startAllowed?: boolean;
-}) {
-  const sp = useSoftphone({
-    tenantId: 't-1',
-    accountId: 'a-1',
-    userId: 'u-1',
-    sessionId: 'sess-sp',
-    connection,
-    frameCall,
-    clock,
-    audio: audioState,
-    surface: 'softphone_page',
-    ringback,
-    presetCampaignId,
-    presetNumber,
-    startAllowed,
-  });
-  return (
-    <MemoryRouter>
-      <SoftphoneView sp={sp} connection={connection} clock={clock} fromCampaign={false} />
-    </MemoryRouter>
-  );
-}
-
 let ringback: ReturnType<typeof fakeRingback>;
 
-async function mount(props: Partial<Parameters<typeof Harness>[0]> = {}) {
-  const view = render(<Harness frameCall={null} ringback={ringback} {...props} />);
-  await act(async () => {});
-  return {
-    ...view,
-    frame: async (frameCall: AgencyManualCall | null, connection: StationConnection = 'open') => {
-      view.rerender(<Harness frameCall={frameCall} ringback={ringback} connection={connection} {...props} />);
-      await act(async () => {});
-    },
-  };
-}
+const mount = (props: Partial<Omit<HarnessProps, 'frameCall'>> = {}) => mountSoftphone({ ringback, ...props });
 
 const rail = () => screen.getByTestId('rail-label').textContent;
 const press = (key: string) => fireEvent.keyDown(window, { key });

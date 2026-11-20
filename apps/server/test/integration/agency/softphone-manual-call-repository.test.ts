@@ -602,6 +602,53 @@ describe('AgencyManualCallRepository (integration)', () => {
       const account = await repo.listForAccount({ ...SCOPE, filters: { agentUserId: session.agent_user_id }, limit: 1 });
       expect(account.rows[0]).toMatchObject({ id: withLeg.id, analysis_status: 'completed' });
     });
+
+    it('a pending leg says the AI service holds it up while a queued job was refused, as the call detail does', async () => {
+      const session = await insertSoftphoneSession();
+      /** A job of the call; `refusedAgo` (an interval) makes it one the vendor refused that long ago. */
+      const job = (
+        callId: string,
+        status: string,
+        { accountId = ACCOUNT, refusedAgo = null }: { accountId?: string; refusedAgo?: string | null } = {},
+      ) => getTestPool().query(
+        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code, vendor_refused_at)
+         VALUES ($1, $2, $3, $4, CASE WHEN $5::interval IS NULL THEN NULL ELSE 'RATE_LIMITED' END, now() - $5::interval)`,
+        [callId, TENANT, accountId, status, refusedAgo],
+      );
+      const settled = { state: 'ended', ended_at: new Date(), settled_at: new Date() };
+      // Queued, never tried; running; pending with no job; completed.
+      const waitingLeg = await insertWebrtcCall({ campaign_id: null, analysis_status: 'pending' });
+      const runningLeg = await insertWebrtcCall({ campaign_id: null, analysis_status: 'pending' });
+      const jobless = await insertWebrtcCall({ campaign_id: null, analysis_status: 'pending' });
+      const doneLeg = await insertWebrtcCall({ campaign_id: null, analysis_status: 'completed' });
+      await job(waitingLeg.id, 'queued');
+      await job(runningLeg.id, 'transcribing');
+      await job(doneLeg.id, 'completed');
+      const waiting = await insertManualCall(session, { webrtc_call_id: waitingLeg.id, created_at: new Date('2026-10-04T10:00:00Z'), ...settled });
+      const running = await insertManualCall(session, { webrtc_call_id: runningLeg.id, created_at: new Date('2026-10-04T09:00:00Z'), ...settled });
+      const noJob = await insertManualCall(session, { webrtc_call_id: jobless.id, created_at: new Date('2026-10-04T08:00:00Z'), ...settled });
+      const done = await insertManualCall(session, { webrtc_call_id: doneLeg.id, created_at: new Date('2026-10-04T07:00:00Z'), ...settled });
+      const delays = async () => (await repo.listForAgent({ ...SCOPE, agentUserId: session.agent_user_id, filters: {}, limit: 10 }))
+        .rows.map((r) => [r.id, r.analysis_delay]);
+
+      // The vendor answers: nothing is held up.
+      expect(await delays()).toEqual([[waiting.id, null], [running.id, null], [noJob.id, null], [done.id, null]]);
+
+      // Another call's job (another account's, even: the vendor is the server's) was refused, and
+      // nothing has completed since: the vendor's newest answer is a refusal.
+      const refusedLeg = await insertWebrtcCall({ campaign_id: null, account_id: OTHER_ACCOUNT, analysis_status: 'pending' });
+      await job(refusedLeg.id, 'queued', { accountId: OTHER_ACCOUNT, refusedAgo: '1 minute' });
+      expect(await delays()).toEqual([
+        [waiting.id, 'vendor_unavailable'], [running.id, null], [noJob.id, null], [done.id, null],
+      ]);
+      const account = await repo.listForAccount({ ...SCOPE, filters: { agentUserId: session.agent_user_id }, limit: 1 });
+      expect(account.rows[0]).toMatchObject({ id: waiting.id, analysis_status: 'pending', analysis_delay: 'vendor_unavailable' });
+
+      // A summary is written after that refusal: the vendor answers again, and the list says so
+      // although the refused job is still queued (the drain).
+      await getTestPool().query(`UPDATE dialer_analysis_jobs SET completed_at = now() WHERE call_id = $1`, [doneLeg.id]);
+      expect(await delays()).toEqual([[waiting.id, null], [running.id, null], [noJob.id, null], [done.id, null]]);
+    });
   });
 
   // ── the account's live count (attempt repository) ─────────────────────────

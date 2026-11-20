@@ -97,7 +97,13 @@ export function SoftphoneView({
 
       <div className={station.body} ref={bodyRef} tabIndex={-1} data-testid="softphone-body" data-phase={sp.phase}>
         <section className={station.colContact} aria-label="Dial">
-          <DialPad sp={sp} clock={clock} numberInputRef={numberInputRef} callButtonRef={callButtonRef} />
+          <DialPad
+            sp={sp}
+            clock={clock}
+            numberInputRef={numberInputRef}
+            callButtonRef={callButtonRef}
+            fromCampaign={fromCampaign}
+          />
         </section>
         <section className={station.colDetail} aria-label="Call details">
           <CallDetailsColumn sp={sp} />

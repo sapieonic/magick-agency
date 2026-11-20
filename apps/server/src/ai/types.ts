@@ -178,8 +178,9 @@ const NOT_RETRIED_IN_PLACE: ReadonlySet<AiErrorKind> = new Set([
 
 /**
  * What a vendor said about a `rate_limited` error, as far as it said anything. Logged so an
- * operator can tell a short per-minute limit from an exhausted daily quota or a billing stop
- * (both arrive as HTTP 429); nothing branches on it.
+ * operator can tell a short per-minute limit from an exhausted daily quota or a billing stop,
+ * which all pause the worker alike: a quota arrives as HTTP 429, while Gemini reports depleted
+ * prepaid credits as a 402 `RESOURCE_EXHAUSTED` with no `quotaIds`. Nothing branches on it.
  */
 export interface AiRateLimitDetail {
   /** The vendor's own code: Gemini's `RESOURCE_EXHAUSTED`, OpenAI's `insufficient_quota` or `rate_limit_exceeded`. */

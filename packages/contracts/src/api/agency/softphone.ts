@@ -15,7 +15,7 @@ import type { AgencyManualCall, AgencyManualCallOverrides } from '../../agency';
 import type { AgencyKeysetPage } from '../../agency';
 import type { AgencyCallAvailability } from './attempt-call';
 import type { AgencyCallListenSession } from './live-calls';
-import type { DialerAnalysisStatus, WebRtcCallRecord } from './webrtc-call';
+import type { DialerAnalysisDelay, DialerAnalysisStatus, WebRtcCallRecord } from './webrtc-call';
 
 export type {
   AgencyCallField,
@@ -113,6 +113,8 @@ export type AgencyManualCallDncRequest = Omit<Core.AgencyManualCallDncRequest, '
 export interface AgencyManualCallListRow extends AgencyManualCall {
   /** The media leg's `analysis_status`; NULL when there is no leg, it was purged, or analysis never ran. */
   analysis_status?: DialerAnalysisStatus | null;
+  /** Why a `pending` summary is held up (`WebRtcCallRecord.analysis_delay`); NULL otherwise. */
+  analysis_delay?: DialerAnalysisDelay | null;
 }
 
 /** `GET /proxy/agency/softphone/calls`. Rows carry no contact `context` or `prior_attempts`. */

@@ -40,6 +40,37 @@ describe('AnalysisStatusCard — generalized retry seam', () => {
     expect(screen.queryByLabelText('Loading')).toBeNull();
   });
 
+  it('says a pending summary is delayed while the AI service refuses, with a clock rather than a spinner', () => {
+    render(
+      <AnalysisStatusCard
+        status="pending"
+        delay="vendor_unavailable"
+        callId="call-1"
+        messages={{ pending: "We're listening to the call and writing the summary." }}
+        onRetryComplete={vi.fn()}
+      />,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe(
+      'Summary delayed: the AI service is not available right now. '
+      + 'It will be written automatically when it is back.',
+    );
+    expect(screen.getByTestId('analysis-delay-icon')).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('ignores a delay beside any state but pending, and a delay it does not know', () => {
+    render(<AnalysisStatusCard status="failed" delay="vendor_unavailable" callId="call-1" onRetryComplete={vi.fn()} />);
+    expect(screen.getByText('Post-call analysis failed. You can retry generating the analysis.')).toBeTruthy();
+    expect(screen.queryByText(/Summary delayed/)).toBeNull();
+    cleanup();
+
+    render(<AnalysisStatusCard status="pending" delay="something_new" callId="call-1" onRetryComplete={vi.fn()} />);
+    expect(screen.getByRole('status').textContent).toContain('Analysis is in progress...');
+    expect(screen.queryByTestId('analysis-delay-icon')).toBeNull();
+  });
+
   it('calls custom onRetry rather than the default AI-call endpoint, then completes', async () => {
     const onRetry = vi.fn().mockResolvedValue(undefined);
     const onRetryComplete = vi.fn();

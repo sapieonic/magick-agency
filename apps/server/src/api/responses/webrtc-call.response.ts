@@ -1,6 +1,7 @@
 import { resolveClientRecordingUrl } from '../../utils/recording-url-resolver.js';
 import { tenantCallErrorMessage } from './call-error-message.js';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
+import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/webrtc-call';
 
 /**
  * Shape a WebRTC call row for a TENANT-facing API (the agency spine and the soft phone).
@@ -34,8 +35,20 @@ import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.mode
  * (`isDirectRecordingProvider`), so the surfaces cannot drift. Consumers therefore
  * get either an absolute URL or a relative path and must not blindly prepend an
  * API base.
+ *
+ * ── `analysisDelay`, required for the same reason ──────────────────────────
+ *
+ * Why a `pending` summary is held up (`vendor_unavailable` while the AI service refuses)
+ * is not on the call row: the caller reads it from the analysis queue
+ * (`analysisDelayForRecord`, `api/routes/helpers/analysis-delay.ts`). Required, because a default of null would put every
+ * surface that forgot it back to "we're writing the summary" for a summary nobody can
+ * write until the vendor answers, the sentence this field exists to correct.
  */
-export function formatWebRtcCallResponse(record: WebRtcCallRecord, recordingPath: string) {
+export function formatWebRtcCallResponse(
+  record: WebRtcCallRecord,
+  recordingPath: string,
+  analysisDelay: DialerAnalysisDelay | null,
+) {
   return {
     id: record.id,
     tenant_id: record.tenant_id,
@@ -63,6 +76,8 @@ export function formatWebRtcCallResponse(record: WebRtcCallRecord, recordingPath
     // ── Post-call analysis (dialer) ──
     analysis_profile_id: record.analysis_profile_id,
     analysis_status: record.analysis_status,
+    // Only beside `pending`: a delay on any other state would contradict it.
+    analysis_delay: record.analysis_status === 'pending' ? analysisDelay : null,
     // List-only scalar sentiment (projected in SQL from call_analysis via
     // WEBRTC_LIST_COLUMNS); undefined on the detail path, which returns the blob.
     ...(record.analysis_sentiment_label !== undefined

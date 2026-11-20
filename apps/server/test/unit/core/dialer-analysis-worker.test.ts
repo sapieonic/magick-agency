@@ -85,6 +85,7 @@ import type { DialerAnalysisConfig, DialerAnalysisRunContext } from '../../../sr
 import { PERSISTENT_RATE_LIMIT_PAUSES, VendorRateLimitBreaker } from '../../../src/core/vendor-rate-limit-breaker.js';
 import type { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
+import { makeJobRecord } from '../../helpers/dialer-analysis-job.js';
 
 const CFG: DialerAnalysisConfig = {
   enabled: true, transcriber: 'gemini', geminiModel: 'g', geminiApiKey: 'k',
@@ -94,15 +95,12 @@ const CFG: DialerAnalysisConfig = {
 } as DialerAnalysisConfig;
 
 function makeJob(over: Partial<DialerAnalysisJobRecord> = {}): DialerAnalysisJobRecord {
-  return {
-    id: 'job-1', call_id: 'call-1', tenant_id: 'ten-1', account_id: 'acc-1',
-    profile_id: null, profile_snapshot: null, analysis_language: null,
-    status: 'queued', attempts: 1, attempts_total: 1, claim_generation: 3,
-    claimed_at: new Date(), heartbeat_at: new Date(), next_attempt_at: null,
+  return makeJobRecord({
+    attempts: 1, attempts_total: 1, claim_generation: 3,
+    claimed_at: new Date(), heartbeat_at: new Date(),
     analysis_audio_seconds: 95,
-    error_code: null, error_message: null, created_at: new Date(), updated_at: new Date(),
     ...over,
-  };
+  });
 }
 
 function makeWorker(over: Partial<{ transcriber: unknown; analysisService: unknown }> = {}) {

@@ -57,6 +57,13 @@ export interface DialerAnalysisJobRecord {
   analysis_audio_seconds: number | null;
   error_code: string | null;
   error_message: string | null;
+  /**
+   * When the AI vendor last refused this job (`requeueRateLimited`, 0054); kept by a graceful
+   * requeue or stale recovery, cleared on completion and manual retry. NULL: never refused.
+   */
+  vendor_refused_at: Date | null;
+  /** When the job completed with a summary (`completeWithAnalysis`, 0054). */
+  completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }

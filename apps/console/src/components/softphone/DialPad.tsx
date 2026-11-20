@@ -10,6 +10,7 @@ import {
 } from '../../utils/softphone/phoneInput';
 import type { ServerClock } from '../../hooks/useServerClock';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
+import { SoftphoneInboundNotice } from './SoftphoneInboundNotice';
 import styles from './SoftphoneView.module.css';
 
 /**
@@ -71,11 +72,14 @@ export function DialPad({
   clock,
   numberInputRef,
   callButtonRef,
+  fromCampaign,
 }: {
   sp: SoftphoneState;
   clock: ServerClock;
   numberInputRef: RefObject<HTMLInputElement>;
   callButtonRef: RefObject<HTMLButtonElement>;
+  /** A campaign switched to the soft phone (SP7): the inbound note names the way back. */
+  fromCampaign: boolean;
 }) {
   const reasonId = useId();
   const callerSelectId = useId();
@@ -262,6 +266,9 @@ export function DialPad({
           {reason}
         </p>
       ) : null}
+
+      {/* Ready to dial only, under Call: why an inbound caller never rings here. */}
+      {phase === 'ready' ? <SoftphoneInboundNotice fromCampaign={fromCampaign} /> : null}
     </form>
   );
 }
