@@ -330,6 +330,31 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(different.ok ? null : different.refusal.code).toBe('call_settled');
   });
 
+  it('BE-3: a call-later the agent books on the soft phone records them as its booker, so My day lists it', async () => {
+    const agent = randomUUID();
+    const campaign = await insertAgencyCampaign({
+      status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG, caller_ids: ['+919000000001'],
+    });
+    const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100071' });
+    const session = await softphoneSession(agent);
+    const station = await openStation(session.id);
+    const placed = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '9811100071', campaignId: campaign.id });
+    if (!placed.ok) throw new Error(`refused: ${placed.refusal.code}`);
+    const webrtcCallId = await webrtcCallIdOf(placed.call.id);
+    answer(webrtcCallId);
+    await waitFor('bridged frame', () => lastCall(station)?.state === 'bridged' && lastCall(station)?.bridged_at);
+    expect((await runtime.softphone.hangup(actor(agent), placed.call.id)).ok).toBe(true);
+    await carrierEnded(webrtcCallId);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+
+    const due = new Date(Date.now() + 2 * 24 * 3_600_000);
+    const outcome = await runtime.softphone.submitDisposition(actor(agent), placed.call.id, { code: 'call_back', callbackAt: due.toISOString() });
+    if (!outcome.ok) throw new Error(`disposition refused: ${outcome.refusal.code}`);
+    const row = await contactRow(contact.id);
+    expect(row).toMatchObject({ state: 'pending', last_disposition: 'call_back', callback_booked_by_user_id: agent });
+    expect(row.callback_booked_at).not.toBeNull();
+  });
+
   it('an unanswered call settles at once: one attempt charged, the retry policy\'s delay before pacing redials, claim released', async () => {
     const agent = randomUUID();
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });

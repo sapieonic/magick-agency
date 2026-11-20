@@ -23,7 +23,15 @@ type CallbackBooker = import('../../../src/agency/call-later.js').CallbackBooker
  *  - (e) nothing booked, or a contact left anything but `pending`, or DNC-suppressed: none;
  *  - (f) the next placed call clears them (`chargeAttempt`); a dial that never went out
  *    (`unclaim`) and an our-fault redial (`chargeOurFaultAttempt`) keep them;
- *  - (g) a placed soft-phone call that held the contact clears them (`settleFromManual`).
+ *  - (g) a placed soft-phone call that held the contact clears them (`settleFromManual`);
+ *  - (h) a call-later the agent books on their own soft-phone call stamps them (`settleFromManual`
+ *    with `mine`); a supervisor's on-behalf save, no call-later, or a contact not left `pending` do
+ *    not; (i) its replay re-stamps for the agent and, for a supervisor, keeps them only while the
+ *    time stays (`rescheduleFromManualReplay`);
+ *  - (j) a call-later the agent who answered an inbound call books stamps them (`settleFromInbound`'s
+ *    `callback` arm with `mine`), also over the customer's own missed-call callback (`callback_source`,
+ *    which never has a booker and is cleared); a supervisor's on-behalf save, any other arm and the
+ *    lapse clear them; (k) its replay as the soft phone's (`rescheduleFromInboundReplay`).
  */
 
 const AGENT = randomUUID();
@@ -155,5 +163,119 @@ describe('the call-later\'s booker on the disposition\'s contact write', () => {
       manualCallId: call.id, decision: null, charge: 'attempt', lastOutcome: 'connected', lastDisposition: null,
     });
     expect(await booker(w.contactId)).toMatchObject({ by: null, at: null });
+  });
+
+  /** A soft-phone call by AGENT that claimed `w`'s contact and bridged, ended, its outcome owed. */
+  async function softPhoneCallOn(w: { campaignId: string; contactId: string }) {
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight', callback_booked_by_user_id = NULL,
+                                      callback_booked_at = NULL WHERE id = $1`, [w.contactId]);
+    // A session already left: one live session per agent, and the settlement never reads it.
+    return insertManualCall(await insertSoftphoneSession({ agent_user_id: AGENT, state: 'offline', left_at: new Date() }), {
+      campaign_id: w.campaignId, contact_id: w.contactId, contact_claimed: true, contact_prior_state: 'pending',
+      state: 'ended', ended_at: new Date(), dialed_at: new Date(), bridged_at: new Date(), outcome: 'connected',
+    });
+  }
+
+  function settleSoftPhone(callId: string, state: 'pending' | 'completed', at: Date | null, callbackBooker?: CallbackBooker) {
+    return agencyContactRepository.settleFromManual({
+      manualCallId: callId, decision: { contactState: state, nextAttemptAt: at, suppressedReason: null },
+      charge: 'attempt', lastOutcome: 'connected', lastDisposition: 'callback', ...(callbackBooker !== undefined ? { callbackBooker } : {}),
+    });
+  }
+
+  it('(h) the agent\'s own call-later on a soft-phone call stamps them; on behalf, none booked, or closed: none', async () => {
+    const w = await conversationAwaitingWriteUp();
+    const before = Date.now();
+    expect(await settleSoftPhone((await softPhoneCallOn(w)).id, 'pending', CALLBACK_1, mine)).toMatchObject({ state: 'pending', applied: 'settled' });
+    const b = await booker(w.contactId);
+    expect(b.by).toBe(AGENT);
+    expect(b.at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+    for (const callbackBooker of [onBehalf, null, undefined] as const) {
+      const v = await conversationAwaitingWriteUp();
+      await settleSoftPhone((await softPhoneCallOn(v)).id, 'pending', CALLBACK_1, callbackBooker ?? undefined);
+      expect(await booker(v.contactId), String(callbackBooker?.kind)).toMatchObject({ by: null, at: null });
+    }
+    const closed = await conversationAwaitingWriteUp();
+    await settleSoftPhone((await softPhoneCallOn(closed)).id, 'completed', null, mine);
+    expect(await booker(closed.contactId)).toMatchObject({ by: null, at: null, state: 'completed' });
+  });
+
+  it('(i) a soft-phone replay: the agent\'s re-stamps; a supervisor\'s keeps them while the time stays, clears them when moved', async () => {
+    const w = await conversationAwaitingWriteUp();
+    const call = await softPhoneCallOn(w);
+    await settleSoftPhone(call.id, 'pending', CALLBACK_1, mine);
+    const first = (await booker(w.contactId)).at!;
+    const replay = (at: Date, callbackBooker: CallbackBooker) =>
+      agencyContactRepository.rescheduleFromManualReplay({ manualCallId: call.id, dispositionCode: 'callback', nextAttemptAt: at, callbackBooker });
+    expect(await replay(CALLBACK_1, onBehalf)).toMatchObject({ contactId: w.contactId });
+    expect(await booker(w.contactId)).toMatchObject({ by: AGENT, at: first });
+    await replay(CALLBACK_2, mine);
+    expect((await booker(w.contactId)).by).toBe(AGENT);
+    await replay(CALLBACK_1, onBehalf);
+    expect(await booker(w.contactId)).toMatchObject({ by: null, at: null });
+  });
+
+  /** An inbound call AGENT answered, matched to `w`'s contact (left `pending`), ended, its outcome owed. */
+  async function inboundCallOn(w: { campaignId: string; contactId: string }, contact: Record<string, unknown> = {}) {
+    await getTestPool().query(
+      `UPDATE agency_contacts SET state = 'pending', callback_booked_by_user_id = NULL, callback_booked_at = NULL,
+              callback_source = $2, callback_due_at = $3 WHERE id = $1`,
+      [w.contactId, contact['callback_source'] ?? null, contact['callback_due_at'] ?? null]);
+    const now = new Date();
+    const { rows } = await getTestPool().query<{ id: string }>(
+      `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, from_e164, to_e164, state, outcome,
+                                         answered_at, bridged_at, answered_by_user_id, ended_at, matched_contact_id, matched_campaign_id)
+       SELECT c.tenant_id, c.account_id, $2, c.phone_e164, '+919000000002', 'ended', 'answered', $3, $3, $4, $3, c.id, c.campaign_id
+         FROM agency_contacts c WHERE c.id = $1
+       RETURNING id`, [w.contactId, `CA-${randomUUID()}`, now, AGENT]);
+    return rows[0]!.id;
+  }
+
+  it('(j) the agent\'s own call-later on an inbound call stamps them, over the customer\'s missed-call callback; otherwise cleared', async () => {
+    const w = await conversationAwaitingWriteUp();
+    const callId = await inboundCallOn(w, { callback_source: 'inbound', callback_due_at: new Date() });
+    const before = Date.now();
+    expect(await agencyContactRepository.settleFromInbound({
+      inboundCallId: callId, settlement: { kind: 'callback', at: CALLBACK_1 }, lastDisposition: 'callback', callbackBooker: mine,
+    })).toMatchObject({ state: 'pending', applied: 'settled' });
+    const b = await booker(w.contactId);
+    expect(b.by).toBe(AGENT);
+    expect(b.at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    const { rows: [c] } = await getTestPool().query('SELECT callback_source, next_attempt_at FROM agency_contacts WHERE id = $1', [w.contactId]);
+    expect(c).toMatchObject({ callback_source: null, next_attempt_at: CALLBACK_1 });
+
+    const cases: Array<[string, Parameters<typeof agencyContactRepository.settleFromInbound>[0]['settlement'], CallbackBooker | undefined]> = [
+      ['on behalf', { kind: 'callback', at: CALLBACK_1 }, onBehalf],
+      ['no booker given', { kind: 'callback', at: CALLBACK_1 }, undefined],
+      ['nothing that moves it (the lapse)', { kind: 'none' }, mine],
+      ['completed', { kind: 'completed' }, mine],
+    ];
+    for (const [label, settlement, callbackBooker] of cases) {
+      const v = await conversationAwaitingWriteUp();
+      const id = await inboundCallOn(v);
+      // A booker from an earlier dialler call-later, which the reach settles.
+      await getTestPool().query('UPDATE agency_contacts SET callback_booked_by_user_id = $2, callback_booked_at = now() WHERE id = $1', [v.contactId, AGENT]);
+      await agencyContactRepository.settleFromInbound({
+        inboundCallId: id, settlement, lastDisposition: 'callback', ...(callbackBooker ? { callbackBooker } : {}),
+      });
+      expect(await booker(v.contactId), label).toMatchObject({ by: null, at: null });
+    }
+  });
+
+  it('(k) an inbound replay: the agent\'s re-stamps; a supervisor\'s keeps them while the time stays, clears them when moved', async () => {
+    const w = await conversationAwaitingWriteUp();
+    const callId = await inboundCallOn(w);
+    await agencyContactRepository.settleFromInbound({
+      inboundCallId: callId, settlement: { kind: 'callback', at: CALLBACK_1 }, lastDisposition: 'callback', callbackBooker: mine,
+    });
+    const replay = (at: Date, callbackBooker: CallbackBooker) =>
+      agencyContactRepository.rescheduleFromInboundReplay({ inboundCallId: callId, dispositionCode: 'callback', nextAttemptAt: at, callbackBooker });
+    await replay(CALLBACK_1, onBehalf);
+    expect((await booker(w.contactId)).by).toBe(AGENT);
+    await replay(CALLBACK_2, onBehalf);
+    expect(await booker(w.contactId)).toMatchObject({ by: null, at: null });
+    await replay(CALLBACK_1, mine);
+    expect((await booker(w.contactId)).by).toBe(AGENT);
   });
 });

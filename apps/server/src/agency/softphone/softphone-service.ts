@@ -66,6 +66,7 @@ import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
 import { isUuid } from '../../utils/uuid.js';
 import { withDialableCallerIds } from '../campaign-dialability.js';
 import type { SoftphoneActor, SoftphoneRefusal, SoftphoneResult } from './types.js';
+import { callbackBookerOf } from '../call-later.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
 
@@ -572,6 +573,15 @@ export class SoftphoneService {
     const { decision, nextAttemptAt } = manualDispositionDecision({
       entry, now, callbackAt: callbackAt ?? followUpAt, placed: row.dialed_at !== null, contact, tag,
     });
+    // Agent station (BE-3): a call-later the agent books on their own soft-phone call is theirs, as
+    // on the station; a supervisor's on-behalf save records no booker (`callbackBookerOf`).
+    const callbackBooker = callbackBookerOf({
+      decisionReason: decision.reason,
+      entry,
+      followUpBooked: followUpAt !== null,
+      onBehalf: found.onBehalf,
+      reservedUserId: row.agent_user_id,
+    });
 
     const client = await getPool().connect();
     let recorded: { call: AgencyManualCallRecord; replay: boolean };
@@ -616,6 +626,7 @@ export class SoftphoneService {
           charge: row.dialed_at !== null ? 'attempt' : 'none',
           lastOutcome: row.outcome,
           lastDisposition: entry.code,
+          callbackBooker,
         }, { client });
         if (settled) {
           contactState = settled.state;
@@ -639,7 +650,7 @@ export class SoftphoneService {
         // is still `pending` on this code). Nothing else runs twice — no DNC mark,
         // no settlement, no attempt charged, no claim released.
         const moved = await agencyContactRepository.rescheduleFromManualReplay({
-          manualCallId: row.id, dispositionCode: entry.code, nextAttemptAt,
+          manualCallId: row.id, dispositionCode: entry.code, nextAttemptAt, callbackBooker,
         }, { client });
         if (moved) {
           contactState = moved.state;
