@@ -7,10 +7,12 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
+import '../widgets/read_aloud_button.dart';
 import '../widgets/state_band.dart';
 import 'call_band.dart';
 import 'contact_details.dart';
 import 'layouts.dart';
+import 'script_cards.dart' show OpeningLineCard;
 import 'sheets.dart';
 
 /// Reserved with no call on the station yet ([StationStage.incoming]): the server's
@@ -60,7 +62,7 @@ class RingingView extends ConsumerWidget {
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),
-          // The opening line ("First, say this") slots in here once the campaign has a script (BE-8).
+          OpeningLineCard(trailing: (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line)),
         ],
       ],
       actions: const ConnectsByItself(),
@@ -130,15 +132,14 @@ class RedialTag extends StatelessWidget {
 }
 
 /// The customer card (03, 04; it does not move between them): initials, the name (the number
-/// leads when there is none), the number, the contact's promise to pay, and three number tiles: the
-/// campaign's first two hero fields with a value and the last call's date (a third hero field when
-/// there was no call before). On Call coming it adds "What they said last time". A tap opens every
-/// field (Details).
-///
-/// Where new data slots in: the name and place by column role (BE-6), money and dates by column type
-/// (BE-6), the masked number (AS9 `phone_display`), and the "Call later · You said you will call at
-/// 3:00 PM" tag (`attempt.callback`, BE-4) above the name.
-class CustomerCard extends StatelessWidget {
+/// leads when there is none), the place and the number (masked where the campaign says so, AS9),
+/// the contact's promise to pay, and three number tiles. With the server's facts (BE-6): its name,
+/// place and fact tiles, amount due and due date first, money as ₹ with Indian grouping and dates
+/// as "20 Nov" where the campaign typed the column; without them, the campaign's first hero fields.
+/// The last call's date takes the third tile when there was a call before. A booked call-later
+/// coming due (BE-4) is tagged above the name. On Call coming it adds "What they said last time".
+/// A tap opens every field (Details).
+class CustomerCard extends ConsumerWidget {
   const CustomerCard({super.key, required this.call, this.lastWords = false});
 
   final CallView call;
@@ -147,21 +148,29 @@ class CustomerCard extends StatelessWidget {
   final bool lastWords;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     final t = context.tokens;
     final c = context.stateTokens.coming;
     final text = Theme.of(context).textTheme;
-    final name = call.displayName?.trim();
+    final facts = call.facts;
+    final name = (facts?.name ?? call.displayName)?.trim();
     final hasName = name != null && name.isNotEmpty;
-    final phone = formatPhone(call.phoneE164);
+    final place = facts?.place?.trim();
+    final phone = stationPhone(call.phoneE164, masked: masked);
     final ordered = orderPriorAttempts(call.priorAttempts);
     final last = ordered.firstOrNull;
     final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
-    final heroes = call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).toList(growable: false);
+    final room = last == null ? 3 : 2;
     final tiles = <Widget>[
-      for (final f in heroes.take(last == null ? 3 : 2)) NumberTile(label: f.label, value: f.value),
+      if (facts != null)
+        for (final f in factTilesInOrder(facts).take(room)) NumberTile(label: f.label, value: factText(f))
+      else
+        for (final f in call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).take(room))
+          NumberTile(label: f.label, value: f.value),
       if (last != null) NumberTile(key: const Key('last-call-tile'), label: StationCopy.lastCall, value: formatDay(last.at)),
     ];
+    final tag = call.callback;
     return Semantics(
       container: true,
       child: Material(
@@ -178,6 +187,10 @@ class CustomerCard extends StatelessWidget {
               children: [
                 if (call.isRedial) ...[
                   Align(alignment: AlignmentDirectional.centerStart, child: RedialTag(number: call.redialNumber!, limit: call.redialLimit)),
+                  const SizedBox(height: Space.sm),
+                ],
+                if (tag != null) ...[
+                  Align(alignment: AlignmentDirectional.centerStart, child: CallLaterTagPill(tag: tag)),
                   const SizedBox(height: Space.sm),
                 ],
                 Row(
@@ -204,14 +217,15 @@ class CustomerCard extends StatelessWidget {
                             header: true,
                             child: Text(hasName ? name : phone, key: const Key('call-headline'), style: text.headlineMedium),
                           ),
-                          if (hasName)
-                            Row(
-                              children: [
-                                Icon(Icons.call_outlined, size: 16, color: t.textSecondary),
-                                const SizedBox(width: Space.xs),
-                                Flexible(child: Text(phone, style: text.bodyMedium!.copyWith(color: t.textSecondary))),
-                              ],
-                            ),
+                          Wrap(
+                            spacing: Space.md,
+                            runSpacing: 2,
+                            children: [
+                              if (place != null && place.isNotEmpty)
+                                _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
+                              if (hasName) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -252,6 +266,84 @@ class CustomerCard extends StatelessWidget {
     final first = parts.first.characters.first;
     final second = parts.length > 1 ? parts[1].characters.first : '';
     return (first + second).toUpperCase();
+  }
+}
+
+/// The facts' tiles in the order the card shows them: amount due and due date first, then the
+/// rest in hero order; never the name's or the place's own column.
+List<FactTileView> factTilesInOrder(FactsView facts) {
+  bool isNameOrPlace(FactTileView f) => f.raw.trim() == facts.name || f.raw.trim() == facts.place;
+  final shown = facts.tiles.where((f) => f.raw.trim().isNotEmpty && !isNameOrPlace(f)).toList();
+  return [
+    ...shown.where((f) => f.amountDue),
+    ...shown.where((f) => f.dueDate),
+    ...shown.where((f) => !f.amountDue && !f.dueDate),
+  ];
+}
+
+/// A fact as the station shows it: money the campaign typed as such as `₹12,500`, a typed date as
+/// `20 Nov`, anything else exactly as uploaded.
+String factText(FactTileView f) {
+  final parsed = f.parsed;
+  if (parsed == null) return f.raw;
+  return switch (f.kind) {
+    FactKind.money => formatRupees(parsed),
+    FactKind.date => formatFactDate(parsed),
+    FactKind.text => f.raw,
+  };
+}
+
+/// "Call later · You said you will call at 3:00 PM" (BE-4): this call is a booked call-later.
+class CallLaterTagPill extends StatelessWidget {
+  const CallLaterTagPill({super.key, required this.tag});
+
+  final CallLaterTag tag;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.stateTokens.coming;
+    final text = Theme.of(context).textTheme;
+    final at = formatTime12(tag.dueAt);
+    return DecoratedBox(
+      key: const Key('call-later-tag'),
+      decoration: BoxDecoration(color: c.soft, borderRadius: BorderRadius.circular(Radii.pill)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.schedule, size: 16, color: c.deep),
+            const SizedBox(width: Space.xs),
+            Flexible(
+              child: Text(
+                tag.bookedByMe ? StationCopy.youSaidYouWillCall(at) : StationCopy.bookedFor(at),
+                style: text.labelLarge!.copyWith(color: c.deep),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IconText extends StatelessWidget {
+  const _IconText({super.key, required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: t.textSecondary),
+        const SizedBox(width: Space.xs),
+        Flexible(child: Text(text, style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary))),
+      ],
+    );
   }
 }
 

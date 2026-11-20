@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/contacts/my_contacts_api.dart';
@@ -14,6 +15,7 @@ import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
+import '../../core/inbound/inbound_fixtures.dart' show contractSample;
 import '../contacts/support.dart' show FakeMyContactsApi, contact;
 import '../performance/support.dart' show FakePerformanceApi, stats, totals;
 import 'station_harness.dart';
@@ -115,11 +117,50 @@ void main() {
       expect(reads, greaterThan(first), reason: 'read again on the return');
     });
 
-    test('My day: today\'s connected calls, talk time and dials on this campaign, from today\'s own stats', () async {
+    test('my-day (BE-1 to BE-3): the target, Will pay and the call-laters this agent booked, with who makes them', () async {
+      final stats = FakePerformanceApi();
+      final contacts = FakeMyContactsApi();
+      final myDay = FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day')));
+      final container = ProviderContainer(
+        overrides: [
+          myDayApiProvider.overrideWithValue(myDay),
+          performanceApiProvider.overrideWithValue(stats),
+          myContactsApiProvider.overrideWithValue(contacts),
+          contactAssignmentEnabledProvider.overrideWithValue(true),
+        ],
+      );
+      addTearDown(container.dispose);
+      final day = await container.read(stationMyDayProvider('c1').future);
+      expect(day, const MyDayView(callsToday: 42, talkSeconds: 6720, dialled: 131, target: 120, willPay: 12));
+      final later = await container.read(stationCallLaterProvider((campaignId: 'c1', offered: false)).future);
+      expect(later.items.map((i) => (i.name, i.overdue)), [('Sunita Patil', true), ('', false), ('Imran Shaikh', false)]);
+      expect([later.today, later.todayCount, later.comesToMe, later.leftGoesToPool], [2, 2, true, false]);
+      // One read serves both, and the old reads are not made.
+      expect(myDay.reads, ['c1']);
+      expect(stats.statsQueries, isEmpty);
+      expect(contacts.queries, isEmpty);
+    });
+
+    test('my-day on a pool campaign with no target: no bar, and another agent may make them', () async {
+      final container = ProviderContainer(
+        overrides: [myDayApiProvider.overrideWithValue(FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day_pool_no_target'))))],
+      );
+      addTearDown(container.dispose);
+      final day = await container.read(stationMyDayProvider('c1').future);
+      expect(day!.target, isNull);
+      final later = await container.read(stationCallLaterProvider((campaignId: 'c1', offered: false)).future);
+      expect(later.comesToMe, isFalse);
+    });
+
+    test('My day from a server without my-day: today\'s connected calls, talk time and dials, from today\'s own stats', () async {
       final api = FakePerformanceApi()..autoAnswer = (q) => stats(from: q.from, to: q.to, t: totals(attempts: 97, connected: 42, talk: 6720.4));
       final now = DateTime(2026, 10, 31, 11, 20);
       final container = ProviderContainer(
-        overrides: [performanceApiProvider.overrideWithValue(api), statsClockProvider.overrideWithValue(() => now)],
+        overrides: [
+          performanceApiProvider.overrideWithValue(api),
+          statsClockProvider.overrideWithValue(() => now),
+          myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
+        ],
       );
       addTearDown(container.dispose);
       final day = await container.read(stationMyDayProvider('c1').future);
@@ -146,13 +187,15 @@ void main() {
           myContactsApiProvider.overrideWithValue(api),
           contactAssignmentEnabledProvider.overrideWithValue(true),
           statsClockProvider.overrideWithValue(() => now),
+          myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
         ],
       );
       addTearDown(container.dispose);
       final items = await container.read(stationCallLaterProvider((campaignId: 'c1', offered: true)).future);
-      expect(items.map((i) => i.at), [DateTime(2026, 10, 31, 15), DateTime(2026, 10, 31, 18)]);
-      expect(items.first.name, '+919840010003', reason: 'no hero value: the number');
-      expect(items.last.name, 'Asha Rao');
+      expect(items.items.map((i) => i.at), [DateTime(2026, 10, 31, 15), DateTime(2026, 10, 31, 18)]);
+      expect(items.items.first.name, '', reason: 'no hero value: never the number ("Customer")');
+      expect(items.items.last.name, 'Asha Rao');
+      expect(items.comesToMe, isNull, reason: 'the station judges it by the campaign\'s routing');
       expect(api.queries.single.buckets, [MyContactBucket.callback]);
     });
 
@@ -160,10 +203,14 @@ void main() {
       final api = FakeMyContactsApi();
       for (final (flag, offered) in [(false, true), (true, false)]) {
         final container = ProviderContainer(
-          overrides: [myContactsApiProvider.overrideWithValue(api), contactAssignmentEnabledProvider.overrideWithValue(flag)],
+          overrides: [
+            myContactsApiProvider.overrideWithValue(api),
+            contactAssignmentEnabledProvider.overrideWithValue(flag),
+            myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
+          ],
         );
         addTearDown(container.dispose);
-        expect(await container.read(stationCallLaterProvider((campaignId: 'c1', offered: offered)).future), isEmpty);
+        expect((await container.read(stationCallLaterProvider((campaignId: 'c1', offered: offered)).future)).items, isEmpty);
       }
       expect(api.queries, isEmpty);
     });
@@ -202,4 +249,24 @@ void main() {
       expect(callbackPresets(DateTime(2026, 10, 31, 11, 20)).map((p) => p.choice), isNot(contains(CallbackChoice.todayEvening)));
     });
   });
+}
+
+/// `GET /proxy/agency/my-day`, scripted: an answer, or an older server's 404.
+class FakeMyDayApi implements MyDayApi {
+  FakeMyDayApi.answering(MyDay this.answer) : status = null;
+  FakeMyDayApi.notFound()
+      : answer = null,
+        status = 404;
+
+  final MyDay? answer;
+  final int? status;
+  final reads = <String>[];
+
+  @override
+  Future<MyDay> read(String campaignId) async {
+    reads.add(campaignId);
+    final a = answer;
+    if (a != null) return a;
+    throw ApiHttpError(status: status!, code: null, message: 'Not Found', body: const {'error': 'Not Found'}, requestId: null);
+  }
 }

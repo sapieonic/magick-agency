@@ -48,14 +48,35 @@ void main() {
       }
     });
 
-    testWidgets('not offered while ringing, waiting or on a break', (tester) async {
+    testWidgets('offered on every working screen (AS5): ready, a call coming, on a break, not yet taking calls', (tester) async {
       for (final v in [
         station(phase: AgentPhase.reserved, call: call()),
         station(),
+        station(dialing: false),
         station(phase: AgentPhase.onBreak, onBreak: BreakInfo(code: 'tea', label: 'Tea break', since: t0)),
+        station(phase: AgentPhase.offline),
+      ]) {
+        final h = await pumpStation(tester, v, needHelp: true);
+        expect(find.byKey(const Key('need-help')), findsOneWidget, reason: '${v.phase}');
+        await tester.tap(find.byKey(const Key('need-help')));
+        await tester.pump();
+        expect(h.actions.count('raiseHelp'), 1, reason: '${v.phase}');
+      }
+    });
+
+    testWidgets('a server that refused a raise off a call (older than BE-9): offered on calls only again', (tester) async {
+      const narrowed = HelpView(onlyOnCall: true);
+      for (final v in [
+        station(help: narrowed),
+        station(phase: AgentPhase.reserved, call: call(), help: narrowed),
+        station(phase: AgentPhase.onBreak, onBreak: BreakInfo(code: 'tea', label: 'Tea break', since: t0), help: narrowed),
       ]) {
         await pumpStation(tester, v, needHelp: true);
         expect(find.byKey(const Key('need-help')), findsNothing, reason: '${v.phase}');
+      }
+      for (final v in [onCall, inWrapup()]) {
+        await pumpStation(tester, station(phase: v.phase, call: v.call, release: v.release, wrapup: v.wrapup, help: narrowed), needHelp: true);
+        expect(find.byKey(const Key('need-help')), findsOneWidget, reason: '${v.phase}');
       }
     });
 
@@ -126,7 +147,7 @@ void main() {
       expect(h.actions.count('cancelHelp'), 0);
     });
 
-    testWidgets('an open request raised in wrap-up stays in view after it, with Cancel, but no new button', (tester) async {
+    testWidgets('an open request stays in view between calls, with Cancel, and no second button', (tester) async {
       final h = await pumpStation(tester, station(help: open), needHelp: true);
       expect(find.byKey(const Key('cancel-help')), findsOneWidget);
       expect(find.byKey(const Key('need-help')), findsNothing);

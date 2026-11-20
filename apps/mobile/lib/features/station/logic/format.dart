@@ -96,3 +96,50 @@ String formatHoursMinutes(Duration d) {
   final m = total % 60;
   return h > 0 ? '${h}h ${m}m' : '${m}m';
 }
+
+/// `98••• ••321`: the customer's number as a campaign that masks it shows it (AS9). The first two
+/// and the last three digits of the national number; the rest hidden. Display only.
+String maskPhone(String e164) {
+  final indian = RegExp(r'^\+91(\d{10})$').firstMatch(e164);
+  final digits = indian?.group(1) ?? e164.replaceAll(RegExp(r'\D'), '');
+  if (digits.length < 7) return '•••';
+  return '${digits.substring(0, 2)}••• ••${digits.substring(digits.length - 3)}';
+}
+
+/// The number as the station shows it: masked when the campaign says so ([masked]), else
+/// `+91 98400 12345`.
+String stationPhone(String e164, {required bool masked}) => masked ? maskPhone(e164) : formatPhone(e164);
+
+/// `₹12,500`, `₹1,25,000.50`: a money fact's parsed value (a decimal string) with the rupee sign
+/// and Indian grouping, no decimals unless they are not zero (design-spec §6.6); [decimal] as it
+/// is when it is not a plain number.
+String formatRupees(String decimal) {
+  final m = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(decimal.trim());
+  if (m == null) return decimal;
+  final whole = m.group(1)!.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+  final frac = (m.group(2) ?? '').padRight(2, '0');
+  String grouped;
+  if (whole.length <= 3) {
+    grouped = whole;
+  } else {
+    final last3 = whole.substring(whole.length - 3);
+    var rest = whole.substring(0, whole.length - 3);
+    final parts = <String>[];
+    while (rest.length > 2) {
+      parts.insert(0, rest.substring(rest.length - 2));
+      rest = rest.substring(0, rest.length - 2);
+    }
+    if (rest.isNotEmpty) parts.insert(0, rest);
+    grouped = '${parts.join(',')},$last3';
+  }
+  return frac == '00' ? '₹$grouped' : '₹$grouped.$frac';
+}
+
+/// `20 Nov` from a date fact's parsed `YYYY-MM-DD`; [ymd] as it is otherwise.
+String formatFactDate(String ymd) {
+  final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(ymd);
+  if (m == null) return ymd;
+  final month = int.parse(m.group(2)!);
+  if (month < 1 || month > 12) return ymd;
+  return '${int.parse(m.group(3)!)} ${_months[month - 1]}';
+}

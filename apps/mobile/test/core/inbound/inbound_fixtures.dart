@@ -83,3 +83,6 @@ List<({String step, Map<String, Object?> frame})> realInboundCallFrames({String 
       (step: 'available', frame: agentStateFrameJson('available', '2026-11-02T05:35:40.118Z')),
       (step: 'settled', frame: stationFrame('inbound_call_settled', sessionId: sessionId)),
     ];
+
+/// Any contract sample by its file and name (a deep copy the test may change).
+Map<String, Object?> contractSample(String file, String name) => _sample(file, name);

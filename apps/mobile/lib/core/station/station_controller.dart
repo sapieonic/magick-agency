@@ -152,6 +152,10 @@ class StationController extends Notifier<StationView?>
   HelpBusy _helpBusy = HelpBusy.none;
   String? _helpError;
 
+  /// The server refused a raise off a call `help_not_on_call` (older than BE-9): Need help is
+  /// offered on a call and while finishing one only, until the next session.
+  bool _helpOnlyOnCall = false;
+
   /// The banner's messages, rebuilt only when the queue or the applied offset moves, so the
   /// shell's `select` sees the same list otherwise.
   List<SupervisorMessageView> _messageViews = const [];
@@ -751,6 +755,7 @@ class StationController extends Notifier<StationView?>
     _assist = FloorAssistState.empty;
     _helpBusy = HelpBusy.none;
     _helpError = null;
+    _helpOnlyOnCall = false;
     _messageViews = const [];
     _messageViewsFrom = null;
   }
@@ -1206,7 +1211,7 @@ class StationController extends Notifier<StationView?>
 
   DateTime _toDevice(DateTime server) => correctedInstant(server, _mapper.appliedOffsetMs)!;
 
-  HelpView _helpView() => _assist.helpView(busy: _helpBusy, error: _helpError, toDevice: _toDevice);
+  HelpView _helpView() => _assist.helpView(busy: _helpBusy, error: _helpError, toDevice: _toDevice, onlyOnCall: _helpOnlyOnCall);
 
   List<SupervisorMessageView> _supervisorMessages() {
     final offset = _mapper.appliedOffsetMs;
@@ -1241,6 +1246,7 @@ class StationController extends Notifier<StationView?>
     } catch (e) {
       if (!_live(s)) return;
       _helpError = FloorAssistCopy.refusal(e, raising: true);
+      if (errorBodyOf(e)?.floorAssistCode == FloorAssistErrorCode.helpNotOnCall) _helpOnlyOnCall = true;
       _log.warn('help raise refused', {'error': _errorTag(e)});
     } finally {
       if (_live(s)) {
