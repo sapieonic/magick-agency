@@ -231,13 +231,14 @@ export function contextDisplayIssues(
   if (display['roles'] !== undefined) {
     const roles = asRecord(display['roles']);
     if (!roles) {
-      issues.push({ field: 'context_display.roles', message: 'roles must be an object of role to column name.' });
+      issues.push({ field: 'context_display.roles', message: 'Choose a column for each customer fact: the name, place, amount due and due date.' });
     } else {
       const used = new Map<string, AgencyContextRole>();
       for (const [role, column] of Object.entries(roles)) {
         const field = `context_display.roles.${role}`;
         if (!(AGENCY_CONTEXT_ROLES as readonly string[]).includes(role)) {
-          issues.push({ field, message: `'${role}' is not a role. The roles are: ${AGENCY_CONTEXT_ROLES.join(', ')}.` });
+          const facts = AGENCY_CONTEXT_ROLES.map((r) => ROLE_WORDS[r]);
+          issues.push({ field, message: `That is not a customer fact the station shows. They are ${facts.slice(0, -1).join(', ')} and ${facts.at(-1)}.` });
           continue;
         }
         const words = ROLE_WORDS[role as AgencyContextRole];
@@ -263,7 +264,7 @@ export function contextDisplayIssues(
   if (display['types'] !== undefined) {
     const types = asRecord(display['types']);
     if (!types) {
-      issues.push({ field: 'context_display.types', message: 'types must be an object of column name to text, money or date.' });
+      issues.push({ field: 'context_display.types', message: 'Choose how to read each column: as text, money or a date.' });
     } else {
       for (const [column, type] of Object.entries(types)) {
         const field = `context_display.types.${column}`;
@@ -272,7 +273,7 @@ export function contextDisplayIssues(
           continue;
         }
         if (!(AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(type)) {
-          issues.push({ field, message: `How to read '${column}' must be one of: ${AGENCY_CONTEXT_FIELD_TYPES.join(', ')}.` });
+          issues.push({ field, message: `Choose how to read '${column}': as text, money or a date.` });
           continue;
         }
         notOnRoster(column, field, 'given a type');

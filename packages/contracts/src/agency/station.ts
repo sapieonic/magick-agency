@@ -63,14 +63,31 @@ void _allClientKindsListed;
  *    message to it is refused `409 agent_not_live` rather than shown to nobody. The same value as
  *    `AGENCY_STATION_FLOOR_ASSIST_CAPABILITY` (`./floor-assist.ts`).
  *
+ *  - `queue_pool` (agent station BE-5, AS18): the station shows a `pool` campaign's queue state
+ *    ({@link AgencyQueueState}: "Nothing due now" and why) in the redesign's words, which say "we"
+ *    and never "your contacts". Only a station that declares it, **whatever its client kind, a
+ *    console too**, is sent queue state on a `pool` campaign: the `queue` frame and `ready.queue`.
+ *    The session bootstrap (an HTTP answer read before any socket) carries none on `pool`. A
+ *    station that does not declare it, an app or a console tab built before the redesign whose
+ *    owner-mode copy ("Nothing of yours is due") would be wrong there, is sent none on `pool`,
+ *    exactly as before BE-5. `strict` / `preferred` queue state is sent to every station as
+ *    always. {@link AGENCY_STATION_QUEUE_POOL_CAPABILITY}.
+ *
  * Like {@link AgencyClientKind}, declared by the client and never verified: it decides which frames
  * the socket is sent and whether it is offered a caller, never anything security-relevant. It
  * belongs to the socket, not the session: a reattach (from another device, or an older build)
  * states its own.
  */
-export type AgencyStationCapability = 'inbound' | 'floor_assist';
+export type AgencyStationCapability = 'inbound' | 'floor_assist' | 'queue_pool';
 
-export const AGENCY_STATION_CAPABILITIES = ['inbound', 'floor_assist'] as const satisfies readonly AgencyStationCapability[];
+export const AGENCY_STATION_CAPABILITIES = ['inbound', 'floor_assist', 'queue_pool'] as const satisfies readonly AgencyStationCapability[];
+
+/**
+ * The capability a station declares (`caps=queue_pool`) to be sent a `pool` campaign's queue state
+ * (agent station BE-5, AS18). Unlike `inbound` and `floor_assist`, a console must declare it too.
+ * See {@link AgencyStationCapability}.
+ */
+export const AGENCY_STATION_QUEUE_POOL_CAPABILITY = 'queue_pool' satisfies AgencyStationCapability;
 
 const _allStationCapabilitiesListed: AllListed<AgencyStationCapability, typeof AGENCY_STATION_CAPABILITIES> = true;
 void _allStationCapabilitiesListed;
@@ -294,8 +311,9 @@ export interface AgencyStationReadyFrame {
   active_attempt?: AgencyActiveAttempt;
   /**
    * This agent's queue now. On a `strict` or `preferred` campaign, their own queue; on a `pool`
-   * campaign (agent station BE-5) the campaign's shared one. Absent from a server that does not
-   * compute it for this campaign (before BE-5, every `pool` campaign).
+   * campaign (agent station BE-5) the campaign's shared one, only to a station that declared
+   * `caps=queue_pool` (AS18). Absent from a server that does not compute it for this campaign
+   * (before BE-5, every `pool` campaign) and, on `pool`, from a station that did not declare it.
    */
   queue?: AgencyQueueState;
   /**
@@ -711,10 +729,11 @@ export interface AgencyQueueState {
 /**
  * This agent's queue changed between due and nothing due (or the reason changed). Sent only on a
  * change, by the pacing leader, which is the only thing that knows: on `strict` and `preferred`
- * campaigns, and (agent station BE-5) on `pool` campaigns too, where it is computed once per
- * campaign per tick and sent to each of its agents. An existing frame, so no capability: every app
- * build already decodes it. The bootstrap's `queue` and the `ready` frame's `queue` carry the
- * state at join and at reconnect.
+ * campaigns to every station, and (agent station BE-5) on `pool` campaigns, where it is computed
+ * once per campaign per tick, only to the stations that declared `caps=queue_pool` (AS18: every
+ * build decodes the frame, but a build before the redesign words it for an owner's queue). The
+ * bootstrap's `queue` (owner modes only) and the `ready` frame's `queue` carry the state at join
+ * and at reconnect.
  */
 export interface AgencyStationQueueFrame extends AgencyQueueState {
   event: 'queue';

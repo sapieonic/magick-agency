@@ -127,6 +127,8 @@ function makeStations(owned: string[]) {
     ownerOf: vi.fn(async (id: string) => (owned.includes(id) ? 'r1' : null)),
     broadcast: vi.fn(() => owned.length),
     sessionIdsForCampaign: vi.fn(() => owned),
+    // No station here declared `queue_pool` (AS18): a pool campaign sends them no queue frame.
+    get: vi.fn((_id: string) => undefined),
   };
 }
 

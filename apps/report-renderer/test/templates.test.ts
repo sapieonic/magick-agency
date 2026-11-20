@@ -36,6 +36,15 @@ describe('agent review', () => {
     expect(t).toContain(`on a call ${pct(d.occupancy.on_call_pct!)} of station time, ${pct(d.occupancy.on_call_pct_excl_break!)} excluding breaks`);
   });
 
+  it('prints the breaks over their limit under the break reasons (BE-12), and nothing when there were none or the dataset predates them', () => {
+    const o = d.presence.break_overruns!;
+    expect(o.breaks).toBeGreaterThan(0);
+    expect(t).toContain(`Breaks over their limit: ${count(o.breaks)}, ${duration(o.seconds_over)} over in all`);
+    for (const presence of [{ ...d.presence, break_overruns: { breaks: 0, seconds_over: 0 } }, { ...d.presence, break_overruns: undefined }]) {
+      expect(text(renderReportHtml({ ...d, presence }, NO_FONTS))).not.toContain('Breaks over their limit:');
+    }
+  });
+
   it('lists one sessions row per day worked and the representative day', () => {
     const sessions = block(html, 'data-block', 'sessions');
     expect((sessions.match(/<tr>/g) ?? []).length - 1).toBe(d.presence.days_worked);

@@ -48,6 +48,12 @@ vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
+const metrics = vi.hoisted(() => ({ trackStationDisconnect: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/agency', async (orig) => ({
+  ...(await orig<typeof import('@magick-agency/observability/metrics/agency')>()),
+  trackStationDisconnect: metrics.trackStationDisconnect,
+}));
+
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
@@ -502,3 +508,32 @@ describe('a decision made before an await must be re-asked after it', () => {
     a.ws.close();
   });
 });
+
+describe('agent station BE-11: a working agent\'s station going counts as a drop (agency_station_disconnects_total)', () => {
+  it('an available agent\'s station closes: counted once, by tenant, app and the state it interrupted (read before the offline write)', async () => {
+    // FALSIFIED: with the state read issued after the release, it reads `offline` and nothing is counted.
+    await h.runtime.agents.set('sess-1', 'available', { leaseMs: AGENT_LEASE_MS.available });
+    const leg = await h.open();
+    leg.ws.close();
+    await leg.closed;
+    await vi.waitFor(() => expect(metrics.trackStationDisconnect).toHaveBeenCalledTimes(1));
+    expect(metrics.trackStationDisconnect).toHaveBeenCalledWith('t1', 'web', 'available');
+    expect((await h.runtime.agents.get('sess-1'))?.state).toBe('offline');
+  });
+
+  it('a superseded socket\'s close, and a station that goes while its agent is on a break, are not drops', async () => {
+    await h.runtime.agents.set('sess-1', 'available', { leaseMs: AGENT_LEASE_MS.available });
+    const first = await h.open();
+    const second = await h.open();
+    await first.closed;
+    await settle();
+    expect(metrics.trackStationDisconnect).not.toHaveBeenCalled();
+
+    await h.runtime.agents.set('sess-1', 'break', { leaseMs: AGENT_LEASE_MS.break });
+    second.ws.close();
+    await second.closed;
+    await settle();
+    expect(metrics.trackStationDisconnect).not.toHaveBeenCalled();
+  });
+});
+

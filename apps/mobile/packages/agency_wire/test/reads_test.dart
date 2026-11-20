@@ -91,6 +91,12 @@ void main() {
   });
 
   group('my-attempts', () {
+    test('my-attempts rows say how their campaign shows the number (AS9)', () {
+      final p = decodeAttemptsPage(fixture('reads.json', 'my_attempts'));
+      expect(p.rows.first.phoneDisplay, PhoneDisplay.masked);
+      expect(p.rows.skip(1).map((r) => r.phoneDisplay), everyElement(PhoneDisplay.full));
+    });
+
     test('a keyset page of attempt rows', () {
       final p = decodeAttemptsPage(fixture('reads.json', 'my_attempts'));
       expect(p.rows, hasLength(2));

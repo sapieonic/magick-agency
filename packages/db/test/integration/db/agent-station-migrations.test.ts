@@ -5,6 +5,7 @@
 //   0058_contact_callback_booker_index.sql  idx_agency_contacts_my_callbacks, and 0057's CHECK validated
 //   0059_session_help_state.sql             agency_agent_sessions.help_state
 //   0060_session_event_break_overrun.sql    agency_agent_session_events.break_limit_minutes, break_overrun_seconds
+//   0061_session_event_break_limit_comment.sql  break_limit_minutes's comment: the limit when the break ended
 // globalSetup has applied every migration. Pins each column (type, nullability, default: the large
 // tables' columns nullable with no default, so their ADD COLUMNs rewrite nothing), each CHECK both
 // ways and whether it is validated, the index by its definition (the invalid-index refusal, one built
@@ -35,6 +36,7 @@ const FILES = [
   '0058_contact_callback_booker_index.sql',
   '0059_session_help_state.sql',
   '0060_session_event_break_overrun.sql',
+  '0061_session_event_break_limit_comment.sql',
 ] as const;
 
 function stepsDownTo(file: string): number {
@@ -319,6 +321,28 @@ describe('0060 — a break over its limit, on the event that ended it', () => {
       await migrate('up', 1);
       const { rows } = await pool().query('SELECT break_limit_minutes, break_overrun_seconds FROM agency_agent_session_events WHERE id = $1', [e.id]);
       expect(rows).toEqual([{ break_limit_minutes: null, break_overrun_seconds: null }]);
+    } finally {
+      await migrate('up');
+    }
+  });
+});
+
+describe('0061 — break_limit_minutes says the limit it holds: the catalog\'s when the break ended', () => {
+  it('re-comments the column and nothing else', async () => {
+    expect(await columnComment('agency_agent_session_events', 'break_limit_minutes'))
+      .toMatch(/as the campaign's break catalog stood when the break ended/);
+    expect(await columnComment('agency_agent_session_events', 'break_limit_minutes')).not.toMatch(/began/);
+    const statements = upStatements(FILES[5]);
+    expect(statements.slice(1).every((s) => s.startsWith('COMMENT ON COLUMN agency_agent_session_events.break_limit_minutes IS'))).toBe(true);
+  });
+
+  it('down puts 0060\'s comment back; up says it again', async () => {
+    await migrate('down', stepsDownTo(FILES[5]));
+    try {
+      expect(await columnComment('agency_agent_session_events', 'break_limit_minutes')).toMatch(/its reason's limit in minutes when the break began/);
+      expect(await columns('agency_agent_session_events', ['break_limit_minutes'])).toEqual({ break_limit_minutes: 'smallint' });
+      await migrate('up', 1);
+      expect(await columnComment('agency_agent_session_events', 'break_limit_minutes')).toMatch(/when the break ended/);
     } finally {
       await migrate('up');
     }

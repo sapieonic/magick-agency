@@ -10,6 +10,7 @@ import {
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
 import type { AgencyQueueState, AgencyStationCapability, AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_QUEUE_POOL_CAPABILITY } from '@magick-agency/contracts/agency';
 
 /**
  * What pacing needs from wherever the agents' station sockets are held: whether a
@@ -28,9 +29,10 @@ export interface PacingStations {
   ownerOf(sessionId: string): Promise<string | null>;
   /**
    * The station's campaign, and its capabilities (`StationRegistry`'s `caps`, IQ46): only a station
-   * with `inbound` is held back for a waiting inbound caller (`pacing/inbound-hold-back.ts`). The
-   * media workers' directory answers none: with media workers no inbound caller is put through to
-   * an agent (IB8, IQ13), so holding one back is moot.
+   * with `inbound` is held back for a waiting inbound caller (`pacing/inbound-hold-back.ts`), and
+   * only one with `queue_pool` is sent a `pool` campaign's `queue` frame (AS18). The media workers'
+   * directory answers the worker's report minus `inbound`: with media workers no inbound caller is
+   * put through to an agent (IB8, IQ13), so holding one back is moot.
    */
   get(sessionId: string): { campaignId: string | null; caps: ReadonlySet<AgencyStationCapability> } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
@@ -1917,14 +1919,20 @@ export class PacingEngine {
   /**
    * A `pool` campaign's `queue` frames (agent station BE-5): the campaign's shared state
    * (`readPoolQueueState`, through {@link poolQueueCache}: one probe per campaign per TTL, never
-   * one per agent), sent to each available agent when it differs from the last they were sent.
-   * Best effort: a failed read sends nothing, warns, and costs the tick nothing.
+   * one per agent), sent to each available agent whose station declared `queue_pool` (AS18) when it
+   * differs from the last they were sent. Best effort: a failed read sends nothing, warns, and
+   * costs the tick nothing.
    */
   private async sendPoolQueueFrames(
     campaign: AgencyCampaignRecord,
     agents: readonly AgentCandidate[],
     fresh: boolean,
   ): Promise<void> {
+    // AS18: only the stations that declared `queue_pool`; a build before the redesign words queue
+    // state for an owner's own contacts, so it is sent none on a `pool` campaign, as before BE-5.
+    // With none of them, nothing is read either.
+    const declared = agents.filter((a) => this.stations.get(a.sessionId)?.caps.has(AGENCY_STATION_QUEUE_POOL_CAPABILITY) === true);
+    if (declared.length === 0) return;
     let state = fresh ? undefined : this.poolQueueCache.get(campaign.id);
     if (!state) {
       const generation = this.poolQueueCache.generation(campaign.id);
@@ -1937,7 +1945,7 @@ export class PacingEngine {
       this.poolQueueCache.setIf(campaign.id, generation, state);
     }
     const reading: AgentQueueReading = { ownDue: false, state };
-    this.sendQueueFrames(campaign.id, agents, new Map(agents.map((a) => [a.agentUserId, reading])));
+    this.sendQueueFrames(campaign.id, declared, new Map(declared.map((a) => [a.agentUserId, reading])));
   }
 
   /** Send each agent's `queue` frame when it differs from the last one they were sent. */

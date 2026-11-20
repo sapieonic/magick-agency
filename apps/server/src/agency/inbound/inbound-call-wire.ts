@@ -21,6 +21,7 @@ import {
 import { projectPriorAttempt } from '../../db/repositories/agency/projections.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../../db/models/agency.model.js';
 import { inboundOutcomeWindowMs } from './inbound-wrapup.js';
+import { dispositionsWithKnownIcons } from '../station-tiles.js';
 
 const log = createChildLogger({ component: 'agency-inbound-wire' });
 
@@ -166,7 +167,8 @@ export function inboundCallToWire(
     sticky,
     match: ctx.match,
     catalog_source: ctx.catalogSource,
-    disposition_catalog: ctx.catalog,
+    // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
+    disposition_catalog: dispositionsWithKnownIcons(ctx.catalog),
     recording: call.recording_requested,
     waited_seconds: offeredAt ? Math.max(0, Math.floor((offeredAt.getTime() - new Date(waitedFrom).getTime()) / 1000)) : 0,
     offered_at: (offeredAt ?? new Date(call.arrived_at)).toISOString(),

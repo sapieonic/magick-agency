@@ -74,7 +74,6 @@ import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { messageSender } from '../../utils/agency/stationHelp';
 import { brand } from '../../brand';
-import { myCallsPath } from '../../utils/agency/myCallsPath';
 import {
   STATION_BLOCK_COPY,
   STATION_COPY,
@@ -1195,8 +1194,9 @@ function StationScreen({
       break;
   }
 
-  // The My calls page, opened in a new tab from ⋮ More, masking this list's numbers when it does (AS9).
-  const myCalls = myCallsPath(bootstrap?.campaign_id ?? null, bootstrap?.phone_display ?? 'full');
+  // The My calls page, opened in a new tab from ⋮ More; it masks each row as its list does (AS9:
+  // the server's `phone_display` on every row).
+  const myCalls = '/dialer/attempts';
   const needHelp = (
     <>
       {/* LS2: the standing "a supervisor may listen" line, behind its info button (only while the flag is on). */}
@@ -1361,7 +1361,6 @@ function StationScreen({
           queue={queue}
           onClose={() => setMyContactsOpen(false)}
           onCalled={() => setMyContactsOpen(false)}
-          phoneDisplay={bootstrap.phone_display ?? 'full'}
         />
       ) : null}
     </>

@@ -294,9 +294,9 @@ describe('agency agent surfaces through the in-process internal hop (integration
    * Real attempts by `agent`, one per phone, on one campaign and one session — the rows
    * the `listForAgent` read joins (`reserved_agent_id` → the session that owns the agent).
    */
-  async function seedAttempts(phones: readonly string[]) {
+  async function seedAttempts(phones: readonly string[], campaignOver: Record<string, unknown> = {}) {
     const campaign = await insertAgencyCampaign({
-      tenant_id: tenant.id, account_id: account.id, status: 'stopped',
+      tenant_id: tenant.id, account_id: account.id, status: 'stopped', ...campaignOver,
     });
     const session = await insertAgentSession(campaign.id as string, {
       tenant_id: tenant.id, account_id: account.id, agent_user_id: agent.id,
@@ -318,6 +318,20 @@ describe('agency agent surfaces through the in-process internal hop (integration
     }
     return out;
   }
+
+  // ═══ Agent station AS9: each of the agent's own rows says how its campaign shows numbers ═══
+  describe('my-attempts rows carry their campaign\'s phone_display (AS9)', () => {
+    it('masked on a masked campaign, full on the others; the number itself still in full', async () => {
+      // FALSIFIED: without the enrichment the rows carry no `phone_display` and this reds.
+      const [masked] = await seedAttempts(['+919812300001'], { phone_display: 'masked' });
+      const [full] = await seedAttempts(['+919812300002']);
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-attempts`, headers: headers(agent.id) });
+      expect(seen(res)).toMatchObject({ status: 200 });
+      const rows = (res.json() as { rows: Array<{ id: string; phone_display?: string; phone_e164: string }> }).rows;
+      expect(rows.find((r) => r.id === masked!.attemptId)).toMatchObject({ phone_display: 'masked', phone_e164: '+919812300001' });
+      expect(rows.find((r) => r.id === full!.attemptId)).toMatchObject({ phone_display: 'full' });
+    });
+  });
 
   // ═══ 1. The whitelisted filters actually arrive ═══════════════════════════
 

@@ -11,8 +11,10 @@
  *   {@link AGENCY_MY_DAY_QUERY_ERROR_CODE}.
  * - **The day** is the campaign's own: its local midnight to the next, in its `default_timezone`
  *   (IST for our tenants), cut by the server's clock, never the phone's.
- * - **Counted:** this agent's dialler attempts on this campaign. Soft-phone and inbound calls are
- *   not counted, as on the floor. An agent on two campaigns in a day reads each separately.
+ * - **Counted:** this agent's dialler attempts on this campaign (calls, dialled, talk time,
+ *   successes: soft-phone and inbound calls are not counted there, as on the floor); `will_pay`
+ *   counts the agent's promises on every kind of call of the campaign (AS7). An agent on two
+ *   campaigns in a day reads each separately.
  * - **When the station reads it:** on join, on every `ready` frame, after each saved outcome, and
  *   every 60 s while Ready. No frame carries it. Old app builds never call it.
  * - **Never cached** (`Cache-Control: no-store`): it names customers. It never carries a number.
@@ -64,10 +66,13 @@ export interface AgencyMyCallLaterRow {
 }
 
 /**
- * The agent's own call-laters (BE-3): the pending callbacks on this campaign that this agent booked
- * (`agency_contacts.callback_booked_by_user_id`, 0057), and, on `strict` / `preferred` campaigns,
- * the callbacks assigned to them (a supervisor's hand-off, LF7, and those booked before the booker
- * was recorded). Due from now to the campaign's midnight, plus the overdue ones.
+ * The agent's own call-laters (BE-3), the ones that will come to them. On a `pool` campaign: the
+ * pending callbacks this agent booked (`agency_contacts.callback_booked_by_user_id`, 0057), on the
+ * dialler, the soft phone or an inbound call. On a `strict` / `preferred` campaign: the callbacks
+ * assigned to them (theirs, a supervisor's hand-off, LF7, and those booked before the booker was
+ * recorded); one they booked that a supervisor gave to another agent (LF21) or that the callback
+ * fallback returned to the pool (CA5) is not listed, the new owner sees it. Due from now to the
+ * campaign's midnight, plus the overdue ones.
  */
 export interface AgencyMyCallLater {
   /** Oldest due first, at most {@link AGENCY_MY_CALL_LATER_ROWS_MAX}. */
@@ -77,8 +82,8 @@ export interface AgencyMyCallLater {
   /** Due before now. */
   overdue: number;
   /**
-   * True: these calls come back to this agent (a `strict` or `preferred` campaign, the contacts
-   * theirs). False: a `pool` campaign, so another agent may get the call. The station's copy follows
+   * True: these calls come back to this agent (a `strict` or `preferred` campaign: every row is
+   * assigned to them). False: a `pool` campaign, so another agent may get the call. The station's copy follows
    * it (AS8): "These calls will come to you on time." / "We will call them on time. Another agent
    * may get the call."
    */
@@ -107,9 +112,11 @@ export interface AgencyMyDay {
   /** The agent's talk time today, in whole seconds (the record's `talk_seconds` rule). */
   talk_seconds: number;
   /**
-   * AS7: this agent's outcomes today that recorded a promise to pay (a pay date), counted by when the
-   * outcome was written; a promise corrected by a replay counts once. Null when this campaign's
-   * catalog has no promise outcome: the tile is not shown.
+   * AS7: this agent's outcomes today that recorded a promise to pay (a pay date), on every kind of
+   * call of this campaign: the dialler's, the agent's soft-phone calls tagged to it and the inbound
+   * calls the agent answered that matched one of its contacts. Counted by when the outcome was
+   * written; a promise corrected by a replay counts once. Null when this campaign's catalog has no
+   * promise outcome: the tile is not shown.
    */
   will_pay: number | null;
   /** Connected calls today with an `is_success` outcome, for a campaign whose `will_pay` is null. */

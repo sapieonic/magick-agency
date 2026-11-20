@@ -126,8 +126,10 @@ export function breakLimitMinutes(
 /**
  * Agent station (BE-12, AS12): a break that ran past its reason's limit, judged when it ends. The
  * break began at `startedAt` (the session's `state_since` on entering it) and ended at `endedAt`;
- * its limit is `breakLimitMinutes(code, configured)` (so a reserved break, a reason with no limit of
- * its own and a code the catalog does not know never count). Over: the limit and the WHOLE seconds
+ * its limit is `breakLimitMinutes(code, configured)` over the catalog as it stands when the break
+ * ENDS (the caller passes the catalog its transition read; a limit changed during the break is the
+ * one judged, as 0061's column comment says), so a reserved break, a reason with no limit of its
+ * own and a code the catalog does not know never count. Over: the limit and the WHOLE seconds
  * past it (floored, so a break a fraction of a second over is not counted), both as
  * `agency_agent_session_events.break_limit_minutes` / `break_overrun_seconds` (0060) take them.
  * Null when it did not run over, or when there is no limit to run over.

@@ -163,7 +163,7 @@ final Map<String, List<WireEnum>> appSends = {
   ],
   // The station upgrade's `caps=`, and the Missed list's `status=` and
   // `reason=` filters.
-  'station_capabilities': [StationCapability.inbound, StationCapability.floorAssist],
+  'station_capabilities': [StationCapability.inbound, StationCapability.floorAssist, StationCapability.queuePool],
   'inbound_follow_up_statuses': [
     for (final v in InboundFollowUpStatus.values)
       if (!v.isUnknown) v,

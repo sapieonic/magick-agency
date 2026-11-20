@@ -15,7 +15,8 @@ const SESSION = { id: 'sess-there', tenant_id: 't-2' };
 
 function runtime() {
   return {
-    stations: { stationPresence: vi.fn(async (): Promise<'connected' | 'absent' | 'unknown'> => 'absent'), detach: vi.fn() },
+    stations: { stationPresence: vi.fn(async (): Promise<'connected' | 'absent' | 'unknown'> => 'absent'), detach: vi.fn(), sessionEnded: vi.fn() },
+    stationDisconnects: { forgetEnded: vi.fn() },
     agents: { get: vi.fn(async (): Promise<{ state: string; ring?: boolean } | null> => ({ state: 'break' })), clear: vi.fn(async () => undefined) },
     dialer: { hasLiveAttempt: vi.fn(() => false), hasRedialInFlight: vi.fn(() => false) },
     softphone: { hasLiveCall: vi.fn(() => false) },
@@ -38,6 +39,9 @@ describe('endIdleSessionElsewhere (OS7)', () => {
     expect(rt.agents.clear).toHaveBeenCalledWith('sess-there');
     expect(leave).toHaveBeenCalledWith('sess-there');
     expect(rt.stations.detach).toHaveBeenCalledWith('sess-there');
+    // BE-11: the session ended, so when its station went is forgotten (here and on the floor's reader).
+    expect(rt.stations.sessionEnded).toHaveBeenCalledWith('sess-there');
+    expect(rt.stationDisconnects.forgetEnded).toHaveBeenCalledWith(['sess-there']);
   });
 
   it('Mode B: ends a session on away_ring (its phone parked) and tells that phone left (not a take-over); a plain break sends nothing', async () => {

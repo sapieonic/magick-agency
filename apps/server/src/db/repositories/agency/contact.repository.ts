@@ -289,6 +289,27 @@ export type AgencyInboundContactSettlement =
   | { kind: 'suppressed'; reason: string }
   | { kind: 'none' };
 
+/**
+ * Agent station (BE-3): the booker on a same-code REPLAY that moves a soft-phone or inbound
+ * call-later (`rescheduleFromManualReplay`, `rescheduleFromInboundReplay`), as the station's own
+ * replay through `releaseFromDisposition` treats it: the agent's own correction ($4) stamps them and
+ * now; a supervisor's on-behalf one ($5) keeps the booker only while the due time does not move;
+ * with neither, the booker stays as the first save left it. Reads the row's old values.
+ */
+const REPLAY_BOOKER_SET_SQL = `callback_booked_by_user_id = CASE
+                WHEN $4::uuid IS NOT NULL THEN $4::uuid
+                WHEN $5::boolean AND c.next_attempt_at IS DISTINCT FROM $3::timestamptz THEN NULL
+                ELSE c.callback_booked_by_user_id END,
+              callback_booked_at = CASE
+                WHEN $4::uuid IS NOT NULL THEN now()
+                WHEN $5::boolean AND c.next_attempt_at IS DISTINCT FROM $3::timestamptz THEN NULL
+                ELSE c.callback_booked_at END`;
+
+/** `$4`, `$5` of {@link REPLAY_BOOKER_SET_SQL}. */
+function replayBookerValues(booker: CallbackBooker | undefined): [string | null, boolean] {
+  return [booker?.kind === 'mine' ? booker.userId : null, booker?.kind === 'on_behalf'];
+}
+
 export class AgencyContactRepository {
   /**
    * Claim up to `limit` dialable contacts for this tick.
@@ -955,6 +976,14 @@ export class AgencyContactRepository {
       charge: 'attempt' | 'our_fault' | 'none';
       lastOutcome: string | null;
       lastDisposition: string | null;
+      /**
+       * Agent station (BE-3, 0057): who booked the call-later this outcome leaves the contact
+       * `pending` for (`callbackBookerOf`, the call's agent). `mine` stamps the agent and now, on
+       * the claimed arm, when the contact lands `pending` and is not DNC-suppressed; anything else
+       * (none booked, a supervisor's on-behalf save, an outcome-less settlement) clears the booker
+       * on a placed call, as before.
+       */
+      callbackBooker?: CallbackBooker;
     },
     deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<{
@@ -996,10 +1025,18 @@ export class AgencyContactRepository {
                 -- A placed soft-phone call settles an inbound callback, as chargeAttempt does.
                 callback_source = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_source END,
                 callback_due_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_due_at END,
-                -- BE-3: and the call-later's booker, by the same rule (the next settled call).
-                callback_booked_by_user_id = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL
-                                                  ELSE c.callback_booked_by_user_id END,
-                callback_booked_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_booked_at END,
+                -- BE-3: the agent's own call-later on this call stamps its booker ($8); otherwise the
+                -- booker goes by the same rule (the next settled call). Both columns from one rule.
+                callback_booked_by_user_id = CASE
+                  WHEN cur.held AND $8::uuid IS NOT NULL AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+                       AND COALESCE($2::varchar, 'pending') = 'pending' THEN $8::uuid
+                  WHEN cur.held AND $3::varchar = 'attempt' THEN NULL
+                  ELSE c.callback_booked_by_user_id END,
+                callback_booked_at = CASE
+                  WHEN cur.held AND $8::uuid IS NOT NULL AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+                       AND COALESCE($2::varchar, 'pending') = 'pending' THEN now()
+                  WHEN cur.held AND $3::varchar = 'attempt' THEN NULL
+                  ELSE c.callback_booked_at END,
                 next_attempt_at = CASE
                                     WHEN c.suppressed_reason = 'dnc' OR NOT cur.held THEN c.next_attempt_at
                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at)
@@ -1027,6 +1064,7 @@ export class AgencyContactRepository {
         input.lastDisposition,
         d?.nextAttemptAt ?? null,
         d?.suppressedReason ?? null,
+        input.callbackBooker?.kind === 'mine' ? input.callbackBooker.userId : null,
       ],
     );
     const row = rows[0];
@@ -1050,20 +1088,22 @@ export class AgencyContactRepository {
    * no row qualifies.
    */
   async rescheduleFromManualReplay(
-    input: { manualCallId: string; dispositionCode: string; nextAttemptAt: Date },
+    input: { manualCallId: string; dispositionCode: string; nextAttemptAt: Date; callbackBooker?: CallbackBooker },
     deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<{ contactId: string; state: AgencyContactState; nextAttemptAt: Date | null } | null> {
     const db = deps.client ?? getPool();
     const { rows } = await db.query<{ id: string; state: AgencyContactState; next_attempt_at: Date | null }>(
       `UPDATE agency_contacts c
-          SET next_attempt_at = $3::timestamptz, updated_at = now()
+          SET next_attempt_at = $3::timestamptz,
+              ${REPLAY_BOOKER_SET_SQL},
+              updated_at = now()
          FROM agency_manual_calls m
         WHERE m.id = $1 AND m.contact_claimed
           AND c.id = m.contact_id AND c.campaign_id = m.campaign_id
           AND c.state = 'pending' AND c.last_disposition = $2::varchar
           AND c.suppressed_reason IS DISTINCT FROM 'dnc'
         RETURNING c.id, c.state, c.next_attempt_at`,
-      [input.manualCallId, input.dispositionCode, input.nextAttemptAt],
+      [input.manualCallId, input.dispositionCode, input.nextAttemptAt, ...replayBookerValues(input.callbackBooker)],
     );
     const row = rows[0];
     return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
@@ -1080,19 +1120,21 @@ export class AgencyContactRepository {
    * one. Nothing else changes. Null when no row qualifies.
    */
   async rescheduleFromInboundReplay(
-    input: { inboundCallId: string; dispositionCode: string; nextAttemptAt: Date },
+    input: { inboundCallId: string; dispositionCode: string; nextAttemptAt: Date; callbackBooker?: CallbackBooker },
     deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<{ contactId: string; state: AgencyContactState; nextAttemptAt: Date | null } | null> {
     const { rows } = await (deps.client ?? getPool()).query<{ id: string; state: AgencyContactState; next_attempt_at: Date | null }>(
       `UPDATE agency_contacts c
-          SET next_attempt_at = $3::timestamptz, updated_at = now()
+          SET next_attempt_at = $3::timestamptz,
+              ${REPLAY_BOOKER_SET_SQL},
+              updated_at = now()
          FROM agency_inbound_calls i
         WHERE i.id = $1::uuid AND i.bridged_at IS NOT NULL
           AND c.id = i.matched_contact_id AND c.campaign_id = i.matched_campaign_id AND c.tenant_id = i.tenant_id
           AND c.state = 'pending' AND c.last_disposition = $2::varchar
           AND c.suppressed_reason IS DISTINCT FROM 'dnc'
         RETURNING c.id, c.state, c.next_attempt_at`,
-      [input.inboundCallId, input.dispositionCode, input.nextAttemptAt],
+      [input.inboundCallId, input.dispositionCode, input.nextAttemptAt, ...replayBookerValues(input.callbackBooker)],
     );
     const row = rows[0];
     return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
@@ -1135,7 +1177,19 @@ export class AgencyContactRepository {
    *   bridge, or the contact is gone.
    */
   async settleFromInbound(
-    input: { inboundCallId: string; settlement: AgencyInboundContactSettlement; lastDisposition: string | null },
+    input: {
+      inboundCallId: string;
+      settlement: AgencyInboundContactSettlement;
+      lastDisposition: string | null;
+      /**
+       * Agent station (BE-3, 0057): `mine` when the agent who answered booked a call-later with
+       * this outcome (`callbackBookerOf`): stamped, with now, when the `callback` arm leaves the
+       * contact `pending`. Anything else (a supervisor's on-behalf save, no call-later, the lapse)
+       * clears the booker: the customer was reached. An inbound callback the customer's own missed
+       * call booked (`callback_source`) never has a booker; this arm clears it.
+       */
+      callbackBooker?: CallbackBooker;
+    },
     deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<{
     contactId: string;
@@ -1185,9 +1239,12 @@ export class AgencyContactRepository {
               callback_source = NULL,
               callback_due_at = NULL,
               callback_reopened = false,
-              -- BE-3: the customer was reached, so a call-later's booker goes too.
-              callback_booked_by_user_id = NULL,
-              callback_booked_at = NULL,
+              -- BE-3: the customer was reached, so a call-later's booker goes too, unless the agent
+              -- booked one on this call ($6), which is theirs.
+              callback_booked_by_user_id = CASE WHEN dec.open_arm AND $2::text = 'callback' AND dec.next_state = 'pending'
+                                                     AND $6::uuid IS NOT NULL THEN $6::uuid END,
+              callback_booked_at = CASE WHEN dec.open_arm AND $2::text = 'callback' AND dec.next_state = 'pending'
+                                             AND $6::uuid IS NOT NULL THEN now() END,
               updated_at = now()
          FROM dec
         WHERE c.id = dec.id
@@ -1201,6 +1258,7 @@ export class AgencyContactRepository {
         st.kind === 'callback' ? st.at : null,
         st.kind === 'suppressed' ? st.reason : null,
         input.lastDisposition,
+        input.callbackBooker?.kind === 'mine' ? input.callbackBooker.userId : null,
       ],
     );
     const row = rows[0];

@@ -374,15 +374,16 @@ class StationSocket {
   bool declareInbound = true;
 
   /// What this build takes beyond its session's own work, declared on every upgrade
-  /// (`caps=inbound,floor_assist`). Without `inbound` the server offers this station no inbound
-  /// calls and sends it neither `inbound_call` nor `customer_waiting`; it is left out while
+  /// (`caps=inbound,floor_assist,queue_pool`). Without `inbound` the server offers this station no
+  /// inbound calls and sends it neither `inbound_call` nor `customer_waiting`; it is left out while
   /// [declareInbound] is off. `floor_assist` (LF16) is always declared: without it the server
   /// sends no supervisor message or Need help answer, and refuses a supervisor's message to this
-  /// agent (`409 agent_not_live`).
+  /// agent (`409 agent_not_live`). `queue_pool` (agent station AS18) is always declared: without it
+  /// the server sends a pool campaign's queue state ("Nothing due now" and why) to no station.
   Uri _withQuery(Uri url) => url.replace(
         queryParameters: StationCapability.withQuery(
           <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
-          [if (declareInbound) StationCapability.inbound, StationCapability.floorAssist],
+          [if (declareInbound) StationCapability.inbound, StationCapability.floorAssist, StationCapability.queuePool],
         ),
       );
 

@@ -370,7 +370,8 @@ export function validateDailyTargetCalls(record: Record<string, unknown>): Campa
     && value >= AGENCY_DAILY_TARGET_CALLS_MIN && value <= AGENCY_DAILY_TARGET_CALLS_MAX) return [];
   return [{
     field: 'daily_target_calls',
-    message: `daily_target_calls must be a whole number from ${AGENCY_DAILY_TARGET_CALLS_MIN} to ${AGENCY_DAILY_TARGET_CALLS_MAX}, or null for no target.`,
+    // Words for a supervisor (AS15): no field name, Indian grouping. `field` says which setting.
+    message: `Daily target must be a whole number from ${AGENCY_DAILY_TARGET_CALLS_MIN.toLocaleString('en-IN')} to ${AGENCY_DAILY_TARGET_CALLS_MAX.toLocaleString('en-IN')}. Leave it empty for no target.`,
   }];
 }
 

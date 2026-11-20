@@ -266,7 +266,8 @@
     "source": "packages/contracts/src/agency/station.ts#AGENCY_STATION_CAPABILITIES",
     "values": [
       "inbound",
-      "floor_assist"
+      "floor_assist",
+      "queue_pool"
     ]
   },
   "stats_bucket_units": {

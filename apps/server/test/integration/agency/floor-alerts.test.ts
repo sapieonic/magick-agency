@@ -5,7 +5,7 @@ import { AGENCY_HELP_EXPIRY_MS } from '@magick-agency/contracts/agency';
 import { AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS } from '@magick-agency/contracts/api/agency/floor';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT } from '../setup/factories.js';
-import { insertAgencyCampaign, insertAgentSession, insertAgentSessionEvent, insertSoftphoneSession } from './agency-factories.js';
+import { insertAgencyCampaign, insertAgentSession, insertAgentSessionEvent, insertManualCall, insertSoftphoneSession } from './agency-factories.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -104,9 +104,27 @@ describe('the reads', () => {
     });
     expect(byId.get(goneReady.id)).toMatchObject({ state: 'offline', break_reason: null, left_state: 'available' });
     expect(byId.get(goneOnBreak.id)).toMatchObject({ state: 'offline', left_state: 'break' });
-    expect(byId.get(goneOnCall.id)).toMatchObject({ state: 'on_call', left_state: null });
+    expect(byId.get(goneOnCall.id)).toMatchObject({ state: 'on_call', left_state: null, soft_phone_call_live: false });
     // Nothing gone asked about: the breaks only.
     expect((await repo.breakOrGoneSessions(T, A, [])).map((r) => r.session_id)).toEqual([onBreak.id]);
+  });
+});
+
+describe('the reads: a soft-phone agent\'s live call (BE-11)', () => {
+  beforeEach(async () => { await truncateAll(); });
+
+  it('breakOrGoneSessions says whether a gone soft-phone session has a soft-phone call live; never for one not asked about', async () => {
+    const onCall = await insertSoftphoneSession({ agent_user_id: randomUUID() }) as unknown as Session;
+    const idle = await insertSoftphoneSession({ agent_user_id: randomUUID() }) as unknown as Session;
+    const notAsked = await insertSoftphoneSession({ agent_user_id: randomUUID() }) as unknown as Session;
+    await insertManualCall(onCall, { state: 'bridged', bridged_at: new Date(), dialed_at: new Date() });
+    await insertManualCall(idle, { state: 'ended', ended_at: new Date() });
+    await insertManualCall(notAsked, { state: 'bridged', bridged_at: new Date(), dialed_at: new Date() });
+    const rows = await repo.breakOrGoneSessions(T, A, [onCall.id, idle.id]);
+    const byId = new Map(rows.map((r) => [r.session_id, r]));
+    expect(byId.get(onCall.id)).toMatchObject({ state: 'break', break_reason: 'soft_phone', soft_phone_call_live: true });
+    expect(byId.get(idle.id)).toMatchObject({ soft_phone_call_live: false });
+    expect(byId.get(notAsked.id)).toMatchObject({ soft_phone_call_live: false });
   });
 });
 
@@ -138,6 +156,7 @@ describe('the internal handler, GET /floor/alerts and the floor\'s disconnected_
   });
 
   const headers = { 'x-mgkvc-tenant': T, 'x-mgkvc-account': A };
+  const HERE = { tenantId: T, accountId: A };
   const alerts = async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency/floor/alerts', headers });
     expect(res.statusCode, res.body).toBe(200);
@@ -155,10 +174,10 @@ describe('the internal handler, GET /floor/alerts and the floor\'s disconnected_
     await insertAgentSessionEvent(blip as never, 'offline', new Date(), { from_state: 'available' });
     const raised = (await raise(helped)).help!;
     const wentAt = Date.now() - 30_000;
-    detach.detached(dropped.id, wentAt);
-    detach.detached(blip.id, Date.now() - AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS + 5_000);
+    detach.detached(dropped.id, HERE, wentAt);
+    detach.detached(blip.id, HERE, Date.now() - AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS + 5_000);
     // A station gone elsewhere (another account's session): never on this account's alerts.
-    detach.detached(randomUUID(), wentAt);
+    detach.detached(randomUUID(), { tenantId: T, accountId: OTHER_ACCOUNT }, wentAt);
     connected = new Map([[dropped.id, false], [blip.id, false]]);
 
     const first = await alerts();
@@ -201,11 +220,39 @@ describe('the internal handler, GET /floor/alerts and the floor\'s disconnected_
   it('liveness unknown (Redis could not answer): no disconnected alert, the rest served', async () => {
     const dropped = await session({ state: 'on_call', agent_user_id: randomUUID() });
     await session({ state: 'break', break_reason: 'lunch', state_since: new Date(Date.now() - 31 * 60_000), agent_user_id: randomUUID() });
-    detach.detached(dropped.id, Date.now() - 60_000);
+    detach.detached(dropped.id, HERE, Date.now() - 60_000);
     connected = new Error('redis down');
     expect((await alerts()).alerts.map((a) => a['kind'])).toEqual(['break_over']);
     connected = new Map([[dropped.id, false]]);
     expect((await alerts()).alerts.map((a) => [a['kind'], a['state']])).toEqual([['break_over', undefined], ['disconnected', 'on_call']]);
+  });
+
+  it('a soft-phone agent whose station went during a live soft-phone call is a disconnected alert; idle on the soft phone, none', async () => {
+    const onCall = await insertSoftphoneSession({ agent_user_id: randomUUID() }) as unknown as Session;
+    const idle = await insertSoftphoneSession({ agent_user_id: randomUUID() }) as unknown as Session;
+    await insertManualCall(onCall, { state: 'bridged', bridged_at: new Date(), dialed_at: new Date() });
+    const wentAt = Date.now() - 30_000;
+    detach.detached(onCall.id, HERE, wentAt);
+    detach.detached(idle.id, HERE, wentAt);
+    connected = new Map([[onCall.id, false], [idle.id, false]]);
+    expect((await alerts()).alerts).toMatchObject([
+      { kind: 'disconnected', session_id: onCall.id, state: 'break', campaign_id: null, since: new Date(wentAt).toISOString() },
+    ]);
+  });
+
+  it('the account\'s gone sessions that have ended are forgotten by the read (the memory keeps only open ones); another account\'s are untouched', async () => {
+    const left = await session({ state: 'offline', left_at: new Date(), agent_user_id: randomUUID() });
+    const open = await session({ state: 'offline', agent_user_id: randomUUID() });
+    await insertAgentSessionEvent(open as never, 'offline', new Date(Date.now() - 60_000), { from_state: 'available' });
+    const elsewhere = randomUUID();
+    detach.detached(left.id, HERE, Date.now() - 60_000);
+    detach.detached(open.id, HERE, Date.now() - 60_000);
+    detach.detached(elsewhere, { tenantId: T, accountId: OTHER_ACCOUNT }, Date.now() - 60_000);
+    connected = new Map([[open.id, false], [left.id, false]]);
+    expect((await alerts()).alerts.map((a) => a['session_id'])).toEqual([open.id]);
+    // FALSIFIED: without the forget, the left session stays in memory and is sent to the SQL on every poll.
+    expect(detach.goneSessionIds(HERE)).toEqual([open.id]);
+    expect(detach.goneSessionIds({ tenantId: T, accountId: OTHER_ACCOUNT })).toEqual([elsewhere]);
   });
 
   it('refuses a request with no account (400), as the floor does', async () => {

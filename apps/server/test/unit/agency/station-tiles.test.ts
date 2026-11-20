@@ -27,9 +27,9 @@ describe('tile icons, the write (BE-13)', () => {
     // FALSIFIED: with the `isAgencyTileIcon` check removed, these return no issues and red.
     for (const icon of ['skull', null, 7, 'Rupee']) {
       expect(tileIconIssues({ disposition_catalog: [{ code: 'a', label: 'A' }, { code: 'b', label: 'B', icon }] }), String(icon))
-        .toEqual([{ field: 'disposition_catalog[1].icon', message: expect.stringContaining('rupee, clock') }]);
+        .toEqual([{ field: 'disposition_catalog[1].icon', message: 'Choose one of the tile pictures, or no picture.' }]);
       expect(tileIconIssues({ break_reasons: [{ code: 'tea', label: 'Tea', icon }] }), String(icon))
-        .toEqual([{ field: 'break_reasons[0].icon', message: expect.stringMatching(/Leave it out for none\.$/) }]);
+        .toEqual([{ field: 'break_reasons[0].icon', message: 'Choose one of the tile pictures, or no picture.' }]);
     }
   });
 
@@ -48,7 +48,7 @@ describe('phone_display, the write (AS9)', () => {
     expect(phoneDisplayIssues({ phone_display: 'full' })).toEqual([]);
     expect(phoneDisplayIssues({ phone_display: 'masked' })).toEqual([]);
     for (const v of [null, 'hidden', 'Masked', 0]) {
-      expect(phoneDisplayIssues({ phone_display: v }), String(v)).toEqual([{ field: 'phone_display', message: 'phone_display must be one of: full, masked.' }]);
+      expect(phoneDisplayIssues({ phone_display: v }), String(v)).toEqual([{ field: 'phone_display', message: 'Choose how agents see the customer’s number: in full, or with the middle digits hidden.' }]);
     }
     expect(stationTileIssues({ phone_display: 'x', disposition_catalog: [{ code: 'a', label: 'A', icon: 'x' }] }).map((i) => i.field))
       .toEqual(['disposition_catalog[0].icon', 'phone_display']);

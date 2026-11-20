@@ -145,8 +145,9 @@ describe('the answered inbound call`s routes', () => {
     expect(saved.statusCode, saved.body).toBe(200);
     expect(saved.json()).toMatchObject({ call: { disposition_code: 'callback', settled_at: expect.any(String) }, contact_state: 'pending', callback_requested_at: at });
     // An exhausted contact reopened by the callback (IQ9), never charged.
-    const { rows } = await q('SELECT state, attempt_count FROM agency_contacts WHERE id = $1', [c.contactId]);
-    expect(rows[0]).toMatchObject({ state: 'pending', attempt_count: 3 });
+    const { rows } = await q('SELECT state, attempt_count, callback_booked_by_user_id FROM agency_contacts WHERE id = $1', [c.contactId]);
+    // The call-later the agent booked is theirs (agent station BE-3): My day lists it.
+    expect(rows[0]).toMatchObject({ state: 'pending', attempt_count: 3, callback_booked_by_user_id: agent(0).id });
     // The same code again: a replay; another code: refused.
     expect((await call('POST', `/calls/${c.id}/disposition`, agent(0), { code: 'callback', callback_at: at })).statusCode).toBe(200);
     expect((await call('POST', `/calls/${c.id}/disposition`, agent(0), { code: 'interested' })).json()).toMatchObject({ code: 'inbound_outcome_already_saved' });
