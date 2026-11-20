@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   hangupAttempt: vi.fn(),
   useTenant: vi.fn(),
   getMyStats: vi.fn(),
+  getMyDay: vi.fn(),
 }));
 vi.mock('../../api/agency', () => ({
   createAgencySession: mocks.createAgencySession,
@@ -27,6 +28,7 @@ vi.mock('../../api/agency', () => ({
 vi.mock('../../api/agencyStats', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyStats')>()),
   getMyStats: mocks.getMyStats,
+  getMyDay: mocks.getMyDay,
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
@@ -37,6 +39,9 @@ import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { STATION_COPY } from '../../utils/agency/stationCopy';
 import { FakeSocket, latestSocket as latest } from '../helpers/fakeSocket';
 import { stubStationMicrophone } from '../helpers/stationDevices';
+import { agentReadsFixture } from '../helpers/agentReads';
+import { TileIcon } from '@magick-agency/web-ui/components/TileIcon';
+import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -96,6 +101,8 @@ beforeEach(() => {
   mocks.setAgentBreak.mockResolvedValue({ session_id: 'sess-1', state: 'wrapup', pending_state: 'break', break_reason: 'tea' });
   mocks.submitDisposition.mockResolvedValue({ attempt_id: 'att-1', contact_id: 'c-1', disposition_code: 'ptp', contact_state: 'completed', next_attempt_at: null, agent_state: 'available' });
   mocks.getMyStats.mockResolvedValue({ totals: { attempts: 61, connected: 42, talk_seconds: 6720, successes: 12 }, buckets: [] });
+  // A server without my-day (404): the station falls back to my-stats, as phase 0 read.
+  mocks.getMyDay.mockRejectedValue(new ApiError(404, { error: 'Not Found' }));
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket);
 });
 
@@ -185,16 +192,62 @@ describe('01 Start of day', () => {
     plain.remove();
   });
 
-  it('shows My day from today’s my-stats on Ready: calls and talk time, and nothing it does not have', async () => {
+  it('falls back to today’s my-stats when my-day fails: calls, talk time and numbers dialled, no target', async () => {
     await mounted();
     await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
     const day = await screen.findByTestId('my-day');
     expect(within(day).getByTestId('my-day-calls').textContent).toContain('42');
     expect(within(day).getByTestId('my-day-talk').textContent).toContain('1h 52m');
-    // No target and no will-pay today (BE-1, BE-2): not shown at all.
+    // No will pay from my-stats: the third tile is Numbers dialled, as on the app.
+    expect(within(day).queryByTestId('my-day-will-pay')).toBeNull();
+    expect(within(day).getByTestId('my-day-dialled').textContent).toBe('Numbers dialled61');
+    expect(day.textContent).not.toContain('/');
+    expect(mocks.getMyDay).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+    expect(mocks.getMyStats).toHaveBeenCalledWith(expect.objectContaining({ campaign_id: 'camp-1', bucket: 'day' }), 'tenant-1', 'account-1');
+  });
+});
+
+describe('My day from my-day (BE-1 to BE-3)', () => {
+  it('shows calls against the target, talk time and Will pay, and the call-later list with names, never numbers', async () => {
+    mocks.getMyDay.mockResolvedValue(agentReadsFixture().my_day);
+    await mounted();
+    const target = await screen.findByTestId('start-target');
+    expect(target.textContent).toContain('120 calls');
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    const day = await screen.findByTestId('my-day');
+    expect(within(day).getByTestId('my-day-calls').textContent).toContain('42 / 120');
+    expect(within(day).getByTestId('my-day-will-pay').textContent).toBe('Will pay12');
+    expect(within(day).queryByTestId('my-day-dialled')).toBeNull();
+    const rows = within(screen.getByTestId('call-later-list')).getAllByTestId('call-later-row');
+    expect(rows.map((r) => r.querySelector('span')?.textContent)).toEqual(['Sunita Patil', 'Customer', 'Imran Shaikh']);
+    // The overdue one says so.
+    expect(rows[0]!.textContent).toContain('Late');
+    expect(screen.getByTestId('call-later-list').textContent).toContain('These calls will come to you on time.');
+    expect(screen.getByTestId('station').textContent).not.toMatch(/\+?91\d{10}/);
+    expect(mocks.getMyStats).not.toHaveBeenCalled();
+  });
+
+  it('on a pool campaign with no target and no promises: Numbers dialled, no call-later list', async () => {
+    mocks.getMyDay.mockResolvedValue({ ...agentReadsFixture().my_day_pool_no_target, calls: 3, dialed: 17, talk_seconds: 400 });
+    await mounted();
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    const day = await screen.findByTestId('my-day');
+    expect(within(day).getByTestId('my-day-dialled').textContent).toBe('Numbers dialled17');
     expect(within(day).queryByTestId('my-day-will-pay')).toBeNull();
     expect(day.textContent).not.toContain('/');
-    expect(mocks.getMyStats).toHaveBeenCalledWith(expect.objectContaining({ campaign_id: 'camp-1', bucket: 'day' }), 'tenant-1', 'account-1');
+    expect(screen.queryByTestId('call-later-list')).toBeNull();
+    expect(screen.queryByTestId('start-target')).toBeNull();
+  });
+
+  it('Finish work says how many call-laters are left and where they go', async () => {
+    mocks.getMyDay.mockResolvedValue(agentReadsFixture().my_day);
+    await mounted();
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    await screen.findByTestId('my-day');
+    fireEvent.click(screen.getByRole('button', { name: STATION_COPY.more }));
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    const at = new Date('2026-11-20T09:30:00.000Z').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    expect(screen.getByTestId('finish-left').textContent).toBe(`2 call-laters are left for today (first at ${at}). They wait for you.`);
   });
 });
 
@@ -370,5 +423,181 @@ describe('04 On call', () => {
       fireEvent.keyDown(document.body, { key: 'b' });
     });
     expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
+  });
+});
+
+describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8, AS9)', () => {
+  const TYPED: AgencyReservedAttempt = {
+    ...ATTEMPT,
+    // Column names that would guess otherwise: the typed facts win.
+    context: { 'Customer Name': 'Sunita Patil', City: 'Pune', 'Amount Due': 'Rs 12,500/-', 'Due Date': '20/11/2026', EMI: '4500' },
+    facts: {
+      name: 'Sunita Patil',
+      place: 'Pune',
+      tiles: [
+        { column: 'EMI', type: 'text', raw: '4500', value: null },
+        { column: 'Amount Due', role: 'amount_due', type: 'money', raw: 'Rs 12,500/-', value: '12500.00' },
+        { column: 'Due Date', role: 'due_date', type: 'date', raw: '20/11/2026', value: '2026-11-20' },
+      ],
+    },
+    callback: { due_at: '2026-11-20T15:00:00.000Z', booked_by_me: true, source: 'outcome' },
+  };
+  const SCRIPTED: AgencySessionBootstrap = {
+    ...BOOTSTRAP,
+    phone_display: 'masked',
+    script: {
+      opening: 'Namaste {name}, I am {agent_name} calling from {campaign_name}.',
+      steps: [
+        { text: 'Tell them the amount due: {amount_due}, due on {due_date}.' },
+        { text: 'Ask when they can pay.' },
+        { text: 'If they agree, confirm the date and the amount. {mood}' },
+      ],
+    },
+  };
+
+  async function coming(attempt: AgencyReservedAttempt = TYPED) {
+    await frames(
+      { event: 'reserved', attempt },
+      { event: 'agent_state', state: 'reserved', since: '2026-11-20T10:00:00.000Z' },
+    );
+  }
+
+  it('03: the card shows the typed facts, the call-later tag and the masked number; First, say this is filled', async () => {
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    const card = screen.getByTestId('customer-card');
+    expect(within(card).getByTestId('customer-name').textContent).toBe('Sunita Patil');
+    expect(within(card).getByTestId('call-later-tag').textContent).toBe('Call later · You said you will call at 3:00 PM');
+    expect(within(card).getByTestId('customer-phone').textContent).toBe('98••• ••321');
+    expect(screen.getByTestId('station').textContent).not.toContain('+919876543321');
+    expect(within(card).getAllByTestId('customer-fact').map((f) => f.textContent)).toEqual([
+      'Amount Due₹12,500',
+      'Due Date20 Nov',
+      'Last call12 Nov',
+    ]);
+    expect(screen.getByTestId('script-opening-line').textContent).toBe('“Namaste Sunita Patil, I am Sunita calling from EMI collections.”');
+  });
+
+  it('04: What to say fills each step, counts what is done, marks steps on a click, and starts afresh with the next call', async () => {
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    const steps = () => within(screen.getByTestId('script-steps')).getAllByTestId('script-step');
+    expect(steps().map((s) => s.textContent)).toEqual([
+      '1Tell them the amount due: ₹12,500, due on 20 Nov.',
+      '2Ask when they can pay.',
+      // An unknown {word} stays as written.
+      '3If they agree, confirm the date and the amount. {mood}',
+    ]);
+    expect(screen.getByTestId('script-progress').textContent).toBe('0 of 3 done');
+    expect(steps()[0]!.getAttribute('data-state')).toBe('current');
+    fireEvent.click(within(steps()[1]!).getByRole('button', { name: /Ask when/ }));
+    expect(screen.getByTestId('script-progress').textContent).toBe('2 of 3 done');
+    expect(steps().map((s) => s.getAttribute('data-state'))).toEqual(['done', 'done', 'current']);
+    fireEvent.click(within(steps()[2]!).getByRole('button', { name: /confirm/ }));
+    expect(screen.getByTestId('script-all-done').textContent).toBe('All steps done');
+    // The note is still on the call screen beside the steps.
+    expect(screen.getByTestId('note-card')).toBeTruthy();
+
+    // The next call starts at the first step.
+    await frames(
+      { event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: false, message: 'x' },
+      { event: 'agent_state', state: 'available', since: '2026-11-20T10:03:00.000Z' },
+    );
+    await coming({ ...TYPED, attempt_id: 'att-2' });
+    await frames({ event: 'bridged', attempt_id: 'att-2', bridged_at: '2026-11-20T10:04:04.000Z' });
+    expect(screen.getByTestId('script-progress').textContent).toBe('0 of 3 done');
+  });
+
+  it('each line has a speaker that reads it aloud', async () => {
+    const speak = vi.fn();
+    class Utterance {
+      voice: unknown = null;
+      lang = '';
+      rate = 1;
+      constructor(public text: string) {}
+    }
+    vi.stubGlobal('SpeechSynthesisUtterance', Utterance);
+    vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn(), getVoices: () => [{ lang: 'en-IN', name: 'Heera' }] });
+    mocks.createAgencySession.mockResolvedValue(SCRIPTED);
+    await mounted();
+    await coming();
+    fireEvent.click(screen.getByTestId('script-opening-say'));
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    fireEvent.click(screen.getByRole('button', { name: 'Read step 2 aloud' }));
+    expect(speak.mock.calls.map((c) => (c[0] as Utterance).text)).toEqual([
+      'Namaste Sunita Patil, I am Sunita calling from EMI collections.',
+      'Ask when they can pay.',
+    ]);
+  });
+
+  it('without a script, 03 shows the last calls and 04 the last calls and the note (04c)', async () => {
+    await mounted();
+    await coming();
+    expect(screen.queryByTestId('script-opening')).toBeNull();
+    expect(screen.getByTestId('last-calls')).toBeTruthy();
+    await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
+    expect(screen.queryByTestId('script-steps')).toBeNull();
+    expect(screen.getByTestId('last-calls')).toBeTruthy();
+    expect(screen.getByTestId('note-card')).toBeTruthy();
+    // Full number by default (AS9).
+    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+919876543321');
+  });
+
+  it('Will pay offers Full and Half of the typed amount due', async () => {
+    await mounted();
+    await coming();
+    await frames(
+      { event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' },
+      { event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: true, message: 'x' },
+      { event: 'agent_state', state: 'wrapup', since: '2026-11-20T10:02:00.000Z' },
+    );
+    act(() => {
+      fireEvent.keyDown(document.body, { key: '1' });
+    });
+    const row = screen.getByTestId('promise-row');
+    expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Half · ₹6,250' })).toBeTruthy();
+  });
+});
+
+describe('the pictures a supervisor picked (BE-13), drawn as campaign Settings draws them', () => {
+  const svgOf = (icon: string) => {
+    const { container, unmount } = render(<TileIcon icon={icon} size={32} />);
+    const html = container.querySelector('svg')?.getAttribute('class');
+    unmount();
+    return html;
+  };
+
+  it('an outcome’s and a break’s icon are the shared picture, not the station’s guess', async () => {
+    mocks.createAgencySession.mockResolvedValue({
+      ...BOOTSTRAP,
+      disposition_catalog: [
+        // The flags would guess ₹ and the label a thumbs down: the pick wins.
+        { code: 'ptp', label: 'Will pay', requires_promise: true, icon: 'calendar' },
+        { code: 'refused', label: 'Refused', icon: 'voicemail' },
+        { code: 'odd', label: 'Odd', icon: 'not-a-picture' as never },
+      ],
+      break_reasons: [
+        { code: 'tea', label: 'Tea', icon: 'washroom' },
+        { code: 'class', label: 'Training' },
+      ],
+    });
+    await whatHappened();
+    const picture = (testId: string) => screen.getByTestId(testId).querySelector('[data-tile-icon]');
+    expect(picture('outcome-ptp')?.getAttribute('data-tile-icon')).toBe('calendar');
+    expect(picture('outcome-ptp')?.getAttribute('class')).toBe(svgOf('calendar'));
+    expect(picture('outcome-refused')?.getAttribute('data-tile-icon')).toBe('voicemail');
+    // A stray stored value: the guess (a dot).
+    expect(picture('outcome-odd')?.getAttribute('data-tile-icon')).toBe('dot');
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'b' });
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Which break?' });
+    const pictures = [...dialog.querySelectorAll('[data-tile-icon]')].map((n) => n.getAttribute('data-tile-icon'));
+    expect(pictures).toEqual(['washroom', 'training']);
+    expect(dialog.querySelector('[data-tile-icon="training"]')?.getAttribute('class')).toBe(svgOf('training'));
   });
 });

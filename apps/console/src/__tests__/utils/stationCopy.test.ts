@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+  DOING_WORDS,
+  INBOUND_NOTICE_COPY,
+  LAST_OUTCOME_LOST,
+  dncDoneLine,
+  dncFailedLine,
+  hangupFailedLine,
+  micProblemLine,
+  presenceRefusedLine,
+  redialRefusedLine,
+  saveRefusedLine,
+  savedLine,
   STATION_BLOCK_COPY,
   STATION_COPY,
   helpAnsweredLine,
@@ -47,9 +58,34 @@ function everyString(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/** Every code the server's agency routes can refuse with (contracts `errors.ts`), and none. */
+const SERVER_CODES: (string | null)[] = [
+  'missing_actor', 'not_your_attempt', 'unknown_disposition_code', 'invalid_dnc_scope', 'note_required', 'datetime_required',
+  'invalid_callback_at', 'attempt_not_dispositionable', 'already_dispositioned', 'unknown_break_reason', 'break_already_applied',
+  'session_ended', 'session_on_other_campaign', 'agent_on_live_call', 'no_station', 'attempt_not_live', 'campaign_not_running',
+  'feature_disabled', 'not_staffed', 'state_changing', 'redial_not_allowed', 'redial_limit_reached', 'disposition_already_submitted',
+  'redial_blocked_dnc', 'redial_blocked_calling_hours', 'redial_blocked', 'inbound_call_live', 'manual_call_live', 'dial_failed',
+  'unknown_attempt', null,
+];
+
 const ALL = [
   ...everyString(STATION_COPY),
   ...everyString(STATION_BLOCK_COPY),
+  ...everyString(DOING_WORDS),
+  ...everyString(INBOUND_NOTICE_COPY),
+  LAST_OUTCOME_LOST,
+  dncDoneLine(true),
+  dncDoneLine(false),
+  ...SERVER_CODES.flatMap((code) => [
+    presenceRefusedLine(code),
+    hangupFailedLine(code),
+    dncFailedLine(code),
+    redialRefusedLine(code, 409),
+    redialRefusedLine(code, null),
+    saveRefusedLine(code),
+  ]),
+  ...['permission_denied', 'no_device', 'device_busy', 'device_lost', 'audio_blocked', 'unsupported', 'x'].flatMap((k) => Object.values(micProblemLine(k)).filter((v): v is string => typeof v === 'string')),
+  savedLine({ label: 'Call later', nextAttemptAt: '2026-11-20T09:30:00.000Z', callbackRequestedAt: '2026-11-20T03:30:00.000Z', dncRecorded: false }),
   ...['completed', 'no_answer', 'busy', 'agent_disconnected', 'remote_hangup', 'x'].map((r) => releaseBanner(r) ?? ''),
   ...['remote_hangup', 'agent_disconnected', 'no_answer', 'x'].map(missedReleaseLine),
   helpAnsweredLine('Priya', 'listen'),

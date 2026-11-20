@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { INBOUND_NOTICE_COPY } from '../utils/agency/stationCopy';
 import {
   dispositionInboundCall,
   getInboundCall,
@@ -73,12 +74,12 @@ export const INBOUND_DISPOSITION_RULE_COPY = {
 } as const;
 
 export const INBOUND_MUTED_AT_CONNECT_COPY = 'You are muted. The caller can’t hear you — press M to unmute.';
-export const INBOUND_HUNG_UP_EARLY_COPY = 'The caller hung up before you were connected.';
-export const INBOUND_REQUEUED_COPY = 'The call went back to the queue while your station was away.';
+export const INBOUND_HUNG_UP_EARLY_COPY = INBOUND_NOTICE_COPY.hungUpEarly;
+export const INBOUND_REQUEUED_COPY = INBOUND_NOTICE_COPY.requeued;
 /** The outcome window ended before an outcome was saved: the call was closed without one (`no_disposition`). */
-export const INBOUND_OUTCOME_WINDOW_ENDED_COPY = 'The time to save this call’s outcome ran out, so it was closed without one.';
+export const INBOUND_OUTCOME_WINDOW_ENDED_COPY = INBOUND_NOTICE_COPY.windowEnded;
 /** A supervisor closed the call before its window ended ("Close and make available"). */
-export const INBOUND_CLOSED_BY_SUPERVISOR_COPY = 'A supervisor closed this call without an outcome.';
+export const INBOUND_CLOSED_BY_SUPERVISOR_COPY = INBOUND_NOTICE_COPY.closedBySupervisor;
 
 /**
  * Why an answered call left the station with no outcome saved (settled, bridged, no code): its

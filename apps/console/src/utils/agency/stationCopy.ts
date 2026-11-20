@@ -3,8 +3,8 @@ import type {
   AgencyQueueIdleReason,
   AgencyReleaseReason,
 } from '@magick-agency/contracts/agency';
-import type { AgencyAttemptOutcome } from '../../types/agency';
-import { clockTime, runningClock } from './stationFormat';
+import type { AgencyAgentState, AgencyAttemptOutcome } from '../../types/agency';
+import { clockTime, runningClock, weekdayDayMonth } from './stationFormat';
 
 /**
  * The agent station's own words (AS15, spec §3 and §6.6). Simple Indian English, short sentences,
@@ -93,6 +93,9 @@ export const STATION_COPY = {
   callsToday: 'Calls today',
   talkTime: 'Talk time',
   willPay: 'Will pay',
+  numbersDialled: 'Numbers dialled',
+  customer: 'Customer',
+  late: 'Late',
   myCallLaterList: 'My call-later list',
   callLaterComesToMe: 'These calls will come to you on time.',
   callLaterPool: 'We will call them on time. Another agent may get the call.',
@@ -116,6 +119,13 @@ export const STATION_COPY = {
   // 03 Call coming
   comingTitle: 'Call coming',
   comingSubtitle: 'Get ready. Say Namaste first.',
+  customerCallingTitle: 'Customer is calling',
+  softphoneReadyTitle: 'Dial a number',
+  softphoneReadySubtitle: 'Type the number and press Call.',
+  softphoneCallingTitle: 'Calling',
+  softphoneCallingSubtitle: 'Wait for the customer to pick up.',
+  backToCalls: 'Back to my calls',
+  backingToCalls: 'Going back…',
   inboundTitle: 'Customer is calling',
   connecting: 'Connecting',
   connectsByItself: 'The call connects by itself.',
@@ -160,6 +170,14 @@ export const STATION_COPY = {
   heldBySupervisor: 'Your supervisor is holding this screen. Choose one when you are ready.',
   callWasCut: 'The call was cut. Choose what happened, or call again.',
   readAloud: (label: string) => `Read “${label}” aloud`,
+  readLineAloud: 'Read this aloud',
+  readStepAloud: (n: number) => `Read step ${n} aloud`,
+
+  // 03 / 04 the script (BE-8)
+  firstSayThis: 'First, say this',
+  whatToSay: 'What to say',
+  stepsDone: (done: number, of: number) => `${done} of ${of} done`,
+  allStepsDone: 'All steps done',
   moreOutcomes: 'More',
   moreOutcomesHint: (n: number) => `${n} more`,
   dontCallAgain: 'Don’t call again',
@@ -236,12 +254,43 @@ export const STATION_COPY = {
   tryAgainNow: 'Try again now',
   internetOnHappened: 'Internet problem. We are trying again. Your answer is kept.',
 
+  // Before work opens: it did not open, it is open elsewhere, or the soft phone holds it
+  joinFailedTitle: 'Your work did not open',
+  joinFailedSubtitle: 'See why below.',
+  goBack: 'Go back',
+  backHome: 'Back to your home screen',
+  otherWorkTitle: 'You are working somewhere else',
+  otherWorkSubtitle: 'You can work on only one list at a time.',
+  otherWorkDoing: (name: string, doing: string) => `You are on ${name}, ${doing}.`,
+  otherWorkMidCall: (name: string) => `Finish the call on ${name} first, then come back here.`,
+  otherWorkLeaveFirst: (name: string) => `Leave ${name} first, then come back here.`,
+  otherWorkSwitch: (name: string) => `Leave ${name} and work here`,
+  otherWorkOpen: (name: string) => `Open ${name}`,
+  otherWorkSwitchTitle: (name: string) => `Leave ${name}?`,
+  otherWorkSwitchBody: (name: string) => `We will close your work on ${name} and start it here.`,
+  otherWorkSwitchYes: 'Leave and work here',
+  otherWorkSwitching: 'Leaving…',
+  otherWorkSwitchNo: 'No, stay',
+  softphoneJoinTitle: 'You are on the soft phone',
+  softphoneJoinSubtitle: 'You can use one at a time. Close the soft phone to start work here.',
+  softphoneJoinBody: 'Your soft phone is still open.',
+  softphoneCloseAndStart: 'Close the soft phone and start here',
+  softphoneClosing: 'Closing the soft phone…',
+  softphoneCallOpen: 'Your soft phone has a call that is not finished. Hang up and save it there, then come back.',
+  openSoftphone: 'Open the soft phone',
+
   // 11 Finish work
   finishTitle: 'Finish work for today?',
   finishSubtitle: 'No more calls will come to you.',
   keepWorking: 'No, keep working',
   yesFinish: 'Yes, finish work',
   finishing: 'Finishing…',
+  leftForToday: (n: number, at: string, goesTo: 'pool' | 'waits_for_me' | null) => {
+    const head = n === 1 ? `1 call later is left for today (${at}).` : `${n} call-laters are left for today (first at ${at}).`;
+    if (goesTo === 'pool') return `${head} Another agent will make ${n === 1 ? 'it' : 'them'}.`;
+    if (goesTo === 'waits_for_me') return `${head} ${n === 1 ? 'It waits' : 'They wait'} for you.`;
+    return head;
+  },
   finishFailed: 'Your work is still open. Try again.',
 
   // 12 Open on another device
@@ -260,6 +309,16 @@ export const STATION_COPY = {
 } as const;
 
 /** 02c's subtitle, by why calls stopped (spec §3 02c; all four reasons exist today). */
+/** What the agent is doing on another list, in the station's words (the join screens). */
+export const DOING_WORDS: Record<AgencyAgentState, string> = {
+  offline: 'not started yet',
+  available: 'ready for calls',
+  reserved: 'with a call coming',
+  on_call: 'on a call',
+  wrapup: 'choosing what happened',
+  break: 'on a break',
+};
+
 export function noCallsSubtitle(input: {
   campaignReason: AgencyCampaignChangeReason | null;
   dialing: boolean;
@@ -378,3 +437,159 @@ export function missedReleaseLine(reason: string): string {
       return 'While your internet was down, the last call ended.';
   }
 }
+
+/* ───────────────────────────── AS15: the station's own words for what the server refused ───────────────────────────── */
+/*
+  Each line below is keyed on the server's code (then its status), never its sentence: the server
+  writes for logs and supervisors, the station for an agent on a call (AS15, spec §6.6). A code the
+  station does not know gets a plain "it did not go through" with what to do next.
+*/
+
+/** Start calls (or Back to calls) refused: `POST /sessions/:id/available`. */
+export function presenceRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'attempt_not_dispositionable':
+      return 'Save what happened on your last call first.';
+    case 'inbound_call_live':
+      return 'Finish the customer’s call first.';
+    case 'manual_call_live':
+      return 'Finish your call on the soft phone and save it first.';
+    case 'session_ended':
+    case 'no_station':
+      return 'Your work was closed. Open today’s work again.';
+    case 'campaign_not_running':
+      return 'Calls are stopped for this work right now.';
+    case 'state_changing':
+      return 'One moment. Try again.';
+    case 'dial_failed':
+      return 'Calls could not start just now. Try again in a moment.';
+    default:
+      return 'That did not go through. Try again in a moment.';
+  }
+}
+
+/** End call refused or failed: `POST /attempts/:id/hangup`. The call is still on. */
+export function hangupFailedLine(code: string | null): string {
+  switch (code) {
+    case 'not_your_attempt':
+      return 'This call has moved on. You cannot end it from here.';
+    case 'attempt_not_live':
+      return 'We cannot end this call from here. Ask the customer to hang up.';
+    default:
+      return 'The call did not end. You are still on the call. Try again.';
+  }
+}
+
+/** Stop calling this number: done. `recorded` false: the number could not go on the list. */
+export function dncDoneLine(recorded: boolean): string {
+  return recorded
+    ? 'Done. We will not call this number again.'
+    : 'We will not call this customer again from this list. Ask your supervisor to check the number.';
+}
+
+/** Stop calling this number: refused or failed. Nothing was changed. */
+export function dncFailedLine(code: string | null): string {
+  switch (code) {
+    case 'not_your_attempt':
+      return 'This call has moved on. Nothing was changed.';
+    case 'unknown_attempt':
+      return 'That call has already ended. Nothing was changed.';
+    default:
+      return 'That did not go through. Nothing was changed. Try again.';
+  }
+}
+
+/** Call again refused (wrap-up redial). `status` null or 5xx: no answer, so it may still ring. */
+export function redialRefusedLine(code: string | null, status: number | null): string {
+  switch (code) {
+    case 'redial_not_allowed':
+      return 'You cannot call this number again now. Choose what happened.';
+    case 'redial_limit_reached':
+      return 'No more tries left for this number. Choose what happened.';
+    case 'disposition_already_submitted':
+      return 'What happened is already saved for this call.';
+    case 'redial_blocked_dnc':
+      return 'We must not call this number. Choose what happened.';
+    case 'redial_blocked_calling_hours':
+      return 'It is too late or too early to call this customer. Choose what happened.';
+    case 'redial_blocked':
+      return 'You cannot call this number again now. Choose what happened.';
+    default:
+      return status === null || status >= 500
+        ? 'No answer yet. The call may still start. If it does not, try again or choose what happened.'
+        : 'That did not go through. Try again, or choose what happened.';
+  }
+}
+
+/** The microphone banner, by what went wrong (`AudioCaptureFailureKind`). */
+export function micProblemLine(kind: string): { headline: string; remedy: string; action: string | null } {
+  switch (kind) {
+    case 'permission_denied':
+      return { headline: 'Your microphone is blocked. The customer cannot hear you.', remedy: 'Allow the microphone for this site, then reload the page.', action: null };
+    case 'no_device':
+      return { headline: 'No microphone found. The customer cannot hear you.', remedy: 'Plug in your headset, then reload the page.', action: null };
+    case 'device_busy':
+      return { headline: 'Another app is using your microphone. The customer cannot hear you.', remedy: 'Close the other app, then reload the page.', action: null };
+    case 'device_lost':
+      return { headline: 'Your headset came off. The customer cannot hear you.', remedy: 'Plug your headset in again, then reload the page.', action: null };
+    case 'audio_blocked':
+      return { headline: 'Sound is off. You cannot hear the customer, and they cannot hear you.', remedy: 'Press Turn sound on to join the call again.', action: 'Turn sound on' };
+    case 'unsupported':
+      return { headline: 'This browser cannot use your microphone here.', remedy: 'Open this page in Chrome, Edge or Firefox.', action: null };
+    default:
+      return { headline: 'Your microphone did not open. The customer cannot hear you.', remedy: 'Reload the page. If it happens again, tell your supervisor.', action: null };
+  }
+}
+
+/** Said when the outcome is saved: what was saved, and when we call again (the server's time). */
+export function savedLine(input: { label: string; nextAttemptAt: string | null; callbackRequestedAt?: string | null; dncRecorded?: boolean }): string {
+  let line = `Saved: ${input.label}.`;
+  const when = input.nextAttemptAt === null ? Number.NaN : Date.parse(input.nextAttemptAt);
+  if (input.nextAttemptAt !== null) {
+    if (Number.isNaN(when)) line += ' We will call again as booked.';
+    else {
+      const at = `${weekdayDayMonth(when)}, ${clockTime(when)}`;
+      const asked = input.callbackRequestedAt != null ? Date.parse(input.callbackRequestedAt) : Number.NaN;
+      line += !Number.isNaN(asked) && asked !== when
+        ? ` We will call again on ${at}, the first time we are allowed to call.`
+        : ` We will call again on ${at}.`;
+    }
+  }
+  if (input.dncRecorded === false) line += ' Ask your supervisor to check the number.';
+  return line;
+}
+
+/** Save refused, by code. The answer the agent chose stays on screen. */
+export function saveRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'unknown_disposition_code':
+      return 'The list of outcomes changed. Choose again.';
+    case 'note_required':
+      return 'Write a note for this one.';
+    case 'datetime_required':
+      return 'Choose when to call again.';
+    case 'invalid_callback_at':
+      return 'That time has passed. Choose when to call again.';
+    case 'attempt_not_dispositionable':
+      return 'This call was closed, so it cannot be saved now.';
+    case 'already_dispositioned':
+      return 'What happened is already saved for this call.';
+    case 'not_your_attempt':
+      return 'This call has moved on. It is not yours to save.';
+    case 'session_ended':
+      return 'Your work was closed. Open today’s work again.';
+    default:
+      return 'Not saved. Try again.';
+  }
+}
+
+/** The last call's outcome was not saved (its answer came back for a call no longer on screen). */
+export const LAST_OUTCOME_LOST = 'What happened on your last call was not saved.';
+
+/** Why an inbound call left the screen without the agent's outcome. */
+export const INBOUND_NOTICE_COPY = {
+  hungUpEarly: 'The customer hung up before you were connected.',
+  requeued: 'The call went back to wait for another agent while your screen was away.',
+  windowEnded: 'Time to save what happened ran out, so the call was closed.',
+  closedBySupervisor: 'A supervisor closed this call.',
+} as const;

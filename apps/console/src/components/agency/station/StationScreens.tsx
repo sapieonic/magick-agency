@@ -15,6 +15,7 @@ import {
   Pause,
   Phone,
   PhoneIncoming,
+  PhoneOutgoing,
   Target,
   Wifi,
   WifiOff,
@@ -31,9 +32,8 @@ import { STATION_COPY } from '../../../utils/agency/stationCopy';
 import { clockTime, hoursMinutes, runningClock } from '../../../utils/agency/stationFormat';
 import { breakIcon } from '../../../utils/agency/stationTiles';
 import type { DeviceChecks } from '../../../utils/agency/stationView';
-import type { MyDay } from '../../../pages/agency/station/useMyDay';
-import type { MyCallLaters } from '../../../pages/agency/station/useMyCallLaters';
-import { BREAK_ICON_COMPONENTS } from './stationIcons';
+import type { MyCallLaters, MyDay } from '../../../pages/agency/station/useMyDay';
+import { StationTileIcon } from './stationIcons';
 import styles from './Station.module.css';
 
 /* ───────────────────────────── 01 / 01b Start of day ───────────────────────────── */
@@ -270,12 +270,21 @@ export function MyDayCard({ day }: { day: MyDay }) {
       </div>,
     );
   }
+  // The third tile: Will pay when the campaign records promises, else Numbers dialled (as the app).
   if (day.willPay !== null) {
     rows.push(
       <div key="pay" className={styles.stat} data-tone="ready" data-testid="my-day-will-pay">
         <span className={styles.statIcon} aria-hidden="true"><IndianRupee size={22} /></span>
         <span className={styles.statLabel}>{STATION_COPY.willPay}</span>
         <span className={styles.num}>{day.willPay}</span>
+      </div>,
+    );
+  } else if (day.dialled !== null) {
+    rows.push(
+      <div key="dialled" className={styles.stat} data-tone="coming" data-testid="my-day-dialled">
+        <span className={styles.statIcon} aria-hidden="true"><PhoneOutgoing size={22} /></span>
+        <span className={styles.statLabel}>{STATION_COPY.numbersDialled}</span>
+        <span className={styles.num}>{day.dialled}</span>
       </div>,
     );
   }
@@ -299,12 +308,13 @@ export function CallLaterCard({ list, now }: { list: MyCallLaters; now: () => nu
       <ul className={styles.laterList}>
         {list.rows.slice(0, 5).map((row) => {
           const minutes = Math.ceil((row.dueAt - present) / 60_000);
-          const soon = minutes <= 5;
+          const late = row.overdue || minutes < 0;
+          const soon = !late && minutes <= 5;
           return (
-            <li key={row.id} className={styles.later} data-soon={soon ? 'true' : undefined}>
+            <li key={row.id} className={styles.later} data-soon={soon || late ? 'true' : undefined} data-testid="call-later-row">
               <time dateTime={new Date(row.dueAt).toISOString()}>{clockTime(row.dueAt)}</time>
-              <span>{row.name}</span>
-              {soon ? <small>{STATION_COPY.callLaterSoon(minutes)}</small> : null}
+              <span>{row.name ?? STATION_COPY.customer}</span>
+              {late ? <small>{STATION_COPY.late}</small> : soon ? <small>{STATION_COPY.callLaterSoon(minutes)}</small> : null}
             </li>
           );
         })}
@@ -323,8 +333,11 @@ export function BreakCard({
   clock,
   limitMinutes,
   over,
+  reason,
 }: {
   label: string | null;
+  /** The break's reason as the campaign lists it, for its picture (the supervisor's pick, BE-13). */
+  reason?: Pick<AgencyBreakReason, 'code' | 'label' | 'icon'> | null;
   since: string | null;
   clock: ServerClock;
   limitMinutes: number | null;
@@ -332,8 +345,7 @@ export function BreakCard({
 }) {
   useRepaintTick(since !== null);
   const elapsedMs = since ? clock.since(since) : null;
-  const icon = breakIcon({ code: label ?? '', label: label ?? '' });
-  const Icon = BREAK_ICON_COMPONENTS[icon];
+  const icon = breakIcon(reason ?? { code: label ?? '', label: label ?? '' });
   const used = elapsedMs ?? 0;
   const pct = limitMinutes ? Math.min(100, (used / (limitMinutes * 60_000)) * 100) : null;
   const leftMs = limitMinutes ? limitMinutes * 60_000 - used : null;
@@ -341,7 +353,7 @@ export function BreakCard({
   return (
     <section className={`${styles.card} ${styles.cardNarrow}`} data-tone={over ? 'over' : 'break'} data-testid="break-card">
       <div className={styles.wait} style={{ minHeight: 0 }}>
-        <span className={`${styles.pulse} ${styles.pulseSm}`} aria-hidden="true">{over ? <TriangleAlert size={56} /> : <Icon size={56} />}</span>
+        <span className={`${styles.pulse} ${styles.pulseSm}`} aria-hidden="true">{over ? <TriangleAlert size={56} /> : <StationTileIcon icon={icon} size={56} />}</span>
         {label ? <h2>{label}</h2> : null}
         <div className={styles.clock} data-over={over ? 'true' : undefined}>
           <span className={styles.num} data-testid="break-elapsed">{elapsedMs === null ? '—' : runningClock(used)}</span>
@@ -442,7 +454,7 @@ export function WhichBreakDialog({
       {reasons.length === 0 ? <p>{STATION_COPY.noBreakReasons}</p> : null}
       <div className={`${styles.picks} ${styles.picks5}`} role="group" aria-label={STATION_COPY.whichBreak}>
         {reasons.map((reason, index) => {
-          const Icon = BREAK_ICON_COMPONENTS[breakIcon(reason)];
+          const icon = breakIcon(reason);
           return (
             <button
               key={reason.code}
@@ -454,7 +466,7 @@ export function WhichBreakDialog({
               data-testid={`break-${reason.code}`}
             >
               {index < 9 ? <span className={styles.key} aria-hidden="true">{index + 1}</span> : null}
-              <span className={styles.pickIcon} aria-hidden="true"><Icon size={30} /></span>
+              <span className={styles.pickIcon} aria-hidden="true" data-icon={icon}><StationTileIcon icon={icon} size={30} /></span>
               <b>{reason.label}</b>
               {reason.limit_minutes ? <small>{STATION_COPY.minutes(reason.limit_minutes)}</small> : null}
             </button>
@@ -507,13 +519,29 @@ export function StopCallingDialog({
 
 /* ───────────────────────────── 11 Finish work, 12 Other device ───────────────────────────── */
 
-export function FinishCard({ myDay, callLaterLeft, failure }: { myDay: MyDay | null; callLaterLeft: string | null; failure: string | null }) {
+/** 11's body: My day, the call-later list, and where the ones left today go. */
+export function FinishCard({
+  myDay,
+  callLaters,
+  now,
+  failure,
+}: {
+  myDay: MyDay | null;
+  callLaters: MyCallLaters | null;
+  now: () => number;
+  failure: string | null;
+}) {
+  const first = callLaters?.rows.find((r) => !r.overdue) ?? null;
+  const left = callLaters && callLaters.today > 0 && first
+    ? STATION_COPY.leftForToday(callLaters.today, clockTime(first.dueAt), callLaters.leftTodayGoesTo)
+    : null;
   return (
-    <section className={`${styles.card} ${styles.cardNarrow}`} data-testid="finish-card">
+    <div className={`${styles.col} ${styles.cardNarrow}`} data-testid="finish-card">
       {myDay ? <MyDayCard day={myDay} /> : null}
-      {callLaterLeft ? <p className={styles.fine}><Calendar size={16} aria-hidden="true" />{callLaterLeft}</p> : null}
+      {callLaters && callLaters.rows.length > 0 ? <CallLaterCard list={callLaters} now={now} /> : null}
+      {left ? <p className={styles.fine} data-testid="finish-left"><Calendar size={16} aria-hidden="true" />{left}</p> : null}
       {failure ? <p className={styles.refusal} role="alert" data-testid="finish-failure">{failure}</p> : null}
-    </section>
+    </div>
   );
 }
 

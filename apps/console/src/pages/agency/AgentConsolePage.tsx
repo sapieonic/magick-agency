@@ -20,24 +20,17 @@ import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp, type StationHelp } from './station/useStationHelp';
 import { useDeviceChecks } from './station/useDeviceChecks';
 import { useMyDay } from './station/useMyDay';
-import { useMyCallLaters } from './station/useMyCallLaters';
-import {
-  FloorAssistAnnouncer,
-  SupervisorMessages,
-  useFloorAssistAnnouncer,
-} from '../../components/agency/SupervisorMessages';
+import { ScriptOpeningCard, ScriptStepsCard } from '../../components/agency/station/StationScript';
+import { fillScript, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
+import { FloorAssistAnnouncer, useFloorAssistAnnouncer } from '../../components/agency/SupervisorMessages';
 import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
-import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
+import { InboundCallView, LapseCountdown, TalkTimer } from '../../components/agency/inbound/InboundCallView';
 import { useInboundCall } from '../../hooks/useInboundCall';
 import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
-import { CueFlashBand } from '../../components/agency/StateRail';
+import { CueFlashBand } from '../../components/agency/CueFlashBand';
 import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
-import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
-import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
-import { StationFatal } from '../../components/agency/StationFatal';
-import { StationHeader } from '../../components/agency/StationHeader';
+import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';
 import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWaitingPill';
 import { CueSettingsFields } from '../../components/agency/CueSettings';
@@ -50,6 +43,7 @@ import { WhatHappened } from '../../components/agency/station/WhatHappened';
 import {
   BreakCard,
   CallLaterCard,
+  FinishCard,
   DeviceCheckTiles,
   ListenNoticeLine,
   MyDayCard,
@@ -72,12 +66,6 @@ import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
 import { trackAgencyStationNothingDue } from '../../analytics/events';
-import {
-  LEAVE_CONFIRM_ACTION,
-  LEAVE_CONFIRM_MESSAGE,
-  LEAVE_CONFIRM_TITLE,
-} from '../../utils/agencyStationExit';
-import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
 import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
 import { findDisposition } from '../../utils/agencyDispositionForm';
@@ -90,13 +78,16 @@ import {
   STATION_COPY,
   helpAnsweredLine,
   helpRefusedLine,
+  micProblemLine,
   missedReleaseLine,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
 import { clockTime, runningClock } from '../../utils/agency/stationFormat';
 import { customerCard, lastCallRows } from '../../utils/agency/stationCustomer';
-import { MAIN_ACTION_KEY, stationView, type MoreItem, type StationView } from '../../utils/agency/stationView';
-import styles from '../../components/agency/AgentStation.module.css';
+import { MAIN_ACTION_KEY, sideViewBand, stationView, type MoreItem, type SideCallPhase, type StationView } from '../../utils/agency/stationView';
+import { contactName, softphonePhase } from '../../utils/softphone/callState';
+import { formatDialNumber } from '../../utils/softphone/phoneInput';
+import { inboundCallerLabel } from '../../utils/inbound/inboundCall';
 
 /**
  * The agent's station (`/station?campaign=…`), redesigned (AS1–AS18, `docs/agent-station.md`;
@@ -137,6 +128,7 @@ export default function AgentConsolePage() {
   const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
   const help = useStationHelp({
     offered: floorAssistOn,
+    everywhere: true,
     sessionId: bootstrap?.session_id ?? null,
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
@@ -206,8 +198,9 @@ function StationScreen({
   const mayMarkDnc = usePermission('agency.dnc.write');
 
   const { station, clock, audio } = cons;
-  const { connection, agentState, live, release, dialing, missedPings } = station;
-  const micNotice = agencyAudioNotice(audio.error);
+  const { connection, agentState, live, release, dialing } = station;
+  // The station's own words for the microphone, keyed on what went wrong (AS15).
+  const micNotice = audio.error ? micProblemLine(audio.error.kind) : null;
 
   useLiveSessionTouch({ tenantId, bootstrap, agentState, connection });
 
@@ -239,9 +232,18 @@ function StationScreen({
 
   const { panelAttempt } = cons;
   const card = useMemo(
-    () => (panelAttempt ? customerCard(panelAttempt, bootstrap?.context_display) : null),
-    [panelAttempt, bootstrap?.context_display],
+    () =>
+      panelAttempt
+        ? customerCard(panelAttempt, bootstrap?.context_display, { phoneDisplay: bootstrap?.phone_display ?? 'full' })
+        : null,
+    [panelAttempt, bootstrap?.context_display, bootstrap?.phone_display],
   );
+  const script = useMemo(() => scriptOrNone(bootstrap?.script), [bootstrap?.script]);
+  const filledScript = useMemo(() => {
+    if (!script || !panelAttempt || !card) return null;
+    const values = scriptValuesFor(panelAttempt, card, { agentName: user?.display_name, campaignName: bootstrap?.campaign_name });
+    return { opening: script.opening ? fillScript(script.opening, values) : null, steps: script.steps.map((line) => fillScript(line, values)) };
+  }, [script, panelAttempt, card, user?.display_name, bootstrap?.campaign_name]);
   const lastCalls = useMemo(
     () => (panelAttempt ? lastCallRows(panelAttempt, bootstrap?.disposition_catalog) : []),
     [panelAttempt, bootstrap?.disposition_catalog],
@@ -290,19 +292,13 @@ function StationScreen({
   const notWorkingYet = agentState === 'offline' && live === null;
   const checks = useDeviceChecks(notWorkingYet && bootstrap !== null);
   const [workMode, setWorkMode] = useState<WorkMode>('calls_come');
-  const myDay = useMyDay({
+  const { myDay, callLaters } = useMyDay({
     campaignId: bootstrap?.campaign_id ?? null,
     tenantId,
     accountId,
     agentState,
     enabled: bootstrap !== null,
-  });
-  const callLaters = useMyCallLaters({
-    campaignId: bootstrap?.campaign_id ?? null,
-    tenantId,
-    accountId,
-    agentState,
-    enabled: bootstrap !== null && assignmentEnabled && assigns,
+    callLaterFallback: assignmentEnabled && assigns,
   });
   const listenOn = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
 
@@ -380,6 +376,7 @@ function StationScreen({
     finishOpen,
     helpOffered: help.offered,
     helpOpen: help.open,
+    helpEverywhere: help.everywhere,
     softphoneAvailable: softphone.available,
     myContactsOffered,
   });
@@ -526,10 +523,13 @@ function StationScreen({
     { breakMenuRef, notesRef, padRef: keyPadRef, dncRef },
   );
 
-  // ── Screens the join decides (unchanged) ────────────────────────────────────
+  // ── Screens the join decides, in the station's frame ────────────────────────
+  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
+  const who = { agentName, brandMark: brand.shortName };
   if (join.joinConflict) {
     return (
       <JoinConflictScreen
+        who={who}
         conflict={join.joinConflict}
         toCampaign={exit.canExitToCampaign}
         campaignId={exit.stationCampaignId}
@@ -545,6 +545,7 @@ function StationScreen({
   if (join.onSoftphoneElsewhere) {
     return (
       <SoftphoneJoinScreen
+        who={who}
         closing={join.closingSoftphone}
         failure={join.closeSoftphoneFailure}
         callPending={join.softphoneCallPending}
@@ -553,129 +554,10 @@ function StationScreen({
     );
   }
   if (join.joinError) {
-    return <StationFatal message={join.joinError} toCampaign={exit.canExitToCampaign} campaignId={exit.stationCampaignId} />;
-  }
-
-  const legacyMicBanner = micNotice ? (
-    <p className={styles.micFailure} role="alert" data-testid="mic-failure">
-      <strong>{micNotice.headline}</strong> {micNotice.remedy}
-      {micNotice.action ? (
-        <button type="button" className={styles.micFailureAction} onClick={audio.resume} data-testid="mic-resume">
-          {micNotice.action}
-        </button>
-      ) : null}
-    </p>
-  ) : null;
-
-  const leaveDialog = (
-    <ConfirmDialog
-      open={exit.leaveConfirm}
-      title={LEAVE_CONFIRM_TITLE}
-      message={exit.leaveFailure ? `Your station is still open — ${exit.leaveFailure}` : LEAVE_CONFIRM_MESSAGE}
-      confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
-      disabled={exit.leaving}
-      onConfirm={exit.confirmLeave}
-      onCancel={exit.cancelLeave}
-    />
-  );
-
-  // ── On an inbound call, and on the soft phone: their own views (not redesigned, spec §8) ──
-  if (inbound.call) {
-    return (
-      <div className={styles.shell} data-testid="station-inbound" data-connect-flash={cons.connectFlashAttemptId === inbound.call.id ? 'true' : undefined}>
-        <StationHeader
-          user={user}
-          campaignName={bootstrap?.campaign_name}
-          recordCalls={inbound.call.recording}
-          muted={audio.muted}
-          cuePrefs={cons.cuePrefs}
-          onCuePrefsChange={cons.setCuePrefs}
-          agentState={inbound.phase === 'outcome' ? 'wrapup' : 'on_call'}
-          canExit={exit.canExitToCampaign}
-          leaving={exit.leaving}
-          onLeave={exit.openLeave}
-          onExit={exit.exitStation}
-          connection={connection}
-          missedPings={missedPings}
-        />
-        {legacyMicBanner}
-        <InboundCallView
-          ib={inbound}
-          call={inbound.call}
-          connection={connection}
-          clock={clock}
-          cueFlash={cons.cueFlash}
-          onReconnect={station.reconnect}
-          shortcutsEnabled={!exit.leaveConfirm}
-        />
-        <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
-        {leaveDialog}
-      </div>
-    );
-  }
-
-  if (softphone.active) {
-    const busy = softphone.sp.call !== null;
-    return (
-      <div className={styles.shell} data-testid="station-softphone">
-        <StationHeader
-          user={user}
-          campaignName={bootstrap?.campaign_name}
-          subline={bootstrap ? `${bootstrap.campaign_name} · Soft phone` : undefined}
-          recordCalls={false}
-          muted={audio.muted}
-          cuePrefs={cons.cuePrefs}
-          onCuePrefsChange={cons.setCuePrefs}
-          agentState={busy ? 'on_call' : agentState}
-          canExit={exit.canExitToCampaign}
-          leaving={exit.leaving}
-          onLeave={exit.openLeave}
-          onExit={exit.exitStation}
-          connection={connection}
-          missedPings={missedPings}
-          extra={
-            <>
-              <SoftphoneDisclosures sp={softphone.sp} showMuted={false} />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={softphone.returnToCampaign}
-                disabled={softphone.returnBlockedReason !== null || softphone.returning}
-                aria-describedby={softphone.returnBlockedReason || softphone.returnFailure ? 'return-to-campaign-reason' : undefined}
-                data-testid="return-to-campaign"
-              >
-                {softphone.returning ? 'Returning…' : 'Return to campaign'}
-              </button>
-              {softphone.returnFailure || softphone.returnBlockedReason ? (
-                <span
-                  id="return-to-campaign-reason"
-                  className={styles.blockReason}
-                  role={softphone.returnFailure ? 'alert' : undefined}
-                  data-testid="return-to-campaign-reason"
-                >
-                  {softphone.returnFailure ?? softphone.returnBlockedReason}
-                </span>
-              ) : null}
-            </>
-          }
-        />
-        {legacyMicBanner}
-        <SoftphoneView
-          sp={softphone.sp}
-          connection={connection}
-          clock={clock}
-          fromCampaign
-          onReconnect={station.reconnect}
-          shortcutsEnabled={!exit.leaveConfirm}
-        />
-        <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
-        {leaveDialog}
-      </div>
-    );
+    return <StationFatal who={who} message={join.joinError} toCampaign={exit.canExitToCampaign} campaignId={exit.stationCampaignId} />;
   }
 
   // ── The redesigned station ──────────────────────────────────────────────────
-  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
   const workName = bootstrap?.campaign_name ?? null;
   const internet: 'ok' | 'checking' | 'offline' =
     connection === 'open' ? 'ok' : connection === 'reconnecting' || connection === 'disconnected' ? 'offline' : 'checking';
@@ -1085,7 +967,7 @@ function StationScreen({
       needed={Boolean(findDisposition(cons.catalog, cons.form.selectedCode)?.requires_note)}
     />
   );
-  const amountDue = card?.facts.find((f) => f.kind === 'money')?.value ?? null;
+  const amountDue = card?.amountDue ?? null;
   let body: ReactNode = null;
   let bodyClass: string | undefined = '';
   switch (screen) {
@@ -1097,7 +979,7 @@ function StationScreen({
           internet={internet}
           workName={workName ?? ''}
           myDay={myDay}
-          callLaterCount={callLaters ? callLaters.rows.length : null}
+          callLaterCount={callLaters ? callLaters.today : null}
           softphoneOffered={softphone.available}
           mode={workMode}
           onMode={setWorkMode}
@@ -1127,7 +1009,7 @@ function StationScreen({
     case 'ready':
     case 'no_calls': {
       const quiet = screen === 'no_calls';
-      const showDay = myDay !== null && (myDay.calls !== null || myDay.talkSeconds !== null || myDay.willPay !== null);
+      const showDay = myDay !== null && (myDay.calls !== null || myDay.talkSeconds !== null || myDay.willPay !== null || myDay.dialled !== null);
       const showLater = callLaters !== null && callLaters.rows.length > 0;
       bodyClass = showDay || showLater ? stationStyles.body2 : stationStyles.bodyCenter;
       // "Nothing due now" with no dial ringing leaves the count out too, as the agent app does.
@@ -1155,13 +1037,33 @@ function StationScreen({
       body = (
         <>
           {card ? <CustomerCardView card={card} /> : <section className={stationStyles.card} />}
-          {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+          {filledScript?.opening ? (
+            <div className={stationStyles.col}>
+              <ScriptOpeningCard line={filledScript.opening} readAloud={readAloud} />
+              {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+            </div>
+          ) : panelAttempt ? (
+            <LastCallsCard rows={lastCalls} />
+          ) : null}
         </>
       );
       break;
     case 'on_call':
       bodyClass = stationStyles.bodyEven;
-      body = (
+      // With the campaign's steps: the card and the last calls left, What to say and the note right.
+      // Without (04c): the card left, the last calls and the note right.
+      body = filledScript && filledScript.steps.length > 0 ? (
+        <>
+          <div className={stationStyles.col}>
+            {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
+            {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+          </div>
+          <div className={stationStyles.col}>
+            <ScriptStepsCard key={panelAttempt?.attempt_id ?? ''} steps={filledScript.steps} readAloud={readAloud} />
+            {noteCard}
+          </div>
+        </>
+      ) : (
         <>
           {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
           <div className={stationStyles.col}>
@@ -1209,6 +1111,7 @@ function StationScreen({
       body = (
         <BreakCard
           label={reservedBreak ? null : cons.breakReasonLabel}
+          reason={reservedBreak ? null : cons.breakReasons.find((r) => r.code === station.breakReasonCode) ?? null}
           since={station.agentStateSince}
           clock={clock}
           limitMinutes={cons.breakLimitMinutes}
@@ -1237,11 +1140,7 @@ function StationScreen({
     case 'finish':
       bodyClass = stationStyles.bodyCenter;
       body = (
-        <div className={`${stationStyles.col} ${stationStyles.cardNarrow}`} data-testid="finish-card">
-          {myDay ? <MyDayCard day={myDay} /> : null}
-          {callLaters && callLaters.rows.length > 0 ? <CallLaterCard list={callLaters} now={clock.now} /> : null}
-          {exit.leaveFailure ? <p className={stationStyles.refusal} role="alert" data-testid="finish-failure">{STATION_COPY.finishFailed}</p> : null}
-        </div>
+        <FinishCard myDay={myDay} callLaters={callLaters} now={clock.now} failure={exit.leaveFailure ? STATION_COPY.finishFailed : null} />
       );
       break;
     case 'other_device':
@@ -1270,9 +1169,142 @@ function StationScreen({
     />
   );
 
+  // ── An inbound call and the soft phone: their own bodies in the station's frame (ruling 2) ──
+  const sideNeedHelp = (onCall: boolean) => (
+    <>
+      <StationListenNotice />
+      {help.offered && connection === 'open' && (help.open || help.everywhere || onCall)
+        ? <NeedHelpButton help={help} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} />
+        : null}
+    </>
+  );
+  const sideMenu = (items: MoreItem[]) => (
+    <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={MY_CALLS_PATH} />
+  );
+  const cueFlashNode = cons.cueFlash ? <CueFlashBand key={`${cons.cueFlash.cue}:${cons.cueFlash.attemptId}`} flash={cons.cueFlash} /> : null;
+  // The way back when the socket is gone or moved: the band says what, this says how.
+  const connectionBanner = connection === 'disconnected' ? (
+    <StationBanner
+      tone="problem"
+      icon={<WifiOff size={22} />}
+      testId="side-try-again"
+      action={<button type="button" className={stationStyles.btn} onClick={station.reconnect} data-testid="try-again">{STATION_COPY.tryAgainNow}</button>}
+    >
+      {STATION_COPY.internetGaveUpSubtitle}
+    </StationBanner>
+  ) : connection === 'superseded' ? (
+    <StationBanner
+      tone="quiet"
+      icon={<Info size={22} />}
+      testId="side-use-this-computer"
+      action={<button type="button" className={stationStyles.btn} onClick={station.reconnect} data-testid="use-this-computer">{STATION_COPY.useThisComputer}</button>}
+    >
+      {STATION_COPY.otherDeviceSubtitle}
+    </StationBanner>
+  ) : null;
+  const sideBanners = <>{micBannerNode}{connectionBanner}{supervisorBanner}<StationListenFirstNotice /></>;
+
+  let sideFrame: ReactNode = null;
+  if (inbound.call) {
+    const call = inbound.call;
+    const phase: SideCallPhase = inbound.phase === 'offered' ? 'coming' : inbound.phase === 'connected' ? 'on_call' : 'happened';
+    const band = sideViewBand({ kind: 'inbound', connection, phase, who: inboundCallerLabel(call) });
+    const live = connection === 'open';
+    sideFrame = (
+      <StationFrame
+        view={band}
+        agentName={agentName}
+        workName={workName}
+        brandMark={brand.shortName}
+        needHelp={sideNeedHelp(phase === 'on_call' || phase === 'happened')}
+        menu={sideMenu(['sound', 'theme'])}
+        bandSide={
+          <span className={stationStyles.bandSide}>
+            {cueFlashNode}
+            {live && call.bridged_at && phase === 'on_call' ? <span className={stationStyles.bandClock}><TalkTimer from={call.bridged_at} clock={clock} /></span> : null}
+            {live && call.outcome_due_at && phase === 'happened' ? <span className={stationStyles.pill}><LapseCountdown due={call.outcome_due_at} clock={clock} /></span> : null}
+          </span>
+        }
+        banners={<>{inbound.notice ? <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner> : null}{sideBanners}</>}
+        connectFlash={cons.connectFlashAttemptId === call.id}
+        bodyClassName={stationStyles.bodySide}
+        testId="station-inbound"
+      >
+        <InboundCallView
+          ib={inbound}
+          call={call}
+          connection={connection}
+          clock={clock}
+          cueFlash={cons.cueFlash}
+          onReconnect={station.reconnect}
+          shortcutsEnabled={!soundOpen}
+          rail={false}
+        />
+      </StationFrame>
+    );
+  } else if (softphone.active && !finishOpen) {
+    const call = softphone.sp.call;
+    const spPhase = softphonePhase(call);
+    const phase: SideCallPhase = spPhase === 'dialing' || spPhase === 'ringing' ? 'coming' : spPhase === 'on_call' ? 'on_call' : spPhase === 'outcome' ? 'happened' : 'idle';
+    const named = contactName(call, softphone.sp.campaign?.context_display);
+    const number = call ? formatDialNumber(call.destination_e164) : null;
+    const band = sideViewBand({ kind: 'softphone', connection, phase, who: phase === 'on_call' ? (named ?? number) : number });
+    const timerFrom = phase === 'on_call' ? call?.bridged_at ?? null : phase === 'coming' ? call?.dialed_at ?? null : null;
+    const returnReason = softphone.returnFailure ?? softphone.returnBlockedReason;
+    sideFrame = (
+      <StationFrame
+        view={band}
+        agentName={agentName}
+        workName={workName}
+        brandMark={brand.shortName}
+        needHelp={sideNeedHelp(phase === 'on_call' || phase === 'happened')}
+        // Finish work while nothing is dialled; during a call only Sound and the colour, as on 04.
+        menu={sideMenu(phase === 'idle' ? ['sound', 'theme', 'finish'] : ['sound', 'theme'])}
+        bandSide={
+          <span className={stationStyles.bandSide}>
+            {cueFlashNode}
+            <SoftphoneDisclosures sp={softphone.sp} showMuted={false} />
+            {timerFrom && connection === 'open' ? <SinceClock anchor={timerFrom} clock={clock} className={stationStyles.bandClock} testId="softphone-timer" /> : null}
+          </span>
+        }
+        banners={<>{cons.softphoneRejection ? <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="status" testId="switch-to-softphone-refused">{cons.softphoneRejection}</StationBanner> : null}{sideBanners}</>}
+        bodyClassName={stationStyles.bodySide}
+        testId="station-softphone"
+        footLeft={returnReason ? (
+          <span className={stationStyles.footHint} id="return-to-campaign-reason" role={softphone.returnFailure ? 'alert' : undefined} data-testid="return-to-campaign-reason">
+            {returnReason}
+          </span>
+        ) : null}
+        // AS1: hidden while a call is live or owes its outcome; the reason says why.
+        footRight={softphone.returnBlockedReason === null ? (
+          <button
+            type="button"
+            className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`}
+            onClick={() => !softphone.returning && softphone.returnToCampaign()}
+            aria-disabled={softphone.returning || undefined}
+            aria-describedby={returnReason ? 'return-to-campaign-reason' : undefined}
+            data-testid="return-to-campaign"
+          >
+            {softphone.returning ? STATION_COPY.backingToCalls : STATION_COPY.backToCalls}
+          </button>
+        ) : null}
+      >
+        <SoftphoneView
+          sp={softphone.sp}
+          connection={connection}
+          clock={clock}
+          fromCampaign
+          onReconnect={station.reconnect}
+          shortcutsEnabled={!soundOpen}
+          rail={false}
+        />
+      </StationFrame>
+    );
+  }
+
   return (
     <>
-      <StationFrame
+      {sideFrame ?? <StationFrame
         view={shownView}
         agentName={agentName}
         workName={workName}
@@ -1292,7 +1324,7 @@ function StationScreen({
         {/* The call's one assertive region: connect, disconnect and the result of the agent's own press. */}
         <div className={stationStyles.srOnly} role="alert" aria-live="assertive">{cons.announcement}</div>
         {body}
-      </StationFrame>
+      </StationFrame>}
 
       <WhichBreakDialog
         open={breakDialog !== null}

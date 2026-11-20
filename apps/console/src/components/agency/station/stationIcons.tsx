@@ -24,6 +24,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from 'lucide-react';
+import { TileIcon } from '@magick-agency/web-ui/components/TileIcon';
 import type { BandIcon } from '../../../utils/agency/stationView';
 import type { BreakIcon, OutcomeIcon } from '../../../utils/agency/stationTiles';
 
@@ -42,23 +43,17 @@ export const BAND_ICONS: Record<BandIcon, LucideIcon> = {
   log_out: LogOut,
 };
 
-export const OUTCOME_ICON_COMPONENTS: Record<OutcomeIcon, LucideIcon> = {
-  rupee: IndianRupee,
-  clock: Clock,
-  stop: Ban,
-  thumbs_up: ThumbsUp,
-  no_voice: VolumeX,
-  refused: ThumbsDown,
-  wrong_number: PhoneOff,
-  dot: CircleDot,
-};
+/**
+ * A tile's picture: the shared picture (`TileIcon`, the same component campaign Settings' picker
+ * draws) for every key it has, so agents see exactly what the supervisor picked; the station's
+ * own two (`no_voice`, `phone`) for the guesses it has no shared picture for.
+ */
+const STATION_ONLY: Record<'no_voice' | 'phone', LucideIcon> = { no_voice: VolumeX, phone: Phone };
 
-export const BREAK_ICON_COMPONENTS: Record<BreakIcon, LucideIcon> = {
-  cup: Coffee,
-  meal: UtensilsCrossed,
-  washroom: Droplet,
-  meeting: Users,
-  training: BookOpen,
-  phone: Phone,
-  pause: Pause,
-};
+export function StationTileIcon({ icon, size }: { icon: OutcomeIcon | BreakIcon; size: number }) {
+  if (icon === 'no_voice' || icon === 'phone') {
+    const Icon = STATION_ONLY[icon];
+    return <Icon size={size} aria-hidden="true" data-tile-icon={icon} />;
+  }
+  return <TileIcon icon={icon} size={size} />;
+}

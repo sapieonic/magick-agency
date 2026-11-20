@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
 import { markContactDnc } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
-import { dncFailureCopy, dncOutcomeCopy, type DncScope } from '../../../utils/agencyDncCopy';
+import type { DncScope } from '../../../utils/agencyDncCopy';
+import { dncDoneLine, dncFailedLine } from '../../../utils/agency/stationCopy';
 import { errorCode } from '../../../utils/agencyErrors';
 import { trackAgencyDncMarked, trackAgencyDncFailed } from '../../../analytics/events';
 import type { AgencyActionErrorCode, AgencySessionBootstrap } from '../../../types/agency';
@@ -134,7 +135,7 @@ export function useDncAction({
           // moves on the next `reserved`, so the wrong-person guarantee above is
           // unchanged — it is the *only* thing that moves it.
           if (panelAttemptRef.current !== attemptId) return;
-          update({ outcome: dncOutcomeCopy(response, scope) });
+          update({ outcome: dncDoneLine(response.dnc_recorded) });
           trackAgencyDncMarked({
             campaign_id: bootstrap?.campaign_id ?? '',
             scope,
@@ -144,7 +145,7 @@ export function useDncAction({
         })
         .catch((err: unknown) => {
           if (panelAttemptRef.current !== attemptId) return;
-          update({ failure: dncFailureCopy(err) });
+          update({ failure: dncFailedLine(errorCode(err)) });
           // Same structured-code read as the hang-up.
           const code = errorCode(err);
           trackAgencyDncFailed({

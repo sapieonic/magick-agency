@@ -4,8 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AgentNav } from '../../components/agency/AgentNav';
-import { StationHeader } from '../../components/agency/StationHeader';
-import { DEFAULT_CUE_PREFS } from '../../utils/agencyCuePrefs';
+import { StationFrame } from '../../components/agency/station/StationFrame';
 
 /**
  * The agent's surfaces (`/station`, `/dialer`, `/dialer/performance`, `/dialer/attempts`) run
@@ -27,28 +26,18 @@ describe('the version on the agent surfaces', () => {
     expect(label.closest('a')).toBeNull();
   });
 
-  it('ends the station header, with nothing focusable added', () => {
+  it('ends the station’s top bar, with nothing focusable added', () => {
+    const view = { screen: 'ready', tone: 'ready' as const, icon: 'headphones' as const, title: 'Ready', subtitle: null };
     render(
       <MemoryRouter>
-        <StationHeader
-          user={{ display_name: 'Asha', email: 'asha@example.com', avatar_url: null }}
-          campaignName="Renewals"
-          recordCalls={false}
-          muted={false}
-          cuePrefs={DEFAULT_CUE_PREFS}
-          onCuePrefsChange={vi.fn()}
-          agentState="available"
-          canExit={false}
-          leaving={false}
-          onLeave={vi.fn()}
-          onExit={vi.fn()}
-          connection="open"
-          missedPings={0}
-        />
+        <StationFrame view={view} agentName="Asha" workName="Renewals" brandMark="MA" menu={<button type="button">More</button>}>
+          <p>Body</p>
+        </StationFrame>
       </MemoryRouter>,
     );
     const label = screen.getByTestId('app-version');
     expect(label.textContent).toBe(`v${version}`);
+    expect(label.closest('header')?.lastElementChild?.contains(label)).toBe(true);
     expect(label.closest('button, a, [tabindex]')).toBeNull();
   });
 });

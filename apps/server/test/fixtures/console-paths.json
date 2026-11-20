@@ -367,6 +367,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/my-day",
+      "source": "apps/console/src/api/agencyStats.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.myDay): the agent station's My day, call-later list and Finish work"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/agents/:userId/stats",
       "source": "apps/console/src/api/agencyStats.ts",
       "status": "served",

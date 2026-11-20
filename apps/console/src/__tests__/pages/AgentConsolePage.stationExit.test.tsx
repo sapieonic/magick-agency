@@ -481,7 +481,7 @@ describe('AgentConsolePage — the join conflict', () => {
 
     // The one error the tenant-wide live-session rule makes reachable for an
     // ordinary agent — a bare "Conflict" would leave them with no remedy.
-    expect(screen.queryByText('Can’t open the station')).toBeNull();
+    expect(screen.queryByText('Your work did not open')).toBeNull();
   });
 
   it('still renders an ordinary join failure the ordinary way', async () => {
@@ -489,7 +489,7 @@ describe('AgentConsolePage — the join conflict', () => {
 
     await mounted();
 
-    await screen.findByText('Can’t open the station');
+    await screen.findByText('Your work did not open');
     expect(screen.queryByTestId('join-conflict')).toBeNull();
   });
 
@@ -506,7 +506,7 @@ describe('AgentConsolePage — the join conflict', () => {
     mocks.createAgencySession.mockRejectedValue(new Error('Campaign is not running'));
 
     await mounted();
-    await screen.findByText('Can’t open the station');
+    await screen.findByText('Your work did not open');
 
     const escape = screen.getByTestId('station-escape');
     // `refused`, not `station`: they did not leave, and the landing screen must
@@ -523,7 +523,7 @@ describe('AgentConsolePage — the join conflict', () => {
     mocks.createAgencySession.mockRejectedValue(new Error('Campaign is not running'));
 
     await mounted();
-    await screen.findByText('Can’t open the station');
+    await screen.findByText('Your work did not open');
 
     expect(screen.getByTestId('station-escape').getAttribute('href')).toBe(
       '/agency/campaigns/camp-1',
@@ -546,7 +546,7 @@ describe('AgentConsolePage — the join conflict', () => {
 
     await mounted();
 
-    await screen.findByText('Can’t open the station');
+    await screen.findByText('Your work did not open');
     expect(
       screen.getByText('You are already joined to another campaign in this workspace.'),
     ).toBeTruthy();
@@ -582,7 +582,7 @@ describe('AgentConsolePage — not staffed on the campaign', () => {
     await mounted();
 
     const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain('Can’t open the station');
+    expect(screen.getByTestId('band-title').textContent).toBe('Your work did not open');
     expect(fatal.textContent).toContain(SENTENCE);
     expect(screen.queryByTestId('join-conflict')).toBeNull();
     expect(screen.getByTestId('station-escape').getAttribute('href')).toBe('/dialer?left=refused');
@@ -711,7 +711,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     expect(screen.getByTestId('switch-station').textContent).toBe(
-      'Leave Collections and join here',
+      'Leave Collections and work here',
     );
   });
 
@@ -732,8 +732,8 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     fireEvent.click(screen.getByTestId('switch-station'));
-    await screen.findByText(/closes your session on Collections/);
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    await screen.findByText(/close your work on Collections/);
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     // The id `leaveAgencySession` needed came from resuming `camp-other`, not
     // from the conflict body — which never carries one.
@@ -762,7 +762,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await mounted();
     await screen.findByTestId('join-conflict');
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     await screen.findByText('Collections is open on another device. Leave it there, then join here.');
     expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
@@ -781,11 +781,11 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     await screen.findByText('Collections is still open — Network error');
     // Not a dead end: the same button is the retry, not replaced by anything.
-    expect(screen.getByRole('button', { name: 'Leave & join here' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Leave and work here' })).toBeTruthy();
     expect(screen.getByTestId('join-conflict')).toBeTruthy();
   });
 
@@ -817,7 +817,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     // `camp-other` really was left — this is not a failure to leave.
     await waitFor(() =>
@@ -827,7 +827,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     // confirm dialog for the stale campaign is gone rather than left open
     // over content that no longer matches it.
     await waitFor(() =>
-      expect(screen.getByTestId('switch-station').textContent).toBe('Leave Renewals and join here'),
+      expect(screen.getByTestId('switch-station').textContent).toBe('Leave Renewals and work here'),
     );
     expect(screen.queryByText(/Collections/)).toBeNull();
     expect(
@@ -860,7 +860,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     // The resume happened — that alone is always safe, it only reads state —
     // but the live call it revealed must never be touched.
@@ -894,7 +894,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     await screen.findByTestId('join-conflict');
 
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     // The leave really happened — this is not a failure to leave.
     await waitFor(() =>
@@ -905,12 +905,12 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     // isn't, any more — replaced by the ordinary join failure. Retrying THIS
     // dialog would have called `createAgencySession('camp-other')` again,
     // rejoining the campaign that was just left.
-    await screen.findByText('Can’t open the station');
+    await screen.findByText('Your work did not open');
     expect(
       screen.getByText('Left Collections, but couldn’t join this campaign — Campaign is not running'),
     ).toBeTruthy();
     expect(screen.queryByTestId('join-conflict')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Leave & join here' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Leave and work here' })).toBeNull();
   });
 
   /**
@@ -956,7 +956,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
 
     await screen.findByTestId('join-conflict');
     fireEvent.click(screen.getByTestId('switch-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
     // If `mountedRef` were stuck `false`, this never resolves — the dialog's
     // `setSwitching(false)` would be skipped and "Switching…" would hang.

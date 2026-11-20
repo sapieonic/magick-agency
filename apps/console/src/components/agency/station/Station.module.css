@@ -465,11 +465,11 @@
 .pick[data-stop='true'] .tick { background: var(--st-stop); }
 .pick[aria-disabled='true'] { opacity: 0.55; cursor: default; }
 .pick[data-icon='rupee'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
-.pick[data-icon='clock'] { --st-soft-c: var(--st-coming-soft); --st-deep-c: var(--st-coming-deep); }
+.pick[data-icon='clock'], .pick[data-icon='calendar'] { --st-soft-c: var(--st-coming-soft); --st-deep-c: var(--st-coming-deep); }
 .pick[data-icon='stop'] { --st-soft-c: var(--st-problem-soft); --st-deep-c: var(--st-problem-deep); }
-.pick[data-icon='thumbs_up'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
-.pick[data-icon='refused'] { --st-soft-c: var(--st-over-soft); --st-deep-c: var(--st-over-deep); }
-.pick[data-icon='no_voice'], .pick[data-icon='wrong_number'], .pick[data-icon='dot'] { --st-soft-c: var(--bg-tertiary); --st-deep-c: var(--text-secondary); }
+.pick[data-icon='thumbs_up'], .pick[data-icon='check'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
+.pick[data-icon='thumbs_down'], .pick[data-icon='cross'] { --st-soft-c: var(--st-over-soft); --st-deep-c: var(--st-over-deep); }
+.pick[data-icon='no_voice'], .pick[data-icon='wrong_number'], .pick[data-icon='phone_missed'], .pick[data-icon='phone_busy'], .pick[data-icon='voicemail'], .pick[data-icon='dot'] { --st-soft-c: var(--bg-tertiary); --st-deep-c: var(--text-secondary); }
 .pickBreak { background: var(--st-break-soft); border-color: color-mix(in srgb, var(--st-break) 70%, transparent); }
 .pickBreak .pickIcon { background: color-mix(in srgb, var(--st-break) 45%, transparent); color: var(--st-break-deep); }
 .dncRow { margin-top: 14px; width: 100%; justify-content: center; border-color: var(--st-stop); color: var(--st-problem-deep); }
@@ -627,3 +627,59 @@
   .clock .num { font-size: 72px; }
   .band { flex-wrap: wrap; }
 }
+
+/* ── The script: "First, say this" (03) and "What to say" (04) ── */
+.scriptOpening { background: var(--st-soft-c); border: 2px solid var(--st-deep-c); }
+.scriptOpening .cardTitle { color: var(--st-deep-c); }
+.scriptOpeningLine { margin: 0; font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1.35; color: var(--text-primary); }
+.scriptSay {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.scriptSay:hover, .scriptSay:focus-visible { background: var(--bg-tertiary); color: var(--text-primary); }
+.scriptProgress { padding: 4px 12px; border-radius: 999px; background: var(--st-ready-soft); color: var(--st-ready-deep); font-size: 15px; font-weight: 700; white-space: nowrap; }
+.scriptSteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.scriptStep { display: flex; align-items: flex-start; gap: 4px; border-radius: var(--radius-lg); }
+.scriptStep[data-state='current'] { background: var(--st-soft-c); }
+.scriptStepButton {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.scriptStepButton:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.scriptStep[data-state='current'] .scriptStepButton { color: var(--text-primary); font-size: 20px; font-weight: 700; }
+.scriptStep[data-state='done'] .scriptText { text-decoration: line-through; color: var(--text-muted); }
+.scriptNumber { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 800; font-size: 15px; }
+.scriptStep[data-state='current'] .scriptNumber { background: var(--st); color: var(--st-ink-c); }
+.scriptStep[data-state='done'] .scriptNumber { background: var(--st-go); color: #fff; }
+.scriptText { padding-top: 3px; min-width: 0; overflow-wrap: anywhere; }
+.scriptStep .scriptSay { margin-top: 6px; }
+
+/* ── Before work opens: the join screens ── */
+.fatalLine { margin: 0 0 12px; font-size: 19px; line-height: 1.5; color: var(--text-primary); }
+.fatalLine:last-child { margin-bottom: 0; }
+
+/* ── An inbound call and the soft phone: their own three columns and action bar, in the frame ── */
+.bodySide { padding: 0; display: flex; flex-direction: column; gap: 0; }
+.bodySide > * { min-width: 0; }
+.version { display: inline-flex; align-items: center; color: var(--text-muted); font-size: 12px; }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { presenceRefusedLine } from '../../utils/agency/stationCopy';
 import { setAgentAvailable } from '../../api/agency';
 import { useAgencyStation, type UseAgencyStationResult } from '../../hooks/useAgencyStation';
 import { DiagnosticsLog } from '../../utils/agencyDiagnostics';
@@ -454,9 +455,8 @@ export function useAgencyConsole(
        * available." — and `no_station` likewise.
        */
       const body = errorBody(err);
-      setPresenceRefusal(
-        body?.message ?? 'That didn’t go through. Try again in a moment.',
-      );
+      // The station's own words keyed on the code, never the server's sentence (AS15).
+      setPresenceRefusal(presenceRefusedLine(body?.code ?? null));
       trackAgencyPresenceRefused({ campaign_id: bootstrap.campaign_id, action, code: body?.code ?? null });
     } finally {
       setPresenceBusy(false);

@@ -201,8 +201,9 @@ describe('Switch to soft phone', () => {
     expect(screen.queryByTestId('queued-break')).toBeNull();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
-    expect(screen.getByTestId('rail-detail').textContent).toMatch(/campaign's dialler does not reserve you here/);
+    // The station's band (ruling 2), with Back to my calls bottom right.
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.getByTestId('return-to-campaign').textContent).toBe('Back to my calls');
     expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
     // A soft-phone break is never ended as an ordinary one.
     expect(screen.queryByRole('button', { name: /End break/ })).toBeNull();
@@ -254,6 +255,22 @@ describe('on the soft phone, in the station', () => {
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
   }
 
+  it('Finish work for today is in ⋮ More while nothing is dialled: 11 opens, and No, keep working comes back', async () => {
+    mocks.leaveAgencySession.mockResolvedValue(undefined);
+    await onSoftphone();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    expect(screen.queryByTestId('station-softphone')).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Finish work for today?');
+    fireEvent.click(screen.getByTestId('keep-working'));
+    expect(screen.getByTestId('station-softphone')).toBeTruthy();
+    // During a call: only Sound and the colour, as on 04.
+    await frame({ event: 'manual_call', call: step(manualCall({ session_id: 'sess-1' }), 3, { state: 'ringing' }) });
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-finish')).toBeNull();
+    expect(screen.getByTestId('station-menu-sound')).toBeTruthy();
+  });
+
   it('Return to campaign ends the soft-phone break', async () => {
     mocks.returnFromSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'available' } });
     await onSoftphone();
@@ -265,16 +282,17 @@ describe('on the soft phone, in the station', () => {
     expect(screen.queryByTestId('station-softphone')).toBeNull();
   });
 
-  it('Return to campaign is disabled, with its reason, while a manual call is live or owes its outcome', async () => {
+  it('Back to my calls is hidden, with its reason, while a manual call is live or owes its outcome (AS1)', async () => {
     await onSoftphone();
     await frame({ event: 'manual_call', call: step(manualCall({ session_id: 'sess-1' }), 3, { state: 'ringing' }) });
-    expect((screen.getByTestId('return-to-campaign') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId('return-to-campaign')).toBeNull();
     expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish this call and save its outcome first.');
     await frame({
       event: 'manual_call',
       call: step(manualCall({ session_id: 'sess-1' }), 60, { state: 'ended', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' }),
     });
-    expect((screen.getByTestId('return-to-campaign') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId('return-to-campaign')).toBeNull();
+    expect(mocks.returnFromSoftphone).not.toHaveBeenCalled();
   });
 
   it('shows the server’s manual_call_live refusal when it says so first', async () => {
@@ -430,9 +448,9 @@ describe('joining a campaign while on the soft phone', () => {
     mocks.createAgencySession.mockRejectedValueOnce(onSoftphone()).mockResolvedValueOnce(BOOTSTRAP);
     mocks.leaveAgencySession.mockResolvedValue(undefined);
     await refused();
-    expect(within(screen.getByTestId('join-on-softphone')).getByRole('link', { name: 'Open the soft phone' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the soft phone' })).toBeTruthy();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-1');
     expect(mocks.createAgencySession).toHaveBeenCalledTimes(2);
@@ -462,7 +480,7 @@ describe('joining a campaign while on the soft phone', () => {
       mocks.leaveAgencySession.mockResolvedValue(undefined);
       await refused();
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
       });
       // `leave` is scoped to the session's account; this account's would be a 404 taken for "gone".
       expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-2');
@@ -480,7 +498,7 @@ describe('joining a campaign while on the soft phone', () => {
       mocks.leaveAgencySession.mockResolvedValue(undefined);
       await refused();
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
       });
       expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
       expect(mocks.getSoftphoneBootstrap).not.toHaveBeenCalledWith('t-1', 'a-1');
@@ -493,7 +511,7 @@ describe('joining a campaign while on the soft phone', () => {
       mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
       await refused();
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
       });
       expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
       expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
@@ -509,12 +527,12 @@ describe('joining a campaign while on the soft phone', () => {
     });
     await refused();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
-    expect(screen.getByTestId('join-softphone-call-pending').textContent).toMatch(/call that isn’t finished/);
+    expect(screen.getByTestId('join-softphone-call-pending').textContent).toMatch(/call that is not finished/);
     // The way to finish it is the one action left.
-    expect(screen.queryByRole('button', { name: 'Close the soft phone and join' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Close the soft phone and start here' })).toBeNull();
     expect(screen.getByTestId('join-open-softphone').getAttribute('href')).toBe('/dialer/phone');
     expect(document.activeElement).toBe(screen.getByTestId('join-open-softphone'));
   });
@@ -526,7 +544,7 @@ describe('joining a campaign while on the soft phone', () => {
     );
     await refused();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(screen.getByTestId('join-softphone-call-pending')).toBeTruthy();
     expect(mocks.createAgencySession).toHaveBeenCalledTimes(1);
@@ -539,7 +557,7 @@ describe('joining a campaign while on the soft phone', () => {
     );
     await refused();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(screen.queryByTestId('join-on-softphone')).toBeNull();
   });
@@ -549,10 +567,10 @@ describe('joining a campaign while on the soft phone', () => {
     mocks.leaveAgencySession.mockRejectedValue(Object.assign(new Error('Service Unavailable'), { statusCode: 503 }));
     await refused();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(screen.getByTestId('join-close-softphone-failure').textContent).toBe('Your soft phone is still open — Service Unavailable');
-    expect((screen.getByRole('button', { name: 'Close the soft phone and join' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Close the soft phone and start here' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('closed, but the join then fails: the ordinary join error, naming that the soft phone is closed', async () => {
@@ -562,7 +580,7 @@ describe('joining a campaign while on the soft phone', () => {
     mocks.leaveAgencySession.mockResolvedValue(undefined);
     await refused();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(screen.queryByTestId('join-on-softphone')).toBeNull();
     expect(document.body.textContent).toMatch(/Closed the soft phone, but couldn’t join this campaign — Campaign is stopped/);
@@ -579,7 +597,7 @@ describe('joining a campaign while on the soft phone', () => {
     );
     await act(async () => {});
     const screenEl = screen.getByTestId('join-on-softphone');
-    expect(screenEl.textContent).toMatch(/You’re on the soft phone/);
-    expect(within(screenEl).getByRole('link', { name: 'Open the soft phone' }).getAttribute('href')).toBe('/dialer/phone');
+    expect(screenEl.textContent).toMatch(/Your soft phone is still open/);
+    expect(screen.getByRole('link', { name: 'Open the soft phone' }).getAttribute('href')).toBe('/dialer/phone');
   });
 });

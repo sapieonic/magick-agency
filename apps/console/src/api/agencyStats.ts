@@ -1,6 +1,7 @@
 import { ENDPOINTS } from '../config';
 import { apiFetch } from './client';
 import type { AgencyAttempt, AgencyAttemptFilters, AgencyKeysetPage } from '../types/agency-spine';
+import type { AgencyMyDay } from '@magick-agency/contracts/api/agency/my-day';
 import type {
   AgencyAgentStats,
   AgencyGroupDimension,
@@ -82,6 +83,21 @@ export async function getMyStats(
 ): Promise<AgencyAgentStats> {
   return apiFetch<AgencyAgentStats>(
     `${ENDPOINTS.proxy.agency.myStats}${statsQuery(query)}`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * The agent's own day on one campaign (`GET /proxy/agency/my-day`, BE-1 to BE-3): connected calls,
+ * numbers dialled, talk time, will pay, the daily target and the agent's call-later list, on the
+ * campaign's own day. Floored at `agency.station.connect`, like {@link getMyStats}. A server
+ * without it answers 404, and the station falls back to my-stats and my-contacts.
+ */
+export async function getMyDay(campaignId: string, tenantId?: string, accountId?: string): Promise<AgencyMyDay> {
+  return apiFetch<AgencyMyDay>(
+    `${ENDPOINTS.proxy.agency.myDay}?campaign_id=${encodeURIComponent(campaignId)}`,
     {},
     tenantId,
     accountId,

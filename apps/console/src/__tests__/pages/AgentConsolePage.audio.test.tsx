@@ -849,7 +849,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     expect(banner.textContent).toContain('blocked');
     // The remedy is the half that makes it actionable — "audio capture failed"
     // tells the agent nothing they can do.
-    expect(banner.textContent).toContain('Allow microphone access');
+    expect(banner.textContent).toContain('Allow the microphone for this site');
     // And it says what the customer is experiencing, which is the fact the
     // agent needs in order to decide whether to keep talking.
     expect(banner.textContent).toContain('cannot hear you');
@@ -882,7 +882,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     await reserved();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('No microphone was found');
+    expect(banner.textContent).toContain('No microphone found');
     expect(banner.textContent).toContain('Plug in your headset');
   });
 
@@ -967,8 +967,8 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     });
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('disconnected');
-    expect(banner.textContent).toContain('Reconnect your headset');
+    expect(banner.textContent).toContain('Your headset came off');
+    expect(banner.textContent).toContain('Plug your headset in again');
   });
 
   it('does not report a device failure when WE stopped the track', async () => {
@@ -1355,9 +1355,9 @@ describe('a browser that suspends the audio graph says so', () => {
     const view = await reloadedMidCall();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('paused by your browser');
+    expect(banner.textContent).toContain('Sound is off');
     // Both directions, because a suspended context breaks both.
-    expect(banner.textContent).toContain('hear or be heard');
+    expect(banner.textContent).toContain('they cannot hear you');
 
     view.unmount();
   });
@@ -1507,7 +1507,7 @@ describe('a blocked pre-flight leaves a banner the agent can actually clear', ()
     const view = await blockedPreflight();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('paused by your browser');
+    expect(banner.textContent).toContain('Sound is off');
     // No customer is involved yet, which is the entire value of probing here.
     expect(screen.queryByText('+919876543210')).toBeNull();
 

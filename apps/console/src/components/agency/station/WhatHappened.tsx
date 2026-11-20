@@ -9,7 +9,7 @@ import { calendarDay, clockTime, halfAmount, rupees, sameDay, weekdayDayMonth } 
 import { NUMBER_KEY_COUNT, type DispositionPadHandle } from '../DispositionPad';
 import { outcomeIcon, outcomeTileLayout } from '../../../utils/agency/stationTiles';
 import type { AgencyDisposition } from '../../../types/agency';
-import { OUTCOME_ICON_COMPONENTS } from './stationIcons';
+import { StationTileIcon } from './stationIcons';
 import styles from './Station.module.css';
 
 /**
@@ -120,7 +120,6 @@ export function WhatHappened({
       >
         {tiles.map((entry, index) => {
           const icon = outcomeIcon(entry);
-          const Icon = OUTCOME_ICON_COMPONENTS[icon];
           const on = entry.code === form.selectedCode;
           return (
             <div key={entry.code} className={styles.pickWrap}>
@@ -139,7 +138,7 @@ export function WhatHappened({
                 onClick={() => select(entry)}
               >
                 {index < NUMBER_KEY_COUNT ? <span className={styles.key} aria-hidden="true">{index + 1}</span> : null}
-                <span className={styles.pickIcon} aria-hidden="true"><Icon size={layout.size === 'small' ? 24 : 32} /></span>
+                <span className={styles.pickIcon} aria-hidden="true"><StationTileIcon icon={icon} size={layout.size === 'small' ? 24 : 32} /></span>
                 <b>{entry.label}</b>
                 {on ? <span className={styles.tick} aria-hidden="true"><Check size={18} strokeWidth={3} /></span> : null}
               </button>

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { hangupAttempt } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
-import { hangupFailureCopy } from '../../../utils/agencyDncCopy';
+import { hangupFailedLine } from '../../../utils/agency/stationCopy';
 import { errorCode } from '../../../utils/agencyErrors';
 import { trackAgencyHangupRequested, trackAgencyHangupFailed } from '../../../analytics/events';
 import type { LiveAttempt } from '../../../hooks/useAgencyStation';
@@ -102,7 +102,7 @@ export function useHangup({
       // already be on a different call, and an error about the previous one is
       // worse than none.
       if (liveAttemptRef.current !== attemptId) return;
-      setFailure({ attemptId, message: hangupFailureCopy(err) });
+      setFailure({ attemptId, message: hangupFailedLine(errorCode(err)) });
       // Same structured-code read `hangupFailureCopy`/`dncFailureCopy` use —
       // `details.code`, never `err.message`.
       const code = errorCode(err);

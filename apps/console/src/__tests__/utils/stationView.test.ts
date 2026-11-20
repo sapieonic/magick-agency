@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { breakIsOver, stationScreen, stationView, type StationViewInput } from '../../utils/agency/stationView';
+import { breakIsOver, sideViewBand, stationScreen, stationView, type SideCallPhase, type StationViewInput } from '../../utils/agency/stationView';
+import type { StationConnection } from '../../hooks/useAgencyStation';
 
 /**
  * The station's view model (AS1, spec §2): one agent state in, one screen out. Every input maps to
@@ -196,5 +197,25 @@ describe('⋮ More hides what cannot be used now (spec §3)', () => {
   it('leaves out My customers and Dial a number myself where they are not on, and the dial tile is on Start of day itself', () => {
     expect(v({ agentState: 'available', myContactsOffered: false, softphoneAvailable: false }).menu).toEqual(['my_calls', 'sound', 'theme', 'finish']);
     expect(v({}).menu).not.toContain('dial_myself');
+  });
+});
+
+describe('the band over an inbound call and the soft phone (ruling 2)', () => {
+  it('says the call in the same words and colours as 03, 04 and 05', () => {
+    const b = (kind: 'inbound' | 'softphone', phase: SideCallPhase, who: string | null = 'Asha Rao') =>
+      sideViewBand({ kind, connection: 'open', phase, who });
+    expect(b('inbound', 'coming')).toMatchObject({ tone: 'coming', title: 'Customer is calling', subtitle: 'Get ready. Say Namaste first.' });
+    expect(b('inbound', 'on_call')).toMatchObject({ tone: 'oncall', title: 'On call', subtitle: 'Asha Rao' });
+    expect(b('inbound', 'happened')).toMatchObject({ tone: 'happened', title: 'What happened?' });
+    expect(b('softphone', 'idle')).toMatchObject({ tone: 'ready', title: 'Dial a number' });
+    expect(b('softphone', 'coming', '+91 98204 61733')).toMatchObject({ tone: 'coming', title: 'Calling +91 98204 61733' });
+  });
+
+  it('lets the socket outrank the call, as on the twelve', () => {
+    const b = (connection: StationConnection, phase: SideCallPhase) => sideViewBand({ kind: 'inbound', connection, phase, who: null });
+    expect(b('reconnecting', 'on_call')).toMatchObject({ tone: 'problem', title: 'Call problem' });
+    expect(b('disconnected', 'happened')).toMatchObject({ tone: 'problem', title: 'Internet problem', subtitle: 'Calls are stopped. Press Try again now.' });
+    expect(b('superseded', 'on_call')).toMatchObject({ title: 'Your work is open on another device' });
+    expect(b('session_gone', 'coming')).toMatchObject({ title: 'Your work was closed' });
   });
 });

@@ -399,7 +399,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
       { event: 'inbound_call', call: inboundCall() },
     );
     expect(screen.getByTestId('station-inbound')).toBeTruthy();
-    expect(railLabel()).toBe('Incoming call from Asha Rao');
+    expect(screen.getByTestId('band-title').textContent).toBe('Customer is calling');
     expect(screen.queryByText(DIALLING)).toBeNull();
     expect(screen.queryByTestId('dial-activity')).toBeNull();
     expect(screen.queryByTestId('missed-release')).toBeNull();

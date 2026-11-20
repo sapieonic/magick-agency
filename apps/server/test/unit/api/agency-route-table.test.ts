@@ -100,10 +100,6 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials/:_/sync-numbers', 'carrier account number sync (BYOC, B18; audited)'],
   // Read by the console's campaign builder once its carrier choice lands (B18).
   ['GET /proxy/agency/carriers', 'carrier accounts a campaign may dial on (BYOC, B18)'],
-  // Agent station BE-1 to BE-3 (contracts api/agency/my-day.ts): the agent's own day on one campaign.
-  // The agent app and the console's redesigned station read it once they are wired (stream C1);
-  // then it moves to the console-path fixture with the file that calls it.
-  ['GET /proxy/agency/my-day', "agent station's My day: the agent's own numbers, target and call-laters (agency.station.connect)"],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
   ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],
