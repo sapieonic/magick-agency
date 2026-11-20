@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { trackAgencyHoldAbandoned } from '../../analytics/events';
-import { isTextEntryTarget } from '../../utils/keyboardTarget';
+import { DOUBLE_KEY_MS, useDoubleKey } from '../../hooks/useDoubleKey';
 import styles from './HoldToConfirmButton.module.css';
 
 /**
@@ -33,7 +33,9 @@ import styles from './HoldToConfirmButton.module.css';
  * not a reliable clock and on some machines produces exactly one event. The
  * keyboard equivalent is therefore **`E` twice within 1.5s** — and it drives the
  * *same fill element*, in reverse, so the fill always means one thing: **an
- * end-call gesture is in progress**, whichever hand started it.
+ * end-call gesture is in progress**, whichever hand started it. For the same
+ * reason a held key's auto-repeat is never the second press. The keys are
+ * `useDoubleKey`, shared with Call coming, so the two screens cannot drift.
  *
  * ── One re-decision against, deliberately ──────────────────────────
  * The spec says the button is "disabled" after firing and while ending. It is
@@ -48,8 +50,8 @@ import styles from './HoldToConfirmButton.module.css';
 
 /** Fixed by Not configurable — see the note above. */
 export const HOLD_MS = 500;
-/** The `E`,`E` window. Also fixed. */
-export const DOUBLE_KEY_MS = 1500;
+/** The `E`,`E` window. Also fixed, and shared with Call coming's `E`,`E` (`useDoubleKey`). */
+export { DOUBLE_KEY_MS };
 /** How long we wait for `released` before admitting we cannot confirm the end. */
 export const RELEASE_TIMEOUT_MS = 3000;
 
@@ -160,6 +162,11 @@ export interface HoldToConfirmButtonProps {
   attemptId: string | null;
   /** False from `reserved` onward is never correct — live from `reserved`. */
   enabled: boolean;
+  /**
+   * Something over the screen owns the keyboard (a dialog over the station): `E`,`E` and Escape
+   * are not this button's then. The pointer hold still works. Read when a key arrives.
+   */
+  suspended?: boolean;
   /** Visible stated reason when there is nothing to hang up. */
   disabledReason?: string | null;
   /**
@@ -187,6 +194,7 @@ export interface HoldToConfirmButtonProps {
 export function HoldToConfirmButton({
   attemptId,
   enabled,
+  suspended = false,
   disabledReason = null,
   reserveReasonLine = false,
   onConfirm,
@@ -194,14 +202,34 @@ export function HoldToConfirmButton({
   buttonClassName,
 }: HoldToConfirmButtonProps) {
   const hintId = `${copy.idPrefix}-hint`;
+  /** Everything but `armed`, which is the double key's (`useDoubleKey`). */
   const [phase, setPhase] = useState<Phase>('idle');
   const fillRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const windowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * `E` twice within the window, through the one implementation Call coming shares
+   * (`useDoubleKey`): a held key's repeat is not a second press, a text field, a modifier or a
+   * key another handler took is ignored, focus going into a text field while armed disarms, and
+   * Escape or the window losing focus calls off the hold as well as the keys.
+   *
+   * `E` is a global shortcut on the console, so the listener is on the window there — an agent
+   * whose focus is in the contact panel still needs it — and on the button itself for `self`.
+   * Fired calls go no further than `ending`, which accepts no input.
+   */
+  const { armed: keyArmed, disarm: disarmKey } = useDoubleKey(() => fire(), {
+    enabled: enabled && phase !== 'ending',
+    suspended,
+    scope: copy.shortcutScope === 'window' ? 'window' : buttonRef,
+    resetKey: attemptId,
+    onCallOff: () => cancel(),
+  });
+  /** What the button shows: a first `E` reads as `armed` over a resting or failed button. */
+  const shown: Phase = keyArmed && (phase === 'idle' || phase === 'failed') ? 'armed' : phase;
   const phaseRef = useRef<Phase>('idle');
-  phaseRef.current = phase;
+  phaseRef.current = shown;
   /**
    * Analytics-only: when the pointer-hold gesture started, so an abandoned hold
    * (released before `HOLD_MS`) can report how long it was actually held.
@@ -246,10 +274,10 @@ export function HoldToConfirmButton({
   /** The shared timer/fill/phase reset, with no analytics of its own. */
   const resetHold = useCallback(() => {
     clearTimer(holdTimer);
-    clearTimer(windowTimer);
+    disarmKey();
     resetFill();
-    setPhase((current) => (current === 'holding' || current === 'armed' ? 'idle' : current));
-  }, [resetFill]);
+    setPhase((current) => (current === 'holding' ? 'idle' : current));
+  }, [resetFill, disarmKey]);
 
   const cancel = useCallback(() => {
     // Silent and instant. Nothing is announced on cancel — a live region firing on
@@ -270,7 +298,7 @@ export function HoldToConfirmButton({
 
   const fire = useCallback(() => {
     clearTimer(holdTimer);
-    clearTimer(windowTimer);
+    disarmKey();
     resetFill();
     setPhase('ending');
     onConfirm();
@@ -291,7 +319,7 @@ export function HoldToConfirmButton({
     if (copy.confirmation === 'external') {
       releaseTimer.current = setTimeout(() => setPhase('failed'), RELEASE_TIMEOUT_MS);
     }
-  }, [onConfirm, resetFill, copy.confirmation]);
+  }, [onConfirm, resetFill, disarmKey, copy.confirmation]);
 
   /**
    * One-shot per attempt, and the reset. A new `reserved` brings a new
@@ -302,7 +330,6 @@ export function HoldToConfirmButton({
    */
   useEffect(() => {
     clearTimer(holdTimer);
-    clearTimer(windowTimer);
     clearTimer(releaseTimer);
     resetFill();
     setPhase('idle');
@@ -323,78 +350,34 @@ export function HoldToConfirmButton({
   useEffect(
     () => () => {
       clearTimer(holdTimer);
-      clearTimer(windowTimer);
       clearTimer(releaseTimer);
     },
     [],
   );
 
+  /**
+   * The keyboard window drives the SAME fill element, in reverse: full to empty over the
+   * window, so the fill means one thing whichever hand started the gesture. A first `E` after a
+   * failure starts afresh, as a hold would. Before paint, so no frame shows the wrong fill.
+   */
+  useLayoutEffect(() => {
+    if (phaseRef.current !== 'idle' && phaseRef.current !== 'armed') return;
+    if (keyArmed) {
+      setPhase((current) => (current === 'failed' ? 'idle' : current));
+      runFill(1, 0, DOUBLE_KEY_MS);
+    } else {
+      resetFill();
+    }
+  }, [keyArmed, runFill, resetFill]);
+
   const startHold = () => {
     if (!enabled || phase === 'ending') return;
+    disarmKey();
     holdStartRef.current = Date.now();
     setPhase('holding');
     runFill(0, 1, HOLD_MS);
     holdTimer.current = setTimeout(fire, HOLD_MS);
   };
-
-  /**
-   * `E` is a global shortcut, so the listener is on the window rather than
-   * the button — an agent whose focus is in the contact panel still needs it. The
-   * suppression rule lives here too: **all single-key shortcuts are suppressed
-   * while focus is inside a text input**, because a note containing the letter "e"
-   * must not end the call.
-   */
-  useEffect(() => {
-    if (!enabled) return undefined;
-    // `self` scope binds to the button; until it has mounted there is nothing to
-    // bind to, and `buttonRef` is filled on the same commit that runs this.
-    const target: Window | HTMLElement | null =
-      copy.shortcutScope === 'window' ? window : buttonRef.current;
-    if (!target) return undefined;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      // The page's own rule, not a second copy of it: a radio or a checkbox is
-      // not somewhere the agent types, so `E`,`E` still works with focus there.
-      const inTextInput = isTextEntryTarget(event.target);
-
-      if (event.key === 'Escape') {
-        cancel();
-        return;
-      }
-      if (inTextInput || event.ctrlKey || event.metaKey || event.altKey) {
-        // Focus entering a text input is itself a cancel: an agent who
-        // has gone to type is no longer ending a call.
-        if (inTextInput && phaseRef.current === 'armed') cancel();
-        return;
-      }
-      if (event.key !== 'e' && event.key !== 'E') return;
-      if (phaseRef.current === 'ending') return;
-
-      event.preventDefault();
-      if (phaseRef.current === 'armed') {
-        fire();
-        return;
-      }
-      // First press — or a fresh press after the window lapsed, which simply
-      // restarts it rather than ending the call.
-      setPhase('armed');
-      // The SAME fill element, run in reverse: full to empty over the window. One
-      // meaning for one element.
-      runFill(1, 0, DOUBLE_KEY_MS);
-      clearTimer(windowTimer);
-      windowTimer.current = setTimeout(cancel, DOUBLE_KEY_MS);
-    };
-
-    target.addEventListener('keydown', onKeyDown as EventListener);
-    return () => target.removeEventListener('keydown', onKeyDown as EventListener);
-  }, [enabled, cancel, fire, runFill, copy.shortcutScope]);
-
-  // The window losing focus cancels: a hold the agent has walked away from is not
-  // a hold.
-  useEffect(() => {
-    window.addEventListener('blur', cancel);
-    return () => window.removeEventListener('blur', cancel);
-  }, [cancel]);
 
   const inert = !enabled || phase === 'ending';
 
@@ -404,7 +387,7 @@ export function HoldToConfirmButton({
         ref={buttonRef}
         type="button"
         className={buttonClassName ? `${styles.button} ${buttonClassName}` : styles.button}
-        data-phase={phase}
+        data-phase={shown}
         // NEVER `disabled` — see the re-decision note at the top of this file.
         aria-disabled={inert || undefined}
         aria-keyshortcuts="e"
@@ -443,7 +426,7 @@ export function HoldToConfirmButton({
           data-testid={`${copy.idPrefix}-fill`}
           aria-hidden="true"
         />
-        <span className={styles.label}>{copy.labels[phase]}</span>
+        <span className={styles.label}>{copy.labels[shown]}</span>
       </button>
 
       {/* Persistent hint node, not a live region — the hold announces nothing. */}
@@ -457,7 +440,7 @@ export function HoldToConfirmButton({
         shape forbids for a stale disposition response, written twice
         because the two are implemented in different files.
       */}
-      {phase === 'failed' ? (
+      {shown === 'failed' ? (
         <span className={styles.error} role="alert" data-testid={`${copy.idPrefix}-failed`}>
           {copy.failedCopy}
         </span>
@@ -465,7 +448,7 @@ export function HoldToConfirmButton({
 
       {!enabled && disabledReason ? (
         <span className={styles.blockedReason}>{disabledReason}</span>
-      ) : reserveReasonLine && phase !== 'failed' ? (
+      ) : reserveReasonLine && shown !== 'failed' ? (
         // The failure line, when there is one, takes the reserved line's place.
         <span className={styles.blockedReason} aria-hidden="true">
           {'\u00a0'}

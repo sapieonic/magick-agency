@@ -272,6 +272,58 @@ describe('E stops a call while it rings (AS11, item 2)', () => {
     expect(mocks.hangupAttempt).not.toHaveBeenCalled();
   });
 
+  it('a held E on Call coming is one press: its auto-repeat stops nothing', async () => {
+    await mounted();
+    await ringing();
+    key('e');
+    for (let i = 0; i < 10; i += 1) {
+      act(() => {
+        fireEvent.keyDown(document.body, { key: 'e', repeat: true });
+      });
+    }
+    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
+    expect(screen.getByTestId('ringing-stop-armed')).toBeTruthy();
+  });
+
+  it('going to type while E is pressed on Call coming calls it off', async () => {
+    await mounted();
+    await ringing();
+    key('e');
+    expect(screen.getByTestId('ringing-stop-armed')).toBeTruthy();
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    act(() => field.focus());
+    expect(screen.queryByTestId('ringing-stop-armed')).toBeNull();
+    act(() => field.blur());
+    field.remove();
+    key('e');
+    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
+  });
+
+  it('a held E on On call ends nothing', async () => {
+    await mounted();
+    await onCall();
+    key('e', window);
+    for (let i = 0; i < 10; i += 1) {
+      act(() => {
+        fireEvent.keyDown(window, { key: 'e', repeat: true });
+      });
+    }
+    await act(async () => {});
+    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
+  });
+
+  it('E then E on On call ends nothing while Which break? is open over it, as on Call coming', async () => {
+    await mounted();
+    await onCall();
+    key('b');
+    expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
+    key('e');
+    key('e');
+    await act(async () => {});
+    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
+  });
+
   it('E then E on an outbound On call ends the call', async () => {
     await mounted();
     await onCall();

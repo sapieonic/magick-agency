@@ -828,6 +828,8 @@ function StationScreen({
           <HoldToConfirmButton
             attemptId={live?.attempt.attempt_id ?? null}
             enabled={Boolean(live)}
+            // The same keys, and the same rule, as Call coming's E then E (`useDoubleKey`).
+            suspended={keysSuspended}
             onConfirm={hangup}
             copy={END_CALL_COPY}
             buttonClassName={stationStyles.endCall}
