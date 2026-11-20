@@ -8,11 +8,14 @@ import {
   agentDisplayName,
   agentsOnShift,
   breakLimitMinutesOf,
+  disconnectedFor,
+  disconnectedWords,
   floorRisk,
   isOnSoftphone,
   isWarningRisk,
   owesInboundOutcome,
   type AgencyFloorRisk,
+  type FloorAgentRow,
 } from '../agencyAgentFloor';
 import { campaignTabHref } from '../agencyCampaignTabs';
 import { customerLabel } from '../listen/listenCopy';
@@ -85,7 +88,7 @@ export function floorCardState(row: Pick<AgencyFloorAgent, 'state' | 'break_reas
  * The floor row as the campaign floor's row, for its rules. A row with no open session has no
  * session id: it is given one no real session has, and no control acts on it (it is `offline`).
  */
-export function supervisorAgentOf(row: AgencyFloorAgent): AgencySupervisorAgent {
+export function supervisorAgentOf(row: AgencyFloorAgent): FloorAgentRow {
   return {
     session_id: row.session_id ?? `no-session:${row.agent_user_id}`,
     agent_user_id: row.agent_user_id,
@@ -100,13 +103,15 @@ export function supervisorAgentOf(row: AgencyFloorAgent): AgencySupervisorAgent 
     on_inbound_call: row.on_inbound_call,
     inbound_outcome_owed: row.inbound_outcome_owed,
     can_take_inbound: null,
+    // BE-11: the drawer says for how long the screen has been down.
+    disconnected_since: row.disconnected_since ?? null,
   };
 }
 
 /** One card: the row, what the campaign floor's rules say of it, and the card's own facts. */
 export interface FloorCard {
   row: AgencyFloorAgent;
-  agent: AgencySupervisorAgent;
+  agent: FloorAgentRow;
   state: FloorCardState;
   risk: AgencyFloorRisk;
   displayName: string;
@@ -532,24 +537,8 @@ export function helpItems(
 
 // ── Disconnected (BE-11) ────────────────────────────────────────────────────
 
-/**
- * How long the agent's screen has been disconnected, in plain words, from the row's
- * `disconnected_since` (BE-11) on the server's clock: "Disconnected for 2 min", "Disconnected for
- * under a minute". "Disconnected" alone when the server does not know since when (an older server,
- * or right after a restart: the time is held in its memory only).
- */
-export function disconnectedWords(since: string | null | undefined, nowMs: number): string {
-  const time = disconnectedFor(since, nowMs);
-  return time === null ? 'Disconnected' : `Disconnected ${time}`;
-}
-
-/** "for 2 min", "for under a minute": how long since `since` at `nowMs`; null when it cannot be read. */
-export function disconnectedFor(since: string | null | undefined, nowMs: number): string | null {
-  const at = since ? Date.parse(since) : Number.NaN;
-  if (!Number.isFinite(at)) return null;
-  const minutes = Math.floor(Math.max(0, nowMs - at) / 60_000);
-  return minutes < 1 ? 'for under a minute' : `for ${formatCount(minutes)} min`;
-}
+// "Disconnected for 2 min": the campaign floor's words too (`agencyAgentFloor.ts`), re-exported here.
+export { disconnectedFor, disconnectedWords };
 
 /**
  * One row per working agent whose screen has been disconnected for at least

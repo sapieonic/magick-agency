@@ -237,9 +237,36 @@ export const AGENCY_FLOOR_RISK_NOTE: Record<AgencyFloorRisk, string | null> = {
   wrapup_overrun: 'Wrap-up has run past this campaign’s window.',
   call_overrun: 'On a call far longer than this campaign’s average.',
   long_break: `On break for more than ${AGENCY_BREAK_DEFAULT_LIMIT_MINUTES} minutes.`,
-  disconnected: 'Station disconnected — no heartbeat.',
+  // Plain words (AS15), as Live floor says it; how long, where the row knows, is `disconnectedWords`.
+  disconnected: 'Disconnected.',
   none: null,
 };
+
+/**
+ * A floor row as the drawer and the Agents tab read it: the campaign floor's row, and since when its
+ * screen has been disconnected where the read knows (Live floor's floor read carries
+ * `disconnected_since`, BE-11; the campaign floor's stats read does not).
+ */
+export type FloorAgentRow = AgencySupervisorAgent & { disconnected_since?: string | null };
+
+/** "for 2 min", "for under a minute": how long since `since` at `nowMs`; null when it cannot be read. */
+export function disconnectedFor(since: string | null | undefined, nowMs: number): string | null {
+  const at = since ? Date.parse(since) : Number.NaN;
+  if (!Number.isFinite(at)) return null;
+  const minutes = Math.floor(Math.max(0, nowMs - at) / 60_000);
+  return minutes < 1 ? 'for under a minute' : `for ${formatCount(minutes)} min`;
+}
+
+/**
+ * How long the agent's screen has been disconnected, in plain words (BE-11, AS15), on the server's
+ * clock: "Disconnected for 2 min", "Disconnected for under a minute"; "Disconnected" alone when the
+ * read does not say since when (the campaign floor's read, an older server, or right after a
+ * restart: the server holds the time in memory only).
+ */
+export function disconnectedWords(since: string | null | undefined, nowMs: number): string {
+  const time = disconnectedFor(since, nowMs);
+  return time === null ? 'Disconnected' : `Disconnected ${time}`;
+}
 
 /**
  * {@link AGENCY_FLOOR_RISK_NOTE} for one agent: a long break names its reason's limit (LF6), "Past
@@ -280,7 +307,7 @@ export const AGENCY_FLOOR_RISK_CLAUSE: Record<AgencyFloorRisk, string | null> = 
   call_overrun: 'on a call past twice the handle-time average',
   // The campaign Agents tab's summary: its rows carry no limit, so its rule is the floor's 30 minutes.
   long_break: `on a break longer than ${AGENCY_BREAK_DEFAULT_LIMIT_MINUTES} minutes`,
-  disconnected: 'with no station heartbeat',
+  disconnected: 'disconnected',
   none: null,
 };
 
