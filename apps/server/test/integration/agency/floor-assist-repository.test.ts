@@ -439,7 +439,10 @@ describe('the floor\'s read', () => {
     const quiet = await session({ agent_user_id: randomUUID() });
     const raised = (await raise(helped, null)).help!;
     const app = Fastify();
-    const runtime = { stations: { connectedBySession: async (ids: readonly string[]) => new Map(ids.map((id) => [id, true])) } };
+    const runtime = {
+      stations: { connectedBySession: async (ids: readonly string[]) => new Map(ids.map((id) => [id, true])) },
+      stationDisconnects: { disconnectedSince: () => new Map(), goneSessionIds: () => [] },
+    };
     await app.register(async (sub) => registerFloorRoutes(sub, runtime as never), { prefix: '/api/v1/agency' });
     try {
       const res = await app.inject({

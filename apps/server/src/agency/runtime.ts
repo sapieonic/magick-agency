@@ -53,6 +53,7 @@ import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { ListenRegistry, type ListenLimits, type ListenSessionHandle } from './listen/listen-registry.js';
 import { ListenTokenStore } from './listen/listen-token.js';
 import { ListenRowKeeper } from './listen/listen-rows.js';
+import type { StationDisconnectsReader } from './station-detach-times.js';
 import { listenAccessCheck } from './listen/listen-access.js';
 import type { ListenSocketDeps } from './listen/listen-socket.js';
 
@@ -85,6 +86,12 @@ export interface AgencyRuntimeOptions {
    * process): none.
    */
   listenLiveReplicaIds?: () => readonly string[];
+  /**
+   * Agent station (BE-11): where the floor and the alerts read learn when a station went (the
+   * primary's `StationDirectory`, which hears the workers' detaches). Unset (one process): the
+   * runtime's own registry.
+   */
+  stationDisconnects?: StationDisconnectsReader;
 }
 
 /** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
@@ -188,6 +195,12 @@ export class AgencyRuntime {
    */
   readonly floorAssist: FloorAssistService;
   /**
+   * Agent station (BE-11, AS16): when each station went, for the floor's `disconnected_since` and the
+   * supervisors' `disconnected` alert: this process's registry, or the media workers' directory in
+   * the primary of a multi-process server ({@link AgencyRuntimeOptions.stationDisconnects}).
+   */
+  readonly stationDisconnects: StationDisconnectsReader;
+  /**
    * Set by a multi-process server: end a supervisor's sessions held by OTHER processes past their
    * cap after an admission here (`listen.revoke` over IPC). Null in one process.
    */
@@ -200,6 +213,7 @@ export class AgencyRuntime {
     this.replicaId = process.env.REPLICA_ID || `${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 
     this.stations = new StationRegistry(redis, keyPrefix, this.replicaId);
+    this.stationDisconnects = options.stationDisconnects ?? this.stations;
     this.agents = new AgentStateMachine(redis, keyPrefix);
     this.breaks = new BreakRegistry();
     // The wrap-up manager returns agents through the dialer's own release path, so

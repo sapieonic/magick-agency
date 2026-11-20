@@ -85,6 +85,24 @@ describe('StationDirectory', () => {
     expect(d.send('s1', frame)).toBe(false);
     expect(sendToWorker).toHaveBeenCalledTimes(1);
   });
+
+  it("BE-11: remembers when a worker's station went (its detach, or the worker's exit) and forgets it when one attaches again", () => {
+    const { d } = dir();
+    d.workerUp(0, 'r0');
+    d.attached(0, 's1', 'c1', 'r0');
+    d.attached(0, 's2', 'c1', 'r0');
+    expect(d.disconnectedSince(['s1', 's2'])).toEqual(new Map());
+    d.detached(0, 's1');
+    expect([...d.disconnectedSince(['s1', 's2']).keys()]).toEqual(['s1']);
+    d.detached(1, 's2'); // another slot's late event: not this station's
+    expect(d.goneSessionIds()).toEqual(['s1']);
+    d.workerDown(0);
+    expect(d.goneSessionIds().sort()).toEqual(['s1', 's2']);
+    d.workerUp(0, 'r0b');
+    d.snapshot(0, 'r0b', [{ sessionId: 's2', campaignId: 'c1' }]);
+    d.attached(0, 's1', 'c1', 'r0b');
+    expect(d.goneSessionIds()).toEqual([]);
+  });
 });
 
 describe('IpcDialDispatcher', () => {

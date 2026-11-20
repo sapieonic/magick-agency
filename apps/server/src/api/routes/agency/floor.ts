@@ -2,10 +2,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCallOrigin, AgencyClientKind, AgencyAgentLiveState } from '@magick-agency/contracts/agency';
 import type { AgencyFloorTotals } from '@magick-agency/contracts/api/agency/floor';
-import type { AgencySessionHelp } from '@magick-agency/contracts/agency';
+import { AGENCY_HELP_EXPIRY_MS, type AgencySessionHelp } from '@magick-agency/contracts/agency';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import {
+  agencyFloorAlertsRepository,
+  agencyFloorAssistRepository,
   agencyFloorRepository,
   agencyListenSessionRepository,
   agencyLiveCallRepository,
@@ -15,6 +17,7 @@ import {
 import { matchName } from '../../../agency/inbound/match-name.js';
 import { floorBreak, floorTotals, parseFloorFrom } from '../../../agency/floor.js';
 import { toSessionHelp } from '../../../agency/floor-assist.js';
+import { buildFloorAlerts, goneLongEnough, isDisconnectedAlert, type CoreFloorAlert } from '../../../agency/floor-alerts.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { isUuid } from '../../../utils/uuid.js';
 import { ahtFor } from './live-calls.js';
@@ -37,7 +40,15 @@ const log = createChildLogger({ component: 'agency-floor' });
  *    {@link FLOOR_CALLS_TODAY_CACHE_MS} per account and `from`).
  *    The call carries the customer's name, never the number: the floor shows no numbers.
  *    Each open session's open Need help (LF4, read with the rows, the expiry applied in the read),
- *    whatever the floor assist flag says: the public layer reads it.
+ *    whatever the floor assist flag says: the public layer reads it. Agent station (BE-11): each
+ *    session whose station is gone (`connected` false) carries when it went
+ *    (`disconnected_since`, the runtime's in-memory detach times, `runtime.stationDisconnects`).
+ *  - `GET /floor/alerts` (owner `none`, as the floor; agent station AS16): the account's open
+ *    alerts (`agency/floor-alerts.ts`): two small reads (`AgencyFloorAlertsRepository`: the open
+ *    Need help requests, and the sessions on a break or whose station went at least the threshold
+ *    ago), the gone ones' liveness (`connectedBySession`; unknown never alerts) and, for each
+ *    disconnected one, the call it is on. `help` alerts whatever the flag says: the public layer
+ *    drops them while it is off. No names: the public layer's.
  */
 
 /**
@@ -93,6 +104,14 @@ export interface CoreFloorAgent {
   left_at: string | null;
   /** The open session's open Need help (LF4), whatever the flag says: the public route nulls it while the flag is off. */
   help: AgencySessionHelp | null;
+  /** BE-11: when the station went, while `connected` is false and this process saw it go; else null. */
+  disconnected_since: string | null;
+}
+
+/** `GET /api/v1/agency/floor/alerts`: the account's alerts without the agents' names. */
+export interface CoreFloorAlertsResponse {
+  alerts: CoreFloorAlert[];
+  as_of: string;
 }
 
 /** `GET /api/v1/agency/floor`. */
@@ -174,6 +193,10 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
       else listenersByCall.set(l.call_id, [l.listener_user_id]);
     }
 
+    // BE-11: when each gone station went (memory), for the rows whose station is not held.
+    const goneSince = runtime.stationDisconnects.disconnectedSince(
+      sessionIdsOf(rows).filter((id) => connected.get(id) === false),
+    );
     const agents: CoreFloorAgent[] = rows.map((r) => {
       const call = r.session_id ? callBySession.get(r.session_id) : undefined;
       const onBreak = floorBreak(r.break_reason, r.break_reasons);
@@ -207,9 +230,45 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
         calls_today: callsTodayByAgent.get(r.agent_user_id) ?? 0,
         left_at: r.left_at ? new Date(r.left_at).toISOString() : null,
         help: r.help_raised_at ? toSessionHelp({ raised_at: r.help_raised_at, call_id: r.help_call_id, state: r.help_state }) : null,
+        disconnected_since: r.session_id ? goneSince.get(r.session_id)?.toISOString() ?? null : null,
       };
     });
     const body: CoreFloorResponse = { agents, totals: floorTotals(rows), as_of: now.toISOString() };
+    return reply.send(body);
+  });
+
+  // ── GET /floor/alerts ─────────────────────────────────────────────────────
+  sub.get('/floor/alerts', async (request: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = getTenantId(request);
+    const accountId = getAccountId(request);
+    if (!isUuid(tenantId) || !isUuid(accountId)) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'The alerts are one account\'s.' });
+    }
+    const now = new Date();
+    // The stations this process saw go at least the threshold ago (any account's: the read keeps
+    // this account's open sessions among them).
+    const disconnects = runtime.stationDisconnects;
+    const since = disconnects.disconnectedSince(disconnects.goneSessionIds());
+    const gone = goneLongEnough(since, now);
+    const [help, sessions] = await Promise.all([
+      agencyFloorAlertsRepository.openHelp(tenantId, accountId, AGENCY_HELP_EXPIRY_MS),
+      agencyFloorAlertsRepository.breakOrGoneSessions(tenantId, accountId, gone),
+    ]);
+    const goneHere = new Set(gone);
+    const connected = await connectedFor(runtime, sessions.filter((s) => goneHere.has(s.session_id)).map((s) => s.session_id));
+    // The call each disconnected agent is on (a drop mid-call is held by the deferred hang-up).
+    const dropped = sessions.filter((s) => isDisconnectedAlert(s, since.get(s.session_id), connected, now));
+    const callIds = new Map(await Promise.all(dropped.map(async (s) => [
+      s.session_id,
+      await agencyFloorAssistRepository.liveCallIdForSession(s.session_id, tenantId).catch((err: unknown) => {
+        log.warn({ err, sessionId: s.session_id }, 'Floor alerts: the call of a disconnected agent could not be read; serving none');
+        return null;
+      }),
+    ] as const)));
+    const body: CoreFloorAlertsResponse = {
+      alerts: buildFloorAlerts({ help, sessions, disconnectedSince: since, connected, callIds, now }),
+      as_of: now.toISOString(),
+    };
     return reply.send(body);
   });
 }

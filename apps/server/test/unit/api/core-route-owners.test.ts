@@ -49,7 +49,10 @@ const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /inbound/calls/:id/ring/accept': INBOUND_SINGLE_PROCESS,
   // The Live floor (B28b): reads only the station registry's liveness keys in Redis
   // (`connectedBySession`), as the stats strip does wherever it runs; no process-held station state.
-  'GET /floor': 'the station liveness read: Redis ownership keys every process reads alike, as the stats strip\'s',
+  'GET /floor': 'the station liveness read: Redis ownership keys every process reads alike, as the stats strip\'s; and (BE-11) the detach times the runtime keeps for the whole server (`stationDisconnects`: the primary\'s directory with media workers, where `none` routes run)',
+  // The supervisors' alerts (AS16): SQL, the liveness keys, and the detach times kept for the whole
+  // server as the floor reads them; no session's own state.
+  'GET /floor/alerts': 'the floor\'s reads: SQL, the Redis liveness keys and the server-wide detach times (`stationDisconnects`), as `GET /floor`',
 };
 
 let core: FastifyInstance;

@@ -68,6 +68,13 @@ export type {
 export { AgencyLiveCallRepository, agencyLiveCallRepository } from './agency/live-call.repository.js';
 export { AgencyFloorRepository, agencyFloorRepository, FLOOR_ACTIVE_STATUSES } from './agency/floor.repository.js';
 export type { AgencyFloorRow } from './agency/floor.repository.js';
+export {
+  AgencyFloorAlertsRepository,
+  agencyFloorAlertsRepository,
+  FLOOR_ALERTS_HELP_SQL,
+  FLOOR_ALERTS_SESSIONS_SQL,
+} from './agency/floor-alerts.repository.js';
+export type { FloorAlertHelpRow, FloorAlertSessionRow } from './agency/floor-alerts.repository.js';
 export { AgencyPromiseSummaryRepository, agencyPromiseSummaryRepository } from './agency/promise-summary.repository.js';
 export type { AgencyPromiseSummaryRow } from './agency/promise-summary.repository.js';
 export { AgencyCallbacksRepository, agencyCallbacksRepository, callbacksPageStatement, CALLBACK_CANDIDATE_SQL } from './agency/callbacks.repository.js';

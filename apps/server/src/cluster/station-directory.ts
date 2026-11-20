@@ -18,6 +18,7 @@
  */
 import type { AgencyStationCapability, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import type { PacingStations } from '../agency/pacing-engine.js';
+import { StationDetachTimes, type StationDisconnectsReader } from '../agency/station-detach-times.js';
 
 const NO_CAPS: ReadonlySet<AgencyStationCapability> = new Set();
 
@@ -36,8 +37,15 @@ export interface StationDirectoryDeps {
   sendToWorker: (slot: number, sessionId: string, frame: AgencyStationServerFrame) => boolean;
 }
 
-export class StationDirectory implements PacingStations {
+export class StationDirectory implements PacingStations, StationDisconnectsReader {
   private readonly entries = new Map<string, Entry>();
+  /**
+   * Agent station (BE-11): when each worker's station went, as the primary hears it (a
+   * `station.detached`, or the worker's exit for every station it held); forgotten when one attaches
+   * again. The primary's floor and alerts reads take it in place of its own registry's, which holds
+   * no stations.
+   */
+  private readonly detachTimes = new StationDetachTimes();
   /** replicaId → slot, for the workers alive now. */
   private readonly liveReplicas = new Map<string, number>();
 
@@ -52,7 +60,11 @@ export class StationDirectory implements PacingStations {
   /** A worker's process exited (or its channel closed): forget everything it held. */
   workerDown(slot: number): void {
     for (const [id, s] of this.liveReplicas) if (s === slot) this.liveReplicas.delete(id);
-    for (const [sessionId, e] of this.entries) if (e.slot === slot) this.entries.delete(sessionId);
+    for (const [sessionId, e] of this.entries) {
+      if (e.slot !== slot) continue;
+      this.entries.delete(sessionId);
+      this.detachTimes.detached(sessionId);
+    }
   }
 
   /** The replica ids of the workers alive now. */
@@ -71,17 +83,23 @@ export class StationDirectory implements PacingStations {
   attached(slot: number, sessionId: string, campaignId: string | null, replicaId: string): void {
     if (this.liveReplicas.get(replicaId) !== slot) return; // a late event from a dead incarnation
     this.entries.set(sessionId, { slot, campaignId, replicaId });
+    this.detachTimes.attached(sessionId);
   }
 
   detached(slot: number, sessionId: string): void {
-    if (this.entries.get(sessionId)?.slot === slot) this.entries.delete(sessionId);
+    if (this.entries.get(sessionId)?.slot !== slot) return;
+    this.entries.delete(sessionId);
+    this.detachTimes.detached(sessionId);
   }
 
   /** Replace everything a worker holds with its own list (on ready, and on reconcile). */
   snapshot(slot: number, replicaId: string, sessions: ReadonlyArray<{ sessionId: string; campaignId: string | null }>): void {
     if (this.liveReplicas.get(replicaId) !== slot) return;
     for (const [sessionId, e] of this.entries) if (e.slot === slot) this.entries.delete(sessionId);
-    for (const s of sessions) this.entries.set(s.sessionId, { slot, campaignId: s.campaignId, replicaId });
+    for (const s of sessions) {
+      this.entries.set(s.sessionId, { slot, campaignId: s.campaignId, replicaId });
+      this.detachTimes.attached(s.sessionId);
+    }
   }
 
   countForSlot(slot: number): number {
@@ -127,5 +145,15 @@ export class StationDirectory implements PacingStations {
 
   size(): number {
     return this.entries.size;
+  }
+
+  /** Agent station (BE-11): when each of these sessions' worker station went, if it has not come back. */
+  disconnectedSince(sessionIds: readonly string[]): Map<string, Date> {
+    return this.detachTimes.disconnectedSince(sessionIds);
+  }
+
+  /** Every session whose worker station went and has not come back. */
+  goneSessionIds(): string[] {
+    return this.detachTimes.goneSessionIds();
   }
 }
