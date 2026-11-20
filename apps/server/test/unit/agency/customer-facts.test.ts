@@ -45,6 +45,8 @@ describe('customerFacts: the panel\'s facts', () => {
       { column: 'Amount Due', role: 'amount_due', type: 'money', raw: '1.25 lakh', value: null });
     expect(facts.tiles.find((t) => t.role === 'due_date')).toEqual(
       { column: 'Due Date', role: 'due_date', type: 'date', raw: '11/25/2026', value: null });
+    expect(customerFacts({ ...ROW, 'Amount Due': 'twelve thousand' }, ROLES).tiles.find((t) => t.role === 'amount_due'))
+      .toEqual({ column: 'Amount Due', role: 'amount_due', type: 'money', raw: 'twelve thousand', value: null });
     // A blank value is a tile with empty raw text and no value.
     expect(customerFacts({ ...ROW, 'Amount Due': '' }, ROLES).tiles.find((t) => t.role === 'amount_due'))
       .toEqual({ column: 'Amount Due', role: 'amount_due', type: 'money', raw: '', value: null });
