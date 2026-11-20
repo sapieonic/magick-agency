@@ -75,7 +75,7 @@ describe('outcome tiles (spec §6.2)', () => {
     expect(outcomeIcon({ ...entry('a'), label: 'No one spoke' })).toBe('no_voice');
     expect(outcomeIcon(entry('a'))).toBe('dot');
     expect(outcomeIcon({ ...entry('a', { requires_promise: true }), icon: 'clock' })).toBe('clock');
-    expect(outcomeIcon({ ...entry('a'), icon: 'not-a-picture' })).toBe('dot');
+    expect(outcomeIcon({ ...entry('a'), icon: 'not-a-picture' as never })).toBe('dot');
   });
 
   it('guesses a break’s picture from its code and label, a cup by default', () => {
