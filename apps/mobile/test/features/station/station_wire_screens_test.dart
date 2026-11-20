@@ -94,6 +94,15 @@ void main() {
       expect(find.text('Call later · Booked for 3:00 PM'), findsOneWidget);
     });
 
+    testWidgets('a ringing call with a countdown keeps its facts and its tag (the card drops only the countdown)', (tester) async {
+      final tag = CallLaterTag(dueAt: DateTime(2026, 10, 31, 15), bookedByMe: true);
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(countdown: 25, facts: facts, callback: tag)));
+      expect(find.text('Sunita Patil'), findsWidgets);
+      expect(find.text('₹12,500'), findsOneWidget);
+      expect(find.text('Call later · You said you will call at 3:00 PM'), findsOneWidget);
+      expect(find.text('Chennai'), findsNothing, reason: 'the facts, not the hero fields');
+    });
+
     testWidgets('no tag and the hero fields from a server older than the fields', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call()));
       expect(find.byKey(const Key('call-later-tag')), findsNothing);

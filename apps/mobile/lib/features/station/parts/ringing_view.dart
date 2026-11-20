@@ -96,6 +96,9 @@ class ConnectsByItself extends StatelessWidget {
   }
 }
 
+/// The call without its countdown (not shown here), so the card does not rebuild every second.
+/// Everything the card and the opening line read is kept: the callback tag (BE-4) and the facts
+/// (BE-6) included.
 CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
     ? c
     : CallView(
@@ -114,6 +117,8 @@ CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
         redialNumber: c.redialNumber,
         redialLimit: c.redialLimit,
         promise: c.promise,
+        callback: c.callback,
+        facts: c.facts,
       );
 
 /// "Calling again · 1 of 2": this call is a call again from What happened?, the agent calling back
