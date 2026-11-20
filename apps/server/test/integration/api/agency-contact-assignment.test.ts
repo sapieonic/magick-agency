@@ -26,6 +26,7 @@ import {
   call, drainAudits, expectHealthy, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
+import { agencyContactRepository } from '../../../src/db/repositories/agency.repository.js';
 
 let loaded: LoadApp;
 let floors: TenantFloor[];
@@ -269,6 +270,24 @@ describe('the agent\'s own contacts', () => {
     const foreign = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${floors[1]!.campaigns[0]}`, agent(0), floor);
     expect(foreign.statusCode).toBe(403);
     expect(foreign.body).toBe(unstaffed.body);
+  });
+
+  // A pool campaign's queue is the campaign probe's (BE-5); when the probe fails (a statement
+  // timeout, an exhausted pool) the summary still answers, from the tally's earliest open contact.
+  // FALSIFIED: with the route reading the queue through `settledValue` again, this is a 500.
+  it('the summary on a pool campaign answers 200 when the queue probe fails, the queue from the tally', async () => {
+    const probe = vi.spyOn(agencyContactRepository, 'probeCampaignQueue').mockRejectedValueOnce(new Error('statement timeout'));
+    try {
+      const res = await call(app(), 'GET', `/proxy/agency/my-contacts/summary?campaign_id=${A()}`, agent(0), floor);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(res.statusCode, res.body).toBe(200);
+      const total = await ownedBy(agent(0).id);
+      expect(res.json()).toMatchObject({
+        campaign_id: A(), assignment_mode: 'pool', total, queue: { due: true, reason: null, next_due_at: null },
+      });
+    } finally {
+      probe.mockRestore();
+    }
   });
 });
 
