@@ -1,96 +1,92 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
-import 'banners.dart' show StationHeader, StationTopNotices;
+import '../widgets/state_band.dart';
+import 'call_band.dart';
 import 'contact_details.dart';
-import 'hang_up.dart';
 import 'layouts.dart';
+import 'sheets.dart';
 
 /// Reserved with no call on the station yet ([StationStage.incoming]): the server's
 /// `agent_state: reserved` for an inbound caller lands a moment before the frame that names
 /// them, and a reconnect's `ready` can say `reserved` before a campaign dial is restated. So
-/// the words fit either direction. Nothing here acts on a call (there is none yet): no Hang up,
-/// no break, no leaving.
+/// the words fit either direction. Nothing here acts on a call (there is none yet).
 class IncomingView extends StatelessWidget {
   const IncomingView({super.key});
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Column(
+    return StationPage(
       key: const Key('station-incoming'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const StationHeader(),
-        // "Your customer is waiting" and why the last call left, as on every station screen.
-        const Padding(
-          padding: EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, 0),
-          child: StationTopNotices(),
-        ),
-        Expanded(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(Space.lg),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const LiveDot(size: 12),
-                  const SizedBox(height: Space.md),
-                  Text(StationCopy.callComingThrough, style: text.titleMedium, textAlign: TextAlign.center),
-                  const SizedBox(height: Space.xs),
-                  Text(InboundCopy.connecting, style: text.bodyMedium, textAlign: TextAlign.center),
-                ],
-              ),
-            ),
-          ),
-        ),
+      onCall: true,
+      band: const StateBand(
+        key: Key('band-incoming'),
+        tone: StationTone.coming,
+        icon: Icons.phone_callback_outlined,
+        title: StationCopy.callComing,
+        subtitle: StationCopy.callComingSubtitle,
+      ),
+      body: [
+        const SizedBox(height: Space.xl),
+        const Center(child: LiveDot(size: 12)),
+        const SizedBox(height: Space.md),
+        Text(StationCopy.callComingThrough, style: text.titleMedium, textAlign: TextAlign.center),
+        const SizedBox(height: Space.xs),
+        Text(InboundCopy.connecting, style: text.bodyMedium, textAlign: TextAlign.center),
       ],
+      actions: const ConnectsByItself(),
     );
   }
 }
 
-/// Reserved: the screen pop. The agent has a few seconds to read who they are
-/// about to speak to, so the name is the biggest thing on screen and the
-/// detail is one tap away.
+/// Call coming (03): the customer card and what they said last time, a few seconds to read who is
+/// coming. No button (AS11): "The call connects by itself." (`E` still stops a ringing dial on
+/// early-binding accounts on the console; the phone has no key.)
 class RingingView extends ConsumerWidget {
   const RingingView({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // The countdown ticks in the band; without it here the pop does not
-    // rebuild every second while it rings.
+    // The countdown is not shown; without it here the card does not rebuild every second.
     final call = ref.watch(stationViewProvider.select((v) => _contactOnly(v?.call)));
-    return CallLayout(
+    return CallPage(
       body: [
-        if (call != null && call.isRedial) ...[
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: RedialTag(number: call.redialNumber!, limit: call.redialLimit),
-          ),
-          const SizedBox(height: Space.sm),
+        if (call != null) ...[
+          CustomerCard(call: call, lastWords: true),
+          // The opening line ("First, say this") slots in here once the campaign has a script (BE-8).
         ],
-        if (call != null) CallHeadline(call: call),
-        if (call != null) ..._details(call),
       ],
-      bottom: const HangUpBar(ringing: true),
+      actions: const ConnectsByItself(),
     );
   }
+}
 
-  List<Widget> _details(CallView call) => [
-    const SizedBox(height: Space.lg),
-    HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
-    if (call.priorAttempts.isNotEmpty) ...[const SizedBox(height: Space.lg), PriorAttemptsCard(attempts: call.priorAttempts, limit: 3)],
-    if (call.otherFields.isNotEmpty) ...[
-      const SizedBox(height: Space.md),
-      MoreDetails(key: ValueKey(call.attemptId), fields: call.otherFields),
-    ],
-  ];
+/// "The call connects by itself.": the footer of a screen with nothing to press.
+class ConnectsByItself extends StatelessWidget {
+  const ConnectsByItself({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Space.sm),
+      child: Row(
+        key: const Key('connects-by-itself'),
+        children: [
+          Icon(Icons.call_outlined, color: t.textMuted),
+          const SizedBox(width: Space.sm),
+          Expanded(child: Text(StationCopy.connectsByItself, style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary))),
+        ],
+      ),
+    );
+  }
 }
 
 CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
@@ -113,8 +109,8 @@ CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
         promise: c.promise,
       );
 
-/// "Redial 1 of 2": this call is a wrap-up redial, the agent calling back the
-/// customer they just spoke to. Shown while it rings and once connected.
+/// "Calling again · 1 of 2": this call is a call again from What happened?, the agent calling back
+/// the customer they just spoke to. Shown while it rings and once connected.
 class RedialTag extends StatelessWidget {
   const RedialTag({super.key, required this.number, this.limit});
 
@@ -125,7 +121,7 @@ class RedialTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StatusPill(
-      StationCopy.redialOf(number, limit),
+      StationCopy.callAgainOf(number, limit),
       key: const Key('redial-label'),
       tone: Tone.accent,
       leading: Icon(Icons.replay, size: 14, color: Tone.accent.fg(context.tokens)),
@@ -133,44 +129,183 @@ class RedialTag extends StatelessWidget {
   }
 }
 
-/// "Priya Raman" over "+91 98400 12345 · Attempt 2"; the number leads when
-/// there is no name.
-class CallHeadline extends StatelessWidget {
-  const CallHeadline({super.key, required this.call, this.subtitle});
+/// The customer card (03, 04; it does not move between them): initials, the name (the number
+/// leads when there is none), the number, the contact's promise to pay, and three number tiles: the
+/// campaign's first two hero fields with a value and the last call's date (a third hero field when
+/// there was no call before). On Call coming it adds "What they said last time". A tap opens every
+/// field (Details).
+///
+/// Where new data slots in: the name and place by column role (BE-6), money and dates by column type
+/// (BE-6), the masked number (AS9 `phone_display`), and the "Call later · You said you will call at
+/// 3:00 PM" tag (`attempt.callback`, BE-4) above the name.
+class CustomerCard extends StatelessWidget {
+  const CustomerCard({super.key, required this.call, this.lastWords = false});
 
   final CallView call;
 
-  /// Replaces the number line ("On call · 05:40 · your mic is muted").
-  final Widget? subtitle;
+  /// Call coming: "What they said last time".
+  final bool lastWords;
 
   @override
   Widget build(BuildContext context) {
+    final t = context.tokens;
+    final c = context.stateTokens.coming;
     final text = Theme.of(context).textTheme;
     final name = call.displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
     final phone = formatPhone(call.phoneE164);
-    return MergeSemantics(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            header: true,
-            child: Text(
-              hasName ? name : phone,
-              key: const Key('call-headline'),
-              style: hasName
-                  ? text.headlineLarge
-                  : monoStyle(context, size: 26, weight: FontWeight.w500, color: context.tokens.textPrimary),
+    final ordered = orderPriorAttempts(call.priorAttempts);
+    final last = ordered.firstOrNull;
+    final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
+    final heroes = call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).toList(growable: false);
+    final tiles = <Widget>[
+      for (final f in heroes.take(last == null ? 3 : 2)) NumberTile(label: f.label, value: f.value),
+      if (last != null) NumberTile(key: const Key('last-call-tile'), label: StationCopy.lastCall, value: formatDay(last.at)),
+    ];
+    return Semantics(
+      container: true,
+      child: Material(
+        color: t.bgSecondary,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.lg), side: BorderSide(color: t.border)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('control-details'),
+          onTap: () => showDetailsSheet(context, call),
+          child: Padding(
+            padding: const EdgeInsets.all(Space.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (call.isRedial) ...[
+                  Align(alignment: AlignmentDirectional.centerStart, child: RedialTag(number: call.redialNumber!, limit: call.redialLimit)),
+                  const SizedBox(height: Space.sm),
+                ],
+                Row(
+                  children: [
+                    ExcludeSemantics(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(color: c.soft, borderRadius: BorderRadius.circular(Radii.md)),
+                        child: SizedBox.square(
+                          dimension: 52,
+                          child: Center(
+                            child: hasName
+                                ? Text(_initials(name), style: text.titleLarge!.copyWith(color: c.deep))
+                                : Icon(Icons.person_outline, color: c.deep),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Space.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Semantics(
+                            header: true,
+                            child: Text(hasName ? name : phone, key: const Key('call-headline'), style: text.headlineMedium),
+                          ),
+                          if (hasName)
+                            Row(
+                              children: [
+                                Icon(Icons.call_outlined, size: 16, color: t.textSecondary),
+                                const SizedBox(width: Space.xs),
+                                Flexible(child: Text(phone, style: text.bodyMedium!.copyWith(color: t.textSecondary))),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (call.promise != null) ...[const SizedBox(height: Space.sm), PromiseLine(promise: call.promise!)],
+                if (tiles.isNotEmpty) ...[const SizedBox(height: Space.md), TileRow(children: tiles)],
+                if (lastWords && said != null) ...[
+                  const SizedBox(height: Space.sm),
+                  DecoratedBox(
+                    key: const Key('what-they-said'),
+                    decoration: BoxDecoration(color: t.bgPrimary, borderRadius: BorderRadius.circular(Radii.md)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(Space.sm),
+                      child: MergeSemantics(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(StationCopy.whatTheySaid, style: text.bodySmall),
+                            const SizedBox(height: 2),
+                            Text('“$said”', style: text.titleMedium),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(height: Space.xs),
-          subtitle ??
-              Text(
-                hasName ? '$phone · ${StationCopy.attempt(call.attemptNumber)}' : StationCopy.attempt(call.attemptNumber),
-                style: monoStyle(context, size: 14),
+        ),
+      ),
+    );
+  }
+
+  static String _initials(String name) {
+    final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final first = parts.first.characters.first;
+    final second = parts.length > 1 ? parts[1].characters.first : '';
+    return (first + second).toUpperCase();
+  }
+}
+
+/// Last calls (04c): a date chip, what happened, and the note, newest first; this work's own calls
+/// before other work's. At most [limit].
+class LastCallsCard extends StatelessWidget {
+  const LastCallsCard({super.key, required this.attempts, this.limit = 3});
+
+  final List<PriorAttempt> attempts;
+  final int limit;
+
+  @override
+  Widget build(BuildContext context) {
+    if (attempts.isEmpty) return const SizedBox.shrink();
+    final c = context.stateTokens.coming;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final shown = orderPriorAttempts(attempts).take(limit).toList(growable: false);
+    return StationCard(
+      key: const Key('prior-attempts'),
+      icon: Icons.history,
+      title: StationCopy.lastCalls,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (i, a) in shown.indexed) ...[
+            if (i > 0) Divider(height: Space.md, color: t.border),
+            MergeSemantics(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(color: c.soft, borderRadius: BorderRadius.circular(Radii.sm)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+                      child: Text(formatDay(a.at), style: text.titleSmall!.copyWith(color: c.deep)),
+                    ),
+                  ),
+                  const SizedBox(width: Space.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(a.outcomeLabel, style: text.titleMedium),
+                        if (!a.sameCampaign) Text(StationCopy.otherCampaign(a.campaignName), style: text.bodySmall),
+                        if (a.promise != null) Text(a.promise!, key: const Key('prior-promise'), style: text.bodySmall),
+                        if (a.notes != null && a.notes!.trim().isNotEmpty) Text('“${a.notes!.trim()}”', style: text.bodyMedium),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-          // PT9: the contact's promise to pay, under who they are.
-          if (call.promise != null) ...[const SizedBox(height: Space.sm), PromiseLine(promise: call.promise!)],
+            ),
+          ],
         ],
       ),
     );

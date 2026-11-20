@@ -185,7 +185,7 @@ void main() {
     expect(h.server.calls('PUT', '/notifications/preferences'), isEmpty);
   });
 
-  testWidgets('the theme switch starts from the phone\'s own setting and is kept on the phone', (tester) async {
+  testWidgets('the theme switch starts light, even on a dark phone (AS14), and is kept on the phone', (tester) async {
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
     final c = await started(tester);
@@ -193,6 +193,12 @@ void main() {
     final darkSwitch = find.widgetWithText(SwitchListTile, 'Dark theme');
     await scrollTo(tester, darkSwitch);
     expect(c.read(localPreferencesProvider).darkTheme, isNull);
+    expect(tester.widget<SwitchListTile>(darkSwitch).value, isFalse);
+
+    await tapVisible(tester, find.text('Dark theme'));
+    await tester.pumpAndSettle();
+    expect(c.read(localPreferencesProvider).darkTheme, isTrue);
+    expect(h.store.values[LocalPreferencesNotifier.darkThemeKey], true);
     expect(tester.widget<SwitchListTile>(darkSwitch).value, isTrue);
 
     await tapVisible(tester, find.text('Dark theme'));

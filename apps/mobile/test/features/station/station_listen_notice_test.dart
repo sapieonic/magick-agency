@@ -6,6 +6,7 @@ import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 
 import '../softphone/softphone_harness.dart' show pumpSoftphone, readyView;
@@ -21,8 +22,8 @@ void main() {
   const line = 'Calls may be listened to by a supervisor for quality and training.';
   const scope = 'u-1:t-1:a-1';
   const seenKey = 'listen.agent_notice_seen:$scope';
-  const firstDetail = 'You can read this again at any time under Monitoring and recording, the i button at the top of the screen.';
-  const firstDetailOnCall = 'You can read this again under Monitoring and recording, the i button at the top of the screen between calls.';
+  const firstDetail = StationCopy.listenFirstDetail;
+  const firstDetailOnCall = StationCopy.listenFirstDetailOnCall;
 
   test('follows the contract’s client flag', () {
     // The key is agency_wire's, pinned there against the contract's platform.json fixture.
@@ -34,17 +35,18 @@ void main() {
     }
   });
 
-  testWidgets('no info button while listening is off', (tester) async {
+  testWidgets('no Monitoring and recording in ⋮ More while listening is off', (tester) async {
     await pumpStation(tester, station(), listenScope: scope);
+    await openMore(tester);
     expect(find.byKey(const Key('station-info')), findsNothing);
     expect(find.byKey(const Key('listen-first-notice')), findsNothing);
     expect(find.text(line), findsNothing);
   });
 
-  testWidgets('with listening on, the header’s Monitoring and recording button opens the sheet with the line', (tester) async {
+  testWidgets('with listening on, ⋮ More → Monitoring and recording opens the sheet with the line', (tester) async {
     await pumpStation(tester, station(), listenNotice: true);
+    await openMore(tester);
     expect(find.byKey(const Key('station-info')), findsOneWidget);
-    expect(find.byTooltip('Monitoring and recording'), findsOneWidget);
     await tester.tap(find.byKey(const Key('station-info')));
     await settle(tester);
     expect(find.byKey(const Key('station-info-sheet')), findsOneWidget);
@@ -52,12 +54,18 @@ void main() {
     expect(find.text(line), findsOneWidget);
   });
 
-  testWidgets('offline and while a call is coming through too: wherever the header shows', (tester) async {
+  testWidgets('Start of day says it in one line; while a call is coming ⋮ More holds only Sound', (tester) async {
     final h = await pumpStation(tester, station(phase: AgentPhase.offline), listenNotice: true);
+    expect(find.text(StationCopy.supervisorMayListen), findsOneWidget);
+    await openMore(tester);
     expect(find.byKey(const Key('station-info')), findsOneWidget);
+    await tester.tapAt(Offset.zero);
+    await settle(tester);
     await h.setView(station(phase: AgentPhase.reserved));
     expect(find.text('A call is coming through'), findsWidgets);
-    expect(find.byKey(const Key('station-info')), findsOneWidget);
+    await openMore(tester);
+    expect(find.byKey(const Key('station-info')), findsNothing);
+    expect(find.byKey(const Key('station-sound')), findsOneWidget);
   });
 
   group('the one-time notice', () {
@@ -77,22 +85,23 @@ void main() {
       await pumpStation(tester, station(phase: AgentPhase.onCall), listenNotice: true, listenScope: scope);
       final notice = find.byKey(const Key('listen-first-notice'));
       expect(notice, findsOneWidget);
-      // The call's band has no info button: the notice says where it is between calls.
-      expect(find.byKey(const Key('station-info')), findsNothing);
+      // ⋮ More on a call holds only Sound: the notice says where it is between calls.
       expect(find.descendant(of: notice, matching: find.text(firstDetailOnCall)), findsOneWidget);
       expect(find.descendant(of: notice, matching: find.text(firstDetail)), findsNothing);
     });
 
-    testWidgets('waiting, it points at the button the header has', (tester) async {
+    testWidgets('waiting, it points at ⋮ More', (tester) async {
       await pumpStation(tester, station(), listenNotice: true, listenScope: scope);
-      expect(find.byKey(const Key('station-info')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('listen-first-notice')), matching: find.text(firstDetail)), findsOneWidget);
+      await openMore(tester);
+      expect(find.byKey(const Key('station-info')), findsOneWidget);
     });
 
     testWidgets('not again once seen', (tester) async {
       await pumpStation(tester, station(), listenNotice: true, listenScope: scope, store: MemoryStore({seenKey: true}));
       expect(find.byKey(const Key('listen-first-notice')), findsNothing);
-      // The info button is still there.
+      // The line is still in ⋮ More.
+      await openMore(tester);
       expect(find.byKey(const Key('station-info')), findsOneWidget);
     });
 

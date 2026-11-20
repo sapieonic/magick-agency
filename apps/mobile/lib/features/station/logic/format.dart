@@ -64,3 +64,35 @@ String formatPhone(String e164) {
   if (m != null) return '+91 ${m.group(1)} ${m.group(2)}';
   return e164;
 }
+
+// ── The redesign's forms (design-spec §6.6): "3:00 PM", "20 Nov", "Fri 20 Nov", "1h 52m" ──
+
+/// `3:00 PM` in the device's zone.
+String formatTime12(DateTime t) {
+  final l = t.toLocal();
+  final h = l.hour % 12 == 0 ? 12 : l.hour % 12;
+  return '$h:${_two(l.minute)} ${l.hour < 12 ? 'AM' : 'PM'}';
+}
+
+/// `20 Nov`.
+String formatDay(DateTime t) {
+  final l = t.toLocal();
+  return '${l.day} ${_months[l.month - 1]}';
+}
+
+/// `Fri 20 Nov`.
+String formatWeekdayDay(DateTime t) {
+  final l = t.toLocal();
+  return '${_weekdays[l.weekday - 1]} ${formatDay(l)}';
+}
+
+/// `Fri 20 Nov at 10:00 AM`.
+String formatWhen(DateTime t) => '${formatWeekdayDay(t)} at ${formatTime12(t)}';
+
+/// `1h 52m`, `52m`, `0m`: talk time and long stretches, at a glance.
+String formatHoursMinutes(Duration d) {
+  final total = d.isNegative ? 0 : d.inMinutes;
+  final h = total ~/ 60;
+  final m = total % 60;
+  return h > 0 ? '${h}h ${m}m' : '${m}m';
+}

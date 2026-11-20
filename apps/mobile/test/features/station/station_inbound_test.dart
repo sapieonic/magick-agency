@@ -123,7 +123,7 @@ void main() {
       final semantics = tester.ensureSemantics();
       final h = await pumpStation(tester, views.first.$2, campaignId: 'camp-1', supportsAnnounce: true);
       String said() => tester.getSemantics(find.byKey(const Key('phase-live-region'))).label;
-      expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
       final saidAt = <String, String>{};
       for (final (step, v) in views.skip(1)) {
         await h.setView(v);
@@ -145,7 +145,7 @@ void main() {
           case 'owed' || 'available':
             expect(find.byKey(const Key('band-inbound-outcome')), findsOneWidget, reason: step);
           case 'settled':
-            expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
+            expect(find.text(StationCopy.nextCallComing), findsOneWidget);
         }
       }
       expect(saidAt['reserved'], StationCopy.callComingThrough, reason: 'politely, in words for either direction');
@@ -155,7 +155,7 @@ void main() {
       expect(saidAt['on_call'], 'Incoming call from Rahul Deshpande', reason: 'nothing new to say');
       expect(saidAt['connected'], 'On call');
       expect(saidAt['owed'], InboundCopy.outcomeAnnouncement);
-      expect(saidAt['settled'], 'Available. Waiting for a call');
+      expect(saidAt['settled'], 'Ready. Next call is coming');
       semantics.dispose();
     });
   });
@@ -184,7 +184,7 @@ void main() {
     expect(h.announcements, isEmpty, reason: 'said politely, once');
     await h.setView(ringing);
     expect(find.byKey(const Key('station-incoming')), findsNothing);
-    expect(said(), 'Ringing');
+    expect(said(), 'Call coming');
     semantics.dispose();
   });
 
@@ -193,7 +193,7 @@ void main() {
         (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller()));
       expect(find.byKey(const Key('band-inbound-offered')), findsOneWidget);
-      expect(find.text(InboundCopy.incomingCall), findsOneWidget);
+      expect(find.text(StationCopy.customerCalling), findsOneWidget);
       expect(find.text('From Rahul Deshpande · Connecting…'), findsOneWidget);
       expect(find.byKey(const Key('inbound-caller')), findsOneWidget);
       expect(find.text('Rahul Deshpande'), findsWidgets);
@@ -206,12 +206,9 @@ void main() {
       expect(find.byKey(const Key('inbound-match')), findsOneWidget);
       expect(find.text(InboundCopy.hangupConnecting), findsOneWidget);
 
-      // Holding the bar while only offered ends nothing.
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
-      await tester.pump();
+      // Sliding while only offered ends nothing.
+      await slideToEnd(tester);
+      await settle(tester);
       expect(h.actions.count('hangUp'), 0);
     });
 
@@ -238,7 +235,7 @@ void main() {
   });
 
   group('on the call', () {
-    testWidgets('the talk timer, notes, the controls, and a 500 ms hold hangs up', (tester) async {
+    testWidgets('the talk timer, notes, the controls, and Slide to end call hangs up', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.connected)));
       expect(find.byKey(const Key('band-on-call')), findsOneWidget);
       expect(find.text('Rahul Deshpande · Inbound'), findsOneWidget);
@@ -251,11 +248,8 @@ void main() {
       await tester.enterText(find.byKey(const Key('notes-field')), 'Wants a quote');
       expect(h.actions.args['updateNotes'], ['Wants a quote']);
 
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 510));
-      await gesture.up();
-      await tester.pump();
+      await slideToEnd(tester);
+      await settle(tester);
       expect(h.actions.count('hangUp'), 1);
     });
 
@@ -288,18 +282,18 @@ void main() {
     testWidgets('"Without one, it closes in" counts to outcome_due_at; the call\'s own list; Save', (tester) async {
       final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome)));
       expect(find.byKey(const Key('band-inbound-outcome')), findsOneWidget);
-      expect(find.text(InboundCopy.outcomeNeeded), findsOneWidget);
+      expect(find.text(StationCopy.whatHappened), findsOneWidget);
       expect(find.text(InboundCopy.lapsePrefix), findsOneWidget);
       expect(find.text('29:41'), findsOneWidget);
       await h.advance(const Duration(seconds: 2));
       expect(find.text('29:39'), findsOneWidget);
       expect(find.text('From Q4 Renewals — Pune’s outcome list'), findsOneWidget);
-      expect(find.text('Pick an outcome to save this call.'), findsOneWidget);
+      expect(find.text(StationCopy.chooseOneFirst), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('outcome-callback')));
       await settle(tester);
       expect(find.byKey(const Key('callback-picker')), findsOneWidget);
-      expect(find.text('This outcome needs a callback time.'), findsOneWidget);
+      expect(find.text(StationCopy.chooseWhen), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('outcome-interested')));
       await settle(tester);
@@ -401,7 +395,7 @@ void main() {
       await pumpStation(tester, inboundStation(notice: 'The caller hung up before you were connected.'));
       expect(find.byKey(const Key('inbound-notice')), findsOneWidget);
       expect(find.text('The caller hung up before you were connected.'), findsOneWidget);
-      expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
     });
 
     testWidgets('every inbound screen fits a 360×640 phone at 200% text, its action on screen', (tester) async {
