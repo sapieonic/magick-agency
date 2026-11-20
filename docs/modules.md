@@ -2734,7 +2734,7 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/telemetry/station_call_events_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/telemetry_test.dart` | ~13 |
 
-### `apps/mobile/lib/core/` (`station/`, `audio/`, `lifecycle/`)
+### `apps/mobile/lib/core/` (`station/`, `audio/`, `lifecycle/`, `speech/`)
 
 The station core behind the screens' seam (`station_view.dart`): the reducer mirrored from the
 console, server clock, liveness, the socket and its transport, the controller and view mapper,
@@ -2759,7 +2759,7 @@ notes save of a soft-phone or inbound call (`manual:<id>`, `inbound:<id>`): kept
 sent, re-armed by a refused outcome (`outcomeRefused`), flushed on leave (`flushNow`). Test
 helper: `controller_harness.dart`.
 
-Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/floor_assist.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_device.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/floor_assist.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_device.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `station/script_fill.dart`, `speech/read_aloud.dart` (read aloud, AS13), `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
@@ -2778,6 +2778,8 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
 | `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound,floor_assist`, `floor_assist` alone while a ring must not be answered) | ~31 |
 | `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, a stale `ready.help` for a request seen to end (shown or not) ignored, a raise in flight whose request ends before its reply, a cancel that lost the race to an answer (its frames before, around and after the cancel's `help: null`: who answered is said), the expiry's minutes from `agencyHelpExpiryMs`, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, a cancel that lost the race (`help_answered` before the reply, `help_cleared` too, both after it), expiry, a late frame for another request, a slow raise reply after the answer and `help_cleared` (with and without a reconnect's `ready` between), `help_cleared` with nothing shown then a `ready` still naming it, `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 34 |
+| `apps/mobile/test/core/station/station_agent_station_test.dart` (stream F's fields through the real core from the contract's samples: the script, the masked number and tile pictures on the bootstrap, a booked call-later and the typed facts on `reserved` and after `bridged`; none of them from an older server; an older server's `help_not_on_call` off a call narrowing Need help) | 5 |
+| `apps/mobile/test/core/speech/read_aloud_test.dart` (read aloud on `flutter_tts`'s channel, faked: `en-IN` where there is one, a stop before each read, nothing for nothing, a refusing engine swallowed) | 3 |
 | `apps/mobile/test/core/station/station_away_ring_test.dart` (Mode B: `away_ring` asked and its 409 fallback, the parked socket and the away notification, the return, why ringing stopped, `resumeForRing` warm and cold, `reportBound` and `reportEnded`) | ~13 |
 
 ### `apps/mobile/lib/core/inbound/`
@@ -2995,8 +2997,14 @@ Speaker); `parts/wrapup_view.dart` What happened? (`OutcomeTiles`, the follow-up
 Call again; `DispositionGrid` stays for the soft phone and inbound); `parts/sheets.dart` Which break?,
 Finish work and the Don't call again confirm (`confirmSheet`); `parts/link_screens.dart` Internet
 problem (09) and Open on another device (12); `parts/call_band.dart` the call's band (Call problem, 10).
-The reads beside the live view are `station_reads.dart` (`stationMyDayProvider` from `/my-stats`,
-`stationCallLaterProvider` from `/my-contacts?bucket=callback`; read again on each return to Ready).
+The reads beside the live view are `station_reads.dart` (`stationMyDayReadProvider`,
+`GET /proxy/agency/my-day`; `stationMyDayProvider` and `stationCallLaterProvider` read it, and fall
+back to `/my-stats` and `/my-contacts?bucket=callback` on an older server; read again on each return
+to Ready). Phases 1–2's fields: the script cards (`parts/script_cards.dart`, "First, say this" and
+"What to say", filled by `core/station/script_fill.dart`), the customer card's facts, call-later tag
+and masked number (`parts/ringing_view.dart`, `logic/format.dart`'s `stationPhone`, `formatRupees`),
+the supervisor's tile pictures (`widgets/tile_pictures.dart`) and read aloud
+(`widgets/read_aloud_button.dart` on `core/speech/read_aloud.dart`, `flutter_tts`, AS13).
 A supervisor's message banner the shell shows over every tab (`supervisor_message_banner.dart`, LF36);
 the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading only
 `StationView.inbound`), and the banners above every layout ("Your customer is waiting", why the last
@@ -3010,7 +3018,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/preflight/preflight_screen_test.dart` (Start of day: the tiles, 01b's band, steps and fix where Start work was, Start work's press handed to the station) | ~22 |
 | `apps/mobile/test/features/station/station_a11y_test.dart` (Slide to end call: short slides, one fire, haptics, a call ending under it, none on Call coming, the screen reader's confirm; announcements; 200% text) | ~16 |
 | `apps/mobile/test/features/station/station_contrast_test.dart` (with every `StationTone`, light and dark: band ink, deep on card and tint, go and stop) | ~5 |
-| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help in the top bar behind the flag, on a call and while finishing one only, asking, "Help asked · 0:42" ticking and cancelling, only the status a live region (never the ticking age), Cancel's semantics, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break against its limit: left rounded up (never "0:00 left"), Break over in red-orange with how late, none without a limit or on a reserved code, 200% text) | 19 |
+| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help in the top bar behind the flag, on every working screen (on calls only after an older server's `help_not_on_call`), asking, "Help asked · 0:42" ticking and cancelling, only the status a live region (never the ticking age), Cancel's semantics, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break against its limit: left rounded up (never "0:00 left"), Break over in red-orange with how late, none without a limit or on a reserved code, 200% text) | 19 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (Ready's "Dialling a customer…", the count line, ringing over No calls right now, stopped calls unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` (Internet problem and Call problem, Try again now only once the retries gave up, Need help offline, another device, work ended) | ~12 |
 | `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: Monitoring and recording under ⋮ More and on both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; Start of day's line; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 15 |
@@ -3020,7 +3028,8 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_nothing_due_test.dart` (No calls right now and its reason; My customers in ⋮ More) | ~10 |
 | `apps/mobile/test/features/station/station_phases_test.dart` (every screen of the redesign, AS1–AS15) | ~61 |
 | `apps/mobile/test/features/station/station_promise_test.dart` (the pay date in the follow-up sheet, its summary row) | ~5 |
-| `apps/mobile/test/features/station/station_redesign_test.dart` (which screen a state is, Start work in one press, My day and the call-later reads, pictures and Call when? chips) | ~13 |
+| `apps/mobile/test/features/station/station_redesign_test.dart` (which screen a state is, Start work in one press, the my-day read and its fallback to `/my-stats` and My contacts, pictures and Call when? chips) | ~15 |
+| `apps/mobile/test/features/station/station_wire_screens_test.dart` (phases 1–2 on screen: the facts on the card, ₹ and dates, the call-later tag, the masked number, the script cards, read aloud, the supervisor's pictures; the formats) | ~17 |
 | `apps/mobile/test/features/station/station_redial_test.dart` (Call again · N left, hidden when spent) | ~12 |
 | `apps/mobile/test/features/station/station_softphone_test.dart` (Dial a number myself in ⋮ More and in Which break?) | ~19 |
 
