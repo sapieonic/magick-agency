@@ -351,5 +351,67 @@
     "rows": [],
     "next_cursor": null,
     "limit": 50
+  },
+  "my_day": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "timezone": "Asia/Kolkata",
+    "day_start": "2026-11-19T18:30:00.000Z",
+    "day_end": "2026-11-20T18:30:00.000Z",
+    "calls": 42,
+    "dialed": 131,
+    "talk_seconds": 6720,
+    "will_pay": 12,
+    "successes": 15,
+    "target": {
+      "metric": "calls",
+      "value": 120
+    },
+    "call_later": {
+      "rows": [
+        {
+          "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+          "customer_name": "Sunita Patil",
+          "due_at": "2026-11-20T05:00:00.000Z",
+          "overdue": true
+        },
+        {
+          "contact_id": "f6e5d4c3-1b0a-4f9e-8d7c-7b6a5f4e3d2c",
+          "customer_name": null,
+          "due_at": "2026-11-20T09:30:00.000Z",
+          "overdue": false
+        },
+        {
+          "contact_id": "a7f6e5d4-2c1b-4a0f-9e8d-8c7b6a5f4e3d",
+          "customer_name": "Imran Shaikh",
+          "due_at": "2026-11-20T12:30:00.000Z",
+          "overdue": false
+        }
+      ],
+      "today": 2,
+      "overdue": 1,
+      "comes_to_me": true,
+      "left_today_goes_to": "waits_for_me"
+    },
+    "as_of": "2026-11-20T06:02:11.418Z"
+  },
+  "my_day_pool_no_target": {
+    "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+    "timezone": "Asia/Kolkata",
+    "day_start": "2026-11-19T18:30:00.000Z",
+    "day_end": "2026-11-20T18:30:00.000Z",
+    "calls": 0,
+    "dialed": 0,
+    "talk_seconds": 0,
+    "will_pay": null,
+    "successes": 0,
+    "target": null,
+    "call_later": {
+      "rows": [],
+      "today": 0,
+      "overdue": 0,
+      "comes_to_me": false,
+      "left_today_goes_to": "pool"
+    },
+    "as_of": "2026-11-20T03:31:00.000Z"
   }
 }

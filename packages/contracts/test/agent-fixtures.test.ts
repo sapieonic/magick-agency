@@ -193,6 +193,10 @@ const STATION = {
   help_answered_message_unnamed: fits<Core.AgencyStationHelpAnsweredFrame>()(station.help_answered_message_unnamed),
   help_cleared_answered: fits<Core.AgencyStationHelpClearedFrame>()(station.help_cleared_answered),
   help_cleared_expired: fits<Core.AgencyStationHelpClearedFrame>()(station.help_cleared_expired),
+  // Agent station (docs/agent-station.md): a booked call-later coming due, with typed facts (BE-4,
+  // BE-6), and Need help raised while Ready (BE-9).
+  reserved_call_later: fits<Core.AgencyStationReservedFrame>()(station.reserved_call_later),
+  ready_help_open_ready: fits<Core.AgencyStationReadyFrame>()(station.ready_help_open_ready),
 };
 
 const STATION_CLIENT = {
@@ -207,6 +211,8 @@ const SESSION = {
   ),
   bootstrap_first_join: fits<Core.AgencySessionBootstrap>()(session.bootstrap_first_join),
   bootstrap_retry_rehydrated: fits<Core.AgencySessionBootstrap>()(session.bootstrap_retry_rehydrated),
+  // Agent station: icons, context roles and types, the script, the masked number, a pool queue.
+  bootstrap_agent_station: fits<Core.AgencySessionBootstrap>()(session.bootstrap_agent_station),
   station_token: fits<Core.AgencyStationTokenResponse>()(session.station_token),
   break_request: fits<Core.AgencySessionBreakRequest>()(session.break_request),
   session_state_available: fits<Core.AgencySessionStateResponse>()(session.session_state_available),
@@ -328,6 +334,7 @@ const INBOUND = {
 const FLOOR_ASSIST = {
   help_response_raised: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_raised),
   help_response_raised_in_wrapup: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_raised_in_wrapup),
+  help_response_raised_on_break: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_raised_on_break),
   help_response_cleared: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_cleared),
   refusal_floor_assist_disabled: fits<Core.AgencyFloorAssistErrorResponse>()(floorAssist.refusal_floor_assist_disabled),
   refusal_help_not_on_call: fits<Core.AgencyFloorAssistErrorResponse>()(floorAssist.refusal_help_not_on_call),
@@ -367,6 +374,9 @@ const READS = {
   my_contacts_summary: fits<AgencyApi.AgencyMyContactsSummary>()(reads.my_contacts_summary),
   my_contacts: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyMyContact>>()(reads.my_contacts),
   my_contacts_last_page: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyMyContact>>()(reads.my_contacts_last_page),
+  // Agent station (BE-1 to BE-3): My day with a target and call-laters, and a pool campaign's empty day.
+  my_day: fits<AgencyApi.AgencyMyDay>()(reads.my_day),
+  my_day_pool_no_target: fits<AgencyApi.AgencyMyDay>()(reads.my_day_pool_no_target),
 };
 
 const PLATFORM = {
@@ -643,6 +653,22 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
   ...Object.keys(floorAssist)
     .filter((s) => s.startsWith('refusal_'))
     .map((s): InboundField => ['floor-assist', s, 'code', 'floor_assist_error_codes']),
+  // Agent station (docs/agent-station.md).
+  ['station', 'ready_help_open_ready', 'help.state_at_raise', 'agent_states'],
+  ['floor-assist', 'help_response_raised_on_break', 'help.state_at_raise', 'agent_states'],
+  ['station', 'reserved_call_later', 'attempt.callback.source', 'attempt_callback_sources'],
+  ['station', 'reserved_call_later', 'attempt.prior_attempts.0.outcome', 'attempt_outcomes'],
+  ...[0, 1, 2, 3].map((i): InboundField => ['station', 'reserved_call_later', `attempt.facts.tiles.${i}.type`, 'context_field_types']),
+  ...[1, 2].map((i): InboundField => ['station', 'reserved_call_later', `attempt.facts.tiles.${i}.role`, 'fact_tile_roles']),
+  ['session', 'bootstrap_agent_station', 'phone_display', 'phone_displays'],
+  ['session', 'bootstrap_agent_station', 'assignment_mode', 'assignment_modes'],
+  ['session', 'bootstrap_agent_station', 'queue.reason', 'queue_idle_reasons'],
+  ['session', 'bootstrap_agent_station', 'state', 'agent_states'],
+  ...[0, 1, 2, 3, 4, 5].map((i): InboundField => ['session', 'bootstrap_agent_station', `disposition_catalog.${i}.icon`, 'tile_icons']),
+  ...[0, 1].map((i): InboundField => ['session', 'bootstrap_agent_station', `break_reasons.${i}.icon`, 'tile_icons']),
+  ...['Amount Due', 'Due Date', 'EMI'].map((c): InboundField => ['session', 'bootstrap_agent_station', `context_display.types.${c}`, 'context_field_types']),
+  ...['my_day', 'my_day_pool_no_target'].map((s): InboundField => ['reads', s, 'call_later.left_today_goes_to', 'my_call_later_left_goes_to']),
+  ['reads', 'my_day', 'target.metric', 'my_day_target_metrics'],
 ];
 
 const FILES: Record<string, Record<string, unknown>> = {
@@ -740,6 +766,25 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       customerHistory.entry_dnc_mark,
       customerHistory.entry_roster_entry,
     ]);
+  });
+
+  it('agent station: the sample\'s roles name its columns, and its script uses only known placeholders', () => {
+    const display = session.bootstrap_agent_station.context_display;
+    const roles = vocab('context_roles');
+    for (const [role, column] of Object.entries(display.roles)) {
+      expect(roles).toContain(role);
+      expect(display.hidden).not.toContain(column);
+    }
+    const script = session.bootstrap_agent_station.script;
+    const texts = [script.opening, ...script.steps.map((s) => s.text)];
+    const used = texts.flatMap((t) => [...t.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]));
+    expect(used.length).toBeGreaterThan(0);
+    for (const name of used) expect(vocab('script_placeholders')).toContain(name);
+    // The call-later's facts: the money and date tiles parsed beside their raw text.
+    const tiles = station.reserved_call_later.attempt.facts.tiles;
+    expect(tiles.find((t) => t.role === 'amount_due')).toMatchObject({ type: 'money', value: '12500.00' });
+    expect(tiles.find((t) => t.role === 'due_date')).toMatchObject({ type: 'date', value: '2026-11-20' });
+    for (const t of tiles.filter((t) => t.type === 'text')) expect(t.value).toBeNull();
   });
 
   it('keeps the client frames the server reads to ping and media', () => {

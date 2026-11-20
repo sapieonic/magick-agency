@@ -22,6 +22,7 @@ import type { AgencyAgentLiveState } from '../../agency/campaign-stats';
 import type { AgencyClientKind } from '../../agency/station';
 import type { AgencyCallOrigin } from '../../agency/listen';
 import type { AgencySessionHelp } from '../../agency/floor-assist';
+import type { AllListed } from '../../primitives';
 import type { AgencyLiveCallNotListenableReason } from './live-calls';
 
 /** The furthest back `from` may be, in hours before the server's now (a local midnight is never more than ~26 h ago). */
@@ -139,6 +140,13 @@ export interface AgencyFloorAgent {
    * holder in the account is alerted: the console polls it every 5 s.
    */
   help: AgencySessionHelp | null;
+  /**
+   * Agent station (BE-11): since when the open session's station socket has been gone, while it is
+   * (`connected` false): the station registry's detach time. **Held in the server's memory only**,
+   * so it is null after a restart until the station comes back and goes again, and null whenever
+   * `connected` is not false (connected, unknown, no open session). Absent from an older server.
+   */
+  disconnected_since?: string | null;
 }
 
 /** Distinct people. */
@@ -155,5 +163,109 @@ export interface AgencyFloorResponse {
   agents: AgencyFloorAgent[];
   totals: AgencyFloorTotals;
   /** ISO-8601. Server time of the read. */
+  as_of: string;
+}
+
+// ─── Supervisor alerts (agent station AS16: BE-10, BE-11, AS12) ─────────────
+
+/**
+ * **NEW.** The account's open alerts in one light read, for every supervisor page:
+ * `GET /proxy/agency/floor/alerts` (no query). The console polls it every 5 s from its shell for an
+ * `agency.supervise` holder, chimes once per new alert `id` (the existing help chime, mutable per
+ * browser) and shows a banner that opens Live floor; Live floor keeps its cards. No push channel.
+ *
+ * - **Gate:** `agency.supervise`, then the account scope (`400 account_scope_required`), then the
+ *   dialer flag (`403 feature_disabled`), in that order, as the floor read. `help` alerts are served
+ *   only while `agency_floor_assist_enabled` is on for the account (none while it is off or cannot
+ *   be read); the other kinds whatever it says.
+ * - **Rows:** one per open alert of the account's open sessions, oldest `since` first:
+ *   - `help` (BE-10): an open Need help request (`AgencyFloorAgent.help`'s rule: not answered,
+ *     cancelled or expired), read from `idx_agency_agent_sessions_help_open`;
+ *   - `break_over` (AS12): an agent on a break past its reason's `limit_minutes` (the floor's
+ *     `break_limit_minutes`; a break whose reason has no limit of its own, a reserved break and the
+ *     soft phone never alert here); open until the break ends;
+ *   - `disconnected` (BE-11): a working agent (not on a break, not `offline`) whose station socket
+ *     has been gone for at least {@link AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS}, so a wifi blip the
+ *     reconnect ladder wins does not alert. Read from the station registry's memory, so none right
+ *     after a restart. An app paused in the background is on a `device_away` break: never this.
+ * - **Never cached** (`Cache-Control: no-store`). Never a customer number.
+ */
+
+/** How long a working agent's station must have been gone before it is a `disconnected` alert. */
+export const AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS = 20_000;
+
+/** The kinds of supervisor alert. */
+export type AgencyFloorAlertKind = 'help' | 'break_over' | 'disconnected';
+
+export const AGENCY_FLOOR_ALERT_KINDS = ['help', 'break_over', 'disconnected'] as const satisfies readonly AgencyFloorAlertKind[];
+
+const _allAlertKindsListed: AllListed<AgencyFloorAlertKind, typeof AGENCY_FLOOR_ALERT_KINDS> = true;
+void _allAlertKindsListed;
+
+/** What every alert carries. */
+export interface AgencyFloorAlertBase {
+  /**
+   * Stable for the life of one alert and never reused by another: a client chimes once per id.
+   * Opaque; built from the kind, the session and the instant the alert's condition began
+   * (`help:<session id>:<raised_at>`, `break_over:<session id>:<break start>`,
+   * `disconnected:<session id>:<disconnected_since>`), so a second break or a second drop of the
+   * same agent is a new alert.
+   */
+  id: string;
+  kind: AgencyFloorAlertKind;
+  /** The open session (`agency_agent_sessions.id`). */
+  session_id: string;
+  agent_user_id: string;
+  /** Joined from `users`; null when the account has none to show. */
+  agent_name: string | null;
+  /** The session's campaign; null for a soft-phone session (a Need help raised on one). */
+  campaign_id: string | null;
+  campaign_name: string | null;
+  /**
+   * ISO-8601. When the alert began: the help request's `raised_at`; the instant the break passed
+   * its limit (`break_started_at` + `limit_minutes`); the station's `disconnected_since`.
+   */
+  since: string;
+}
+
+/** An agent's open Need help request (BE-10). */
+export interface AgencyFloorHelpAlert extends AgencyFloorAlertBase {
+  kind: 'help';
+  /** The request, as `AgencyFloorAgent.help`: `raised_at` (= `since`), `call_id`, `state_at_raise`. */
+  help: AgencySessionHelp;
+}
+
+/** An agent on a break past its reason's limit (AS12). */
+export interface AgencyFloorBreakOverAlert extends AgencyFloorAlertBase {
+  kind: 'break_over';
+  /** The break reason code, a code of the campaign's catalog (its built-ins when it lists none). */
+  break_reason: string;
+  /** The reason's label, as `AgencyFloorAgent.break_label`; null for a code the catalog does not know. */
+  break_label: string | null;
+  /** The reason's `limit_minutes`, as `AgencyFloorAgent.break_limit_minutes`. */
+  limit_minutes: number;
+  /** ISO-8601. When the break began (the session's `state_since`). */
+  break_started_at: string;
+}
+
+/** A working agent whose station has been gone for at least {@link AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS} (BE-11). */
+export interface AgencyFloorDisconnectedAlert extends AgencyFloorAlertBase {
+  kind: 'disconnected';
+  /** The session's state as last recorded (a call it was on is held by the deferred hang-up). */
+  state: AgencyAgentLiveState;
+  /** The app the station last attached from; null when not recorded. */
+  client_kind: AgencyClientKind | null;
+  /** The call in progress on the session when its station went, if any (`agency_calls.id`). */
+  call_id: string | null;
+}
+
+/** One open supervisor alert. Switch on `kind`; a client ignores a kind it does not know. */
+export type AgencyFloorAlert = AgencyFloorHelpAlert | AgencyFloorBreakOverAlert | AgencyFloorDisconnectedAlert;
+
+/** `GET /floor/alerts`. */
+export interface AgencyFloorAlertsResponse {
+  /** Oldest `since` first, then by `id`. Empty when nothing needs a supervisor. */
+  alerts: AgencyFloorAlert[];
+  /** ISO-8601. Server time of the read: a banner's "for 3 min" counts from `since` to it. */
   as_of: string;
 }

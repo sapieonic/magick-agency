@@ -800,5 +800,97 @@
       "agent_not_live",
       "message_invalid"
     ]
+  },
+  "tile_icons": {
+    "source": "packages/contracts/src/agency/tile-icons.ts#AGENCY_TILE_ICONS",
+    "values": [
+      "rupee",
+      "clock",
+      "calendar",
+      "stop",
+      "thumbs_up",
+      "thumbs_down",
+      "check",
+      "cross",
+      "phone_missed",
+      "phone_busy",
+      "voicemail",
+      "wrong_number",
+      "language",
+      "question",
+      "tea",
+      "lunch",
+      "washroom",
+      "meeting",
+      "training",
+      "prayer",
+      "headset",
+      "walk",
+      "person",
+      "dot"
+    ]
+  },
+  "phone_displays": {
+    "source": "packages/contracts/src/agency/session.ts#AGENCY_PHONE_DISPLAYS",
+    "values": [
+      "full",
+      "masked"
+    ]
+  },
+  "attempt_callback_sources": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_ATTEMPT_CALLBACK_SOURCES",
+    "values": [
+      "outcome",
+      "promise",
+      "inbound"
+    ]
+  },
+  "context_roles": {
+    "source": "packages/contracts/src/agency/customer-facts.ts#AGENCY_CONTEXT_ROLES",
+    "values": [
+      "name",
+      "place",
+      "amount_due",
+      "due_date"
+    ]
+  },
+  "context_field_types": {
+    "source": "packages/contracts/src/agency/customer-facts.ts#AGENCY_CONTEXT_FIELD_TYPES",
+    "values": [
+      "text",
+      "money",
+      "date"
+    ]
+  },
+  "fact_tile_roles": {
+    "source": "packages/contracts/src/agency/customer-facts.ts#AGENCY_FACT_TILE_ROLES",
+    "values": [
+      "amount_due",
+      "due_date"
+    ]
+  },
+  "script_placeholders": {
+    "source": "packages/contracts/src/agency/agent-script.ts#AGENCY_SCRIPT_PLACEHOLDERS",
+    "values": [
+      "name",
+      "place",
+      "amount_due",
+      "due_date",
+      "agent_name",
+      "campaign_name"
+    ]
+  },
+  "my_day_target_metrics": {
+    "source": "packages/contracts/src/api/agency/my-day.ts#AGENCY_MY_DAY_TARGET_METRICS",
+    "values": [
+      "calls"
+    ]
+  },
+  "my_call_later_left_goes_to": {
+    "source": "packages/contracts/src/api/agency/my-day.ts#AGENCY_MY_CALL_LATER_LEFT_GOES_TO",
+    "values": [
+      "pool",
+      "waits_for_me"
+    ]
   }
 }

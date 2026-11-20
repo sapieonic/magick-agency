@@ -13,6 +13,14 @@
       "call_id": null
     }
   },
+  "help_response_raised_on_break": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "help": {
+      "raised_at": "2026-11-20T06:15:30.000Z",
+      "call_id": null,
+      "state_at_raise": "break"
+    }
+  },
   "help_response_cleared": {
     "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
     "help": null

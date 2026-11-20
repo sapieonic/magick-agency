@@ -84,6 +84,21 @@ package root.
   wrap-up redial, `AgencyRedialInfo`, `AgencyRedialResponse`
   and the constants `AGENCY_WRAPUP_REDIAL_LIMIT` and `AGENCY_REDIALED_DISPOSITION_CODE`
   (`AgencyRedialRequest` is not re-exported: see §5).
+- `api/agency/agency.ts`, for the agent station redesign (docs/agent-station.md, AS18; optional
+  fields on shapes already re-exported above): the panel's call-later tag `AgencyAttemptCallback`
+  with `AgencyAttemptCallbackSource` / `AGENCY_ATTEMPT_CALLBACK_SOURCES` (BE-4,
+  `AgencyReservedAttempt.callback`); the typed facts `AgencyCustomerFacts`, `AgencyFactTile`,
+  `AgencyFactTileRole` / `AGENCY_FACT_TILE_ROLES` (BE-6, `AgencyReservedAttempt.facts`); the
+  context roles and types `AgencyContextRoles`, `AgencyContextRole` / `AGENCY_CONTEXT_ROLES`,
+  `AgencyContextFieldType` / `AGENCY_CONTEXT_FIELD_TYPES` (BE-6, `AgencyContextDisplay.roles` /
+  `.types`); the script `AgencyAgentScript`, `AgencyAgentScriptStep`, `AgencyScriptPlaceholder` /
+  `AGENCY_SCRIPT_PLACEHOLDERS` and its bounds (BE-8, `AgencySessionBootstrap.script`); the number
+  display `AgencyPhoneDisplay` / `AGENCY_PHONE_DISPLAYS` / `AGENCY_PHONE_DISPLAY_DEFAULT` (AS9,
+  `AgencySessionBootstrap.phone_display`); the tile icons `AgencyTileIcon` / `AGENCY_TILE_ICONS`,
+  `isAgencyTileIcon`, `agencyTileIconOrNone` (BE-13, `AgencyDisposition.icon`,
+  `AgencyBreakReason.icon`). `AgencySessionHelp.state_at_raise` (BE-9) rides on the floor's `help`
+  unchanged. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
+  the dialer type with no second edit, pinned by `console-wire-derived.test.ts`.
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
   `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null),
@@ -217,6 +232,24 @@ API layer from the contacts table (SQL only); it has no dialer counterpart. The 
 hand-off (`AgencyLateCallbacksToLiveAgents` and its preview, commit, result and refusal types in
 `assignment.ts`) is served by the public API layer like every assignment operation, so it has none
 either.
+
+The agent station redesign (docs/agent-station.md, rulings AS1–AS18) adds console-side shapes with
+no dialer twin. The campaign object (`AgencyCampaign`, served by the internal handlers'
+`formatAgencyCampaignResponse`, which spreads the row) gains `daily_target_calls?: number | null`
+(BE-2, `AGENCY_DAILY_TARGET_CALLS_MIN` / `_MAX`), `agent_script?: AgencyAgentScript` (BE-8) and
+`phone_display?: AgencyPhoneDisplay` (AS9), columns of 0056; the last two reach the station on the
+dialer's bootstrap, the target only through My day. My day (`my-day.ts`,
+`GET /proxy/agency/my-day`, BE-1 to BE-3: `AgencyMyDay`, `AgencyMyDayTarget`, `AgencyMyCallLater`,
+`AgencyMyCallLaterRow`, `AGENCY_MY_DAY_QUERY_ERROR_CODE`, `AGENCY_MY_CALL_LATER_ROWS_MAX`,
+`AGENCY_MY_DAY_TARGET_METRICS`, `AGENCY_MY_CALL_LATER_LEFT_GOES_TO`) is assembled by the public API
+layer from SQL, like the callbacks list. The supervisor alerts (`floor.ts`,
+`GET /proxy/agency/floor/alerts`, AS16: `AgencyFloorAlert`, its three kinds
+`AgencyFloorHelpAlert` / `AgencyFloorBreakOverAlert` / `AgencyFloorDisconnectedAlert` over
+`AgencyFloorAlertBase`, `AgencyFloorAlertsResponse`, `AGENCY_FLOOR_ALERT_KINDS`,
+`AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS`) and `AgencyFloorAgent.disconnected_since?` (BE-11, the
+station registry's detach time, held in memory) are the floor's, console-side like it. The agent
+review dataset's `presence.break_overruns?` (`AgentReviewBreakOverruns`, BE-12, `../../reports/agent.ts`)
+reads 0060's event columns.
 
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,

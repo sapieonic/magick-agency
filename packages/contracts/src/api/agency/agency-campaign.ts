@@ -12,11 +12,13 @@ import type * as Core from '../../agency';
 import type { AgencyAgentState, AgencyBreakReason, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
 import type {
+  AgencyAgentScript,
   AgencyAssignmentMode,
   AgencyCallbackFallback,
   AgencyAutoDispositionOutcome,
   AgencyOnUnstaff,
   AgencyOutcomeDispositions,
+  AgencyPhoneDisplay,
 } from '../../agency';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
@@ -52,6 +54,14 @@ export {
   AGENCY_OUR_FAULT_REDIAL_BOUND,
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
 } from '../../agency';
+
+/**
+ * Agent station (BE-2, AS6): the bounds of a campaign's `daily_target_calls`, a whole number of
+ * connected calls (conversations) per agent per day. The write refuses anything else; the column's
+ * CHECK holds the same bounds (0056).
+ */
+export const AGENCY_DAILY_TARGET_CALLS_MIN = 1;
+export const AGENCY_DAILY_TARGET_CALLS_MAX = 2000;
 
 /** Roster ingest lifecycle. `pending` → `running` → terminal. */
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -625,6 +635,29 @@ export interface AgencyCampaign {
    * that does not know the field leaves it as it is; settable at any status.
    */
   inbound_sticky_enabled?: boolean;
+  /**
+   * Agent station (BE-2, AS6): the day's target for each agent on this campaign, in connected
+   * calls (conversations: the number the floor's `calls_today` counts), from
+   * {@link AGENCY_DAILY_TARGET_CALLS_MIN} to {@link AGENCY_DAILY_TARGET_CALLS_MAX}. `null` (the
+   * column default): no target, so My day shows no bar (null is not zero). Settable on create and
+   * by PATCH at any status (`null` clears it); not on the bootstrap, because a supervisor may change
+   * it mid-shift: the agent reads it through `GET /proxy/agency/my-day` (`AgencyMyDay.target`).
+   */
+  daily_target_calls?: number | null;
+  /**
+   * Agent station (BE-8): the campaign's script for its agents (`agency_campaigns.agent_script`,
+   * `NOT NULL DEFAULT '{}'`). `{}` is no script. A PATCH replaces it whole; the write refuses more
+   * than `AGENCY_SCRIPT_STEPS_MAX` steps, a step or opening out of bounds, and an unknown
+   * placeholder (`../../agency/agent-script.ts`). Retry campaigns copy their parent's. Served to the
+   * agent on the session bootstrap (`script`), so an edit reaches them on their next join.
+   */
+  agent_script?: AgencyAgentScript;
+  /**
+   * Agent station (AS9): how the station shows the customer's number (`full`, the column default,
+   * or `masked`). Settable on create and by PATCH at any status. Served on the session bootstrap
+   * (`phone_display`). A display choice: the number is still on the wire.
+   */
+  phone_display?: AgencyPhoneDisplay;
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order

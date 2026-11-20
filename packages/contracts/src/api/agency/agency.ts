@@ -52,6 +52,19 @@ import type {
   AgencyWrapupHoldReason,
   AgencyRedialInfo,
   AgencyRedialResponse,
+  AgencyAttemptCallback,
+  AgencyAttemptCallbackSource,
+  AgencyCustomerFacts,
+  AgencyFactTile,
+  AgencyFactTileRole,
+  AgencyContextRoles,
+  AgencyContextRole,
+  AgencyContextFieldType,
+  AgencyAgentScript,
+  AgencyAgentScriptStep,
+  AgencyScriptPlaceholder,
+  AgencyPhoneDisplay,
+  AgencyTileIcon,
 } from '../../agency';
 import type * as Core from '../../agency';
 import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors';
@@ -96,8 +109,39 @@ export type {
   // API layer adds the actor (`AgencyRedialRequest.agent_user_id`), as for every action.
   AgencyRedialInfo,
   AgencyRedialResponse,
+  // Agent station (docs/agent-station.md): the panel's call-later tag (BE-4) and typed facts (BE-6),
+  // the context roles and types (BE-6), the script (BE-8), the number display (AS9), the tile icons
+  // (BE-13). The same shapes on both sides (`CONTRACT-DIFF.md` §3).
+  AgencyAttemptCallback,
+  AgencyAttemptCallbackSource,
+  AgencyCustomerFacts,
+  AgencyFactTile,
+  AgencyFactTileRole,
+  AgencyContextRoles,
+  AgencyContextRole,
+  AgencyContextFieldType,
+  AgencyAgentScript,
+  AgencyAgentScriptStep,
+  AgencyScriptPlaceholder,
+  AgencyPhoneDisplay,
+  AgencyTileIcon,
 };
 export { AGENCY_WRAPUP_REDIAL_LIMIT, AGENCY_REDIALED_DISPOSITION_CODE } from '../../agency/actions';
+export {
+  AGENCY_ATTEMPT_CALLBACK_SOURCES,
+  AGENCY_CONTEXT_ROLES,
+  AGENCY_CONTEXT_FIELD_TYPES,
+  AGENCY_FACT_TILE_ROLES,
+  AGENCY_SCRIPT_STEPS_MAX,
+  AGENCY_SCRIPT_STEP_MAX_CHARS,
+  AGENCY_SCRIPT_OPENING_MAX_CHARS,
+  AGENCY_SCRIPT_PLACEHOLDERS,
+  AGENCY_PHONE_DISPLAYS,
+  AGENCY_PHONE_DISPLAY_DEFAULT,
+  AGENCY_TILE_ICONS,
+  isAgencyTileIcon,
+  agencyTileIconOrNone,
+} from '../../agency';
 /** The runtime list of {@link AgencyActionErrorCode}; the console keys its copy off it. */
 export { AGENCY_ACTION_ERROR_CODES } from '../../errors';
 

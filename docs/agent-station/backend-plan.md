@@ -170,8 +170,8 @@ Rules that apply to every item (root `CLAUDE.md`):
      (`CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), so the agent and
      the supervisor see the same number.
    - `will_pay` counts the agent's attempts with `promise_date IS NOT NULL` whose outcome was
-     written in the window. Migration 0050 already indexes promises by when their outcome was
-     written; check its plan for a per-agent filter before adding an index.
+     written in the window. `0050_promise_summary_indexes.sql` already indexes promises by when
+     their outcome was written; check its plan for a per-agent filter before adding an index.
    - The day is cut by `localDayEnd(campaign.default_timezone, now)`
      (`apps/server/src/agency/calling-hours.ts`), as the callbacks list does.
    - The station reads it on join, on every `ready` frame, after each saved outcome, and every
@@ -949,3 +949,122 @@ above is safe in that order because the server only adds.
 | "If they had already picked and the timer ends, it saves (today's behaviour)" | **Not found on the server.** The server returns the agent only when an outcome was submitted; otherwise it holds them (`disposition_required`). If the console saves a picked tile at expiry, that is client code I did not find. To verify before the AI pick is built. |
 | "Finish work: another agent will make it" | **True only** on pool campaigns or with `callback_fallback = 'pool'`. With `wait` the call waits for the same agent. |
 | Agent dropped: "an alert on the floor is NEW" | **Partly exists.** The card already has a `disconnected` risk. The chime and the off-page alert are new. |
+
+---
+
+## F. Foundation: the wire for phases 1–2
+
+Built on branch `station/f` (stream F, 2026-11-20). Every name below is exactly as it is in the
+code; the server, console and app streams code against these and do not change them. Every new
+field on an existing shape is optional (AS18); nothing was renamed or removed. Where this list and
+§3 differ, this list is what was built.
+
+### Migrations (`packages/db/migrations`)
+
+| File | Table | What |
+|---|---|---|
+| `0056_campaign_station_settings.sql` | `agency_campaigns` | `daily_target_calls INTEGER NULL` (CHECK 1–2000, `ck_agency_campaign_daily_target_calls`); `agent_script JSONB NOT NULL DEFAULT '{}'` (CHECK an object, `ck_agency_campaign_agent_script`); `phone_display VARCHAR(10) NOT NULL DEFAULT 'full'` (CHECK `full` / `masked`, `ck_agency_campaign_phone_display`) |
+| `0057_contact_callback_booker.sql` | `agency_contacts` | `callback_booked_by_user_id UUID NULL`, `callback_booked_at TIMESTAMPTZ NULL` (no default; `ck_agency_contact_callback_booked`: both set or both NULL) |
+| `0058_contact_callback_booker_index.sql` | `agency_contacts` | `idx_agency_contacts_my_callbacks (campaign_id, callback_booked_by_user_id, next_attempt_at) WHERE state = 'pending' AND callback_booked_by_user_id IS NOT NULL`; validates 0057's CHECK. A read that wants the index repeats that predicate byte for byte |
+| `0059_session_help_state.sql` | `agency_agent_sessions` | `help_state VARCHAR(20) NULL` (`ck_agency_agent_sessions_help_state`, NOT VALID: one of the six agent states, and only while `help_raised_at` is set, so **clear it in every statement that clears `help_raised_at`**) |
+| `0060_session_event_break_overrun.sql` | `agency_agent_session_events` | `break_limit_minutes SMALLINT NULL`, `break_overrun_seconds INTEGER NULL` on the transition out of `break` that ended a break past its limit (`ck_agency_session_event_break_overrun`, NOT VALID: set together, `from_state = 'break'`, limit 1–240, overrun > 0) |
+
+No column was added to the server's row models (`apps/server/src/db/models/agency.model.ts`): the
+stream that first reads or writes a column adds it there. `context_display.roles` / `.types` and the
+`icon` fields live in existing JSONB columns.
+
+### Dialer contract (`packages/contracts/src/agency/`, also re-exported in `AgencyApi`)
+
+- `tile-icons.ts` (BE-13): `AGENCY_TILE_ICONS` (24 keys: `rupee`, `clock`, `calendar`, `stop`,
+  `thumbs_up`, `thumbs_down`, `check`, `cross`, `phone_missed`, `phone_busy`, `voicemail`,
+  `wrong_number`, `language`, `question`, `tea`, `lunch`, `washroom`, `meeting`, `training`,
+  `prayer`, `headset`, `walk`, `person`, `dot`), `AgencyTileIcon`, `isAgencyTileIcon(value)` (the
+  write's rule), `agencyTileIconOrNone(value)` (the read's: unknown is `undefined`).
+  `AgencyDisposition.icon?: AgencyTileIcon`, `AgencyBreakReason.icon?: AgencyTileIcon`.
+- `customer-facts.ts` (BE-6): `AgencyContextRole` / `AGENCY_CONTEXT_ROLES` (`name`, `place`,
+  `amount_due`, `due_date`), `AgencyContextFieldType` / `AGENCY_CONTEXT_FIELD_TYPES` (`text`,
+  `money`, `date`), `AgencyContextRoles { name?, place?, amount_due?, due_date? }`,
+  `AgencyFactTileRole` / `AGENCY_FACT_TILE_ROLES` (`amount_due`, `due_date`),
+  `AgencyFactTile { column, role?, type, raw, value: string | null }`,
+  `AgencyCustomerFacts { name?, place?, tiles }`.
+- `session.ts`: `AgencyContextDisplay.roles?: AgencyContextRoles`,
+  `AgencyContextDisplay.types?: Record<string, AgencyContextFieldType>` (BE-6);
+  `AgencyPhoneDisplay` / `AGENCY_PHONE_DISPLAYS` (`full`, `masked`), `AGENCY_PHONE_DISPLAY_DEFAULT`
+  (`full`) (AS9); `AgencySessionBootstrap.script?: AgencyAgentScript` (absent when the campaign has
+  none) and `AgencySessionBootstrap.phone_display?: AgencyPhoneDisplay` (BE-8, AS9).
+- `agent-script.ts` (BE-8): `AgencyAgentScript { opening?, steps?: AgencyAgentScriptStep[] }`,
+  `AgencyAgentScriptStep { text }`, `AgencyScriptPlaceholder` / `AGENCY_SCRIPT_PLACEHOLDERS`
+  (`name`, `place`, `amount_due`, `due_date`, `agent_name`, `campaign_name`),
+  `AGENCY_SCRIPT_STEPS_MAX` (12), `AGENCY_SCRIPT_STEP_MAX_CHARS` (200),
+  `AGENCY_SCRIPT_OPENING_MAX_CHARS` (300).
+- `station.ts` (BE-4, BE-6): `AgencyReservedAttempt.callback?: AgencyAttemptCallback`,
+  `AgencyAttemptCallback { due_at, booked_by_me, source }`, `AgencyAttemptCallbackSource` /
+  `AGENCY_ATTEMPT_CALLBACK_SOURCES` (`outcome`, `promise`, `inbound`);
+  `AgencyReservedAttempt.facts?: AgencyCustomerFacts`. `AgencyActiveAttempt` inherits both. BE-5:
+  the `queue` frame, the bootstrap's `queue` and `ready.queue` are now documented for `pool`
+  campaigns too (no type change, no capability).
+- `floor-assist.ts` (BE-9): `AgencySessionHelp.state_at_raise?: AgencyAgentState`. The error code
+  `help_not_on_call` stays in the union.
+
+### Console wire types (`packages/contracts/src/api/agency/`)
+
+- `agency-campaign.ts`: `AgencyCampaign.daily_target_calls?: number | null`,
+  `AgencyCampaign.agent_script?: AgencyAgentScript`, `AgencyCampaign.phone_display?: AgencyPhoneDisplay`;
+  `AGENCY_DAILY_TARGET_CALLS_MIN` (1), `AGENCY_DAILY_TARGET_CALLS_MAX` (2000).
+- `my-day.ts` (new; BE-1 to BE-3): `AgencyMyDayQuery { campaign_id }`, `AgencyMyDay { campaign_id,
+  timezone, day_start, day_end, calls, dialed, talk_seconds, will_pay: number | null, successes,
+  target: AgencyMyDayTarget | null, call_later: AgencyMyCallLater, as_of }`,
+  `AgencyMyDayTarget { metric: 'calls', value }`, `AgencyMyDayTargetMetric` /
+  `AGENCY_MY_DAY_TARGET_METRICS`, `AgencyMyCallLater { rows, today, overdue, comes_to_me,
+  left_today_goes_to }`, `AgencyMyCallLaterRow { contact_id, customer_name, due_at, overdue }`,
+  `AgencyMyCallLaterLeftGoesTo` / `AGENCY_MY_CALL_LATER_LEFT_GOES_TO` (`pool`, `waits_for_me`),
+  `AGENCY_MY_CALL_LATER_ROWS_MAX` (20), `AGENCY_MY_DAY_QUERY_ERROR_CODE`
+  (`invalid_my_day_query`). Note the field is `dialed` (wire spelling, as `dialed_at`), not
+  `dialled`.
+- `floor.ts` (AS16, BE-11): `AgencyFloorAgent.disconnected_since?: string | null`;
+  `AgencyFloorAlertKind` / `AGENCY_FLOOR_ALERT_KINDS` (`help`, `break_over`, `disconnected`),
+  `AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS` (20 000), `AgencyFloorAlertBase { id, kind, session_id,
+  agent_user_id, agent_name, campaign_id, campaign_name, since }`, `AgencyFloorHelpAlert { kind:
+  'help', help: AgencySessionHelp }`, `AgencyFloorBreakOverAlert { kind: 'break_over', break_reason,
+  break_label, limit_minutes, break_started_at }`, `AgencyFloorDisconnectedAlert { kind:
+  'disconnected', state, client_kind, call_id }`, `AgencyFloorAlert` (their union),
+  `AgencyFloorAlertsResponse { alerts, as_of }`. The `id` recipe (`<kind>:<session id>:<instant the
+  condition began>`) is in the type's comment: the console chimes once per id.
+- `../reports/agent.ts` (BE-12): `AgentReviewPresence.break_overruns?: AgentReviewBreakOverruns`,
+  `AgentReviewBreakOverruns { breaks, seconds_over }`.
+
+### Routes the servers must add (not served yet)
+
+| Method and path | Permission | Response | Stream |
+|---|---|---|---|
+| `GET /proxy/agency/my-day?campaign_id=<uuid>` | `agency.station.connect` | `AgencyMyDay` | S1 |
+| `GET /proxy/agency/floor/alerts` | `agency.supervise` | `AgencyFloorAlertsResponse` | S2 |
+
+The contracts keep no route table. The server's route-table tests list what is registered
+(`apps/server/test/unit/api/agency-route-table.test.ts` reads `test/fixtures/console-paths.json`;
+`agency-agent-reach.test.ts` holds the agent's reachable set): the stream that serves a route adds
+it there in the same commit (my-day joins the agent's reachable set; the alerts read does not).
+Neither test fails before then, because nothing registers the paths yet.
+
+### Vocabularies for the app (`fixtures/agent/literals.json`)
+
+`tile_icons`, `phone_displays`, `attempt_callback_sources`, `context_roles`,
+`context_field_types`, `fact_tile_roles`, `script_placeholders`, `my_day_target_metrics`,
+`my_call_later_left_goes_to` (84 vocabularies in all). New samples: `session.json`
+`bootstrap_agent_station`; `station.json` `reserved_call_later`, `ready_help_open_ready`;
+`floor-assist.json` `help_response_raised_on_break`; `reads.json` `my_day`, `my_day_pool_no_target`.
+
+### Dart (`apps/mobile/packages/agency_wire`)
+
+`lib/src/agent_station.dart`: `TileIcon` (`TileIcon.tryFromWire`: unknown is null),
+`PhoneDisplay`, `AttemptCallbackSource`, `AttemptCallback`, `ContextRole`, `ContextFieldType`,
+`FactTileRole`, `ContextRoles`, `contextFieldTypesFromJson`, `FactTile`, `CustomerFacts`
+(`amountDue`, `dueDate`, `tileFor`), `ScriptPlaceholder`, `fillScriptPlaceholders`,
+`AgentScriptStep`, `AgentScript`, `MyDayTargetMetric`, `CallLaterLeftGoesTo`, `MyDayQuery`,
+`MyDayTarget`, `MyCallLaterRow`, `MyCallLater`, `MyDay`. Wired into `Disposition.icon`,
+`BreakReason.icon`, `ContextDisplay.roles` / `.types`, `SessionBootstrap.script` /
+`.phoneDisplay` / `.phoneDisplayRaw` / `.masksPhone`, `ReservedAttempt.callback` / `.facts` (and
+`ActiveAttempt`), `SessionHelp.stateAtRaise` / `.stateAtRaiseRaw`. Every new field is read
+leniently: a value the build cannot read is absent, never a failed bootstrap or frame.
+`SessionHelp`'s constructor is no longer `const`.
+

@@ -68,6 +68,21 @@ export interface AgentReviewPresence {
   break_by_reason: Array<{ reason: string; label: string; seconds: number }>;
   /** Calls reserved to the agent that ended `agent_disconnected` (their station went away mid-call). */
   drops: number;
+  /**
+   * Agent station (BE-12, AS12): the breaks that ran past their reason's `limit_minutes`, from the
+   * session event that ended each (`agency_agent_session_events.break_overrun_seconds`, 0060), for
+   * breaks that ended in the window. A reserved break never counts; a break that ended with the
+   * session is measured to the session's end. Absent from a dataset built before the field.
+   */
+  break_overruns?: AgentReviewBreakOverruns;
+}
+
+/** Breaks over their limit in the window (BE-12). */
+export interface AgentReviewBreakOverruns {
+  /** Breaks that ran over. */
+  breaks: number;
+  /** Their time past the limit, summed, in whole seconds. */
+  seconds_over: number;
 }
 
 /**
