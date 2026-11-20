@@ -492,6 +492,7 @@ export function StopCallingDialog({
   failure,
   onYes,
   onNo,
+  body = STATION_COPY.stopCallingBody,
 }: {
   open: boolean;
   who: string | null;
@@ -499,11 +500,13 @@ export function StopCallingDialog({
   failure: string | null;
   onYes: () => void;
   onNo: () => void;
+  /** How far it reaches, when that is not "this work" (a side view's caller on no list, or any list). */
+  body?: string;
 }) {
   return (
     <StationDialog open={open} onClose={onNo} title={STATION_COPY.stopCallingTitle} icon={<Ban size={30} aria-hidden="true" />} small testId="stop-calling">
       {who ? <p><b>{who}</b></p> : null}
-      <p>{STATION_COPY.stopCallingBody}</p>
+      <p>{body}</p>
       {failure ? <p className={styles.refusal} role="alert">{failure}</p> : null}
       <div className={styles.dialogFoot}>
         <button type="button" className={`${styles.btn} ${styles.btnBig} ${styles.btnGo}`} onClick={onNo} data-testid="stop-calling-no">

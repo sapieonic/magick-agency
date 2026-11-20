@@ -38,6 +38,7 @@ export function WhatHappened({
   onAskDontCallAgain,
   dontCallAgainOffered,
   shake,
+  callLaterLine,
 }: {
   catalog: AgencyDisposition[];
   form: DispositionFormState;
@@ -59,6 +60,11 @@ export function WhatHappened({
   dontCallAgainOffered: boolean;
   /** Save was pressed before a tile was picked: the tiles shake once (spec §6.1). */
   shake: number;
+  /**
+   * The line under Call when? where nothing calls the customer back by itself (a side view's call
+   * that no list is waiting on); absent, the line follows `comesToMe` (AS8).
+   */
+  callLaterLine?: (when: string) => string;
 }) {
   const layout = outcomeTileLayout(catalog);
   const [showAll, setShowAll] = useState(false);
@@ -196,7 +202,7 @@ export function WhatHappened({
         />
       ) : null}
       {selected?.requires_datetime ? (
-        <CallWhenRow form={form} onChange={onChange} enabled={enabled} now={now} comesToMe={comesToMe} firstChipRef={callWhenRef} />
+        <CallWhenRow form={form} onChange={onChange} enabled={enabled} now={now} comesToMe={comesToMe} firstChipRef={callWhenRef} line={callLaterLine} />
       ) : null}
     </div>
   );
@@ -323,6 +329,7 @@ function CallWhenRow({
   now,
   comesToMe,
   firstChipRef,
+  line,
 }: {
   form: DispositionFormState;
   onChange: (next: DispositionFormState) => void;
@@ -330,6 +337,7 @@ function CallWhenRow({
   now: () => number;
   comesToMe: boolean | null;
   firstChipRef: RefObject<HTMLButtonElement | null>;
+  line?: (when: string) => string;
 }) {
   // The chips are relative to now, so the row repaints itself while it is on screen.
   useRepaintTick();
@@ -379,7 +387,7 @@ function CallWhenRow({
       </div>
       {when ? (
         <p className={`${styles.fine} ${styles.fineStrong}`} data-testid="callback-resolved">
-          {comesToMe === false ? STATION_COPY.mayGoToAnother(when) : STATION_COPY.willComeToYou(when)}
+          {line ? line(when) : comesToMe === false ? STATION_COPY.mayGoToAnother(when) : STATION_COPY.willComeToYou(when)}
         </p>
       ) : null}
     </section>

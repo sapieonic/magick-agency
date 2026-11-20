@@ -1,26 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import {
-  INBOUND_DNC_ENQUIRY_COPY,
   NUMBER_WITHHELD,
-  catalogHint,
   customerWaitingLine,
-  describeInboundRail,
   inboundCallerLabel,
   inboundCallerNumber,
   inboundMatchName,
   inboundPhase,
   isInboundCallLive,
   isInboundCallOnStation,
-  matchLine,
   newerInboundCall,
-  stickyLine,
-  waitedLine,
 } from '../../utils/inbound/inboundCall';
 import { connected, inboundCall, owing } from '../helpers/inbound';
 
 /**
  * The inbound call as the station reads it (P2): which phase it puts the panel in, which of two
- * copies is newer (the row has no `updated_at`), and the rail's and the panel's words.
+ * copies is newer (the row has no `updated_at`), and the caller in words.
  */
 
 describe('inboundPhase', () => {
@@ -88,67 +82,10 @@ describe('the caller, in words', () => {
     expect(NUMBER_WITHHELD).toBe('Number withheld');
   });
 
-  it('says why the caller is "your customer", and when they usually speak to someone else', () => {
-    expect(stickyLine(inboundCall())).toBe('Your customer: you last spoke to them');
-    expect(stickyLine(inboundCall({ sticky: { reason: 'owner', is_you: true } }))).toMatch(/assigned to you/);
-    expect(stickyLine(inboundCall({ sticky: { reason: 'owner', is_you: false } }))).toMatch(/another agent/);
-    expect(stickyLine(inboundCall({ sticky: null }))).toBeNull();
-  });
-
-  it('names the outcome list the pad offers', () => {
-    expect(catalogHint(inboundCall())).toBe('From Card Renewals’s outcome list');
-    expect(catalogHint(inboundCall({ catalog_source: 'route', match: null }))).toBe('From the Customer care route’s outcome list');
-    expect(catalogHint(inboundCall({ catalog_source: 'builtin', match: null }))).toBe('From the standard outcome list');
-  });
-
-  it('the matched campaign, the wait, and the DNC sentence', () => {
-    expect(matchLine(inboundCall())).toBe('Card Renewals · Waiting');
-    expect(matchLine(inboundCall({ match: null }))).toBeNull();
-    expect(waitedLine(42)).toBe('Waited 42 s');
-    expect(waitedLine(120)).toBe('Waited 2 min');
-    expect(waitedLine(65)).toBe('Waited 1 min 5 s');
-    expect(INBOUND_DNC_ENQUIRY_COPY).toMatch(/customer’s own call is an enquiry/);
-  });
-
   it('the waiting pill names the contact, else the number', () => {
     const frame = { event: 'customer_waiting' as const, inbound_call_id: 'ib-9', from_e164: '+919820461733', waiting_since: 'x' };
     expect(customerWaitingLine({ ...frame, match_name: 'Asha Rao' })).toBe('Your customer is waiting: Asha Rao');
     expect(customerWaitingLine(frame)).toBe(`Your customer is waiting: ${inboundCallerNumber('+919820461733')}`);
     expect(customerWaitingLine({ ...frame, from_e164: null })).toBe('Your customer is waiting');
-  });
-});
-
-describe('describeInboundRail', () => {
-  it('offered: who is calling and that they are being put through', () => {
-    const rail = describeInboundRail({ connection: 'open', call: inboundCall() });
-    expect(rail.tone).toBe('info');
-    expect(rail.label).toBe('Incoming call from Asha Rao');
-    expect(rail.detail).toMatch(/^Rang .* · Customer care · connecting you now$/);
-    expect(rail.timerFrom).toBeNull();
-  });
-
-  it('a withheld caller is said so', () => {
-    const rail = describeInboundRail({ connection: 'open', call: inboundCall({ from_e164: null, match: null }) });
-    expect(rail.label).toBe('Incoming call from Number withheld');
-    expect(rail.detail).toMatch(/^The caller withheld their number/);
-  });
-
-  it('connected: the talk timer from bridged_at', () => {
-    const rail = describeInboundRail({ connection: 'open', call: connected() });
-    expect(rail.tone).toBe('success');
-    expect(rail.label).toBe('On a call with Asha Rao');
-    expect(rail.timerFrom).toBe('2026-11-09T10:00:01.500Z');
-  });
-
-  it('outcome needed: the lapse instant for the countdown', () => {
-    const rail = describeInboundRail({ connection: 'open', call: owing() });
-    expect(rail.label).toBe('Outcome needed');
-    expect(rail.lapseAt).toBe('2026-11-09T10:33:00.000Z');
-  });
-
-  it('a lost connection outranks the call', () => {
-    expect(describeInboundRail({ connection: 'disconnected', call: connected() }).detail).toMatch(/can’t hear you/);
-    expect(describeInboundRail({ connection: 'reconnecting', call: owing() }).detail).toMatch(/outcome is kept/);
-    expect(describeInboundRail({ connection: 'superseded', call: connected() }).label).toMatch(/another device/);
   });
 });

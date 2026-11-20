@@ -1,11 +1,8 @@
 import { formatDialNumber } from '../softphone/phoneInput';
-import { contextName, type RailTone } from '../softphone/callState';
-import { contactStateLabel } from '../../types/agency-spine';
-import type { StationConnection } from '../../hooks/agencyStation/types';
+import { contextName } from '../softphone/callState';
 import type {
   AgencyInboundCall,
   AgencyInboundCallState,
-  AgencyInboundStickyReason,
   AgencyStationCustomerWaitingFrame,
 } from '../../types/inbound';
 
@@ -122,152 +119,8 @@ export function inboundCallerLabel(call: AgencyInboundCall): string {
   return inboundMatchName(call) ?? inboundCallerNumber(call.from_e164);
 }
 
-/**
- * The DNC badge. The caller's number is on a Do Not Call list, and they rang us: a customer's
- * own call is an enquiry (`docs/inbound.md` §10), so the agent helps them now, and nothing
- * dials them back unless they ask.
- */
-export const INBOUND_DNC_BADGE = 'On Do Not Call';
-export const INBOUND_DNC_ENQUIRY_COPY =
-  'This number is on a Do Not Call list. The customer’s own call is an enquiry, so help them now — but don’t call them back unless they ask you to.';
-
-/** Why the panel calls the caller "your customer" (`sticky.is_you`). */
-export const STICKY_REASON_COPY: Record<AgencyInboundStickyReason, string> = {
-  owner: 'Your customer: their contact is assigned to you',
-  last_from_number: 'Your customer: you last called them from this number',
-  last_connected: 'Your customer: you last spoke to them',
-  last_dialled: 'Your customer: you last called them',
-};
-
-/** The sticky line, or null when the caller has no agent of their own. */
-export function stickyLine(call: Pick<AgencyInboundCall, 'sticky'>): string | null {
-  if (!call.sticky) return null;
-  return call.sticky.is_you
-    ? STICKY_REASON_COPY[call.sticky.reason]
-    : 'Usually speaks to another agent, who isn’t free';
-}
-
-/** Where the pad's outcomes come from, said once above it. */
-export function catalogHint(call: AgencyInboundCall): string {
-  switch (call.catalog_source) {
-    case 'campaign':
-      return call.match ? `From ${call.match.campaign_name}’s outcome list` : 'From the campaign’s outcome list';
-    case 'route':
-      return call.route ? `From the ${call.route.name} route’s outcome list` : 'From the route’s outcome list';
-    case 'builtin':
-      return 'From the standard outcome list';
-  }
-}
-
-/** The matched contact, in one line: "Home Loan Renewals · Pending". */
-export function matchLine(call: AgencyInboundCall): string | null {
-  if (!call.match) return null;
-  return `${call.match.campaign_name} · ${contactStateLabel(call.match.contact_state)}`;
-}
-
-/** "Waited 1 min 5 s" — how long the caller held before this offer. */
-export function waitedLine(seconds: number): string {
-  const s = Math.max(0, Math.round(seconds));
-  if (s < 60) return `Waited ${s} s`;
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  return rest === 0 ? `Waited ${m} min` : `Waited ${m} min ${rest} s`;
-}
-
-export interface InboundRailDescription {
-  tone: RailTone;
-  label: string;
-  detail: string | null;
-  /** The instant the rail's talk timer counts from, or null for none. */
-  timerFrom: string | null;
-  /** The instant an owed outcome lapses, for the countdown; null when none is owed. */
-  lapseAt: string | null;
-}
-
-/**
- * The inbound call's rail, as a pure function of the connection and the call.
- *
- * Connection failures outrank the call, for the station's reason: an agent whose socket is gone
- * must be told whether the caller can hear them.
- */
-export function describeInboundRail(input: {
-  connection: StationConnection;
-  call: AgencyInboundCall;
-}): InboundRailDescription {
-  const { connection, call } = input;
-  const phase = inboundPhase(call);
-  const live = phase === 'offered' || phase === 'connected';
-  const who = inboundCallerLabel(call);
-  const rang = `rang ${formatDialNumber(call.to_e164)}${call.route ? ` · ${call.route.name}` : ''}`;
-
-  if (connection === 'superseded') {
-    return {
-      tone: 'danger',
-      label: 'Your station moved to another device',
-      detail: 'You opened it on your phone or in another window. Only one can take calls.',
-      timerFrom: null,
-      lapseAt: null,
-    };
-  }
-  if (connection === 'session_gone') {
-    return { tone: 'danger', label: 'Session ended', detail: 'Reload the page to rejoin.', timerFrom: null, lapseAt: null };
-  }
-  if (connection === 'disconnected') {
-    return {
-      tone: 'danger',
-      label: 'Connection lost',
-      detail: live ? 'The caller can’t hear you right now. Reconnect to get back on the call.' : 'Reconnect to save this call’s outcome.',
-      timerFrom: null,
-      lapseAt: null,
-    };
-  }
-  if (connection === 'reconnecting') {
-    return {
-      tone: 'warning',
-      label: 'Reconnecting',
-      detail: live ? 'Stay on the line — we’re reconnecting you.' : 'Your outcome is kept while we reconnect.',
-      timerFrom: null,
-      lapseAt: null,
-    };
-  }
-
-  switch (phase) {
-    case 'offered':
-      return {
-        tone: 'info',
-        label: `Incoming call from ${who}`,
-        detail: `${call.from_e164 ? '' : 'The caller withheld their number · '}${capitalise(rang)} · connecting you now`,
-        timerFrom: null,
-        lapseAt: null,
-      };
-    case 'connected':
-      return {
-        tone: 'success',
-        label: `On a call with ${who}`,
-        detail: `Inbound · ${rang}`,
-        timerFrom: call.bridged_at,
-        lapseAt: null,
-      };
-    case 'outcome':
-    default:
-      return {
-        tone: 'warning',
-        label: 'Outcome needed',
-        detail: `The call with ${who} ended. Pick an outcome and save it to take your next call.`,
-        timerFrom: null,
-        lapseAt: call.outcome_due_at,
-      };
-  }
-}
-
-/** "Without one, it closes in 0:24" — the countdown's words around its digits. */
-export const LAPSE_PREFIX = 'Without one, it closes in';
-
 /** Why the outcome pad is closed, by phase. */
 export const INBOUND_PAD_DISABLED_COPY = 'Outcomes open when you’re connected to the caller.';
-export const INBOUND_HANGUP_CONNECTING_COPY = 'Connecting you to the caller…';
-export const INBOUND_HANGUP_ENDED_COPY = 'The call has ended';
-export const INBOUND_DNC_WITHHELD_COPY = 'The caller withheld their number.';
 
 /** The "Your customer is waiting" pill's words. */
 export function customerWaitingLine(frame: AgencyStationCustomerWaitingFrame): string {
@@ -278,7 +131,3 @@ export function customerWaitingLine(frame: AgencyStationCustomerWaitingFrame): s
 /** The pill's title: what happens next. */
 export const CUSTOMER_WAITING_HINT =
   'A customer who usually speaks to you has rung in and is on hold. Finish this call’s work soon to take them.';
-
-function capitalise(text: string): string {
-  return text ? text[0]!.toUpperCase() + text.slice(1) : text;
-}
