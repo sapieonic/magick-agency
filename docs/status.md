@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-19.
+"is it done". As of 2026-11-20.
 
 ## Summary
 
@@ -2433,6 +2433,27 @@ findings (one short transcript failing a complete recording for good, the delay 
 a drain, the scan behind it, a missing `modules.md` entry) are fixed with tests. Mutation-checked,
 each red then restored. Not verified: a real Gemini transcription, the real UI in a browser, the
 query plan on production-sized data. Test counts below.
+
+### Agent station redesign, phases 0 to 2 2026-11-20 (AS1–AS18, [`agent-station.md`](agent-station.md))
+
+The agent's working screen redesigned on the console and the app from mock-ups made with agents:
+one state per screen, a coloured band, big numbers, picture tiles and one main button; light by
+default everywhere (AS14); simple Indian English copy (AS15). Built in seven streams merged into
+one branch; the plan, rulings and per-stream evidence are in [`agent-station.md`](agent-station.md) §3.
+
+| Part | What | Evidence (on the merged branch) |
+|---|---|---|
+| Wire | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display; the Dart mirror in `agency_wire` | contracts 617, db unit 457, db integration 877, `agency_wire` 761 |
+| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons (BE-5); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` (AS9) | server unit 10,656 passed (3 failures in `inbound-recordings.test.ts`); integration rest 3,178 passed (11 failures, all `inbound-clips-routes.test.ts`); wall-clock 31. Both sets of failures are this build container's missing audio decoders, in an area the redesign did not touch |
+| Console station | Every screen of the spec on today's data, then wired to the new fields; hold to end call; the inbound, soft-phone and join screens in the same frame; station words keyed on codes | console 7,906, web-ui 244, lint clean |
+| Console supervisor | Alerts banner and chime on every page; campaign Settings for target, number display, script, customer facts and tile pictures; the Collections set in New campaign (AS4); super-admin light by default | included in the console count; super-admin 514 |
+| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice (AS13) | `flutter analyze` clean; `flutter test` 2152 |
+
+Guards: `test:release` 10, `test:tooling` 20, `test:grafana` 34. Not built: the agent's campaign
+list as big tiles (console `AgentHomePage`), the inbound and soft-phone bodies' own new look (only
+their frame and band are new), and BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17).
+Not verified: nothing has run on a real phone, a real carrier or with real agents; read aloud has
+not run on a device.
 
 ## Test counts
 
