@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 import { attemptCallbackOf, callbackBookerOf, type CallLaterContact } from '../../../src/agency/call-later.js';
+import { buildPanel } from '../../../src/agency/dialer/live-attempt.js';
+import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 /**
  * Who booked a call-later, and the panel's call-later tag (agent station BE-3, BE-4; AS8;
@@ -77,5 +79,32 @@ describe('attemptCallbackOf (BE-4)', () => {
 
   it('a wrap-up redial carries none', () => {
     expect(attemptCallbackOf({ contact: contact(), catalog: CATALOG, agentUserId: AGENT, redial: true })).toBeUndefined();
+  });
+});
+
+describe('buildPanel: the reserved attempt carries the call-later tag (BE-4)', () => {
+  const cmd = (over: Partial<DialCommand> = {}, contactOver: Record<string, unknown> = {}) => ({
+    attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 2,
+    campaign: { name: 'Collections', context_display: {}, disposition_catalog: CATALOG },
+    contact: {
+      phone_e164: '+919811100001', context: {}, promise_date: null,
+      last_outcome: 'connected', last_disposition: 'call_later', next_attempt_at: new Date('2026-11-20T09:30:00Z'),
+      callback_source: null, callback_booked_by_user_id: AGENT, ...contactOver,
+    },
+    agentUserId: AGENT,
+    ...over,
+  }) as unknown as DialCommand;
+
+  it('the agent\'s own call-later coming due', () => {
+    expect(buildPanel(cmd(), []).callback).toEqual({ due_at: '2026-11-20T09:30:00.000Z', booked_by_me: true, source: 'outcome' });
+  });
+
+  it('for an agent the dial does not name, not mine', () => {
+    expect(buildPanel(cmd({ agentUserId: undefined }), []).callback?.booked_by_me).toBe(false);
+  });
+
+  it('absent on an ordinary dial and on a wrap-up redial (the key is not sent at all)', () => {
+    expect('callback' in buildPanel(cmd({}, { last_disposition: 'sale' }), [])).toBe(false);
+    expect('callback' in buildPanel(cmd({ redial: { ofAttemptId: 'a0', number: 1 } }), [])).toBe(false);
   });
 });

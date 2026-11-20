@@ -32,6 +32,7 @@ const { repos, settings } = vi.hoisted(() => ({
       claimDialable: vi.fn().mockResolvedValue([]),
       claimForAgents: vi.fn().mockResolvedValue([]),
       probeAgentQueues: vi.fn(),
+      probeCampaignQueue: vi.fn(),
       unclaim: vi.fn().mockResolvedValue(undefined),
       unclaimMany: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
@@ -571,19 +572,76 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     }
   });
 
-  it('pool mode: claimDialable with N, no probe and no queue frame (the tick as it was)', async () => {
+  // Agent station BE-5: a pool campaign's agents hear the campaign's shared queue.
+  // FALSIFIED: with the pool arm removed from `planTick` (no `sendPoolQueueFrames`) this reds.
+  it('pool mode: one campaign probe, every available agent told the shared state on a change; the claim as it was', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: LATER, hasNonCallback: false });
     const send = vi.fn((_id: string, _frame: unknown) => true);
     const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
     const { e } = engine(makeStations(['s1', 's2', 's3'], send), agents);
 
     await e.tickOnce('camp-1');
 
+    const later = { event: 'queue', campaign_id: 'camp-1', due: false, reason: 'callbacks_later', next_due_at: LATER.toISOString() };
+    expect(queueFrames(send)).toEqual([['s1', later], ['s2', later], ['s3', later]]);
+    expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(1);
+    expect(repos.contact.probeCampaignQueue).toHaveBeenCalledWith('camp-1', ['callback']);
+    // Told, never decided on: the claim is the pool's own, for every available agent.
     expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
     expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
     expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
     expect(fallback.sweep).not.toHaveBeenCalled();
+
+    // Unchanged: nothing more. Due now: everyone hears it.
+    send.mockClear();
+    await e.tickOnce('camp-1');
+    expect(queueFrames(send)).toHaveLength(0);
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(Date.now() - 1_000), hasNonCallback: null });
+    await e.tickOnce('camp-1');
+    const due = { event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null };
+    expect(queueFrames(send)).toEqual([['s1', due], ['s2', due], ['s3', due]]);
+  });
+
+  it('pool mode: a failed probe sends nothing and costs the tick nothing', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockRejectedValue(new Error('db blip'));
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(queueFrames(send)).toHaveLength(0);
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
+  });
+
+  it('pool mode: scheduled ticks share one probe per campaign within the cache TTL', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: null, hasNonCallback: null });
+    const clock = { t: 1_000_000 };
+    const e = new PacingEngine(
+      null, '', 'r1', makeStations(['s1']) as any, makeAgents({ s1: 'available' }) as any,
+      { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any,
+      { bus: new InProcessPacingInvalidationBus(), now: () => clock.t },
+    );
+    e.setAutoRounds(false);
+    const ticks: PacingTickObservation[] = [];
+    e.registerTickObserver((o) => ticks.push(o));
+    (e as any).beginLeading({ ...CAMPAIGN, assignment_mode: 'pool' });
+    try {
+      await e.runRound();
+      clock.t += 500;
+      ticks.length = 0;
+      await e.runRound();
+      // The second round ticked in full (not skipped), and read the cached state.
+      expect(ticks).toEqual([expect.objectContaining({ mode: 'full' })]);
+      expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(1);
+      clock.t += 5_000;
+      await e.runRound();
+      expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(2);
+    } finally {
+      await e.stop();
+    }
   });
 });
 

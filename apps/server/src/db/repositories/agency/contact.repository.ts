@@ -1318,8 +1318,8 @@ export class AgencyContactRepository {
    * **It settles an inbound callback.** A placed call to the contact is the call an inbound
    * callback (`callback_source`, docs/inbound.md §7) asked for, so its source and due time are
    * cleared here, with the charge. An our-fault redial ({@link chargeOurFaultAttempt}) is not a
-   * call the customer took part in and keeps it. So is a booked call-later's booker (0057,
-   * agent station BE-3): the call it asked for has now been made.
+   * call the customer took part in and keeps it. A booked call-later's booker (0057, agent
+   * station BE-3) is cleared here by the same rule: the call it asked for has now been made.
    */
   async chargeAttempt(contactId: string, outcome: string | null): Promise<number> {
     const { rows } = await getPool().query<{ attempt_count: number }>(
