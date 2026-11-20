@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.0](https://github.com/sapieonic/magick-agency/compare/db-v0.25.0...db-v0.26.0) (2026-11-20)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** the agent station redesign, phases 0 to 2 ([#110](https://github.com/sapieonic/magick-agency/issues/110)) ([d3d50e2](https://github.com/sapieonic/magick-agency/commit/d3d50e295e377d42c4bb583dbce05e46dff89c92))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.28.0
+    * @magick-agency/domain bumped to 0.14.0
+    * @magick-agency/observability bumped to 0.17.0
+
 ## [0.25.0](https://github.com/sapieonic/magick-agency/compare/db-v0.24.0...db-v0.25.0) (2026-11-19)
 
 

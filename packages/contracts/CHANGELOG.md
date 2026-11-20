@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.27.0...contracts-v0.28.0) (2026-11-20)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** the agent station redesign, phases 0 to 2 ([#110](https://github.com/sapieonic/magick-agency/issues/110)) ([d3d50e2](https://github.com/sapieonic/magick-agency/commit/d3d50e295e377d42c4bb583dbce05e46dff89c92))
+
 ## [0.27.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.26.0...contracts-v0.27.0) (2026-11-19)
 
 
