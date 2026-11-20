@@ -1177,3 +1177,37 @@ what was built.
   session) and the My contacts summary carry it; `station_ready` is published for pool sessions too.
   No capability: every build already decodes `queue`.
 
+
+
+## C2. Console supervisor side: as built
+
+Built on branch `station/cs` (stream C2, 2026-11-20). Console and super-admin only; no server,
+contract or migration change beyond the route table's reason text.
+
+- **AS16 alerts** (`apps/console/src/components/layout/SupervisorAlerts.tsx`, in `ConsoleLayout`
+  between the top bar and the page): `getAgencyFloorAlerts` (`api/agencyFloor.ts`) polled by
+  `useFloorAlerts` every 5 s while the tab is visible, one read in flight, only for a reader
+  `HOME_GATE` passes (`agency.supervise`, the `agency` capability, the dialer flag); a 403 stops it
+  quietly, and failing reads drop the banner after two periods. The words are
+  `utils/agency/floorAlerts.ts` ("<name> needs help", "<name>’s break is over by 6 min", "<name> is
+  disconnected"), counted to the read's `as_of`; each row links to Live floor; three are listed and
+  the rest counted. The chime is `useHelpChime` keyed on the alert ids, muted from the banner (the
+  same per-browser setting as Live floor's: every mounted chime follows a toggle). On Live floor the
+  banner is not shown and Need help is not chimed by the shell (the page's own chime plays for it);
+  the other kinds still chime there.
+- **Campaign Settings** (`AgencyCampaignSettingsPage.tsx`): two sections after Agents, `#agent-screen`
+  "What agents see" (daily target, number display with its `98••• ••321` preview, customer facts) and
+  `#script` "Script". Rules in `utils/agency/stationSettings.ts`; each setting is sent only when it
+  changed (`daily_target_calls: null` clears; `context_display` is sent whole, the stored hero, order
+  and hidden kept); live findings hold Save; refusals land on `daily_target_calls`, `phone_display`,
+  `agent_script.opening`, `agent_script.steps[<i>].text`, `context_display.roles.<role>`,
+  `context_display.types.<column>`. The facts' columns come from the campaign's newest three
+  completed imports (`useCampaignColumns`: the uploads read, then each job's `context_columns`).
+- **Tile pictures** (BE-13): `packages/web-ui/src/components/TileIcon.tsx` is the one map from
+  `AGENCY_TILE_ICONS` to lucide icons and names (`TILE_ICONS`, `TILE_ICON_LABELS`, `<TileIcon>`);
+  the console's `TileIconPicker` offers it on outcomes (`DispositionCatalogEditor icons`) and break
+  reasons (`BreakLimitsEditor icons`). The console station (C1) should draw from the same map.
+- **AS4**: New campaign's behaviour step offers "Start with the Collections set"
+  (`utils/agency/collectionsStarter.ts`); the config save sends it as `disposition_catalog`.
+- **AS14 super-admin**: `apps/super-admin/src/theme.ts`, light unless the operator chose dark
+  (stored under its own key, only when chosen), a Dark theme switch in the sidebar.
