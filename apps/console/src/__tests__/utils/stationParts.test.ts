@@ -187,6 +187,13 @@ describe('the customer card (spec 03/04, today’s data)', () => {
     ]);
     // An amount the server could not read hides Full / Half.
     expect(card.amountDue).toBeNull();
+    // So does a money column that is not the amount due.
+    const emiOnly = customerCard(
+      { ...ATTEMPT, facts: { tiles: [{ column: 'EMI', type: 'money', raw: '4,500', value: '4500.00' }] } },
+      undefined,
+    );
+    expect(emiOnly.facts[0]?.value).toBe('₹4,500');
+    expect(emiOnly.amountDue).toBeNull();
   });
 
   it('tags a booked call-later arriving (03b), in the agent’s own words or as booked', () => {
