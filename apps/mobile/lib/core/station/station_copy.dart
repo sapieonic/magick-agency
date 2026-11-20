@@ -95,6 +95,19 @@ const Map<AgentState, String> agentStateLabels = {
 
 String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[state] ?? (raw ?? 'Unknown');
 
+/// What the agent is doing on another list, in the station's words (the console's `DOING_WORDS`):
+/// "You are on Renewals, on a call."
+const Map<AgentState, String> joinDoingWords = {
+  AgentState.offline: 'not started yet',
+  AgentState.available: 'ready for calls',
+  AgentState.reserved: 'with a call coming',
+  AgentState.onCall: 'on a call',
+  AgentState.wrapup: 'choosing what happened',
+  AgentState.onBreak: 'on a break',
+};
+
+String joinDoing(AgentState state) => joinDoingWords[state] ?? 'working';
+
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
 
@@ -244,7 +257,7 @@ const softphoneNotificationTitle = 'Soft phone';
 const softphoneReadyNotificationText = 'Ready to dial';
 const softphoneCallingNotificationText = 'Calling…';
 const softphoneOnCallNotificationText = 'On a call';
-const softphoneOutcomeNotificationText = 'Outcome needed';
+const softphoneOutcomeNotificationText = 'Choose what happened';
 
 /// The console's `SOFTPHONE_REFUSAL_COPY` lines the host's own actions can meet.
 const softphoneManualCallLiveCopy = 'Finish this call and save its outcome first.';
@@ -338,16 +351,17 @@ enum DispositionBlock {
   promiseAmountInvalid,
 }
 
+/// Why an outcome cannot be saved yet, in the station's words (AS15; the console's
+/// `STATION_BLOCK_COPY`).
 const Map<DispositionBlock, String> dispositionBlockCopy = {
-  DispositionBlock.noSelection: 'Pick a disposition to save this call.',
-  DispositionBlock.noteRequired: 'This disposition needs a note.',
-  DispositionBlock.datetimeRequired: 'This disposition needs a callback time.',
-  DispositionBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
-  DispositionBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
-  DispositionBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
-  DispositionBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
+  DispositionBlock.noSelection: 'Choose one first.',
+  DispositionBlock.noteRequired: 'Write a note for this one.',
+  DispositionBlock.datetimeRequired: 'Choose when to call.',
+  DispositionBlock.callbackInPast: 'That time is over. Choose a new time.',
+  DispositionBlock.promiseRequired: 'Choose the pay date.',
+  DispositionBlock.promiseDateInvalid: 'Choose a pay date from today up to 30 days ahead.',
+  DispositionBlock.promiseAmountInvalid: 'Write the amount in numbers only, like 12500.',
 };
-
 const catalogChangedCopy = "This campaign's outcomes changed. Pick one of these.";
 const dispositionLostCopy = "The last call's disposition wasn't saved.";
 const noCallForDispositionCopy = 'There is no call to save an outcome for.';

@@ -7,6 +7,7 @@ import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/softphone/parts/number_field.dart';
 import 'package:magick_agency_agent/features/softphone/parts/setup_section.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
 
 import 'softphone_harness.dart';
 
@@ -261,7 +262,7 @@ void main() {
       expect(h.actions.calls, ['toggleMute']);
       await h.setView(callView(SoftphonePhase.ringing, muted: true));
       expect(find.text('Ring muted'), findsOneWidget);
-      expect(find.textContaining('Outcomes open when the customer answers.'), findsOneWidget);
+      expect(find.textContaining('You can choose once the customer picks up.'), findsOneWidget);
     });
 
     testWidgets('ringing on a carrier that cancels a ringing call: no SP3 warning', (tester) async {
@@ -288,14 +289,14 @@ void main() {
 
     testWidgets('outcome: Save pinned, the countdown runs, no hang-up', (tester) async {
       final h = await pumpSoftphone(tester, callView(SoftphonePhase.outcome, outcomeDueAt: t0.add(const Duration(seconds: 102))));
-      expect(find.text('Outcome needed'), findsOneWidget);
+      expect(find.text('What happened?'), findsWidgets);
       expect(find.byKey(const Key('softphone-hang-up')), findsNothing);
       expect(find.byKey(const Key('softphone-save')), findsOneWidget);
-      expect(find.text('Dialling is blocked until this call has an outcome. Without one, it closes in 1:42.'), findsOneWidget);
+      expect(find.text('You cannot dial until you save what happened on this call. If you do not choose, it closes in 1:42.'), findsOneWidget);
       await h.advance(const Duration(seconds: 2));
-      expect(find.text('Dialling is blocked until this call has an outcome. Without one, it closes in 1:40.'), findsOneWidget);
+      expect(find.text('You cannot dial until you save what happened on this call. If you do not choose, it closes in 1:40.'), findsOneWidget);
       await h.advance(const Duration(seconds: 100));
-      expect(find.text('Dialling is blocked until this call has an outcome. Closing with no outcome…'), findsOneWidget);
+      expect(find.text('You cannot dial until you save what happened on this call. Closing…'), findsOneWidget);
     });
 
     testWidgets('Log to and Call from are locked once a call is placed', (tester) async {
@@ -398,28 +399,44 @@ void main() {
   });
 
   group('the outcome', () {
-    testWidgets('picking an outcome on a live call: Save unlocks when the call ends', (tester) async {
+    testWidgets('picking an outcome on a live call: Save opens when the call ends', (tester) async {
       final h = await pumpSoftphone(tester, callView(SoftphonePhase.onCall));
       await tester.ensureVisible(find.byKey(const Key('outcome-interested')));
       await tester.tap(find.byKey(const Key('outcome-interested')));
       expect(h.actions.calls, ['selectOutcome']);
       await h.setView(callView(SoftphonePhase.onCall, outcomeCode: 'interested'));
-      expect(find.text('Save unlocks when the call ends.'), findsOneWidget);
+      expect(find.text('Save opens when the call ends.'), findsOneWidget);
+      // The station's tiles, with no speaker while the customer is on the line (AS13).
+      expect(find.byIcon(Icons.volume_up_outlined), findsNothing);
       expect(tester.widget<FilledButton>(find.byKey(const Key('softphone-save'))).onPressed, isNull);
     });
 
-    testWidgets('the reasons Save is blocked, in the console’s order', (tester) async {
+    testWidgets('What happened? is the station\'s: picture tiles, no badges, a speaker once the call has ended', (tester) async {
       final h = await pumpSoftphone(tester, callView(SoftphonePhase.outcome));
-      expect(find.text('Pick an outcome to save this call.'), findsOneWidget);
+      expect(find.text('What happened?'), findsWidgets);
+      expect(find.byKey(const Key('outcome-interested')), findsOneWidget);
+      for (final old in ['Success', 'Stops calling', 'Outcome', 'Save outcome']) {
+        expect(find.text(old), findsNothing, reason: old);
+      }
+      expect(find.textContaining('outcome list'), findsNothing);
+      expect(find.byIcon(Icons.volume_up_outlined), findsWidgets, reason: 'read aloud once the customer is gone (AS13)');
+      await tester.ensureVisible(find.byKey(const Key('outcome-interested')));
+      await tester.tap(find.byKey(const Key('outcome-interested')));
+      expect(h.actions.calls, ['selectOutcome']);
+    });
+
+    testWidgets('the reasons Save is blocked, in the station\'s words (AS15)', (tester) async {
+      final h = await pumpSoftphone(tester, callView(SoftphonePhase.outcome));
+      expect(find.text('Choose one first.'), findsOneWidget);
       await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'wrong'));
-      expect(find.text('This disposition needs a note.'), findsOneWidget);
+      expect(find.text('Write a note for this one.'), findsOneWidget);
       expect(find.text('Notes (required)'), findsOneWidget);
       await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'callback'));
-      expect(find.text('This disposition needs a callback time.'), findsOneWidget);
+      expect(find.text('Choose when to call.'), findsOneWidget);
       await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'callback', callbackAt: t0.subtract(const Duration(minutes: 1))));
-      expect(find.text('That time has already passed. Pick when we should call back.'), findsOneWidget);
+      expect(find.text('That time is over. Choose a new time.'), findsOneWidget);
       await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'interested', requiredFieldsMissing: true));
-      expect(find.text('Fill in the required call details first.'), findsOneWidget);
+      expect(find.text('Fill in the call details first.'), findsOneWidget);
       await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'interested'));
       expect(find.byKey(const Key('softphone-save-reason')), findsNothing);
       await tester.tap(find.byKey(const Key('softphone-save')));
@@ -432,8 +449,10 @@ void main() {
       await tester.tap(find.byKey(const Key('softphone-callback-inOneHour')));
       expect(h.actions.calls, ['setCallback']);
       expect(h.actions.args['setCallback'], [DateTime(2026, 10, 31, 12, 20)]);
-      // A claimed contact goes back to the campaign queue; the note says so.
-      expect(find.text('We will call at this time. Another agent may get the call.'), findsOneWidget);
+      await h.setView(callView(SoftphonePhase.outcome, outcomeCode: 'callback', callbackAt: DateTime(2026, 10, 31, 12, 20)));
+      expect(find.text('Sat 31 Oct at 12:20 PM'), findsOneWidget);
+      // A claimed contact: a list is waiting on it, so another agent may get the call (AS8).
+      expect(find.text(StationCopy.callWillBeMade('Sat 31 Oct at 12:20 PM')), findsOneWidget);
     });
 
     testWidgets('a promise outcome asks for the date and amount, and blocks Save until the date (PT1)', (tester) async {
@@ -443,7 +462,7 @@ void main() {
       ];
       final h = await pumpSoftphone(tester, callView(SoftphonePhase.outcome, outcomeCode: 'ptp', outcomeOptions: options));
       expect(find.byKey(const Key('promise-picker')), findsOneWidget);
-      expect(find.text('This outcome needs the date the customer promised to pay.'), findsOneWidget);
+      expect(find.text('Choose the pay date.'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('promise-Tomorrow')));
       await tester.tap(find.byKey(const Key('promise-Tomorrow')));
       expect(h.actions.args['setPromiseDate'], [DateTime(2026, 10, 31).add(const Duration(days: 1))]);
@@ -467,9 +486,11 @@ void main() {
           SoftphonePhase.outcome,
           outcomeCode: 'callback',
           contactView: const SoftphoneContactView(campaignName: 'Q4 Renewals'),
+          callbackAt: t0.add(const Duration(hours: 2)),
         ),
       );
-      expect(find.textContaining('It isn’t added to a campaign’s queue'), findsOneWidget);
+      // Nobody calls back by themselves: the agent does (the console's `callBackYourself`).
+      expect(find.text(StationCopy.callBackYourself('Sat 31 Oct at 1:20 PM')), findsOneWidget);
     });
 
     testWidgets('Save becomes blocked by itself when a callback time passes', (tester) async {
@@ -479,7 +500,7 @@ void main() {
       );
       expect(find.byKey(const Key('softphone-save-reason')), findsNothing);
       await h.advance(const Duration(seconds: 3));
-      expect(find.text('That time has already passed. Pick when we should call back.'), findsOneWidget);
+      expect(find.text('That time is over. Choose a new time.'), findsOneWidget);
     });
   });
 

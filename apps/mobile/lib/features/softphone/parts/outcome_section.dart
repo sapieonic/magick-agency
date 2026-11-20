@@ -10,20 +10,23 @@ import '../../station/logic/disposition_form.dart';
 import '../../station/logic/format.dart';
 import '../../station/parts/banners.dart' show BusyLabel;
 import '../../station/parts/promise_picker.dart';
-import '../../station/parts/wrapup_view.dart' show DispositionGrid;
+import '../../station/parts/wrapup_view.dart' show OutcomeTiles;
 import '../../station/station_copy.dart';
 import '../../station/station_providers.dart';
 import '../../station/widgets/ticking.dart';
 import '../softphone_copy.dart';
 
-/// The outcome: the station's pad (keys in the catalog's order, success and
-/// Do-Not-Call codes marked by a word and an icon), a callback time for a code
-/// that asks for one, and the reason Save is not ready yet.
+/// What happened? on the soft phone, as the station has it (05): one picture tile per outcome of the
+/// call's list (`OutcomeTiles`, More past nine), the call-later time and the pay date with the
+/// station's chips, and the reason Save is not ready yet, in the station's words (AS15). The speaker
+/// on each tile shows only once the call has ended (AS13).
 ///
-/// The pad opens when the customer answers; Save opens when the call ends. The
-/// catalog is the tag's, else the soft phone's own (the core picks it).
+/// The tiles open when the customer answers; Save opens when the call ends. The list is the tag's,
+/// else the soft phone's own (the core picks it). A call-later says who makes it (AS8, the console's
+/// `StationSoftphone`): on a call a list is waiting on (the contact claimed), another agent may get
+/// it; otherwise nobody calls back by themselves, so the agent does.
 ///
-/// The panel keys this on the call, so a new call starts with no callback chip.
+/// The panel keys this on the call, so a new call starts with no call-later chip.
 class OutcomeSection extends ConsumerStatefulWidget {
   const OutcomeSection({super.key, this.includeSave = true});
 
@@ -53,7 +56,7 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
           reason: v.padDisabledReason,
           rejection: v.padRejection,
           saving: v.saving,
-          tag: v.campaigns.firstWhereOrNull((c) => c.campaignId == v.tagCampaignId)?.name,
+          ended: v.phase == SoftphonePhase.outcome,
           claimed: v.contact?.claimed ?? false,
         ),
       ),
@@ -67,8 +70,7 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
       key: const Key('softphone-outcome'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionLabel(SoftphoneCopy.outcome),
-        Text(SoftphoneCopy.outcomeFrom(s.tag), style: text.labelSmall),
+        const SectionLabel(StationCopy.whatHappened),
         const SizedBox(height: Space.sm),
         if (!s.enabled && s.reason != null) ...[
           Text(s.reason!, key: const Key('pad-disabled-reason'), style: text.bodySmall),
@@ -85,7 +87,13 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
           ),
           const SizedBox(height: Space.sm),
         ],
-        DispositionGrid(options: s.outcomes, selected: s.code, enabled: s.enabled && !s.saving, onSelect: actions.selectOutcome),
+        OutcomeTiles(
+          options: s.outcomes,
+          selected: s.code,
+          enabled: s.enabled && !s.saving,
+          onSelect: actions.selectOutcome,
+          readAloud: s.ended,
+        ),
         if (selected != null && selected.requiresCallbackTime) ...[
           const SizedBox(height: Space.lg),
           _CallbackChooser(
@@ -116,9 +124,9 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
   }
 }
 
-/// When to call back: the station's three chips and a picker, the chosen time
-/// written out with its zone (the app does not know the customer's). On a call
-/// the campaign is not waiting on, the time stays on the call: it says so.
+/// Call when?: the station's chips (In 1 hour, Today 6:00 PM, Tomorrow 10:00 AM, Tomorrow 6:00 PM,
+/// Other time), the time written out, and who makes the call ([claimed]: a list is waiting on this
+/// contact, so another agent may get it; otherwise the agent calls back themselves).
 class _CallbackChooser extends ConsumerWidget {
   const _CallbackChooser({required this.at, required this.choice, required this.enabled, required this.claimed, required this.onPick});
 
@@ -139,7 +147,7 @@ class _CallbackChooser extends ConsumerWidget {
 
     Widget chip(CallbackChoice c, VoidCallback onTap) => ChoiceChip(
       key: Key('softphone-callback-${c.name}'),
-      label: Text(StationCopy.callbackChip(c)),
+      label: Text(StationCopy.stationCallbackChip(c)),
       selected: choice == c && at != null,
       onSelected: enabled ? (_) => onTap() : null,
     );
@@ -148,16 +156,16 @@ class _CallbackChooser extends ConsumerWidget {
       key: const Key('softphone-callback'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(StationCopy.callbackTitle, style: text.labelMedium),
+        Text(StationCopy.callWhen, style: text.labelMedium),
         const SizedBox(height: Space.sm),
         Wrap(
           spacing: Space.sm,
           runSpacing: Space.sm,
           children: [
-            for (final p in callbackPresets(now))
+            for (final p in stationCallbackPresets(now))
               chip(p.choice, () {
                 // Read the clock at the tap, so "In 1 hour" means from now.
-                final fresh = callbackPresets(clock()).firstWhere((x) => x.choice == p.choice);
+                final fresh = stationCallbackPresets(clock()).firstWhere((x) => x.choice == p.choice, orElse: () => p);
                 onPick(fresh.at, p.choice);
               }),
             chip(CallbackChoice.picked, () => _pick(context, ref, clock)),
@@ -166,19 +174,19 @@ class _CallbackChooser extends ConsumerWidget {
         if (at != null) ...[
           const SizedBox(height: Space.sm),
           Text(
-            formatCallback(at),
+            formatWhen(at),
             key: const Key('softphone-callback-resolved'),
             style: text.titleSmall!.copyWith(color: past ? t.danger : t.textPrimary),
           ),
+          if (!past) ...[
+            const SizedBox(height: Space.xs),
+            Text(
+              claimed ? StationCopy.callWillBeMade(formatWhen(at)) : StationCopy.callBackYourself(formatWhen(at)),
+              key: const Key('callback-note'),
+              style: text.bodySmall,
+            ),
+          ],
         ],
-        const SizedBox(height: Space.xs),
-        Text(StationCopy.callbackTimezone(now.timeZoneName), style: text.bodySmall),
-        const SizedBox(height: Space.xs),
-        Text(
-          claimed ? StationCopy.callbackGroundTruth : SoftphoneCopy.callbackNote,
-          key: const Key('callback-note'),
-          style: text.bodySmall,
-        ),
       ],
     );
   }
@@ -187,7 +195,7 @@ class _CallbackChooser extends ConsumerWidget {
     final container = ProviderScope.containerOf(context, listen: false);
     final callId = container.read(softphoneViewProvider).callId;
     final now = clock();
-    final start = at ?? callbackPresets(now).first.at;
+    final start = at ?? stationCallbackPresets(now).first.at;
     final today = DateTime(now.year, now.month, now.day);
     final date = await showDatePicker(
       context: context,
@@ -204,7 +212,7 @@ class _CallbackChooser extends ConsumerWidget {
   }
 }
 
-/// "Save outcome", with the reason it is disabled written beside it (a bare
+/// Save, with the reason it is disabled written beside it (a bare
 /// greyed button reads as broken), and, once the call has ended, how long the
 /// outcome has before the call closes without one.
 ///

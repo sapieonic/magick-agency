@@ -51,14 +51,14 @@ void main() {
     ErrorBody invalid(String reason) => ErrorBody.fromJson(
           {'error': 'Bad Request', 'code': 'disposition_invalid', 'message': 'The server’s words', 'reason': reason},
         );
-    expect(refusalCopy(invalid('promise_required')), 'This outcome needs the date the customer promised to pay.');
-    expect(refusalCopy(invalid('invalid_promise_date')), contains('before the customer’s today or too far ahead'));
-    expect(refusalCopy(invalid('invalid_promise_amount')), contains('up to two decimal places'));
-    expect(refusalCopy(invalid('promise_not_expected')), contains('doesn’t record a promise to pay'));
+    expect(refusalCopy(invalid('promise_required')), 'Choose the pay date.');
+    expect(refusalCopy(invalid('invalid_promise_date')), 'That pay date cannot be used. Choose a date from today up to 30 days ahead.');
+    expect(refusalCopy(invalid('invalid_promise_amount')), 'Write the amount in numbers only, like 12500.');
+    expect(refusalCopy(invalid('promise_not_expected')), contains('does not take a pay date'));
     expect(
       refusalCopy(invalid('promise_needs_contact')),
-      'A promise to pay can’t be saved on this call: the number isn’t an open contact on the campaign’s list. '
-      'Pick another outcome and put the promise in the note.',
+      'A pay date cannot be saved on this call: this number is not a customer on the list. '
+      'Choose another, and write the promise in the note.',
     );
     // Any other rule keeps the outcome's own line.
     expect(refusalCopy(invalid('note_required')), softphoneRefusalCopy[SoftphoneErrorCode.dispositionInvalid]);

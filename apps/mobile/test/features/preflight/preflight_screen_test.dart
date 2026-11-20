@@ -364,7 +364,7 @@ void main() {
         sessionId: 's9',
         campaignId: 'c9',
         campaignName: 'Personal Loan Top-up',
-        stateLabel: 'Available',
+        stateLabel: 'ready for calls',
         canLeave: true,
         accountName: 'Acme Chennai',
       );
@@ -373,12 +373,14 @@ void main() {
       await settle(tester);
       await tester.tap(goOnDuty);
       await settle(tester);
-      expect(find.text('You’re still at another station'), findsOneWidget);
-      expect(find.textContaining('You’re joined to Personal Loan Top-up in Acme Chennai — available.'), findsOneWidget);
+      // The station's words, as the console's join screens (AS15).
+      expect(find.text('You are working somewhere else'), findsOneWidget);
+      expect(find.text('You are on Personal Loan Top-up in Acme Chennai, ready for calls.'), findsOneWidget);
+      expect(find.text('Leave Personal Loan Top-up and work here'), findsOneWidget);
       await tester.tap(find.byKey(const Key('switch-station')));
       await settle(tester);
-      expect(find.text('Leave that station?'), findsOneWidget);
-      await tester.tap(find.text('Leave & join here'));
+      expect(find.text('Leave Personal Loan Top-up?'), findsOneWidget);
+      await tester.tap(find.text('Leave and work here'));
       await settle(tester);
       expect(launcher.calls, ['start:c1', 'leaveOtherAndStart:c9->c1']);
       expect(find.text('station-c1'), findsOneWidget);
@@ -387,14 +389,14 @@ void main() {
     testWidgets('elsewhere mid-call: no switch, finish there first', (tester) async {
       final checks = FakeChecks()..allGood();
       final launcher = FakeLauncher([
-        const StationElsewhere(sessionId: 's9', campaignId: 'c9', campaignName: 'Diwali Offers', stateLabel: 'On call', canLeave: false),
+        const StationElsewhere(sessionId: 's9', campaignId: 'c9', campaignName: 'Diwali Offers', stateLabel: 'on a call', canLeave: false),
       ]);
       await pumpPreflight(tester, checks, launcher);
       await settle(tester);
       await tester.tap(goOnDuty);
       await settle(tester);
       expect(find.byKey(const Key('switch-station')), findsNothing);
-      expect(find.textContaining('Finish what you’re doing on Diwali Offers'), findsOneWidget);
+      expect(find.text('Finish the call on Diwali Offers first, then come back here.'), findsOneWidget);
     });
 
     testWidgets('soft phone: closes it and joins when the launcher can', (tester) async {
@@ -404,7 +406,7 @@ void main() {
       await settle(tester);
       await tester.tap(goOnDuty);
       await settle(tester);
-      expect(find.text('You’re on the soft phone'), findsOneWidget);
+      expect(find.text('You are on the soft phone'), findsOneWidget);
       await tester.tap(find.byKey(const Key('close-softphone')));
       await settle(tester);
       expect(launcher.calls, ['start:c1', 'closeSoftphoneAndStart:c1']);
@@ -437,7 +439,7 @@ void main() {
       await settle(tester);
       await tester.tap(goOnDuty);
       await settle(tester);
-      expect(find.text('Can’t open the station'), findsOneWidget);
+      expect(find.text('Your work did not open'), findsOneWidget);
       expect(find.text('You aren’t staffed on this campaign. Ask your supervisor.'), findsOneWidget);
       await tester.tap(find.byKey(const Key('back-to-campaigns')));
       await settle(tester);
@@ -450,7 +452,7 @@ void main() {
       await settle(tester);
       await tester.tap(goOnDuty);
       await settle(tester);
-      expect(find.text('Couldn’t open the station. Check your connection and try again.'), findsOneWidget);
+      expect(find.text(PreflightCopy.startFailed), findsOneWidget);
     });
 
     testWidgets('Back while joining does nothing; the join lands on the station', (tester) async {

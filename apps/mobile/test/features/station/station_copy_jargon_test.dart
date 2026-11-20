@@ -1,12 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_copy.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/station/promise_rules.dart' show promiseRefusalCopy;
+import 'package:magick_agency_agent/core/station/station_copy.dart' show dispositionBlockCopy;
+import 'package:magick_agency_agent/features/softphone/softphone_copy.dart';
 
 import '../../support/station_jargon.dart';
 
 /// AS15, spec §6.6: the station's own words never use the jargon on the spec's list. Every string
-/// literal in `StationCopy`, `InboundCopy` and `FloorAssistCopy` is read from the source (Dart has
-/// no reflection to call each one) and checked, so a new line that says "campaign" or "outcome"
+/// literal in `StationCopy`, `InboundCopy`, `FloorAssistCopy` and `PreflightCopy` (Start of day and
+/// its join screens) is read from the source (Dart has no reflection to call each one) and checked, so a new line that says "campaign" or "outcome"
 /// goes red, used or not.
 void main() {
   /// The body of `abstract final class [name]` in [path], comments taken out.
@@ -56,6 +61,7 @@ void main() {
     ('lib/features/station/station_copy.dart', 'StationCopy'),
     ('lib/features/station/station_copy.dart', 'InboundCopy'),
     ('lib/core/station/floor_assist.dart', 'FloorAssistCopy'),
+    ('lib/features/preflight/preflight_copy.dart', 'PreflightCopy'),
   ]) {
     test('$name says none of the jargon', () {
       final found = literals(classBody(path, name));
@@ -67,6 +73,23 @@ void main() {
       expect(bad, isEmpty, reason: bad.join('\n'));
     });
   }
+
+  test('the soft phone\'s What happened?, and the save and promise lines the station shares, say none of the jargon', () {
+    final lines = [
+      ...softphoneSaveBlockCopy.values,
+      ...dispositionBlockCopy.values,
+      ...promiseRefusalCopy.values,
+      softphonePadDisabledCopy,
+      softphoneOutcomeSavedCopy,
+      softphoneOutcomeNotSavedCopy(''),
+      SoftphoneCopy.saveOutcome,
+      SoftphoneCopy.dialBlockedOwed,
+      SoftphoneCopy.closesIn('1:42'),
+      SoftphoneCopy.closingNoOutcome,
+    ];
+    final bad = [for (final l in lines) if (jargonIn(l).isNotEmpty) '"$l": ${jargonIn(l).join(', ')}'];
+    expect(bad, isEmpty, reason: bad.join('\n'));
+  });
 
   test('the guard finds what it is looking for', () {
     expect(jargonIn('Pick a disposition'), isNotEmpty);

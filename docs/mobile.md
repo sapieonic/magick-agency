@@ -367,7 +367,21 @@ text the band scrolls with the content and the main action keeps its place.
   your internet was down, the customer hung up."). A guard test reads every literal of
   `StationCopy`, `InboundCopy` and `FloorAssistCopy` against the spec's §6.6 list plus "campaign",
   "station", "disposition", "DNC", "Do Not Call", "outcome" and "queue". The work list says what a
-  list is doing in the console's words ("Calling is on", "Paused by your supervisor", …).
+  list is doing in the console's words ("Calling is on", "Paused by your supervisor", …). Start
+  of day's join screens say it as the console's do ("You are working somewhere else", "You are on
+  Renewals, on a call.", "Leave Renewals and work here", "You are on the soft phone", "Your work did
+  not open"). An inbound call's refusals, rules and notices are the console's words too, and a code
+  this build does not know gets "That did not go through. Try again in a moment.", never the
+  server's sentence. The guard reads `PreflightCopy` as well, and the soft phone's What happened?
+  lines.
+- **The soft phone's What happened?** (on the Phone tab and on the station) is the station's: the
+  picture tiles (More past nine; the speaker only once the call has ended, AS13), Call when? with
+  the station's chips and who makes the call (on a contact a list is waiting on, another agent may
+  get it; otherwise the agent calls back), the pay date picker, and the station's words for why
+  Save is not ready.
+- **My calls and My customers** show each row's number as its campaign does (AS9): the server's
+  `phone_display` on the row, masked with `stationPhone` (in the list, a call's detail and the Call
+  button's spoken label); an older server sends none, and the number shows in full.
 - **Light by default (AS14).** The app opens light whatever the phone's setting until the agent
   turns the dark theme on (the Me tab, or ⋮ More → Sound); every station screen is tested in light
   and its colours' contrast in both.
@@ -407,7 +421,7 @@ minus refused is not the number placed.
 
 An outcome whose catalogue entry sets `requires_promise` (decisions PT1–PT14) asks "When will
 the customer pay?" (on the station, in What happened?'s follow-up sheet, then one summary row "Will
-pay on Sun 1 Nov · 12,500"; on the soft phone and inbound, under the pad): chips for Today, Tomorrow and In a week, a date picker (a day
+pay on Sun 1 Nov · 12,500"; inbound, in the same sheet; on the soft phone, under the tiles): chips for Today, Tomorrow and In a week, a date picker (a day
 before today up to 30 days ahead; the server judges the customer's today), and an optional
 amount (digits and a point). Save stays held, with the reason, until a date is picked and the
 amount reads as a number with at most two places; the request carries `promise_date` and the
@@ -1542,8 +1556,9 @@ from the browser or file manager it was opened from.
 - **The app review's fixes (2026-11-20) are tested against fakes only**: the my-day reads' new times
   (every `ready` frame, 60 s, the day's end) and their 401 to the gate, the matched campaign's routing
   read from its My contacts summary, and Don't call again on What happened? (read off the server's
-  route, which takes an ended attempt, but not run against it). Nothing of them has run on a phone
-  or against a running server.
+  route, which takes an ended attempt, but not run against it), and My calls and My customers
+  masking from each row's `phone_display` (tested with the rows' fields set by hand, not against a
+  running server). Nothing of them has run on a phone or against a running server.
 - **Read aloud (2026-11-20) has not run on a device.** Nor has its check for an engine and a
   language (`getEngines`, `getLanguages`): which phones answer them how is unverified. `flutter_tts` 4.2.5 resolved from pub.dev and
   its Dart side is tested against a faked channel; no Android or iOS build with it has run here (no

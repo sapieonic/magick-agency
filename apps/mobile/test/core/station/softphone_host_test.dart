@@ -364,7 +364,7 @@ void main() {
         expect(app.engine.notification!.text, 'On a call');
         app.manualCallFrame({..._owed, 'end_reason': 'agent_hangup'});
         expect(app.engine.endedCalls.single, (callId: 'mc-1', reason: audio.CallEndReason.local));
-        expect(app.engine.notification!.text, 'Outcome needed');
+        expect(app.engine.notification!.text, 'Choose what happened');
         app.dispose();
       });
     });

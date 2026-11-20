@@ -257,7 +257,7 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text(PreflightCopy.switchConfirmTitle),
+        title: Text(PreflightCopy.switchConfirmTitle(other.campaignName)),
         content: Text(PreflightCopy.switchConfirmMessage(other.campaignName)),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text(PreflightCopy.cancel)),
@@ -648,6 +648,7 @@ class _OutcomePanel extends StatelessWidget {
       StationElsewhere(:final campaignName, :final stateLabel, :final canLeave, :final accountName) => (
         PreflightCopy.elsewhereTitle,
         [
+          PreflightCopy.elsewhereSubtitle,
           PreflightCopy.elsewhereDetail(campaignName, stateLabel, accountName),
           canLeave ? PreflightCopy.elsewhereRemedy(campaignName) : PreflightCopy.elsewhereRemedyMidCall(campaignName),
         ],

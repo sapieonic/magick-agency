@@ -454,24 +454,11 @@ abstract final class StationCopy {
     PromiseStanding.followedUp => 'Followed up',
     PromiseStanding.unknown => '',
   };
-  static const success = 'Success';
-  static const stopsCalling = 'Stops calling';
 
   // ── Wrap-up redial ──
   static const redialling = 'Redialling…';
 
-
-
-  // ── Callback ──
-  static const callbackTitle = 'When should we call back?';
-  static String callbackChip(CallbackChoice c) => switch (c) {
-    CallbackChoice.inOneHour => 'In 1 hour',
-    CallbackChoice.tomorrowMorning => 'Tomorrow 10 am',
-    CallbackChoice.tomorrowEvening => 'Tomorrow 6 pm',
-    CallbackChoice.picked => 'Pick…',
-    CallbackChoice.todayEvening => 'Today 6 pm',
-  };
-
+  // ── Call when? ──
   /// What happened?'s Call when? chips (05b).
   static String stationCallbackChip(CallbackChoice c) => switch (c) {
     CallbackChoice.inOneHour => 'In 1 hour',
@@ -480,11 +467,8 @@ abstract final class StationCopy {
     CallbackChoice.tomorrowEvening => 'Tomorrow 6:00 PM',
     CallbackChoice.picked => 'Other time',
   };
-  static String callbackTimezone(String zone) =>
-      'Times are in your timezone${zone.isEmpty ? '' : ' ($zone)'}. We don’t have the customer’s — say the time out loud to agree it.';
-  static const callbackGroundTruth = 'We will call at this time. Another agent may get the call.';
-  static const callbackDateHelp = 'Call back on';
-  static const callbackTimeHelp = 'Call back at';
+  static const callbackDateHelp = 'Call on';
+  static const callbackTimeHelp = 'Call at';
 
   // ── Link states (the station band) ──
   static const connecting = 'Getting your calls ready…';

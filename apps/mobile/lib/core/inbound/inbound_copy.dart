@@ -1,47 +1,49 @@
 import 'package:agency_wire/agency_wire.dart';
 
-import '../station/promise_rules.dart'
-    show promiseAmountRefusedCopy, promiseDateRefusedCopy, promiseNotExpectedCopy, promiseRequiredCopy;
 import 'inbound_call_api.dart';
 import 'inbound_call_rules.dart';
 
-/// What the station core says about an inbound call (British English), in the console's words
-/// (`utils/inbound/inboundCopy.ts`, `hooks/useInboundCall.ts`). The screens' own words are in
-/// `features/station/station_copy.dart` (`InboundCopy`).
+/// What the station core says about an inbound call, in the station's own words (AS15, the
+/// console's `useInboundCall.ts`: `INBOUND_CALL_REFUSAL_WORDS`, `INBOUND_DISPOSITION_RULE_COPY` and
+/// `stationCopy.ts`'s `INBOUND_NOTICE_COPY`), keyed on the server's code and never its sentence.
+/// The screens' own words are in `features/station/station_copy.dart` (`InboundCopy`).
 
-/// Every refusal the agent's call routes can give, keyed by the wire code; the route editor's
-/// and the Missed list's codes are not met on the station and fall back to the server's sentence.
+/// A refusal this build has no words for (a code the server added later, a 5xx): a safe line, never
+/// the server's sentence. The console's `STATION_COPY.somethingWentWrong`.
+const inboundSomethingWentWrongCopy = 'That did not go through. Try again in a moment.';
+
+/// Every refusal the agent's call routes can give, keyed by the wire code (the console's
+/// `INBOUND_CALL_REFUSAL_WORDS`).
 const Map<InboundErrorCode, String> inboundRefusalCopy = {
-  InboundErrorCode.inboundDisabled: 'Inbound calls aren’t turned on for this account.',
-  InboundErrorCode.inboundCallLive: 'An inbound call is in progress or still needs its outcome. Save the outcome first.',
-  InboundErrorCode.inboundCallNotFound: 'We can’t find that call any more — it may already be closed.',
-  InboundErrorCode.inboundCallNotDispositionable:
-      'This call can’t take an outcome: it hasn’t ended, or nobody spoke to the caller.',
-  InboundErrorCode.inboundDispositionInvalid:
-      'That outcome can’t be saved. Check the outcome, its note and its callback time.',
-  InboundErrorCode.inboundOutcomeAlreadySaved: 'This call’s outcome is already saved.',
+  InboundErrorCode.inboundDisabled: 'Calls from customers are turned off for this account.',
+  InboundErrorCode.inboundCallLive: 'Finish this call first. Choose what happened and press Save.',
+  InboundErrorCode.inboundCallNotFound: 'We cannot find this call. It may be closed already.',
+  InboundErrorCode.inboundCallNotDispositionable: 'You can choose what happened only after you have talked to the customer.',
+  InboundErrorCode.inboundDispositionInvalid: 'That did not save. Check what you chose, the note and the time.',
+  InboundErrorCode.inboundOutcomeAlreadySaved: 'This call is saved already.',
 };
 
-/// Why the server refused an outcome (`inbound_disposition_invalid`'s `reason`), in words.
+/// Why the server refused what the agent chose (`inbound_disposition_invalid`'s `reason`), in the
+/// station's words (the console's `INBOUND_DISPOSITION_RULE_COPY`).
 const Map<InboundDispositionRule, String> inboundDispositionRuleCopy = {
-  InboundDispositionRule.unknownCode: 'The outcome list for this call changed. Pick one of these.',
-  InboundDispositionRule.noteRequired: 'This outcome needs a note.',
-  InboundDispositionRule.datetimeRequired: 'This outcome needs a callback time.',
-  InboundDispositionRule.invalidCallbackAt: 'That callback time can’t be used. Pick a time in the future.',
-  // Promise to pay (PT8): the console's words for the four rules.
-  InboundDispositionRule.promiseRequired: promiseRequiredCopy,
-  InboundDispositionRule.invalidPromiseDate: promiseDateRefusedCopy,
-  InboundDispositionRule.invalidPromiseAmount: promiseAmountRefusedCopy,
-  InboundDispositionRule.promiseNotExpected: promiseNotExpectedCopy,
+  InboundDispositionRule.unknownCode: 'This list changed. Choose one of these.',
+  InboundDispositionRule.noteRequired: 'Write a note for this one.',
+  InboundDispositionRule.datetimeRequired: 'Choose when to call.',
+  InboundDispositionRule.invalidCallbackAt: 'That time is over. Choose a new time.',
+  InboundDispositionRule.promiseRequired: 'Choose the pay date.',
+  InboundDispositionRule.invalidPromiseDate: 'Choose a pay date from today up to 30 days ahead.',
+  InboundDispositionRule.invalidPromiseAmount: 'Write the amount in numbers only, like 12500.',
+  InboundDispositionRule.promiseNotExpected:
+      'This choice does not take a pay date. Clear the pay date, or choose the one that does.',
 };
 
-/// The outcome window ended before an outcome was saved: the call was closed without one.
-const inboundOutcomeWindowEndedCopy = 'The time to save this call’s outcome ran out, so it was closed without one.';
+/// The time to save what happened ran out: the call was closed without it.
+const inboundOutcomeWindowEndedCopy = 'Time to save what happened ran out, so the call was closed.';
 
 /// A supervisor closed the call before its window ended.
-const inboundClosedBySupervisorCopy = 'A supervisor closed this call without an outcome.';
-const inboundHungUpEarlyCopy = 'The caller hung up before you were connected.';
-const inboundRequeuedCopy = 'The call went back to the queue while your station was away.';
+const inboundClosedBySupervisorCopy = 'A supervisor closed this call.';
+const inboundHungUpEarlyCopy = 'The customer hung up before you were connected.';
+const inboundRequeuedCopy = 'The call went back to wait for another agent while your screen was away.';
 
 /// How long the station says why a call left it.
 const inboundNoticeDuration = Duration(seconds: 30);
@@ -54,11 +56,12 @@ String inboundLeftCopy(InboundLeftReason reason) => switch (reason) {
       InboundLeftReason.requeued => inboundRequeuedCopy,
     };
 
-/// A refusal in the console's words: ours for a known code, the server's sentence otherwise.
-String inboundRefusalSentence(InboundRefusal refusal) => inboundRefusalCopy[refusal.code] ?? refusal.message;
+/// A refusal in the station's words: ours for a known code, else a safe generic line (the console's
+/// `inboundCallRefusalWords`). Never the server's sentence.
+String inboundRefusalSentence(InboundRefusal refusal) => inboundRefusalCopy[refusal.code] ?? inboundSomethingWentWrongCopy;
 
-/// An outcome refused, in the console's words: the rule when the server named one. "Already
-/// saved" once the call's window has ended is the lapse closing it, not an outcome someone saved.
+/// What the agent chose, refused: the rule when the server named one. "Already saved" once the
+/// call's window has ended is the lapse closing it, not a save someone made.
 String inboundDispositionRefusalCopy(InboundRefusal refusal, {bool windowEnded = false}) {
   if (refusal.code == InboundErrorCode.inboundOutcomeAlreadySaved && windowEnded) return inboundOutcomeWindowEndedCopy;
   if (refusal.code == InboundErrorCode.inboundDispositionInvalid) {
@@ -69,20 +72,27 @@ String inboundDispositionRefusalCopy(InboundRefusal refusal, {bool windowEnded =
   return inboundRefusalSentence(refusal);
 }
 
-String inboundHangupFailedCopy(InboundRefusal refusal) =>
-    'We couldn’t end the call — you may still be connected. ${inboundRefusalSentence(refusal)}';
+/// End call did not go through (the console's `SIDE_COPY.endCallFailed`), with the reason when the
+/// code names one.
+String inboundHangupFailedCopy(InboundRefusal refusal) {
+  final why = inboundRefusalCopy[refusal.code];
+  return why == null ? 'The call did not end. Try again.' : 'The call did not end. $why';
+}
 
-String inboundDncFailedCopy(InboundRefusal refusal) =>
-    'We couldn’t add the number to Do Not Call. ${inboundRefusalSentence(refusal)}';
+/// Don't call again did not go through (the console's `SIDE_COPY.stopFailed`).
+String inboundDncFailedCopy(InboundRefusal refusal) {
+  final why = inboundRefusalCopy[refusal.code];
+  return why == null ? 'That did not go through. Nothing was changed. Try again.' : 'Nothing was changed. $why';
+}
 
 /// After Don't call again on an inbound caller: the console's `SIDE_COPY.stoppedCalls`. Never the
 /// number (AS9: the matched campaign may mask it).
 const inboundDncOutcomeCopy = 'We will not call this number again.';
 
 /// Save is pressed while the caller is still on the line.
-const inboundSaveCallLiveCopy = 'Save unlocks when the call ends.';
+const inboundSaveCallLiveCopy = 'Save opens when the call ends.';
 
-/// Mark DNC with no number to mark.
+/// Don't call again with no number to add.
 const inboundDncWithheldCopy = 'The caller withheld their number.';
 
 /// The caller as the station names them when nothing better is known.
@@ -101,4 +111,4 @@ const inboundContactStateLabels = <ContactState, String>{
 // ── The on-duty notification ──
 const inboundOfferedNotificationText = 'Incoming call';
 const inboundOnCallNotificationText = 'On a call';
-const inboundOutcomeNotificationText = 'Outcome needed';
+const inboundOutcomeNotificationText = 'Choose what happened';

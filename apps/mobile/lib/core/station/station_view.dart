@@ -1204,6 +1204,8 @@ final class StationElsewhere extends StationStart {
   final String sessionId;
   final String campaignId;
   final String campaignName;
+
+  /// What the agent is doing there, in the station's words ("on a call", `joinDoing`).
   final String stateLabel;
   final bool canLeave;
   final String? accountId;
