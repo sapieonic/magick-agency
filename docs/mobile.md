@@ -263,10 +263,10 @@ text the band scrolls with the content and the main action keeps its place.
 | 01 Start of day | the pre-flight (before the join), and `offline` after it | Start work |
 | 01b A check failed | the microphone or the internet check failed | its fix (Allow microphone, Open Settings, Check again) |
 | 02 Ready, 02b banners | `available`, calls coming | Take break |
-| 02c No calls right now | `available`, calls stopped by the supervisor or nothing due (contact assignment) | Take break |
+| 02c No calls right now | `available`, the campaign not dialling (why, from `campaign_state.reason`: the supervisor stopped calls, the system's own short pause, every customer on the list called, or not started yet) or nothing due for the agent (the `queue` frame, on every assignment mode since BE-5) | Take break |
 | 03 Call coming | `reserved` | none: "The call connects by itself." (AS11) |
 | 04 On call (04c), 04b | `on_call` | Slide to end call (AS3); Mute and Speaker beside it |
-| 05 What happened?, 05b–05d | `wrapup` | Save & next call; Save & break; Call again · N left |
+| 05 What happened?, 05b–05d | `wrapup` | Save & next call; Save & take break; Call again · N left |
 | 06 Which break? | a bottom sheet over 02 or 05 | a tile |
 | 07 On break, 08 Break over | `break` (past its reason's `limit_minutes`: 08, red-orange) | Start calls again |
 | Paused | the app's own `device_away` / `away_ring` pause | Start calls again |
@@ -283,7 +283,8 @@ text the band scrolls with the content and the main action keeps its place.
   ready (`/available`), or switches to the soft phone; a station that opens on a break or a call is
   left as it is. The join is still a separate request; the server is never asked for `/available`
   before the socket is open.
-- **Need help** is in the top bar on every working screen (AS5, BE-9); an open request shows as
+- **Need help** is in the top bar on every working screen (AS5, BE-9), and beside Return to campaign
+  on the station's soft phone, whose header replaces the top bar; an open request shows as
   "Help asked · 0:42", and pressing it again cancels. A server older than BE-9 refuses a raise off a
   call `409 help_not_on_call`: the button is then offered on a call and while finishing one only, for
   the rest of the session (`HelpView.onlyOnCall`). With no internet it says "Call your supervisor to
@@ -296,12 +297,19 @@ text the band scrolls with the content and the main action keeps its place.
   talk time, and Will pay when it is sent (else numbers dialled); the call-laters this agent booked,
   soonest first, a late one marked, one with no name said as "Customer" (never the number). A server
   without my-day (a 404), or a failed read, falls back to the agent's own `/my-stats` for today and,
-  where My contacts serves it, `/my-contacts?bucket=callback`. Both are read again each time the agent
-  is back to Ready (`station_reads.dart`). The list's line is the server's `comes_to_me` (AS8): "These
-  calls will come to you on time." or "We will call them on time. Another agent may get the call."
-  (from the fallback read, judged by whether the campaign assigns contacts). Start of day shows the
+  where My contacts serves it, `/my-contacts?bucket=callback`. They are read when the my-day contract
+  says (`StationReadsRefresher`, `station_reads.dart`): on join, on every `ready` frame (a reconnect's
+  too), after each saved outcome, back on Ready, every 60 s while Ready, and again just past the end
+  of the campaign's day (my-day's `day_end`; the phone's midnight from the fallback). They belong to
+  the signed-in agent and account (`agentWorkspaceProvider`): a new sign-in reads afresh. A 401 goes
+  to the app gate, as every feature's does, and a failed read is not retried between those times.
+  The list's line is the server's `comes_to_me` (AS8): "These calls will come to you on time." or "We
+  will call them on time. Another agent may get the call." (from the fallback read, judged by the
+  bootstrap's assignment mode: `strict` or `preferred` yes, `pool` no; never by the `queue` frame,
+  which a pool campaign gets too since BE-5). Start of day shows the
   target and today's call-laters; Finish work says how many are left today and who will make them
-  (`left_today_goes_to`). A call that ended without needing an
+  (`left_today_goes_to`), naming the first one still to come (an overdue one is not "left for
+  today"). A call that ended without needing an
   outcome is the one-line banner "The last call did not connect. You do not need to do anything." for
   6 s, in the station's own words (AS15).
 - **The customer card** (Call coming, On call): the server's facts (BE-6) when it sends them, its
@@ -315,24 +323,51 @@ text the band scrolls with the content and the main action keeps its place.
   coming; "What to say" on On call, the current step and the next two with "1 of 4 done", a tap
   marking a step (and every one before it) done, afresh for each call. Every line is filled for the
   customer and the agent by the contract's `fillScriptPlaceholders` (`core/station/script_fill.dart`).
-- **On call**: the customer card, the script, Last calls, the note; nothing about AI (AS2); no break button
-  (AS10: Save & break on the next screen). Don't call again is on the call only when the campaign's
-  outcomes have no such tile, because today's server marks a live call only.
-- **What happened?**: one tile per outcome of the campaign's own list, two across, with the picture
+- **On call**: the customer card, then the script when the campaign has one, else Last calls (04c);
+  the note; nothing about AI (AS2); no break button (AS10: Save & take break on the next screen).
+  Don't call again is a row on the call and on What happened? when the campaign's outcomes have no
+  such tile (the server marks an attempt after it ended too: `POST /attempts/:id/dnc` checks only
+  that it is this account's), until the outcome is saved; its result never shows the number (AS9).
+  Details shows every field and the history, without "Attempt N" or "Calling from" (spec §8).
+- **What happened?**: one tile per outcome of the campaign's own list, two across (ten or more: the
+  first eight and a More tile that opens the rest, spec §6.2), with the picture
   the supervisor chose (BE-13; else one by the outcome's flags: ₹, a clock, a stop sign, a
   thumbs-up, a dot) and a speaker that reads the label aloud;
   the pay date or the call-later time in a bottom sheet with large chips (Call when?: In 1 hour, Today
   6:00 PM while it is more than an hour away, Tomorrow 10:00 AM, Tomorrow 6:00 PM, Other time) and OK,
-  then one summary row with Change; the note with Speak a note (it puts the cursor in the note, so the
-  keyboard's own microphone dictates, AS13). Don't call again asks on a bottom sheet. Save & break
+  then one summary row with Change; the pay date sheet offers Full and Half from the customer's typed
+  amount due (a parsed money fact, BE-6; none without one), with Indian grouping and no ₹ (PT5), and
+  a follow-up outcome says "We will call again on 4 Nov." once the date is picked; the call-later line
+  says who makes it (AS8, as Ready's list); the note with Speak a note (it puts the cursor in the note, so the
+  keyboard's own microphone dictates, AS13). Don't call again asks on a bottom sheet. Save & take break
   asks which break (queued behind this screen) and then saves; a break picked after the screen has
   gone is still sent and saves nothing. The time running out with nothing picked turns the band
   red-orange, "Time is over" (05d); nothing is ever picked for the agent.
 - **Read aloud (AS13)** uses the phone's own text-to-speech (`flutter_tts`, `core/speech/read_aloud.dart`):
-  the speaker on each What happened? tile, on the opening line and on the current step. An Indian
-  English voice (`en-IN`) where the phone has one, else its default; each read stops the one before;
-  a phone that cannot speak reads nothing and says nothing. The Android manifest declares the
+  the speaker on each What happened? tile and on the opening line before the call connects. Never
+  while a customer is on the line (Call coming once connected, On call): speech on the phone's
+  speaker can reach them through the microphone. Every change of screen stops what is being read. An
+  Indian English voice (`en-IN`) where the phone has one, else its default; each read stops the one
+  before. A phone with no engine (`getEngines`, Android) or no language (`getLanguages`) shows no
+  speaker (AS1: hidden, not disabled). The Android manifest declares the
   `android.intent.action.TTS_SERVICE` query that Android 11+ needs to see the engines.
+- **An inbound caller** follows the campaign's `phone_display` (AS9): the caller's line, the band,
+  the announcer, Details, Your customer is waiting and the Don't call again sheets mask the number
+  when the campaign masks numbers. Its What happened? is the outbound screen's: the tiles, the
+  follow-up sheet, the note with Speak a note, the Don't call again row and Save, faded until ready.
+  A call-later follows the matched campaign's routing (AS8): "This call will come to you" on a
+  `strict` or `preferred` one (this station's, or another's read from its My contacts summary), "We
+  will call … Another agent may get the call." on `pool`, and for a caller on no list, that the agent
+  calls back themselves.
+- **The station's own words (AS15).** Refusals and notices are keyed on the server's code, then its
+  status, never its sentence: the join (the pre-flight's and the fatal screen's: `not_staffed`,
+  `feature_disabled`, another organisation, …), Start calls again, a break, the save, Call again,
+  Finish work, End call, Don't call again and Need help; why a call ended (a reason this build does
+  not know gets a plain line); a call that ended while the internet was down is one sentence ("While
+  your internet was down, the customer hung up."). A guard test reads every literal of
+  `StationCopy`, `InboundCopy` and `FloorAssistCopy` against the spec's §6.6 list plus "campaign",
+  "station", "disposition", "DNC", "Do Not Call", "outcome" and "queue". The work list says what a
+  list is doing in the console's words ("Calling is on", "Paused by your supervisor", …).
 - **Light by default (AS14).** The app opens light whatever the phone's setting until the agent
   turns the dark theme on (the Me tab, or ⋮ More → Sound); every station screen is tested in light
   and its colours' contrast in both.
@@ -348,7 +383,7 @@ samples drive them through the real station core (`test/core/station/station_age
 ## Wrap-up redial
 
 On a campaign with `allow_wrapup_redial` (decisions WR1–WR13), What happened? shows **Call again ·
-N left** beside Save & break, under Save & next call, while an outcome is owed and a redial is left
+N left** beside Save & take break, under Save & next call, while an outcome is owed and a redial is left
 (at most 2 per call); spent, it is hidden. The `wrapup` frame's `redial_remaining` decides; the bootstrap's
 `allow_wrapup_redial` is decoded but not used to gate it. Pressing it sends
 `POST /proxy/agency/sessions/:id/redial` `{ attempt_id }`. The redial then runs on the station
@@ -376,9 +411,11 @@ pay on Sun 1 Nov · 12,500"; on the soft phone and inbound, under the pad): chip
 before today up to 30 days ahead; the server judges the customer's today), and an optional
 amount (digits and a point). Save stays held, with the reason, until a date is picked and the
 amount reads as a number with at most two places; the request carries `promise_date` and the
-amount's two-place string only for that outcome. The line under it says whether saving books a
-call ("We'll call again N days after this date, in calling hours", from the entry's
-`promise_follow_up_days`) or not. The same picker serves the station's wrap-up, an inbound call's
+amount's two-place string only for that outcome. When the entry books a follow-up
+(`promise_follow_up_days`), the line under it says when, once a date is picked ("We will call again
+on 4 Nov."); spec §8 dropped the old system explanations ("Saving a promise doesn't book a call.",
+"The date is the customer's, as they said it."). Full and Half chips fill the amount from the
+customer's typed amount due when the station has one. The same picker serves the station's wrap-up, an inbound call's
 outcome and the soft phone (`lib/features/station/parts/promise_picker.dart`); the rules are a
 hand port of the shared module (`lib/core/station/promise_rules.dart`). The contact's latest
 promise rides on the `reserved` frame (`attempt.promise`) and shows under the contact's name while
@@ -1502,7 +1539,13 @@ from the browser or file manager it was opened from.
   depends on the phone's keyboard offering a microphone. The my-day read, the facts, the script and
   the masked number were tested with the contract's samples, not against a running server (my-day
   was not served yet when they were wired).
-- **Read aloud (2026-11-20) has not run on a device.** `flutter_tts` 4.2.5 resolved from pub.dev and
+- **The app review's fixes (2026-11-20) are tested against fakes only**: the my-day reads' new times
+  (every `ready` frame, 60 s, the day's end) and their 401 to the gate, the matched campaign's routing
+  read from its My contacts summary, and Don't call again on What happened? (read off the server's
+  route, which takes an ended attempt, but not run against it). Nothing of them has run on a phone
+  or against a running server.
+- **Read aloud (2026-11-20) has not run on a device.** Nor has its check for an engine and a
+  language (`getEngines`, `getLanguages`): which phones answer them how is unverified. `flutter_tts` 4.2.5 resolved from pub.dev and
   its Dart side is tested against a faked channel; no Android or iOS build with it has run here (no
   Android SDK or Xcode in this environment), nor has a voice been heard. Whether a phone offers an
   `en-IN` voice, the manifest's `TTS_SERVICE` query on Android 11+ and the plugin's iOS audio session
