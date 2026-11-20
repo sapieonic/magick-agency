@@ -27,7 +27,7 @@ import 'sheets.dart';
 
 /// What happened? (05): one picture tile per outcome of this campaign's own list, two across; the
 /// follow-up (pay date, call when) in a bottom sheet with large chips, then one summary row; the
-/// note with Speak a note; Save & next call, Save & break, and Call again while the campaign allows
+/// note with Speak a note; Save & next call, Save & take break, and Call again while the campaign allows
 /// it. Nothing is ever picked for the agent: when the time runs out with nothing picked, the band
 /// turns red-orange and says so (05d); with a tile picked, the server saves and moves on (today's
 /// rule).
@@ -148,7 +148,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     await ref.read(stationActionsProvider).redial(attemptId: view.call?.attemptId);
   }
 
-  /// Save & break: which break first (queued behind this screen, as the server does), then save.
+  /// Save & take break: which break first (queued behind this screen, as the server does), then save.
   /// Cancel on Which break? saves nothing. A break picked after this screen has gone (the time ran
   /// out with a tile picked, and the server saved it) is still sent: the agent asked for it.
   Future<void> _saveAndBreak() async {
@@ -497,7 +497,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
   }
 }
 
-/// Save & next call, with Save & break and Call again under it. Save is the one control on the
+/// Save & next call, with Save & take break and Call again under it. Save is the one control on the
 /// station shown faded rather than hidden (spec §6.1): before the form is ready it stays in place,
 /// and pressing it says what is missing ("Choose one first."). Rebuilds on each keystroke (a needed
 /// note) without rebuilding the tiles above.
@@ -631,7 +631,8 @@ int? _redialRemaining(StationView? v) {
 /// picture by what the outcome does, until outcomes carry an icon of their own (BE-13): ₹ for a
 /// promise to pay, a clock for call later, a stop sign for don't call again, a thumbs-up for a
 /// success, a dot otherwise. The picked tile has a green border and a tick, never colour alone.
-/// The speaker that reads a tile aloud (AS13) is not here: see `docs/mobile.md`.
+/// Each tile has a speaker that reads its label aloud (AS13), hidden on a phone that cannot speak.
+/// Ten or more: the first eight and a More tile (spec §6.2).
 class OutcomeTiles extends StatefulWidget {
   const OutcomeTiles({super.key, required this.options, required this.selected, required this.enabled, required this.onSelect});
 

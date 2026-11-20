@@ -404,8 +404,6 @@ const Map<NotesStatus, String> notesStatusCopy = {
   NotesStatus.closed: 'Notes are closed for this call.',
 };
 
-const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
-
 // ─── Lifecycle notifications ────────────────────────────────────────────────
 
 const pausedNotificationTitle = 'You’re paused';
