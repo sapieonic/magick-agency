@@ -629,7 +629,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request), and CORS for the API on its own host (`cors.ts`, registered only when `CORS_ALLOWED_ORIGINS` is set; B27).
+App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, the `X-Client` log context (`client-log-context.ts`: `client`, and `clientApp` / `clientVersion` for an app that names itself, on every log line of a request), and CORS for the API on its own host (`cors.ts`, registered only when `CORS_ALLOWED_ORIGINS` is set; B27).
 
 Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `cors.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
@@ -645,7 +645,7 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`,
 | `apps/server/test/unit/api/middleware/rate-limit.scope.test.ts` | 3 |
 | `apps/server/test/unit/api/middleware/rate-limit.user-bucket.test.ts` | 4 |
 | `apps/server/test/unit/api/middleware/tenant-context.middleware.test.ts` | 25 |
-| `apps/server/test/unit/api/client-log-context.test.ts` | 3 |
+| `apps/server/test/unit/api/client-log-context.test.ts` | 4 |
 
 ### `apps/server/src/api/responses/`
 
@@ -1330,11 +1330,12 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
-| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 35 |
+| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 36 |
+| `apps/server/test/unit/build/package-versions.test.ts` (the bundled packages' versions the build injects: `dependencies` only, never the runtime-loaded renderer, checked against what esbuild inlined; read back by `@magick-agency/observability`) | 7 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` (with Plivo's regional media hosts proxied and a host with an empty label refused) | 48 |
 | `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 21 |
-| `apps/server/test/unit/utils/client-header.test.ts` | 5 |
+| `apps/server/test/unit/utils/client-header.test.ts` | 7 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
 | `apps/server/test/unit/utils/trace-context.test.ts` | 4 |
 | `apps/server/test/unit/utils/redact-url.test.ts` | 23 |
@@ -1761,7 +1762,7 @@ Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metr
 
 | Test file | Cases |
 |---|---|
-| `packages/observability/test/logger.test.ts` | 4 |
+| `packages/observability/test/logger.test.ts` | 5 |
 | `packages/observability/test/metric-instruments.test.ts` (the settable gauge: every label set observed; `retire` reports once and goes) | 3 |
 | `packages/observability/test/metrics-agency.test.ts` (with the `agency_listen_*` labels and the active gauge) | 11 |
 | `packages/observability/test/metrics-platform.test.ts` (the push senders' instruments and `trackPushSend`) | 3 |
@@ -1791,14 +1792,16 @@ for both clients (`apiErrorBody.ts`: `parseApiErrorBody`, field-level `details` 
 generic `message`), date and number formatting (`format.ts`), customer-facing carrier aliases
 and, beside them, the vendors' own names that only super-admin's `operatorCarrierName` reads
 (`telephonyProviders.ts`), a bounded `allSettled`-style fan-out (`concurrency.ts`:
-`mapWithConcurrency`), and the stylesheet both apps' `main.tsx` import (`global.css`: theme tokens,
-base elements, `.toast-container`).
+`mapWithConcurrency`), the headers every API request carries (`clientHeaders.ts`: the originator and
+`X-Client: <originator>/<version>`, the server's log context), and the stylesheet both apps'
+`main.tsx` import (`global.css`: theme tokens, base elements, `.toast-container`).
 
-Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
+Files: `apiErrorBody.ts`, `clientHeaders.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/web-ui/test/apiErrorBody.test.ts` | 14 |
+| `packages/web-ui/test/clientHeaders.test.ts` | 1 |
 | `packages/web-ui/test/concurrency.test.ts` | 9 |
 | `packages/web-ui/test/errors.test.ts` | 21 |
 | `packages/web-ui/test/format.test.ts` | 50 |
@@ -1899,7 +1902,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts` (a
 | `apps/console/src/__tests__/api/error-analytics.test.ts` | 5 |
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
-| `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
+| `apps/console/src/__tests__/api/originator-header.test.ts` | 7 |
 | `apps/console/src/__tests__/api/reports.test.ts` | 13 |
 | `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/stationDevice.test.ts` | 5 |
@@ -2474,7 +2477,7 @@ Files: `saRoutes.ts`, `super-admin.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 35 |
+| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 36 |
 | `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 65 |
 
 ### `apps/super-admin/src/components/`
@@ -2650,7 +2653,7 @@ Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/lambda.test.ts` | 9 |
+| `apps/report-renderer/test/lambda.test.ts` | 13 |
 | `apps/report-renderer/test/build-lambda.test.ts` | 2 |
 | `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
 

@@ -21,7 +21,14 @@ describe('clientLogContextHook', () => {
   it('stamps the mobile app with its version and platform', async () => {
     const a = await app();
     const res = await a.inject({ url: '/ctx', headers: { 'x-client': 'magick-agency-mobile/1.4.0+212 (android 14; Pixel 8)' } });
-    expect(res.json()).toEqual({ client: 'mobile', clientVersion: '1.4.0+212', clientPlatform: 'android' });
+    expect(res.json()).toEqual({ client: 'mobile', clientApp: 'magick-agency-mobile', clientVersion: '1.4.0+212', clientPlatform: 'android' });
+    await a.close();
+  });
+
+  it('stamps a web UI with its app and version, still as web', async () => {
+    const a = await app();
+    const res = await a.inject({ url: '/ctx', headers: { 'x-client': 'magick-agency-console/0.29.0' } });
+    expect(res.json()).toEqual({ client: 'web', clientApp: 'magick-agency-console', clientVersion: '0.29.0' });
     await a.close();
   });
 

@@ -203,6 +203,16 @@ describe('saFetch — originator header', () => {
     const [, opts] = mocks.fetch.mock.calls[0]!;
     expect((opts as RequestInit & { headers: Record<string, string> }).headers[ORIGINATOR_HEADER]).toBe(ORIGINATOR);
   });
+
+  // `X-Client: <originator>/<version>`: which super-admin build sent it, for the server's logs.
+  it('is sent with X-Client naming super-admin and its version', async () => {
+    mocks.fetch.mockResolvedValue(makeOkResponse());
+
+    await saFetch('/super-admin/me');
+
+    const [, opts] = mocks.fetch.mock.calls[0]!;
+    expect((opts as RequestInit & { headers: Record<string, string> }).headers['X-Client']).toBe(`${ORIGINATOR}/${__APP_VERSION__}`);
+  });
 });
 
 // ── Error message resolution ─────────────────────────────────────────────────

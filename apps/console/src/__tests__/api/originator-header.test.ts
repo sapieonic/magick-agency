@@ -38,6 +38,7 @@ Object.defineProperty(window, 'location', {
  */
 import { apiFetch } from '../../api/client';
 import { fetchRecordingBlobUrl } from '../../api/calls';
+import { getInvite } from '../../api/invites';
 
 function okJson(body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -108,4 +109,27 @@ describe('x-mgkvc-originator header — raw-fetch endpoints', () => {
     expect(headersOf()[ORIGINATOR_HEADER]).toBe(ORIGINATOR);
   });
 
+});
+
+// `X-Client: <originator>/<version>` (web-ui's `clientHeaders`), on every path that reaches the API.
+describe('X-Client header', () => {
+  const expected = `${ORIGINATOR}/${__APP_VERSION__}`;
+
+  it('is sent on apiFetch alongside a caller\'s own headers', async () => {
+    mocks.fetch.mockResolvedValue(okJson());
+    await apiFetch('/api/example', { headers: { 'X-Custom': 'v' } });
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
+
+  it('is sent on the raw-fetch endpoints (buildAuthHeaders)', async () => {
+    mocks.fetch.mockResolvedValue(new Response(new Blob(['audio']), { status: 200 }));
+    await fetchRecordingBlobUrl('t1', 'call-1', 'a1');
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
+
+  it('is sent on the signed-out invite lookup', async () => {
+    mocks.fetch.mockResolvedValue(okJson({ status: 'pending' }));
+    await getInvite('tok').catch(() => undefined);
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
 });

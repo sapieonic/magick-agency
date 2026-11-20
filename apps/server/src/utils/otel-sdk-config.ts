@@ -144,7 +144,7 @@ export function processInstanceSuffix(env: Env): string | null {
 
 export function buildResourceAttributes(
   env: Env,
-  opts: { version: string; hostname: () => string },
+  opts: { version: string; hostname: () => string; packageVersions?: Readonly<Record<string, string>> },
 ): Record<string, string> {
   const attrs: Record<string, string> = {
     // Same default as `config.otel.serviceName`.
@@ -152,6 +152,11 @@ export function buildResourceAttributes(
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
   };
+  // Each bundled workspace package's version (`magick_agency.package.db.version`; a hyphen in a
+  // name is `_`), on every exported log, span and metric at no per-series cost.
+  for (const [name, version] of Object.entries(opts.packageVersions ?? {})) {
+    attrs[`magick_agency.package.${name.replaceAll('-', '_')}.version`] = version;
+  }
   // D7 (docs/scaling.md §7): with worker processes every process exports the same series
   // names, so each must have its own instance or counters from several processes
   // interleave into one series. Forced on then, the base id suffixed with the process:

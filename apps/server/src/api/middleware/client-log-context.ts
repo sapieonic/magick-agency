@@ -5,7 +5,8 @@ import { parseClientHeader } from '../../utils/client-header.js';
 /**
  * `onRequest`, app-wide: stamp which app sent the request (`X-Client`,
  * `parseClientHeader`) onto every log line the request produces, as `client` (`web` |
- * `mobile`), plus `clientVersion` / `clientPlatform` for the mobile app.
+ * `mobile`), plus `clientApp` / `clientVersion` for an app that names itself (the mobile
+ * app, the console, super-admin) and `clientPlatform` for the mobile app.
  *
  * Through the ambient log context (`@magick-agency/observability`'s `mixin`), so every
  * module logger a handler reaches carries it without being passed anything. A fresh
@@ -19,6 +20,7 @@ export function clientLogContextHook(request: FastifyRequest, _reply: FastifyRep
   const client = parseClientHeader(request.headers['x-client']);
   setLogContext({
     client: client.kind,
+    ...(client.app ? { clientApp: client.app } : {}),
     ...(client.version ? { clientVersion: client.version } : {}),
     ...(client.platform ? { clientPlatform: client.platform } : {}),
   });

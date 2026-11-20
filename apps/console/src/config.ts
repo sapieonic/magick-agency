@@ -1,3 +1,4 @@
+import { clientHeaders, ORIGINATOR_HEADER } from '@magick-agency/web-ui/clientHeaders';
 import { brand } from './brand';
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
@@ -15,8 +16,11 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
  * it as the actor of a dialer row (`agencyActivityCopy.ts`). The header NAME is
  * wire, not branding, and is unchanged.
  */
-export const ORIGINATOR_HEADER = 'x-mgkvc-originator';
+export { ORIGINATOR_HEADER };
 export const ORIGINATOR = `${brand.id}-console`;
+
+/** The headers every request to the API carries: who sent it, and which build. */
+export const CLIENT_HEADERS = clientHeaders(ORIGINATOR, __APP_VERSION__);
 
 export const FIREBASE_CONFIG = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',

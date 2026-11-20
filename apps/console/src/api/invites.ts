@@ -1,4 +1,4 @@
-import { ENDPOINTS, ORIGINATOR, ORIGINATOR_HEADER } from '../config';
+import { CLIENT_HEADERS, ENDPOINTS } from '../config';
 import { toFetchError } from '@magick-agency/web-ui/errors';
 import { captureApiError } from './error-analytics';
 import { redactInviteToken } from '../analytics/redact';
@@ -228,7 +228,7 @@ function responseStatus(res: Response, body: unknown): InviteUnavailableStatus |
 export async function getInvite(token: string): Promise<InviteLookup> {
   const url = ENDPOINTS.invites.get(token);
   const res = await fetch(url, {
-    headers: { [ORIGINATOR_HEADER]: ORIGINATOR },
+    headers: CLIENT_HEADERS,
   });
   const body = await readBody(res);
 
@@ -278,7 +278,7 @@ export async function claimInvite(token: string, idToken: string): Promise<Sessi
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      [ORIGINATOR_HEADER]: ORIGINATOR,
+      ...CLIENT_HEADERS,
     },
     body: JSON.stringify({ id_token: idToken }),
   });

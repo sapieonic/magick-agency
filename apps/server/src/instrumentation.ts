@@ -29,7 +29,7 @@ import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 // Subpaths, not the package index: the index loads the logger and `meter.ts`, whose
 // `metrics.getMeter` would bind every metric to the no-op provider before the SDK below exists.
-import { APP_VERSION } from '@magick-agency/observability/version';
+import { APP_VERSION, PACKAGE_VERSIONS } from '@magick-agency/observability/version';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
 import {
   OTEL_SHUTDOWN_TIMEOUT_MS,
@@ -103,7 +103,7 @@ export async function shutdownOtelSdk(): Promise<void> {
 // only — except a tight Node runtime-health allow-list (≈4 series). The list,
 // and why the allow-list must match NO drop view, live in
 // `utils/otel-sdk-config.ts`, where they are testable without an SDK.
-const resourceAttributes = buildResourceAttributes(process.env, { version: APP_VERSION, hostname });
+const resourceAttributes = buildResourceAttributes(process.env, { version: APP_VERSION, hostname, packageVersions: PACKAGE_VERSIONS });
 
 // Only initialize OTel when explicitly enabled AND an endpoint is configured AND the service is
 // named (`otelServiceNamed`).

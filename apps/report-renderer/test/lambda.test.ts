@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { createHmac } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { SQSEvent } from 'aws-lambda';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   REPORT_SIGNATURE_HEADER,
   REPORT_TIMESTAMP_HEADER,
@@ -22,7 +22,8 @@ import {
   type ReportRenderCallback,
   type ReportRenderMessage,
 } from '@magick-agency/contracts/reports';
-import { createHandler, type HandlerDeps } from '../src/lambda';
+import { createHandler, handler, logRecord, type HandlerDeps } from '../src/lambda';
+import { RENDERER_VERSION } from '../src/version';
 import { CALLBACK_BACKOFF_MS } from '../src/lambda/callback';
 import { chromiumSpecifier, loadSparticuzChromium } from '../src/lambda/chromium';
 import { verifyCallbackSignature } from '../src/signature';
@@ -218,5 +219,34 @@ describe('@sparticuz/chromium resolution', () => {
     const seen: string[] = [];
     await loadSparticuzChromium({ layerDir: '/nonexistent/layer/', importer: async (s) => (seen.push(s), { default: { args: [], executablePath: async () => '' } }) });
     expect(seen).toEqual(['@sparticuz/chromium']);
+  });
+});
+
+describe('logRecord', () => {
+  it('stamps every Lambda line with its time and the renderer\'s version, which no event field replaces', () => {
+    const at = new Date('2026-11-19T10:00:00.000Z');
+    expect(logRecord({ event: 'record.failed', message_id: 'm1', version: 'dataset-2', ts: 'x' }, at)).toEqual({
+      event: 'record.failed',
+      message_id: 'm1',
+      ts: '2026-11-19T10:00:00.000Z',
+      version: RENDERER_VERSION,
+      // Empty outside the Lambda build, which injects them (test/build-lambda.test.ts).
+      packages: {},
+    });
+  });
+
+  it('is what the deployed handler writes: one JSON line per event, stamped', async () => {
+    vi.stubEnv('AGENCY_REPORTS_CALLBACK_SECRET', '');
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      // No secret: the record fails before any S3 or Chromium work, and is logged.
+      const result = await handler({ Records: [{ messageId: 'm1', body: '{}' }] } as unknown as SQSEvent);
+      expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'm1' }]);
+      const lines = spy.mock.calls.map(([text]) => JSON.parse(String(text)) as Record<string, unknown>);
+      expect(lines).toEqual([expect.objectContaining({ event: 'record.failed', message_id: 'm1', version: RENDERER_VERSION, packages: {} })]);
+    } finally {
+      spy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 });
