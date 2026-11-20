@@ -2981,7 +2981,11 @@ class StationController extends Notifier<StationView?>
     if (_s == null) return;
     final inbound = _terminal ? null : _station.inboundOnScreen;
     if (inbound != null) return _markInboundDnc(inbound, reason: reason, callId: attemptId);
-    final live = _terminal ? null : _station.live?.attemptId;
+    // The live call, or the one on What happened? while its outcome is owed: the server marks an
+    // attempt after it ended too (`POST /attempts/:id/dnc` checks only that it is this account's),
+    // as the console's What happened? row does.
+    final owed = _station.effectiveState == AgentState.wrapup && _saved?.attemptId != _station.currentAttemptId;
+    final live = _terminal ? null : (_station.live?.attemptId ?? (owed ? _station.currentAttemptId : null));
     if (live == null || (attemptId != null && attemptId != live)) {
       // No call, or not the one the agent confirmed for: the next customer is
       // never marked for the last one's answer.
@@ -2996,7 +3000,7 @@ class StationController extends Notifier<StationView?>
         _log.info('marked do not call', {'recorded': r.dncRecorded});
         if (_live(s) && _station.currentAttemptId == live) _dncOutcome = (attemptId: live, text: dncOutcomeCopy(r));
       } on ApiError catch (e) {
-        if (_live(s) && _station.live?.attemptId == live) _actionError = dncFailureCopy(e);
+        if (_live(s) && _station.currentAttemptId == live) _actionError = dncFailureCopy(e);
       }
     });
   }

@@ -311,7 +311,7 @@ String dncOutcomeCopy(DncResponse response) => dncDoneCopy(recorded: response.dn
 /// (`dnc_recorded: false`): only this customer is stopped (the console's `savedLine` tail).
 const suppressOutcomeNotListedCopy = 'We will not call this customer again. Ask your supervisor to check the number.';
 
-const dncNeedsCallCopy = 'Available while you are on a call';
+const dncNeedsCallCopy = 'You can do this on a call, or while you choose what happened.';
 
 /// Mark DNC confirmed for a call that is no longer the live one.
 const dncCallChangedCopy = 'That call has ended. Nothing was marked.';

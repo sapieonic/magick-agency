@@ -21,7 +21,7 @@ import 'call_band.dart';
 import 'callback_picker.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
-import 'on_call_view.dart' show QueuedBreakChip;
+import 'on_call_view.dart' show DontCallAgainRow, QueuedBreakChip;
 import 'promise_picker.dart';
 import 'sheets.dart';
 
@@ -110,6 +110,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
           const SizedBox(height: Space.md),
           LinkGate(child: FollowUpRow(option: selected, form: _form, onChange: () => _followUp(selected))),
         ],
+        // The list has no stop tile: Don't call again as its own row (spec §6.2), as the console.
+        const DontCallAgainRow(),
         const SizedBox(height: Space.md),
         StationNotesField(
           controller: widget.notes,

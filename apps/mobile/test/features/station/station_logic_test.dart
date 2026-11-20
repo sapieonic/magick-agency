@@ -220,6 +220,13 @@ void main() {
     ];
     expect(orderPriorAttempts(a).map((x) => x.outcomeLabel), ['new here', 'old here', 'y', 'x']);
   });
+
+  test('the station\'s words match the console\'s: "Tea break after this call", "Save & take break"', () {
+    expect(StationCopy.breakAfterThisCall('Tea'), 'Tea break after this call');
+    expect(StationCopy.breakAfterThisCall('Tea break'), 'Tea break after this call');
+    expect(StationCopy.breakAfterThisCall('Lunch Break'), 'Lunch Break after this call');
+    expect(StationCopy.saveAndBreak, 'Save & take break');
+  });
 }
 
 abstract final class _Now {

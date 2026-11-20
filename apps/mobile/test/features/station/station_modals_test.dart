@@ -88,7 +88,7 @@ void main() {
           queuedBreak: const BreakInfo(code: 'lunch', label: 'Lunch'),
         ),
       );
-      expect(find.text('Lunch after this call'), findsOneWidget);
+      expect(find.text('Lunch break after this call'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('cancel-queued-break')));
       await tester.tap(find.byKey(const Key('cancel-queued-break')));
       expect(h.actions.calls, contains('cancelQueuedBreak'));

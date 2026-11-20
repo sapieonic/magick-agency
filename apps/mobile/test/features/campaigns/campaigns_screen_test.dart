@@ -47,10 +47,12 @@ void main() {
     await pumpScreen(tester, c, const CampaignsScreen());
     expect(find.text('My campaigns'), findsOneWidget);
     expect(find.text('Acme Collections · Chennai'), findsOneWidget);
-    expect(find.text('Running'), findsOneWidget);
-    expect(find.text('Paused right now. You can wait at the station for it to resume.'), findsOneWidget);
-    expect(find.text('Completed'), findsOneWidget);
-    expect(find.text('Finished — every contact has been dialled.'), findsOneWidget);
+    // The console's words for what a list is doing (`workStatus`).
+    expect(find.text('Calling is on'), findsOneWidget);
+    expect(find.text('Paused by your supervisor'), findsOneWidget);
+    expect(find.text('Finished. Every customer was called.'), findsOneWidget);
+    expect(find.text('Running'), findsNothing);
+    expect(find.text('Calls are going out now.'), findsNothing);
     expect(find.text('Enter station'), findsNWidgets(2));
     expect(find.text('Closed'), findsOneWidget);
     expect(find.text('You can be on one campaign at a time.'), findsOneWidget);
@@ -260,13 +262,24 @@ void main() {
         expect(assignmentEntry(a(s)).canEnter, isTrue, reason: s);
       }
       expect(assignmentEntry(a('stopped')), const AssignmentEntry(
-        canEnter: false, note: 'Ended by a supervisor. It won’t start again.', label: 'Stopped', tone: Tone.neutral));
+        canEnter: false, note: null, label: 'Ended by your supervisor. No more calls.', tone: Tone.neutral));
       expect(assignmentEntry(a('completed')).canEnter, isFalse);
     });
 
-    test('an unknown or missing status never blocks; an unknown one shows as itself', () {
+    test('every status in the console\'s words', () {
+      expect([for (final s in ['running', 'paused', 'draft', 'stopping', 'stopped', 'completed']) assignmentEntry(a(s)).label], [
+        'Calling is on',
+        'Paused by your supervisor',
+        'Not started yet',
+        'Ending now. No new calls.',
+        'Ended by your supervisor. No more calls.',
+        'Finished. Every customer was called.',
+      ]);
+    });
+
+    test('an unknown or missing status never blocks, and says nothing it cannot stand behind', () {
       expect(assignmentEntry(a(null)), const AssignmentEntry(canEnter: true, note: null, label: null, tone: Tone.neutral));
-      expect(assignmentEntry(a('archived')), const AssignmentEntry(canEnter: true, note: null, label: 'archived', tone: Tone.neutral));
+      expect(assignmentEntry(a('archived')), const AssignmentEntry(canEnter: true, note: null, label: null, tone: Tone.neutral));
     });
 
     test('tones: running ok, paused/stopping warn', () {

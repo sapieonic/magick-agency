@@ -572,7 +572,7 @@ void main() {
       final h = await pumpStation(tester, onCall());
       expect(find.byKey(const Key('break-after-call')), findsNothing);
       await h.setView(onCall(queued: const BreakInfo(code: 'lunch', label: 'Lunch')));
-      expect(find.text('Lunch after this call'), findsOneWidget);
+      expect(find.text('Lunch break after this call'), findsOneWidget);
       await tester.tap(find.byKey(const Key('cancel-queued-break')));
       expect(h.actions.calls, contains('cancelQueuedBreak'));
     });
@@ -874,6 +874,34 @@ void main() {
       expect(live.label, 'Saved');
       expect(find.byKey(const Key('dnc-outcome')), findsNothing);
       expect(find.byKey(const Key('time-over')), findsNothing);
+    });
+
+    testWidgets('a list with no stop tile: Don\'t call again under the tiles, for this call, then the line (spec §6.2)', (tester) async {
+      final noStop = dispositions.where((d) => !d.suppresses).toList();
+      final h = await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: noStop),
+      );
+      await tester.ensureVisible(find.byKey(const Key('control-dnc')));
+      await tester.tap(find.byKey(const Key('control-dnc')));
+      await settle(tester);
+      expect(find.text(StationCopy.stopCallingTitle), findsOneWidget);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
+      await settle(tester);
+      expect(h.actions.args['markDnc'], [null, 'a1']);
+      await h.setView(station(
+        phase: AgentPhase.wrapup,
+        call: call(),
+        release: hungUpRelease,
+        wrapup: wrapup(),
+        dispositionOptions: noStop,
+        dncOutcome: 'Done. We will not call this number again.',
+      ));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
+      expect(find.text('Done. We will not call this number again.'), findsOneWidget);
+      // With a stop tile, the tile is the one way.
+      await h.setView(station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup()));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
     });
 
     testWidgets('ten or more outcomes: the first eight and a More tile that opens the rest (spec §6.2)', (tester) async {

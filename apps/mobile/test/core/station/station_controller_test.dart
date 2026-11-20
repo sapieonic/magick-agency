@@ -894,6 +894,41 @@ void main() {
       });
     });
 
+    test('DNC on What happened?: the call that ended, while its outcome is owed (the server takes it)', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST /proxy/agency/attempts/att-1/dnc'] = (_) => json(200, {
+              'campaign_id': 'camp-1',
+              'attempt_id': 'att-1',
+              'contact_id': 'c-att-1',
+              'phone_e164': '+919876543210',
+              'contact_state': 'suppressed',
+              'dnc_recorded': true,
+            });
+        app.run(app.controller.markDnc(attemptId: 'att-1'));
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc'), hasLength(1));
+        expect(app.view!.actionError, isNull);
+        expect(app.view!.dncOutcome, 'Done. We will not call this number again.');
+        // Saved: nothing is owed, so nothing more to mark.
+        app.routes['POST /proxy/agency/attempts/att-1/disposition'] =
+            (_) => json(200, {
+                  'campaign_id': 'camp-1',
+                  'attempt_id': 'att-1',
+                  'contact_id': 'c-att-1',
+                  'disposition_code': 'interested',
+                  'contact_state': 'completed',
+                  'agent_state': 'wrapup',
+                });
+        app.run(app.controller.submitDisposition('interested'));
+        expect(app.view!.dispositionSaved, 'interested');
+        app.run(app.controller.markDnc(attemptId: 'att-1'));
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc'), hasLength(1));
+        expect(app.view!.actionError, dncNeedsCallCopy);
+        app.dispose();
+      });
+    });
+
     test('the DNC outcome line goes with the call it was about', () {
       fakeAsync((async) {
         final app = App(async)..start();

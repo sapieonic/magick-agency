@@ -119,7 +119,12 @@ abstract final class StationCopy {
   static const endCall = 'End call';
   static const endCallHint = 'Slide to the right to end the call';
   static const ending = 'Ending…';
-  static String breakAfterThisCall(String label) => '$label after this call';
+  /// "Tea break after this call" (the console's words); a reason already called a break is not
+  /// said twice ("Tea break break").
+  static String breakAfterThisCall(String label) {
+    final l = label.trim();
+    return RegExp(r'\bbreak$', caseSensitive: false).hasMatch(l) ? '$l after this call' : '$l break after this call';
+  }
 
   // 05 What happened?
   static const whatHappened = 'What happened?';
@@ -130,7 +135,7 @@ abstract final class StationCopy {
   static const heldBanner = 'Your supervisor is holding this screen. Choose one, then press Save.';
   static const callWasCut = 'The call was cut. Choose what happened, or call again.';
   static const saveAndNext = 'Save & next call';
-  static const saveAndBreak = 'Save & break';
+  static const saveAndBreak = 'Save & take break';
   static String callAgainLeft(int n) => 'Call again · $n left';
   static const callingAgain = 'Calling…';
   static const chooseOneFirst = 'Choose one first.';
