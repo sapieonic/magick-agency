@@ -104,10 +104,19 @@ export function helpAgo(raisedAt: string, nowMs: number): string {
 const CHIME_KEY = 'magick.liveFloor.helpChime.v1';
 
 /**
- * Whether Need help plays its sound in this browser: on unless turned off here. Storage that throws
- * (a private window, blocked site data) reads as the default, on.
+ * The choice made on this page, whatever storage did with it: `null` until the reader toggles. One
+ * value for the whole page, so a chime mounted after a toggle (Live floor opened after muting from
+ * the banner) agrees with every other, even where storage cannot keep the choice.
+ */
+let chosenOnThisPage: boolean | null = null;
+
+/**
+ * Whether Need help plays its sound in this browser: on unless turned off here. The choice made on
+ * this page first (so every chime agrees, storage or not), then the browser's, then on: storage
+ * that throws (a private window, blocked site data) reads as the default.
  */
 export function readHelpChimeOn(): boolean {
+  if (chosenOnThisPage !== null) return chosenOnThisPage;
   try {
     return browserStorage()?.getItem(CHIME_KEY) !== 'off';
   } catch {
@@ -115,13 +124,19 @@ export function readHelpChimeOn(): boolean {
   }
 }
 
-/** Keeps the choice for this browser; storage that throws keeps it for this page only. */
+/** Keeps the choice for this page, and for this browser where storage lets it. */
 export function writeHelpChimeOn(on: boolean): void {
+  chosenOnThisPage = on;
   try {
     const storage = browserStorage();
     if (on) storage?.removeItem(CHIME_KEY);
     else storage?.setItem(CHIME_KEY, 'off');
   } catch {
-    // Blocked or full storage: the page's own state carries the choice until it is reloaded.
+    // Blocked or full storage: the page's choice above carries it until the page is reloaded.
   }
+}
+
+/** Tests only: forget the page's choice, as a reload does. */
+export function resetHelpChimeChoiceForTests(): void {
+  chosenOnThisPage = null;
 }

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getAgencyFloorAlerts: vi.fn(),
   playHelpChime: vi.fn(),
   storage: new Map<string, string>(),
+  storageBlocked: false,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({
@@ -31,17 +32,23 @@ vi.mock('../../contexts/GovernanceContext', () => ({
 }));
 vi.mock('../../api/agencyFloor', () => ({ getAgencyFloorAlerts: mocks.getAgencyFloorAlerts }));
 vi.mock('../../utils/agency/helpChime', () => ({ playHelpChime: mocks.playHelpChime, unlockHelpChime: vi.fn() }));
-vi.mock('../../utils/browserStorage', () => ({
-  browserStorage: () => ({
-    getItem: (k: string) => mocks.storage.get(k) ?? null,
-    setItem: (k: string, v: string) => void mocks.storage.set(k, v),
-    removeItem: (k: string) => void mocks.storage.delete(k),
-  }),
-}));
+vi.mock('../../utils/browserStorage', () => {
+  const blocked = () => {
+    if (mocks.storageBlocked) throw new DOMException('blocked', 'SecurityError');
+  };
+  return {
+    browserStorage: () => ({
+      getItem: (k: string) => { blocked(); return mocks.storage.get(k) ?? null; },
+      setItem: (k: string, v: string) => { blocked(); mocks.storage.set(k, v); },
+      removeItem: (k: string) => { blocked(); mocks.storage.delete(k); },
+    }),
+  };
+});
 
 import { SupervisorAlerts } from '../../components/layout/SupervisorAlerts';
 import { FLOOR_ALERTS_POLL_MS } from '../../hooks/useFloorAlerts';
 import { useHelpChime } from '../../hooks/useHelpChime';
+import { resetHelpChimeChoiceForTests } from '../../utils/agency/floorAssist';
 
 const AS_OF = '2026-11-20T10:30:00.000Z';
 const base = { session_id: 's-1', agent_user_id: 'u-1', campaign_id: 'c-1', campaign_name: 'Collections' };
@@ -95,6 +102,8 @@ beforeEach(() => {
   mocks.role = 'account_admin';
   mocks.flags = new Set(['agency_dialer_enabled']);
   mocks.storage.clear();
+  mocks.storageBlocked = false;
+  resetHelpChimeChoiceForTests();
   mocks.getAgencyFloorAlerts.mockResolvedValue(answer());
 });
 afterEach(() => {
@@ -256,5 +265,20 @@ describe('useHelpChime’s one setting', () => {
     fireEvent.click(screen.getByRole('button', { name: 'a on' }));
     expect(screen.getByText('b off')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'a off' })).toBeTruthy();
+  });
+
+  it('a chime mounted after a toggle agrees with it, even where storage is blocked', () => {
+    mocks.storageBlocked = true;
+    function One({ label }: { label: string }) {
+      const chime = useHelpChime(null);
+      return <button type="button" onClick={chime.toggle}>{`${label} ${chime.on ? 'on' : 'off'}`}</button>;
+    }
+    const first = render(<One label="shell" />);
+    fireEvent.click(screen.getByRole('button', { name: 'shell on' }));
+    expect(screen.getByRole('button', { name: 'shell off' })).toBeTruthy();
+    // Live floor opened after muting from the banner: its chime starts off too.
+    render(<One label="floor" />);
+    expect(screen.getByRole('button', { name: 'floor off' })).toBeTruthy();
+    first.unmount();
   });
 });

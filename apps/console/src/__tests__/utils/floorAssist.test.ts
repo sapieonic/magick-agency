@@ -10,6 +10,7 @@ import {
   messageRefusal,
   newHelpKeys,
   readHelpChimeOn,
+  resetHelpChimeChoiceForTests,
   reminderText,
   writeHelpChimeOn,
 } from '../../utils/agency/floorAssist';
@@ -102,6 +103,7 @@ describe('the chime’s setting (LF4: on by default, per browser)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.localStorage.clear();
+    resetHelpChimeChoiceForTests();
   });
 
   it('is on until turned off here, and kept', () => {
@@ -122,6 +124,24 @@ describe('the chime’s setting (LF4: on by default, per browser)', () => {
     expect(() => writeHelpChimeOn(true)).not.toThrow();
     // It did try: a not.toThrow on storage never touched would pass whatever the code does.
     expect(blocked).toHaveBeenCalledTimes(3);
+  });
+
+  it('where storage throws, keeps the choice for the page, so every chime read after it agrees', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    writeHelpChimeOn(false);
+    expect(readHelpChimeOn()).toBe(false);
+    writeHelpChimeOn(true);
+    expect(readHelpChimeOn()).toBe(true);
+  });
+
+  it('the page’s choice stands over what storage says, as a reload forgets it', () => {
+    writeHelpChimeOn(false);
+    window.localStorage.clear();
+    expect(readHelpChimeOn()).toBe(false);
+    resetHelpChimeChoiceForTests();
+    expect(readHelpChimeOn()).toBe(true);
   });
 });
 

@@ -71,6 +71,7 @@ vi.mock('../../utils/agency/liveFloor', async (importOriginal) => {
 
 import HomePage from '../../pages/agency/HomePage';
 import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
+import { resetHelpChimeChoiceForTests } from '../../utils/agency/floorAssist';
 
 const ASSIST = 'agency_floor_assist_enabled';
 const ASSIGNMENT = 'agency_contact_assignment_enabled';
@@ -118,6 +119,7 @@ const DIVYA = () => floorRow('divya', { agent_name: 'Divya S' });
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  resetHelpChimeChoiceForTests();
   resetHomeAcksForTests();
   mocks.flags = new Set([ASSIST]);
   mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4 collections', stats: stats({ agents_live: 3 }) })]));
