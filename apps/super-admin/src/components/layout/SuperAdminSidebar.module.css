@@ -133,3 +133,31 @@
     display: flex;
   }
 }
+
+/* AS14: the theme switch, above the version line. */
+.themeBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px;
+  padding: 8px 12px;
+  min-height: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.themeBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.themeBtn[aria-pressed='true'] {
+  color: var(--accent-hover);
+  border-color: var(--border-focus);
+}

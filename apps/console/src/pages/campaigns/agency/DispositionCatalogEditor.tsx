@@ -16,6 +16,7 @@ import {
   AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN,
 } from '@magick-agency/contracts/agency';
 import type { ConfigFieldErrors } from './configFieldErrors';
+import { TileIconPicker } from '../../../components/agency/TileIconPicker';
 import styles from './CampaignBehaviourSection.module.css';
 
 /*
@@ -47,6 +48,12 @@ interface DispositionCatalogEditorProps {
    * there (their calls have no campaign contact to keep it on). The campaign forms turn it on.
    */
   promises?: boolean;
+  /**
+   * Offer each outcome's tile picture (agent station BE-13): `icon`, one of the pictures the
+   * station draws, or none. Off by default: only a campaign's catalogue carries one (the server
+   * checks it there); the campaign forms turn it on.
+   */
+  icons?: boolean;
 }
 
 /** Copy of the promise group: what the agent is asked, and what it does (PT3). */
@@ -70,6 +77,7 @@ export function DispositionCatalogEditor({
   errors,
   overrides = false,
   promises = false,
+  icons = false,
 }: DispositionCatalogEditorProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
 
@@ -148,6 +156,15 @@ export function DispositionCatalogEditor({
                 >
                   {index + 1}
                 </kbd>
+                {icons ? (
+                  <TileIconPicker
+                    value={entry.icon}
+                    name={name}
+                    onChange={(icon) => edit({ type: 'update', index, patch: { icon } })}
+                    describedBy={errors.describedBy(`disposition_catalog[${index}].icon`)}
+                    testId={`outcome-icon-${index}`}
+                  />
+                ) : null}
                 <div className={styles.naming}>
                   <input
                     ref={labelRef}
@@ -499,6 +516,7 @@ export function DispositionCatalogEditor({
 
               {errors.render(`disposition_catalog[${index}].code`)}
               {errors.render(`disposition_catalog[${index}].label`)}
+              {icons ? errors.render(`disposition_catalog[${index}].icon`) : null}
               {errors.render(`disposition_catalog[${index}].retry.max_attempts`)}
               {errors.render(`disposition_catalog[${index}].retry.delay_minutes`)}
               {errors.render(`disposition_catalog[${index}].override`)}

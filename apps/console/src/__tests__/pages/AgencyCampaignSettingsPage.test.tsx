@@ -1308,7 +1308,8 @@ describe('the settings sections', () => {
     await screen.findByTestId('settings-section-nav');
 
     expect(navIds()).toEqual([
-      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#agents', '#roster-uploads',
+      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#agents',
+      '#agent-screen', '#script', '#roster-uploads',
     ]);
     for (const href of navIds()) {
       expect(document.getElementById(href!.slice(1)), href!).toBeTruthy();

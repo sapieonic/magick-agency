@@ -20,6 +20,8 @@ describe('CAMPAIGN_SETTINGS_SECTIONS', () => {
       'wrap-up',
       'recording',
       'agents',
+      'agent-screen',
+      'script',
       'roster-uploads',
     ]);
   });
