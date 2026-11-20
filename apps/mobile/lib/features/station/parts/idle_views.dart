@@ -307,6 +307,7 @@ class _WaitingViewState extends ConsumerState<WaitingView> {
   Widget build(BuildContext context) {
     final since = ref.watch(stationViewProvider.select((v) => v?.phaseSince));
     final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
+    final stopped = ref.watch(stationViewProvider.select((v) => v?.callsStopped));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
     final queue = ref.watch(stationViewProvider.select((v) => v?.queue));
     final dial = ref.watch(stationViewProvider.select((v) => v?.dialActivity));
@@ -321,7 +322,7 @@ class _WaitingViewState extends ConsumerState<WaitingView> {
     if (quiet) {
       final next = queue?.nextDueAt;
       final reason = !dialing
-          ? StationCopy.callsStoppedBySupervisor
+          ? StationCopy.callsStopped(stopped)
           : switch (queue?.reason ?? QueueIdle.other) {
               QueueIdle.queueEmpty => StationCopy.noCustomersWaiting,
               QueueIdle.callbacksLater => next == null ? StationCopy.callsStartLater : StationCopy.nextCallAt(formatTime12(next)),
@@ -560,10 +561,9 @@ class CallLaterCard extends ConsumerWidget {
     final items = list.items;
     if (items.isEmpty) return const SizedBox.shrink();
     // The server's word when it says (AS8, `comes_to_me`); else a campaign that assigns contacts
-    // keeps the agent's own call-laters theirs (strict, preferred: the station has their queue), and
-    // a pool campaign may give one to another agent.
-    final assigns = ref.watch(stationViewProvider.select((v) => v?.queue != null));
-    final own = list.comesToMe ?? assigns;
+    // keeps the agent's own call-laters theirs (strict, preferred), and a pool campaign may give one
+    // to another agent.
+    final own = watchComesToMe(ref);
     final now = ref.watch(stationClockProvider);
     final s = context.stateTokens;
     final t = context.tokens;

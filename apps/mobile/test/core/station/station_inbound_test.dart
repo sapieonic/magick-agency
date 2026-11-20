@@ -484,7 +484,8 @@ void main() {
         app.routes['POST $_call/dnc'] = (_) => json(200, inboundSample('call_dnc_response'));
         app.run(app.controller.markDnc(attemptId: fixtureCallId));
         expect(app.requests('POST', '$_call/dnc').single.body, <String, Object?>{});
-        expect(app.view!.dncOutcome, '+91 87654 32109 is on the Do Not Call list for Q4 Renewals — Pune.');
+        // AS9: never the caller's number.
+        expect(app.view!.dncOutcome, 'We will not call this number again.');
         app.dispose();
       });
     });

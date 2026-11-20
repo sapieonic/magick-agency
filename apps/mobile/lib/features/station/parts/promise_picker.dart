@@ -6,16 +6,18 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/station/promise_rules.dart';
 import '../../../core/station/station_view.dart';
 import '../logic/disposition_form.dart';
+import '../logic/format.dart' show formatDay;
 import '../station_copy.dart';
 import '../station_providers.dart';
 import 'sheets.dart';
 
 /// Promise to pay (PT1): the date the customer promised to pay, three chips
 /// for the commonest answers and a date picker for the rest, then the amount
-/// if they gave one. Inline, like the callback picker: a chip is one tap.
+/// if they gave one, with Full and Half chips when the customer's amount due is
+/// known (a typed money fact, BE-6). A chip is one tap.
 ///
-/// Says plainly whether saving books a call (PT2, PT3): the agent is about to
-/// tell the customer what happens next.
+/// When the outcome books a follow-up (PT2), the date picked says when: "We will
+/// call again on 22 Nov." (spec §8 dropped the system explanations around it.)
 class PromisePicker extends ConsumerStatefulWidget {
   const PromisePicker({
     super.key,
@@ -26,6 +28,7 @@ class PromisePicker extends ConsumerStatefulWidget {
     this.enabled = true,
     this.attemptId,
     this.station = true,
+    this.amountDue,
   });
 
   final DispositionForm form;
@@ -40,6 +43,10 @@ class PromisePicker extends ConsumerStatefulWidget {
   /// On the station (the picker is guarded to its wrap-up), or the soft phone
   /// (no station call to guard on).
   final bool station;
+
+  /// The customer's amount due: a money fact's parsed value (a decimal string), for the Full and
+  /// Half chips; null hides them.
+  final String? amountDue;
 
   @override
   ConsumerState<PromisePicker> createState() => _PromisePickerState();
@@ -69,6 +76,14 @@ class _PromisePickerState extends ConsumerState<PromisePicker> {
       (StationCopy.promiseInAWeek, DateTime(today.year, today.month, today.day + 7)),
     ];
     final followUp = widget.option.promiseFollowUpDays;
+    final due = widget.amountDue;
+    final full = due == null ? null : plainAmount(due);
+    final half = due == null ? null : halfAmount(due);
+    final typed = _amount.text.trim();
+    final amountChips = <(String, String, String)>[
+      if (full != null) ('promise-full', StationCopy.fullAmount, full),
+      if (half != null && half != '0') ('promise-half', StationCopy.halfAmount, half),
+    ];
 
     return Column(
       key: const Key('promise-picker'),
@@ -116,16 +131,38 @@ class _PromisePickerState extends ConsumerState<PromisePicker> {
             setState(() {});
           },
         ),
-        const SizedBox(height: Space.xs),
-        Text(StationCopy.promiseDateNote, style: text.bodySmall),
-        const SizedBox(height: Space.xs),
-        Text(
-          followUp != null ? StationCopy.promiseFollowUp(followUp) : StationCopy.promiseNoCall,
-          key: const Key('promise-ground-truth'),
-          style: text.bodySmall,
-        ),
+        if (amountChips.isNotEmpty) ...[
+          const SizedBox(height: Space.sm),
+          Wrap(
+            spacing: Space.sm,
+            runSpacing: Space.sm,
+            children: [
+              for (final (key, label, amount) in amountChips)
+                ChoiceChip(
+                  key: Key(key),
+                  label: Text(StationCopy.amountChip(label, formatPromiseAmount(amount))),
+                  selected: typed == amount,
+                  onSelected: widget.enabled ? (_) => _setAmount(amount) : null,
+                ),
+            ],
+          ),
+        ],
+        if (followUp != null && chosen != null) ...[
+          const SizedBox(height: Space.sm),
+          Text(
+            StationCopy.weWillCallAgain(formatDay(DateTime(chosen.year, chosen.month, chosen.day + followUp))),
+            key: const Key('promise-follow-up'),
+            style: text.bodySmall,
+          ),
+        ],
       ],
     );
+  }
+
+  void _setAmount(String amount) {
+    _amount.text = amount;
+    widget.onAmount(amount);
+    setState(() {});
   }
 
   Future<void> _pick(BuildContext context, DateTime today) async {

@@ -565,11 +565,11 @@ class AudioView {
   int get hashCode => Object.hash(muted, route, routes.length, micProblem, interruption);
 }
 
-/// What happened while the station could not reach the agent ("While you
-/// were away: the customer hung up").
+/// What happened while the station could not reach the agent, in one sentence that says so
+/// ("While your internet was down, the customer hung up."), with an optional [detail] line.
 @immutable
 class MissedReleaseView {
-  const MissedReleaseView({required this.headline, required this.detail});
+  const MissedReleaseView({required this.headline, this.detail = ''});
   final String headline;
   final String detail;
 
@@ -578,6 +578,11 @@ class MissedReleaseView {
   @override
   int get hashCode => Object.hash(headline, detail);
 }
+
+/// Why the campaign is not dialling, as No calls right now (02c) says it (`campaign_state.reason`):
+/// only a supervisor's pause or stop blames the supervisor; the system's own pause (`auto_paused`)
+/// blames nobody; a finished list says so; no reason yet is a neutral line.
+enum CallsStopped { bySupervisor, autoPaused, listFinished, notStarted }
 
 /// Why nothing is due for the agent on a `strict` or `preferred` campaign
 /// (contact assignment). [other]: a reason this build does not know.
@@ -678,6 +683,7 @@ class InboundCallView {
     this.sticky,
     this.stickyIsYou = false,
     this.campaignName,
+    this.campaignId,
     this.contactState,
     this.heroFields = const [],
     this.heroesConfigured = false,
@@ -715,6 +721,9 @@ class InboundCallView {
 
   /// The matched contact's campaign, or null when the number matched nobody.
   final String? campaignName;
+
+  /// The matched campaign's id (its routing decides who makes a call-later, AS8); null with no match.
+  final String? campaignId;
 
   /// The matched contact's state, in words.
   final String? contactState;
@@ -759,6 +768,7 @@ class InboundCallView {
       other.recording == recording &&
       other.waitedSeconds == waitedSeconds &&
       other.campaignName == campaignName &&
+      other.campaignId == campaignId &&
       other.contactState == contactState &&
       _eqF.equals(other.heroFields, heroFields) &&
       other.heroesConfigured == heroesConfigured &&
@@ -900,6 +910,7 @@ class StationView {
     this.phaseSince,
     this.campaignDialing = true,
     this.campaignMessage,
+    this.callsStopped,
     this.onBreak,
     this.queuedBreak,
     this.breakOptions = const [],
@@ -921,12 +932,14 @@ class StationView {
     this.queue,
     this.dialActivity,
     this.myContactsOffered = false,
+    this.assignsContacts = false,
     this.inbound,
     this.customerWaiting,
     this.inboundNotice,
     this.help = const HelpView(),
     this.script,
     this.maskPhone = false,
+    this.readyCount = 0,
   });
 
   final String campaignId;
@@ -942,6 +955,9 @@ class StationView {
   /// who ring in can still reach the agent: the inbound router does not read campaign status).
   final bool campaignDialing;
   final String? campaignMessage;
+
+  /// Why calls stopped, while [campaignDialing] is false; null while dialling.
+  final CallsStopped? callsStopped;
 
   final BreakInfo? onBreak;
   final BreakInfo? queuedBreak;
@@ -979,8 +995,9 @@ class StationView {
   /// The station cannot open at all (join refused); shown full-screen with a way back.
   final String? fatal;
 
-  /// The agent's own queue (contact assignment): null on a `pool` campaign,
-  /// where the waiting screen keeps its usual words.
+  /// The agent's own queue, from the `queue` frame: sent on every assignment mode since BE-5
+  /// (a `pool` campaign included, for No calls right now's reasons), so it says nothing about
+  /// who makes a call-later. Null before the first frame, or from a server older than it.
   final QueueView? queue;
 
   /// Late binding's hidden dials, when the waiting screen has something to say
@@ -992,6 +1009,11 @@ class StationView {
   /// `pool`) or lets agents retry the ones they did not reach. The
   /// console's rule for its header button; the flag is checked on top.
   final bool myContactsOffered;
+
+  /// The campaign assigns contacts (`strict` or `preferred`, as the join bootstrap says; an
+  /// absent mode reads `pool`): a call-later booked here comes back to this agent (AS8). On a
+  /// `pool` campaign another agent may make it. The console's `assigns` (`AgentConsolePage`).
+  final bool assignsContacts;
 
   /// The inbound caller on the station (offered, on the call, or owing the outcome), or null.
   /// While it is set, [call] is null, and [notes], [dispositions], [dispositionSaved] and
@@ -1016,6 +1038,10 @@ class StationView {
   /// on every station screen. The number is still in [CallView.phoneE164] for the call itself.
   final bool maskPhone;
 
+  /// How many `ready` frames this session has had (the first, and one after each reconnect). The
+  /// station reads My day again on each (the my-day contract's "on every `ready` frame").
+  final int readyCount;
+
   /// The call on screen, campaign or inbound: what notes, dialogs and sheets are keyed by.
   String? get callId => call?.attemptId ?? inbound?.callId;
 
@@ -1036,6 +1062,7 @@ class StationView {
       other.phaseSince == phaseSince &&
       other.campaignDialing == campaignDialing &&
       other.campaignMessage == campaignMessage &&
+      other.callsStopped == callsStopped &&
       other.onBreak == onBreak &&
       other.queuedBreak == queuedBreak &&
       _eqB.equals(other.breakOptions, breakOptions) &&
@@ -1057,12 +1084,14 @@ class StationView {
       other.queue == queue &&
       other.dialActivity == dialActivity &&
       other.myContactsOffered == myContactsOffered &&
+      other.assignsContacts == assignsContacts &&
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&
       other.inboundNotice == inboundNotice &&
       other.help == help &&
       other.script == script &&
-      other.maskPhone == maskPhone;
+      other.maskPhone == maskPhone &&
+      other.readyCount == readyCount;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);

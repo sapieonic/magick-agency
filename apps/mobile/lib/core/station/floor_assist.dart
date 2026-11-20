@@ -311,14 +311,18 @@ abstract final class FloorAssistCopy {
 
   static const expired = 'No supervisor answered within $expiryMinutes minutes. Ask again if you still need help.';
 
-  // ── Refusals of the raise and the cancel ──
-  static const disabled = 'Need help is turned off for your workspace. Ask your supervisor another way.';
-  static const notOnCall = 'You can ask for help during a call, or while you finish one.';
-  static const sessionEnded = 'Your session on this station has ended, so help can’t be asked for here.';
-  static const raiseOffline = 'Your request for help didn’t reach the server. Check your connection and try again.';
-  static const cancelOffline = 'Your request couldn’t be cancelled. Check your connection and try again.';
-  static const raiseFailed = 'Your request for help didn’t go through. Try again.';
-  static const cancelFailed = 'Your request couldn’t be cancelled. Try again.';
+  // ── Refusals of the raise and the cancel: the station's words, keyed on the code, then the
+  // status, never the server's sentence (AS15; the console's `helpRefusedLine`) ──
+  static const disabled = 'Need help is not turned on. Call your supervisor to your desk.';
+  static const notOnCall = 'You can ask for help on a call, or while you choose what happened.';
+  static const sessionEnded = 'Your work was closed. Open today’s work again to ask for help.';
+  static const notFound = 'Your work was not found. Open today’s work again to ask for help.';
+  static const notAllowed = 'You cannot ask for help here. Call your supervisor to your desk.';
+  static const accountScope = 'Open your work from your account to ask for help.';
+  static const raiseOffline = 'Your request for help did not go through. Check your internet and try again.';
+  static const cancelOffline = 'Your request could not be cancelled. Check your internet and try again.';
+  static const raiseFailed = 'Your request did not go through. Try again.';
+  static const cancelFailed = 'Your request could not be cancelled. Try again.';
 
   /// The words for a refused raise ([raising]) or cancel, from the error.
   static String refusal(Object error, {required bool raising}) {
@@ -335,8 +339,9 @@ abstract final class FloorAssistCopy {
           break;
       }
       if (body.code == AgencyErrorCode.sessionEnded) return sessionEnded;
-      if (error.isServerError || body.message.isEmpty) return raising ? raiseFailed : cancelFailed;
-      return body.message;
+      if (body.codeRaw == 'account_scope_required') return accountScope;
+      if (error.status == 404) return notFound;
+      if (error.status == 403) return notAllowed;
     }
     return raising ? raiseFailed : cancelFailed;
   }

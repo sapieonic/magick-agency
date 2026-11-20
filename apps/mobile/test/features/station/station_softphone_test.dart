@@ -40,6 +40,25 @@ void main() {
   });
 
   group('on the soft phone (break/soft_phone)', () {
+    testWidgets('Need help is there too (AS5), beside the way back; its answer shows under it', (tester) async {
+      final h = await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn, needHelp: true);
+      await settle(tester);
+      expect(find.byKey(const Key('need-help')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('need-help')));
+      await tester.pump();
+      expect(h.actions.count('raiseHelp'), 1);
+      await h.setView(station(
+        phase: AgentPhase.onBreak,
+        onBreak: softphoneBreak,
+        help: const HelpView(notice: 'Anitha N answered with a message.', noticeTone: HelpNoticeTone.success),
+      ));
+      expect(find.byKey(const Key('help-notice')), findsOneWidget);
+      // Off for the account: not there.
+      await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn);
+      await settle(tester);
+      expect(find.byKey(const Key('need-help')), findsNothing);
+    });
+
     testWidgets('the station renders the soft-phone panel in place, without End break or the break menu', (tester) async {
       final h = await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn);
       await settle(tester);
@@ -50,7 +69,7 @@ void main() {
       expect(find.byKey(const Key('end-break')), findsNothing);
       expect(find.byKey(const Key('take-break')), findsNothing);
       expect(find.byKey(const Key('switch-softphone')), findsNothing);
-      expect(find.text(StationCopy.endBreak), findsNothing);
+      expect(find.text('End break'), findsNothing);
 
       await tester.tap(find.byKey(const Key('softphone-return')));
       await settle(tester);

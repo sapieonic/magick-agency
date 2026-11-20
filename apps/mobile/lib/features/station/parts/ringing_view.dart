@@ -58,11 +58,16 @@ class RingingView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // The countdown is not shown; without it here the card does not rebuild every second.
     final call = ref.watch(stationViewProvider.select((v) => _contactOnly(v?.call)));
+    // Read aloud only before the customer is on the line (AS13): once it connects, the phone's
+    // speaker can reach them through the microphone.
+    final connected = call?.bridgedAt != null;
     return CallPage(
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),
-          OpeningLineCard(trailing: (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line)),
+          OpeningLineCard(
+            trailing: connected ? null : (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line),
+          ),
         ],
       ],
       actions: const ConnectsByItself(),
@@ -91,6 +96,9 @@ class ConnectsByItself extends StatelessWidget {
   }
 }
 
+/// The call without its countdown (not shown here), so the card does not rebuild every second.
+/// Everything the card and the opening line read is kept: the callback tag (BE-4) and the facts
+/// (BE-6) included.
 CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
     ? c
     : CallView(
@@ -109,6 +117,8 @@ CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
         redialNumber: c.redialNumber,
         redialLimit: c.redialLimit,
         promise: c.promise,
+        callback: c.callback,
+        facts: c.facts,
       );
 
 /// "Calling again · 1 of 2": this call is a call again from What happened?, the agent calling back

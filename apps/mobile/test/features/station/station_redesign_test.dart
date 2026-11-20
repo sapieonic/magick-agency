@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show agentWorkspaceProvider, appGateProvider;
 import 'package:magick_agency_agent/core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/contacts/my_contacts_api.dart';
@@ -16,13 +17,16 @@ import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
 import '../../core/inbound/inbound_fixtures.dart' show contractSample;
-import '../contacts/support.dart' show FakeMyContactsApi, contact;
-import '../performance/support.dart' show FakePerformanceApi, stats, totals;
+import '../contacts/support.dart' show FakeMyContactsApi, contact, summaryOf;
+import '../performance/support.dart' show FakePerformanceApi, RecordingGate, stats, testWorkspaceProvider, totals;
 import 'station_harness.dart';
 
 /// The redesign's own pieces (AS1–AS15, phase 0): which screen a state is, Start work in one press,
 /// the reads Ready shows beside the live view, and the pictures and chips What happened? and Which
 /// break? use until the server sends its own.
+/// The signed-in agent the reads are scoped to (`agentWorkspaceProvider`).
+final _workspace = agentWorkspaceProvider.overrideWithValue('u1:t1:a1');
+
 void main() {
   group('one state, one screen (stationStageOf)', () {
     test('the line down with nothing on screen to keep is Internet problem (09)', () {
@@ -101,20 +105,66 @@ void main() {
   });
 
   group('the reads beside the live view', () {
-    testWidgets('My day and the call-later list are read again each time the agent is back to Ready', (tester) async {
+    testWidgets('read as the my-day contract says: on join, every ready frame, each saved outcome, back to Ready, '
+        'and every 60 s while Ready only', (tester) async {
       var reads = 0;
       final h = await pumpStation(
         tester,
         station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup()),
         onMyDayRead: () => reads++,
       );
-      expect(reads, 0, reason: 'What happened? shows no My day');
-      await h.setView(station());
-      final first = reads;
-      expect(first, greaterThanOrEqualTo(1));
-      await h.setView(station(phase: AgentPhase.reserved, call: call(attemptId: 'a2')));
-      await h.setView(station());
-      expect(reads, greaterThan(first), reason: 'read again on the return');
+      expect(reads, 1, reason: 'on join, whatever the screen');
+      Future<void> expectRead(String why, Future<void> Function() step) async {
+        final before = reads;
+        await step();
+        await tester.pump();
+        expect(reads, greaterThan(before), reason: why);
+      }
+
+      await expectRead('a saved outcome', () => h.setView(station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionSaved: 'interested')));
+      await expectRead('back to Ready', () => h.setView(station()));
+      await expectRead('a ready frame (a reconnect)', () => h.setView(station(readyCount: 2)));
+      await expectRead('60 s on Ready', () => h.advance(const Duration(seconds: 61)));
+      await h.setView(station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea'), readyCount: 2));
+      await tester.pump();
+      final onBreak = reads;
+      await h.advance(const Duration(minutes: 3));
+      expect(reads, onBreak, reason: 'not every minute while on a break');
+    });
+
+    testWidgets('read again past the end of the campaign\'s day (my-day\'s day_end), else the phone\'s midnight', (tester) async {
+      var reads = 0;
+      // 23:59:00 on the phone; the campaign's day ends at 23:59:30.
+      final now = DateTime(2026, 10, 31, 23, 59);
+      final h = await pumpStation(
+        tester,
+        station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea')),
+        now: now,
+        myDay: MyDayView(callsToday: 3, talkSeconds: 60, dialled: 9, dayEnd: now.add(const Duration(seconds: 30))),
+        onMyDayRead: () => reads++,
+      );
+      expect(reads, 1);
+      await h.advance(const Duration(seconds: 30));
+      expect(reads, 1, reason: 'not before the day ends');
+      await h.advance(const Duration(seconds: 6));
+      await tester.pump();
+      expect(reads, 2, reason: 'just past the day\'s end');
+
+      // A server without my-day: the phone's own midnight.
+      var fallbackReads = 0;
+      final h2 = await pumpStation(
+        tester,
+        station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea')),
+        now: now,
+        myDay: const MyDayView(callsToday: 3, talkSeconds: 60, dialled: 9),
+        onMyDayRead: () => fallbackReads++,
+      );
+      expect(fallbackReads, 1);
+      await h2.advance(const Duration(seconds: 59));
+      expect(fallbackReads, 1);
+      await h2.advance(const Duration(seconds: 6));
+      await tester.pump();
+      expect(fallbackReads, 2, reason: 'past the phone\'s midnight');
     });
 
     test('my-day (BE-1 to BE-3): the target, Will pay and the call-laters this agent booked, with who makes them', () async {
@@ -123,6 +173,7 @@ void main() {
       final myDay = FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day')));
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           myDayApiProvider.overrideWithValue(myDay),
           performanceApiProvider.overrideWithValue(stats),
           myContactsApiProvider.overrideWithValue(contacts),
@@ -131,7 +182,7 @@ void main() {
       );
       addTearDown(container.dispose);
       final day = await container.read(stationMyDayProvider('c1').future);
-      expect(day, const MyDayView(callsToday: 42, talkSeconds: 6720, dialled: 131, target: 120, willPay: 12));
+      expect(day, MyDayView(callsToday: 42, talkSeconds: 6720, dialled: 131, target: 120, willPay: 12, dayEnd: DateTime.utc(2026, 11, 20, 18, 30)));
       final later = await container.read(stationCallLaterProvider((campaignId: 'c1', offered: false)).future);
       expect(later.items.map((i) => (i.name, i.overdue)), [('Sunita Patil', true), ('', false), ('Imran Shaikh', false)]);
       expect([later.today, later.todayCount, later.comesToMe, later.leftGoesToPool], [2, 2, true, false]);
@@ -141,9 +192,64 @@ void main() {
       expect(contacts.queries, isEmpty);
     });
 
+    test('the reads are the signed-in agent\'s: another sign-in reads afresh, never the last agent\'s numbers', () async {
+      final api = FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day')));
+      final container = ProviderContainer(
+        overrides: [
+          agentWorkspaceProvider.overrideWith((ref) => ref.watch(testWorkspaceProvider)),
+          myDayApiProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.listen(stationMyDayProvider('c1'), (_, _) {});
+      container.listen(stationCallLaterProvider((campaignId: 'c1', offered: false)), (_, _) {});
+      expect((await container.read(stationMyDayProvider('c1').future))!.callsToday, 42);
+      expect(api.reads, ['c1']);
+      // Another agent signs in on this phone; their day is not 42 calls.
+      api.answer = MyDay.fromJson({...contractSample('reads.json', 'my_day'), 'calls': 3});
+      container.read(testWorkspaceProvider.notifier).set('u2:t1:a1');
+      expect((await container.read(stationMyDayProvider('c1').future))!.callsToday, 3);
+      expect((await container.read(stationCallLaterProvider((campaignId: 'c1', offered: false)).future)).today, isNotNull);
+      expect(api.reads, ['c1', 'c1'], reason: 'one read per agent, both lists from it');
+    });
+
+    test('a 401 from the reads goes to the app gate, as every feature\'s does, and is not hidden by the fallback', () async {
+      final api = FakeMyDayApi.failing(const ApiUnauthorized());
+      final stats = FakePerformanceApi();
+      final container = ProviderContainer(
+        overrides: [
+          appGateProvider.overrideWith(RecordingGate.new),
+          _workspace,
+          myDayApiProvider.overrideWithValue(api),
+          performanceApiProvider.overrideWithValue(stats),
+        ],
+      );
+      addTearDown(container.dispose);
+      await expectLater(container.read(stationMyDayProvider('c1').future), throwsA(isA<ApiUnauthorized>()));
+      await Future<void>.delayed(Duration.zero);
+      final gate = container.read(appGateProvider.notifier) as RecordingGate;
+      expect(gate.reported, [isA<ApiUnauthorized>()]);
+      expect(stats.statsQueries, isEmpty, reason: 'no fallback read behind a 401');
+
+      // The fallback's own 401 too (a server without my-day).
+      final c2 = ProviderContainer(
+        overrides: [
+          appGateProvider.overrideWith(RecordingGate.new),
+          _workspace,
+          myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
+          performanceApiProvider.overrideWithValue(FakePerformanceApi()..autoAnswer = (_) => throw const ApiUnauthorized()),
+        ],
+      );
+      addTearDown(c2.dispose);
+      await expectLater(c2.read(stationMyDayProvider('c1').future), throwsA(isA<ApiUnauthorized>()));
+      await Future<void>.delayed(Duration.zero);
+      expect((c2.read(appGateProvider.notifier) as RecordingGate).reported, [isA<ApiUnauthorized>()]);
+    });
+
     test('my-day on a pool campaign with no target: no bar, and another agent may make them', () async {
       final container = ProviderContainer(
-        overrides: [myDayApiProvider.overrideWithValue(FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day_pool_no_target'))))],
+        overrides: [
+          _workspace,myDayApiProvider.overrideWithValue(FakeMyDayApi.answering(MyDay.fromJson(contractSample('reads.json', 'my_day_pool_no_target'))))],
       );
       addTearDown(container.dispose);
       final day = await container.read(stationMyDayProvider('c1').future);
@@ -157,6 +263,7 @@ void main() {
       final now = DateTime(2026, 10, 31, 11, 20);
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           performanceApiProvider.overrideWithValue(api),
           statsClockProvider.overrideWithValue(() => now),
           myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
@@ -184,6 +291,7 @@ void main() {
         );
       final container = ProviderContainer(
         overrides: [
+          _workspace,
           myContactsApiProvider.overrideWithValue(api),
           contactAssignmentEnabledProvider.overrideWithValue(true),
           statsClockProvider.overrideWithValue(() => now),
@@ -199,11 +307,28 @@ void main() {
       expect(api.queries.single.buckets, [MyContactBucket.callback]);
     });
 
+    test('an inbound caller matched to another campaign: its routing from its summary (AS8), false when unread', () async {
+      final api = FakeMyContactsApi();
+      for (final (answer, expected) in <(Object, bool)>[
+        (summaryOf(mode: AssignmentMode.strict), true),
+        (summaryOf(mode: AssignmentMode.preferred), true),
+        (summaryOf(mode: AssignmentMode.pool), false),
+        (const ApiNetworkError('offline'), false),
+      ]) {
+        api.summaryAnswer = answer;
+        final container = ProviderContainer(overrides: [_workspace, myContactsApiProvider.overrideWithValue(api)]);
+        addTearDown(container.dispose);
+        expect(await container.read(matchedAssignsContactsProvider('c9').future), expected, reason: '$answer');
+      }
+      expect(api.summaries, ['c9', 'c9', 'c9', 'c9']);
+    });
+
     test('no call-later read where My contacts does not serve it', () async {
       final api = FakeMyContactsApi();
       for (final (flag, offered) in [(false, true), (true, false)]) {
         final container = ProviderContainer(
           overrides: [
+            _workspace,
             myContactsApiProvider.overrideWithValue(api),
             contactAssignmentEnabledProvider.overrideWithValue(flag),
             myDayApiProvider.overrideWithValue(FakeMyDayApi.notFound()),
@@ -253,18 +378,26 @@ void main() {
 
 /// `GET /proxy/agency/my-day`, scripted: an answer, or an older server's 404.
 class FakeMyDayApi implements MyDayApi {
-  FakeMyDayApi.answering(MyDay this.answer) : status = null;
+  FakeMyDayApi.answering(MyDay this.answer)
+      : status = null,
+        error = null;
   FakeMyDayApi.notFound()
       : answer = null,
-        status = 404;
+        status = 404,
+        error = null;
+  FakeMyDayApi.failing(Object this.error)
+      : answer = null,
+        status = null;
 
-  final MyDay? answer;
+  MyDay? answer;
   final int? status;
+  final Object? error;
   final reads = <String>[];
 
   @override
   Future<MyDay> read(String campaignId) async {
     reads.add(campaignId);
+    if (error != null) throw error!;
     final a = answer;
     if (a != null) return a;
     throw ApiHttpError(status: status!, code: null, message: 'Not Found', body: const {'error': 'Not Found'}, requestId: null);

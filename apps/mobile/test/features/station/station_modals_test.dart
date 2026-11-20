@@ -88,7 +88,7 @@ void main() {
           queuedBreak: const BreakInfo(code: 'lunch', label: 'Lunch'),
         ),
       );
-      expect(find.text('Lunch after this call'), findsOneWidget);
+      expect(find.text('Lunch break after this call'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('cancel-queued-break')));
       await tester.tap(find.byKey(const Key('cancel-queued-break')));
       expect(h.actions.calls, contains('cancelQueuedBreak'));
@@ -123,7 +123,10 @@ void main() {
       await tester.tap(find.byKey(const Key('control-details')));
       await settle(tester);
       expect(find.byKey(const Key('details-sheet')), findsOneWidget);
-      expect(find.text('Priya Raman · Attempt 2'), findsOneWidget);
+      expect(find.text('Priya Raman'), findsWidgets);
+      // Spec §8: not needed to do the call.
+      expect(find.textContaining('Attempt'), findsNothing);
+      expect(find.text('Calling from'), findsNothing);
       await h.setView(onCall(attemptId: 'a2'));
       await settle(tester);
       expect(find.byKey(const Key('details-sheet')), findsNothing);
@@ -149,7 +152,7 @@ void main() {
       await settle(tester);
       expect(find.text(StationCopy.stopCallingTitle), findsNothing);
       expect(h.actions.calls, isNot(contains('markDnc')));
-      expect(find.text('The call ended before Do Not Call was marked, so nothing was recorded.'), findsOneWidget);
+      expect(find.text(StationCopy.dncNotMarked), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

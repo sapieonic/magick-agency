@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/softphone/softphone_view.dart';
+import '../../core/speech/read_aloud.dart';
 import '../../core/station/station_view.dart';
 import '../missed/rang_while_away.dart';
 import '../softphone/softphone_panel.dart';
@@ -163,12 +164,6 @@ class _StationScreenState extends ConsumerState<StationScreen> {
 
   void _onPhase(AgentPhase? prev, AgentPhase? next) {
     if (next == prev || next == null) return;
-    // Back to Ready (after a call, a break): My day and the call-later list are read again; what
-    // was shown stays until the new answer lands.
-    if (next == AgentPhase.available && prev != null) {
-      final v = ref.read(stationViewProvider);
-      if (v != null) refreshStationReads(ref, v.campaignId, callLaterOffered: v.myContactsOffered);
-    }
     // Feel the call arrive and connect without looking. The ring tone itself
     // is the core's.
     if (next == AgentPhase.reserved) unawaited(HapticFeedback.heavyImpact());
@@ -198,6 +193,10 @@ class _StationScreenState extends ConsumerState<StationScreen> {
     // The call on screen, campaign or inbound: a new call gets a new notes controller.
     final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+    // A new screen stops whatever was being read aloud: never over a call that just connected.
+    ref.listen<StationStage>(stationViewProvider.select((v) => stationStageOf(v, widget.campaignId)), (prev, next) {
+      if (prev != next) unawaited(ref.read(readAloudProvider).stop());
+    });
 
     // Built while the station is: a return from a pause is then asked about (IQ50).
     ref.listen(rangWhileAwayProvider, (_, _) {});
@@ -247,6 +246,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
           child: Stack(
             children: [
               const Positioned(left: 0, top: 0, width: 1, height: 1, child: PhaseAnnouncer()),
+              // My day and the call-later list kept fresh (the my-day contract's times).
+              Positioned(left: 0, top: 0, width: 0, height: 0, child: StationReadsRefresher(campaignId: widget.campaignId)),
               Positioned.fill(
                 child: Align(
                   alignment: Alignment.topCenter,
@@ -331,7 +332,7 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
           away: v?.onBreak?.isDeviceAway ?? false,
           softphone: onSoftphoneBreak(v),
           label: v?.onBreak?.label,
-          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!, masked: v.maskPhone),
           callless: v?.phase == AgentPhase.reserved && v?.call == null && v?.inbound == null,
         ),
       ),

@@ -94,6 +94,15 @@ void main() {
       expect(find.text('Call later · Booked for 3:00 PM'), findsOneWidget);
     });
 
+    testWidgets('a ringing call with a countdown keeps its facts and its tag (the card drops only the countdown)', (tester) async {
+      final tag = CallLaterTag(dueAt: DateTime(2026, 10, 31, 15), bookedByMe: true);
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(countdown: 25, facts: facts, callback: tag)));
+      expect(find.text('Sunita Patil'), findsWidgets);
+      expect(find.text('₹12,500'), findsOneWidget);
+      expect(find.text('Call later · You said you will call at 3:00 PM'), findsOneWidget);
+      expect(find.text('Chennai'), findsNothing, reason: 'the facts, not the hero fields');
+    });
+
     testWidgets('no tag and the hero fields from a server older than the fields', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call()));
       expect(find.byKey(const Key('call-later-tag')), findsNothing);
@@ -152,8 +161,9 @@ void main() {
       await tester.pump();
       expect(find.text('4 of 4 done'), findsOneWidget);
       expect(find.text(StationCopy.allStepsDone), findsOneWidget);
-      // Last calls and the note stay under it.
-      expect(find.text(StationCopy.lastCalls), findsOneWidget);
+      // AS2: the script when there is one, not Last calls; the note stays.
+      expect(find.text(StationCopy.lastCalls), findsNothing);
+      expect(find.byKey(const Key('notes-field')), findsOneWidget);
     });
 
     testWidgets('a new call starts the steps afresh', (tester) async {
@@ -184,13 +194,41 @@ void main() {
       expect(find.byKey(const Key('read-aloud-dnc')), findsOneWidget);
     });
 
-    testWidgets('the opening line and the current step read the filled line', (tester) async {
+    testWidgets('the opening line reads the filled line before the call connects; nothing reads once it is live',
+        (tester) async {
       final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts), script: script));
       await tester.tap(find.byKey(const Key('read-aloud-opening')));
       await tester.pump();
-      await pumpStation(tester, station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, facts: facts), script: script));
-      expect(find.byKey(const Key('read-aloud-step')), findsOneWidget, reason: 'the current step only');
       expect(h.readAloud.said, ['Namaste Sunita Patil, I am Sunita calling from Q4 Card Renewals.']);
+      // The customer is on the line: the phone's speaker could reach them through the microphone.
+      await h.setView(station(phase: AgentPhase.reserved, call: call(facts: facts, bridgedAt: t0), script: script));
+      expect(find.byKey(const Key('script-opening')), findsOneWidget);
+      expect(find.byKey(const Key('read-aloud-opening')), findsNothing);
+      await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, facts: facts), script: script));
+      expect(find.byKey(const Key('script-steps')), findsOneWidget);
+      expect(find.byIcon(Icons.volume_up_outlined), findsNothing);
+    });
+
+    testWidgets('every change of screen stops what is being read', (tester) async {
+      final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts), script: script));
+      await tester.tap(find.byKey(const Key('read-aloud-opening')));
+      await tester.pump();
+      final before = h.readAloud.stops;
+      await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, facts: facts), script: script));
+      expect(h.readAloud.stops, before + 1, reason: 'Call coming → On call');
+      await h.setView(station(phase: AgentPhase.wrapup, call: call(facts: facts), release: hungUpRelease, wrapup: wrapup()));
+      expect(h.readAloud.stops, before + 2, reason: 'On call → What happened?');
+      await h.setView(station(phase: AgentPhase.wrapup, call: call(facts: facts), release: hungUpRelease, wrapup: wrapup(), notes: const NotesView(text: 'x')));
+      expect(h.readAloud.stops, before + 2, reason: 'the same screen does not stop it');
+    });
+
+    testWidgets('a phone with no text-to-speech engine or language shows no speaker (hidden, not disabled)', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup()), readAloudAvailable: false);
+      expect(find.byKey(const Key('outcome-callback')), findsOneWidget);
+      expect(find.byIcon(Icons.volume_up_outlined), findsNothing);
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts), script: script), readAloudAvailable: false);
+      expect(find.byKey(const Key('script-opening')), findsOneWidget);
+      expect(find.byIcon(Icons.volume_up_outlined), findsNothing);
     });
   });
 

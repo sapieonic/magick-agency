@@ -71,9 +71,15 @@ void main() {
 
     testWidgets('a campaign that assigns contacts keeps the agent\'s call-laters theirs', (tester) async {
       final items = [CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'K. Venkatesh')];
-      await pumpStation(tester, station(myContactsOffered: true, queue: const QueueView(due: true)), callLater: items);
+      await pumpStation(tester, station(myContactsOffered: true, assignsContacts: true), callLater: items);
       expect(find.text('K. Venkatesh'), findsOneWidget);
       expect(find.text(StationCopy.callLaterComesToYou), findsOneWidget);
+    });
+
+    testWidgets('a pool campaign\'s queue frame (BE-5) does not make them the agent\'s', (tester) async {
+      final items = [CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'K. Venkatesh')];
+      await pumpStation(tester, station(myContactsOffered: true, queue: const QueueView(due: true)), callLater: items);
+      expect(find.text(StationCopy.callLaterPool), findsOneWidget);
     });
 
     testWidgets('no call-later list when the read has none', (tester) async {
@@ -113,6 +119,24 @@ void main() {
       );
       await tapMore(tester, 'leave');
       expect(find.text('1 call later is left for today (6:00 PM). Another agent will make it.'), findsOneWidget);
+    });
+
+    testWidgets('Finish work names the first one still to come, not an overdue one that leads the list', (tester) async {
+      await pumpStation(
+        tester,
+        station(),
+        callLater: [
+          CallLaterItem(at: DateTime(2026, 10, 31, 9), name: 'A', overdue: true),
+          CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'B'),
+          CallLaterItem(at: DateTime(2026, 10, 31, 18), name: 'C'),
+        ],
+        callLaterGoesToPool: false,
+      );
+      await tapMore(tester, 'leave');
+      expect(
+        tester.widget<Text>(find.byKey(const Key('finish-left-today'))).data,
+        '2 call-laters are left for today (first at 4:30 PM). They wait for you.',
+      );
     });
 
     testWidgets('02c: calls stopped by the supervisor is No calls right now, slate, and callers can still ring in', (tester) async {
@@ -249,14 +273,13 @@ void main() {
       expect(find.text(StationCopy.lastCallNotConnected), findsNothing);
     });
 
-    testWidgets('missed release: "While you were away" until dismissed', (tester) async {
+    testWidgets('missed release: one line, said once, until dismissed', (tester) async {
       final h = await pumpStation(
         tester,
-        station(
-          missedRelease: const MissedReleaseView(headline: 'The customer hung up', detail: 'The call ended.'),
-        ),
+        station(missedRelease: const MissedReleaseView(headline: 'While your internet was down, the customer hung up.')),
       );
-      expect(find.text('While you were away: The customer hung up'), findsOneWidget);
+      expect(find.text('While your internet was down, the customer hung up.'), findsOneWidget);
+      expect(find.textContaining('While you were away'), findsNothing);
       await tester.tap(find.descendant(of: find.byKey(const Key('missed-release')), matching: find.byTooltip('Dismiss')));
       expect(h.actions.calls, ['dismissMissedRelease']);
     });
@@ -413,14 +436,18 @@ void main() {
       expect(identical(tester.widget<Text>(find.text('Priya Raman')), before), isTrue);
     });
 
-    testWidgets('a tap on the card opens every field and the caller ID', (tester) async {
+    testWidgets('a tap on the card opens every field, without the caller ID or the attempt (spec §8)', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(otherFields: 12)));
       await tester.tap(find.byKey(const Key('control-details')));
       await settle(tester);
       expect(find.text('Contact details'), findsOneWidget);
       expect(find.text('Field 0'), findsOneWidget);
-      await tester.dragUntilVisible(find.text('+91 80471 82200'), find.byKey(const Key('details-sheet')), const Offset(0, -200));
-      expect(find.text('+91 80471 82200'), findsOneWidget);
+      await tester.dragUntilVisible(find.text('Field 11'), find.byKey(const Key('details-sheet')), const Offset(0, -200));
+      await tester.drag(find.byKey(const Key('details-sheet')), const Offset(0, -2000));
+      await settle(tester);
+      expect(find.text('+91 80471 82200'), findsNothing);
+      expect(find.text('Calling from'), findsNothing);
+      expect(find.textContaining('Attempt 2'), findsNothing);
     });
   });
 
@@ -545,7 +572,7 @@ void main() {
       final h = await pumpStation(tester, onCall());
       expect(find.byKey(const Key('break-after-call')), findsNothing);
       await h.setView(onCall(queued: const BreakInfo(code: 'lunch', label: 'Lunch')));
-      expect(find.text('Lunch after this call'), findsOneWidget);
+      expect(find.text('Lunch break after this call'), findsOneWidget);
       await tester.tap(find.byKey(const Key('cancel-queued-break')));
       expect(h.actions.calls, contains('cancelQueuedBreak'));
     });
@@ -584,8 +611,10 @@ void main() {
       String? dnc,
       ReleaseView release = hungUpRelease,
       QueueView? queue,
+      bool assigns = false,
     }) => station(
       phase: AgentPhase.wrapup,
+      assignsContacts: assigns,
       call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
       release: release,
       wrapup: w ?? wrapup(),
@@ -688,7 +717,28 @@ void main() {
     });
 
     testWidgets('Call later on a campaign that assigns contacts: "This call will come to you"', (tester) async {
+      await pumpStation(tester, wrap(assigns: true), now: DateTime(2026, 10, 31, 11, 20, 30));
+      await tester.tap(find.byKey(const Key('outcome-callback')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('callback-todayEvening')));
+      await tester.pump();
+      expect(find.text(StationCopy.callWillComeToYou('Sat 31 Oct at 6:00 PM')), findsOneWidget);
+    });
+
+    testWidgets('Call later on a pool campaign that sends a queue (BE-5): another agent may get the call', (tester) async {
       await pumpStation(tester, wrap(queue: const QueueView(due: true)), now: DateTime(2026, 10, 31, 11, 20, 30));
+      await tester.tap(find.byKey(const Key('outcome-callback')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('callback-todayEvening')));
+      await tester.pump();
+      expect(find.text(StationCopy.callWillBeMade('Sat 31 Oct at 6:00 PM')), findsOneWidget);
+      expect(find.text(StationCopy.callWillComeToYou('Sat 31 Oct at 6:00 PM')), findsNothing);
+      await tester.tap(find.byKey(const Key('follow-up-ok')));
+      await settle(tester);
+    });
+
+    testWidgets('Call later: my-day\'s comes_to_me wins over the campaign\'s mode', (tester) async {
+      await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20, 30), callLaterComesToMe: true);
       await tester.tap(find.byKey(const Key('outcome-callback')));
       await settle(tester);
       await tester.tap(find.byKey(const Key('callback-todayEvening')));
@@ -826,11 +876,71 @@ void main() {
       expect(find.byKey(const Key('time-over')), findsNothing);
     });
 
+    testWidgets('a list with no stop tile: Don\'t call again under the tiles, for this call, then the line (spec §6.2)', (tester) async {
+      final noStop = dispositions.where((d) => !d.suppresses).toList();
+      final h = await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: noStop),
+      );
+      await tester.ensureVisible(find.byKey(const Key('control-dnc')));
+      await tester.tap(find.byKey(const Key('control-dnc')));
+      await settle(tester);
+      expect(find.text(StationCopy.stopCallingTitle), findsOneWidget);
+      await tester.tap(find.text(StationCopy.yesStopCalls));
+      await settle(tester);
+      expect(h.actions.args['markDnc'], [null, 'a1']);
+      await h.setView(station(
+        phase: AgentPhase.wrapup,
+        call: call(),
+        release: hungUpRelease,
+        wrapup: wrapup(),
+        dispositionOptions: noStop,
+        dncOutcome: 'Done. We will not call this number again.',
+      ));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
+      expect(find.text('Done. We will not call this number again.'), findsOneWidget);
+      // With a stop tile, the tile is the one way.
+      await h.setView(station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup()));
+      expect(find.byKey(const Key('control-dnc')), findsNothing);
+    });
+
+    testWidgets('ten or more outcomes: the first eight and a More tile that opens the rest (spec §6.2)', (tester) async {
+      final many = [for (var i = 1; i <= 11; i++) DispositionOption(code: 'o$i', label: 'Outcome $i')];
+      final h = await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: many),
+      );
+      for (var i = 1; i <= 8; i++) {
+        expect(find.byKey(Key('outcome-o$i')), findsOneWidget, reason: 'o$i');
+      }
+      expect(find.byKey(const Key('outcome-o9')), findsNothing);
+      expect(find.text('3 more'), findsNothing, reason: 'the hint rides with More');
+      await tester.ensureVisible(find.byKey(const Key('outcome-more')));
+      await tester.tap(find.byKey(const Key('outcome-more')));
+      await tester.pump();
+      expect(find.byKey(const Key('outcome-more')), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('outcome-o11')));
+      await tester.tap(find.byKey(const Key('outcome-o11')));
+      await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('save-outcome')));
+      await tester.tap(find.byKey(const Key('save-outcome')));
+      await tester.pump();
+      expect(h.actions.args['submitDisposition'], ['o11', null, null]);
+
+      // Nine fit without More.
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup(), dispositionOptions: many.sublist(0, 9)),
+      );
+      expect(find.byKey(const Key('outcome-more')), findsNothing);
+      expect(find.byKey(const Key('outcome-o9')), findsOneWidget);
+    });
+
     testWidgets('a saved suppress outcome whose number could not go on the list says so (DS8)', (tester) async {
       await pumpStation(tester, wrap(saved: 'do_not_call', dnc: suppressOutcomeNotListedCopy));
       expect(find.byKey(const Key('outcome-saved')), findsOneWidget);
       expect(find.byKey(const Key('dnc-outcome')), findsOneWidget);
-      expect(find.textContaining('It couldn’t go on this campaign’s Do Not Call list'), findsOneWidget);
+      expect(find.text('We will not call this customer again. Ask your supervisor to check the number.'), findsOneWidget);
     });
   });
 }

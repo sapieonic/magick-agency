@@ -49,7 +49,7 @@ class CallStateBand extends ConsumerWidget {
           wrapup: v?.wrapup,
           saved: v?.dispositionSaved != null,
           inbound: v?.inbound?.stage,
-          inboundWho: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          inboundWho: v?.inbound == null ? null : InboundCopy.who(v!.inbound!, masked: v.maskPhone),
           inboundBridgedAt: v?.inbound?.bridgedAt,
           inboundDue: v?.inbound?.outcomeDueAt,
           inboundRecording: v?.inbound?.recording ?? false,

@@ -11,6 +11,7 @@ import '../logic/format.dart';
 import '../logic/wrapup_math.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
+import '../station_reads.dart' show watchComesToMe;
 import '../widgets/action_buttons.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/ticking.dart';
@@ -20,13 +21,13 @@ import 'call_band.dart';
 import 'callback_picker.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
-import 'on_call_view.dart' show QueuedBreakChip;
+import 'on_call_view.dart' show DontCallAgainRow, QueuedBreakChip;
 import 'promise_picker.dart';
 import 'sheets.dart';
 
 /// What happened? (05): one picture tile per outcome of this campaign's own list, two across; the
 /// follow-up (pay date, call when) in a bottom sheet with large chips, then one summary row; the
-/// note with Speak a note; Save & next call, Save & break, and Call again while the campaign allows
+/// note with Speak a note; Save & next call, Save & take break, and Call again while the campaign allows
 /// it. Nothing is ever picked for the agent: when the time runs out with nothing picked, the band
 /// turns red-orange and says so (05d); with a tile picked, the server saves and moves on (today's
 /// rule).
@@ -47,6 +48,9 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 
   /// Save was pressed before the form was ready: the reason shows (spec §6.1).
   bool _tried = false;
+
+  /// AS8, as last built: a call-later booked here comes back to this agent.
+  bool _comesToMe = false;
   final _noteFocus = FocusNode(debugLabel: 'wrapup-note');
 
   @override
@@ -67,8 +71,14 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 
   Future<void> _followUp(DispositionOption option) async {
     final attemptId = ref.read(stationViewProvider)?.call?.attemptId;
-    final own = ref.read(stationViewProvider)?.queue != null;
-    final next = await showFollowUpSheet(context, option: option, form: _form, attemptId: attemptId, ownQueue: own);
+    final own = _comesToMe;
+    final next = await showFollowUpSheet(
+      context,
+      option: option,
+      form: _form,
+      attemptId: attemptId,
+      callLaterLine: own ? StationCopy.callWillComeToYou : StationCopy.callWillBeMade,
+    );
     if (next != null && mounted) setState(() => _form = next);
   }
 
@@ -82,7 +92,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     final cut = ref.watch(stationViewProvider.select((v) => v?.release?.tone == ReleaseTone.danger && (v?.release?.requiresDisposition ?? false)));
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
-    final own = ref.watch(stationViewProvider.select((v) => v?.queue != null));
+    _comesToMe = watchComesToMe(ref);
 
     return CallPage(
       body: [
@@ -98,14 +108,16 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         ),
         if (selected != null && saved == null && (selected.requiresCallbackTime || selected.requiresPromise)) ...[
           const SizedBox(height: Space.md),
-          LinkGate(child: _FollowUpRow(option: selected, form: _form, ownQueue: own, onChange: () => _followUp(selected))),
+          LinkGate(child: FollowUpRow(option: selected, form: _form, onChange: () => _followUp(selected))),
         ],
+        // The list has no stop tile: Don't call again as its own row (spec §6.2), as the console.
+        const DontCallAgainRow(),
         const SizedBox(height: Space.md),
         StationNotesField(
           controller: widget.notes,
           required: selected?.requiresNote ?? false,
           focusNode: _noteFocus,
-          trailing: _SpeakNoteButton(focus: _noteFocus),
+          trailing: SpeakNoteButton(focus: _noteFocus),
         ),
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip(offer: false)),
@@ -136,7 +148,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     await ref.read(stationActionsProvider).redial(attemptId: view.call?.attemptId);
   }
 
-  /// Save & break: which break first (queued behind this screen, as the server does), then save.
+  /// Save & take break: which break first (queued behind this screen, as the server does), then save.
   /// Cancel on Which break? saves nothing. A break picked after this screen has gone (the time ran
   /// out with a tile picked, and the server saved it) is still sent: the agent asked for it.
   Future<void> _saveAndBreak() async {
@@ -198,8 +210,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 }
 
 /// Speak a note (AS13): puts the cursor in the note, so the keyboard's own microphone dictates.
-class _SpeakNoteButton extends StatelessWidget {
-  const _SpeakNoteButton({required this.focus});
+class SpeakNoteButton extends StatelessWidget {
+  const SpeakNoteButton({super.key, required this.focus});
 
   final FocusNode focus;
 
@@ -282,14 +294,22 @@ class _Line extends StatelessWidget {
   }
 }
 
+/// The customer's amount due for the Full and Half chips: the server's typed money fact in the
+/// amount-due role (BE-6), its parsed value; null without one (an untyped column is never guessed).
+String? amountDueOf(CallView? call) {
+  for (final t in call?.facts?.tiles ?? const <FactTileView>[]) {
+    if (t.amountDue && t.kind == FactKind.money && t.parsed != null) return t.parsed;
+  }
+  return null;
+}
+
 /// The follow-up's one summary row: "Will pay on Fri 20 Nov · 12,500 · Change", "Call later · Fri 20
 /// Nov at 10:00 AM · Change", or, before it is given, what is still needed and Choose.
-class _FollowUpRow extends StatelessWidget {
-  const _FollowUpRow({required this.option, required this.form, required this.ownQueue, required this.onChange});
+class FollowUpRow extends StatelessWidget {
+  const FollowUpRow({super.key, required this.option, required this.form, required this.onChange});
 
   final DispositionOption option;
   final DispositionForm form;
-  final bool ownQueue;
   final VoidCallback onChange;
 
   @override
@@ -346,12 +366,16 @@ class _FollowUpRow extends StatelessWidget {
 /// Call when? for an outcome that books a call later, the pay date and amount for one that records
 /// a promise to pay. Returns the form with what was chosen, or null for Back (the tile stays picked,
 /// and Save says what is still needed). Closes with this call's What happened?.
+///
+/// [callLaterLine] says who makes a call-later at the time picked (AS8): "This call will come to
+/// you on …", "We will call on … Another agent may get the call.", or for a caller on no list,
+/// that the agent calls back themselves.
 Future<DispositionForm?> showFollowUpSheet(
   BuildContext context, {
   required DispositionOption option,
   required DispositionForm form,
   required String? attemptId,
-  required bool ownQueue,
+  required String Function(String when) callLaterLine,
 }) {
   final scope = sameCall(attemptId, const {AgentPhase.wrapup});
   return showModalBottomSheet<DispositionForm>(
@@ -360,18 +384,18 @@ Future<DispositionForm?> showFollowUpSheet(
     useSafeArea: true,
     builder: (context) => StationModalGuard(
       scope: scope,
-      child: _FollowUpSheet(option: option, form: form, attemptId: attemptId, ownQueue: ownQueue),
+      child: _FollowUpSheet(option: option, form: form, attemptId: attemptId, callLaterLine: callLaterLine),
     ),
   );
 }
 
 class _FollowUpSheet extends ConsumerStatefulWidget {
-  const _FollowUpSheet({required this.option, required this.form, required this.attemptId, required this.ownQueue});
+  const _FollowUpSheet({required this.option, required this.form, required this.attemptId, required this.callLaterLine});
 
   final DispositionOption option;
   final DispositionForm form;
   final String? attemptId;
-  final bool ownQueue;
+  final String Function(String when) callLaterLine;
 
   @override
   ConsumerState<_FollowUpSheet> createState() => _FollowUpSheetState();
@@ -415,6 +439,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
               form: _form,
               option: widget.option,
               attemptId: widget.attemptId,
+              amountDue: ref.watch(stationViewProvider.select((v) => amountDueOf(v?.call))),
               onDate: (day) => setState(() => _form = _form.withPromiseDate(day)),
               onAmount: (amount) => setState(() => _form = _form.withPromiseAmount(amount)),
             )
@@ -433,7 +458,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
                   const SizedBox(width: Space.xs),
                   Expanded(
                     child: Text(
-                      widget.ownQueue ? StationCopy.callWillComeToYou(formatWhen(at)) : StationCopy.callWillBeMade(formatWhen(at)),
+                      widget.callLaterLine(formatWhen(at)),
                       key: const Key('call-later-who'),
                       style: text.bodyMedium,
                     ),
@@ -472,7 +497,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
   }
 }
 
-/// Save & next call, with Save & break and Call again under it. Save is the one control on the
+/// Save & next call, with Save & take break and Call again under it. Save is the one control on the
 /// station shown faded rather than hidden (spec §6.1): before the form is ready it stays in place,
 /// and pressing it says what is missing ("Choose one first."). Rebuilds on each keystroke (a needed
 /// note) without rebuilding the tiles above.
@@ -606,8 +631,9 @@ int? _redialRemaining(StationView? v) {
 /// picture by what the outcome does, until outcomes carry an icon of their own (BE-13): ₹ for a
 /// promise to pay, a clock for call later, a stop sign for don't call again, a thumbs-up for a
 /// success, a dot otherwise. The picked tile has a green border and a tick, never colour alone.
-/// The speaker that reads a tile aloud (AS13) is not here: see `docs/mobile.md`.
-class OutcomeTiles extends StatelessWidget {
+/// Each tile has a speaker that reads its label aloud (AS13), hidden on a phone that cannot speak.
+/// Ten or more: the first eight and a More tile (spec §6.2).
+class OutcomeTiles extends StatefulWidget {
   const OutcomeTiles({super.key, required this.options, required this.selected, required this.enabled, required this.onSelect});
 
   final List<DispositionOption> options;
@@ -615,15 +641,36 @@ class OutcomeTiles extends StatelessWidget {
   final bool enabled;
   final ValueChanged<String> onSelect;
 
+  /// Up to nine fit; past that the first eight and a More tile that opens the rest (spec §6.2, the
+  /// console's `outcomeTileLayout`).
+  static const maxWithoutMore = 9;
+  static const beforeMore = 8;
+
+  @override
+  State<OutcomeTiles> createState() => _OutcomeTilesState();
+}
+
+class _OutcomeTilesState extends State<OutcomeTiles> {
+  bool _showAll = false;
+
   @override
   Widget build(BuildContext context) {
+    final all = widget.options;
+    final overflowing = all.length > OutcomeTiles.maxWithoutMore;
+    // An outcome behind More that is picked keeps the rest open.
+    final pickedBehind = all.indexWhere((o) => o.code == widget.selected) >= OutcomeTiles.beforeMore;
+    final expanded = !overflowing || _showAll || pickedBehind;
+    final options = expanded ? all : all.sublist(0, OutcomeTiles.beforeMore);
+    final selected = widget.selected;
+    final enabled = widget.enabled;
+    final onSelect = widget.onSelect;
     return LayoutBuilder(
       builder: (context, c) {
         final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
         final columns = scale > 1.6 || c.maxWidth < 280 ? 1 : 2;
         final w = ((c.maxWidth - Space.sm * (columns - 1)) / columns).floorToDouble();
         // 1–6: big tiles; 7 or more: smaller ones (spec §6.2).
-        final big = options.length <= 6;
+        final big = all.length <= 6;
         return Wrap(
           spacing: Space.sm,
           runSpacing: Space.sm,
@@ -638,9 +685,69 @@ class OutcomeTiles extends StatelessWidget {
                   onTap: enabled ? () => onSelect(o.code) : null,
                 ),
               ),
+            if (!expanded)
+              SizedBox(
+                width: w,
+                child: _MoreTile(hidden: all.length - OutcomeTiles.beforeMore, onTap: () => setState(() => _showAll = true)),
+              ),
           ],
         );
       },
+    );
+  }
+}
+
+/// The More tile: the outcomes past the first eight, opened in place.
+class _MoreTile extends StatelessWidget {
+  const _MoreTile({required this.hidden, required this.onTap});
+
+  final int hidden;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      label: '${StationCopy.moreOutcomes}, ${StationCopy.moreOutcomesHint(hidden)}',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: t.bgSecondary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          side: BorderSide(color: t.borderStrong, width: 1.5),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('outcome-more'),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 64),
+            child: Padding(
+              padding: const EdgeInsets.all(Space.sm),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.more_horiz, color: t.textSecondary),
+                  const SizedBox(width: Space.xs),
+                  Flexible(
+                    child: Text.rich(
+                      TextSpan(
+                        text: StationCopy.moreOutcomes,
+                        style: text.titleMedium,
+                        children: [TextSpan(text: ' · ${StationCopy.moreOutcomesHint(hidden)}', style: text.bodySmall)],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

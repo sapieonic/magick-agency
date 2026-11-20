@@ -6,7 +6,6 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../station_copy.dart';
 import '../widgets/action_buttons.dart';
-import '../widgets/read_aloud_button.dart';
 import 'banners.dart';
 import 'call_band.dart';
 import 'hang_up.dart';
@@ -16,10 +15,10 @@ import 'ringing_view.dart' show CustomerCard, LastCallsCard;
 import 'script_cards.dart' show ScriptStepsCard;
 import 'sheets.dart';
 
-/// On call (04, in its `04c` form, AS2: no AI anywhere): the customer card, Last calls, the note,
+/// On call (04, AS2: no AI anywhere): the customer card, then the script when the campaign has one,
+/// else (04c) Last calls; the note,
 /// and the controls in thumb reach: Mute and Speaker side by side, Slide to end call under them.
-/// No break button (AS10: Save & break on the next screen), no Mark DNC (Don't call again is on the
-/// next screen). A customer's hang-up moves the screen on by itself.
+/// No break button (AS10: Save & take break on the next screen). A customer's hang-up moves the screen on by itself.
 class OnCallView extends ConsumerWidget {
   const OnCallView({super.key, required this.notes});
 
@@ -31,6 +30,7 @@ class OnCallView extends ConsumerWidget {
     final call = ref.watch(stationViewProvider.select((v) => v?.call));
     final muted = ref.watch(stationViewProvider.select((v) => v?.audio.muted ?? false));
     final lineDown = ref.watch(stationViewProvider.select((v) => v != null && v.link != StationLink.open));
+    final hasScript = ref.watch(stationViewProvider.select((v) => (v?.script?.steps ?? const <String>[]).isNotEmpty));
     final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
     return CallPage(
       body: [
@@ -39,18 +39,16 @@ class OnCallView extends ConsumerWidget {
         if (muted && interrupted == AudioInterruption.none) const _MutedBanner(),
         if (call != null) CustomerCard(call: call),
         const SizedBox(height: Space.md),
-        // The script (BE-8), above Last calls; without one, 04c's Last calls and note.
-        if (call != null)
-          ScriptStepsCard(
-            callId: call.attemptId,
-            trailing: (line) => ReadAloudButton(key: const Key('read-aloud-step'), text: line),
-          ),
-        if (call != null && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
+        // AS2: the script (BE-8) when the campaign has one; else 04c's Last calls and the note. No
+        // read aloud here: the customer is on the line, and the phone's speaker can reach them
+        // through the microphone (AS13).
+        if (call != null && hasScript) ScriptStepsCard(callId: call.attemptId),
+        if (call != null && !hasScript && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
         const SizedBox(height: Space.md),
         StationNotesField(controller: notes),
         const SizedBox(height: Space.md),
         const QueuedBreakChip(offer: false),
-        const _DontCallAgain(),
+        const DontCallAgainRow(),
         // At large text Mute and Speaker scroll with the content, so End call keeps its place.
         if (tight) ...[const SizedBox(height: Space.md), const LinkGate(child: ControlRow())],
       ],
@@ -69,18 +67,20 @@ class OnCallView extends ConsumerWidget {
   }
 }
 
-/// Don't call again, on the call (design-spec §6.2): when this campaign's outcomes have no "don't
-/// call again" tile, a red row offers it here, with the same confirm. Here and not on What
-/// happened?, because today's server marks only a live call. With such a tile, the tile is the way.
-class _DontCallAgain extends ConsumerWidget {
-  const _DontCallAgain();
+/// Don't call again (design-spec §6.2): when this campaign's outcomes have no "don't call again"
+/// tile, a red row offers it on the call and on What happened? (the server marks an attempt after
+/// it ended too), with the same confirm; once done, the line that says so. With such a tile, the
+/// tile is the way. Not once the outcome is saved.
+class DontCallAgainRow extends ConsumerWidget {
+  const DontCallAgainRow({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hasTile = ref.watch(stationViewProvider.select((v) => (v?.dispositions ?? const <DispositionOption>[]).any((d) => d.suppresses)));
     final marking = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.markingDnc));
     final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
-    if (hasTile) return const SizedBox.shrink();
+    final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved != null));
+    if (hasTile || saved) return const SizedBox.shrink();
     final red = context.stateTokens.problem.deep;
     return Padding(
       padding: const EdgeInsets.only(top: Space.sm),

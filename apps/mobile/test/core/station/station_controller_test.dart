@@ -7,7 +7,6 @@ import 'package:fake_async/fake_async.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -58,7 +57,7 @@ void main() {
       });
     });
 
-    test('OS1: live in another organisation is refused with the server\'s sentence', () {
+    test('OS1: live in another organisation is refused in the station\'s words, naming it', () {
       fakeAsync((async) {
         final app = App(async);
         app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {
@@ -70,7 +69,7 @@ void main() {
             });
         final r = app.start() as StationRefused;
         expect(r.code, 'session_in_other_tenant');
-        expect(r.message, 'You are live in Acme. Leave your station there first.');
+        expect(r.message, 'You are working in Acme. Finish work there first, then come back here.');
         expect(app.view, isNull);
         app.dispose();
       });
@@ -149,14 +148,16 @@ void main() {
       });
     });
 
-    test('403 not_staffed / feature_disabled / other → StationRefused in the server’s words, or ours', () {
+    test('403 not_staffed / feature_disabled / other → StationRefused in the station\'s words, never the server\'s (AS15)', () {
       fakeAsync((async) {
         final app = App(async);
         final cases = [
-          (403, {'code': 'not_staffed', 'message': 'You are not on this campaign.'}, 'You are not on this campaign.', 'not_staffed'),
+          (403, {'code': 'not_staffed', 'message': 'You are not on this campaign.'}, notStaffedCopy, 'not_staffed'),
           (403, {'code': 'not_staffed', 'message': ''}, notStaffedCopy, 'not_staffed'),
-          (403, {'code': 'feature_disabled', 'message': 'The dialer is off.'}, 'The dialer is off.', 'feature_disabled'),
-          (409, {'code': 'campaign_not_running', 'message': 'This campaign is paused.'}, 'This campaign is paused.', 'campaign_not_running'),
+          (403, {'code': 'feature_disabled', 'message': 'The dialer is off.'}, featureDisabledCopy, 'feature_disabled'),
+          (409, {'code': 'campaign_not_running', 'message': 'This campaign is paused.'},
+              'Calls are stopped for this work right now. Ask your supervisor.', 'campaign_not_running'),
+          (403, {'code': 'something_new', 'message': 'A server sentence.'}, 'You cannot open this work. Ask your supervisor.', 'something_new'),
         ];
         for (final (status, body, message, code) in cases) {
           app.routes['POST /proxy/agency/sessions'] = (_) => json(status, {'error': 'Refused', ...body});
@@ -166,7 +167,7 @@ void main() {
         }
         app.routes['POST /proxy/agency/sessions'] = (_) => throw const SocketException('offline');
         final offline = app.start() as StationRefused;
-        expect(offline.message, contains('offline'));
+        expect(offline.message, 'Check your internet. Then go back and try again.');
         app.dispose();
       });
     });
@@ -209,11 +210,11 @@ void main() {
         final app = App(async);
         const live = StationElsewhere(sessionId: 'o', campaignId: 'camp-9', campaignName: 'Q3', stateLabel: 'On a call', canLeave: false);
         final refused = app.run(app.controller.leaveOtherAndStart(live, 'camp-1', campaignName: 'Renewals')) as StationRefused;
-        expect(refused.message, startsWith('Finish what you’re doing on Q3'));
+        expect(refused.message, 'Finish the call on Q3 first, then come back here.');
         app.routes['POST /proxy/agency/sessions/o/leave'] = (_) => json(409, {'code': 'agent_on_live_call', 'message': 'A call is live.'});
         const idle = StationElsewhere(sessionId: 'o', campaignId: 'camp-9', campaignName: 'Q3', stateLabel: 'On break', canLeave: true);
         final failed = app.run(app.controller.leaveOtherAndStart(idle, 'camp-1', campaignName: 'Renewals')) as StationRefused;
-        expect(failed.message, 'Q3 is still open — A call is live.');
+        expect(failed.message, 'Q3 is still open. Nothing changed. Try again.');
         app.dispose();
       });
     });
@@ -268,7 +269,7 @@ void main() {
         app.wrapupFrame('att-1', endsAt: '2026-11-01T09:02:00.000Z');
         final v = app.view!;
         expect(v.phase, AgentPhase.wrapup);
-        expect(v.release!.headline, 'Wrap-up');
+        expect(v.release!.headline, 'What happened?');
         expect(v.release!.detail, 'The customer hung up.');
         expect(v.call!.attemptId, 'att-1', reason: 'the panel stays up for the disposition');
         expect(v.wrapup!.endsAt, DateTime.utc(2026, 11, 1, 9, 1));
@@ -357,7 +358,40 @@ void main() {
         app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'paused', 'reason': 'paused_by_supervisor', 'dialing': false, 'message': 'Paused.'});
         expect(app.view!.campaignDialing, isFalse);
         expect(app.view!.campaignMessage, 'Paused.');
+        expect(app.view!.callsStopped, CallsStopped.bySupervisor);
         expect(identical(app.view!.call, call), isTrue);
+        app.dispose();
+      });
+    });
+
+    test('02c\'s reason follows campaign_state.reason: supervisor, the system\'s own pause, a finished list', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        for (final (reason, stopped) in [
+          ('paused_by_supervisor', CallsStopped.bySupervisor),
+          ('stopped_by_supervisor', CallsStopped.bySupervisor),
+          ('auto_paused', CallsStopped.autoPaused),
+          ('list_exhausted', CallsStopped.listFinished),
+          ('something_new', CallsStopped.notStarted),
+        ]) {
+          app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'paused', 'reason': reason, 'dialing': false, 'message': 'x'});
+          expect(app.view!.callsStopped, stopped, reason: reason);
+        }
+        app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'running', 'reason': 'resumed', 'dialing': true, 'message': 'x'});
+        expect(app.view!.callsStopped, isNull, reason: 'dialling again');
+        app.dispose();
+      });
+    });
+
+    test('every ready frame is counted, so My day is read again on each (the my-day contract)', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        final first = app.view!.readyCount;
+        app.readyFrame('available');
+        expect(app.view!.readyCount, first + 1);
+        app.readyFrame('available');
+        expect(app.view!.readyCount, first + 2, reason: 'a reconnect\'s ready, with nothing else changed');
         app.dispose();
       });
     });
@@ -374,7 +408,7 @@ void main() {
             'ended_at': '2026-11-01T08:59:00.000Z',
           },
         });
-        expect(app.view!.missedRelease!.headline, 'While you were away: Wrap-up');
+        expect(app.view!.missedRelease!.headline, 'While your internet was down, the customer hung up.');
         app.controller.dismissMissedRelease();
         expect(app.view!.missedRelease, isNull);
         app.dispose();
@@ -700,7 +734,7 @@ void main() {
       });
     });
 
-    test('a refused presence change shows the server’s sentence, or the console’s fallback', () {
+    test('a refused presence change is said in the station\'s words, keyed on the code (AS15)', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST /proxy/agency/sessions/sess-1/available'] = (_) => json(409, {
@@ -708,12 +742,12 @@ void main() {
               'message': 'Submit a disposition for your last call before going available.',
             });
         app.run(app.controller.goAvailable());
-        expect(app.view!.actionError, 'Submit a disposition for your last call before going available.');
+        expect(app.view!.actionError, 'Save what happened on your last call first.');
         app.controller.dismissActionError();
         expect(app.view!.actionError, isNull);
         app.routes['POST /proxy/agency/sessions/sess-1/available'] = (_) => throw const SocketException('down');
         app.run(app.controller.goAvailable());
-        expect(app.view!.actionError, presenceFailedCopy);
+        expect(app.view!.actionError, noInternetCopy);
         app.dispose();
       });
     });
@@ -795,7 +829,7 @@ void main() {
         app.routes['POST /proxy/agency/attempts/att-1/hangup'] = (_) => json(409, {'code': 'attempt_not_live', 'message': 'x'});
         app.run(app.controller.hangUp());
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/hangup'), hasLength(1));
-        expect(app.view!.actionError, startsWith('We can’t reach this call'));
+        expect(app.view!.actionError, 'We cannot end this call from here. Ask the customer to hang up.');
         app.dispose();
       });
     });
@@ -849,12 +883,48 @@ void main() {
         app.run(app.controller.markDnc(reason: 'asked'));
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc').single.body, {'scope': 'campaign', 'reason': 'asked'});
         expect(app.view!.actionError, isNull);
-        expect(app.view!.dncOutcome,
-            '+919876543210 won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.');
+        // AS9: the station's words, never the number (the campaign may mask it).
+        expect(app.view!.dncOutcome, 'Done. We will not call this number again.');
+        expect(app.view!.dncOutcome, isNot(contains('9876543210')));
         app.routes['POST /proxy/agency/attempts/att-1/dnc'] = (_) => json(403, {'code': 'not_your_attempt', 'message': 'x'});
         app.run(app.controller.markDnc());
-        expect(app.view!.actionError, 'This call has moved on — it isn’t yours to mark any more.');
+        expect(app.view!.actionError, 'This call has moved on. Nothing was changed.');
         expect(app.view!.dncOutcome, isNull);
+        app.dispose();
+      });
+    });
+
+    test('DNC on What happened?: the call that ended, while its outcome is owed (the server takes it)', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST /proxy/agency/attempts/att-1/dnc'] = (_) => json(200, {
+              'campaign_id': 'camp-1',
+              'attempt_id': 'att-1',
+              'contact_id': 'c-att-1',
+              'phone_e164': '+919876543210',
+              'contact_state': 'suppressed',
+              'dnc_recorded': true,
+            });
+        app.run(app.controller.markDnc(attemptId: 'att-1'));
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc'), hasLength(1));
+        expect(app.view!.actionError, isNull);
+        expect(app.view!.dncOutcome, 'Done. We will not call this number again.');
+        // Saved: nothing is owed, so nothing more to mark.
+        app.routes['POST /proxy/agency/attempts/att-1/disposition'] =
+            (_) => json(200, {
+                  'campaign_id': 'camp-1',
+                  'attempt_id': 'att-1',
+                  'contact_id': 'c-att-1',
+                  'disposition_code': 'interested',
+                  'contact_state': 'completed',
+                  'agent_state': 'wrapup',
+                });
+        app.run(app.controller.submitDisposition('interested'));
+        expect(app.view!.dispositionSaved, 'interested');
+        app.run(app.controller.markDnc(attemptId: 'att-1'));
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc'), hasLength(1));
+        expect(app.view!.actionError, dncNeedsCallCopy);
         app.dispose();
       });
     });
@@ -872,7 +942,7 @@ void main() {
               'dnc_recorded': false,
             });
         app.run(app.controller.markDnc());
-        expect(app.view!.dncOutcome, contains('It couldn’t go on'));
+        expect(app.view!.dncOutcome, 'We will not call this customer again from this list. Ask your supervisor to check the number.');
         app.releasedFrame('att-1', requiresDisposition: false);
         app.agentStateFrame('available');
         app.reserved('att-2');
@@ -945,7 +1015,6 @@ void main() {
           app.run(app.controller.submitDisposition('do_not_call'));
           expect(app.view!.dispositionSaved, 'do_not_call');
           expect(app.view!.dncOutcome, suppressOutcomeNotListedCopy);
-          expect(app.view!.dncOutcome, contains('It couldn’t go on this campaign’s Do Not Call list'));
           app.dispose();
 
           final listed = App(async)..start();
@@ -1002,7 +1071,7 @@ void main() {
           app.controller.updateNotes('Wants a quote');
           app.tokens.throws = FirebaseAuthException(code: 'network-request-failed');
           app.run(app.controller.submitDisposition('interested'));
-          expect(app.view!.actionError, const ApiNetworkError('x').userMessage);
+          expect(app.view!.actionError, noInternetCopy);
           expect(app.view!.dispositionSaved, isNull);
           async.elapse(const Duration(seconds: 2));
           expect(app.view!.notes.status, NotesStatus.retrying);
@@ -1354,7 +1423,10 @@ void main() {
         app.routes['POST /proxy/agency/sessions/sess-1/leave'] =
             (_) => json(409, {'code': 'agent_on_live_call', 'message': 'Finish the call first.'});
         expect(app.run(app.controller.leave()), LeaveOutcome.stayed);
-        expect(app.view!.actionError, 'Finish the call first.');
+        expect(app.view!.actionError, 'Finish your call first. Leaving now would cut the customer off.');
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => json(409, {'code': 'something_new', 'message': 'A sentence.'});
+        expect(app.run(app.controller.leave()), LeaveOutcome.stayed);
+        expect(app.view!.actionError, leaveFailedCopy);
         app.dispose();
       });
     });

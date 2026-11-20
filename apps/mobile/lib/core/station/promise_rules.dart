@@ -121,6 +121,29 @@ String formatPromiseAmount(String amount) {
 }
 
 /// `Promised 18 Nov 2026 · 12,500`, or without the amount.
+/// The Full chip's amount: a money fact's parsed value (a decimal string) as the agent would type
+/// it, `12500` or `12500.50`; null when it is not a plain amount.
+String? plainAmount(String decimal) {
+  final m = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(decimal.trim());
+  if (m == null) return null;
+  final whole = m.group(1)!.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+  final frac = (m.group(2) ?? '').padRight(2, '0');
+  return frac == '00' ? whole : '$whole.$frac';
+}
+
+/// The Half chip's amount: half of [decimal], to the paisa (rounded down), as the agent would type
+/// it; null when it is not a plain amount. The console's `halfAmount`.
+String? halfAmount(String decimal) {
+  final plain = plainAmount(decimal);
+  if (plain == null) return null;
+  final parts = plain.split('.');
+  final paise = BigInt.parse(parts[0]) * BigInt.from(100) + BigInt.parse(parts.length > 1 ? parts[1] : '0');
+  final half = paise ~/ BigInt.two;
+  final rupees = half ~/ BigInt.from(100);
+  final rest = (half % BigInt.from(100)).toInt();
+  return rest == 0 ? '$rupees' : '$rupees.${rest.toString().padLeft(2, '0')}';
+}
+
 String formatPromise(String date, String? amount) {
   final head = 'Promised ${formatPromiseDate(date)}';
   return amount == null || amount.trim().isEmpty ? head : '$head · ${formatPromiseAmount(amount)}';

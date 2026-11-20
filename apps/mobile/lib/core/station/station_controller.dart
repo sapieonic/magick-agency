@@ -20,7 +20,6 @@ import '../ring/ring_channel.dart';
 import '../ring/ring_copy.dart';
 import '../ring/ring_rules.dart';
 import '../ring/station_ring.dart';
-import '../softphone/call_labels.dart' show formatDialNumber;
 import '../softphone/call_state.dart';
 import '../softphone/refusal_copy.dart' show refusalBodyOf, softphoneErrorCopy;
 import '../softphone/softphone_api.dart';
@@ -234,6 +233,9 @@ class StationController extends Notifier<StationView?>
   /// reason stands in for a `ready` that states none only once).
   bool _readySeen = false;
 
+  /// `ready` frames this session has had ([StationView.readyCount]).
+  int _readyCount = 0;
+
   // Lifecycle.
   bool _foreground = true;
   SessionStateResponse? _lastStateResponse;
@@ -439,12 +441,12 @@ class StationController extends Notifier<StationView?>
     try {
       await _api.leave(sessionId, accountId: other.accountId);
     } on ApiError catch (e) {
-      if (!_alreadyLeft(e)) return StationRefused(switchFailureCopy(SwitchStage.leave, other.campaignName, errorDetail(e)));
+      if (!_alreadyLeft(e)) return StationRefused(switchFailureCopy(SwitchStage.leave, other.campaignName));
     }
     if (own != null && own.id == sessionId) await _closeSession();
     final result = await start(campaignId, campaignName: campaignName);
     if (result is StationRefused) {
-      return StationRefused(switchFailureCopy(SwitchStage.rejoin, other.campaignName, result.message), code: result.code);
+      return StationRefused(switchFailureCopy(SwitchStage.rejoin, other.campaignName), code: result.code);
     }
     return result;
   }
@@ -466,21 +468,27 @@ class StationController extends Notifier<StationView?>
         break;
     }
     final result = await start(campaignId, campaignName: campaignName);
-    if (result is StationRefused) return StationRefused(softphoneJoinFailedCopy(result.message), code: result.code);
+    if (result is StationRefused) return StationRefused(softphoneJoinFailedCopy, code: result.code);
     return result;
   }
 
   static bool _alreadyLeft(ApiError e) =>
       e is ApiHttpError && (e.status == 404 || e.code == AgencyErrorCode.sessionEnded.wire);
 
+  /// Why the join was refused, in the station's own words keyed on the code (AS15), never the
+  /// server's sentence; or the conflict the pre-flight offers a way out of.
   StationStart _joinRefusal(ApiError e) {
+    if (e is ApiNetworkError) return StationRefused(joinRefusedCopy());
     if (e is! ApiHttpError) return StationRefused(e.userMessage);
     final body = ErrorBody.fromJson(e.body);
-    final message = body.message.trim();
+    StationRefused refused() => StationRefused(
+          joinRefusedCopy(code: body.codeRaw, status: e.status, placeName: body.raw['tenant_name'] as String?),
+          code: body.codeRaw,
+        );
     switch (body.code) {
       case AgencyErrorCode.sessionOnOtherCampaign:
         final c = body.campaignConflict;
-        if (c == null) return StationRefused(message.isEmpty ? joinFailedCopy : message, code: body.codeRaw);
+        if (c == null) return refused();
         final own = _s;
         // The session to leave and the account it is in come together, or
         // not at all (a server older than the fields). Without them only this
@@ -497,20 +505,16 @@ class StationController extends Notifier<StationView?>
         );
       case AgencyErrorCode.sessionOnSoftphone:
         final sp = body.softphoneConflict;
-        if (sp == null) return StationRefused(message.isEmpty ? joinFailedCopy : message, code: body.codeRaw);
+        if (sp == null) return refused();
         return StationOnSoftphone(sessionId: sp.sessionId, accountId: sp.accountId, accountName: sp.accountName);
       case AgencyErrorCode.notStaffed:
-        return StationRefused(message.isEmpty ? notStaffedCopy : message, code: body.codeRaw);
+        return refused();
       case AgencyErrorCode.stationOnOtherDevice:
         // OS3: an automatic resume found the station on another device. Never taken back on
         // the app's own initiative: the agent goes on duty here (which takes it) if they mean to.
         return StationRefused(stationOnOtherDeviceCopy(body.stationOnOtherDevice?.clientKind), code: body.codeRaw);
-      case AgencyErrorCode.sessionInOtherTenant:
-        return StationRefused(message.isEmpty ? sessionInOtherTenantCopy : message, code: body.codeRaw);
-      case AgencyErrorCode.featureDisabled:
-        return StationRefused(message.isEmpty ? featureDisabledCopy : message, code: body.codeRaw);
       default:
-        return StationRefused(e.userMessage, code: body.codeRaw);
+        return refused();
     }
   }
 
@@ -734,6 +738,7 @@ class StationController extends Notifier<StationView?>
     _announceOnReturn = false;
     _upgradeRefused = false;
     _readySeen = false;
+    _readyCount = 0;
     _mapper = StationViewMapper();
     _ringMuted = false;
     _ringCallId = null;
@@ -783,6 +788,7 @@ class StationController extends Notifier<StationView?>
         if (active != null) _carryNotes(active);
         final first = !_readySeen;
         _readySeen = true;
+        _readyCount++;
         // Back from `away_ring`: this is the snapshot that says whether the server kept it.
         final check = _absence.ringOffCheck;
         if (check != null) _absence.ringOffCheck = (back: check.back, absenceStart: check.absenceStart, ready: true);
@@ -861,8 +867,8 @@ class StationController extends Notifier<StationView?>
         if (!isKnownReleaseReason(frame.reason)) _log.warn('unknown release reason', {'reason': frame.reasonRaw});
         _calls.campaignReleased(frame);
         _dispatch(ReleasedAction(frame, at: _now(), retain: _station.live?.attempt));
-      case CampaignStateFrame(:final dialing, :final message):
-        _dispatch(CampaignStateAction(dialing: dialing, message: message));
+      case CampaignStateFrame(:final dialing, :final message, :final reason):
+        _dispatch(CampaignStateAction(dialing: dialing, message: message, reason: reason));
       case StationErrorFrame():
         _log.warn('station error frame', {'code': frame.codeRaw});
         _dispatch(ErrorAction(frame));
@@ -1177,6 +1183,7 @@ class StationController extends Notifier<StationView?>
       awayNoRing: _absence.noRing == null || _absence.ringStopped ? null : RingCopy.blockerWhy(_absence.noRing!),
       dialGapHeld: _dialGapTimer != null,
       help: _helpView(),
+      readyCount: _readyCount,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -2643,7 +2650,7 @@ class StationController extends Notifier<StationView?>
       // tells the agent it did not go through (an outcome left unsaved must
       // never look saved).
       _log.error('station action failed', {'action': kind.name}, e, st);
-      if (identical(_s, s)) _actionError = e is ApiError ? e.userMessage : actionFailedCopy;
+      if (identical(_s, s)) _actionError = stationErrorCopy(e);
     } finally {
       if (identical(_s, s)) {
         _inFlight.remove(kind);
@@ -2671,8 +2678,8 @@ class StationController extends Notifier<StationView?>
           final r = await _api.available(s.id);
           if (_live(s)) _reconcile(r);
         } on ApiError catch (e) {
-          // Shown as received: "Submit a disposition for your last call before going available."
-          if (_live(s)) _actionError = _serverSentence(e) ?? presenceFailedCopy;
+          // The station's words keyed on the code (AS15), never the server's sentence.
+          if (_live(s)) _actionError = e is ApiHttpError ? presenceRefusedCopy(e.code) : stationErrorCopy(e, presenceFailedCopy);
         }
       });
 
@@ -2682,7 +2689,7 @@ class StationController extends Notifier<StationView?>
           final r = await _api.available(s.id);
           if (_live(s)) _reconcile(r);
         } on ApiError catch (e) {
-          if (_live(s)) _actionError = _serverSentence(e) ?? presenceFailedCopy;
+          if (_live(s)) _actionError = e is ApiHttpError ? presenceRefusedCopy(e.code) : stationErrorCopy(e, presenceFailedCopy);
         }
       });
 
@@ -2701,7 +2708,7 @@ class StationController extends Notifier<StationView?>
             _breakReasons = resyncBreakReasons(_breakReasons, allowed);
             _actionError = breakRejectedCopy;
           } else {
-            _actionError = _serverSentence(e) ?? breakFailedCopy;
+            _actionError = stationErrorCopy(e, breakFailedCopy);
           }
         }
       });
@@ -2859,10 +2866,10 @@ class StationController extends Notifier<StationView?>
         } else if (body?.code == AgencyErrorCode.unknownDispositionCode && allowed != null) {
           _catalog = resyncDispositions(_catalog, allowed);
           _actionError = catalogChangedCopy;
-        } else if (body != null) {
-          _actionError = body.message.trim().isNotEmpty ? body.message.trim() : dispositionFailedCopy;
+        } else if (e is ApiHttpError) {
+          _actionError = saveRefusedCopy(body?.codeRaw ?? e.code);
         } else {
-          _actionError = e.userMessage;
+          _actionError = stationErrorCopy(e, saveRefusedCopy(null));
         }
       }
     });
@@ -2942,7 +2949,7 @@ class StationController extends Notifier<StationView?>
               _redialOverride = (attemptId: target, remaining: null);
             }
           }
-          _actionError = redialRefusalCopy(code, _serverSentence(e));
+          _actionError = redialRefusalCopy(code);
         } else if (e is ApiUnauthorized) {
           _actionError = e.userMessage;
         } else {
@@ -2974,7 +2981,11 @@ class StationController extends Notifier<StationView?>
     if (_s == null) return;
     final inbound = _terminal ? null : _station.inboundOnScreen;
     if (inbound != null) return _markInboundDnc(inbound, reason: reason, callId: attemptId);
-    final live = _terminal ? null : _station.live?.attemptId;
+    // The live call, or the one on What happened? while its outcome is owed: the server marks an
+    // attempt after it ended too (`POST /attempts/:id/dnc` checks only that it is this account's),
+    // as the console's What happened? row does.
+    final owed = _station.effectiveState == AgentState.wrapup && _saved?.attemptId != _station.currentAttemptId;
+    final live = _terminal ? null : (_station.live?.attemptId ?? (owed ? _station.currentAttemptId : null));
     if (live == null || (attemptId != null && attemptId != live)) {
       // No call, or not the one the agent confirmed for: the next customer is
       // never marked for the last one's answer.
@@ -2989,7 +3000,7 @@ class StationController extends Notifier<StationView?>
         _log.info('marked do not call', {'recorded': r.dncRecorded});
         if (_live(s) && _station.currentAttemptId == live) _dncOutcome = (attemptId: live, text: dncOutcomeCopy(r));
       } on ApiError catch (e) {
-        if (_live(s) && _station.live?.attemptId == live) _actionError = dncFailureCopy(e);
+        if (_live(s) && _station.currentAttemptId == live) _actionError = dncFailureCopy(e);
       }
     });
   }
@@ -3017,7 +3028,7 @@ class StationController extends Notifier<StationView?>
       } on ApiError catch (e) {
         if (!_live(s)) return;
         if (!_alreadyLeft(e)) {
-          _actionError = _serverSentence(e) ?? e.userMessage;
+          _actionError = e is ApiHttpError ? leaveRefusedCopy(e.code) : stationErrorCopy(e, leaveFailedCopy);
           return;
         }
       }
@@ -3327,11 +3338,7 @@ class StationController extends Notifier<StationView?>
       switch (result) {
         case InboundOk(:final value):
           _log.info('marked do not call', {'recorded': value.dncRecorded});
-          final campaign = value.scope == DncEntryScope.campaign ? call.match?.campaignName : null;
-          _inboundDnc = (
-            callId: call.id,
-            text: inboundDncOutcomeCopy(formatDialNumber(value.phoneE164), campaignName: campaign),
-          );
+          _inboundDnc = (callId: call.id, text: inboundDncOutcomeCopy);
         case InboundRefused(:final refusal):
           _actionError = inboundDncFailedCopy(refusal);
       }

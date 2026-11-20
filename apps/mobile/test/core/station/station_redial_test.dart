@@ -224,7 +224,8 @@ void main() {
         app.routes['POST $_redialPath'] =
             (_) => json(409, {'error': 'Conflict', 'code': 'redial_blocked', 'message': 'Your station is not connected.'});
         app.run(app.controller.redial(attemptId: 'att-1'));
-        expect(app.view!.actionError, 'Your station is not connected.');
+        // The station's words (AS15), never the server's sentence.
+        expect(app.view!.actionError, redialNotAllowedCopy);
 
         app.routes['POST $_redialPath'] =
             (_) => json(409, {'error': 'Conflict', 'code': 'redial_not_allowed', 'message': 'x'});
@@ -661,16 +662,15 @@ void main() {
   });
 
   group('copy', () {
-    test('every redial refusal has words, never a raw code', () {
-      expect(redialRefusalCopy(AgencyErrorCode.redialNotAllowed, 's'), redialNotAllowedCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.redialLimitReached, 's'), redialLimitReachedCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.dispositionAlreadySubmitted, 's'), redialAlreadySavedCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.redialBlockedDnc, 's'), redialBlockedDncCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.redialBlockedCallingHours, 's'), redialBlockedHoursCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.redialBlocked, 'No caller ID.'), 'No caller ID.');
-      expect(redialRefusalCopy(AgencyErrorCode.redialBlocked, null), redialFailedCopy);
-      expect(redialRefusalCopy(AgencyErrorCode.unknown, null), redialFailedCopy);
-      expect(redialRefusalCopy(null, 'Server words.'), 'Server words.');
+    test('every redial refusal has the station\'s words, never a raw code or the server\'s sentence (AS15)', () {
+      expect(redialRefusalCopy(AgencyErrorCode.redialNotAllowed), redialNotAllowedCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.redialLimitReached), redialLimitReachedCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.dispositionAlreadySubmitted), redialAlreadySavedCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.redialBlockedDnc), redialBlockedDncCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.redialBlockedCallingHours), redialBlockedHoursCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.redialBlocked), redialNotAllowedCopy);
+      expect(redialRefusalCopy(AgencyErrorCode.unknown), redialFailedCopy);
+      expect(redialRefusalCopy(null), redialFailedCopy);
     });
   });
 }

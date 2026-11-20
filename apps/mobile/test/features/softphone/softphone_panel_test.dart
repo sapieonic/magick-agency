@@ -433,7 +433,7 @@ void main() {
       expect(h.actions.calls, ['setCallback']);
       expect(h.actions.args['setCallback'], [DateTime(2026, 10, 31, 12, 20)]);
       // A claimed contact goes back to the campaign queue; the note says so.
-      expect(find.text('Goes back to the campaign queue. It may not be you who calls.'), findsOneWidget);
+      expect(find.text('We will call at this time. Another agent may get the call.'), findsOneWidget);
     });
 
     testWidgets('a promise outcome asks for the date and amount, and blocks Save until the date (PT1)', (tester) async {

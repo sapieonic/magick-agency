@@ -8,12 +8,14 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show agentWorkspaceProvider;
 import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/speech/read_aloud.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/performance/performance_controller.dart' show statsClockProvider;
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
@@ -157,12 +159,19 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
 
 /// Records what would be read aloud.
 class FakeReadAloud implements ReadAloud {
-  final said = <String>[];
+  FakeReadAloud({this.available = true});
 
+  /// What [canSpeak] answers: a phone with an engine and a language.
+  final bool available;
+  final said = <String>[];
+  int stops = 0;
+
+  @override
+  Future<bool> canSpeak() async => available;
   @override
   Future<void> speak(String text) async => said.add(text);
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async => stops++;
 }
 
 class SoftphoneHolder extends Notifier<SoftphoneView> {
@@ -340,6 +349,8 @@ Future<StationHarness> pumpStation(
   bool? callLaterComesToMe,
   bool? callLaterGoesToPool,
   void Function()? onMyDayRead,
+  bool readAloudAvailable = true,
+  Map<String, bool> matchedAssigns = const {},
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -360,7 +371,7 @@ Future<StationHarness> pumpStation(
   });
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
-  final readAloudFake = FakeReadAloud();
+  final readAloudFake = FakeReadAloud(available: readAloudAvailable);
   final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
   final softphoneHolder = NotifierProvider<SoftphoneHolder, SoftphoneView>(() => SoftphoneHolder(softphone));
   final availabilityHolder = NotifierProvider<AvailabilityHolder, SoftphoneAvailability>(() => AvailabilityHolder(availability));
@@ -372,6 +383,8 @@ Future<StationHarness> pumpStation(
       stationViewProvider.overrideWith((ref) => ref.watch(holder)),
       stationActionsProvider.overrideWithValue(actions),
       stationClockProvider.overrideWithValue(clock.call),
+      // The reads' clock (the end of the day they count) is the test's too.
+      statsClockProvider.overrideWithValue(clock.call),
       stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
       softphoneHostActionsProvider.overrideWith((ref) => h.host),
       softphoneActionsProvider.overrideWith((ref) => h.softphoneActions),
@@ -385,10 +398,15 @@ Future<StationHarness> pumpStation(
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
       stationAgentNameProvider.overrideWithValue(agentName),
       readAloudProvider.overrideWithValue(readAloudFake),
+      // Answered at once (the device asks the platform once per run).
+      readAloudAvailableProvider.overrideWith((ref) => readAloudAvailable),
       stationMyDayProvider.overrideWith((ref, id) async {
         onMyDayRead?.call();
         return myDay;
       }),
+      // An inbound caller matched to another campaign: that campaign's routing (AS8), by its id.
+      matchedAssignsContactsProvider.overrideWith((ref, id) async => matchedAssigns[id] ?? false),
+      agentWorkspaceProvider.overrideWithValue('u1:t1:a1'),
       stationCallLaterProvider.overrideWith(
         (ref, key) async => CallLaterList(items: callLater, comesToMe: callLaterComesToMe, leftGoesToPool: callLaterGoesToPool),
       ),
@@ -516,6 +534,7 @@ StationView station({
   AgentPhase phase = AgentPhase.available,
   DateTime? phaseSince,
   bool dialing = true,
+  CallsStopped? stopped = CallsStopped.bySupervisor,
   BreakInfo? onBreak,
   BreakInfo? queuedBreak,
   CallView? call,
@@ -536,11 +555,13 @@ StationView station({
   QueueView? queue,
   DialActivityView? dialActivity,
   bool myContactsOffered = false,
+  bool assignsContacts = false,
   List<DispositionOption>? dispositionOptions,
   List<BreakOption> breakOptions = breaks,
   HelpView help = const HelpView(),
   ScriptView? script,
   bool maskPhone = false,
+  int readyCount = 1,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -549,6 +570,7 @@ StationView station({
   phase: phase,
   phaseSince: phaseSince,
   campaignDialing: dialing,
+  callsStopped: dialing ? null : stopped,
   onBreak: onBreak,
   queuedBreak: queuedBreak,
   breakOptions: breakOptions,
@@ -570,9 +592,11 @@ StationView station({
   queue: queue,
   dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
+  assignsContacts: assignsContacts,
   help: help,
   script: script,
   maskPhone: maskPhone,
+  readyCount: readyCount,
 );
 
 const hungUpRelease = ReleaseView(

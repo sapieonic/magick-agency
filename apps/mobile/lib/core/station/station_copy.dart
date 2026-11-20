@@ -20,74 +20,67 @@ final class ReleaseCopy {
   final ReleaseTone tone;
 }
 
+// The station's own words for why a call ended (AS15): keyed on the reason, never the server's
+// `message`. The headline is the band's word on What happened?; the subtext one plain sentence.
 const Map<ReleaseReason, ReleaseCopy> _releaseCopy = {
-  ReleaseReason.completed: ReleaseCopy('Wrap-up', 'Call ended. Pick a disposition.', ReleaseTone.neutral),
-  ReleaseReason.agentHangup: ReleaseCopy('Wrap-up', 'You ended the call.', ReleaseTone.neutral),
-  ReleaseReason.remoteHangup: ReleaseCopy('Wrap-up', 'The customer hung up.', ReleaseTone.neutral),
-  ReleaseReason.noAnswer: ReleaseCopy('No answer', "Nobody picked up. We'll try again later.", ReleaseTone.neutral),
-  ReleaseReason.busy: ReleaseCopy('Line busy', "The line was engaged. We'll try again later.", ReleaseTone.neutral),
-  ReleaseReason.failed:
-      ReleaseCopy("Couldn't connect", "The call didn't go through. We'll try again later.", ReleaseTone.neutral),
-  ReleaseReason.invalid: ReleaseCopy(
-    'Number not usable',
-    "This number can't be dialled, so it's been taken off the list.",
-    ReleaseTone.neutral,
-  ),
+  ReleaseReason.completed: ReleaseCopy('What happened?', 'The call ended. Choose what happened.', ReleaseTone.neutral),
+  ReleaseReason.agentHangup: ReleaseCopy('What happened?', 'You ended the call.', ReleaseTone.neutral),
+  ReleaseReason.remoteHangup: ReleaseCopy('What happened?', 'The customer hung up.', ReleaseTone.neutral),
+  ReleaseReason.noAnswer: ReleaseCopy('No answer', 'Nobody picked up. We will try again later.', ReleaseTone.neutral),
+  ReleaseReason.busy: ReleaseCopy('Line busy', 'The line was busy. We will try again later.', ReleaseTone.neutral),
+  ReleaseReason.failed: ReleaseCopy('Did not connect', 'The call did not go through. We will try again later.', ReleaseTone.neutral),
+  ReleaseReason.invalid: ReleaseCopy('Wrong number', 'This number cannot be called. We will not call it again.', ReleaseTone.neutral),
   ReleaseReason.abandoned: ReleaseCopy(
-    'Call dropped before you got it',
-    "The customer answered but we couldn't connect you. This is logged.",
+    'Did not connect',
+    'The customer picked up, but we could not put them through to you.',
     ReleaseTone.warning,
   ),
-  ReleaseReason.agentDisconnected: ReleaseCopy(
-    'Call lost — your connection dropped',
-    "Check your network. You'll need to go available again.",
-    ReleaseTone.danger,
-  ),
-  ReleaseReason.reservationExpired: ReleaseCopy(
-    'Call released',
-    'The call was reassigned before it went out. Nothing to do.',
-    ReleaseTone.neutral,
-  ),
+  ReleaseReason.agentDisconnected: ReleaseCopy('The call was cut', 'Your internet dropped during the call.', ReleaseTone.danger),
+  ReleaseReason.reservationExpired: ReleaseCopy('Did not connect', 'The call went to someone else. You do not need to do anything.', ReleaseTone.neutral),
   ReleaseReason.campaignPaused: ReleaseCopy(
-    'Campaign paused',
-    'A supervisor paused the campaign. No new calls for now.',
+    'Calls stopped',
+    'Your supervisor has stopped calls for now.',
     ReleaseTone.warning,
   ),
   ReleaseReason.campaignStopped: ReleaseCopy(
-    'Campaign stopped',
-    'This campaign has finished. You can leave the station.',
+    'Calls ended',
+    'Your supervisor has ended calls on this list. You can finish work for today.',
     ReleaseTone.warning,
   ),
   ReleaseReason.supervisorReleased: ReleaseCopy(
-    'A supervisor ended this call',
-    "The call was taken off you. Ask your supervisor if you're unsure.",
+    'Your supervisor ended this call',
+    'Ask your supervisor if you are not sure why.',
     ReleaseTone.warning,
   ),
-  ReleaseReason.orphaned: ReleaseCopy(
-    'Call recovered',
-    'Something went wrong on our side and the call was cleaned up. Nothing you did.',
-    ReleaseTone.neutral,
-  ),
+  ReleaseReason.orphaned: ReleaseCopy('The call ended', 'Something went wrong on our side. It was not you.', ReleaseTone.neutral),
   ReleaseReason.inboundCall: ReleaseCopy(
-    'The customer rang us',
-    'They called in while we were ringing them, so this call was cancelled. Nothing to do.',
+    'The customer called us',
+    'They called while we were calling them, so this call was stopped. You do not need to do anything.',
     ReleaseTone.neutral,
   ),
 };
 
-/// Copy for a release, falling back to the server's own sentence for a reason
-/// this build does not know (expected traffic after a server deploy).
-ReleaseCopy releaseCopy(ReleaseReason reason, String message) =>
-    _releaseCopy[reason] ??
-    ReleaseCopy('Call ended', message.trim().isEmpty ? 'The call ended.' : message.trim(), ReleaseTone.neutral);
+/// The station's words for a release. A reason this build does not know (expected traffic after a
+/// server deploy) gets a plain line, never the server's sentence.
+ReleaseCopy releaseCopy(ReleaseReason reason) =>
+    _releaseCopy[reason] ?? const ReleaseCopy('The call ended', 'The call ended.', ReleaseTone.neutral);
 
 bool isKnownReleaseReason(ReleaseReason reason) => _releaseCopy.containsKey(reason);
 
-/// The one-line account of a release no wrap-up explained: the server's sentence.
-String releaseAccount(String message) => message.trim().isEmpty ? 'The call ended.' : message.trim();
-
-/// Prefix for a release the socket was away for.
-const missedReleasePrefix = 'While you were away';
+/// A call that ended while the internet was down (`ready.missed_release`), said once it is back:
+/// the console's `missedReleaseLine`, one sentence keyed on the reason.
+String missedReleaseCopy(ReleaseReason reason) => switch (reason) {
+      ReleaseReason.remoteHangup => 'While your internet was down, the customer hung up.',
+      ReleaseReason.agentDisconnected => 'While your internet was down, the call was cut.',
+      ReleaseReason.noAnswer ||
+      ReleaseReason.busy ||
+      ReleaseReason.failed ||
+      ReleaseReason.invalid ||
+      ReleaseReason.abandoned ||
+      ReleaseReason.reservationExpired =>
+        'While your internet was down, the last call did not connect.',
+      _ => 'While your internet was down, the last call ended.',
+    };
 
 // ─── States and breaks ──────────────────────────────────────────────────────
 
@@ -115,14 +108,60 @@ const phoneCallBreakLabel = 'Phone call';
 const phoneCallPauseFailedCopy =
     'We couldn’t pause you for your phone call. Take a break, or a customer may be put through while you’re on it.';
 
-const breakRejectedCopy = 'That break reason is no longer available. Pick another.';
-const breakFailedCopy = 'That break could not be started.';
+const breakRejectedCopy = 'You cannot take that break now. Choose another.';
+const breakFailedCopy = 'The break did not start. Try again.';
 const breakAlreadyStartedCopy = 'Your break already started.';
-const cancelBreakFailedCopy = "Couldn't cancel. Try again.";
-const presenceFailedCopy = 'That didn’t go through. Try again in a moment.';
+const cancelBreakFailedCopy = 'The break could not be cancelled. Try again.';
+const presenceFailedCopy = 'That did not go through. Try again in a moment.';
 
 /// Any action that failed in a way nothing more specific covers.
-const actionFailedCopy = 'That didn’t go through. Try again in a moment.';
+const actionFailedCopy = 'That did not go through. Try again in a moment.';
+
+/// An action that got no answer: the internet, most likely.
+const noInternetCopy = 'That did not go through. Check your internet and try again.';
+
+/// A failed action in the station's words: no internet, an ended sign-in (the app's own line), else
+/// [fallback]. Never the server's sentence (AS15): it writes for logs and supervisors.
+String stationErrorCopy(Object error, [String fallback = actionFailedCopy]) => switch (error) {
+      ApiNetworkError() => noInternetCopy,
+      ApiUnauthorized() => error.userMessage,
+      _ => fallback,
+    };
+
+/// Start calls again (or Ready after a break) refused: `POST /sessions/:id/available`, keyed on the
+/// server's code (the console's `presenceRefusedLine`).
+String presenceRefusedCopy(String? code) => switch (code) {
+      'attempt_not_dispositionable' => 'Save what happened on your last call first.',
+      'inbound_call_live' => 'Finish the customer’s call first.',
+      'manual_call_live' => 'Finish your call on the soft phone and save it first.',
+      'session_ended' || 'no_station' => 'Your work was closed. Open today’s work again.',
+      'campaign_not_running' => 'Calls are stopped for this work right now.',
+      'state_changing' => 'One moment. Try again.',
+      'dial_failed' => 'Calls could not start just now. Try again in a moment.',
+      _ => presenceFailedCopy,
+    };
+
+/// Save refused, by code (the console's `saveRefusedLine`). The answer the agent chose stays.
+String saveRefusedCopy(String? code) => switch (code) {
+      'unknown_disposition_code' => 'This list changed. Choose one of these.',
+      'note_required' => 'Write a note for this one.',
+      'datetime_required' => 'Choose when to call again.',
+      'invalid_callback_at' => 'That time has passed. Choose when to call again.',
+      'attempt_not_dispositionable' => 'This call was closed, so it cannot be saved now.',
+      'already_dispositioned' => 'What happened is already saved for this call.',
+      'not_your_attempt' => 'This call has moved on. It is not yours to save.',
+      'session_ended' => 'Your work was closed. Open today’s work again.',
+      _ => 'Not saved. Try again.',
+    };
+
+/// Finish work refused: the work is still open.
+const leaveFailedCopy = 'Your work is still open. Try again.';
+
+/// Finish work refused, keyed on the code: a call still on, else [leaveFailedCopy].
+String leaveRefusedCopy(String? code) => switch (code) {
+      'agent_on_live_call' || 'inbound_call_live' || 'manual_call_live' => 'Finish your call first. Leaving now would cut the customer off.',
+      _ => leaveFailedCopy,
+    };
 
 // ─── Join ───────────────────────────────────────────────────────────────────
 
@@ -130,51 +169,72 @@ bool conflictIsMidCall(AgentState state) =>
     state == AgentState.reserved || state == AgentState.onCall || state == AgentState.wrapup;
 
 String joinConflictRemedy(String campaignName, AgentState state) => conflictIsMidCall(state)
-    ? 'Finish what you’re doing on $campaignName, leave that station, then come back here.'
+    ? 'Finish the call on $campaignName first, then come back here.'
     : 'Leave $campaignName first, then come back here.';
 
 enum SwitchStage { resume, leave, rejoin }
 
-String switchFailureCopy(SwitchStage stage, String campaignName, String? detail) => switch (stage) {
-      SwitchStage.resume => detail != null
-          ? 'Couldn’t reach $campaignName to leave it — $detail'
-          : 'Couldn’t reach $campaignName to leave it. Try again.',
-      SwitchStage.leave => detail != null ? '$campaignName is still open — $detail' : '$campaignName is still open. Try again.',
-      SwitchStage.rejoin => detail != null
-          ? 'Left $campaignName, but couldn’t join this campaign — $detail'
-          : 'Left $campaignName, but couldn’t join this campaign. Try again.',
+/// The one-press switch from another list failed (the console's `switchFailedLine`): reaching that
+/// list, leaving it, or opening this one after leaving it. Says what is true now; never the
+/// server's sentence.
+String switchFailureCopy(SwitchStage stage, String campaignName) => switch (stage) {
+      SwitchStage.resume => 'We could not reach $campaignName. Nothing changed. Try again.',
+      SwitchStage.leave => '$campaignName is still open. Nothing changed. Try again.',
+      SwitchStage.rejoin => 'You left $campaignName, but this work did not open. Go back and open it again.',
     };
 
 /// A server older than the conflict's `session_id` / `account_id`: the app
 /// cannot tell which session to leave, or in which account.
 String leaveOtherUnknownCopy(String campaignName) =>
-    'We can’t close $campaignName from here. Leave it where it’s open (the console or your other phone), then come back here.';
+    'We cannot close $campaignName from here. Finish work where it is open (the computer or your other phone), then come back here.';
 
-const notStaffedCopy = 'You’re not on this campaign’s team. Ask your supervisor to add you.';
-const featureDisabledCopy = 'Calling is switched off for your organisation right now. Ask your supervisor.';
-const joinFailedCopy = 'Could not join the campaign.';
+/// Why today's work did not open (`POST /sessions` refused or failed), keyed on the server's code,
+/// then its status; never the server's sentence (AS15; the console's `joinRefusedLine`).
+/// [placeName] is the other account a `session_in_other_tenant` refusal names, a name and not a
+/// sentence. [status] null: no answer (no internet).
+String joinRefusedCopy({String? code, int? status, String? placeName}) {
+  final place = placeName?.trim();
+  switch (code) {
+    case 'not_staffed':
+      return notStaffedCopy;
+    case 'session_in_other_tenant':
+      return place != null && place.isNotEmpty
+          ? 'You are working in $place. Finish work there first, then come back here.'
+          : 'You are working in another account. Finish work there first, then come back here.';
+    case 'session_on_other_campaign':
+      return 'You are working on another list. Finish work there first, then come back here.';
+    case 'feature_disabled':
+      return featureDisabledCopy;
+    case 'account_scope_required':
+      return 'Open your work again from your home screen.';
+    case 'station_token_unavailable' || 'dial_failed':
+      return 'Calls could not start just now. Go back and try again in a moment.';
+    case 'campaign_not_running':
+      return 'Calls are stopped for this work right now. Ask your supervisor.';
+  }
+  if (status == 404) return 'This work was not found. Ask your supervisor.';
+  if (status == 403) return 'You cannot open this work. Ask your supervisor.';
+  if (status == null) return 'Check your internet. Then go back and try again.';
+  return joinFailedCopy;
+}
+
+const notStaffedCopy = 'You are not on this work. Ask your supervisor to add you.';
+const featureDisabledCopy = 'Calls are turned off for your team. Ask your supervisor.';
+const joinFailedCopy = 'We could not open your work just now. Go back and try again.';
 
 /// OS3: the station is open on another device, and this phone did not take it (an automatic
 /// resume). [holder] is the app that last attached it.
 String stationOnOtherDeviceCopy(ClientKind? holder) => switch (holder) {
-      ClientKind.web => 'Your station is open in the console. Use it there, or go on duty here to move it to this phone.',
-      ClientKind.mobile => 'Your station is open on another phone. Use it there, or go on duty here to move it to this phone.',
-      _ => 'Your station is open on another device. Use it there, or go on duty here to move it to this phone.',
+      ClientKind.web => 'Your work is open on a computer. Work there, or press Start work to bring it to this phone.',
+      ClientKind.mobile => 'Your work is open on another phone. Work there, or press Start work to bring it to this phone.',
+      _ => 'Your work is open on another device. Work there, or press Start work to bring it to this phone.',
     };
 
-/// OS1: the agent is live in another organisation; nothing here can end it.
-const sessionInOtherTenantCopy =
-    'You’re live in another organisation. Leave your station there first: you can be on only one station at a time.';
+const softphoneCallPendingCopy = 'Your soft phone has a call that is not finished. Hang up and save it there, then come back.';
 
-const softphoneCallPendingCopy =
-    'Your soft phone has a call that isn’t finished. Hang up and save its outcome there, then come back to join.';
+const softphoneStillOpenCopy = 'Your soft phone is still open. Try again.';
 
-String softphoneStillOpenCopy(String? detail) =>
-    detail != null && detail.isNotEmpty ? 'Your soft phone is still open — $detail' : 'Your soft phone is still open. Try again.';
-
-String softphoneJoinFailedCopy(String? detail) => detail != null && detail.isNotEmpty
-    ? 'Closed the soft phone, but couldn’t join this campaign — $detail'
-    : 'Closed the soft phone, but couldn’t join this campaign. Try again.';
+const softphoneJoinFailedCopy = 'The soft phone is closed, but your work did not open. Go back and open it again.';
 
 // ─── The soft phone, as the session host says it ────────────────────────────
 
@@ -218,47 +278,40 @@ String softphoneStatusRefusalCopy(SoftphoneErrorCode code, String? serverSentenc
 
 // ─── Call actions ───────────────────────────────────────────────────────────
 
-/// The human detail of a failure, or null when there is none worth quoting.
-String? errorDetail(Object error) => switch (error) {
-      ApiHttpError(:final message) when message.isNotEmpty => message,
-      ApiError() => error.userMessage,
-      _ => null,
-    };
-
+/// End call refused or failed: `POST /attempts/:id/hangup`, keyed on the code (the console's
+/// `hangupFailedLine`). The call is still on.
 String hangupFailureCopy(Object error) {
   final code = error is ApiHttpError ? error.code : null;
-  if (code == AgencyErrorCode.notYourAttempt.wire) return 'This call has moved on — it isn’t yours to end any more.';
-  if (code == AgencyErrorCode.attemptNotLive.wire) {
-    return 'We can’t reach this call to end it. Ask the customer to hang up, then use Wrap-up.';
-  }
-  final detail = errorDetail(error);
-  return detail != null ? 'Couldn’t end the call: $detail. You are still connected.' : 'Couldn’t end the call. You are still connected.';
+  if (code == AgencyErrorCode.notYourAttempt.wire) return 'This call has moved on. You cannot end it from here.';
+  if (code == AgencyErrorCode.attemptNotLive.wire) return 'We cannot end this call from here. Ask the customer to hang up.';
+  if (error is ApiNetworkError) return 'The call did not end. Check your internet. You are still on the call.';
+  return 'The call did not end. You are still on the call. Try again.';
 }
 
+/// Don't call again refused or failed, keyed on the code (the console's `dncFailedLine`). Nothing
+/// was changed.
 String dncFailureCopy(Object error) {
   final code = error is ApiHttpError ? error.code : null;
-  if (code == AgencyErrorCode.notYourAttempt.wire) return 'This call has moved on — it isn’t yours to mark any more.';
-  if (code == 'unknown_attempt') return 'That call has already ended. Nothing was marked.';
-  final detail = errorDetail(error);
-  return detail != null ? 'Couldn’t mark Do Not Call: $detail' : 'Couldn’t mark Do Not Call. Nothing was changed.';
+  if (code == AgencyErrorCode.notYourAttempt.wire) return 'This call has moved on. Nothing was changed.';
+  if (code == 'unknown_attempt') return 'That call has already ended. Nothing was changed.';
+  return 'That did not go through. Nothing was changed. Try again.';
 }
 
-/// Why a campaign entry could not be written, and what that leaves open: the tail of every
-/// `dnc_recorded: false` sentence for this campaign's list (console `DNC_CAMPAIGN_NOT_LISTED`).
-const dncCampaignNotListedCopy =
-    'It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, '
-    'so a new upload could bring it back. Ask an admin to check the number.';
+/// Don't call again went through (campaign scope only: the agent role cannot reach the
+/// workspace-wide list). In the station's words, and never the number (AS9: the campaign may mask
+/// it): the console's `dncDoneLine`. [recorded] false: the number could not go on the list, so
+/// only this customer is stopped and a supervisor should check the number.
+String dncDoneCopy({required bool recorded}) => recorded
+    ? 'Done. We will not call this number again.'
+    : 'We will not call this customer again from this list. Ask your supervisor to check the number.';
 
-/// Campaign scope only: the agent role cannot reach the workspace-wide list.
-String dncOutcomeCopy(DncResponse response) => response.dncRecorded
-    ? '${response.phoneE164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.'
-    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. $dncCampaignNotListedCopy';
+String dncOutcomeCopy(DncResponse response) => dncDoneCopy(recorded: response.dncRecorded);
 
-/// A saved outcome that suppresses (DS8) whose Do Not Call entry could not be written
-/// (`dnc_recorded: false`): only this contact is suppressed (console `SUPPRESS_OUTCOME_NOT_LISTED`).
-const suppressOutcomeNotListedCopy = 'This contact won’t be dialled again. $dncCampaignNotListedCopy';
+/// A saved outcome that stops calling (DS8) whose number could not go on the list
+/// (`dnc_recorded: false`): only this customer is stopped (the console's `savedLine` tail).
+const suppressOutcomeNotListedCopy = 'We will not call this customer again. Ask your supervisor to check the number.';
 
-const dncNeedsCallCopy = 'Available while you are on a call';
+const dncNeedsCallCopy = 'You can do this on a call, or while you choose what happened.';
 
 /// Mark DNC confirmed for a call that is no longer the live one.
 const dncCallChangedCopy = 'That call has ended. Nothing was marked.';
@@ -296,43 +349,37 @@ const Map<DispositionBlock, String> dispositionBlockCopy = {
 };
 
 const catalogChangedCopy = "This campaign's outcomes changed. Pick one of these.";
-const dispositionFailedCopy = 'That disposition could not be saved.';
 const dispositionLostCopy = "The last call's disposition wasn't saved.";
 const noCallForDispositionCopy = 'There is no call to save an outcome for.';
 
 // ─── Wrap-up redial ─────────────────────────────────────────────────────────
 
-const redialNotAllowedCopy = 'Redial isn’t available for this call. Save the outcome.';
-const redialLimitReachedCopy = 'You’ve used all the redials for this call. Save the outcome.';
-const redialAlreadySavedCopy = 'This call’s outcome is already saved, so it can’t be redialled.';
-const redialBlockedDncCopy = 'This number is on a Do Not Call list, so it can’t be redialled. Save the outcome.';
-const redialBlockedHoursCopy =
-    'It’s outside this customer’s calling hours, so they can’t be redialled now. Save the outcome.';
-const redialFailedCopy = 'Couldn’t redial this customer. Save the outcome, or try again.';
+const redialNotAllowedCopy = 'You cannot call this number again now. Choose what happened.';
+const redialLimitReachedCopy = 'No more tries left for this number. Choose what happened.';
+const redialAlreadySavedCopy = 'What happened is already saved for this call.';
+const redialBlockedDncCopy = 'We must not call this number. Choose what happened.';
+const redialBlockedHoursCopy = 'It is too late or too early to call this customer. Choose what happened.';
+const redialFailedCopy = 'That did not go through. Try again, or choose what happened.';
 
-/// No usable answer to the redial (no network, a timeout, a server error): it
-/// may have been placed all the same, so this never says it failed. The
-/// console's words.
-const redialUncertainCopy =
-    'No answer from the server, so the redial may still go through. If no call starts, try again or save the outcome.';
+/// No usable answer to the redial (no network, a timeout, a server error): it may have been
+/// placed all the same, so this never says it failed. The console's words.
+const redialUncertainCopy = 'No answer yet. The call may still start. If it does not, try again or choose what happened.';
 
-/// The redial was placed, and its call has not reached the station in time.
-const redialNotArrivedCopy = 'The redial hasn’t reached your station yet. If no call starts, save the outcome.';
+/// The redial was placed, and its call has not reached the phone in time.
+const redialNotArrivedCopy = 'The call has not come through yet. If no call starts, choose what happened.';
 
 /// The Redial was for a wrap-up that is no longer the one on screen.
-const redialCallChangedCopy = 'That call has moved on. Nothing was redialled.';
+const redialCallChangedCopy = 'That call has moved on. Nothing was called.';
 
-/// Why a redial was refused (`POST /sessions/:id/redial`). Ours for the codes
-/// whose meaning is fixed; the server's sentence for `redial_blocked` (it says
-/// which check failed) and anything else; a plain line when it sent none.
-String redialRefusalCopy(AgencyErrorCode? code, String? serverSentence) => switch (code) {
-      AgencyErrorCode.redialNotAllowed => redialNotAllowedCopy,
+/// Why a redial was refused (`POST /sessions/:id/redial`), keyed on the code (the console's
+/// `redialRefusedLine`); never the server's sentence (AS15).
+String redialRefusalCopy(AgencyErrorCode? code) => switch (code) {
+      AgencyErrorCode.redialNotAllowed || AgencyErrorCode.redialBlocked => redialNotAllowedCopy,
       AgencyErrorCode.redialLimitReached => redialLimitReachedCopy,
       AgencyErrorCode.dispositionAlreadySubmitted || AgencyErrorCode.alreadyDispositioned => redialAlreadySavedCopy,
       AgencyErrorCode.redialBlockedDnc => redialBlockedDncCopy,
       AgencyErrorCode.redialBlockedCallingHours => redialBlockedHoursCopy,
-      AgencyErrorCode.redialBlocked => serverSentence ?? redialFailedCopy,
-      _ => serverSentence ?? redialFailedCopy,
+      _ => redialFailedCopy,
     };
 
 String alreadyRecordedCopy(String? label) =>
@@ -356,8 +403,6 @@ const Map<NotesStatus, String> notesStatusCopy = {
   NotesStatus.failed: 'Not saved to the server. Still on this device — keep the app open.',
   NotesStatus.closed: 'Notes are closed for this call.',
 };
-
-const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
 
 // ─── Lifecycle notifications ────────────────────────────────────────────────
 

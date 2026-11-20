@@ -32,44 +32,21 @@ class AssignmentEntry {
   int get hashCode => Object.hash(canEnter, note, label, tone);
 }
 
+/// What a list is doing, in the console's words (`agentHome.ts`'s `workStatus`): one line, as the
+/// pill. An unknown status says nothing it cannot stand behind (AS1) and keeps the way in.
 AssignmentEntry assignmentEntry(Assignment a) {
   final raw = a.campaignStatusRaw;
   if (raw == null || raw.isEmpty) return const AssignmentEntry(canEnter: true, note: null, label: null, tone: Tone.neutral);
   return switch (a.campaignStatus ?? CampaignStatus.unknown) {
-    CampaignStatus.running =>
-      const AssignmentEntry(canEnter: true, note: 'Calls are going out now.', label: 'Running', tone: Tone.ok),
-    CampaignStatus.draft => const AssignmentEntry(
-        canEnter: true,
-        note: 'Not started yet — your supervisor hasn’t launched it.',
-        label: 'Draft',
-        tone: Tone.neutral,
-      ),
-    CampaignStatus.paused => const AssignmentEntry(
-        canEnter: true,
-        note: 'Paused right now. You can wait at the station for it to resume.',
-        label: 'Paused',
-        tone: Tone.warn,
-      ),
-    CampaignStatus.stopping => const AssignmentEntry(
-        canEnter: true,
-        note: 'Finishing up — no new calls are being made.',
-        label: 'Stopping',
-        tone: Tone.warn,
-      ),
-    CampaignStatus.stopped => const AssignmentEntry(
-        canEnter: false,
-        note: 'Ended by a supervisor. It won’t start again.',
-        label: 'Stopped',
-        tone: Tone.neutral,
-      ),
-    CampaignStatus.completed => const AssignmentEntry(
-        canEnter: false,
-        note: 'Finished — every contact has been dialled.',
-        label: 'Completed',
-        tone: Tone.accent,
-      ),
-    // Shown as itself rather than mapped to a guess.
-    CampaignStatus.unknown => AssignmentEntry(canEnter: true, note: null, label: raw, tone: Tone.neutral),
+    CampaignStatus.running => const AssignmentEntry(canEnter: true, note: null, label: 'Calling is on', tone: Tone.ok),
+    CampaignStatus.paused => const AssignmentEntry(canEnter: true, note: null, label: 'Paused by your supervisor', tone: Tone.warn),
+    CampaignStatus.draft => const AssignmentEntry(canEnter: true, note: null, label: 'Not started yet', tone: Tone.neutral),
+    CampaignStatus.stopping => const AssignmentEntry(canEnter: true, note: null, label: 'Ending now. No new calls.', tone: Tone.warn),
+    CampaignStatus.stopped =>
+      const AssignmentEntry(canEnter: false, note: null, label: 'Ended by your supervisor. No more calls.', tone: Tone.neutral),
+    CampaignStatus.completed =>
+      const AssignmentEntry(canEnter: false, note: null, label: 'Finished. Every customer was called.', tone: Tone.accent),
+    CampaignStatus.unknown => const AssignmentEntry(canEnter: true, note: null, label: null, tone: Tone.neutral),
   };
 }
 

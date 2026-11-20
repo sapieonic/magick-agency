@@ -75,9 +75,9 @@ String inboundHangupFailedCopy(InboundRefusal refusal) =>
 String inboundDncFailedCopy(InboundRefusal refusal) =>
     'We couldn’t add the number to Do Not Call. ${inboundRefusalSentence(refusal)}';
 
-/// After Mark DNC: what the server recorded. [number] is already formatted for display.
-String inboundDncOutcomeCopy(String number, {required String? campaignName}) =>
-    '$number is on the Do Not Call list ${campaignName != null ? 'for $campaignName' : 'for this account'}.';
+/// After Don't call again on an inbound caller: the console's `SIDE_COPY.stoppedCalls`. Never the
+/// number (AS9: the matched campaign may mask it).
+const inboundDncOutcomeCopy = 'We will not call this number again.';
 
 /// Save is pressed while the caller is still on the line.
 const inboundSaveCallLiveCopy = 'Save unlocks when the call ends.';
