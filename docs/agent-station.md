@@ -66,7 +66,9 @@ by the lead's run of lint and the touched packages' suites.
 | Stream | Status | Evidence |
 |---|---|---|
 | F | Merged 2026-11-20 | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
-| C1 | Phases 0–2 merged 2026-11-20 | Console unit 7,906 passed and web-ui 244 on the merged branch; lint clean. Not done: the agent's campaign list as big tiles (`AgentHomePage`); the inbound and soft-phone bodies keep their old look inside the new frame |
+| C1 | Phases 0–2 merged 2026-11-20 | Console unit 7,906 passed and web-ui 244 on the merged branch; lint clean. The two pieces it left are done by C3 and C4 |
+| C3 | Merged 2026-11-20 | The agent's work picker (`AgentHomePage`) as big tiles; join, switch and help refusals in the station's own words; dead copy removed. Console unit 7,845 passed; lint clean |
+| C4 | Merged 2026-11-20 | The inbound call, the station's soft phone and `/dialer/phone` in the station's look; soft-phone and inbound refusals in the station's words; the agent nav's "My work"; no ₹ on promised amounts (PT5, Manas 2026-11-20: "not yet"). Console unit 7,872 passed, web-ui 244, super-admin 514, server unit 10,656 (3 audio-decoder failures, as before); lint clean |
 | M1 | Phases 0–2 merged 2026-11-20 | `flutter analyze` clean; `flutter test` 2152 passed and `agency_wire` 761 on the merged branch. Read aloud and the new fields not yet run on a phone or against a live server |
 | S1 | Merged 2026-11-20 | Server unit 10,656 passed on the merged branch (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 243 (relevant files), wall-clock lane 31; grafana 34; tooling 20; lint clean |
 | S2 | Merged 2026-11-20 | Server unit 10,617 passed on the merged branch (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); domain 364; grafana 34; renderer 94; integration rest 266, wall-clock 5 (relevant files); lint clean |
