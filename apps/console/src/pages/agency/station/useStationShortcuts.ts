@@ -22,7 +22,6 @@ export interface StationShortcutTargets {
   breakMenuRef: RefObject<BreakMenuHandle | null>;
   notesRef: RefObject<HTMLTextAreaElement>;
   /** The old contact panel's field filter (`/`); the redesigned station has none (spec §2). */
-  fieldFilterRef?: RefObject<HTMLInputElement>;
   padRef: RefObject<DispositionPadHandle | null>;
   dncRef: RefObject<DncControlHandle | null>;
 }
@@ -77,7 +76,7 @@ export function useStationShortcuts(
     /** The redesigned station's keys; absent, none of them is bound. */
     screenKeys?: StationScreenKeys;
   },
-  { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef }: StationShortcutTargets,
+  { breakMenuRef, notesRef, padRef, dncRef }: StationShortcutTargets,
 ): void {
   const shortcutStateRef = useLatestRef(state);
   useEffect(() => {
@@ -182,20 +181,6 @@ export function useStationShortcuts(
           notesRef.current?.focus();
         }
         shortcutUsed('n', cons.notesEnabled);
-        return;
-      }
-
-      if (key === '/') {
-        // Focuses the filter input; nothing to enable/disable here — the
-        // box is present at every density and in every call state, so there is
-        // no "refuses" branch the way `C` and `N` have one. Once focus lands
-        // inside the input, `inTextField` above is what stops this branch from
-        // firing again — the second `/` types a literal slash rather than
-        // re-focusing a field that already has focus.
-        if (!fieldFilterRef?.current) return;
-        event.preventDefault();
-        fieldFilterRef.current.focus();
-        shortcutUsed('slash', true);
         return;
       }
 
