@@ -173,12 +173,16 @@ describe('01 Start of day', () => {
 
   it('Enter on a focused button is that button’s, never the main action', async () => {
     await mounted();
-    const more = screen.getByRole('button', { name: 'More' });
+    // A button with no Enter handler of its own: the browser's own activation is its click, so
+    // the page must leave the key alone rather than also press Start work.
+    const plain = document.createElement('button');
+    screen.getByTestId('station-body').appendChild(plain);
     act(() => {
-      more.focus();
-      fireEvent.keyDown(more, { key: 'Enter' });
+      plain.focus();
+      fireEvent.keyDown(plain, { key: 'Enter' });
     });
     expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
+    plain.remove();
   });
 
   it('shows My day from today’s my-stats on Ready: calls and talk time, and nothing it does not have', async () => {
