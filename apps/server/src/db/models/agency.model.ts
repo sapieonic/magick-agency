@@ -475,6 +475,12 @@ export interface AgencyAgentSessionRecord {
   /** Need help: who answered it. */
   help_answered_by: string | null;
   /**
+   * Need help (0059, agent station BE-9): the agent's state when the open request was raised
+   * (`AgencySessionHelp.state_at_raise`); NULL when none is raised, or raised before 0059. Cleared in
+   * every statement that clears `help_raised_at` (`ck_agency_agent_sessions_help_state`).
+   */
+  help_state: AgencyAgentState | null;
+  /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;
    * narrow with `isCampaignSession` rather than asserting non-null.

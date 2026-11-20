@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * tenant context, RBAC, the flag), a real listener socket, Postgres and Redis.
  *
  * Covered: raising Need help on a call (the call it was raised on), again (idempotent), in wrap-up
- * (no call), refused when not on a call; the floor read's `help` (on, cleared, the flag off); every
+ * (no call), while Ready and on a break (BE-9: any state, `state_at_raise`); the floor read's `help` (on, cleared, the flag off); every
  * clearing path with the frames it sends the agent's station and exactly one audit row: a listen
  * going live, a message, the agent's cancel, the session ending, the 15-minute expiry (the raise
  * backdated on the database's clock, the sweep run); messages delivered and stored, `409
@@ -295,7 +295,7 @@ describe('Need help, end to end', () => {
     const first = await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/help`);
     expect(first.statusCode, first.body).toBe(200);
     const help = first.json().help as { raised_at: string; call_id: string };
-    expect(first.json()).toEqual({ session_id: sid, help: { raised_at: expect.any(String), call_id: call.callId } });
+    expect(first.json()).toEqual({ session_id: sid, help: { raised_at: expect.any(String), call_id: call.callId, state_at_raise: 'on_call' } });
     const again = await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/help`);
     expect(again.json()).toEqual(first.json());
     expect(await floorHelp(supervisor, sid)).toEqual(help);
@@ -357,7 +357,7 @@ describe('Need help, end to end', () => {
     await hangUp(call);
     const raised = await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/help`);
     expect(raised.statusCode, raised.body).toBe(200);
-    expect(raised.json().help).toEqual({ raised_at: expect.any(String), call_id: null });
+    expect(raised.json().help).toEqual({ raised_at: expect.any(String), call_id: null, state_at_raise: 'wrapup' });
     const left = await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/leave`);
     expect(left.statusCode, left.body).toBe(200);
     await waitFor('cleared', () => helpFrames(call.station).length >= 1);
@@ -384,13 +384,39 @@ describe('Need help, end to end', () => {
     expect(helpFrames(call.station)).toHaveLength(1);
   });
 
-  it('refused when not on a call or in wrap-up (409 help_not_on_call); nothing written', async () => {
+  it('BE-9: raised while Ready (no call, the state recorded), on the floor; a supervisor\'s message answers it', async () => {
+    // FALSIFIED: with the route's old on-call-or-wrap-up refusal restored, this is 409
+    // help_not_on_call and reds.
     const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, status: 'running', disposition_catalog: JSON.stringify([]) });
     const agent = await user('agent');
     const st = await stationFor(campaign.id as string, agent);
     const res = await http(agent, 'POST', `/proxy/agency/sessions/${st.sessionId}/help`);
-    expect([res.statusCode, res.json().code]).toEqual([409, 'help_not_on_call']);
-    expect(await auditActions(st.sessionId)).toEqual([]);
+    expect(res.statusCode, res.body).toBe(200);
+    const help = res.json().help as { raised_at: string };
+    expect(res.json()).toEqual({ session_id: st.sessionId, help: { raised_at: expect.any(String), call_id: null, state_at_raise: 'available' } });
+    expect(await floorHelp(supervisor, st.sessionId)).toEqual(res.json().help);
+    const msg = await http(supervisor, 'POST', `/proxy/agency/sessions/${st.sessionId}/messages`, { text: 'I am coming to your desk.' });
+    expect(msg.statusCode, msg.body).toBe(201);
+    await waitFor('answered', () => helpFrames(st).length >= 3);
+    expect(helpFrames(st).slice(1)).toEqual([
+      { event: 'help_answered', raised_at: help.raised_at, by_name: supervisor.name, how: 'message' },
+      { event: 'help_cleared', raised_at: help.raised_at, reason: 'answered' },
+    ]);
+    expect(await floorHelp(supervisor, st.sessionId)).toBeNull();
+    expect(await auditActions(st.sessionId)).toEqual(['agency_session.help_answered', 'agency_session.help_raised', 'agency_session.message_sent']);
+  });
+
+  it('BE-9: raised on a break, the state recorded', async () => {
+    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, status: 'running', disposition_catalog: JSON.stringify([]) });
+    const agent = await user('agent');
+    const st = await stationFor(campaign.id as string, agent);
+    const paused = await http(agent, 'POST', `/proxy/agency/sessions/${st.sessionId}/break`, { reason: 'tea' });
+    expect(paused.statusCode, paused.body).toBe(200);
+    const res = await http(agent, 'POST', `/proxy/agency/sessions/${st.sessionId}/help`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().help).toEqual({ raised_at: expect.any(String), call_id: null, state_at_raise: 'break' });
+    const { rows } = await pool().query('SELECT help_state FROM agency_agent_sessions WHERE id = $1', [st.sessionId]);
+    expect(rows[0]).toEqual({ help_state: 'break' });
   });
 
   it('only on the caller\'s own session: a colleague and the supervisor get the uniform 404 on raise and cancel; nothing written', async () => {
@@ -506,7 +532,7 @@ describe('a phone station (LF16): the frames only to one that declared caps=floo
     const sid = call.station.sessionId;
     await hangUp(call);
     const help = (await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/help`)).json().help as { raised_at: string; call_id: null };
-    expect(help).toEqual({ raised_at: expect.any(String), call_id: null });
+    expect(help).toEqual({ raised_at: expect.any(String), call_id: null, state_at_raise: 'wrapup' });
 
     // An older build: `caps=inbound` only. No `ready.help`, and a message has no station to go to.
     const older = await phoneSocket(sid, 'inbound');

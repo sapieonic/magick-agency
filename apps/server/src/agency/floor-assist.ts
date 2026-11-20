@@ -52,6 +52,7 @@ import {
 import {
   AGENCY_HELP_EXPIRY_MS,
   AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS,
+  type AgencyAgentState,
   type AgencyFloorAssistErrorCode,
   type AgencyHelpAnswerHow,
   type AgencyHelpClearedReason,
@@ -99,9 +100,16 @@ export type SupervisorMessageOutcome =
   | { ok: true; id: string; sent_at: Date }
   | { ok: false; code: 'agent_not_live' };
 
-/** The wire shape of an open request. */
-export function toSessionHelp(row: Pick<OpenHelpRow, 'raised_at' | 'call_id'>): AgencySessionHelp {
-  return { raised_at: new Date(row.raised_at).toISOString(), call_id: row.call_id };
+/**
+ * The wire shape of an open request. `state_at_raise` (BE-9) only when the row recorded one (a
+ * request raised before 0059 has none), so the field stays absent rather than null.
+ */
+export function toSessionHelp(row: Pick<OpenHelpRow, 'raised_at' | 'call_id'> & { state?: AgencyAgentState | null }): AgencySessionHelp {
+  return {
+    raised_at: new Date(row.raised_at).toISOString(),
+    call_id: row.call_id,
+    ...(row.state ? { state_at_raise: row.state } : {}),
+  };
 }
 
 type HelpAuditAction =
@@ -129,22 +137,24 @@ export class FloorAssistService {
   // ── Need help ──────────────────────────────────────────────────────────────
 
   /**
-   * The agent raises a request on their own session (the route has checked it is theirs, live, on a
-   * call or in wrap-up). Answers the open request (the one just raised, or the one already open), or
-   * null when the session has left.
+   * The agent raises a request on their own session (the route has checked it is theirs and live;
+   * agent station BE-9, AS5: in any state). `state` is the agent's state now, recorded with the
+   * request (`state_at_raise`). Answers the open request (the one just raised, or the one already
+   * open), or null when the session has left.
    */
-  async raise(session: FloorAssistSession, callId: string | null): Promise<AgencySessionHelp | null> {
+  async raise(session: FloorAssistSession, callId: string | null, state: AgencyAgentState): Promise<AgencySessionHelp | null> {
     const result = await this.deps.repo.raise({
-      sessionId: session.id, tenantId: session.tenant_id, accountId: session.account_id, callId, expiryMs: this.expiryMs,
+      sessionId: session.id, tenantId: session.tenant_id, accountId: session.account_id, callId, state, expiryMs: this.expiryMs,
     });
     if (result.expired) this.cleared(result.expired, 'expired', SYSTEM_AUDIT_ACTOR);
     if (result.raised) {
-      this.safely(() => trackHelpRaised());
+      this.safely(() => trackHelpRaised(state));
       this.audit(session, 'agency_session.help_raised', { actor_type: 'human', user_id: session.agent_user_id }, {
         raised_at: new Date(result.help.raised_at).toISOString(),
         ...(result.help.call_id ? { call_id: result.help.call_id } : {}),
+        state,
       });
-      log.info({ sessionId: session.id, tenantId: session.tenant_id, callId: result.help.call_id }, 'Need help raised');
+      log.info({ sessionId: session.id, tenantId: session.tenant_id, callId: result.help.call_id, state }, 'Need help raised');
     }
     return result.help ? toSessionHelp(result.help) : null;
   }
@@ -403,6 +413,8 @@ export function senderNameForFrame(name: string | null | undefined): string | nu
 /** The refusals' sentences (British English; the console and the app key their own copy off `code`). */
 export const FLOOR_ASSIST_REFUSAL_MESSAGES = {
   floor_assist_disabled: 'Need help and messages to agents are not turned on for this account.',
+  // No longer sent (agent station BE-9: a raise is accepted in any state of a live session); kept
+  // because the code stays in the union for older servers, and the record names every code.
   help_not_on_call: 'You can ask for help during a call, or while you finish one.',
   agent_not_live: 'This agent is not connected to their station, so the message could not be shown. Try again when they are back.',
   message_invalid: `Write a message of 1 to ${AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS} characters.`,

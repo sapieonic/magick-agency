@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
-import { AGENCY_HELP_EXPIRY_MS } from '@magick-agency/contracts/agency';
+import { AGENCY_HELP_EXPIRY_MS, type AgencyAgentState } from '@magick-agency/contracts/agency';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT } from '../setup/factories.js';
 import {
@@ -55,8 +55,8 @@ async function floorHelp(tenantId: string, accountId: string): Promise<string[]>
   return rows.flatMap((r) => (r.help_raised_at !== null && r.session_id !== null ? [r.session_id] : []));
 }
 
-const raise = (s: Session, callId: string | null = null) =>
-  repo.raise({ sessionId: s.id, tenantId: s.tenant_id, accountId: s.account_id, callId, expiryMs: EXPIRY });
+const raise = (s: Session, callId: string | null = null, state: AgencyAgentState = 'on_call') =>
+  repo.raise({ sessionId: s.id, tenantId: s.tenant_id, accountId: s.account_id, callId, state, expiryMs: EXPIRY });
 
 /** Move the session's raise `ms` into the past (the database's clock is the expiry's). */
 async function backdate(s: Session, ms: number): Promise<Date> {
@@ -79,8 +79,11 @@ async function waitForLockWaiters(n: number): Promise<void> {
 
 async function row(s: Session) {
   const { rows } = await pool().query(
-    'SELECT help_raised_at, help_call_id, help_answered_at, help_answered_by FROM agency_agent_sessions WHERE id = $1', [s.id]);
-  return rows[0] as { help_raised_at: Date | null; help_call_id: string | null; help_answered_at: Date | null; help_answered_by: string | null };
+    'SELECT help_raised_at, help_call_id, help_answered_at, help_answered_by, help_state FROM agency_agent_sessions WHERE id = $1', [s.id]);
+  return rows[0] as {
+    help_raised_at: Date | null; help_call_id: string | null; help_answered_at: Date | null; help_answered_by: string | null;
+    help_state: AgencyAgentState | null;
+  };
 }
 
 describe('raise', () => {
@@ -115,9 +118,9 @@ describe('raise', () => {
     const left = await session({ left_at: new Date(), state: 'offline' });
     expect(await raise(left)).toEqual({ raised: false, help: null, expired: null });
     const s = await session();
-    expect(await repo.raise({ sessionId: s.id, tenantId: OTHER_TENANT, accountId: A, callId: null, expiryMs: EXPIRY }))
+    expect(await repo.raise({ sessionId: s.id, tenantId: OTHER_TENANT, accountId: A, callId: null, state: 'on_call', expiryMs: EXPIRY }))
       .toEqual({ raised: false, help: null, expired: null });
-    expect(await repo.raise({ sessionId: s.id, tenantId: T, accountId: OTHER_ACCOUNT, callId: null, expiryMs: EXPIRY }))
+    expect(await repo.raise({ sessionId: s.id, tenantId: T, accountId: OTHER_ACCOUNT, callId: null, state: 'on_call', expiryMs: EXPIRY }))
       .toEqual({ raised: false, help: null, expired: null });
     expect((await row(s)).help_raised_at).toBeNull();
   });
@@ -131,7 +134,7 @@ describe('raise', () => {
     expect(out.raised).toBe(true);
     expect(out.expired).toEqual({
       session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
-      raised_at: old, call_id: call,
+      raised_at: old, call_id: call, state: 'on_call',
     });
     expect(out.help!.raised_at.getTime()).toBeGreaterThan(old.getTime());
     expect(await repo.expireDue(EXPIRY)).toEqual([]);
@@ -153,10 +156,10 @@ describe('the 15-minute expiry, against the database clock', () => {
     const swept = await repo.expireDue(EXPIRY);
     expect(swept).toEqual([{
       session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
-      raised_at: expiredAt, call_id: call,
+      raised_at: expiredAt, call_id: call, state: 'on_call',
     }]);
     expect(raisedAt.getTime()).toBeGreaterThan(expiredAt.getTime());
-    expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
+    expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null, help_state: null });
     expect(await repo.expireDue(EXPIRY)).toEqual([]);
   });
 
@@ -173,9 +176,9 @@ describe('the 15-minute expiry, against the database clock', () => {
       };
       expect(await transitions[first](), first).toEqual({
         session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
-        raised_at: expiredAt, call_id: call, expired: true, ...(first === 'answer' ? { answered_at: null } : {}),
+        raised_at: expiredAt, call_id: call, state: 'on_call', expired: true, ...(first === 'answer' ? { answered_at: null } : {}),
       });
-      expect(await row(s), first).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
+      expect(await row(s), first).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null, help_state: null });
       for (const next of Object.values(transitions)) expect(await next(), first).toBeNull();
       expect(await repo.expireDue(EXPIRY), first).toEqual([]);
     }
@@ -358,10 +361,59 @@ describe('each request ends exactly once', () => {
     const raised = (await raise(s, call)).help!;
     expect(await repo.cancel(s.id, OTHER_TENANT, EXPIRY)).toBeNull();
     expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ session_id: s.id, raised_at: raised.raised_at, call_id: call, expired: false });
-    expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
+    expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null, help_state: null });
     await raise(s);
     expect(await repo.endWithSession(s.id, EXPIRY)).toMatchObject({ session_id: s.id, expired: false });
     expect(await repo.endWithSession(s.id, EXPIRY)).toBeNull();
+  });
+});
+
+describe('the state Need help was raised in (BE-9, 0059)', () => {
+  it('recorded by the raise and kept by an answer and a repeated raise; cleared with help_raised_at by every statement that clears it (cancel, end, expiry, the sweep, an expired answer)', async () => {
+    // FALSIFIED: with `help_state = NULL` dropped from `clearSql` (or from the answer's expired arm),
+    // 0059's CHECK refuses the statement (a state on a request that is not raised) and this reds.
+    const s = await session({ state: 'available' });
+    expect((await raise(s, null, 'available')).help).toMatchObject({ state: 'available' });
+    expect(await row(s)).toMatchObject({ help_state: 'available' });
+    expect((await raise(s, null, 'break')).help).toMatchObject({ state: 'available' });
+    expect(await repo.openForSession(s.id, T, A, EXPIRY)).toMatchObject({ state: 'available' });
+    await repo.answer(s.id, T, randomUUID(), EXPIRY);
+    expect(await row(s)).toMatchObject({ help_state: 'available' });
+    const cleared = { help_raised_at: null, help_call_id: null, help_state: null };
+    await raise(s, null, 'break');
+    expect(await row(s)).toMatchObject({ help_state: 'break', help_answered_at: null });
+    expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ state: 'break', expired: false });
+    expect(await row(s)).toMatchObject(cleared);
+    await raise(s, null, 'offline');
+    expect(await repo.endWithSession(s.id, EXPIRY)).toMatchObject({ state: 'offline' });
+    expect(await row(s)).toMatchObject(cleared);
+    for (const end of ['sweep', 'answer', 'raise'] as const) {
+      await raise(s, null, 'wrapup');
+      await backdate(s, EXPIRY + 1_000);
+      if (end === 'sweep') expect(await repo.expireDue(EXPIRY)).toMatchObject([{ session_id: s.id, state: 'wrapup' }]);
+      if (end === 'answer') expect(await repo.answer(s.id, T, randomUUID(), EXPIRY)).toMatchObject({ expired: true, state: 'wrapup' });
+      if (end === 'raise') {
+        const again = await raise(s, null, 'reserved');
+        expect(again).toMatchObject({ raised: true, help: { state: 'reserved' }, expired: { state: 'wrapup' } });
+        expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ state: 'reserved' });
+      }
+      expect(await row(s), end).toMatchObject(cleared);
+    }
+  });
+
+  it('a request raised before 0059 (no state) reads as none, and clears as before', async () => {
+    const s = await session();
+    await pool().query('UPDATE agency_agent_sessions SET help_raised_at = now() WHERE id = $1', [s.id]);
+    expect(await repo.openForSession(s.id, T, A, EXPIRY)).toMatchObject({ state: null });
+    expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ state: null, expired: false });
+  });
+
+  it('the CHECK refuses a state on a session with no request, and a value outside the six states', async () => {
+    const s = await session();
+    await expect(pool().query(`UPDATE agency_agent_sessions SET help_state = 'available' WHERE id = $1`, [s.id]))
+      .rejects.toMatchObject({ constraint: 'ck_agency_agent_sessions_help_state' });
+    await expect(pool().query(`UPDATE agency_agent_sessions SET help_raised_at = now(), help_state = 'lunch' WHERE id = $1`, [s.id]))
+      .rejects.toMatchObject({ constraint: 'ck_agency_agent_sessions_help_state' });
   });
 });
 
@@ -396,7 +448,7 @@ describe('the floor\'s read', () => {
       });
       expect(res.statusCode, res.body).toBe(200);
       const bySession = new Map((res.json().agents as Array<{ session_id: string; help: unknown }>).map((a) => [a.session_id, a.help]));
-      expect(bySession.get(helped.id)).toEqual({ raised_at: raised.raised_at.toISOString(), call_id: null });
+      expect(bySession.get(helped.id)).toEqual({ raised_at: raised.raised_at.toISOString(), call_id: null, state_at_raise: 'on_call' });
       expect(bySession.get(quiet.id)).toBeNull();
       await repo.cancel(helped.id, T, EXPIRY);
       const after = await app.inject({

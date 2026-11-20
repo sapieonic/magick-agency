@@ -1165,11 +1165,17 @@ export function trackListenTapError(stage: ListenTapErrorStage): void {
 /** Why a Need help request ended (`agency_help_requests_cleared_total`): the contract's `AgencyHelpClearedReason`. */
 export type HelpClearedMetricReason = 'answered' | 'cancelled' | 'expired' | 'session_ended';
 
+/**
+ * The agent's state when they raised Need help (`agency_help_requests_raised_total`'s `state`; agent
+ * station BE-9): the contract's `AgencyAgentState`, six values.
+ */
+export type HelpRaisedMetricState = 'offline' | 'available' | 'reserved' | 'on_call' | 'wrapup' | 'break';
+
 /** How a message to an agent's station went (`agency_supervisor_messages_total`). */
 export type SupervisorMessageResult = 'delivered' | 'agent_not_live';
 
-export const agencyHelpRequestsRaisedTotal = counter(meter, 'agency_help_requests_raised_total', {
-  description: 'Need help requests raised by agents (a repeated raise while one is open is not counted)',
+export const agencyHelpRequestsRaisedTotal = counter<'state'>(meter, 'agency_help_requests_raised_total', {
+  description: 'Need help requests raised by agents, by the agent\'s state when they raised it: offline, available, reserved, on_call, wrapup or break (a repeated raise while one is open is not counted)',
 });
 
 export const agencyHelpRequestsClearedTotal = counter<'reason'>(meter, 'agency_help_requests_cleared_total', {
@@ -1190,9 +1196,9 @@ export const agencySupervisorMessageMarkFailuresTotal = counter(meter, 'agency_s
   description: 'Supervisor messages a station took whose row could not be marked delivered (tried twice): the supervisor was told it was delivered, the audit row says so, and the stored row still reads delivered = false',
 });
 
-/** One request raised. */
-export function trackHelpRaised(): void {
-  agencyHelpRequestsRaisedTotal.inc();
+/** One request raised, in the agent's state at the raise. */
+export function trackHelpRaised(state: HelpRaisedMetricState): void {
+  agencyHelpRequestsRaisedTotal.inc({ state });
 }
 
 /** One request ended, once per request; an answer with how long it waited. */

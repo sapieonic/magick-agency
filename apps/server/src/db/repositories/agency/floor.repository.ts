@@ -46,7 +46,7 @@
  * `test/integration/agency/floor-repository.test.ts` pins the rows on their indexes.
  */
 import { getPool } from '@magick-agency/db';
-import type { AgencyAgentLiveState, AgencyClientKind } from '@magick-agency/contracts/agency';
+import type { AgencyAgentLiveState, AgencyAgentState, AgencyClientKind } from '@magick-agency/contracts/agency';
 import { AGENCY_INBOUND_OUTCOME_LAPSE_MS, type AgencyBreakReason } from '@magick-agency/contracts/agency';
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
@@ -89,6 +89,8 @@ export interface AgencyFloorRow {
   help_raised_at: Date | null;
   /** The call it was raised on; null with no open request, or one raised in wrap-up. */
   help_call_id: string | null;
+  /** The agent's state when it was raised (BE-9, 0059); null with no open request, or one raised before it was recorded. */
+  help_state: AgencyAgentState | null;
 }
 
 /**
@@ -103,7 +105,8 @@ export const FLOOR_ROWS_SQL = `
            s.id, s.agent_user_id, s.campaign_id, s.state, s.state_since, s.break_reason, s.client_kind,
            -- The open Need help (LF4), by the rule every read applies: open and fresh on the database's clock.
            CASE WHEN ${helpOpenSql('$7')} THEN s.help_raised_at END AS help_raised_at,
-           CASE WHEN ${helpOpenSql('$7')} THEN s.help_call_id END AS help_call_id
+           CASE WHEN ${helpOpenSql('$7')} THEN s.help_call_id END AS help_call_id,
+           CASE WHEN ${helpOpenSql('$7')} THEN s.help_state END AS help_state
       FROM agency_agent_sessions s
      WHERE s.tenant_id = $1::uuid AND s.account_id = $2::uuid AND s.left_at IS NULL
      ORDER BY s.agent_user_id, s.joined_at DESC, s.id DESC
@@ -131,7 +134,7 @@ export const FLOOR_ROWS_SQL = `
          COALESCE(ib.outcome_owed, false) AS inbound_outcome_owed,
          EXISTS (SELECT 1 FROM staffed st WHERE st.agent_user_id = o.agent_user_id) AS staffed,
          NULL::timestamptz AS left_at,
-         o.help_raised_at, o.help_call_id
+         o.help_raised_at, o.help_call_id, o.help_state
     FROM open_sessions o
     LEFT JOIN agency_campaigns cam ON cam.id = o.campaign_id AND cam.tenant_id = $1::uuid
     -- The session's unsettled inbound call (on_call, outcome_owed, its captured window): the
@@ -141,7 +144,7 @@ export const FLOOR_ROWS_SQL = `
   SELECT NULL::uuid, st.agent_user_id, NULL::uuid, NULL::varchar, NULL::int, NULL::jsonb,
          'offline'::varchar, NULL::timestamptz, NULL::varchar, NULL::varchar, false, false, true,
          CASE WHEN last.left_at >= $3::timestamptz THEN last.left_at END,
-         NULL::timestamptz, NULL::uuid
+         NULL::timestamptz, NULL::uuid, NULL::varchar
     FROM staffed st
     -- Their last session in the account: sessions of one agent in one tenant never overlap
     -- (uq_agency_agent_live_tenant), so the newest joined is the last to end. The walk goes back

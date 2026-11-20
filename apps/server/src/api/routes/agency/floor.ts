@@ -206,7 +206,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
           : null,
         calls_today: callsTodayByAgent.get(r.agent_user_id) ?? 0,
         left_at: r.left_at ? new Date(r.left_at).toISOString() : null,
-        help: r.help_raised_at ? toSessionHelp({ raised_at: r.help_raised_at, call_id: r.help_call_id }) : null,
+        help: r.help_raised_at ? toSessionHelp({ raised_at: r.help_raised_at, call_id: r.help_call_id, state: r.help_state }) : null,
       };
     });
     const body: CoreFloorResponse = { agents, totals: floorTotals(rows), as_of: now.toISOString() };

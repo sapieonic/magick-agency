@@ -201,8 +201,10 @@
   {
     "name": "agency_help_requests_raised_total",
     "kind": "Counter",
-    "description": "Need help requests raised by agents (a repeated raise while one is open is not counted)",
-    "attributes": []
+    "description": "Need help requests raised by agents, by the agent's state when they raised it: offline, available, reserved, on_call, wrapup or break (a repeated raise while one is open is not counted)",
+    "attributes": [
+      "state"
+    ]
   },
   {
     "name": "agency_inbound_answer_seconds",
