@@ -181,8 +181,8 @@ class CallLaterList {
   /// for this agent; null when the server did not say.
   final bool? leftGoesToPool;
 
-  /// How many are due today.
-  int get todayCount => today ?? items.length;
+  /// How many are still due today (an overdue one is not counted, as my-day's own `today`).
+  int get todayCount => today ?? items.where((i) => !i.overdue).length;
 
   static const _eq = ListEquality<CallLaterItem>();
 

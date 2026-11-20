@@ -121,6 +121,24 @@ void main() {
       expect(find.text('1 call later is left for today (6:00 PM). Another agent will make it.'), findsOneWidget);
     });
 
+    testWidgets('Finish work names the first one still to come, not an overdue one that leads the list', (tester) async {
+      await pumpStation(
+        tester,
+        station(),
+        callLater: [
+          CallLaterItem(at: DateTime(2026, 10, 31, 9), name: 'A', overdue: true),
+          CallLaterItem(at: DateTime(2026, 10, 31, 16, 30), name: 'B'),
+          CallLaterItem(at: DateTime(2026, 10, 31, 18), name: 'C'),
+        ],
+        callLaterGoesToPool: false,
+      );
+      await tapMore(tester, 'leave');
+      expect(
+        tester.widget<Text>(find.byKey(const Key('finish-left-today'))).data,
+        '2 call-laters are left for today (first at 4:30 PM). They wait for you.',
+      );
+    });
+
     testWidgets('02c: calls stopped by the supervisor is No calls right now, slate, and callers can still ring in', (tester) async {
       await pumpStation(tester, station(dialing: false));
       expect(find.byKey(const Key('band-tone-quiet')), findsOneWidget);

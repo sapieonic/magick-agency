@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -577,6 +578,9 @@ class _FinishWorkSheet extends ConsumerWidget {
     final day = id == null ? null : ref.watch(stationMyDayProvider(id)).value;
     final offered = ref.watch(stationViewProvider.select((v) => v?.myContactsOffered ?? false));
     final later = id == null ? null : ref.watch(stationCallLaterProvider((campaignId: id, offered: offered))).value;
+    // The first one still to come: an overdue one leads the list but is not "left for today" (the
+    // console's `FinishCard`).
+    final next = later?.items.firstWhereOrNull((i) => !i.overdue);
     return SingleChildScrollView(
       key: const Key('finish-sheet'),
       padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
@@ -602,10 +606,10 @@ class _FinishWorkSheet extends ConsumerWidget {
               ),
             ],
           ),
-          if (later != null && later.todayCount > 0 && later.items.isNotEmpty) ...[
+          if (later != null && later.todayCount > 0 && next != null) ...[
             const SizedBox(height: Space.md),
             Text(
-              StationCopy.leftForToday(later.todayCount, formatTime12(later.items.first.at), pool: later.leftGoesToPool),
+              StationCopy.leftForToday(later.todayCount, formatTime12(next.at), pool: later.leftGoesToPool),
               key: const Key('finish-left-today'),
               style: text.bodyLarge,
             ),
