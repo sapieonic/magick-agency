@@ -65,12 +65,12 @@ by the lead's run of lint and the touched packages' suites.
 
 | Stream | Status | Evidence |
 |---|---|---|
-| F | Not started | |
-| C1 | Not started | |
-| M1 | Not started | |
-| S1 | Not started | |
-| S2 | Not started | |
-| S3 | Not started | |
+| F | Merged 2026-11-20 | Migrations 0056–0060; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
+| C1 | In progress | |
+| M1 | In progress | |
+| S1 | In progress | |
+| S2 | In progress | |
+| S3 | In progress | |
 | C2 | Not started | |
 
 Nothing here has run on a real phone, a real carrier or with real agents.
