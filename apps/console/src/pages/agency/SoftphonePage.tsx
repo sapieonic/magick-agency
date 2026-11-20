@@ -10,6 +10,7 @@ import {
   switchToSoftphone,
   type SoftphoneSessionOnCampaignRefusal,
   type SoftphoneSessionOnSoftphoneRefusal,
+  type SoftphoneRefusal,
 } from '../../api/softphone';
 import { trackAgencySoftphoneSwitch, trackFeatureGateUnavailable } from '../../analytics/events';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled, useStationMediaFormat } from '../../hooks/useFeatureFlagEnabled';
@@ -34,7 +35,7 @@ import { EscapeLink, JoinFrame, type Who } from '../../components/agency/station
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { useReadAloud } from '../../hooks/useSpeech';
 import { SIDE_COPY, SOFTPHONE_PAGE_COPY } from '../../utils/agency/sideViewCopy';
-import { DOING_WORDS, SOFTPHONE_CLOSE_COPY, STATION_COPY } from '../../utils/agency/stationCopy';
+import { DOING_WORDS, SOFTPHONE_CLOSE_COPY, STATION_COPY, joinRefusedLine } from '../../utils/agency/stationCopy';
 import { brand } from '../../brand';
 import stationStyles from '../../components/agency/station/Station.module.css';
 import side from '../../components/agency/station/SideView.module.css';
@@ -117,7 +118,7 @@ export default function SoftphonePage() {
         )}
       >
         {/* The station's words for the refusal's code; with no answer at all, the internet. */}
-        <p className={stationStyles.fatalLine}>{state.refusal ? refusalCopy(state.refusal) : SOFTPHONE_PAGE_COPY.failedNoAnswer}</p>
+        <p className={stationStyles.fatalLine}>{openRefusedLine(state.refusal)}</p>
       </JoinFrame>
     );
   }
@@ -149,6 +150,19 @@ export default function SoftphonePage() {
       user={user}
     />
   );
+}
+
+/**
+ * Why the soft phone did not open, in the station's words (AS15): `refusalCopy` by the refusal's
+ * code; live in another organisation (OS1) as the station's join says it, naming the place
+ * (`tenant_name`, OS2); with no answer at all, the internet.
+ */
+export function openRefusedLine(refusal: SoftphoneRefusal | null): string {
+  if (refusal === null) return SOFTPHONE_PAGE_COPY.failedNoAnswer;
+  if (refusal.code === 'unknown' && refusal.raw_code === 'session_in_other_tenant') {
+    return joinRefusedLine({ code: 'session_in_other_tenant', status: refusal.status, placeName: refusal.tenant_name ?? null });
+  }
+  return refusalCopy(refusal);
 }
 
 function SoftphoneConsole({

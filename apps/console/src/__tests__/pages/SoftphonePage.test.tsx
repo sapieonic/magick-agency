@@ -581,6 +581,13 @@ describe('/dialer/phone', () => {
       inFrameAndWords();
     });
 
+    it('live in another organisation (OS1): the station’s words, naming it (OS2)', async () => {
+      mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'unknown', raw_code: 'session_in_other_tenant', status: 409, message: SERVER, tenant_name: 'Acme Collections' } });
+      await mount();
+      expect(screen.getByTestId('softphone-failed').textContent).toBe('You are working in Acme Collections. Finish work there first, then come back here.');
+      inFrameAndWords();
+    });
+
     it('open in another account, turned off here, with a close that fails', async () => {
       mocks.flags = new Set();
       const session = { session_id: 'sess-sp', account_id: 'a-2', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
