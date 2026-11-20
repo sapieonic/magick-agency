@@ -500,16 +500,25 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   `agency_inbound_enabled` flag is on: whether the account has a route or a linked number is read
   only with `agency.inbound.write`, so an agent cannot see it, and no read was added for a note.
   The agent app's Phone tab has no such note yet.
-- **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
-  agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
-  disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`
-  reports `break/soft_phone` the soft phone renders in place on the same socket and microphone,
-  with the campaign preselected as the tag and **Return to campaign** in the header (disabled,
-  with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
+- **The station (SP7).** **Dial a number myself** in ⋮ More, or **I dial the number** on Start of
+  day (the redesign, `docs/agent-station.md`). While the agent is reserved, on a call or in wrap-up
+  the switch is queued: a chip "Dial a number myself after this call" with ✕ cancels it. When
+  `agent_state` reports `break/soft_phone` the soft phone renders in place on the same socket and
+  microphone, with the campaign preselected as the tag, in the station's frame and band and in its
+  look (`StationSoftphone`, AS1): **Dial a number** is the number box, a big keypad and Call (faded,
+  with the reason in the station's words, until it can dial), "Save this call to" and "Call from",
+  the call details and My recent calls, with **Back to my calls** bottom right (hidden, with the
+  reason, while a manual call is live or awaiting its outcome) and Finish work in ⋮ More;
+  **Calling** is the station's customer card (the number dialled, and the roster contact's name and
+  facts when the number is on the tag's list), the SP3 warning while ringing, Mute ring and End
+  call held (or `E` twice); **On call** adds Last calls, the note and the call details; **What
+  happened?** is the station's outcome tiles and follow-ups with Save bottom right, faded until it
+  can save, and Don't call again asked first. The keys are the soft phone's. The ordinary End break
   and the station's own shortcuts are suspended. After a reload during a soft-phone break the
   station reads `session.on_softphone` from the bootstrap. A switch or return refused
   `dial_failed` (the agent state store did not take the write) says the agent's status did not
-  change, not that a call was not placed (`refusalCopy`'s `status` context).
+  change, not that a call was not placed (`refusalCopy`'s `status` context). `/dialer/phone` keeps
+  `SoftphoneView`, the three columns above.
 - **Joining a campaign with the soft phone open.** The join's 409 `session_on_softphone` screen
   offers **Close the soft phone and join** (`useStationJoin.closeSoftphoneAndJoin`): it reads the
   soft-phone bootstrap first and closes nothing while a call there is live or owes its outcome
