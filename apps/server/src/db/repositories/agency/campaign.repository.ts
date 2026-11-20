@@ -143,6 +143,10 @@ export class AgencyCampaignRepository {
     inbound_sticky_enabled?: boolean;
     /** Agent station (0056, BE-2). Omitted or null ⇒ NULL, no target. */
     daily_target_calls?: number | null;
+    /** Agent station (0056, AS9). Omitted ⇒ `'full'`, the column DEFAULT. */
+    phone_display?: string;
+    /** Agent station (0056, BE-8), already normalised (`normalizeAgentScript`). Omitted ⇒ `{}`, no script. */
+    agent_script?: unknown;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -177,7 +181,7 @@ export class AgencyCampaignRepository {
     // If you change a default here, change it in the schema too.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
-         (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls)
+         (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls, phone_display, agent_script)
        VALUES ($1,$2,$3,$4,COALESCE($5,'voicelink'),
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
@@ -186,7 +190,7 @@ export class AgencyCampaignRepository {
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
                COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true),
-               $32::integer)
+               $32::integer,COALESCE($33::varchar,'full'),COALESCE($34::jsonb,'{}'::jsonb))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -219,9 +223,12 @@ export class AgencyCampaignRepository {
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
         // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
         input.inbound_sticky_enabled ?? null,
-        // Agent station (0056, BE-2): outside the shared column list, so the retry create's
-        // positions do not move (it copies the parent's itself). NULL: no target.
+        // The agent station's settings (0056): outside the shared column list, so the retry
+        // create's positions do not move (it copies the parent's itself). The target NULL (none),
+        // the number display `'full'` and the script `{}` (none) when omitted: the column DEFAULTs.
         input.daily_target_calls ?? null,
+        input.phone_display ?? null,
+        input.agent_script !== undefined ? JSON.stringify(input.agent_script) : null,
       ],
     );
     return rows[0]!;

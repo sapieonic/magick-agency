@@ -119,11 +119,11 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
     // The create input, key for key, minus `sip_connection_id`.
     expect(Object.keys(input).sort()).toEqual([
       'abandon_announcement_id', 'abandonment_ceiling_pct', 'account_id', 'agent_retry_cooldown_minutes',
-      'agent_retry_rounds', 'allow_agent_retry', 'allow_wrapup_redial',
+      'agent_retry_rounds', 'agent_script', 'allow_agent_retry', 'allow_wrapup_redial',
       'analysis_profile_id', 'assignment_mode', 'callback_fallback', 'callback_owner_grace_minutes',
       'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',
       'created_by', 'daily_target_calls', 'default_timezone', 'disposition_catalog', 'inbound_sticky_enabled', 'name', 'on_unstaff',
-      'outcome_dispositions',
+      'outcome_dispositions', 'phone_display',
       'record_calls', 'retry_policy',
       'telephony_credential_id', 'telephony_provider', 'tenant_id', 'wrapup_auto_return', 'wrapup_seconds',
     ]);
