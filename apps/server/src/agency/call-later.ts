@@ -2,16 +2,20 @@
  * Who booked a contact's call-later, and what the agent's panel says about a call-later coming due
  * (agent station BE-3, BE-4; ruling AS8: routing is unchanged, the booker is only recorded). Pure.
  *
- *  - {@link callbackBookerOf}: the disposition route's decision for the contact's
- *    `callback_booked_by_user_id` / `callback_booked_at` (0057), written by
- *    `AgencyContactRepository.releaseFromDisposition` in the same statement as the contact.
+ *  - {@link callbackBookerOf}: the outcome's decision for the contact's
+ *    `callback_booked_by_user_id` / `callback_booked_at` (0057), written in the same statement as
+ *    the contact: the station's disposition route (`releaseFromDisposition`), the soft phone's
+ *    outcome (`settleFromManual`, the call's agent) and an inbound call's (`settleFromInbound`, the
+ *    agent who answered), and their replays (`rescheduleFromManualReplay`,
+ *    `rescheduleFromInboundReplay`). An inbound callback the customer's own missed call booked
+ *    (`callback_source`, `bookInboundCallback`) never has a booker.
  *  - {@link attemptCallbackOf}: `AgencyReservedAttempt.callback` from the claimed contact, built
  *    with the rest of the panel (`dialer/live-attempt.ts` `buildPanel`).
  *
  * What clears the booker is the contact's next settled call: `chargeAttempt` (a placed dialler
  * call), `settleFromManual` (a placed soft-phone call that held the contact) and
  * `settleFromInbound` (the customer reached on an inbound call), the same writes that clear an
- * inbound callback's `callback_source`. A dial that never went out (`unclaim`) and an our-fault
+ * inbound callback's `callback_source`, unless that call's own outcome books the agent's call-later. A dial that never went out (`unclaim`) and an our-fault
  * redial (`chargeOurFaultAttempt`) keep it, as they keep `callback_source`.
  */
 import type { AgencyAttemptCallback, AgencyDisposition } from '@magick-agency/contracts/agency';

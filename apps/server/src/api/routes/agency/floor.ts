@@ -245,15 +245,21 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
       return reply.code(400).send({ error: 'Bad Request', message: 'The alerts are one account\'s.' });
     }
     const now = new Date();
-    // The stations this process saw go at least the threshold ago (any account's: the read keeps
-    // this account's open sessions among them).
+    // The stations of THIS account this process saw go at least the threshold ago (filtered in
+    // memory by the tenant and account each detach was recorded with: the SQL gets a handful of
+    // ids, never every station that ever went).
     const disconnects = runtime.stationDisconnects;
-    const since = disconnects.disconnectedSince(disconnects.goneSessionIds());
+    const since = disconnects.disconnectedSince(disconnects.goneSessionIds({ tenantId, accountId }));
     const gone = goneLongEnough(since, now);
     const [help, sessions] = await Promise.all([
       agencyFloorAlertsRepository.openHelp(tenantId, accountId, AGENCY_HELP_EXPIRY_MS),
       agencyFloorAlertsRepository.breakOrGoneSessions(tenantId, accountId, gone),
     ]);
+    // The read returns every open session among `gone`: one it left out has ended (however and
+    // wherever it ended), so it is forgotten here, and the memory holds only sessions still open.
+    const open = new Set(sessions.map((s) => s.session_id));
+    const ended = gone.filter((id) => !open.has(id));
+    if (ended.length > 0) disconnects.forgetEnded(ended);
     const goneHere = new Set(gone);
     const connected = await connectedFor(runtime, sessions.filter((s) => goneHere.has(s.session_id)).map((s) => s.session_id));
     // The call each disconnected agent is on (a drop mid-call is held by the deferred hang-up).

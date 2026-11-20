@@ -622,6 +622,8 @@ export function agentFixture(options: AgentFixtureOptions = {}): AgentFixture {
         .map(([reason, seconds]) => ({ reason, label: BREAK_LABELS[reason] ?? reason, seconds }))
         .sort((a, b) => b.seconds - a.seconds),
       drops: dropsTotal,
+      // Agent station (BE-12): three breaks over their limit, 21 minutes over in all.
+      break_overruns: { breaks: 3, seconds_over: 1260 },
     },
     daily: dailyRows,
     timeline,
@@ -687,6 +689,7 @@ function agentDefinitions(self: boolean) {
     { key: 'days_worked', label: 'Days worked', text: 'Days with any logged-in time.' },
     { key: 'first_in_last_out', label: 'First in, last out', text: 'The first and last logged-in moment of each day; a shift running through midnight is split there.' },
     { key: 'drops', label: 'Dropped calls', text: 'Calls reserved to the agent that ended because their station disconnected mid-call.' },
+    { key: 'break_overruns', label: 'Breaks over their limit', text: "Breaks that ran past their reason's time limit, counted when each break ended, and the time past the limit in all. The limit is the one set for the reason when the break ended. Soft-phone time and the app's own pauses never count." },
     { key: 'callbacks_booked', label: 'Callbacks booked', text: 'The agent\'s calls in the window that ended with a callback time set.' },
     { key: 'callbacks_on_time', label: 'Callbacks kept on time', text: 'Of the callbacks the agent booked that were due in the window, those whose follow-up call was dialled no later than 15 minutes after the booked time (an early call counts as on time), whoever dialled it.' },
     { key: 'callbacks_late', label: 'Callbacks kept late', text: 'Callbacks the agent booked, due in the window, whose follow-up call was dialled more than 15 minutes after the booked time.' },

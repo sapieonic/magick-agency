@@ -1,6 +1,7 @@
 import {
   AGENCY_STATION_ALAW8_FRAME_BYTES,
   AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
+  AGENCY_STATION_QUEUE_POOL_CAPABILITY,
   AGENCY_WS_MAX_MESSAGE_BYTES,
   type AgencyStationMediaFormat,
 } from '@magick-agency/contracts/agency';
@@ -87,6 +88,33 @@ export function withStationMediaQuery(url: string, format: AgencyStationMediaFor
     .filter((p) => p !== '' && p !== 'media' && !p.startsWith('media='));
   params.push(`media=${format}`);
   return `${path}?${params.join('&')}${hash}`;
+}
+
+/**
+ * What this console's station declares on its upgrade (`caps=`): `queue_pool` (agent station BE-5,
+ * AS18), so the server sends it a `pool` campaign's queue state ("Nothing due now" and why), which
+ * the redesigned station words for a shared queue. A console tab built before it declares nothing
+ * and is sent none on `pool`. `inbound` and `floor_assist` a console has without declaring them.
+ */
+export const STATION_DECLARED_CAPS = [AGENCY_STATION_QUEUE_POOL_CAPABILITY] as const;
+
+/**
+ * The upgrade URL with this console's capabilities ({@link STATION_DECLARED_CAPS}) as `caps=`,
+ * appended as text as {@link withStationMediaQuery} does, a `caps` already there replaced.
+ */
+export function withStationCapsQuery(url: string): string {
+  const hashAt = url.indexOf('#');
+  const base = hashAt === -1 ? url : url.slice(0, hashAt);
+  const hash = hashAt === -1 ? '' : url.slice(hashAt);
+  const queryAt = base.indexOf('?');
+  const caps = `caps=${STATION_DECLARED_CAPS.join(',')}`;
+  if (queryAt === -1) return `${base}?${caps}${hash}`;
+  const params = base
+    .slice(queryAt + 1)
+    .split('&')
+    .filter((p) => p !== '' && p !== 'caps' && !p.startsWith('caps='));
+  params.push(caps);
+  return `${base.slice(0, queryAt)}?${params.join('&')}${hash}`;
 }
 
 /** `pcm16`: the server normalises every carrier to this before the socket. Hz. */

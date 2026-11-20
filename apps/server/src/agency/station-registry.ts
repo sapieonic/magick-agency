@@ -12,9 +12,10 @@ import {
 } from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { trackStationReconnect } from '@magick-agency/observability/metrics/agency';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
 import { stationCaps } from './station-upgrade.js';
-import { StationDetachTimes, type StationDisconnectsReader } from './station-detach-times.js';
+import { StationDetachTimes, type StationDetachScope, type StationDisconnectsReader } from './station-detach-times.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -56,6 +57,9 @@ interface StationEntry {
   lastSeen: number;
 }
 
+/** A station as `onAttached` tells it: which session, its campaign, and whose. */
+export type StationAttached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'caps'>>;
+
 /** A station as it was when it detached (`onDetached`): who it was, with no socket. */
 export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'caps'>>;
 
@@ -93,8 +97,9 @@ export class StationRegistry implements StationDisconnectsReader {
   private readonly stations = new Map<string, StationEntry>();
   /**
    * Agent station (BE-11): when each session's station went, in memory (`station-detach-times.ts`):
-   * written by {@link detach}, forgotten by {@link attach}. The floor's `disconnected_since` and the
-   * supervisors' `disconnected` alert read it ({@link disconnectedSince}).
+   * written by {@link detach} with the session's tenant and account, forgotten by {@link attach}
+   * (which observes the time to reconnect) and by {@link sessionEnded}. The floor's
+   * `disconnected_since` and the supervisors' `disconnected` alert read it ({@link disconnectedSince}).
    */
   private readonly detachTimes = new StationDetachTimes();
   /** A mobile station's protocol-ping probe, by session: its stop function. See {@link startProbe}. */
@@ -111,7 +116,7 @@ export class StationRegistry implements StationDisconnectsReader {
     return `${this.keyPrefix}agency:station:${sessionId}`;
   }
 
-  private readonly attachListeners = new Set<(entry: { sessionId: string; campaignId: string | null }) => void>();
+  private readonly attachListeners = new Set<(entry: StationAttached) => void>();
 
   /**
    * Be told after every attach. An agent whose `available` lease outlived a dropped
@@ -119,7 +124,7 @@ export class StationRegistry implements StationDisconnectsReader {
    * rehydrate reads the live lease), so the attach itself is the pacing engine's
    * wake-up for it (wired by the runtime). Total: a throwing listener is logged.
    */
-  onAttached(listener: (entry: { sessionId: string; campaignId: string | null }) => void): () => void {
+  onAttached(listener: (entry: StationAttached) => void): () => void {
     this.attachListeners.add(listener);
     return () => { this.attachListeners.delete(listener); };
   }
@@ -168,14 +173,19 @@ export class StationRegistry implements StationDisconnectsReader {
     // superseded socket's pongs must not keep its replacement alive.
     this.stopProbe(entry.sessionId);
     this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
-    this.detachTimes.attached(entry.sessionId);
+    // BE-11: a station that went and came back here: how long it was away (the socket's process
+    // observes it, so with media workers each reconnect is seen once, by the worker).
+    const wentAt = this.detachTimes.attached(entry.sessionId);
+    if (wentAt !== undefined) trackStationReconnect(entry.clientKind, (Date.now() - wentAt) / 1000);
     if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
     log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.caps.has('inbound') },
       'Station socket attached');
     for (const listener of this.attachListeners) {
       try {
-        listener({ sessionId: entry.sessionId, campaignId: entry.campaignId });
+        listener({
+          sessionId: entry.sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId, caps: entry.caps,
+        });
       } catch (err) {
         log.warn({ err, sessionId: entry.sessionId }, 'Station attach listener threw');
       }
@@ -246,7 +256,7 @@ export class StationRegistry implements StationDisconnectsReader {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
-    this.detachTimes.detached(sessionId);
+    this.detachTimes.detached(sessionId, { tenantId: entry.tenantId, accountId: entry.accountId });
     const station: StationDetached = {
       sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
       agentUserId: entry.agentUserId, clientKind: entry.clientKind, caps: entry.caps,
@@ -384,9 +394,33 @@ export class StationRegistry implements StationDisconnectsReader {
     return this.detachTimes.disconnectedSince(sessionIds);
   }
 
-  /** Every session whose station went here and has not come back (the alerts read's candidates). */
-  goneSessionIds(): string[] {
-    return this.detachTimes.goneSessionIds();
+  /** Every session whose station went here and has not come back (the alerts read's candidates), `scope`'s when given. */
+  goneSessionIds(scope?: StationDetachScope): string[] {
+    return this.detachTimes.goneSessionIds(scope);
+  }
+
+  forgetEnded(sessionIds: readonly string[]): void {
+    this.detachTimes.forgetEnded(sessionIds);
+  }
+
+  private readonly endedListeners = new Set<(sessionId: string) => void>();
+
+  /** Be told when a session ends here ({@link sessionEnded}): a media worker tells the primary's directory. Total. */
+  onSessionEnded(listener: (sessionId: string) => void): () => void {
+    this.endedListeners.add(listener);
+    return () => { this.endedListeners.delete(listener); };
+  }
+
+  /**
+   * Agent station (BE-11): the session has ended (left), after its station's detach: its detach time
+   * is forgotten here, and the listeners are told (the primary's directory, over IPC). A session that
+   * ended never attaches again, so nothing else would forget it.
+   */
+  sessionEnded(sessionId: string): void {
+    this.detachTimes.ended(sessionId);
+    for (const listener of this.endedListeners) {
+      try { listener(sessionId); } catch (err) { log.warn({ err, sessionId }, 'Session-ended listener threw'); }
+    }
   }
 
   /**
@@ -704,4 +738,6 @@ const CAPABILITY_FOR_EVENT: ReadonlyMap<AgencyStationServerFrame['event'], Agenc
 const CAPABILITY_REFUSAL_LOG: Readonly<Record<AgencyStationCapability, string>> = {
   inbound: 'Inbound station frame not sent to a station that cannot take inbound calls',
   floor_assist: 'Floor assist station frame not sent to a station that cannot receive it',
+  // No event needs it (a pool campaign's `queue` frame is filtered by pacing, AS18): never logged.
+  queue_pool: 'Pool queue frame not sent to a station that did not declare queue_pool',
 };

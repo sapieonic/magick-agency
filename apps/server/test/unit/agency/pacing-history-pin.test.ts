@@ -108,7 +108,7 @@ function makeStations(owned: string[]) {
     ownerOf: vi.fn(async (id: string) => (owned.includes(id) ? 'r1' : null)),
     broadcast: vi.fn(() => owned.length),
     send: vi.fn(() => true),
-    get: vi.fn((id: string) => (owned.includes(id) ? { campaignId: 'camp-1' } : undefined)),
+    get: vi.fn((id: string) => (owned.includes(id) ? { campaignId: 'camp-1', caps: new Set<string>() } : undefined)),
   };
 }
 

@@ -120,7 +120,7 @@ export async function proxyAgencyMyDayRoutes(app: FastifyInstance, opts: ProxyAg
         deps.callLaters({
           campaignId,
           agentUserId: userId,
-          includeAssigned: ownerModeOf(campaign) !== null,
+          ownerMode: ownerModeOf(campaign) !== null,
           callbackCodes: callbackCodes(campaign.disposition_catalog),
           dueBefore: window.end,
           now,

@@ -91,12 +91,12 @@ export function agentScriptIssues(record: Record<string, unknown>): AgentScriptI
   if (record[FIELD] === undefined) return [];
   const script = asRecord(record[FIELD]);
   if (!script) {
-    return [{ field: FIELD, message: 'agent_script must be an object with an opening line and steps. Send {} for no script.' }];
+    return [{ field: FIELD, message: 'The script must have an opening line and steps. Leave both empty for no script.' }];
   }
   const issues: AgentScriptIssue[] = [];
   for (const key of Object.keys(script)) {
     if (key !== 'opening' && key !== 'steps') {
-      issues.push({ field: `${FIELD}.${key}`, message: `Unknown script field '${key}'. A script has only an opening line and steps.` });
+      issues.push({ field: `${FIELD}.${key}`, message: 'A script has only an opening line and steps.' });
     }
   }
   if (script['opening'] !== undefined) {
@@ -105,7 +105,7 @@ export function agentScriptIssues(record: Record<string, unknown>): AgentScriptI
   const steps = script['steps'];
   if (steps !== undefined) {
     if (!Array.isArray(steps)) {
-      issues.push({ field: `${FIELD}.steps`, message: 'steps must be a list of steps.' });
+      issues.push({ field: `${FIELD}.steps`, message: 'The steps must be a list, one step after another.' });
     } else {
       if (steps.length > AGENCY_SCRIPT_STEPS_MAX) {
         issues.push({ field: `${FIELD}.steps`, message: `A script can have at most ${AGENCY_SCRIPT_STEPS_MAX} steps.` });
@@ -114,11 +114,11 @@ export function agentScriptIssues(record: Record<string, unknown>): AgentScriptI
         const at = `${FIELD}.steps[${i}]`;
         const step = asRecord(raw);
         if (!step) {
-          issues.push({ field: at, message: 'Each step must be an object with its text.' });
+          issues.push({ field: at, message: `Step ${i + 1} must have its words.` });
           return;
         }
         for (const key of Object.keys(step)) {
-          if (key !== 'text') issues.push({ field: `${at}.${key}`, message: `Unknown step field '${key}'. A step has only its text.` });
+          if (key !== 'text') issues.push({ field: `${at}.${key}`, message: `Step ${i + 1} can have only its words.` });
         }
         issues.push(...textIssues(step['text'], `${at}.text`, AGENCY_SCRIPT_STEP_MAX_CHARS, `Step ${i + 1}`));
       });

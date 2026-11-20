@@ -16,6 +16,8 @@ vi.mock('../../../src/agency/pre-dial-gates.js', () => ({
 }));
 
 describe('StationDirectory', () => {
+  const SCOPE = { tenantId: 't-1', accountId: 'a-1' };
+  const st = (sessionId: string, campaignId: string | null, scope = SCOPE) => ({ sessionId, campaignId, ...scope });
   function dir(owner: string | null = null) {
     const broadcast = vi.fn();
     const sendToWorker = vi.fn((_slot: number, _sessionId: string, _frame: unknown) => true);
@@ -26,7 +28,7 @@ describe('StationDirectory', () => {
   it('an agent is dialable only while attached to a live worker; a worker going down drops all of its agents', () => {
     const { d } = dir();
     d.workerUp(0, 'h:mw0:1');
-    d.attached(0, 's1', 'c1', 'h:mw0:1');
+    d.attached(0, st('s1', 'c1'), 'h:mw0:1');
     expect(d.isLocallyOwned('s1')).toBe(true);
     expect(d.get('s1')).toEqual({ campaignId: 'c1', caps: new Set() }); // IB8: never held back for an inbound caller
     d.workerDown(0);
@@ -38,20 +40,29 @@ describe('StationDirectory', () => {
     const { d } = dir();
     d.workerUp(0, 'h:mw0:1');
     d.workerUp(0, 'h:mw0:2'); // restarted
-    d.attached(0, 's1', 'c1', 'h:mw0:1');
+    d.attached(0, st('s1', 'c1'), 'h:mw0:1');
     expect(d.isLocallyOwned('s1')).toBe(false);
-    d.attached(0, 's1', 'c1', 'h:mw0:2');
+    d.attached(0, st('s1', 'c1'), 'h:mw0:2');
     expect(d.isLocallyOwned('s1')).toBe(true);
   });
 
   it('a snapshot replaces what the worker holds', () => {
     const { d } = dir();
     d.workerUp(1, 'r1');
-    d.attached(1, 's1', 'c1', 'r1');
-    d.snapshot(1, 'r1', [{ sessionId: 's2', campaignId: null }]);
+    d.attached(1, st('s1', 'c1'), 'r1');
+    d.snapshot(1, 'r1', [st('s2', null)]);
     expect(d.isLocallyOwned('s1')).toBe(false);
     expect(d.isLocallyOwned('s2')).toBe(true);
     expect(d.countForSlot(1)).toBe(1);
+  });
+
+  it('AS18: the station\'s capabilities as its worker reported them, never inbound (IB8): pacing sends a pool queue frame only to queue_pool', () => {
+    const { d } = dir();
+    d.workerUp(0, 'r0');
+    d.attached(0, { ...st('s1', 'c1'), caps: ['inbound', 'floor_assist', 'queue_pool'] }, 'r0');
+    expect(d.get('s1')).toEqual({ campaignId: 'c1', caps: new Set(['floor_assist', 'queue_pool']) });
+    d.snapshot(0, 'r0', [{ ...st('s1', 'c1'), caps: ['inbound'] }]);
+    expect(d.get('s1')).toEqual({ campaignId: 'c1', caps: new Set() });
   });
 
   it("ownerOf trusts the Redis key only when it names a live replica (a crashed worker's key is no owner)", async () => {
@@ -66,8 +77,8 @@ describe('StationDirectory', () => {
   it('a broadcast goes to every worker and returns the attached count for the campaign', () => {
     const { d, broadcast } = dir();
     d.workerUp(0, 'r0');
-    d.attached(0, 's1', 'c1', 'r0');
-    d.attached(0, 's2', 'c2', 'r0');
+    d.attached(0, st('s1', 'c1'), 'r0');
+    d.attached(0, st('s2', 'c2'), 'r0');
     const frame = { event: 'campaign_state' } as never;
     expect(d.broadcast('c1', frame)).toBe(1);
     expect(broadcast).toHaveBeenCalledWith('c1', frame);
@@ -76,7 +87,7 @@ describe('StationDirectory', () => {
   it("a session's frame goes to the worker holding its station, and nowhere when no live worker does", () => {
     const { d, sendToWorker } = dir();
     d.workerUp(2, 'r2');
-    d.attached(2, 's1', 'c1', 'r2');
+    d.attached(2, st('s1', 'c1'), 'r2');
     const frame = { event: 'queue', campaign_id: 'c1', due: true, reason: null, next_due_at: null } as never;
     expect(d.send('s1', frame)).toBe(true);
     expect(sendToWorker).toHaveBeenCalledWith(2, 's1', frame);
@@ -89,8 +100,8 @@ describe('StationDirectory', () => {
   it("BE-11: remembers when a worker's station went (its detach, or the worker's exit) and forgets it when one attaches again", () => {
     const { d } = dir();
     d.workerUp(0, 'r0');
-    d.attached(0, 's1', 'c1', 'r0');
-    d.attached(0, 's2', 'c1', 'r0');
+    d.attached(0, st('s1', 'c1'), 'r0');
+    d.attached(0, st('s2', 'c1'), 'r0');
     expect(d.disconnectedSince(['s1', 's2'])).toEqual(new Map());
     d.detached(0, 's1');
     expect([...d.disconnectedSince(['s1', 's2']).keys()]).toEqual(['s1']);
@@ -99,9 +110,37 @@ describe('StationDirectory', () => {
     d.workerDown(0);
     expect(d.goneSessionIds().sort()).toEqual(['s1', 's2']);
     d.workerUp(0, 'r0b');
-    d.snapshot(0, 'r0b', [{ sessionId: 's2', campaignId: 'c1' }]);
-    d.attached(0, 's1', 'c1', 'r0b');
+    d.snapshot(0, 'r0b', [st('s2', 'c1')]);
+    d.attached(0, st('s1', 'c1'), 'r0b');
     expect(d.goneSessionIds()).toEqual([]);
+  });
+
+  it('BE-11: a snapshot that no longer lists a station records it gone (a detach the primary missed); one it lists is not', () => {
+    // FALSIFIED: with the snapshot dropping the missing station without a time, s1 is never gone.
+    const { d } = dir();
+    d.workerUp(0, 'r0');
+    d.attached(0, st('s1', 'c1'), 'r0');
+    d.attached(0, st('s2', 'c1'), 'r0');
+    d.snapshot(0, 'r0', [st('s2', 'c1')]);
+    expect(d.goneSessionIds()).toEqual(['s1']);
+    expect(d.goneSessionIds(SCOPE)).toEqual(['s1']);
+    expect(d.isLocallyOwned('s1')).toBe(false);
+  });
+
+  it('BE-11: each detach keeps whose station it was; an ended session (station.ended) and the read\'s forget clear it', () => {
+    const { d } = dir();
+    const other = { tenantId: 't-1', accountId: 'a-2' };
+    d.workerUp(0, 'r0');
+    d.attached(0, st('s1', 'c1'), 'r0');
+    d.attached(0, st('s2', 'c2', other), 'r0');
+    d.attached(0, st('s3', 'c1'), 'r0');
+    d.detached(0, 's1');
+    d.workerDown(0);
+    expect(d.goneSessionIds(SCOPE).sort()).toEqual(['s1', 's3']);
+    expect(d.goneSessionIds(other)).toEqual(['s2']);
+    d.ended('s1');
+    d.forgetEnded(['s2']);
+    expect(d.goneSessionIds()).toEqual(['s3']);
   });
 });
 

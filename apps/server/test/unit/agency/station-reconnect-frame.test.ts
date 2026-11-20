@@ -198,8 +198,8 @@ async function harness(): Promise<Harness> {
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
-async function ready(h: Harness): Promise<any> {
-  const ws = await h.app.injectWS('/api/v1/agency/station/sess-1?token=tok');
+async function ready(h: Harness, query = ''): Promise<any> {
+  const ws = await h.app.injectWS(`/api/v1/agency/station/sess-1?token=tok${query}`);
   await vi.waitFor(() => expect(h.sent.some((f) => f.event === 'ready')).toBe(true));
   ws.terminate();
   return h.sent.find((f) => f.event === 'ready');
@@ -338,15 +338,32 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u-agent'], expect.anything());
   });
 
-  // Agent station BE-5: a pool campaign's reconnect is told the campaign's shared queue.
-  // FALSIFIED: with the attach's old mode gate put back (`campaignId && ownerMode`) this reds.
-  it('carries the campaign\'s shared `queue` on a pool campaign, one probe for the campaign', async () => {
+  // Agent station BE-5: a pool campaign's reconnect is told the campaign's shared queue, but only
+  // by a station that declared `caps=queue_pool` (AS18), a console's included.
+  // FALSIFIED: with the attach's old mode gate put back (`campaignId && ownerMode`) the first reds;
+  // with the capability gate dropped, the second.
+  it('carries the campaign\'s shared `queue` on a pool campaign to a station that declared queue_pool, one probe for the campaign', async () => {
     repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
     const later = new Date(Date.now() + 600_000);
     repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: later, hasNonCallback: false });
-    expect((await ready(h)).queue).toEqual({ due: false, reason: 'callbacks_later', next_due_at: later.toISOString() });
+    expect((await ready(h, '&caps=queue_pool')).queue).toEqual({ due: false, reason: 'callbacks_later', next_due_at: later.toISOString() });
     expect(repos.contact.probeCampaignQueue).toHaveBeenCalledWith('camp-1', []);
     expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
+  });
+
+  it('AS18: a station that did not declare queue_pool (an older console or app) gets no queue on a pool campaign, as before BE-5', async () => {
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: new Date(), hasNonCallback: false });
+    for (const query of ['', '&client=mobile&caps=inbound,floor_assist']) {
+      h.sent.length = 0;
+      expect('queue' in (await ready(h, query)), query).toBe(false);
+    }
+    expect(repos.contact.probeCampaignQueue).not.toHaveBeenCalled();
+    // An owner-mode campaign's queue still reaches every station.
+    h.sent.length = 0;
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
+    repos.contact.probeAgentQueues.mockResolvedValue({ agents: [{ agentUserId: 'u-agent', ownDue: true, ownNextAt: null, ownHasNonCallback: null }], pool: null });
+    expect((await ready(h)).queue).toMatchObject({ due: true });
   });
 
   it('omits it on a soft-phone session, and when the read fails', async () => {
@@ -391,7 +408,7 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     it('on a pool campaign too (BE-5), never on a soft-phone session', async () => {
       repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
       repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(), hasNonCallback: null });
-      await ready(h);
+      await ready(h, '&caps=queue_pool');
       expect(events).toEqual([
         { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
       ]);

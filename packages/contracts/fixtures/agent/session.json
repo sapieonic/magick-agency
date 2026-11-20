@@ -357,7 +357,7 @@
       "deferred_hangup_ms": 8000
     },
     "allow_wrapup_redial": true,
-    "assignment_mode": "pool",
+    "assignment_mode": "preferred",
     "allow_agent_retry": true,
     "queue": {
       "due": false,

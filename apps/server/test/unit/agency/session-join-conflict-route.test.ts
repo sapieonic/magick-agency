@@ -138,6 +138,8 @@ function makeRuntime() {
     stations: {
       send: vi.fn(() => true), attach: vi.fn(), detach: stationDetach, isLocallyOwned: vi.fn(() => true),
       stationPresence: stationPresence,
+      // Agent station (BE-11): a session the join ends elsewhere forgets when its station went.
+      sessionEnded: vi.fn(),
     },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },

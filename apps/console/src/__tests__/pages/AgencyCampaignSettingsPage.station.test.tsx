@@ -170,12 +170,12 @@ describe('Settings › What agents see: the daily target (AS6)', () => {
   });
 
   it('shows the server’s refusal on the field', async () => {
-    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ daily_target_calls: 'daily_target_calls must be a whole number from 1 to 2000, or null for no target.' }));
+    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ daily_target_calls: 'Daily target must be a whole number from 1 to 2,000. Leave it empty for no target.' }));
     renderPage();
     await screen.findByTestId('daily-target');
     fireEvent.change(target(), { target: { value: '50' } });
     save();
-    const message = await screen.findByText(/or null for no target/);
+    const message = await screen.findByText(/Leave it empty for no target/);
     expect(target().getAttribute('aria-describedby')).toContain(message.closest('p')!.id);
   });
 });
@@ -376,12 +376,12 @@ describe('the pictures on outcomes and break reasons (BE-13)', () => {
 
   it('shows a refused picture on its break reason’s row', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ break_reasons: [{ code: 'tea', label: 'Tea' }, { code: 'lunch', label: 'Lunch' }] }));
-    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ 'break_reasons[1].icon': 'icon must be one of the tile pictures.' }));
+    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ 'break_reasons[1].icon': 'Choose one of the tile pictures, or no picture.' }));
     renderPage();
     fireEvent.click(await screen.findByTestId('break-icon-lunch'));
     fireEvent.click(screen.getByTestId('tile-icon-option-lunch'));
     save();
-    const message = await screen.findByText('icon must be one of the tile pictures.');
+    const message = await screen.findByText('Choose one of the tile pictures, or no picture.');
     expect(screen.getByTestId('break-limit-row-lunch').contains(message)).toBe(true);
   });
 });

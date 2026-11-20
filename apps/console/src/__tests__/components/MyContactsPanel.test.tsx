@@ -103,8 +103,12 @@ describe('the number, as the station shows it (AS9)', () => {
     expect(screen.getByTestId('my-phone-c-due').textContent).toBe('+91 98000 00001');
   });
 
-  it('masked on a campaign that masks it: the rows, the retry ticks and the calling-hours note', async () => {
-    renderPanel({ phoneDisplay: 'masked', queue: { due: false, reason: 'outside_calling_hours', next_due_at: null } });
+  it('masked from the rows when their campaign masks it (the server\'s phone_display): the rows, the retry ticks and the calling-hours note', async () => {
+    // FALSIFIED: with the panel ignoring the row's `phone_display`, the numbers show in full and this reds.
+    mocks.listMyContacts.mockResolvedValue({
+      rows: [DUE, MISSED, LATE_HOURS].map((r) => ({ ...r, phone_display: 'masked' as const })), next_cursor: 'cur-2', limit: 25,
+    });
+    renderPanel({ queue: { due: false, reason: 'outside_calling_hours', next_due_at: null } });
     await screen.findByTestId('my-row-c-due');
     expect(screen.getByTestId('my-phone-c-due').textContent).toBe('98••• ••001');
     expect(screen.getByLabelText('Include 98••• ••002 in the retry')).toBeTruthy();

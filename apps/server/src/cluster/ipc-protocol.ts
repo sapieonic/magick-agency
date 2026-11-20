@@ -14,7 +14,7 @@
  * Plain JSON: ids, numbers, strings, and records whose dates the decoder revives. Never a
  * callback, a class instance or a socket's audio. No media frame ever crosses IPC.
  */
-import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CAPABILITIES, type AgencyStationCapability, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import { parsePacingInvalidationEvent, type PacingInvalidationEvent } from '../agency/pacing/invalidation-bus.js';
 import { parseCacheInvalidation, type CacheInvalidation } from '../cache/cache-invalidation.js';
 import type { DialCommand } from '../agency/dial-dispatcher.js';
@@ -220,9 +220,22 @@ export function parseHealthBody(raw: unknown): HealthBody | null {
 
 // ─── Media worker bodies ────────────────────────────────────────────────────
 
-export interface StationAttachedBody { sessionId: string; campaignId: string | null; replicaId: string }
+export interface StationAttachedBody {
+  sessionId: string;
+  campaignId: string | null;
+  tenantId: string;
+  accountId: string;
+  /** The station's capabilities (known values only, `AGENCY_STATION_CAPABILITIES`). */
+  caps: AgencyStationCapability[];
+  replicaId: string;
+}
 export interface StationDetachedBody { sessionId: string }
-export interface StationSnapshotBody { replicaId: string; sessions: Array<{ sessionId: string; campaignId: string | null }> }
+/** A worker's session ended (left): the primary forgets its detach time (agent station BE-11). */
+export interface StationEndedBody { sessionId: string }
+export interface StationSnapshotBody {
+  replicaId: string;
+  sessions: Array<{ sessionId: string; campaignId: string | null; tenantId: string; accountId: string; caps: AgencyStationCapability[] }>;
+}
 export interface StationBroadcastBody { campaignId: string; frame: AgencyStationServerFrame }
 export interface StationSendBody { sessionId: string; frame: AgencyStationServerFrame }
 export interface PacingRevokeBody { campaignId: string | null; upTo: number }
@@ -284,19 +297,35 @@ export type CallLeaseBody = { op: 'held'; lease: CallLease } | { op: 'released';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const nullableId = (v: unknown): v is string | null => v === null || isId(v);
 
+/** A station's capabilities: an array of strings, the known ones kept (an unknown one is ignored, as on the upgrade). */
+function parseCapsList(v: unknown): AgencyStationCapability[] | null {
+  if (!Array.isArray(v) || v.length > 16 || !v.every((c) => typeof c === 'string')) return null;
+  return AGENCY_STATION_CAPABILITIES.filter((c) => (v as string[]).includes(c));
+}
 export function parseStationAttached(raw: unknown): StationAttachedBody | null {
-  if (!isRecord(raw) || !isId(raw['sessionId']) || !nullableId(raw['campaignId']) || !isId(raw['replicaId'])) return null;
-  return { sessionId: raw['sessionId'], campaignId: raw['campaignId'], replicaId: raw['replicaId'] };
+  if (!isRecord(raw) || !isId(raw['sessionId']) || !nullableId(raw['campaignId']) || !isId(raw['replicaId'])
+    || !isId(raw['tenantId']) || !isId(raw['accountId'])) return null;
+  const caps = parseCapsList(raw['caps']);
+  if (!caps) return null;
+  return {
+    sessionId: raw['sessionId'], campaignId: raw['campaignId'], tenantId: raw['tenantId'], accountId: raw['accountId'],
+    caps, replicaId: raw['replicaId'],
+  };
 }
 export function parseStationDetached(raw: unknown): StationDetachedBody | null {
+  return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
+}
+export function parseStationEnded(raw: unknown): StationEndedBody | null {
   return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
 }
 export function parseStationSnapshot(raw: unknown): StationSnapshotBody | null {
   if (!isRecord(raw) || !isId(raw['replicaId']) || !Array.isArray(raw['sessions'])) return null;
   const sessions: StationSnapshotBody['sessions'] = [];
   for (const s of raw['sessions']) {
-    if (!isRecord(s) || !isId(s['sessionId']) || !nullableId(s['campaignId'])) return null;
-    sessions.push({ sessionId: s['sessionId'], campaignId: s['campaignId'] });
+    if (!isRecord(s) || !isId(s['sessionId']) || !nullableId(s['campaignId']) || !isId(s['tenantId']) || !isId(s['accountId'])) return null;
+    const caps = parseCapsList(s['caps']);
+    if (!caps) return null;
+    sessions.push({ sessionId: s['sessionId'], campaignId: s['campaignId'], tenantId: s['tenantId'], accountId: s['accountId'], caps });
   }
   return { replicaId: raw['replicaId'], sessions };
 }
@@ -475,6 +504,8 @@ export interface IpcEventMap {
   'cache.invalidate': CacheInvalidation;
   'station.attached': StationAttachedBody;
   'station.detached': StationDetachedBody;
+  /** Media worker → primary: a session ended (agent station BE-11: its detach time is forgotten). */
+  'station.ended': StationEndedBody;
   'station.snapshot': StationSnapshotBody;
   'station.broadcast': StationBroadcastBody;
   'station.send': StationSendBody;
@@ -515,6 +546,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'cache.invalidate': parseCacheInvalidation,
   'station.attached': parseStationAttached,
   'station.detached': parseStationDetached,
+  'station.ended': parseStationEnded,
   'station.snapshot': parseStationSnapshot,
   'station.broadcast': parseStationBroadcast,
   'station.send': parseStationSend,

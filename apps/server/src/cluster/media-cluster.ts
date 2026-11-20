@@ -170,8 +170,11 @@ export class MediaCluster implements WsHandoffTarget {
     channel.onEvent('ready', (body) => {
       if (body.role === 'media' && body.slot === slot && body.replicaId) this.directory.workerUp(slot, body.replicaId);
     });
-    channel.onEvent('station.attached', (b) => this.directory.attached(slot, b.sessionId, b.campaignId, b.replicaId));
+    channel.onEvent('station.attached', (b) => this.directory.attached(slot, {
+      sessionId: b.sessionId, campaignId: b.campaignId, tenantId: b.tenantId, accountId: b.accountId, caps: b.caps,
+    }, b.replicaId));
     channel.onEvent('station.detached', (b) => this.directory.detached(slot, b.sessionId));
+    channel.onEvent('station.ended', (b) => this.directory.ended(b.sessionId));
     channel.onEvent('station.snapshot', (b) => this.directory.snapshot(slot, b.replicaId, b.sessions));
     channel.onEvent('pacing.invalidate', (ev) => publishPacingInvalidation(ev));
     channel.onEvent('cache.invalidate', (ev) => deliverCacheInvalidation(ev));

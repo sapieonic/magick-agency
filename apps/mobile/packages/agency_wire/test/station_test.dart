@@ -522,6 +522,13 @@ void main() {
       expect(StationCapability.floorAssist.wire, 'floor_assist');
       expect(StationCapability.queryValue([StationCapability.floorAssist, StationCapability.inbound]), 'inbound,floor_assist');
       expect(StationCapability.queryValue([StationCapability.floorAssist]), 'floor_assist');
+      // AS18: the redesigned station also declares queue_pool (a pool campaign's queue state).
+      expect(StationCapability.queuePool.wire, 'queue_pool');
+      expect(StationCapability.fromWire('queue_pool'), StationCapability.queuePool);
+      expect(
+        StationCapability.queryValue([StationCapability.queuePool, StationCapability.floorAssist, StationCapability.inbound]),
+        'inbound,floor_assist,queue_pool',
+      );
     });
   });
 

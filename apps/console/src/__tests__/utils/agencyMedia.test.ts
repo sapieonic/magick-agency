@@ -8,6 +8,7 @@ import {
   isSendableAlawMessage,
   readAgencyMediaPayload,
   uplinkFrameFormat,
+  withStationCapsQuery,
   withStationMediaQuery,
 } from '../../utils/agencyMedia';
 import { AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
@@ -118,6 +119,18 @@ describe('the agency station audio wire format', () => {
       expect(() => readAgencyMediaPayload(frame)).not.toThrow();
       expect(readAgencyMediaPayload(frame)).toBeNull();
     });
+  });
+});
+
+describe('caps=queue_pool (agent station AS18)', () => {
+  it('the station declares it, after the token, the token untouched; a caps already there is replaced', () => {
+    const token = 'a+b/c=d%2Be';
+    expect(withStationCapsQuery(`/proxy/agency/station/s1?token=${token}`)).toBe(`/proxy/agency/station/s1?token=${token}&caps=queue_pool`);
+    expect(withStationCapsQuery('/s')).toBe('/s?caps=queue_pool');
+    expect(withStationCapsQuery('/s?caps=inbound&token=t#x')).toBe('/s?token=t&caps=queue_pool#x');
+    // With the format after it: the URL the console's station opens.
+    expect(withStationMediaQuery(withStationCapsQuery('/proxy/agency/station/s1?token=t'), 'alaw8'))
+      .toBe('/proxy/agency/station/s1?token=t&caps=queue_pool&media=alaw8');
   });
 });
 

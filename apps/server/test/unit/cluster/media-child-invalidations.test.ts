@@ -35,7 +35,7 @@ function start() {
   const app = { close: vi.fn(async () => {}), server: {} };
   const runtime = {
       replicaId: 'h:mw0:1',
-      stations: { onAttached: vi.fn(), onDetached: vi.fn(), all: () => [] },
+      stations: { onAttached: vi.fn(), onDetached: vi.fn(), onSessionEnded: vi.fn(), all: () => [] },
       stopShard: vi.fn(async () => {}),
       listen: {
         shutdown: vi.fn(async () => {}), revokeUser: vi.fn(async () => 0), endSessions: vi.fn(async (_ids: string[], _reason: string) => 0),

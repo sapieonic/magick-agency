@@ -153,7 +153,7 @@ describe('PATCH /proxy/agency/campaigns/:id — agent_script (BE-8)', () => {
     ['a step of 201 characters', { steps: [{ text: 'a'.repeat(201) }] }, 'agent_script.steps[0].text',
       'Step 1 must be 1 to 200 characters.'],
     ['not an object', 'Namaste', 'agent_script',
-      'agent_script must be an object with an opening line and steps. Send {} for no script.'],
+      'The script must have an opening line and steps. Leave both empty for no script.'],
   ])('refuses %s with a 400 naming the field, and writes nothing', async (_why, script, field, message) => {
     const id = await campaignAt('running', { agent_script: JSON.stringify(SCRIPT_TRIMMED) });
     const res = await patch(id, { agent_script: script });
@@ -214,7 +214,7 @@ describe('PATCH /proxy/agency/campaigns/:id — context_display.roles and .types
     expect(res.statusCode, res.body).toBe(400);
     expect(res.json().details).toEqual({
       'context_display.roles.name': "'aadhaar' is hidden from agents, so it cannot be the customer's name. Show the column first.",
-      'context_display.types.City': "How to read 'City' must be one of: text, money, date.",
+      'context_display.types.City': "Choose how to read 'City': as text, money or a date.",
     });
     expect((await stored(id)).context_display).toEqual({});
   });

@@ -23,8 +23,9 @@ import {
  *    this server must still get a station, and a 1008 is terminal for the app), and a
  *    repeated `caps` parameter is the union. `inbound`: whether a mobile station can be put
  *    through to inbound callers and sent their frames;
- *    `floor_assist`: whether it is sent a supervisor's messages and its Need help's answers
- *    (both {@link stationHas}).
+ *    `floor_assist`: whether it is sent a supervisor's messages and its Need help's answers;
+ *    `queue_pool`: whether it is sent a `pool` campaign's queue state, declared by a console too
+ *    (all three {@link stationHas}).
  *
  * One parser for all three, so every station entry point refuses the same inputs the same
  * way. Client-declared and never trusted for anything security-relevant: the token is
@@ -48,11 +49,20 @@ export const DEFAULT_STATION_UPGRADE: Readonly<StationUpgradeQuery> = Object.fre
  * `inbound` (docs/inbound.md §4.3): put through to inbound callers and sent their frames, every
  * other app build staying out of the pool. `floor_assist` (LF4, LF5; contracts
  * `agency/floor-assist.ts`): sent a supervisor's messages and its Need help's answers, a message to
- * any other app build being `409 agent_not_live`.
+ * any other app build being `409 agent_not_live`. `queue_pool` (agent station BE-5, AS18): sent a
+ * `pool` campaign's queue state; only when declared, by a console too.
  */
 export function stationHas(query: Pick<StationUpgradeQuery, 'client' | 'caps'>, cap: AgencyStationCapability): boolean {
+  if (DECLARED_BY_EVERY_CLIENT.has(cap)) return query.caps.includes(cap);
   return query.client !== 'mobile' || query.caps.includes(cap);
 }
+
+/**
+ * The capabilities a console has only when it declares them too (agent station AS18): `queue_pool`,
+ * a `pool` campaign's queue state, which a console tab built before the redesign would word for an
+ * owner's own contacts. The others a console always has (every console build decodes their frames).
+ */
+const DECLARED_BY_EVERY_CLIENT: ReadonlySet<AgencyStationCapability> = new Set<AgencyStationCapability>(['queue_pool']);
 
 /** Every capability a station attaching with `query` has ({@link stationHas}): what its registry entry keeps. */
 export function stationCaps(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): ReadonlySet<AgencyStationCapability> {

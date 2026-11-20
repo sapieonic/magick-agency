@@ -31,6 +31,7 @@ import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { settledValue } from '../helpers/settled.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { agentRetryOpen, staffedCampaign } from './shared.js';
+import { phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'proxy-agency-my-contacts' });
 
@@ -166,6 +167,9 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
       ...(cursor ? { after: cursor } : {}),
       limit: clampLimit(query.data.limit),
     });
-    return reply.code(200).send(page);
+    // Agent station AS9: how the campaign shows a customer's number, on every row, so My customers
+    // masks from the row wherever it is opened (the bootstrap's reading, `phoneDisplayOf`).
+    const phoneDisplay = phoneDisplayOf(campaign.phone_display);
+    return reply.code(200).send({ ...page, rows: page.rows.map((row) => ({ ...row, phone_display: phoneDisplay })) });
   });
 }

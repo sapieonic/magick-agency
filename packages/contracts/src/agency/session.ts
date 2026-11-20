@@ -368,9 +368,10 @@ export interface AgencySessionBootstrap {
    */
   allow_agent_retry?: boolean;
   /**
-   * This agent's queue at join, in `strict` and `preferred` mode; in `pool` mode the campaign's
-   * shared queue (agent station BE-5), absent from a server that does not compute it there. The
-   * `queue` station frame carries every later change.
+   * This agent's queue at join, in `strict` and `preferred` mode. Absent in `pool` mode: the
+   * bootstrap is read before the station socket declares what it can show, so a `pool` campaign's
+   * shared queue (agent station BE-5) comes on `ready.queue` and the `queue` frame, to a station
+   * that declared `caps=queue_pool` only (AS18). The `queue` station frame carries every later change.
    */
   queue?: AgencyQueueState;
   /** Whether calls on this campaign are recorded — the console must disclose it. */

@@ -14,7 +14,7 @@ import { localDayStart } from '../../../src/agency/calling-hours.js';
  * My day's pure rules (agent station BE-1, BE-2, BE-3; AS6, AS7, AS8; `src/agency/my-day.ts`):
  * the query, the campaign's day, `will_pay`'s null, the target, where the call-laters go, and the
  * customer's name on a row. The reads are pinned on Postgres in
- * `test/integration/agency/my-day.test.ts`.
+ * `test/integration/api/agent-station-my-day.test.ts`.
  */
 
 const CAMPAIGN = '11111111-1111-4111-8111-111111111111';
@@ -65,6 +65,43 @@ describe('myDayWindow: the campaign\'s own day, by the server\'s clock', () => {
   it('an unreadable zone is cut at UTC midnight, and says so', () => {
     const w = myDayWindow('EST', new Date('2026-11-20T10:00:00Z'));
     expect(w).toEqual({ timezone: 'UTC', start: new Date('2026-11-20T00:00:00Z'), end: new Date('2026-11-21T00:00:00Z') });
+  });
+
+  it('America/Santiago, whose clocks skip midnight (6 Sep 2026, 00:00 → 01:00): the day holding now ends at the jump', () => {
+    // 03:59Z is 23:59 on the 5th (UTC-4); 04:00Z is 01:00 on the 6th (UTC-3). There is no
+    // midnight on the 6th, so the 5th ends, and the 6th begins, at 04:00Z.
+    const before = new Date('2026-09-06T03:59:00Z');
+    const w = myDayWindow('America/Santiago', before);
+    expect(w).toEqual({
+      timezone: 'America/Santiago',
+      start: new Date('2026-09-05T04:00:00Z'),
+      end: new Date('2026-09-06T04:00:00Z'),
+    });
+    expect(w.start.getTime()).toBeLessThanOrEqual(before.getTime());
+    expect(w.end.getTime()).toBeGreaterThan(before.getTime());
+
+    const after = new Date('2026-09-06T04:30:00Z');
+    const next = myDayWindow('America/Santiago', after);
+    expect(next.start).toEqual(new Date('2026-09-06T04:00:00Z'));
+    expect(next.end).toEqual(new Date('2026-09-07T03:00:00Z'));
+    // A 23-hour day.
+    expect(next.end.getTime() - next.start.getTime()).toBe(23 * 3_600_000);
+  });
+
+  it('start ≤ now < end, every 15 minutes across both of Santiago\'s and New York\'s 2026 clock changes', () => {
+    const spans: Array<[string, string, string]> = [
+      ['America/Santiago', '2026-09-04T00:00:00Z', '2026-09-08T00:00:00Z'],
+      ['America/Santiago', '2026-04-03T00:00:00Z', '2026-04-07T00:00:00Z'],
+      ['America/New_York', '2026-03-07T00:00:00Z', '2026-03-10T00:00:00Z'],
+      ['America/New_York', '2026-10-31T00:00:00Z', '2026-11-03T00:00:00Z'],
+    ];
+    for (const [zone, from, to] of spans) {
+      for (let t = Date.parse(from); t < Date.parse(to); t += 15 * 60_000) {
+        const w = myDayWindow(zone, new Date(t));
+        expect(w.timezone, `${zone} ${new Date(t).toISOString()}`).toBe(zone);
+        expect(w.start.getTime() <= t && t < w.end.getTime(), `${zone} ${new Date(t).toISOString()}`).toBe(true);
+      }
+    }
   });
 
   it('localDayStart is null for an unusable zone', () => {
@@ -132,6 +169,16 @@ describe('callLaterCustomerName: the name, never the number', () => {
   it('else the floor\'s guess', () => {
     expect(callLaterCustomerName({ customer_name: 'Ravi K' }, {})).toBe('Ravi K');
     expect(callLaterCustomerName({ borrower: '' , full_name: 'Meena S' }, { roles: { name: 'borrower' } })).toBe('Meena S');
+  });
+
+  it('never a column the campaign hides from agents, by the role or by the guess (case ignored)', () => {
+    // The role names a hidden column: not used, and the guess does not fall back to it either.
+    expect(callLaterCustomerName({ borrower: 'Asha Rao', name: 'Shown Name' }, { roles: { name: 'borrower' }, hidden: ['Borrower'] }))
+      .toBe('Shown Name');
+    // The guess's column is hidden: the next visible guess, else nothing.
+    expect(callLaterCustomerName({ name: 'Hidden', full_name: 'Meena S' }, { hidden: ['NAME'] })).toBe('Meena S');
+    expect(callLaterCustomerName({ customer_name: 'Ravi K' }, { hidden: ['customer_name'] })).toBeNull();
+    expect(callLaterCustomerName({ borrower: 'Asha Rao' }, { roles: { name: 'borrower' }, hidden: [' borrower '] })).toBeNull();
   });
 
   it('null without one', () => {

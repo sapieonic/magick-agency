@@ -75,17 +75,17 @@ describe('agentScriptIssues: the write', () => {
   });
 
   it('refuses a wrong shape: not an object, unknown keys, steps not a list, a step not { text }', () => {
-    expect(issues(null)).toEqual(['agent_script: agent_script must be an object with an opening line and steps. Send {} for no script.']);
+    expect(issues(null)).toEqual(['agent_script: The script must have an opening line and steps. Leave both empty for no script.']);
     expect(issues(['Namaste'])).toHaveLength(1);
     expect(issues('Namaste')).toHaveLength(1);
     expect(issues({ opening: 'Hi', title: 'x' })).toEqual([
-      "agent_script.title: Unknown script field 'title'. A script has only an opening line and steps.",
+      'agent_script.title: A script has only an opening line and steps.',
     ]);
     expect(issues({ opening: 42 })).toEqual(['agent_script.opening: The opening line must be text.']);
-    expect(issues({ steps: 'Ask' })).toEqual(['agent_script.steps: steps must be a list of steps.']);
-    expect(issues({ steps: ['Ask'] })).toEqual(['agent_script.steps[0]: Each step must be an object with its text.']);
+    expect(issues({ steps: 'Ask' })).toEqual(['agent_script.steps: The steps must be a list, one step after another.']);
+    expect(issues({ steps: ['Ask'] })).toEqual(['agent_script.steps[0]: Step 1 must have its words.']);
     expect(issues({ steps: [{ text: 'Ask', done: true }] })).toEqual([
-      "agent_script.steps[0].done: Unknown step field 'done'. A step has only its text.",
+      'agent_script.steps[0].done: Step 1 can have only its words.',
     ]);
   });
 

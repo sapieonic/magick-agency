@@ -6,7 +6,6 @@ import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsLis
 import { PhoneOutgoing } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getMyCampaigns } from '../../api/agencyStats';
-import { maskedCampaigns } from '../../utils/agency/myCallsPath';
 import { agencyPersona } from '../../utils/agencyPersona';
 import { campaignNameMap } from '../../utils/agencyAgentPerformance';
 import { AgentSurfaceShell } from '../../components/agency/AgentSurfaceShell';
@@ -174,14 +173,11 @@ export function AgentAttemptsPage() {
     document.getElementById(`my-calls-tab-${next}`)?.focus();
   };
 
-  // AS9: the station's My calls today names the lists that mask their numbers (`?masked=`).
-  const masked = maskedCampaigns(params);
   const campaignPanel = (
     <AgentAttemptsPanel
       subject={{ kind: 'me' }}
       campaignNames={campaignNameMap(entries)}
       caption="Calls you have taken, newest first"
-      phoneDisplayFor={(campaignId) => (masked.has(campaignId) ? 'masked' : 'full')}
     />
   );
 

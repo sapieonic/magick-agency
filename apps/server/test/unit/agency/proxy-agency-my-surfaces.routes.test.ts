@@ -1338,3 +1338,32 @@ describe('every performance route carries its RBAC permission', () => {
     await app.close();
   });
 });
+
+describe('withPhoneDisplays (agent station AS9): each my-attempts row\'s campaign number display', () => {
+  it('reads the page\'s campaigns once, marks each row, and reads anything unexpected as full', async () => {
+    const { withPhoneDisplays } = await import('../../../src/api/routes/proxy-agency-performance/per-agent.js');
+    const read = vi.fn(async () => new Map([['c-1', 'masked'], ['c-2', 'blurred']]));
+    const body = { rows: [{ id: 'a1', campaign_id: 'c-1' }, { id: 'a2', campaign_id: 'c-2' }, { id: 'a3', campaign_id: 'c-1' }, { id: 'a4', campaign_id: 'c-9' }], next_cursor: null };
+    const out = await withPhoneDisplays(body, TENANT, 'acct', vi.fn(), read);
+    expect(read).toHaveBeenCalledWith(TENANT, 'acct', ['c-1', 'c-2', 'c-9']);
+    expect(out).toEqual({
+      rows: [
+        { id: 'a1', campaign_id: 'c-1', phone_display: 'masked' },
+        { id: 'a2', campaign_id: 'c-2', phone_display: 'full' },
+        { id: 'a3', campaign_id: 'c-1', phone_display: 'masked' },
+        { id: 'a4', campaign_id: 'c-9', phone_display: 'full' },
+      ],
+      next_cursor: null,
+    });
+  });
+
+  it('a failed read serves the rows as they came (never a 500), and a body that is not a page passes through', async () => {
+    const { withPhoneDisplays } = await import('../../../src/api/routes/proxy-agency-performance/per-agent.js');
+    const onError = vi.fn();
+    const body = { rows: [{ id: 'a1', campaign_id: 'c-1' }] };
+    expect(await withPhoneDisplays(body, TENANT, 'acct', onError, async () => { throw new Error('db down'); })).toBe(body);
+    expect(onError).toHaveBeenCalledOnce();
+    const odd = { error: 'Bad Request' };
+    expect(await withPhoneDisplays(odd, TENANT, 'acct', onError, vi.fn())).toBe(odd);
+  });
+});

@@ -45,6 +45,7 @@ export function agentDefinitions(audience: 'supervisor' | 'self'): ReportDefinit
     d('days_worked', 'Days worked', 'Days with any logged-in time.'),
     d('first_in_last_out', 'First in, last out', 'The first and last logged-in moment of each day; a shift running through midnight is split there.'),
     d('drops', 'Dropped calls', 'Calls reserved to the agent that ended because their station disconnected mid-call.'),
+    d('break_overruns', 'Breaks over their limit', "Breaks that ran past their reason's time limit, counted when each break ended, and the time past the limit in all. The limit is the one set for the reason when the break ended. Soft-phone time and the app's own pauses never count."),
     d('callbacks_booked', 'Callbacks booked', 'The agent\'s calls in the window that ended with a callback time set.'),
     d('callbacks_on_time', 'Callbacks kept on time', `Of the callbacks the agent booked that were due in the window, those whose follow-up call was dialled no later than ${ON_TIME} minutes after the booked time (an early call counts as on time), whoever dialled it.`),
     d('callbacks_late', 'Callbacks kept late', `Callbacks the agent booked, due in the window, whose follow-up call was dialled more than ${ON_TIME} minutes after the booked time.`),

@@ -12,6 +12,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'agent_station.dart' show PhoneDisplay;
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
@@ -254,6 +255,7 @@ final class MyContact {
     required List<HeroField> hero,
     required this.retry,
     this.overrideGrant,
+    this.phoneDisplay,
   }) : bucketRaw = bucketRaw ?? bucket.wire,
        stateRaw = stateRaw ?? state.wire,
        hero = List.unmodifiable(hero);
@@ -278,6 +280,7 @@ final class MyContact {
       hero: j.list('hero', HeroField.fromJson),
       retry: MyContactRetry.fromJson(j.obj('retry')),
       overrideGrant: override == null ? null : ContactOverride.fromJson(override),
+      phoneDisplay: phoneDisplayOrNull(j['phone_display']),
     );
   }
 
@@ -305,6 +308,11 @@ final class MyContact {
   /// An override granted by an outcome and not yet spent, or null.
   final ContactOverride? overrideGrant;
 
+  /// Agent station AS9: how the contact's campaign shows a customer's number;
+  /// null from an older server (show it in full). An unknown value reads as
+  /// [PhoneDisplay.full].
+  final PhoneDisplay? phoneDisplay;
+
   /// Open and due now, at [now] (the server's clock, when the caller has it).
   bool isDueAt(DateTime now) => state == ContactState.pending && !nextAttemptAt.isAfter(now);
 
@@ -323,7 +331,8 @@ final class MyContact {
       other.lastAttemptAt == lastAttemptAt &&
       listEquals(other.hero, hero) &&
       other.retry == retry &&
-      other.overrideGrant == overrideGrant;
+      other.overrideGrant == overrideGrant &&
+      other.phoneDisplay == phoneDisplay;
 
   @override
   int get hashCode => Object.hash(
@@ -340,6 +349,7 @@ final class MyContact {
     listHash(hero),
     retry,
     overrideGrant,
+    phoneDisplay,
   );
 }
 

@@ -132,22 +132,22 @@ describe('the station socket in media=alaw8', () => {
   }
 
   describe('the upgrade', () => {
-    it('names media=alaw8 next to the token, and reads binary as ArrayBuffer', async () => {
+    it('names media=alaw8 after the token and the station\'s caps=queue_pool (AS18), and reads binary as ArrayBuffer', async () => {
       const view = await mounted('alaw8');
-      expect(latest().url).toMatch(/\/proxy\/agency\/station\/sess-1\?token=t1&media=alaw8$/);
+      expect(latest().url).toMatch(/\/proxy\/agency\/station\/sess-1\?token=t1&caps=queue_pool&media=alaw8$/);
       expect(latest().binaryType).toBe('arraybuffer');
       expect(view.result.current.mediaFormat).toBe('alaw8');
     });
 
     it('names media=pcm16 when asked for pcm16 (the flag off), and by default', async () => {
       const off = await mounted('pcm16');
-      expect(latest().url).toMatch(/\?token=t1&media=pcm16$/);
+      expect(latest().url).toMatch(/\?token=t1&caps=queue_pool&media=pcm16$/);
       expect(off.result.current.mediaFormat).toBe('pcm16');
       off.unmount();
 
       FakeSocket.instances = [];
       const unset = await mounted();
-      expect(latest().url).toMatch(/\?token=t1&media=pcm16$/);
+      expect(latest().url).toMatch(/\?token=t1&caps=queue_pool&media=pcm16$/);
       expect(unset.result.current.mediaFormat).toBe('pcm16');
     });
 
@@ -155,7 +155,7 @@ describe('the station socket in media=alaw8', () => {
       await mounted('alaw8');
       act(() => latest().serverClose(1006, ''));
       await waitFor(() => expect(FakeSocket.instances.length).toBe(2), { timeout: 3000 });
-      expect(latest().url).toMatch(/\?token=FRESH&media=alaw8$/);
+      expect(latest().url).toMatch(/\?token=FRESH&caps=queue_pool&media=alaw8$/);
     });
   });
 
@@ -248,7 +248,7 @@ describe('the station socket in media=alaw8', () => {
       act(() => latest().serverClose(1008, 'invalid_media'));
       await waitFor(() => expect(FakeSocket.instances.length).toBe(2), { timeout: 3000 });
 
-      expect(latest().url).toMatch(/\?token=FRESH&media=pcm16$/);
+      expect(latest().url).toMatch(/\?token=FRESH&caps=queue_pool&media=pcm16$/);
       expect(view.result.current.mediaFormat).toBe('pcm16');
       expect(view.result.current.diagnostics.some((d) => d.detail.includes('invalid_media'))).toBe(true);
 

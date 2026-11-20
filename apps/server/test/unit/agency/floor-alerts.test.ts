@@ -5,6 +5,7 @@ import {
   goneLongEnough,
   isDisconnectedAlert,
   stateWhenStationWent,
+  workingState,
 } from '../../../src/agency/floor-alerts.js';
 import { StationDetachTimes } from '../../../src/agency/station-detach-times.js';
 import type { FloorAlertHelpRow, FloorAlertSessionRow } from '../../../src/db/repositories/agency.repository.js';
@@ -34,7 +35,8 @@ function helpRow(over: Partial<FloorAlertHelpRow> = {}): FloorAlertHelpRow {
 function sessionRow(over: Partial<FloorAlertSessionRow> = {}): FloorAlertSessionRow {
   return {
     session_id: S2, agent_user_id: 'agent-2', campaign_id: 'c-1', campaign_name: 'Renewals', break_reasons: [],
-    state: 'break', state_since: ago(16 * 60_000), break_reason: 'tea', client_kind: 'web', left_state: null, ...over,
+    state: 'break', state_since: ago(16 * 60_000), break_reason: 'tea', client_kind: 'web', left_state: null,
+    soft_phone_call_live: false, ...over,
   };
 }
 
@@ -132,6 +134,24 @@ describe('disconnected (BE-11)', () => {
     expect(gone(sessionRow({ session_id: S3, state: 'offline', left_state: 'break', break_reason: null }))).toBe(false);
   });
 
+  it('a soft-phone agent (on `break`/`soft_phone`) is working while a soft-phone call is live: a drop then alerts; idle on the soft phone it does not', () => {
+    // FALSIFIED: with `break` never working, the live-call case reds; with every soft-phone break
+    // working, the idle case reds.
+    expect(workingState('break', true)).toBe('break');
+    expect(workingState('break', false)).toBeNull();
+    expect(workingState('offline', true)).toBeNull();
+    expect(workingState('on_call', false)).toBe('on_call');
+    const phone = sessionRow({
+      session_id: S3, state: 'break', break_reason: 'soft_phone', campaign_id: null, campaign_name: null, break_reasons: null,
+    });
+    const input = { disconnectedSince: new Map([[S3, ago(30_000)]]), connected: new Map([[S3, false]]), callIds: new Map([[S3, 'call-7']]) };
+    expect(build({ ...input, sessions: [{ ...phone, soft_phone_call_live: true }] }))
+      .toMatchObject([{ kind: 'disconnected', session_id: S3, state: 'break', call_id: 'call-7' }]);
+    expect(build({ ...input, sessions: [{ ...phone, soft_phone_call_live: false }] })).toEqual([]);
+    // Only the soft phone's own break: another break with a live flag set never counts as a call.
+    expect(stateWhenStationWent({ state: 'offline', left_state: 'break', soft_phone_call_live: true })).toBeNull();
+  });
+
   it('served with the state it went in and the call it is on', () => {
     const row = sessionRow({ session_id: S3, state: 'offline', left_state: 'on_call', break_reason: null, client_kind: 'mobile' });
     expect(build({
@@ -171,16 +191,43 @@ describe('ids and order', () => {
 });
 
 describe('the detach times (memory)', () => {
-  it('a detach records when; an attach forgets it; a second detach is the new time; the oldest goes first past the cap', () => {
+  const A = { tenantId: 't-1', accountId: 'a-1' };
+  const B = { tenantId: 't-1', accountId: 'a-2' };
+
+  it('a detach records when; an attach forgets it and says when it went; a second detach is the new time; the oldest goes first past the cap', () => {
     const times = new StationDetachTimes(2);
-    times.detached(S1, 1_000);
-    times.detached(S2, 2_000);
+    times.detached(S1, A, 1_000);
+    times.detached(S2, A, 2_000);
     expect(times.disconnectedSince([S1, S2, S3])).toEqual(new Map([[S1, new Date(1_000)], [S2, new Date(2_000)]]));
-    times.attached(S1);
+    expect(times.attached(S1)).toBe(1_000);
+    expect(times.attached(S1)).toBeUndefined();
     expect(times.disconnectedSince([S1])).toEqual(new Map());
-    times.detached(S1, 3_000);
-    times.detached(S3, 4_000);
+    times.detached(S1, A, 3_000);
+    times.detached(S3, A, 4_000);
     expect(times.goneSessionIds()).toEqual([S1, S3]);
     expect(times.size()).toBe(2);
+  });
+
+  it('the alerts read asks for its own account only (filtered in memory, before any SQL); a detach with no scope is nobody\'s', () => {
+    // FALSIFIED: with the scope ignored, every account's gone sessions are listed and this reds.
+    const times = new StationDetachTimes();
+    times.detached(S1, A, 1_000);
+    times.detached(S2, B, 2_000);
+    times.detached(S3, null, 3_000);
+    expect(times.goneSessionIds(A)).toEqual([S1]);
+    expect(times.goneSessionIds(B)).toEqual([S2]);
+    expect(times.goneSessionIds({ tenantId: 't-2', accountId: 'a-1' })).toEqual([]);
+    expect(times.goneSessionIds()).toEqual([S1, S2, S3]);
+  });
+
+  it('a session that ended is forgotten, one at a time or by the list the alerts read found ended', () => {
+    const times = new StationDetachTimes();
+    times.detached(S1, A, 1_000);
+    times.detached(S2, A, 2_000);
+    times.detached(S3, A, 3_000);
+    times.ended(S1);
+    times.forgetEnded([S2, 'not-there']);
+    expect(times.goneSessionIds(A)).toEqual([S3]);
+    expect(times.size()).toBe(1);
   });
 });

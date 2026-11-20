@@ -238,6 +238,8 @@ interface OldAgencyAttempt {
   caller_id: string;
   agent_user_id: string | null;
   agent_name?: string | null;
+  // Added deliberately (agent station AS9): the campaign's number display, on the agent's own read.
+  phone_display?: Api.AgencyPhoneDisplay;
   reserved_agent_id: string | null;
   state: Api.AgencyAttemptState;
   outcome: Api.AgencyAttemptOutcome | null;

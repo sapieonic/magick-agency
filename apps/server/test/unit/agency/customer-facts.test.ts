@@ -154,7 +154,7 @@ describe('the write: context_display.roles and .types', () => {
 
   it('refuses an unknown role, a bad column name, a hidden column, and one column in two roles', () => {
     expect(issues({ roles: { phone: 'Mobile' } })).toEqual([
-      "context_display.roles.phone: 'phone' is not a role. The roles are: name, place, amount_due, due_date.",
+      "context_display.roles.phone: That is not a customer fact the station shows. They are the customer's name, the customer's place, the amount due and the due date.",
     ]);
     expect(issues({ roles: { name: '' } })[0]).toMatch(/^context_display\.roles\.name: Choose the column for the customer's name/);
     expect(issues({ roles: { name: 42 } })).toHaveLength(1);
@@ -165,14 +165,14 @@ describe('the write: context_display.roles and .types', () => {
     expect(issues({ roles: { amount_due: 'Amount', due_date: 'AMOUNT' } })).toEqual([
       "context_display.roles.due_date: 'AMOUNT' is already the amount due. One column can play one role only.",
     ]);
-    expect(issues({ roles: ['Name'] })).toEqual(['context_display.roles: roles must be an object of role to column name.']);
+    expect(issues({ roles: ['Name'] })).toEqual(['context_display.roles: Choose a column for each customer fact: the name, place, amount due and due date.']);
   });
 
   it('refuses a type that is not text, money or date', () => {
     expect(issues({ types: { Amount: 'currency' } })).toEqual([
-      "context_display.types.Amount: How to read 'Amount' must be one of: text, money, date.",
+      "context_display.types.Amount: Choose how to read 'Amount': as text, money or a date.",
     ]);
-    expect(issues({ types: 'money' })).toEqual(['context_display.types: types must be an object of column name to text, money or date.']);
+    expect(issues({ types: 'money' })).toEqual(['context_display.types: Choose how to read each column: as text, money or a date.']);
   });
 
   it('with the roster\'s columns: every role and type must name one, ignoring case; the refusal lists them', () => {

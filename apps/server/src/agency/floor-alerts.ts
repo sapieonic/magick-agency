@@ -9,9 +9,11 @@
  *    never alert) and has run PAST it (strictly: at the limit itself it is not over).
  *  - `disconnected`: a session whose station went at least `AGENCY_FLOOR_DISCONNECTED_ALERT_AFTER_MS`
  *    ago (the in-memory detach time), is still gone (the registry's liveness says `false`; unknown
- *    never alerts), and was working when it went: its state, or for a row the close wrote `offline`
- *    the state it left, is `available`, `reserved`, `on_call` or `wrapup` (never a break, so an app
- *    paused in the background on `device_away` never alerts).
+ *    never alerts), and was working when it went ({@link workingState}): its state, or for a row the
+ *    close wrote `offline` the state it left, is `available`, `reserved`, `on_call` or `wrapup`, or
+ *    it is on the soft phone's `break` with a soft-phone call live (the soft phone sits on
+ *    `break`/`soft_phone`, during its calls too, and the close keeps that state while the call is
+ *    live). Never another break, so an app paused in the background on `device_away` never alerts.
  *
  * **Ids** follow the contract's recipe (`AgencyFloorAlertBase.id`): the kind, the session and the
  * instant the condition began (the raise, the break's start, the detach), so the same condition
@@ -26,12 +28,13 @@ import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import type { FloorAlertHelpRow, FloorAlertSessionRow } from '../db/repositories/agency.repository.js';
 import { floorBreak } from './floor.js';
 import { toSessionHelp } from './floor-assist.js';
+import { workingState } from './working-state.js';
+
+export { workingState };
 
 /** An alert as the internal handler answers it: everything but the agent's name (the public layer's). */
 export type CoreFloorAlert = AgencyFloorAlert extends infer A ? (A extends unknown ? Omit<A, 'agent_name'> : never) : never;
 
-/** The states an agent works in: a station going in one of them is a `disconnected` alert. */
-const WORKING_STATES: ReadonlySet<AgencyAgentState> = new Set(['available', 'reserved', 'on_call', 'wrapup']);
 
 export interface FloorAlertsInput {
   help: readonly FloorAlertHelpRow[];
@@ -45,15 +48,20 @@ export interface FloorAlertsInput {
   now: Date;
 }
 
-/** The working state of a session whose station went: its own, or for a row written `offline` by the close, the one it left. */
-export function stateWhenStationWent(row: Pick<FloorAlertSessionRow, 'state' | 'left_state'>): AgencyAgentState | null {
+/**
+ * The working state of a session whose station went: its own, or for a row written `offline` by
+ * the close, the one it left; a soft-phone break counts while its call is live ({@link workingState}).
+ */
+export function stateWhenStationWent(
+  row: Pick<FloorAlertSessionRow, 'state' | 'left_state'> & Partial<Pick<FloorAlertSessionRow, 'soft_phone_call_live'>>,
+): AgencyAgentState | null {
   const state = row.state === 'offline' ? row.left_state : row.state;
-  return state && WORKING_STATES.has(state) ? state : null;
+  return workingState(state, row.state === 'break' && row.soft_phone_call_live === true);
 }
 
 /** Whether a session's station has been gone long enough, still gone, and went while working: the `disconnected` rule. */
 export function isDisconnectedAlert(
-  row: Pick<FloorAlertSessionRow, 'session_id' | 'state' | 'left_state'>,
+  row: Pick<FloorAlertSessionRow, 'session_id' | 'state' | 'left_state'> & Partial<Pick<FloorAlertSessionRow, 'soft_phone_call_live'>>,
   since: Date | undefined,
   connected: ReadonlyMap<string, boolean> | null,
   now: Date,

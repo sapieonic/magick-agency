@@ -155,6 +155,8 @@ describe('pacing tick arithmetic, as a property (load)', () => {
         ownerOf: async (id: string) => (f.owned.has(id) ? 'r1' : null),
         broadcast: () => 0,
         sessionIdsForCampaign: () => [...f.owned],
+        // No station declares `queue_pool` (AS18): a pool campaign's queue frame goes to none.
+        get: () => undefined,
       };
       const dispatcher = { dispatch: async (cmd: { sessionId: string; contactId: string }) => { dispatched.push(cmd); } };
       const engine = new PacingEngine(

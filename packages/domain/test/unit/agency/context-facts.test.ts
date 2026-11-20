@@ -51,6 +51,11 @@ describe('parseMoneyFact', () => {
     ['another currency', '$500'],
     ['junk', 'pending'],
     ['two amounts', '500 / 600'],
+    ['two amounts side by side, not a grouping', '5000 2500'],
+    ['a space where no grouping comma stands', '12 50'],
+    ['a space in a western group of two', '1 25'],
+    ['spaces and commas in one amount', '1 25,000'],
+    ['a space among the decimals', '125000.5 0'],
     ['too long to be one amount', '1'.repeat(65)],
   ];
   it.each(REFUSED)('refuses %s (%j) with null', (_why, raw) => {
@@ -108,6 +113,34 @@ describe('parseDateFact', () => {
   ];
   it.each(REFUSED)('refuses %s (%j) with null', (_why, raw) => {
     expect(parseDateFact(raw)).toBeNull();
+  });
+});
+
+describe('parseDateFact: a two-digit year is the century nearest today', () => {
+  const NOW = new Date('2026-11-20T06:00:00Z');
+  const CASES: Array<[string, string]> = [
+    // 41 years back is nearer than 59 ahead.
+    ['15/08/85', '1985-08-15'],
+    ['15-Aug-85', '1985-08-15'],
+    ['25-11-26', '2026-11-25'],
+    ['01/01/00', '2000-01-01'],
+    // About 43 years ahead is nearer than nearly 57 back.
+    ['01/01/70', '2070-01-01'],
+    // Either side of the ±50-year edge, by the whole date: 49½ years back, and 49½ ahead.
+    ['20/05/77', '1977-05-20'],
+    ['20/05/76', '2076-05-20'],
+  ];
+  it.each(CASES)('on 20 Nov 2026 reads %j as %j', (raw, value) => {
+    expect(parseDateFact(raw, NOW)).toBe(value);
+  });
+
+  it('follows the clock it is given', () => {
+    expect(parseDateFact('15/08/85', new Date('2060-01-01T00:00:00Z'))).toBe('2085-08-15');
+    expect(parseContextFact('15/08/85', 'date', NOW)).toBe('1985-08-15');
+  });
+
+  it('a four-digit year is taken as written', () => {
+    expect(parseDateFact('15/08/2085', NOW)).toBe('2085-08-15');
   });
 });
 

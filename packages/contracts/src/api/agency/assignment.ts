@@ -31,6 +31,7 @@ import type {
   AgencyAssignmentReason,
   AgencyContactState,
   AgencyOverrideKind,
+  AgencyPhoneDisplay,
   AgencyQueueState,
 } from '../../agency';
 import type { AllListed } from '../../primitives';
@@ -488,6 +489,13 @@ export interface AgencyMyContact {
   };
   /** An override granted by an outcome and not yet spent, or null. */
   override: AgencyContactOverride | null;
+  /**
+   * Agent station AS9: how this contact's campaign shows a customer's number on the agent's screens
+   * (the campaign's `phone_display`, read as the session bootstrap reads it). My customers masks from
+   * it wherever it is opened. Absent from an older server: show it in full. `phone_e164` is still
+   * sent in full.
+   */
+  phone_display?: AgencyPhoneDisplay;
 }
 
 /** The caller's contacts on one campaign, in counts. */
