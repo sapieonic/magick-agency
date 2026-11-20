@@ -15,6 +15,7 @@ import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/speech/read_aloud.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/performance/performance_controller.dart' show statsClockProvider;
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
@@ -382,6 +383,8 @@ Future<StationHarness> pumpStation(
       stationViewProvider.overrideWith((ref) => ref.watch(holder)),
       stationActionsProvider.overrideWithValue(actions),
       stationClockProvider.overrideWithValue(clock.call),
+      // The reads' clock (the end of the day they count) is the test's too.
+      statsClockProvider.overrideWithValue(clock.call),
       stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
       softphoneHostActionsProvider.overrideWith((ref) => h.host),
       softphoneActionsProvider.overrideWith((ref) => h.softphoneActions),
@@ -557,6 +560,7 @@ StationView station({
   HelpView help = const HelpView(),
   ScriptView? script,
   bool maskPhone = false,
+  int readyCount = 1,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -590,6 +594,7 @@ StationView station({
   help: help,
   script: script,
   maskPhone: maskPhone,
+  readyCount: readyCount,
 );
 
 const hungUpRelease = ReleaseView(

@@ -164,12 +164,6 @@ class _StationScreenState extends ConsumerState<StationScreen> {
 
   void _onPhase(AgentPhase? prev, AgentPhase? next) {
     if (next == prev || next == null) return;
-    // Back to Ready (after a call, a break): My day and the call-later list are read again; what
-    // was shown stays until the new answer lands.
-    if (next == AgentPhase.available && prev != null) {
-      final v = ref.read(stationViewProvider);
-      if (v != null) refreshStationReads(ref, v.campaignId, callLaterOffered: v.myContactsOffered);
-    }
     // Feel the call arrive and connect without looking. The ring tone itself
     // is the core's.
     if (next == AgentPhase.reserved) unawaited(HapticFeedback.heavyImpact());
@@ -252,6 +246,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
           child: Stack(
             children: [
               const Positioned(left: 0, top: 0, width: 1, height: 1, child: PhaseAnnouncer()),
+              // My day and the call-later list kept fresh (the my-day contract's times).
+              Positioned(left: 0, top: 0, width: 0, height: 0, child: StationReadsRefresher(campaignId: widget.campaignId)),
               Positioned.fill(
                 child: Align(
                   alignment: Alignment.topCenter,

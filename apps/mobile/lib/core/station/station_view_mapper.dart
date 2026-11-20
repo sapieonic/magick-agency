@@ -109,6 +109,7 @@ class StationViewMapper {
     String? awayNoRing,
     bool dialGapHeld = false,
     HelpView help = const HelpView(),
+    int readyCount = 0,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -178,6 +179,7 @@ class StationViewMapper {
       help: help,
       script: _scriptFor(bootstrap?.script),
       maskPhone: bootstrap?.masksPhone ?? false,
+      readyCount: readyCount,
     );
   }
 

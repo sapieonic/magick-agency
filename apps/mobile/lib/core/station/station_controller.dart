@@ -233,6 +233,9 @@ class StationController extends Notifier<StationView?>
   /// reason stands in for a `ready` that states none only once).
   bool _readySeen = false;
 
+  /// `ready` frames this session has had ([StationView.readyCount]).
+  int _readyCount = 0;
+
   // Lifecycle.
   bool _foreground = true;
   SessionStateResponse? _lastStateResponse;
@@ -735,6 +738,7 @@ class StationController extends Notifier<StationView?>
     _announceOnReturn = false;
     _upgradeRefused = false;
     _readySeen = false;
+    _readyCount = 0;
     _mapper = StationViewMapper();
     _ringMuted = false;
     _ringCallId = null;
@@ -784,6 +788,7 @@ class StationController extends Notifier<StationView?>
         if (active != null) _carryNotes(active);
         final first = !_readySeen;
         _readySeen = true;
+        _readyCount++;
         // Back from `away_ring`: this is the snapshot that says whether the server kept it.
         final check = _absence.ringOffCheck;
         if (check != null) _absence.ringOffCheck = (back: check.back, absenceStart: check.absenceStart, ready: true);
@@ -1178,6 +1183,7 @@ class StationController extends Notifier<StationView?>
       awayNoRing: _absence.noRing == null || _absence.ringStopped ? null : RingCopy.blockerWhy(_absence.noRing!),
       dialGapHeld: _dialGapTimer != null,
       help: _helpView(),
+      readyCount: _readyCount,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.

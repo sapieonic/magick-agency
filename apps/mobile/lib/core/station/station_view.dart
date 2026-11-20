@@ -933,6 +933,7 @@ class StationView {
     this.help = const HelpView(),
     this.script,
     this.maskPhone = false,
+    this.readyCount = 0,
   });
 
   final String campaignId;
@@ -1028,6 +1029,10 @@ class StationView {
   /// on every station screen. The number is still in [CallView.phoneE164] for the call itself.
   final bool maskPhone;
 
+  /// How many `ready` frames this session has had (the first, and one after each reconnect). The
+  /// station reads My day again on each (the my-day contract's "on every `ready` frame").
+  final int readyCount;
+
   /// The call on screen, campaign or inbound: what notes, dialogs and sheets are keyed by.
   String? get callId => call?.attemptId ?? inbound?.callId;
 
@@ -1075,7 +1080,8 @@ class StationView {
       other.inboundNotice == inboundNotice &&
       other.help == help &&
       other.script == script &&
-      other.maskPhone == maskPhone;
+      other.maskPhone == maskPhone &&
+      other.readyCount == readyCount;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);
