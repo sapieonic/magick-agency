@@ -37,7 +37,7 @@ import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWai
 import { CueSettingsFields } from '../../components/agency/CueSettings';
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
-import { MoreMenu, NeedHelpButton, StationBanner, StationFrame } from '../../components/agency/station/StationFrame';
+import { MoreMenu, NeedHelpButton, StationBanner, StationFrame, TimedBanner } from '../../components/agency/station/StationFrame';
 import { KeptCountdown, RetryCountdown, SinceClock, TimeLeftRing } from '../../components/agency/station/StationClocks';
 import { CustomerCardView, LastCallsCard, NoteCard } from '../../components/agency/station/StationCustomer';
 import { WhatHappened } from '../../components/agency/station/WhatHappened';
@@ -62,6 +62,7 @@ import stationStyles from '../../components/agency/station/Station.module.css';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useDialActivityDisplay } from '../../hooks/useDialActivityDisplay';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
+import { useRenderAt } from '../../hooks/useRenderAt';
 import { useReadAloud } from '../../hooks/useSpeech';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueReason as queueNothingDueReason } from '../../utils/agencyStationIdle';
@@ -164,8 +165,6 @@ const END_CALL_COPY: HoldToConfirmCopy = {
   analyticsControl: 'hangup',
 };
 
-/** 02b's "The last call did not connect": how long it stays (or until the next call). */
-export const LAST_CALL_BANNER_MS = 6_000;
 
 
 function StationScreen({
@@ -695,7 +694,7 @@ function StationScreen({
         return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="unexplained-release">{STATION_COPY.lastCallEnded}</StationBanner>;
       }
       const line = releaseBanner(release.reason);
-      if (line) return <TimedBanner key={station.releasedAt ?? 0} at={station.releasedAt} line={line} />;
+      if (line) return <TimedBanner key={station.releasedAt ?? 0} at={station.releasedAt} icon={<Info size={22} />} testId="last-call-banner">{line}</TimedBanner>;
     }
     if (station.customerWaiting) {
       return (
@@ -1367,28 +1366,6 @@ function StationScreen({
       ) : null}
     </>
   );
-}
-
-/** 02b's "The last call did not connect": shown for {@link LAST_CALL_BANNER_MS}, or until the next call. */
-function TimedBanner({ at, line }: { at: number | null; line: string }) {
-  useRepaintTick(at !== null);
-  if (at === null || Date.now() - at > LAST_CALL_BANNER_MS) return null;
-  return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="last-call-banner">{line}</StationBanner>;
-}
-
-/**
- * Renders its caller once more at `at` (a local epoch ms), and never otherwise: what turns 07 into
- * 08 without a clock on the station's root.
- */
-function useRenderAt(at: number | null): void {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (at === null) return undefined;
-    const wait = at - Date.now();
-    if (wait <= 0) return undefined;
-    const timer = window.setTimeout(() => setTick((n) => n + 1), wait);
-    return () => window.clearTimeout(timer);
-  }, [at]);
 }
 
 /**

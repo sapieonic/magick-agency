@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
+import { useRenderAt } from '../../../hooks/useRenderAt';
 import type { StationHelp } from '../../../pages/agency/station/useStationHelp';
 import { STATION_COPY, helpAskedLabel } from '../../../utils/agency/stationCopy';
 import type { MoreItem, StationView } from '../../../utils/agency/stationView';
@@ -144,6 +145,22 @@ export function StationFrame({
 }
 
 /** A banner under the band (spec §3): one line, an icon, in a state's colours or the message colours. */
+/** 02b's "The last call did not connect": how long it stays (or until the next call). */
+export const LAST_CALL_BANNER_MS = 6_000;
+
+/**
+ * A banner that goes by itself {@link LAST_CALL_BANNER_MS} after `at` (02b's "The last call did not
+ * connect"; the page keys it on the release, so the next one starts afresh). One timer to its end
+ * and none after: its words never change, so nothing repaints while it shows.
+ */
+export function TimedBanner({ at, icon, testId, children }: { at: number | null; icon: ReactNode; testId: string; children: ReactNode }) {
+  const endsAt = at === null ? null : at + LAST_CALL_BANNER_MS;
+  const shown = endsAt !== null && Date.now() < endsAt;
+  useRenderAt(shown ? endsAt + 1 : null);
+  if (!shown) return null;
+  return <StationBanner tone="quiet" icon={icon} role="status" testId={testId}>{children}</StationBanner>;
+}
+
 export function StationBanner({
   tone,
   icon,
