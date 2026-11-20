@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { calendarDay, clockTime, halfAmount, hoursMinutes, initials, runningClock, rupees } from '../../utils/agency/stationFormat';
 import { breakIcon, outcomeIcon, outcomeTileLayout } from '../../utils/agency/stationTiles';
-import { customerCard, lastCallRows, phoneForDisplay } from '../../utils/agency/stationCustomer';
+import { customerCard, factTilesInOrder, lastCallRows, phoneForDisplay } from '../../utils/agency/stationCustomer';
 import { headsetCheckFrom, microphoneCheckFrom } from '../../utils/agency/stationDevices';
 import { helpAnsweredLine, releaseBanner } from '../../utils/agency/stationCopy';
 import { pickVoice } from '../../hooks/useSpeech';
@@ -126,28 +126,31 @@ describe('the customer card (spec 03/04, today’s data)', () => {
   });
 
   it('takes the typed facts when the server sends them, and guesses nothing (BE-6)', () => {
+    const facts = {
+      name: 'Sunita Patil',
+      place: 'Pune',
+      tiles: [
+        { column: 'City', type: 'text' as const, raw: 'Pune', value: null },
+        { column: 'Loan', type: 'text' as const, raw: 'L-77', value: null },
+        { column: 'Due on', role: 'due_date' as const, type: 'date' as const, raw: '20/11/2026', value: '2026-11-20' },
+        { column: 'Balance', role: 'amount_due' as const, type: 'money' as const, raw: 'Rs 1,25,000/-', value: '125000.00' },
+      ],
+    };
+    // Amount due, due date, then the rest; the place is not a tile again.
+    expect(factTilesInOrder(facts).map((t) => t.column)).toEqual(['Balance', 'Due on', 'Loan']);
     const card = customerCard(
       {
         ...ATTEMPT,
         // The columns' names would guess differently: the typed facts win.
         context: { Name: 'Wrong Guess', Branch: 'Nowhere', 'Amount due': '99' },
-        facts: {
-          name: 'Sunita Patil',
-          place: 'Pune',
-          tiles: [
-            { column: 'Loan', type: 'text', raw: 'L-77', value: null },
-            { column: 'Due on', role: 'due_date', type: 'date', raw: '20/11/2026', value: '2026-11-20' },
-            { column: 'Balance', role: 'amount_due', type: 'money', raw: 'Rs 1,25,000/-', value: '125000.00' },
-            { column: 'City', type: 'text', raw: 'Pune', value: null },
-          ],
-        },
+        facts,
       },
       { hero: ['Name', 'Branch', 'Amount due'] },
     );
     expect(card.name).toBe('Sunita Patil');
     expect(card.initials).toBe('SP');
     expect(card.place).toBe('Pune');
-    // Amount due, due date, then the rest; the place is not a tile again; Last call last.
+    // Two facts, then Last call.
     expect(card.facts.map((f) => [f.label, f.value, f.kind])).toEqual([
       ['Balance', '₹1,25,000', 'money'],
       ['Due on', '20 Nov', 'date'],
