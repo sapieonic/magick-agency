@@ -14,6 +14,7 @@ import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_providers.dart';
+import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
 import '../softphone/softphone_harness.dart' show FakeSoftphoneActions, ShellScaffold, setPhoneInsets;
@@ -270,6 +271,33 @@ Future<void> settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+/// ⋮ More, opened.
+Future<void> openMore(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('station-more')));
+  await settle(tester);
+}
+
+/// ⋮ More, then the item with [key].
+Future<void> tapMore(WidgetTester tester, String key) async {
+  await openMore(tester);
+  await tester.tap(find.byKey(Key(key)));
+  await settle(tester);
+}
+
+/// Slides End call [fraction] of the way along its track (1: all the way, which ends the call).
+Future<void> slideToEnd(WidgetTester tester, {double fraction = 1}) async {
+  final r = tester.getRect(find.byKey(const Key('hang-up')));
+  await tester.dragFrom(Offset(r.left + 32, r.center.dy), Offset(r.width * fraction, 0));
+  await tester.pump();
+}
+
+/// Finish work for today: ⋮ More, then Yes on the sheet.
+Future<void> finishWork(WidgetTester tester) async {
+  await tapMore(tester, 'leave');
+  await tester.tap(find.byKey(const Key('finish-yes')));
+  await settle(tester);
+}
+
 /// [statusBar], [keyboard] and [shell] put the phone's own chrome around the
 /// station: see `setPhoneInsets` and `ShellScaffold` in the soft-phone harness.
 Future<StationHarness> pumpStation(
@@ -284,7 +312,7 @@ Future<StationHarness> pumpStation(
   bool disableAnimations = false,
   bool supportsAnnounce = false,
   String campaignId = 'c1',
-  Brightness brightness = Brightness.dark,
+  Brightness brightness = Brightness.light,
   SoftphoneAvailability availability = SoftphoneAvailability.hidden,
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
@@ -292,6 +320,10 @@ Future<StationHarness> pumpStation(
   bool needHelp = false,
   String? listenScope,
   KeyValueStore? store,
+  String? agentName = 'Sunita Yadav',
+  MyDayView? myDay,
+  List<CallLaterItem> callLater = const [],
+  void Function()? onMyDayRead,
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -334,6 +366,12 @@ Future<StationHarness> pumpStation(
       // Nobody to remember the one-time listening notice for unless a test names one.
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
+      stationAgentNameProvider.overrideWithValue(agentName),
+      stationMyDayProvider.overrideWith((ref, id) async {
+        onMyDayRead?.call();
+        return myDay;
+      }),
+      stationCallLaterProvider.overrideWith((ref, key) async => callLater),
       ...extra,
     ],
   );
@@ -387,6 +425,8 @@ Future<StationHarness> pumpStation(
       ),
     ),
   );
+  await tester.pump();
+  // The station's reads (My day, the call-later list) answer on the next microtask.
   await tester.pump();
   return h;
 }
@@ -472,6 +512,7 @@ StationView station({
   DialActivityView? dialActivity,
   bool myContactsOffered = false,
   List<DispositionOption>? dispositionOptions,
+  List<BreakOption> breakOptions = breaks,
   HelpView help = const HelpView(),
 }) => StationView(
   campaignId: campaignId,
@@ -483,7 +524,7 @@ StationView station({
   campaignDialing: dialing,
   onBreak: onBreak,
   queuedBreak: queuedBreak,
-  breakOptions: breaks,
+  breakOptions: breakOptions,
   call: call,
   release: release,
   wrapup: wrapup,

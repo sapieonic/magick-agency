@@ -16,6 +16,7 @@ import type {
   AgencyContactState,
   AgencyBreakReason,
   AgencyContextDisplay,
+  AgencyAgentScript,
   AgencyDisposition,
   AgencyManualCallDispositionSource,
   AgencyManualCallEndReason,
@@ -130,6 +131,11 @@ export interface AgencyCampaignRecord {
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
   break_reasons: AgencyBreakReason[];
   context_display: AgencyContextDisplay;
+  /**
+   * Agent station (BE-8, 0056): the campaign's script, `{}` when it has none (the column default).
+   * Written by the PATCH (`src/agency/agent-script.ts`); served on the bootstrap as `script`.
+   */
+  agent_script: AgencyAgentScript;
   record_calls: boolean;
   analysis_profile_id: string | null;
   status: AgencyCampaignStatus;

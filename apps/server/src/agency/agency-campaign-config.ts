@@ -11,6 +11,8 @@ import {
   validateBreakReasons,
   validateOutcomeDispositions,
 } from './campaign-config.js';
+import { contextDisplayIssues } from './customer-facts.js';
+import { agentScriptIssues } from './agent-script.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
@@ -684,6 +686,11 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   // Contact assignment and agent retry (0009): the internal handler's rules, imported.
   issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record));
+  // Agent station (BE-6): `context_display.roles` / `.types`, the internal handler's shape rule
+  // (this layer holds no roster, so the columns are the internal handler's to check).
+  issues.push(...contextDisplayIssues(record));
+  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
+  issues.push(...agentScriptIssues(record));
   return issues;
 }
 

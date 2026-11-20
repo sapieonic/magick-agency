@@ -1068,3 +1068,47 @@ Neither test fails before then, because nothing registers the paths yet.
 leniently: a value the build cannot read is absent, never a failed bootstrap or frame.
 `SessionHelp`'s constructor is no longer `const`.
 
+
+## S3. Customer facts, script and the starter set: as built
+
+Built on branch `station/sc` (stream S3, 2026-11-20). Where this list and §3 differ, this list is
+what was built.
+
+- **BE-6 parse rule** (`packages/domain/src/context-facts.ts`): `parseMoneyFact` (rupee sign or
+  word, `/-`, `only`, spaces; Indian or western grouping; at most two decimals; a minus sign,
+  brackets, a decimal comma or words are `null`), `parseDateFact` (year first, day first, a month
+  name either side; a time of day after the date is ignored, a time with a zone is `null`; never
+  month first with numbers), `parseContextFact`.
+- **BE-6 facts** (`apps/server/src/agency/customer-facts.ts`, `customerFacts`, called in
+  `buildPanel`, so the `reserved` frame and every resume of it carry `attempt.facts`): `name` and
+  `place` by their roles, else a guess from name columns (the inbound match's list) and place
+  columns (`city`, `town`, `place`, `location`, `district`, `village`) only, matched ignoring case,
+  spaces and underscores, at most 100 characters. `tiles`: the hero columns (the contact panel's
+  reading: no "first columns" fallback), minus the name and place columns, then the `amount_due`
+  and `due_date` role columns when the heroes leave them out; at most four, the role tiles kept
+  when the cap bites. Hidden columns are never a role, a guess or a tile. `context` is still sent
+  raw.
+- **BE-6 write**: `contextDisplayIssues` (both campaign-config validators) refuses an unknown role,
+  a column name that is blank or over 200 characters, a hidden column as a role, one column in two
+  roles, and a type other than `text` / `money` / `date`. The internal PATCH then checks every role
+  and type against the campaign's imported columns (`agency_ingest_jobs.context_columns` of its real
+  imports, never a check; a retry campaign's lineage root's too), ignoring case, and the 400 lists
+  them. A campaign with no import yet is not checked against a roster. A create is shape-checked
+  only. The `matchName` callers (callbacks list, floor, inbound) do not read the `name` role yet.
+- **BE-8** (`apps/server/src/agency/agent-script.ts`): `agent_script` is patchable (JSONB) and
+  audited by name only (`agency_campaign.config_changed`). Refused: not an object, a key other than
+  `opening` / `steps`, a step other than `{ text }`, an opening over 300 or a step over 200 code
+  points after trimming (or empty), more than 12 steps, and any `{word}` (letters, digits and
+  underscores in braces, spaces allowed inside) that is not exactly one of the six placeholders, so
+  `{Name}` and `{ name }` are refused; braces round anything else are plain text. Stored trimmed.
+  `{}` clears it. The bootstrap's `script` is absent when there is no opening and no step; a
+  malformed stored part is left out, never a failed join. A create does not store `agent_script`
+  (`CAMPAIGN_INSERT_COLUMNS_SQL` is shared with the retry create): New campaign sets it with a
+  PATCH after the create.
+- **AS4** (`packages/contracts/src/agency/campaign-defaults.ts`, re-exported on the console wire):
+  `AGENCY_COLLECTIONS_STARTER_CATALOG`: `will_pay` "Will pay" (`requires_promise`, `is_success`,
+  `rupee`; no follow-up call, PT2's default), `callback` "Call later" (`requires_datetime`,
+  `clock`), `no_one_spoke` "No one spoke" (the voicemail retry rule, `phone_missed`), `refused`
+  "Refused" (`requires_note`, `thumbs_down`), `wrong_number` "Wrong number" (`terminal`,
+  `wrong_number`), `do_not_call` "Don't call again" (`suppress`, `stop`). New campaign sends it as
+  the create's `disposition_catalog`.

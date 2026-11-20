@@ -67,13 +67,12 @@ void main() {
       expect(h.actions.count('raiseHelp'), 0);
     });
 
-    testWidgets('open: "Help requested", how long ago, ticking; Cancel withdraws it', (tester) async {
+    testWidgets('open: the button turns solid red, "Help asked · 0:42", ticking; pressing it again cancels', (tester) async {
       final h = await pumpStation(tester, inWrapup(help: open), needHelp: true);
       expect(find.byKey(const Key('need-help')), findsNothing);
-      expect(find.text(StationCopy.helpRequested), findsOneWidget);
-      expect(find.text('Your supervisors can see it · asked 0:42 ago'), findsOneWidget);
+      expect(find.text('Help asked · 0:42'), findsOneWidget);
       await h.advance(const Duration(seconds: 3));
-      expect(find.text('Your supervisors can see it · asked 0:45 ago'), findsOneWidget);
+      expect(find.text('Help asked · 0:45'), findsOneWidget);
       await tester.tap(find.byKey(const Key('cancel-help')));
       await tester.pump();
       expect(h.actions.count('cancelHelp'), 1);
@@ -85,10 +84,10 @@ void main() {
       final before = liveRegions(tester);
       expect(before, contains(StationCopy.helpRequested));
       await h.advance(const Duration(seconds: 3));
-      expect(find.text('Your supervisors can see it · asked 0:45 ago'), findsOneWidget, reason: 'the clock did tick');
+      expect(find.text('Help asked · 0:45'), findsOneWidget, reason: 'the clock did tick');
       final after = liveRegions(tester);
       expect(after, before, reason: 'a live region whose text changes is said again, every second');
-      expect(after.where((l) => l.contains('ago')), isEmpty);
+      expect(after.where((l) => l.contains('0:4')), isEmpty);
       semantics.dispose();
     });
 
@@ -129,7 +128,7 @@ void main() {
 
     testWidgets('an open request raised in wrap-up stays in view after it, with Cancel, but no new button', (tester) async {
       final h = await pumpStation(tester, station(help: open), needHelp: true);
-      expect(find.byKey(const Key('help-requested')), findsOneWidget);
+      expect(find.byKey(const Key('cancel-help')), findsOneWidget);
       expect(find.byKey(const Key('need-help')), findsNothing);
       await tester.tap(find.byKey(const Key('cancel-help')));
       await tester.pump();
@@ -193,53 +192,59 @@ void main() {
       ]) {
         await pumpStation(tester, v, textScale: 2, size: const Size(360, 640), needHelp: true);
         expect(tester.takeException(), isNull, reason: '${v.phase}');
-        expect(find.byKey(const Key('need-help-card')), findsOneWidget);
+        expect(find.byKey(const Key('need-help')).evaluate().length + find.byKey(const Key('need-help-card')).evaluate().length, greaterThan(0));
       }
     });
   });
 
-  group('the break countdown (LF6)', () {
+  group('the break against its limit (LF6; 07, 08)', () {
     BreakInfo tea({required Duration ago, int? limit = 15, String code = 'tea'}) =>
         BreakInfo(code: code, label: 'Tea break', since: t0.subtract(ago), limitMinutes: limit);
 
-    testWidgets('counts down from the break\'s start to its limit', (tester) async {
+    testWidgets('counts the time used against the limit, and what is left', (tester) async {
       final h = await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 10, seconds: 30))));
-      expect(find.text('On break for 10:30'), findsOneWidget);
-      expect(find.text('4:30 left of your 15 min'), findsOneWidget);
+      expect(find.text('10:30'), findsWidgets);
+      expect(find.text('4:30 left of your 15 minutes.'), findsOneWidget);
       await h.advance(const Duration(seconds: 2));
-      expect(find.text('4:28 left of your 15 min'), findsOneWidget);
+      expect(find.text('4:28 left of your 15 minutes.'), findsOneWidget);
       expect(find.byKey(const Key('break-over')), findsNothing);
+      expect(find.byKey(const Key('band-tone-onBreak')), findsOneWidget);
     });
 
-    testWidgets('past the limit it says over, in the warning tone, and keeps counting', (tester) async {
+    testWidgets('past the limit the screen turns red-orange: Break time is over, how late, and keeps counting (08)', (tester) async {
       final h = await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 14, seconds: 59))));
-      expect(find.text('0:01 left of your 15 min'), findsOneWidget);
+      expect(find.text('0:01 left of your 15 minutes.'), findsOneWidget);
       await h.advance(const Duration(seconds: 3));
       expect(find.byKey(const Key('break-left')), findsNothing);
-      expect(find.text('Over your 15 min break by 0:02'), findsOneWidget);
+      expect(find.byKey(const Key('band-tone-over')), findsOneWidget);
+      expect(find.text(StationCopy.breakTimeOver), findsOneWidget);
+      expect(find.text('You are 0:02 late. Start calls now.'), findsOneWidget);
+      expect(find.text('Your break was 15 minutes. Your supervisor can see this.'), findsOneWidget);
       final text = tester.widget<Text>(find.byKey(const Key('break-over')));
-      final tokens = tester.element(find.byKey(const Key('break-over'))).tokens;
-      expect(text.style!.color, tokens.warning);
-      expect(find.byIcon(Icons.schedule), findsOneWidget);
+      final over = tester.element(find.byKey(const Key('break-over'))).stateTokens.over;
+      expect(text.style!.color, over.deep);
+      // Colour is never the only signal: an icon and words change with it.
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+      expect(find.byKey(const Key('end-break')), findsOneWidget);
     });
 
     testWidgets('time left rounds up: a millisecond past a whole second still shows that second, and "0:00 left" never shows',
         (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 10, seconds: 30, milliseconds: 1))));
-      expect(find.text('4:30 left of your 15 min'), findsOneWidget);
+      expect(find.text('4:30 left of your 15 minutes.'), findsOneWidget);
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 14, seconds: 59, milliseconds: 999))));
-      expect(find.text('0:01 left of your 15 min'), findsOneWidget);
+      expect(find.text('0:01 left of your 15 minutes.'), findsOneWidget);
       // At the limit itself it is over, by nothing yet.
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 15))));
       expect(find.byKey(const Key('break-left')), findsNothing);
-      expect(find.text('Over your 15 min break by 0:00'), findsOneWidget);
+      expect(find.text('You are 0:00 late. Start calls now.'), findsOneWidget);
     });
 
     testWidgets('none on a break whose reason has no limit, nor on a reserved one', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 3), limit: null)));
       expect(find.byKey(const Key('break-left')), findsNothing);
       expect(find.byKey(const Key('break-over')), findsNothing);
-      expect(find.text('On break for 03:00'), findsOneWidget);
+      expect(find.text('3:00'), findsWidgets);
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 3), limit: null, code: 'device_away')));
       expect(find.byKey(const Key('break-left')), findsNothing);
     });
@@ -252,7 +257,7 @@ void main() {
         size: const Size(360, 640),
       );
       expect(tester.takeException(), isNull);
-      expect(find.text('Over your 30 min break by 17:05'), findsOneWidget);
+      expect(find.text('You are 17:05 late. Start calls now.'), findsOneWidget);
     });
   });
 }

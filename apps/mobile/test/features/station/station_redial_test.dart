@@ -2,12 +2,13 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/widgets/action_buttons.dart';
 
 import '../../core/station/controller_harness.dart' as core;
 import 'station_harness.dart';
 
-/// Wrap-up redial on the station screen: the Redial button beside the
-/// outcome pad, and the live call's "Redial 1 of 2".
+/// Wrap-up redial on the station screen: "Call again · 2 left" beside Save & break under Save,
+/// and the live call's "Calling again · 1 of 2".
 
 WrapupView _wrapup({int? remaining, bool submitted = false}) => WrapupView(
   endsAt: t0.add(const Duration(seconds: 30)),
@@ -75,8 +76,11 @@ StationView _wrap({int? remaining, String? saved, StationBusy busy = StationBusy
   return out;
 }
 
-OutlinedButton _redial(WidgetTester tester) => tester.widget<OutlinedButton>(find.byKey(const Key('redial')));
-FilledButton _save(WidgetTester tester) => tester.widget<FilledButton>(find.byKey(const Key('save-outcome')));
+SecondaryActionButton _redial(WidgetTester tester) => tester.widget<SecondaryActionButton>(find.byKey(const Key('redial')));
+MainActionButton _save(WidgetTester tester) => tester.widget<MainActionButton>(find.byKey(const Key('save-outcome')));
+
+/// Save can be pressed and is ready (not faded, not busy, nothing held).
+bool _saveReady(WidgetTester tester) => _save(tester).onPressed != null && !_save(tester).dimmed && !_save(tester).busy;
 
 void main() {
   group('the wrap-up', () {
@@ -86,16 +90,17 @@ void main() {
       expect(find.byKey(const Key('redial')), findsNothing);
     });
 
-    testWidgets('Redial sits beside Save outcome, says what it leaves, and redials the call on screen', (tester) async {
+    testWidgets('Call again sits beside Save & break under Save, says what it leaves, and redials the call on screen', (tester) async {
       final h = await pumpStation(tester, _wrap(remaining: 2));
-      expect(find.text('Redial'), findsOneWidget);
-      expect(find.text('2 redials left'), findsOneWidget);
+      expect(find.text('Call again · 2 left'), findsOneWidget);
       expect(find.byKey(const Key('save-outcome')), findsOneWidget);
-      // Side by side at normal text size.
+      // Side by side with Save & break, under the main button, at normal text size.
       final redialBox = tester.getRect(find.byKey(const Key('redial')));
+      final breakBox = tester.getRect(find.byKey(const Key('save-and-break')));
       final saveBox = tester.getRect(find.byKey(const Key('save-outcome')));
-      expect(redialBox.center.dy, moreOrLessEquals(saveBox.center.dy, epsilon: 1));
-      expect(redialBox.right, lessThan(saveBox.left));
+      expect(redialBox.center.dy, moreOrLessEquals(breakBox.center.dy, epsilon: 1));
+      expect(breakBox.right, lessThan(redialBox.left));
+      expect(redialBox.top, greaterThan(saveBox.bottom));
 
       await tester.tap(find.byKey(const Key('redial')));
       await tester.pump();
@@ -106,33 +111,30 @@ void main() {
 
     testWidgets('one left is said in the singular', (tester) async {
       await pumpStation(tester, _wrap(remaining: 1));
-      expect(find.text('1 redial left'), findsOneWidget);
+      expect(find.text('Call again · 1 left'), findsOneWidget);
     });
 
-    testWidgets('used up: shown, disabled, "No redials left"', (tester) async {
-      final h = await pumpStation(tester, _wrap(remaining: 0));
-      expect(find.text('No redials left'), findsOneWidget);
-      expect(_redial(tester).onPressed, isNull);
-      await tester.tap(find.byKey(const Key('redial')), warnIfMissed: false);
-      await tester.pump();
-      expect(h.actions.count('redial'), 0);
+    testWidgets('used up: hidden, not greyed (AS1); Save & break takes the row', (tester) async {
+      await pumpStation(tester, _wrap(remaining: 0));
+      expect(find.byKey(const Key('redial')), findsNothing);
+      expect(find.byKey(const Key('save-and-break')), findsOneWidget);
     });
 
     testWidgets('while the redial goes out, the pad, Save and Redial are all held', (tester) async {
       final h = await pumpStation(tester, _wrap(remaining: 2));
       await tester.tap(find.byKey(const Key('outcome-interested')));
       await tester.pump();
-      expect(_save(tester).onPressed, isNotNull);
+      expect(_saveReady(tester), isTrue);
 
       await h.setView(_wrap(remaining: 2, busy: StationBusy.redialing));
-      expect(find.text('Redialling…'), findsOneWidget);
-      expect(_redial(tester).onPressed, isNull);
+      expect(find.text('Calling…'), findsOneWidget);
+      expect(_redial(tester).busy, isTrue);
       expect(_save(tester).onPressed, isNull);
       await tester.tap(find.byKey(const Key('outcome-not_interested')));
       await tester.pump();
       await h.setView(_wrap(remaining: 2));
       // The pick made before is still the one selected: the pad ignored the tap.
-      expect(_save(tester).onPressed, isNotNull);
+      expect(_saveReady(tester), isTrue);
       await tester.tap(find.byKey(const Key('save-outcome')));
       await tester.pump();
       expect(h.actions.args['submitDisposition']?.first, 'interested');
@@ -141,6 +143,7 @@ void main() {
     testWidgets('while the outcome saves, Redial waits', (tester) async {
       await pumpStation(tester, _wrap(remaining: 2, busy: StationBusy.savingDisposition));
       expect(_redial(tester).onPressed, isNull);
+      expect(_save(tester).busy, isTrue);
     });
 
     testWidgets('a refusal is said, and the outcome pad stays usable', (tester) async {
@@ -152,7 +155,7 @@ void main() {
       expect(find.textContaining('can’t be redialled'), findsOneWidget);
       await tester.tap(find.byKey(const Key('outcome-interested')));
       await tester.pump();
-      expect(_save(tester).onPressed, isNotNull);
+      expect(_saveReady(tester), isTrue);
       await tester.tap(find.byKey(const Key('save-outcome')));
       await tester.pump();
       expect(h.actions.count('submitDisposition'), 1);
@@ -164,12 +167,11 @@ void main() {
       expect(find.byKey(const Key('redial')), findsNothing);
     });
 
-    testWidgets('large text puts Redial under the outcome pad, so Save keeps the pinned area', (tester) async {
+    testWidgets('large text stacks Save & break and Call again under Save; nothing overflows', (tester) async {
       final h = await pumpStation(tester, _wrap(remaining: 2), textScale: 2);
       expect(find.byKey(const Key('redial')), findsOneWidget);
       final redialBox = tester.getRect(find.byKey(const Key('redial')));
-      expect(redialBox.top, greaterThan(tester.getRect(find.byKey(const Key('outcome-dnc'))).bottom));
-      expect(redialBox.bottom, lessThan(tester.getRect(find.byKey(const Key('notes-field'))).top));
+      expect(redialBox.top, greaterThan(tester.getRect(find.byKey(const Key('save-and-break'))).top));
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.byKey(const Key('redial')));
       await tester.pump();
@@ -188,7 +190,7 @@ void main() {
 
       await h.setView(views.ringing);
       expect(find.byKey(const Key('band-ringing')), findsOneWidget);
-      expect(find.text('Redial 1 of 2'), findsOneWidget);
+      expect(find.text('Calling again · 1 of 2'), findsOneWidget);
       expect(find.byKey(const Key('save-outcome')), findsNothing);
       expect(find.byKey(const Key('redial')), findsNothing);
 
@@ -199,7 +201,7 @@ void main() {
 
       await h.setView(views.redialWrapup);
       expect(find.byKey(const Key('save-outcome')), findsOneWidget);
-      expect(find.text('1 redial left'), findsOneWidget);
+      expect(find.text('Call again · 1 left'), findsOneWidget);
     });
   });
 
@@ -211,7 +213,7 @@ void main() {
       );
       expect(find.byKey(const Key('band-ringing')), findsOneWidget);
       expect(find.byKey(const Key('redial-label')), findsOneWidget);
-      expect(find.text('Redial 1 of 2'), findsOneWidget);
+      expect(find.text('Calling again · 1 of 2'), findsOneWidget);
       // Above the name the agent reads while it rings.
       expect(
         tester.getRect(find.byKey(const Key('redial-label'))).bottom,
@@ -220,7 +222,7 @@ void main() {
 
       await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, redialNumber: 2, redialLimit: 2)));
       expect(find.byKey(const Key('band-on-call')), findsOneWidget);
-      expect(find.text('Redial 2 of 2'), findsOneWidget);
+      expect(find.text('Calling again · 2 of 2'), findsOneWidget);
     });
 
     testWidgets('a call the dialer placed carries no label', (tester) async {

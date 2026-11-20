@@ -10,11 +10,11 @@ import '../logic/disposition_form.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
-import '../widgets/hold_to_confirm.dart';
+import '../widgets/slide_to_confirm.dart';
 import 'banners.dart';
+import 'call_band.dart';
 import 'callback_picker.dart';
 import 'contact_details.dart';
-import 'layouts.dart';
 import 'notes_field.dart';
 import 'on_call_view.dart' show ControlTile, QueuedBreakChip;
 import 'promise_picker.dart';
@@ -37,7 +37,7 @@ class InboundOfferView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final call = ref.watch(stationViewProvider.select(_inbound));
     if (call == null) return const SizedBox.shrink();
-    return CallLayout(
+    return CallPage(
       body: [
         InboundHeadline(call: call),
         const SizedBox(height: Space.md),
@@ -48,7 +48,7 @@ class InboundOfferView extends ConsumerWidget {
         const SizedBox(height: Space.lg),
         InboundMatch(call: call, priorLimit: 3),
       ],
-      bottom: const InboundHangUpBar(),
+      actions: const InboundHangUpBar(),
     );
   }
 }
@@ -65,7 +65,7 @@ class InboundOnCallView extends ConsumerWidget {
     final interrupted = ref.watch(stationViewProvider.select((v) => v?.audio.interruption ?? AudioInterruption.none));
     final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
     if (call == null) return const SizedBox.shrink();
-    return CallLayout(
+    return CallPage(
       body: [
         if (interrupted != AudioInterruption.none) _InboundInterruption(kind: interrupted) else InboundSummary(call: call),
         const SizedBox(height: Space.lg),
@@ -76,7 +76,7 @@ class InboundOnCallView extends ConsumerWidget {
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip()),
       ],
-      bottom: const InboundHangUpBar(),
+      actions: const InboundHangUpBar(),
     );
   }
 }
@@ -108,7 +108,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
 
-    return CallLayout(
+    return CallPage(
       body: [
         Semantics(header: true, child: Text(StationCopy.howDidItGo(InboundCopy.who(call)), style: text.labelMedium)),
         const SizedBox(height: Space.xs),
@@ -160,7 +160,7 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
         // IQ48: the customers waiting to be called back, a tap from the list.
         const MissedToCallBackLine(),
       ],
-      bottom: LinkGate(child: _InboundSaveArea(form: _form, notes: widget.notes, onSave: _save)),
+      actions: LinkGate(child: _InboundSaveArea(form: _form, notes: widget.notes, onSave: _save)),
     );
   }
 
@@ -592,7 +592,7 @@ class _DncOutcomeLine extends StatelessWidget {
       );
 }
 
-/// Hold to hang up, offered only once the caller is connected: before that the panel is up
+/// Slide to end call (AS3), offered only once the caller is connected: before that the panel is up
 /// for the 1.5 s the agent has to read it, and a hang-up would end a customer's call unheard.
 class InboundHangUpBar extends ConsumerWidget {
   const InboundHangUpBar({super.key});
@@ -624,17 +624,16 @@ class InboundHangUpBar extends ConsumerWidget {
           const SizedBox(height: Space.sm),
         ],
         LinkGate(
-          child: HoldToConfirmBar(
+          child: SlideToConfirm(
             key: const Key('hang-up'),
-            label: StationCopy.holdToHangUp,
-            holdingLabel: StationCopy.keepHolding,
-            busyLabel: StationCopy.endingCall,
-            semanticLabel: StationCopy.hangUp,
-            semanticHint: StationCopy.hangUpHint,
+            label: StationCopy.slideToEnd,
+            busyLabel: StationCopy.ending,
+            semanticLabel: StationCopy.endCall,
+            semanticHint: StationCopy.endCallHint,
             enabled: stage == InboundStage.connected,
             busy: busy,
             onConfirmed: () => ref.read(stationActionsProvider).hangUp(),
-            confirmAccessibly: (context) => confirmHangUp(context, ringing: false),
+            confirmAccessibly: (context) => confirmHangUp(context),
           ),
         ),
       ],

@@ -80,3 +80,43 @@ class ListenFirstNoticeNotifier extends Notifier<bool> {
     if (scope != null) await _kv.setBool('$keyPrefix:$scope', true);
   }
 }
+
+/// The signed-in agent's name, for the station's top bar and "Namaste, Sunita" (the app gate's
+/// [GateReady.displayName]); null before the gate is ready. A provider so widget tests need no
+/// sign-in.
+final stationAgentNameProvider = Provider<String?>((ref) {
+  final gate = ref.watch(appGateProvider);
+  if (gate is! GateReady) return null;
+  final name = gate.displayName.trim();
+  return name.isEmpty ? null : name;
+});
+
+/// How the agent chose to work on Start of day (design-spec §3, "How will you work?").
+enum WorkMode {
+  /// Calls come to me: the station goes ready.
+  callsComeToMe,
+
+  /// I dial the number: the station switches to the soft phone (SP7).
+  iDial,
+}
+
+/// "Start work", pressed on Start of day before the station existed: the join runs first, and once
+/// the station's socket is open it goes on in [WorkMode] by itself, so the agent presses once
+/// (design-spec §2: Start work → Ready). Spent on the first open of that campaign's station,
+/// whatever the agent's state is then: a station rejoined on a break or mid-call is left as it is.
+final startWorkIntentProvider = NotifierProvider<StartWorkIntent, ({String campaignId, WorkMode mode})?>(StartWorkIntent.new);
+
+class StartWorkIntent extends Notifier<({String campaignId, WorkMode mode})?> {
+  @override
+  ({String campaignId, WorkMode mode})? build() => null;
+
+  void set(String campaignId, WorkMode mode) => state = (campaignId: campaignId, mode: mode);
+
+  /// The intent for [campaignId], once; null when there is none for it.
+  WorkMode? take(String campaignId) {
+    final s = state;
+    if (s == null || s.campaignId != campaignId) return null;
+    state = null;
+    return s.mode;
+  }
+}

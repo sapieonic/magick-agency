@@ -10,7 +10,10 @@ import '../../../core/station/station_copy.dart' show leftOfflineCopy;
 import '../../../core/station/station_view.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
+import '../station_reads.dart';
+import '../widgets/action_buttons.dart';
 import 'contact_details.dart';
+import 'layouts.dart' show ButtonPair, NumberTile, TileRow;
 
 /// The station's dialogs and bottom sheets. Free functions so the phase views
 /// stay small and every flow is one call. They take a [BuildContext] and no
@@ -138,15 +141,15 @@ class CloseWhenCallArrives extends StatelessWidget {
   Widget build(BuildContext context) => StationModalGuard(scope: noCallOnScreen, child: child);
 }
 
-/// The screen-reader path of hold-to-hang-up. Closes with the call (or the
-/// phase) it was asked about: the bar that asked is gone by then.
-Future<bool> confirmHangUp(BuildContext context, {required bool ringing}) {
+/// The screen-reader path of Slide to end call (a slide cannot be done reliably with one). Closes
+/// with the call (or the phase) it was asked about: the control that asked is gone by then.
+Future<bool> confirmHangUp(BuildContext context) {
   final view = ProviderScope.containerOf(context, listen: false).read(stationViewProvider);
   return confirmDialog(
     context,
     title: StationCopy.hangUpConfirmTitle,
-    message: ringing ? StationCopy.hangUpConfirmRinging : StationCopy.hangUpConfirmBody,
-    confirm: StationCopy.hangUp,
+    message: StationCopy.hangUpConfirmBody,
+    confirm: StationCopy.endCall,
     cancel: StationCopy.keepCall,
     danger: true,
     scope: thisCallNow(view),
@@ -171,75 +174,10 @@ const switchToSoftphoneChoice = 'soft_phone';
 Future<void> showBreakSheet(BuildContext context, {required bool queued}) async {
   final container = ProviderScope.containerOf(context, listen: false);
   final actions = container.read(stationActionsProvider);
-  final view = container.read(stationViewProvider);
-  final options = (view?.breakOptions ?? const <BreakOption>[])
-      // The app's own pause and the soft phone are not breaks an agent picks
-      // from the campaign's reasons.
-      .where((o) => o.code != 'device_away' && o.code != switchToSoftphoneChoice)
-      .toList(growable: false);
   final softphone = container.read(softphoneAvailabilityProvider).startAllowed;
   final host = softphone ? container.read(softphoneHostActionsProvider) : null;
   final messenger = ScaffoldMessenger.maybeOf(context);
-  final scope = queued ? untilNextCall(view?.call?.attemptId) : noCallOnScreen;
-  final code = await showModalBottomSheet<String>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (context) {
-      final text = Theme.of(context).textTheme;
-      return StationModalGuard(
-        scope: scope,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Semantics(header: true, child: Text(StationCopy.breakSheetTitle, style: text.titleLarge)),
-                  ),
-                  TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text(StationCopy.cancel)),
-                ],
-              ),
-              Text(queued ? StationCopy.breakSheetQueued : StationCopy.breakSheetNow, style: text.bodySmall),
-              const SizedBox(height: Space.md),
-              if (options.isEmpty)
-                Text(StationCopy.breakUnconfigured, style: text.bodyMedium)
-              else
-                for (final o in options)
-                  ListTile(
-                    key: Key('break-${o.code}'),
-                    minTileHeight: Space.touch + 8,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: Space.sm),
-                    title: Text(o.label),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).pop(o.code),
-                  ),
-              if (softphone) ...[
-                const Divider(height: Space.lg),
-                ListTile(
-                  key: const Key('break-switch-softphone'),
-                  minTileHeight: Space.touch + 8,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: Space.sm),
-                  leading: const Icon(Icons.dialpad),
-                  title: const Text(StationCopy.switchToSoftphone),
-                  subtitle: Text(queued ? StationCopy.switchAfterCallHint : StationCopy.switchHint),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).pop(switchToSoftphoneChoice),
-                ),
-              ],
-              if (!queued) ...[
-                const SizedBox(height: Space.sm),
-                Text(StationCopy.breakSheetOnCallNote, style: text.labelSmall, textAlign: TextAlign.center),
-              ],
-            ],
-          ),
-        ),
-      );
-    },
-  );
+  final code = await pickBreakReason(context, queued: queued);
   if (code == null) return;
   final now = container.read(stationViewProvider);
   if (now == null) return;
@@ -252,6 +190,79 @@ Future<void> showBreakSheet(BuildContext context, {required bool queued}) async 
     return;
   }
   await actions.takeBreak(code);
+}
+
+/// Which break? (06): the campaign's reasons as picture tiles, and "Dial a number myself" while the
+/// soft phone may start calls. The code picked ([switchToSoftphoneChoice] for the soft phone), or
+/// null for Cancel or a sheet that closed itself (a call arrived; [queued]: another call).
+Future<String?> pickBreakReason(BuildContext context, {required bool queued}) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  final view = container.read(stationViewProvider);
+  final options = (view?.breakOptions ?? const <BreakOption>[])
+      // The app's own pause and the soft phone are not breaks an agent picks
+      // from the campaign's reasons.
+      .where((o) => o.code != 'device_away' && o.code != switchToSoftphoneChoice)
+      .toList(growable: false);
+  final softphone = container.read(softphoneAvailabilityProvider).startAllowed;
+  final scope = queued ? untilNextCall(view?.callId) : noCallOnScreen;
+  final code = await showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (context) {
+      final text = Theme.of(context).textTheme;
+      return StationModalGuard(
+        scope: scope,
+        child: SingleChildScrollView(
+          key: const Key('break-sheet'),
+          padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Semantics(header: true, child: Text(StationCopy.whichBreak, style: text.headlineSmall)),
+                  ),
+                  TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text(StationCopy.cancel)),
+                ],
+              ),
+              Text(queued ? StationCopy.whichBreakAfterCall : StationCopy.whichBreakNow, style: text.bodyMedium),
+              const SizedBox(height: Space.md),
+              if (options.isEmpty)
+                Text(StationCopy.noBreakReasons, style: text.bodyMedium)
+              else
+                _TileGrid(
+                  children: [
+                    for (final o in options)
+                      _BreakTile(
+                        key: Key('break-${o.code}'),
+                        option: o,
+                        onTap: () => Navigator.of(context).pop(o.code),
+                      ),
+                  ],
+                ),
+              if (softphone) ...[
+                const Divider(height: Space.xl),
+                ListTile(
+                  key: const Key('break-switch-softphone'),
+                  minTileHeight: Space.touch + 8,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: Space.sm),
+                  leading: const Icon(Icons.dialpad),
+                  title: const Text(StationCopy.dialMyself),
+                  subtitle: Text(queued ? StationCopy.switchAfterCallHint : StationCopy.switchHint),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).pop(switchToSoftphoneChoice),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  return code;
 }
 
 /// Switches this campaign station to the soft phone (SP7): at once while
@@ -281,8 +292,9 @@ Future<void> cancelSoftphoneSwitch(BuildContext context) async {
   }
 }
 
-/// Leave: refused while a call is on screen; otherwise confirmed, and then
-/// back to the campaign list once the server agreed.
+/// Finish work for today (11): refused while a call is on screen; otherwise asked on the Finish
+/// work sheet (the safe choice is the big one), and then back to the work list once the server
+/// agreed.
 ///
 /// Plain HTTP, so it is offered whatever the socket is doing.
 Future<void> leaveStation(BuildContext context) async {
@@ -294,20 +306,14 @@ Future<void> leaveStation(BuildContext context) async {
   final actions = container.read(stationActionsProvider);
   final view = container.read(stationViewProvider);
   if (view != null && view.callActive) {
-    messenger.showSnackBar(const SnackBar(content: Text(StationCopy.leaveBlocked)));
+    messenger.showSnackBar(const SnackBar(content: Text(StationCopy.finishCallFirst)));
     return;
   }
-  final ok = await confirmDialog(
-    context,
-    title: StationCopy.leaveTitle,
-    message: StationCopy.leaveMessage,
-    confirm: StationCopy.leaveAction,
-    scope: noCallOnScreen,
-  );
+  final ok = await showFinishWorkSheet(context);
   if (!ok) return;
   // Confirmed in the same instant a call arrived: the call comes first.
   if (container.read(stationViewProvider)?.callActive ?? false) {
-    messenger.showSnackBar(const SnackBar(content: Text(StationCopy.leaveBlocked)));
+    messenger.showSnackBar(const SnackBar(content: Text(StationCopy.finishCallFirst)));
     return;
   }
   actions.dismissActionError();
@@ -437,12 +443,15 @@ Future<void> markDnc(BuildContext context) async {
   final call = view?.call;
   if (view == null || call == null) return;
   final scope = sameCall(call.attemptId, {view.phase});
-  final ok = await confirmDialog(
+  final name = call.displayName?.trim();
+  final phone = formatPhone(call.phoneE164);
+  final ok = await confirmSheet(
     context,
-    title: StationCopy.dncTitle,
-    message: StationCopy.dncMessage(formatPhone(call.phoneE164), call.campaignName),
-    confirm: StationCopy.dncAction,
-    danger: true,
+    title: StationCopy.stopCallingTitle,
+    detail: name == null || name.isEmpty ? phone : '$name · $phone',
+    message: StationCopy.stopCallingBody,
+    confirm: StationCopy.yesStopCalls,
+    cancel: StationCopy.noGoBack,
     scope: scope,
   );
   if (scope(container.read(stationViewProvider))) {
@@ -453,4 +462,228 @@ Future<void> markDnc(BuildContext context) async {
   // The call moved on while the dialog was open (it closed itself), or in the
   // instant the agent confirmed.
   messenger?.showSnackBar(const SnackBar(key: Key('dnc-not-marked'), content: Text(StationCopy.dncNotMarked)));
+}
+
+/// One tile per row on a narrow screen or at large text, else two across.
+class _TileGrid extends StatelessWidget {
+  const _TileGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
+        final columns = scale > 1.5 || c.maxWidth < 280 ? 1 : 2;
+        final w = ((c.maxWidth - Space.sm * (columns - 1)) / columns).floorToDouble();
+        return Wrap(
+          spacing: Space.sm,
+          runSpacing: Space.sm,
+          children: [for (final child in children) SizedBox(width: w, child: child)],
+        );
+      },
+    );
+  }
+}
+
+/// A break reason as a picture tile (06): its icon (guessed from its code or words, a cup when
+/// nothing fits, until reasons carry an icon of their own), its name, and its minutes when it has
+/// a limit. One tap starts it.
+class _BreakTile extends StatelessWidget {
+  const _BreakTile({super.key, required this.option, required this.onTap});
+
+  final BreakOption option;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final c = context.stateTokens.onBreak;
+    final text = Theme.of(context).textTheme;
+    final limit = option.limitMinutes;
+    return Semantics(
+      button: true,
+      label: limit == null ? option.label : '${option.label}, ${StationCopy.minutes(limit)}',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: t.bgSecondary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          side: BorderSide(color: t.borderStrong, width: 1.5),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 96),
+            child: Padding(
+              padding: const EdgeInsets.all(Space.md),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(color: c.soft, shape: BoxShape.circle),
+                    child: SizedBox.square(dimension: 44, child: Icon(breakIcon(option), color: c.deep)),
+                  ),
+                  const SizedBox(height: Space.xs),
+                  Text(option.label, textAlign: TextAlign.center, style: text.titleMedium),
+                  if (limit != null) Text(StationCopy.minutes(limit), style: text.bodySmall),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A break reason's picture (design-spec §5.5): guessed from its code or name until reasons carry
+/// an icon of their own (BE-13); a cup when nothing fits.
+IconData breakIcon(BreakOption o) {
+  final words = '${o.code} ${o.label}'.toLowerCase();
+  if (words.contains('lunch') || words.contains('meal') || words.contains('dinner')) return Icons.restaurant_outlined;
+  if (words.contains('wash') || words.contains('toilet') || words.contains('rest room') || words.contains('restroom')) return Icons.wc;
+  if (words.contains('meet')) return Icons.groups_outlined;
+  if (words.contains('train') || words.contains('coach')) return Icons.school_outlined;
+  return Icons.free_breakfast_outlined;
+}
+
+/// Finish work for today? (11): a bottom sheet, the day's numbers, and the safe choice as the big
+/// green button. True: finish.
+Future<bool> showFinishWorkSheet(BuildContext context) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (context) => const CloseWhenCallArrives(child: _FinishWorkSheet()),
+  );
+  return ok ?? false;
+}
+
+class _FinishWorkSheet extends ConsumerWidget {
+  const _FinishWorkSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final s = context.stateTokens;
+    final id = ref.watch(stationViewProvider.select((v) => v?.campaignId));
+    final day = id == null ? null : ref.watch(stationMyDayProvider(id)).value;
+    return SingleChildScrollView(
+      key: const Key('finish-sheet'),
+      padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(color: s.start.band, borderRadius: BorderRadius.circular(Radii.md)),
+                child: SizedBox.square(dimension: 48, child: Icon(Icons.logout, color: s.start.ink)),
+              ),
+              const SizedBox(width: Space.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Semantics(header: true, child: Text(StationCopy.finishWorkTitle, style: text.headlineSmall)),
+                    Text(StationCopy.finishWorkSubtitle, style: text.bodyMedium),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (day != null) ...[
+            const SizedBox(height: Space.md),
+            TileRow(
+              children: [
+                NumberTile(label: StationCopy.callsToday, value: '${day.callsToday}', suffix: day.target == null ? null : '/ ${day.target}'),
+                NumberTile(label: StationCopy.talkTime, value: formatHoursMinutes(Duration(seconds: day.talkSeconds))),
+                if (day.willPay != null)
+                  NumberTile(label: StationCopy.willPay, value: '${day.willPay}')
+                else
+                  NumberTile(label: StationCopy.dialled, value: '${day.dialled}'),
+              ],
+            ),
+          ],
+          const SizedBox(height: Space.lg),
+          MainActionButton(
+            key: const Key('finish-no'),
+            label: StationCopy.noKeepWorking,
+            onPressed: () => Navigator.of(context).pop(false),
+          ),
+          const SizedBox(height: Space.sm),
+          SecondaryActionButton(
+            key: const Key('finish-yes'),
+            label: StationCopy.yesFinishWork,
+            icon: Icons.logout,
+            danger: true,
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A question that cannot be undone, as a bottom sheet (05c): [title], [message], the safe choice
+/// first and the red one under it. With a [scope] it closes itself, answered "no", once the scope
+/// no longer holds.
+Future<bool> confirmSheet(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirm,
+  required String cancel,
+  String? detail,
+  StationModalScope? scope,
+}) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (context) {
+      final text = Theme.of(context).textTheme;
+      final s = context.stateTokens;
+      final sheet = SingleChildScrollView(
+        key: const Key('confirm-sheet'),
+        padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(color: s.problem.soft, shape: BoxShape.circle),
+                  child: SizedBox.square(dimension: 48, child: Icon(Icons.block, color: s.problem.deep)),
+                ),
+                const SizedBox(width: Space.md),
+                Expanded(child: Semantics(header: true, child: Text(title, style: text.headlineSmall))),
+              ],
+            ),
+            if (detail != null) ...[const SizedBox(height: Space.sm), Text(detail, style: text.titleMedium)],
+            const SizedBox(height: Space.sm),
+            Text(message, style: text.bodyLarge),
+            const SizedBox(height: Space.lg),
+            ButtonPair(
+              first: SecondaryActionButton(key: const Key('confirm-no'), label: cancel, onPressed: () => Navigator.of(context).pop(false)),
+              second: MainActionButton(
+                key: const Key('confirm-yes'),
+                label: confirm,
+                kind: ActionKind.stop,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+            ),
+          ],
+        ),
+      );
+      return scope == null ? sheet : StationModalGuard(scope: scope, child: sheet);
+    },
+  );
+  return ok ?? false;
 }

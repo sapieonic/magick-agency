@@ -6,8 +6,15 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
+import '../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../core/station/station_view.dart';
 import '../../ui/primitives.dart';
+import '../station/parts/idle_views.dart' show WorkCard;
+import '../station/parts/layouts.dart';
+import '../station/station_copy.dart';
+import '../station/station_providers.dart';
+import '../station/widgets/action_buttons.dart';
+import '../station/widgets/state_band.dart';
 import 'preflight_checks.dart';
 import 'preflight_copy.dart';
 
@@ -20,8 +27,10 @@ import 'preflight_copy.dart';
 String preflightLocation(String campaignId, String campaignName) =>
     Uri(path: Routes.preflight(campaignId), queryParameters: {'campaignName': campaignName}).toString();
 
-/// "Ready to take calls?": the phone checks itself before every shift, then
-/// "Go on duty" joins the campaign.
+/// Start of day (01, 01b): the phone checks itself before every shift, the agent sees today's
+/// work and chooses how to work, then "Start work" joins and, once the station is open, starts.
+/// A blocking check that fails turns the band red, says what to do, and puts its fix where Start
+/// work was (hidden, not greyed: AS1).
 ///
 /// Checks run in parallel and each row settles on its own. Only a missing
 /// microphone or an unusable network blocks; everything else is advice.
@@ -52,6 +61,10 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
   Future<void>? _soundCheck;
   StationStart? _outcome;
   bool _awaitingSettings = false;
+
+  /// How will you work? (the choice on screen) and how the last Start work asked to.
+  WorkMode _mode = WorkMode.callsComeToMe;
+  WorkMode _intent = WorkMode.callsComeToMe;
   final Set<Timer> _deadlines = {};
 
   @override
@@ -222,6 +235,7 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     if (!mounted) return;
     if (result is StationStarted) {
       setState(() => _starting = false);
+      ref.read(startWorkIntentProvider.notifier).set(widget.campaignId, _intent);
       context.go(Routes.station(widget.campaignId));
       return;
     }
@@ -231,7 +245,12 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     });
   }
 
-  void _goOnDuty() => _start((l, name) => l.start(widget.campaignId, campaignName: name));
+  /// Start work: join, and once the station is open go on in [mode] by itself
+  /// ([startWorkIntentProvider]), so the agent presses once.
+  void _goOnDuty([WorkMode mode = WorkMode.callsComeToMe]) {
+    _intent = mode;
+    _start((l, name) => l.start(widget.campaignId, campaignName: name));
+  }
 
   Future<void> _switchFrom(StationElsewhere other) async {
     final t = context.tokens;
@@ -264,24 +283,83 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     final name = _campaignName;
     final block = dutyBlock(_results);
     final outcome = _outcome;
+    final agent = ref.watch(stationAgentNameProvider);
+    final softphone = ref.watch(softphoneAvailabilityProvider.select((a) => a.startAllowed));
+    final mode = softphone ? _mode : WorkMode.callsComeToMe;
+    final failed = block == DutyBlock.microphone || block == DutyBlock.network;
+    final mic = _results[PreflightCheck.microphone];
+    // Large text on a small phone: the band scrolls with the checks, so they and Start work fit.
+    final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
+
+    // 01b: a blocking check failed. The band turns red and says what; the main action is the fix.
+    final StateBand band;
+    if (block == DutyBlock.microphone) {
+      band = const StateBand(
+        key: Key('band-check-failed'),
+        tone: StationTone.problem,
+        icon: Icons.mic_off,
+        title: PreflightCopy.micBlockedTitle,
+        subtitle: PreflightCopy.micBlockedSubtitle,
+      );
+    } else if (block == DutyBlock.network) {
+      band = const StateBand(
+        key: Key('band-check-failed'),
+        tone: StationTone.problem,
+        icon: Icons.wifi_off,
+        title: PreflightCopy.noInternetTitle,
+        subtitle: PreflightCopy.noInternetSubtitle,
+      );
+    } else {
+      band = StateBand(
+        key: const Key('band-start-of-day'),
+        tone: StationTone.start,
+        icon: Icons.headphones,
+        title: StationCopy.namaste(agent),
+        subtitle: PreflightCopy.checkThese,
+      );
+    }
+
+    final Widget action;
+    if (block == DutyBlock.microphone) {
+      final settings = mic?.fix == CheckFix.openSettings;
+      action = MainActionButton(
+        key: const Key('fix-check'),
+        label: settings ? PreflightCopy.openSettings : PreflightCopy.allowMicrophone,
+        icon: settings ? Icons.settings_outlined : Icons.mic,
+        kind: ActionKind.stop,
+        onPressed: _starting ? null : () => _fix(PreflightCheck.microphone, mic?.fix ?? CheckFix.allowMicrophone),
+      );
+    } else if (block == DutyBlock.network) {
+      action = MainActionButton(
+        key: const Key('check-again'),
+        label: PreflightCopy.checkAgain,
+        icon: Icons.refresh,
+        kind: ActionKind.stop,
+        onPressed: _starting ? null : _runAll,
+      );
+    } else {
+      action = MainActionButton(
+        key: const Key('go-on-duty'),
+        label: _finishingSoundCheck
+            ? PreflightCopy.finishingSoundCheck
+            : _starting
+            ? PreflightCopy.joining
+            : block == DutyBlock.checking
+            ? PreflightCopy.blockedChecking
+            : PreflightCopy.goOnDuty,
+        icon: Icons.play_arrow_rounded,
+        busy: _starting,
+        onPressed: block == null && !_starting ? () => _goOnDuty(mode) : null,
+      );
+    }
 
     // Not while joining: the join would finish unseen (on duty with nobody
     // looking at the station), or a conflict would have nowhere to show.
     return PopScope(
       canPop: !_starting,
       child: Scaffold(
-        appBar: AppBar(
-          automaticallyImplyLeading: !_starting,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(PreflightCopy.title),
-              if (name.isNotEmpty) Text(name, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ],
-          ),
-        ),
+        backgroundColor: t.bgPrimary,
         body: SafeArea(
-          top: false,
           child: Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
@@ -289,10 +367,45 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  ColoredBox(
+                    color: t.bgSecondary,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.xs, Space.xs, Space.lg, Space.xs),
+                      child: Row(
+                        children: [
+                          if (!_starting && (GoRouter.maybeOf(context)?.canPop() ?? false))
+                            const BackButton()
+                          else
+                            const SizedBox(width: Space.md),
+                          Expanded(
+                            child: Semantics(
+                              header: true,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (agent != null) Text(agent, style: text.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  if (name.isNotEmpty)
+                                    Text(name, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (!tight) band,
                   Expanded(
                     child: ListView(
-                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                      padding: EdgeInsets.zero,
                       children: [
+                        if (tight) band,
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
                         if (outcome != null) ...[
                           _OutcomePanel(
                             key: const Key('start-outcome'),
@@ -300,29 +413,34 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
                             busy: _starting,
                             onSwitch: _switchFrom,
                             onCloseSoftphone: _closeSoftphone,
-                            onRetry: _goOnDuty,
+                            onRetry: () => _goOnDuty(mode),
                             onBack: () => context.go(Routes.home),
                           ),
                           const SizedBox(height: Space.lg),
                         ],
-                        AppCard(
-                          padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
-                          child: Column(
-                            children: [
-                              for (final c in PreflightCheck.values)
-                                if (_results[c] != null)
-                                  _CheckRow(
-                                    key: Key('check-${c.name}'),
-                                    result: _results[c]!,
-                                    last: c == _lastShown,
-                                    onFix: (fix) => _fix(c, fix),
-                                  ),
-                            ],
+                        _CheckGrid(results: _results, onFix: _fix),
+                        if (failed) ...[
+                          const SizedBox(height: Space.md),
+                          StepsCard(
+                            key: const Key('fix-steps'),
+                            title: StationCopy.whatToDo,
+                            tone: StationTone.problem,
+                            steps: block == DutyBlock.microphone
+                                ? (mic?.fix == CheckFix.openSettings
+                                      ? const [PreflightCopy.stepOpenSettings, PreflightCopy.stepTurnOnMic, PreflightCopy.stepComeBack]
+                                      : const [PreflightCopy.stepPressAllow, PreflightCopy.stepAllowMic])
+                                : const [StationCopy.stepCheckInternet, PreflightCopy.stepCheckAgain],
                           ),
-                        ),
-                        const SizedBox(height: Space.md),
-                        Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
-                        if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail))
+                        ] else ...[
+                          const SizedBox(height: Space.md),
+                          WorkCard(
+                            campaignName: name,
+                            softphone: softphone,
+                            mode: mode,
+                            onMode: (m) => setState(() => _mode = m),
+                          ),
+                        ],
+                        if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail) && !failed)
                           Align(
                             child: TextButton.icon(
                               key: const Key('check-again'),
@@ -331,47 +449,15 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
                               label: const Text(PreflightCopy.checkAgain),
                             ),
                           ),
+                        const SizedBox(height: Space.sm),
+                        Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  if (outcome == null)
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border(top: BorderSide(color: t.border)),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.md),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (block != null) ...[
-                              Text(
-                                switch (block) {
-                                  DutyBlock.checking => PreflightCopy.blockedChecking,
-                                  DutyBlock.microphone => PreflightCopy.blockedMic,
-                                  DutyBlock.network => PreflightCopy.blockedNetwork,
-                                },
-                                key: const Key('duty-blocked'),
-                                textAlign: TextAlign.center,
-                                style: text.bodySmall!.copyWith(color: block == DutyBlock.checking ? t.textSecondary : t.danger),
-                              ),
-                              const SizedBox(height: Space.sm),
-                            ],
-                            EmberButton(
-                              key: const Key('go-on-duty'),
-                              label: _finishingSoundCheck
-                                  ? PreflightCopy.finishingSoundCheck
-                                  : _starting
-                                  ? PreflightCopy.joining
-                                  : PreflightCopy.goOnDuty,
-                              icon: Icons.headset_mic,
-                              onPressed: block == null && !_starting ? _goOnDuty : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  if (outcome == null) StationActionArea(child: action),
                 ],
               ),
             ),
@@ -380,54 +466,81 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
       ),
     );
   }
+}
 
-  PreflightCheck? get _lastShown {
-    PreflightCheck? last;
-    for (final c in PreflightCheck.values) {
-      if (_results.containsKey(c)) last = c;
-    }
-    return last;
+/// The checks as tiles, two across (design-spec §4, phone): Microphone, Headset, Internet and
+/// Battery always; the sound check while it listens (the agent has to say hello) or when it found
+/// a problem, and the battery saver only when it is in the way. Each says OK, Checking… or what is
+/// wrong in a word, with a tick or a cross, never colour alone, and the fix when there is one.
+class _CheckGrid extends StatelessWidget {
+  const _CheckGrid({required this.results, required this.onFix});
+
+  final Map<PreflightCheck, CheckResult> results;
+  final void Function(PreflightCheck check, CheckFix fix) onFix;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = [
+      for (final c in PreflightCheck.values)
+        if (results[c] case final r?)
+          if (switch (c) {
+            PreflightCheck.soundCheck => r.status != CheckStatus.ok,
+            PreflightCheck.batterySaver => r.status == CheckStatus.warn || r.status == CheckStatus.fail,
+            _ => true,
+          })
+            (c, r),
+    ];
+    return StationCard(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
+          final columns = scale > 1.4 || box.maxWidth < 300 ? 1 : 2;
+          final w = ((box.maxWidth - Space.sm * (columns - 1)) / columns).floorToDouble();
+          return Wrap(
+            spacing: Space.sm,
+            runSpacing: Space.sm,
+            children: [
+              for (final (c, r) in shown)
+                SizedBox(width: w, child: _CheckTile(key: Key('check-${c.name}'), check: c, result: r, onFix: (fix) => onFix(c, fix))),
+            ],
+          );
+        },
+      ),
+    );
   }
 }
 
-class _CheckRow extends StatelessWidget {
-  const _CheckRow({super.key, required this.result, required this.last, required this.onFix});
+class _CheckTile extends StatelessWidget {
+  const _CheckTile({super.key, required this.check, required this.result, required this.onFix});
 
+  final PreflightCheck check;
   final CheckResult result;
-  final bool last;
   final ValueChanged<CheckFix> onFix;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final s = context.stateTokens;
     final text = Theme.of(context).textTheme;
-    final still = MediaQuery.disableAnimationsOf(context);
-    final duration = still ? Duration.zero : const Duration(milliseconds: 240);
-    final (Tone tone, String? pill, Widget icon) = switch (result.status) {
-      CheckStatus.pending => (
-        Tone.neutral,
-        null,
-        SizedBox.square(
-          key: const ValueKey('pending'),
-          dimension: 20,
-          child: CircularProgressIndicator(strokeWidth: 2, color: t.textMuted),
-        ),
-      ),
-      CheckStatus.ok => (
-        Tone.ok,
-        result.pill ?? PreflightCopy.pillOk,
-        Icon(Icons.check_circle, key: const ValueKey('ok'), color: t.success),
-      ),
-      CheckStatus.warn => (
-        Tone.warn,
-        result.pill ?? PreflightCopy.pillCheck,
-        Icon(Icons.error_outline, key: const ValueKey('warn'), color: t.warning),
-      ),
-      CheckStatus.fail => (
-        Tone.danger,
-        result.pill ?? PreflightCopy.pillFail,
-        Icon(Icons.cancel, key: const ValueKey('fail'), color: t.danger),
-      ),
+    final c = switch (result.status) {
+      CheckStatus.ok => s.ready,
+      CheckStatus.warn => s.onBreak,
+      CheckStatus.fail => s.problem,
+      CheckStatus.pending => null,
+    };
+    final icon = switch (check) {
+      PreflightCheck.microphone => Icons.mic_none,
+      PreflightCheck.soundCheck => Icons.record_voice_over_outlined,
+      PreflightCheck.headset => Icons.headphones,
+      PreflightCheck.network => Icons.wifi,
+      PreflightCheck.battery => Icons.battery_std_outlined,
+      PreflightCheck.batterySaver => Icons.battery_saver_outlined,
+    };
+    final word = switch (result.status) {
+      CheckStatus.pending => null,
+      CheckStatus.ok => result.pill ?? PreflightCopy.pillOk,
+      CheckStatus.warn => result.pill ?? PreflightCopy.pillCheck,
+      CheckStatus.fail => result.pill ?? PreflightCopy.pillFail,
     };
     final fixLabel = switch (result.fix) {
       CheckFix.allowMicrophone => PreflightCopy.allow,
@@ -435,62 +548,72 @@ class _CheckRow extends StatelessWidget {
       CheckFix.allowBackground => PreflightCopy.allowBackground,
       CheckFix.none => null,
     };
-
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: last ? null : Border(bottom: BorderSide(color: t.border)),
+        color: c?.soft ?? t.bgPrimary,
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(color: c?.deep.withValues(alpha: 0.35) ?? t.border, width: 1.5),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: Space.md),
-        child: Row(
+        padding: const EdgeInsets.all(Space.sm),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AnimatedSwitcher(
-              duration: duration,
-              transitionBuilder: (child, a) => ScaleTransition(
-                scale: a,
-                child: FadeTransition(opacity: a, child: child),
-              ),
-              child: icon,
-            ),
-            const SizedBox(width: Space.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  MergeSemantics(
-                    child: Semantics(
-                      liveRegion: result.status != CheckStatus.pending,
-                      child: AnimatedSize(
-                        duration: duration,
-                        alignment: Alignment.topLeft,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Wrap(
-                              spacing: Space.sm,
-                              runSpacing: Space.xs,
-                              crossAxisAlignment: WrapCrossAlignment.center,
+            MergeSemantics(
+              child: Semantics(
+                liveRegion: result.status != CheckStatus.pending,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(color: t.bgSecondary, borderRadius: BorderRadius.circular(Radii.sm)),
+                      child: SizedBox.square(dimension: 36, child: Icon(icon, color: c?.deep ?? t.textSecondary)),
+                    ),
+                    const SizedBox(width: Space.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(result.title, style: text.titleSmall),
+                          if (result.status == CheckStatus.pending)
+                            Row(
                               children: [
-                                Text(result.title, style: text.titleSmall),
-                                if (pill != null) StatusPill(pill, tone: tone),
+                                SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2, color: t.textMuted)),
+                                const SizedBox(width: Space.xs),
+                                Flexible(child: Text(result.detail, style: text.bodySmall)),
+                              ],
+                            )
+                          else ...[
+                            Row(
+                              children: [
+                                Icon(
+                                  switch (result.status) {
+                                    CheckStatus.ok => Icons.check,
+                                    CheckStatus.warn => Icons.error_outline,
+                                    _ => Icons.close,
+                                  },
+                                  size: 16,
+                                  color: c!.deep,
+                                ),
+                                const SizedBox(width: 2),
+                                Flexible(child: Text(word!, style: text.labelLarge!.copyWith(color: c.deep))),
                               ],
                             ),
-                            const SizedBox(height: 2),
-                            Text(result.detail, style: text.bodySmall),
+                            if (result.status != CheckStatus.ok || check == PreflightCheck.battery || check == PreflightCheck.network)
+                              Text(result.detail, style: text.bodySmall),
                           ],
-                        ),
+                        ],
                       ),
                     ),
-                  ),
-                  if (fixLabel != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: Space.xs),
-                      child: OutlinedButton(onPressed: () => onFix(result.fix), child: Text(fixLabel)),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
+            if (fixLabel != null)
+              Padding(
+                padding: const EdgeInsets.only(top: Space.xs),
+                child: OutlinedButton(onPressed: () => onFix(result.fix), child: Text(fixLabel)),
+              ),
           ],
         ),
       ),

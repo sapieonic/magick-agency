@@ -15,6 +15,8 @@
  * frozen, so no consumer can rewrite a default for the rest of the process.
  */
 
+import type { AgencyDisposition } from './session';
+
 /**
  * The retry rule the built-in `voicemail` disposition carries.
  *
@@ -57,6 +59,36 @@ export const AGENCY_DEFAULT_DISPOSITION_CATALOG = Object.freeze([
   // dialer's side.
   Object.freeze({ code: 'do_not_call', label: 'Do not call', suppress: true }),
 ] as const);
+
+/**
+ * Agent station (AS4): the "Collections" starter set New campaign offers in place of the
+ * built-in three: six outcomes in the station's words (AS15), each with its tile's icon from
+ * `AGENCY_TILE_ICONS`. A starting point the supervisor edits like any catalog; nothing on the
+ * server reads these codes. It passes both of the server's catalog validators as it is (pinned by
+ * `apps/server/test/unit/agency/collections-starter-catalog.test.ts`).
+ *
+ *  - **Will pay** (`will_pay`): asks for the pay date (`requires_promise`; the amount is
+ *    optional) and counts as a success. No follow-up call is booked (PT2's default): the dialler
+ *    cannot tell whether the customer paid, so the supervisor turns one on deliberately.
+ *  - **Call later** (`callback`): asks for the time to call (`requires_datetime`). The built-in
+ *    `callback` code, so reports and the default catalog agree on it.
+ *  - **No one spoke** (`no_one_spoke`): the call connected but nobody answered on the line; tried
+ *    again like the built-in voicemail ({@link AGENCY_DEFAULT_DISPOSITION_RETRY}).
+ *  - **Refused** (`refused`): the customer will not pay; the agent writes why (`requires_note`).
+ *    The contact is finished, as for any plain outcome.
+ *  - **Wrong number** (`wrong_number`): not the customer; the contact is finished (`terminal`).
+ *    Not `suppress`: the number is not on a do-not-call list, it is just not this customer's.
+ *  - **Don't call again** (`do_not_call`): the customer asked not to be called; the number is
+ *    suppressed (`suppress`, the built-in `do_not_call`), the one outcome the station confirms.
+ */
+export const AGENCY_COLLECTIONS_STARTER_CATALOG = Object.freeze([
+  Object.freeze({ code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true, icon: 'rupee' }),
+  Object.freeze({ code: 'callback', label: 'Call later', requires_datetime: true, icon: 'clock' }),
+  Object.freeze({ code: 'no_one_spoke', label: 'No one spoke', retry: AGENCY_DEFAULT_DISPOSITION_RETRY, icon: 'phone_missed' }),
+  Object.freeze({ code: 'refused', label: 'Refused', requires_note: true, icon: 'thumbs_down' }),
+  Object.freeze({ code: 'wrong_number', label: 'Wrong number', terminal: true, icon: 'wrong_number' }),
+  Object.freeze({ code: 'do_not_call', label: "Don't call again", suppress: true, icon: 'stop' }),
+] as const) satisfies readonly AgencyDisposition[];
 
 /**
  * ─── THE OUR-FAULT REDIAL BOUND ─────────────────────────────────────────────

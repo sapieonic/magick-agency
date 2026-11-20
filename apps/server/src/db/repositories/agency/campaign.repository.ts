@@ -75,6 +75,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // "hang up without an apology" — so this key must survive `v === undefined`
   // filtering in `update()`, which it does, and must not be defaulted anywhere.
   'abandon_announcement_id',
+  // Agent station (BE-8, 0056): the script, an operator setting patchable at any status; a
+  // session reads it at join (the bootstrap). JSONB, so it is in the list below too.
+  'agent_script',
 ]);
 
 /**
@@ -90,6 +93,7 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
  */
 const CAMPAIGN_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons', 'outcome_dispositions',
+  'agent_script',
 ]);
 
 /** The UPDATE for a patch (its patchable columns only), or null when it names none. */

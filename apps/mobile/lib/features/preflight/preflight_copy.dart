@@ -2,11 +2,23 @@
 /// The join-conflict wording follows the console's `agencyJoinConflict` and
 /// `SoftphoneJoinScreen`.
 abstract final class PreflightCopy {
-  static const title = 'Ready to take calls?';
+  static const title = 'Start of day';
+  static const checkThese = 'Check these. Then start work.';
+  static const micBlockedTitle = 'Microphone is blocked';
+  static const micBlockedSubtitle = 'The customer cannot hear you. Fix this first.';
+  static const noInternetTitle = 'No internet';
+  static const noInternetSubtitle = 'You cannot take calls without it.';
+  static const allowMicrophone = 'Allow microphone';
+  static const stepOpenSettings = 'Press Open Settings below.';
+  static const stepTurnOnMic = 'Turn on Microphone.';
+  static const stepComeBack = 'Come back to this app.';
+  static const stepPressAllow = 'Press Allow microphone below.';
+  static const stepAllowMic = 'Choose Allow when your phone asks.';
+  static const stepCheckAgain = 'Press Check again.';
   static const checking = 'Checking…';
   static const keepOpen = 'Keep this app open while you wait for calls. If you leave it, we pause you.';
-  static const goOnDuty = 'Go on duty';
-  static const joining = 'Joining…';
+  static const goOnDuty = 'Start work';
+  static const joining = 'Starting…';
   static const finishingSoundCheck = 'Finishing the sound check…';
   static const checkAgain = 'Check again';
 
@@ -42,7 +54,7 @@ abstract final class PreflightCopy {
   static const noHeadset = 'No headset — calls will use the phone. A headset sounds better to the customer.';
 
   // Network.
-  static const network = 'Network';
+  static const network = 'Internet';
   static const offline = 'No connection — you can’t take calls offline.';
   static const unreachable = 'We couldn’t reach Magick Agency.';
   static String noAnswer(String? transport) =>

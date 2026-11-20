@@ -38,4 +38,26 @@ void main() {
       }
     });
   }
+
+  // The redesign's state colours (AS1, design-spec §6.7): the band's ink on its fill, the state's
+  // deep colour as text on the card and on its own tint, and the go / stop buttons' text.
+  for (final (name, t, s) in [('light', AppTokens.light, StateTokens.light), ('dark', AppTokens.dark, StateTokens.dark)]) {
+    group('$name station states', () {
+      for (final tone in StationTone.values) {
+        final c = s.of(tone);
+        test('${tone.name}: band ink on the band is at least 4.5:1', () {
+          expect(ratio(c.ink, c.band), greaterThanOrEqualTo(4.5));
+        });
+        test('${tone.name}: deep text on the card and on its tint is at least 4.5:1', () {
+          expect(ratio(c.deep, t.bgSecondary), greaterThanOrEqualTo(4.5), reason: 'on the card');
+          expect(ratio(c.deep, c.soft), greaterThanOrEqualTo(4.5), reason: 'on its tint');
+        });
+      }
+      for (final (fill, color) in [('go', s.go), ('stop', s.stop)]) {
+        test('button text on $fill is at least 4.5:1', () {
+          expect(ratio(s.onAction, color), greaterThanOrEqualTo(4.5));
+        });
+      }
+    });
+  }
 }

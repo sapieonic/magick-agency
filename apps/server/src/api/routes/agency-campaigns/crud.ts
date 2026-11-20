@@ -30,6 +30,8 @@ import { sendRefusal } from '../helpers/refusal.js';
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
+import { contextColumnsRejected } from './guards.js';
+import { normalizeAgentScript } from '../../../agency/agent-script.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
 
 
@@ -323,6 +325,10 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     }
 
     if (configRejected(reply, body, campaign)) return reply;
+    // BE-6: the roles and types against the campaign's customer list, after the shape check.
+    if (await contextColumnsRejected(reply, body, campaign)) return reply;
+    // BE-8: the script is stored with its texts trimmed (the rules counted them trimmed).
+    if ('agent_script' in body) body.agent_script = normalizeAgentScript(body.agent_script);
 
     // After the shape check, so a malformed mode is the 400 that names the field.
     if (assignmentModeChangeRefused(reply, body, campaign)) return reply;
