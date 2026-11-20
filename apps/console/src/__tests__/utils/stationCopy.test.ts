@@ -13,12 +13,20 @@ import {
   savedLine,
   STATION_BLOCK_COPY,
   STATION_COPY,
+  SOFTPHONE_CLOSE_COPY,
   helpAnsweredLine,
+  joinRefusedLine,
+  switchFailedLine,
   helpRefusedLine,
+  backToCallsRefusedLine,
+  softphoneSwitchRefusedLine,
   missedReleaseLine,
   noCallsSubtitle,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
+import { STATION_HELP_COPY } from '../../utils/agency/stationHelp';
+import { BREAK_REJECTED_COPY } from '../../hooks/useBreakQueue';
+import { AGENCY_SOFTPHONE_ERROR_CODES } from '../../types/softphone';
 
 /**
  * AS15 and spec §6.6: the station's own words never use the jargon on the spec's list. Every
@@ -68,6 +76,12 @@ const SERVER_CODES: (string | null)[] = [
   'unknown_attempt', null,
 ];
 
+/** What `POST /sessions` can refuse with, and the client's own `no_campaign`. */
+const JOIN_CODES: (string | null)[] = [
+  ...SERVER_CODES, 'no_campaign', 'session_in_other_tenant', 'station_on_other_device', 'session_on_softphone',
+  'station_token_unavailable', 'account_scope_required', 'not_a_code_we_know',
+];
+
 const ALL = [
   ...everyString(STATION_COPY),
   ...everyString(STATION_BLOCK_COPY),
@@ -84,6 +98,16 @@ const ALL = [
     redialRefusedLine(code, null),
     saveRefusedLine(code),
   ]),
+  ...JOIN_CODES.flatMap((code) => [403, 404, 409, 500, 503, null].flatMap((status) => [
+    joinRefusedLine({ code, status }),
+    joinRefusedLine({ code, status, placeName: 'Acme Collections' }),
+  ])),
+  ...(['resume', 'leave', 'rejoin'] as const).flatMap((stage) =>
+    ['station_on_other_device', 'session_ended', null].map((code) => switchFailedLine(stage, 'Renewals', code))),
+  ...everyString(SOFTPHONE_CLOSE_COPY),
+  ...everyString(STATION_HELP_COPY),
+  BREAK_REJECTED_COPY,
+  ...[...AGENCY_SOFTPHONE_ERROR_CODES, 'unknown', null].flatMap((code) => [softphoneSwitchRefusedLine(code), backToCallsRefusedLine(code)]),
   ...['permission_denied', 'no_device', 'device_busy', 'device_lost', 'audio_blocked', 'unsupported', 'x'].flatMap((k) => Object.values(micProblemLine(k)).filter((v): v is string => typeof v === 'string')),
   savedLine({ label: 'Call later', nextAttemptAt: '2026-11-20T09:30:00.000Z', callbackRequestedAt: '2026-11-20T03:30:00.000Z', dncRecorded: false }),
   ...['completed', 'no_answer', 'busy', 'agent_disconnected', 'remote_hangup', 'x'].map((r) => releaseBanner(r) ?? ''),
@@ -116,5 +140,39 @@ describe('the station’s own words (AS15, spec §6.6)', () => {
 
   it('spells the British way', () => {
     expect(ALL.filter((line) => /\b(canceled|color|dialed|redialed|organization|center)\b/i.test(line))).toEqual([]);
+  });
+});
+
+describe('why work did not open (AS15: keyed on the code, never the server’s sentence)', () => {
+  it('says who to ask when the agent is not on the work', () => {
+    expect(joinRefusedLine({ code: 'not_staffed', status: 403 })).toBe('You are not on this work. Ask your supervisor to add you.');
+  });
+
+  it('names the other account from its name, not from a sentence', () => {
+    expect(joinRefusedLine({ code: 'session_in_other_tenant', status: 409, placeName: 'Acme Collections' }))
+      .toBe('You are working in Acme Collections. Finish work there first, then come back here.');
+    expect(joinRefusedLine({ code: 'session_in_other_tenant', status: 409, placeName: '  ' }))
+      .toBe('You are working in another account. Finish work there first, then come back here.');
+  });
+
+  it('reads an unreadable other-list conflict as working on another list', () => {
+    expect(joinRefusedLine({ code: 'session_on_other_campaign', status: 409 }))
+      .toBe('You are working on another list. Finish work there first, then come back here.');
+  });
+
+  it('falls back by status, then to a safe line, for a code it does not know', () => {
+    expect(joinRefusedLine({ code: 'something_new', status: 404 })).toBe('This work was not found. Ask your supervisor.');
+    expect(joinRefusedLine({ code: 'something_new', status: 403 })).toBe('You cannot open this work. Ask your supervisor.');
+    expect(joinRefusedLine({ code: null, status: null })).toBe('Check your internet. Then go back and try again.');
+    expect(joinRefusedLine({ code: 'something_new', status: 500 })).toBe('We could not open your work just now. Go back and try again.');
+  });
+
+  it('says what is true after each step of the switch from another list', () => {
+    expect(switchFailedLine('resume', 'Renewals', null)).toBe('We could not reach Renewals. Nothing changed. Try again.');
+    expect(switchFailedLine('resume', 'Renewals', 'station_on_other_device'))
+      .toBe('Renewals is open on another device. Finish work there, then come back here.');
+    expect(switchFailedLine('leave', 'Renewals', 'state_changing')).toBe('Renewals is still open. Nothing changed. Try again.');
+    // The one an agent must not be left to guess at: the other list is already closed.
+    expect(switchFailedLine('rejoin', 'Renewals', null)).toBe('You left Renewals, but this work did not open. Go back and open it again.');
   });
 });

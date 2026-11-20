@@ -712,7 +712,7 @@ describe('useAgencyStation', () => {
               since: '2026-08-11T10:05:00.000Z',
             });
           });
-          // The state `IdlePanel` renders `releaseAccount(release)` from.
+          // The state the station's "The last call ended." banner reads.
           expect(view.result.current.release?.attempt_id).toBe('att-1');
           expect(view.result.current.retainedAttempt).toBeNull();
           expect(view.result.current.wrapup).toBeNull();

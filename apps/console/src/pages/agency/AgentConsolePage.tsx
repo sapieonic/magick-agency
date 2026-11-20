@@ -63,8 +63,7 @@ import { useDialActivityDisplay } from '../../hooks/useDialActivityDisplay';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { useReadAloud } from '../../hooks/useSpeech';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
-import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
-import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
+import { effectiveQueue, nothingDueReason as queueNothingDueReason } from '../../utils/agencyStationIdle';
 import { trackAgencyStationNothingDue } from '../../analytics/events';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
 import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
@@ -206,8 +205,7 @@ function StationScreen({
 
   // ── The agent's own queue (contact assignment) ──────────────────────────────
   const queue = effectiveQueue(station.queue, bootstrap?.queue);
-  const nothingDue = nothingDueCopy(queue, formatSpineTimestamp);
-  const nothingDueReason = nothingDue !== null ? queue?.reason ?? null : null;
+  const nothingDueReason = queueNothingDueReason(queue);
   useEffect(() => {
     if (!nothingDueReason || !bootstrap) return;
     trackAgencyStationNothingDue({ campaign_id: bootstrap.campaign_id, reason: nothingDueReason });

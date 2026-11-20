@@ -4,7 +4,7 @@ import { trackAgencySoftphoneSwitch } from '../../../analytics/events';
 import { useSoftphone, type SoftphoneState } from '../../../hooks/useSoftphone';
 import { useSoftphoneAvailable } from '../../../components/agency/AgentNav';
 import { usePermission } from '../../../hooks/usePermission';
-import { refusalCopy, SOFTPHONE_REFUSAL_COPY } from '../../../utils/softphone/refusalCopy';
+import { STATION_COPY, backToCallsRefusedLine } from '../../../utils/agency/stationCopy';
 import { SOFTPHONE_BREAK_REASON } from '../../../types/softphone';
 import type { AgencyConsoleState } from '../useAgencyConsole';
 import type { AgencySessionBootstrap } from '../../../types/agency';
@@ -104,7 +104,7 @@ export function useStationSoftphone({
     setReturnFailure(null);
   }, [station.agentState, station.agentStateSince]);
 
-  const returnBlockedReason = sp.call ? SOFTPHONE_REFUSAL_COPY.manual_call_live : null;
+  const returnBlockedReason = sp.call ? STATION_COPY.finishCallFirst : null;
 
   const returnToCampaign = useCallback(async () => {
     if (!bootstrap || returning || sp.call) return;
@@ -123,7 +123,7 @@ export function useStationSoftphone({
       // The server holds a call we do not show: take its copy, then say why.
       sp.reloadBootstrap();
     }
-    setReturnFailure(refusalCopy(result.refusal, 'status'));
+    setReturnFailure(backToCallsRefusedLine(result.refusal.code));
   }, [bootstrap, returning, sp, tenantId, accountId]);
 
   return {

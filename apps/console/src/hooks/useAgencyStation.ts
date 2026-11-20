@@ -672,7 +672,7 @@ export function useAgencyStation(
              * **`release` does NOT unconditionally go with them**, and that is the
              * correction: it used to, and the rule was written when the wrap-up rail
              * was its only consumer. It has a second one now with a longer lifetime
-             * — `IdlePanel` renders `releaseAccount(release)` for a
+             * — the station's "The last call ended." banner (`unexplained-release`) for a
              * `requires_disposition` release that no wrap-up ever explained (the agent dispositioned mid-call, so `agent_state{wrapup}` and
              * `wrapup` are never sent and the state goes `on_call → available`). On
              * that path this console **witnessed** the release while connected, so

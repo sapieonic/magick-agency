@@ -125,6 +125,7 @@ export const STATION_COPY = {
   softphoneCallingTitle: 'Calling',
   softphoneCallingSubtitle: 'Wait for the customer to pick up.',
   backToCalls: 'Back to my calls',
+  finishCallFirst: 'Finish your call and save what happened first.',
   backingToCalls: 'Going back…',
   inboundTitle: 'Customer is calling',
   connecting: 'Connecting',
@@ -465,6 +466,107 @@ export function presenceRefusedLine(code: string | null): string {
       return 'Calls could not start just now. Try again in a moment.';
     default:
       return 'That did not go through. Try again in a moment.';
+  }
+}
+
+/**
+ * Why today's work did not open (`POST /sessions` refused or failed), the body of the "Your work
+ * did not open" screen. Keyed on the server's code, then its status; never the server's sentence.
+ * `no_campaign` is the client's own: the link named no work. `placeName` is the other account a
+ * `session_in_other_tenant` refusal names (`tenant_name`), a name and not a sentence.
+ */
+export function joinRefusedLine(input: { code: string | null; status: number | null; placeName?: string | null }): string {
+  const place = input.placeName?.trim() || null;
+  switch (input.code) {
+    case 'no_campaign':
+      return 'No work was chosen. Go back and choose your work.';
+    case 'not_staffed':
+      return 'You are not on this work. Ask your supervisor to add you.';
+    case 'session_in_other_tenant':
+      return place
+        ? `You are working in ${place}. Finish work there first, then come back here.`
+        : 'You are working in another account. Finish work there first, then come back here.';
+    case 'session_on_other_campaign':
+      return 'You are working on another list. Finish work there first, then come back here.';
+    case 'feature_disabled':
+      return 'Calls are turned off for your team. Ask your supervisor.';
+    case 'account_scope_required':
+      return 'Open your work again from your home screen.';
+    case 'station_token_unavailable':
+    case 'dial_failed':
+      return 'Calls could not start just now. Go back and try again in a moment.';
+    case 'campaign_not_running':
+      return 'Calls are stopped for this work right now. Ask your supervisor.';
+    default:
+      break;
+  }
+  if (input.status === 404) return 'This work was not found. Ask your supervisor.';
+  if (input.status === 403) return 'You cannot open this work. Ask your supervisor.';
+  if (input.status === null) return 'Check your internet. Then go back and try again.';
+  return 'We could not open your work just now. Go back and try again.';
+}
+
+/**
+ * The one-press switch from another list failed (`useStationJoin`'s three steps): reaching that
+ * list, leaving it, or opening this one after leaving it. `name` is that list's name. The step says
+ * what is true now: nothing changed, it is still open, or it is closed and this one did not open.
+ */
+export function switchFailedLine(stage: 'resume' | 'leave' | 'rejoin', name: string, code: string | null): string {
+  switch (stage) {
+    case 'resume':
+      if (code === 'station_on_other_device') return `${name} is open on another device. Finish work there, then come back here.`;
+      return `We could not reach ${name}. Nothing changed. Try again.`;
+    case 'leave':
+      return `${name} is still open. Nothing changed. Try again.`;
+    case 'rejoin':
+      return `You left ${name}, but this work did not open. Go back and open it again.`;
+  }
+}
+
+/** Close the soft phone and start here: what went wrong, in the station's words. */
+export const SOFTPHONE_CLOSE_COPY = {
+  /** The close failed: the soft phone is still open. */
+  stillOpen: 'Your soft phone is still open. Try again.',
+  /** The refusal named no session and the soft phone's own read had none either. */
+  notFound: 'We could not find your soft phone to close. Open the soft phone and close it there.',
+  /** It was opened again (another window) between the close and the start. */
+  reopened: 'The soft phone was opened again, maybe in another window. Close it there, or try again.',
+  /** The soft phone closed, but this work did not open. */
+  closedNotOpened: 'The soft phone is closed, but your work did not open. Go back and open it again.',
+} as const;
+
+/** Dial a number myself refused: `POST /sessions/:id/softphone`. Nothing changed. */
+export function softphoneSwitchRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'softphone_disabled':
+      return 'Dialling a number yourself is turned off. Ask your supervisor.';
+    case 'manual_call_live':
+    case 'outcome_pending':
+    case 'attempt_not_dispositionable':
+      return STATION_COPY.finishCallFirst;
+    case 'session_not_found':
+    case 'session_ended':
+    case 'wrong_session_kind':
+      return 'Your work was closed. Open today’s work again.';
+    default:
+      return 'You cannot dial a number yourself just now. Nothing changed. Try again in a moment.';
+  }
+}
+
+/** Back to my calls refused: `POST /sessions/:id/softphone/return`. The soft phone stays. */
+export function backToCallsRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'manual_call_live':
+    case 'outcome_pending':
+      return STATION_COPY.finishCallFirst;
+    case 'session_not_found':
+    case 'session_ended':
+    case 'wrong_session_kind':
+      return 'Your work was closed. Open today’s work again.';
+    case 'not_on_softphone':
+      return 'One moment. Try again.';
+    default:
+      return 'You could not go back to your calls just now. Try again in a moment.';
   }
 }
 

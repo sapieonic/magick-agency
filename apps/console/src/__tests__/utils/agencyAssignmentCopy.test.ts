@@ -32,6 +32,7 @@ import {
 } from '../../utils/agencyAssignmentCopy';
 import {
   AGENT_RETRY_REFUSAL_COPY,
+  MY_CONTACT_BUCKET_LABELS,
   RETRY_BLOCK_COPY,
   agentRetryRefusal,
   contactCallGate,
@@ -119,7 +120,7 @@ describe('agent refusals', () => {
       error: 'Conflict', code: 'outside_calling_hours', message: 'closed',
       details: { next_open_at: '2026-11-04T03:30:00.000Z' },
     });
-    expect(agentRetryRefusal(hours, 'x')).toMatch(/^The campaign is outside its calling hours\. It opens again /);
+    expect(agentRetryRefusal(hours, 'x')).toMatch(/^It is outside calling hours for this work\. It opens again /);
     const cooldown = new ApiError(409, {
       error: 'Conflict', code: 'contact_not_retryable', message: 'no',
       details: { blocked: 'cooldown', available_at: '2026-11-03T10:00:00.000Z' },
@@ -127,9 +128,21 @@ describe('agent refusals', () => {
     expect(agentRetryRefusal(cooldown, 'x')).toContain(RETRY_BLOCK_COPY.cooldown);
     expect(agentRetryRefusal(new ApiError(409, { code: 'dnc_listed' }), 'x')).toBe(AGENT_RETRY_REFUSAL_COPY.dnc_listed);
   });
-  it('falls back to the server’s sentence for a code this build does not know', () => {
-    expect(agentRetryRefusal(new ApiError(409, { code: 'brand_new', message: 'Server words' }), 'x'))
-      .toBe('Server words');
+  it('says the caller’s own line, never the server’s sentence, for a code this build does not know (AS15)', () => {
+    expect(agentRetryRefusal(new ApiError(409, { code: 'brand_new', message: 'Server words' }), 'The call was not placed. Try again.'))
+      .toBe('The call was not placed. Try again.');
+    expect(agentRetryRefusal(new Error('Failed to fetch'), 'x')).toBe('x');
+    // A key `Object.prototype` has is not a code with words.
+    expect(agentRetryRefusal(new ApiError(409, { code: 'toString', message: 'Server words' }), 'x')).toBe('x');
+  });
+
+  it('never says the station’s jargon (spec §6.6) in the agent’s own panel', () => {
+    const lines = [
+      ...Object.values(AGENT_RETRY_REFUSAL_COPY),
+      ...Object.values(RETRY_BLOCK_COPY),
+      ...Object.values(MY_CONTACT_BUCKET_LABELS),
+    ];
+    expect(lines.filter((l) => /disposition|wrap-?up|session|station|\bDNC\b|call-?back|campaign|\bavailable\b|\boffline\b/i.test(l))).toEqual([]);
   });
 });
 
@@ -160,7 +173,7 @@ describe('contactCallGate', () => {
 
   it('refuses with the reason when the station cannot dial or the contact cannot be called', () => {
     expect(contactCallGate(CONTACT, { ...STATION, agentState: 'break' }, NOW))
-      .toEqual({ ok: false, reason: 'Go available to call a contact.' });
+      .toEqual({ ok: false, reason: 'Start calls first, then call a customer.' });
     expect(contactCallGate(CONTACT, { ...STATION, sessionId: null }, NOW).ok).toBe(false);
     expect(contactCallGate(CONTACT, { ...STATION, dialing: false }, NOW).ok).toBe(false);
     expect(contactCallGate({ ...CONTACT, bucket: 'suppressed', state: 'suppressed' }, STATION, NOW))

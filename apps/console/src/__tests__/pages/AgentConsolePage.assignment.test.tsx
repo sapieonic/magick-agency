@@ -182,7 +182,7 @@ describe('My customers, under ⋮ More', () => {
     fireEvent.keyDown(window, { key: 'b' });
     expect(screen.queryByRole('dialog', { name: 'Which break?' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close My contacts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close My customers' }));
     expect(screen.queryByTestId('my-contacts')).toBeNull();
     fireEvent.keyDown(window, { key: 'b' });
     expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();

@@ -8,7 +8,7 @@ import {
   trackAgencySoftphoneSwitch,
 } from '../analytics/events';
 import { SOFTPHONE_BREAK_REASON } from '../types/softphone';
-import { refusalCopy } from '../utils/softphone/refusalCopy';
+import { STATION_COPY, softphoneSwitchRefusedLine } from '../utils/agency/stationCopy';
 import { errorBody } from '../utils/agencyErrors';
 import { resyncCatalog, numberKeysRemapped } from '../utils/agencyCatalogSync';
 import { useLatestRef } from './useLatestRef';
@@ -195,7 +195,8 @@ export function useBreakQueue(options: {
             catalog_resynced: true,
           });
         } else {
-          setBreakRejection(body?.message ?? 'That break could not be started.');
+          // The station's words, never the server's sentence (AS15).
+          setBreakRejection(BREAK_REJECTED_COPY);
           trackAgencyBreakRejected({ campaign_id: bootstrap.campaign_id, code: 'other', catalog_resynced: false });
         }
       } finally {
@@ -238,13 +239,13 @@ export function useBreakQueue(options: {
          */
         writeQueue(null);
         setBreakAlreadyStarted(true);
-        announce('Your break already started.');
+        announce(STATION_COPY.breakAlreadyStarted);
         trackAgencyQueuedBreakResolved({ campaign_id: bootstrap.campaign_id, outcome: 'already_applied' });
       } else {
         // The break is still queued, which is the truth, and pressing ✕ again is
         // the right next action.
         setCancelFailed(true);
-        announce("Couldn't cancel. Try again.");
+        announce(STATION_COPY.breakCancelFailed);
         trackAgencyQueuedBreakResolved({ campaign_id: bootstrap.campaign_id, outcome: 'cancel_failed' });
       }
     } finally {
@@ -265,13 +266,14 @@ export function useBreakQueue(options: {
       // Queued: the pill. Immediate: nothing to queue — the `agent_state` frame that
       // follows is what puts the soft phone on screen.
       writeQueue(queued ? (result.value.break_reason ?? SOFTPHONE_BREAK_REASON) : null);
-      if (queued) announce('Switching to the soft phone after this call.');
+      if (queued) announce(STATION_COPY.dialAfterCall);
       trackAgencySoftphoneSwitch({ action: 'start', queued, outcome: 'accepted', code: null });
       return;
     }
-    const copy = refusalCopy(result.refusal, 'status');
+    // The station's own words keyed on the code (AS15), never the server's sentence.
+    const copy = softphoneSwitchRefusedLine(result.refusal.code);
     setSoftphoneRejection(copy);
-    announce(`Couldn’t switch to the soft phone. ${copy}`);
+    announce(copy);
     trackAgencySoftphoneSwitch({ action: 'start', queued: false, outcome: 'refused', code: result.refusal.code });
   }, [bootstrap, breakBusy, tenantId, accountId, writeQueue, announce]);
 

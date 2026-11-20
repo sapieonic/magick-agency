@@ -7,7 +7,6 @@ import type {
   AgencyMyContactBucket,
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyAgentState } from '../types/agency';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorDetails } from './agencyErrors';
 import { formatSpineTimestamp } from './agencySpineCopy';
 import { plural } from './format/number';
@@ -23,40 +22,53 @@ import { plural } from './format/number';
  */
 
 export const AGENT_RETRY_REFUSAL_COPY: Record<AgencyAgentRetryErrorCode, string> = {
-  assignment_disabled: 'My contacts is turned off for this account. Ask your supervisor.',
-  not_staffed: 'You’re no longer on this campaign. Ask your supervisor to add you back.',
-  agent_retry_disabled: 'This campaign doesn’t let agents retry their own contacts.',
-  contact_not_found: 'That contact isn’t yours any more — it may have been reassigned. Refresh the list.',
-  contact_not_retryable: 'That contact can’t be called or retried right now.',
+  assignment_disabled: 'My customers is turned off for your team. Ask your supervisor.',
+  not_staffed: 'You are no longer on this work. Ask your supervisor to add you back.',
+  agent_retry_disabled: 'This work does not let you call your customers again yourself.',
+  contact_not_found: 'That customer is not yours any more. They may have moved to another agent. Refresh the list.',
+  contact_not_retryable: 'That customer cannot be called now.',
   contact_in_flight: 'This customer is already on a call. Wait for it to finish.',
-  campaign_not_running: 'The campaign isn’t running, so nothing can be dialled.',
-  agent_not_available: 'Go available first — calls are placed only while you’re waiting for one.',
-  outside_calling_hours: 'The campaign is outside its calling hours.',
+  campaign_not_running: 'Calls are stopped for this work, so nothing can be dialled.',
+  agent_not_available: 'Start calls first. You can call a customer only while you are ready for calls.',
+  outside_calling_hours: 'It is outside calling hours for this work.',
   override_note_invalid: `The note needs ${AGENCY_OVERRIDE_NOTE_MIN} to ${AGENCY_OVERRIDE_NOTE_MAX} characters.`,
-  dnc_listed: 'This number is on the Do Not Call list. It can’t be called.',
+  dnc_listed: 'We must not call this number.',
   dnc_unavailable:
-    'We couldn’t check the Do Not Call list just now, so nothing was dialled. Try again in a moment.',
-  no_caller_id: 'The campaign has no caller ID to dial from. Tell your supervisor.',
-  no_station: 'Your station isn’t connected. Wait for it to reconnect, then try again.',
-  dial_failed: 'The call couldn’t be placed. The contact is still yours — try again.',
-  feature_disabled: 'Calling is turned off for this account. Ask your admin.',
+    'We could not check if this number may be called, so nothing was dialled. Try again in a moment.',
+  no_caller_id: 'There is no number to call from on this work. Tell your supervisor.',
+  no_station: 'Your screen is not connected. Wait for the internet to come back, then try again.',
+  dial_failed: 'The call could not be placed. The customer is still yours. Try again.',
+  feature_disabled: 'Calling is turned off for your team. Ask your supervisor.',
 };
 
 /** Why one contact cannot be retried by its agent now. */
 export const RETRY_BLOCK_COPY: Record<AgencyAgentRetryBlock, string> = {
-  retry_disabled: 'This campaign doesn’t allow agent retry',
-  not_retryable: 'Not a contact you missed',
-  rounds_used: 'Already retried as many times as allowed',
-  cooldown: 'Cooling down after the last attempt',
-  suppressed: 'Do not call — never retried',
+  retry_disabled: 'This work does not let you call again yourself',
+  not_retryable: 'Not a customer you missed',
+  rounds_used: 'Already called again as many times as allowed',
+  cooldown: 'Wait a little after the last call',
+  suppressed: 'Don’t call again. Never called',
+};
+
+/**
+ * The agent panel's names for each group of customers. The station's words (AS15): the
+ * supervisor's `CONTACT_BUCKET_LABELS` say "Callback" and "suppressed", which an agent never reads.
+ */
+export const MY_CONTACT_BUCKET_LABELS: Record<AgencyMyContactBucket, string> = {
+  pending: 'Not called yet',
+  callback: 'Call later booked',
+  not_reached: 'Not reached',
+  in_progress: 'On a call',
+  reached: 'Reached',
+  exhausted: 'No tries left',
+  suppressed: 'Don’t call again',
 };
 
 /** A refusal in the agent's words, with its detail filled in where the body carries one. */
 export function agentRetryRefusal(err: unknown, fallback: string): string {
   const code = errorCode(err) as AgencyAgentRetryErrorCode | null;
-  if (code === null || !(code in AGENT_RETRY_REFUSAL_COPY)) {
-    return getErrorMessage(err, fallback);
-  }
+  // A code this client has no words for: the caller's own line, never the server's sentence (AS15).
+  if (code === null || !Object.prototype.hasOwnProperty.call(AGENT_RETRY_REFUSAL_COPY, code)) return fallback;
   const details = errorDetails(err);
   if (code === 'outside_calling_hours' && typeof details?.['next_open_at'] === 'string') {
     return `${AGENT_RETRY_REFUSAL_COPY[code]} It opens again ${formatSpineTimestamp(details['next_open_at'])}.`;
@@ -66,7 +78,7 @@ export function agentRetryRefusal(err: unknown, fallback: string): string {
     if (typeof blocked === 'string' && blocked in RETRY_BLOCK_COPY) {
       const reason = RETRY_BLOCK_COPY[blocked as AgencyAgentRetryBlock];
       const at = typeof details?.['available_at'] === 'string'
-        ? ` — try after ${formatSpineTimestamp(details['available_at'])}`
+        ? `. Try after ${formatSpineTimestamp(details['available_at'])}`
         : '';
       return `${AGENT_RETRY_REFUSAL_COPY[code]} ${reason}${at}.`;
     }
@@ -110,10 +122,10 @@ export function contactCallGate(
   station: { sessionId: string | null; agentState: AgencyAgentState; dialing: boolean },
   now: number,
 ): CallGate {
-  if (!station.sessionId) return { ok: false, reason: 'Your station isn’t connected yet.' };
-  if (!station.dialing) return { ok: false, reason: 'The campaign isn’t running.' };
+  if (!station.sessionId) return { ok: false, reason: 'Your screen is not connected yet.' };
+  if (!station.dialing) return { ok: false, reason: 'Calls are stopped for this work.' };
   if (station.agentState !== 'available') {
-    return { ok: false, reason: 'Go available to call a contact.' };
+    return { ok: false, reason: 'Start calls first, then call a customer.' };
   }
   if (contact.bucket === 'suppressed') return { ok: false, reason: RETRY_BLOCK_COPY.suppressed };
   if (contact.bucket === 'in_progress') return { ok: false, reason: 'Already on a call.' };
@@ -126,7 +138,7 @@ export function contactCallGate(
   }
   const blocked = contact.retry.blocked;
   if (blocked === 'cooldown' && contact.retry.available_at) {
-    return { ok: false, reason: `${RETRY_BLOCK_COPY.cooldown} — until ${formatSpineTimestamp(contact.retry.available_at)}` };
+    return { ok: false, reason: `${RETRY_BLOCK_COPY.cooldown}, until ${formatSpineTimestamp(contact.retry.available_at)}` };
   }
   return { ok: false, reason: blocked ? RETRY_BLOCK_COPY[blocked] : RETRY_BLOCK_COPY.not_retryable };
 }

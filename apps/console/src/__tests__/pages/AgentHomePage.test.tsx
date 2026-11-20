@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
@@ -29,10 +29,15 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getMyAssignments: vi.fn(),
+  getMyDay: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agency', () => ({ getMyAssignments: mocks.getMyAssignments }));
+vi.mock('../../api/agencyStats', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyStats')>()),
+  getMyDay: mocks.getMyDay,
+}));
 
 import { AgentHomePage } from '../../pages/agency/AgentHomePage';
 import { PARENT_BRAND } from '../helpers/parentBrand';
@@ -80,9 +85,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.useTenant.mockReturnValue(tenant());
   mocks.getMyAssignments.mockResolvedValue([]);
+  mocks.getMyDay.mockRejectedValue(new Error('no my-day here'));
 });
 
 afterEach(() => cleanup());
+
+/** The links into each list: the whole tile, named "Open <list>". */
+const openLinks = () => screen.queryAllByRole('link', { name: /^Open / });
 
 describe('AgentHomePage — one assignment', () => {
   it('sends the agent straight to their station, with ?campaign= filled in', async () => {
@@ -126,9 +135,9 @@ describe('AgentHomePage — one assignment', () => {
 
     renderAt();
 
-    await screen.findByText(/won’t start again/i);
+    await screen.findByText('Ended by your supervisor. No more calls.');
     expect(screen.queryByTestId('where')).toBeNull();
-    expect(screen.queryByRole('link', { name: /enter station/i })).toBeNull();
+    expect(openLinks()).toHaveLength(0);
   });
 
   it('still redirects a name-less assignment — the id is what the redirect needs', async () => {
@@ -190,14 +199,15 @@ describe('AgentHomePage — several assignments', () => {
     // No redirect: the agent chooses.
     expect(screen.queryByTestId('where')).toBeNull();
 
-    const links = screen.getAllByRole('link', { name: /enter station/i });
+    const links = openLinks();
+    expect(links.map((l) => l.getAttribute('aria-label'))).toEqual(['Open Renewals', 'Open Collections']);
     expect(links.map((l) => l.getAttribute('href'))).toEqual([
       '/station?campaign=camp-1',
       '/station?campaign=camp-2',
     ]);
   });
 
-  it('says that only one campaign can be worked at a time', async () => {
+  it('says that only one list can be worked at a time', async () => {
     // Being live on one campaign is the API's session index, and an agent who does
     // not know that reads a refusal at the second station as a broken app.
     mocks.getMyAssignments.mockResolvedValue([
@@ -207,7 +217,7 @@ describe('AgentHomePage — several assignments', () => {
 
     renderAt();
 
-    expect(await screen.findByText(/only be on one campaign at a time/i)).toBeTruthy();
+    expect(await screen.findByText('You can work on only one list at a time.')).toBeTruthy();
   });
 
   it('keeps a terminal campaign on the list, with its reason and no way in', async () => {
@@ -222,9 +232,12 @@ describe('AgentHomePage — several assignments', () => {
     renderAt();
 
     await screen.findByText('Collections');
-    expect(screen.getByText(/won’t start again/i)).toBeTruthy();
-    expect(screen.getAllByRole('link', { name: /enter station/i })).toHaveLength(1);
-    expect(screen.getByText(/closed/i)).toBeTruthy();
+    expect(screen.getByText('Ended by your supervisor. No more calls.')).toBeTruthy();
+    // AS1: hidden, not greyed. The stopped tile has no way in at all.
+    expect(openLinks().map((l) => l.getAttribute('aria-label'))).toEqual(['Open Renewals']);
+    const stopped = screen.getAllByTestId('work-tile')[1]!;
+    expect(stopped.getAttribute('data-closed')).toBe('true');
+    expect(stopped.querySelector('a')).toBeNull();
   });
 
   it('offers a paused campaign alongside a running one, with a note', async () => {
@@ -238,8 +251,9 @@ describe('AgentHomePage — several assignments', () => {
     renderAt();
 
     await screen.findByText('Collections');
-    expect(screen.getAllByRole('link', { name: /enter station/i })).toHaveLength(2);
-    expect(screen.getByText(/wait at the station/i)).toBeTruthy();
+    expect(openLinks()).toHaveLength(2);
+    expect(screen.getByText('Paused by your supervisor')).toBeTruthy();
+    expect(screen.getByText('Calls are waiting')).toBeTruthy();
   });
 
   it('renders a name-less campaign without a hole where the name should be', async () => {
@@ -256,11 +270,9 @@ describe('AgentHomePage — several assignments', () => {
 
     renderAt();
 
-    expect(await screen.findByText('Unnamed campaign')).toBeTruthy();
+    expect(await screen.findByText('Unnamed list')).toBeTruthy();
     // The id still drives the link — the name was only ever presentation.
-    expect(
-      screen.getAllByRole('link', { name: /enter station/i })[1]!.getAttribute('href'),
-    ).toBe('/station?campaign=camp-2');
+    expect(openLinks()[1]!.getAttribute('href')).toBe('/station?campaign=camp-2');
   });
 });
 
@@ -273,10 +285,10 @@ describe('AgentHomePage — the arrivals', () => {
 
     renderAt('/dialer?left=station');
 
-    await screen.findByText(/you’ve left the station/i);
+    await screen.findByText('Work finished for now');
     expect(screen.queryByTestId('where')).toBeNull();
     // A way back in that they choose, rather than one that chooses for them.
-    expect(screen.getByRole('link', { name: /enter station/i }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: 'Open Renewals' }).getAttribute('href')).toBe(
       '/station?campaign=camp-1',
     );
   });
@@ -294,8 +306,8 @@ describe('AgentHomePage — the arrivals', () => {
 
     renderAt('/dialer?left=refused');
 
-    await screen.findByText(/that station didn’t open/i);
-    expect(screen.queryByText(/you’ve left the station/i)).toBeNull();
+    await screen.findByText('Your work did not open');
+    expect(screen.queryByText('Work finished for now')).toBeNull();
     expect(screen.queryByTestId('where')).toBeNull();
   });
 
@@ -321,7 +333,7 @@ describe('AgentHomePage — nothing to work, and nothing to say', () => {
 
     renderAt();
 
-    await screen.findByText(/not assigned to a campaign yet/i);
+    await screen.findByText('No work for you yet');
     // An agent holds no permission that could staff them, so a "try again" here
     // would be an instruction to repeat something that cannot work.
     expect(screen.getByText(/ask your supervisor/i)).toBeTruthy();
@@ -332,8 +344,22 @@ describe('AgentHomePage — nothing to work, and nothing to say', () => {
 
     renderAt();
 
-    await screen.findByText(/couldn’t check your campaigns/i);
+    await screen.findByText('We could not load your work');
     expect(screen.queryByText(/ask your supervisor/i)).toBeNull();
+    // The station's own words (AS15), never the server's or the client's sentence.
+    expect(document.body.textContent).not.toContain('Request Failed');
+  });
+
+  it('reads the list again on Try again, and shows it once it loads', async () => {
+    mocks.getMyAssignments
+      .mockRejectedValueOnce(new Error('Request Failed'))
+      .mockResolvedValueOnce([assignment(), assignment({ campaign_id: 'camp-2', campaign_name: 'Collections' })]);
+
+    renderAt();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await screen.findByText('Collections');
+    expect(mocks.getMyAssignments).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -538,7 +564,7 @@ describe('AgentHomePage — the way to "My performance"', () => {
 
     renderAt();
 
-    await screen.findByText(/couldn’t check your campaigns/i);
+    await screen.findByText('We could not load your work');
     /*
      * By testid, because the copy this used to query for no longer exists. The
      * three sibling tests moved to `agent-nav-*` when `AgentNav` replaced the
@@ -550,5 +576,83 @@ describe('AgentHomePage — the way to "My performance"', () => {
     expect(screen.queryByTestId('agent-nav-performance')).toBeNull();
     expect(screen.queryByTestId('agent-nav-attempts')).toBeNull();
     expect(screen.queryByTestId('agent-nav-campaigns')).toBeNull();
+  });
+});
+
+describe('AgentHomePage — the tiles (spec §3 01, AS1, AS15)', () => {
+  const TWO = () => [
+    assignment(),
+    assignment({ campaign_id: 'camp-2', campaign_name: 'Collections', campaign_status: 'paused' }),
+  ];
+  const day = (today: number, overdue: number) => ({ call_later: { rows: [], today, overdue, comes_to_me: true, left_today_goes_to: 'waits_for_me' } });
+
+  it('shows the agent’s call-laters today on each tile the agent can open', async () => {
+    mocks.getMyAssignments.mockResolvedValue(TWO());
+    mocks.getMyDay.mockImplementation((id: string) => Promise.resolve(id === 'camp-1' ? day(3, 1) : day(0, 0)));
+
+    renderAt();
+
+    const later = await screen.findByTestId('work-tile-call-later');
+    expect(later.textContent).toBe('Call later · 3 today · 1 late');
+    // None due on the other list: the line is hidden, not "0 today".
+    expect(screen.getAllByTestId('work-tile-call-later')).toHaveLength(1);
+    expect(mocks.getMyDay).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+    expect(mocks.getMyDay).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1');
+    // Read as the tile's description, after its name.
+    const link = screen.getByRole('link', { name: 'Open Renewals' });
+    expect(link.getAttribute('aria-describedby')!.split(' ')).toContain(later.id);
+  });
+
+  it('leaves the call-later line off when the agent’s day cannot be read', async () => {
+    mocks.getMyAssignments.mockResolvedValue(TWO());
+
+    renderAt();
+
+    await screen.findByText('Collections');
+    await waitFor(() => expect(mocks.getMyDay).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId('work-tile-call-later')).toBeNull();
+  });
+
+  it('never reads the day of a list that cannot be opened, nor on the way to a redirect', async () => {
+    mocks.getMyAssignments.mockResolvedValue([assignment(), assignment({ campaign_id: 'camp-2', campaign_status: 'completed' })]);
+    renderAt();
+    await screen.findByText('Finished. Every customer was called.');
+    await waitFor(() => expect(mocks.getMyDay).toHaveBeenCalledTimes(1));
+    expect(mocks.getMyDay).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+    cleanup();
+
+    mocks.getMyDay.mockClear();
+    mocks.getMyAssignments.mockResolvedValue([assignment()]);
+    renderAt();
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-1'));
+    expect(mocks.getMyDay).not.toHaveBeenCalled();
+  });
+
+  it('wears the station’s band, and its tiles and band never say the jargon (spec §6.6)', async () => {
+    mocks.getMyAssignments.mockResolvedValue([
+      ...TWO(),
+      assignment({ campaign_id: 'camp-3', campaign_name: 'Old list', campaign_status: 'stopped' }),
+    ]);
+
+    renderAt();
+
+    await screen.findByText('Old list');
+    expect(screen.getByTestId('band-title').textContent).toBe('Namaste');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Choose your work for today.');
+    const words = `${screen.getByTestId('station-band').textContent} ${screen.getByTestId('work-tiles').textContent}`;
+    expect(words).not.toMatch(/campaign|station|session|available|offline/i);
+  });
+
+  it('puts every way in on the keyboard, one stop per tile', async () => {
+    mocks.getMyAssignments.mockResolvedValue(TWO());
+
+    renderAt();
+
+    await screen.findByText('Collections');
+    for (const tile of screen.getAllByTestId('work-tile')) {
+      const links = within(tile).getAllByRole('link');
+      expect(links).toHaveLength(1);
+      expect(links[0]!.tabIndex).toBe(0);
+    }
   });
 });
