@@ -4,7 +4,7 @@
  *
  * ── One rule, two listeners ──────────────────────────────────────────────────
  * The page's shortcut map (`AgentConsolePage`) and the hang-up's `E`,`E`
- * (`HoldToConfirmButton`) each kept their own copy of this test, and the copies
+ * (now `useDoubleKey`) each kept their own copy of this test, and the copies
  * disagreed. The page had already learned that `tag === 'INPUT'` is too wide; the
  * hang-up had not, so `E`,`E` was dead while focus sat on a cue-settings radio.
  * Both read this now, so they cannot disagree again.

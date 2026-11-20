@@ -85,6 +85,18 @@ describe('the five assertions names', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it('a held E ends nothing: its auto-repeat is not the second press', () => {
+    // A finger resting on E repeats after about 500ms, inside the window.
+    const { onConfirm } = setup();
+    fireEvent.keyDown(window, { key: 'e' });
+    for (let i = 0; i < 10; i += 1) {
+      advance(50);
+      fireEvent.keyDown(window, { key: 'e', repeat: true });
+    }
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(label()).toBe('Press E again to end');
+  });
+
   it('E,E at 1.6s apart ends nothing', () => {
     const { onConfirm } = setup();
     fireEvent.keyDown(window, { key: 'e' });
@@ -257,10 +269,12 @@ describe('E is suppressed inside a text input', () => {
 
     const textarea = document.createElement('textarea');
     document.body.appendChild(textarea);
-    textarea.focus();
-    fireEvent.keyDown(textarea, { key: 'x' });
+    // Focus going there is the cancel: no key has to be typed in it first.
+    act(() => textarea.focus());
 
     expect(label()).toBe('Hang up');
+    expect(fill().style.transform).toBe('scaleX(0)');
+    act(() => textarea.blur());
     fireEvent.keyDown(window, { key: 'e' });
     expect(onConfirm).not.toHaveBeenCalled();
     textarea.remove();

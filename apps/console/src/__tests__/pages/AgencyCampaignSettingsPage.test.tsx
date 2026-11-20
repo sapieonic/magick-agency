@@ -1406,13 +1406,18 @@ describe('the settings sections', () => {
 
   it('highlights the section scrolled into view', async () => {
     let report: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void = () => {};
+    const watched: Element[] = [];
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: typeof report) { report = callback; }
-      observe() {}
+      observe(element: Element) { watched.push(element); }
       disconnect() {}
     });
     renderPage();
     await screen.findByTestId('settings-section-nav');
+    // The hook makes its observer in an effect, which React may run a task after the commit that
+    // put the sections on the page. Under load the find resolves in between, and a report sent
+    // then went to no observer. Report only once the sections are watched, as a browser would.
+    await waitFor(() => expect(watched).toContain(document.getElementById('wrap-up')));
 
     act(() => report([
       { target: document.getElementById('general')!, isIntersecting: false },
