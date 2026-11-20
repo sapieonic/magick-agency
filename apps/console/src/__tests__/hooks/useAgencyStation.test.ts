@@ -1193,6 +1193,30 @@ describe('useAgencyStation', () => {
       expect(mocks.mintStationToken).toHaveBeenLastCalledWith('sess-1', undefined, undefined, { takeOver: false });
     });
 
+    it('exposes when the next retry is due, for screen 09\'s countdown (spec 5.6)', async () => {
+      mocks.mintStationToken.mockResolvedValue({
+        session_id: 'sess-1',
+        station_ws_url: '/proxy/agency/station/sess-1?token=t2',
+        expires_at: 'x',
+      });
+      const view = await mounted();
+      expect(view.result.current.nextRetryAt).toBeNull();
+      const before = Date.now();
+      act(() => latest().serverClose(1006, ''));
+      await waitFor(() => expect(view.result.current.connection).toBe('reconnecting'));
+      const at = view.result.current.nextRetryAt;
+      expect(at).not.toBeNull();
+      // The first rung of the ladder, from the moment of the drop.
+      expect(at!).toBeGreaterThanOrEqual(before);
+      expect(at!).toBeLessThanOrEqual(Date.now() + 5_000);
+      // The retry runs and the new socket opens: the countdown is over.
+      await waitFor(() => expect(FakeSocket.instances.length).toBeGreaterThan(1), { timeout: 3000 });
+      await act(async () => latest().open());
+      await waitFor(() => expect(view.result.current.connection).toBe('open'));
+      expect(view.result.current.nextRetryAt).toBeNull();
+      view.unmount();
+    });
+
     it('reports reconnecting rather than "ended" on an ordinary drop', async () => {
       // Never say "call ended" while a reconnect is still possible.
       mocks.mintStationToken.mockResolvedValue({

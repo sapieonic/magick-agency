@@ -43,16 +43,17 @@ vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import type { AgencySessionBootstrap } from '../../types/agency';
 
 /**
  * The station on a `strict` / `preferred` campaign (contact assignment), driven
  * by real socket frames through the real hook, asserting what the agent sees:
  *
- *  - "Nothing due now" and why, from the bootstrap's `queue` and then from
+ *  - 02 No calls right now and why, from the bootstrap's `queue` and then from
  *    `queue` frames, instead of the promise of a call;
- *  - the header's My contacts, present for the shift and refused in place while a
- *    call is reserved (and closed if it was open).
+ *  - ⋮ More's My customers (today's My contacts), offered while no call is on screen and
+ *    hidden while one is (AS1), closing if it was open.
  */
 
 const BOOTSTRAP: AgencySessionBootstrap = {
@@ -75,7 +76,9 @@ const BOOTSTRAP: AgencySessionBootstrap = {
   queue: { due: false, reason: 'queue_empty', next_due_at: null },
 };
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.flag.mockReturnValue(true);
@@ -90,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
 });
 
@@ -106,30 +110,42 @@ async function mounted() {
   return view;
 }
 
-describe('Nothing due now', () => {
+async function available() {
+  await act(async () => {
+    latestSocket().emit({ event: 'agent_state', state: 'available', since: '2026-11-03T10:00:00.000Z' });
+  });
+}
+
+function openMyCustomers() {
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  fireEvent.click(screen.getByTestId('station-menu-my_customers'));
+}
+
+describe('No calls right now (02c), from the agent’s own queue', () => {
   it('says so from the bootstrap’s queue before the socket states one', async () => {
     await mounted();
-    const nothing = screen.getByTestId('idle-nothing-due');
-    expect(nothing.textContent).toContain('Nothing due now');
-    expect(nothing.textContent).toContain('You have no open contacts right now.');
+    await available();
+    expect(screen.getByTestId('band-title').textContent).toBe('No calls right now');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('No customers are waiting. Stay on this screen.');
+    expect(screen.getByTestId('no-calls').textContent).toContain('Calls will start again');
   });
 
   it('follows queue frames: a reason with the next time, then something due', async () => {
     await mounted();
+    await available();
     await act(async () => {
       latestSocket().emit({
         event: 'queue', campaign_id: 'camp-1', due: false, reason: 'waiting_for_retry',
         next_due_at: '2026-11-03T12:30:00.000Z',
       });
     });
-    expect(screen.getByTestId('idle-nothing-due').textContent)
-      .toMatch(/Your contacts are scheduled for another try later\. The next one is due .+\./);
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Your next call is at 12:30 PM.');
 
     await act(async () => {
       latestSocket().emit({ event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null });
     });
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
-    expect(screen.getByTestId('idle-guide')).toBeTruthy();
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
+    expect(screen.queryByTestId('no-calls')).toBeNull();
   });
 
   it('a ready without a queue (a pool campaign) says nothing of the kind', async () => {
@@ -137,70 +153,100 @@ describe('Nothing due now', () => {
     await act(async () => {
       latestSocket().emit({ event: 'ready', session_id: 'sess-1', state: 'available' });
     });
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
   });
 
   it('is absent on a pool campaign', async () => {
     mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, assignment_mode: 'pool', queue: undefined });
     await mounted();
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
+    await available();
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
   });
 });
 
-describe('My contacts in the header', () => {
+describe('My customers, under ⋮ More', () => {
   it('opens over the station while idle', async () => {
     await mounted();
-    await act(async () => {
-      latestSocket().emit({ event: 'agent_state', state: 'available', since: '2026-11-03T10:00:00.000Z' });
-    });
-    fireEvent.click(screen.getByTestId('my-contacts-open'));
+    await available();
+    openMyCustomers();
     expect(screen.getByTestId('my-contacts')).toBeTruthy();
-    // The console underneath is still there, socket and all.
-    expect(screen.getByTestId('idle-guide')).toBeTruthy();
+    // The station underneath is still there, socket and all.
+    expect(screen.getByTestId('station-band')).toBeTruthy();
   });
 
   it('suspends the station shortcuts while it is open, and they come back when it closes', async () => {
     await mounted();
-    await act(async () => {
-      latestSocket().emit({ event: 'agent_state', state: 'available', since: '2026-11-03T10:00:00.000Z' });
-    });
-    fireEvent.click(screen.getByTestId('my-contacts-open'));
+    await available();
+    openMyCustomers();
     expect(screen.getByTestId('my-contacts')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'b' });
-    expect(screen.queryByRole('menu', { name: 'Break reasons' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Which break?' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close My contacts' }));
     expect(screen.queryByTestId('my-contacts')).toBeNull();
     fireEvent.keyDown(window, { key: 'b' });
-    expect(screen.getByRole('menu', { name: 'Break reasons' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
   });
 
-  it('is refused in place, with the reason, while a call is reserved — and closes if open', async () => {
+  it('is hidden while a call is reserved (AS1) — and closes if open', async () => {
     await mounted();
-    await act(async () => {
-      latestSocket().emit({ event: 'agent_state', state: 'available', since: '2026-11-03T10:00:00.000Z' });
-    });
-    fireEvent.click(screen.getByTestId('my-contacts-open'));
+    await available();
+    openMyCustomers();
     expect(screen.getByTestId('my-contacts')).toBeTruthy();
 
     await act(async () => {
       latestSocket().emit({ event: 'agent_state', state: 'reserved', since: '2026-11-03T10:01:00.000Z' });
     });
     expect(screen.queryByTestId('my-contacts')).toBeNull();
-    const button = screen.getByTestId('my-contacts-open') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent)
-      .toBe('Finish this call first.');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-my_customers')).toBeNull();
+    expect(screen.getByTestId('station-menu-sound')).toBeTruthy();
   });
 
   it('is not offered with the flag off, or on a pool campaign without agent retry', async () => {
     mocks.flag.mockReturnValue(false);
     await mounted();
-    expect(screen.queryByTestId('my-contacts-open')).toBeNull();
+    await available();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-my_customers')).toBeNull();
     cleanup();
     mocks.flag.mockReturnValue(true);
     mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, assignment_mode: 'pool', allow_agent_retry: false });
     await mounted();
-    expect(screen.queryByTestId('my-contacts-open')).toBeNull();
+    await available();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-my_customers')).toBeNull();
+  });
+});
+
+describe('My call-later list (02, phase 0 from my-contacts)', () => {
+  it('lists today’s call-laters, earliest first, on an assigning campaign', async () => {
+    const today = new Date();
+    const at = (h: number) => { const d = new Date(today); d.setHours(h, 0, 0, 0); return d.toISOString(); };
+    const row = (id: string, name: string, h: number) => ({
+      id, campaign_id: 'camp-1', phone_e164: '+919800000000', bucket: 'callback', state: 'pending', attempt_count: 1,
+      last_outcome: null, last_disposition: null, next_attempt_at: at(h), last_attempt_at: null,
+      hero: [{ name: 'Name', value: name }], retry: { eligible: false, blocked: null, rounds_used: 0, available_at: null }, override: null,
+    });
+    mocks.listMyContacts.mockResolvedValue({ rows: [row('b', 'Ravi', 23), row('a', 'Anjali Devi', 22)], next_cursor: null, limit: 50 });
+    mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, queue: { due: true, reason: null, next_due_at: null } });
+    await mounted();
+    await available();
+    const list = await screen.findByTestId('call-later-list');
+    expect(list.textContent).toMatch(/Anjali Devi.*Ravi/);
+    expect(list.textContent).toContain('These calls will come to you on time.');
+    expect(mocks.listMyContacts).toHaveBeenCalledWith(
+      expect.objectContaining({ campaign_id: 'camp-1', bucket: ['callback'] }),
+      'tenant-1',
+      'account-1',
+    );
+  });
+
+  it('is not read on a pool campaign, where today’s server does not serve it', async () => {
+    mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, assignment_mode: 'pool', allow_agent_retry: true, queue: undefined });
+    await mounted();
+    await available();
+    expect(mocks.listMyContacts).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('call-later-list')).toBeNull();
   });
 });

@@ -10,26 +10,48 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-// Decision B17: the key is brand-specific to Magick Agency.
-const STORAGE_KEY = 'magick-agency-theme';
+/**
+ * AS14: the console opens in light unless the user chose dark. Light is the look the agent
+ * station is drawn for (a brightly lit call floor, bands read from a distance); dark stays on offer.
+ *
+ * **Only a choice is stored, under its own key.** The key before AS14 (`magick-agency-theme`,
+ * decision B17's brand-specific name) was written on every load with whatever the default
+ * then was, dark, so it cannot tell a user who chose dark from one who never chose. Reading it
+ * would keep almost everyone in dark; it is left alone and no longer read. The new key is
+ * written only by `toggleTheme`, so its absence means "never chose".
+ */
+export const THEME_CHOICE_KEY = 'magick-agency-theme-choice';
 
-function getInitialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
-  if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
-  return 'dark';
+function readChoice(): Theme | null {
+  try {
+    const stored = localStorage.getItem(THEME_CHOICE_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+export function initialTheme(): Theme {
+  return readChoice() ?? 'light';
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+    setTheme((prev) => {
+      const next: Theme = prev === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem(THEME_CHOICE_KEY, next);
+      } catch {
+        /* blocked site data: the choice lasts for this page only */
+      }
+      return next;
+    });
   }, []);
 
   return (
@@ -43,4 +65,9 @@ export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error('useTheme must be used within ThemeProvider');
   return ctx;
+}
+
+/** The theme where a page may render without the provider (the station's tests): null then. */
+export function useOptionalTheme(): ThemeContextValue | null {
+  return useContext(ThemeContext) ?? null;
 }

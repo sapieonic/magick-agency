@@ -23,6 +23,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import type {
   AgencyPriorAttempt,
   AgencyReservedAttempt,
@@ -148,7 +149,9 @@ class FakeSocket {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1' });
@@ -160,6 +163,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
 });
 
@@ -192,111 +196,48 @@ async function onCall(reserved: AgencyReservedAttempt) {
   return view;
 }
 
-describe('the retry banner', () => {
-  it('names the pass and the campaign it came from', async () => {
+describe('the retry banner is gone (spec §8: supervisor language)', () => {
+  it('shows no retry banner on a retry campaign; Last calls says the customer was called before', async () => {
     mocks.createAgencySession.mockResolvedValue(RETRY_BOOTSTRAP);
-    await mounted();
-
-    const banner = screen.getByTestId('retry-context');
-    expect(banner.textContent).toContain('Retry 1');
-    expect(banner.textContent).toContain('Q3 Winback');
-  });
-
-  it('renders the API’s selection summary unchanged', async () => {
-    // The API builds it from the frozen selector on the child's row, so the
-    // sentence the agent reads and the query that put this contact in front of
-    // them cannot disagree. Re-deriving it here would be a second answer.
-    mocks.createAgencySession.mockResolvedValue(RETRY_BOOTSTRAP);
-    await mounted();
-
-    expect(screen.getByTestId('retry-context').textContent).toContain(
-      'voicemail, callback, no answer',
-    );
-  });
-
-  it('is present from the moment the station opens, before any call', async () => {
-    // Read from the bootstrap, which is fixed at join — so the banner cannot
-    // appear or disappear under the agent's cursor mid-shift, which is what
-    // lets it sit above the console body without breaking the frozen geometry.
-    mocks.createAgencySession.mockResolvedValue(RETRY_BOOTSTRAP);
-    await mounted();
-    expect(screen.getByTestId('retry-context')).toBeTruthy();
-    expect(screen.getByTestId('idle-guide')).toBeTruthy();
-  });
-
-  it('leaves the console exactly as it was on an ordinary campaign', async () => {
-    // The 100% case today: `retry_context` is absent for every non-retry
-    // campaign, and an absent one must render nothing at all — not an empty
-    // banner holding space.
-    await mounted();
+    await onCall(attempt([prior({ ...PARENT_CAMPAIGN_FIELDS(), attempt_number: 2, notes: 'asked for a week' })]));
     expect(screen.queryByTestId('retry-context')).toBeNull();
-    expect(screen.getByTestId('idle-guide')).toBeTruthy();
-    expect(screen.getByTestId('station-identity')).toBeTruthy();
+    expect(screen.queryByText(/Retry 1 of/)).toBeNull();
+    expect(screen.queryByText(/voicemail, callback, no answer/)).toBeNull();
+    const calls = screen.getByTestId('last-calls');
+    expect(within(calls).getByText('“asked for a week”')).toBeTruthy();
   });
 });
 
-describe('prior attempts across a lineage', () => {
-  it('groups by campaign, with this campaign first', async () => {
+const lastCallRows = () => within(screen.getByTestId('last-calls')).getAllByRole('listitem');
+
+describe('Last calls across a lineage (04c)', () => {
+  it('lists the newest calls first, across the campaigns of the lineage', async () => {
     await onCall(
       attempt([
-        // The ancestor's attempt is the NEWEST, and the agent's own pass still
-        // leads: it is the context for the call they are about to take.
-        prior({
-          ...PARENT_CAMPAIGN_FIELDS(),
-          attempt_number: 2,
-          ended_at: '2026-08-24T10:00:00.000Z',
-          disposition_code: null,
-        }),
-        prior({ attempt_number: 1, ended_at: '2026-08-20T10:00:00.000Z' }),
+        prior({ ...PARENT_CAMPAIGN_FIELDS(), attempt_number: 2, ended_at: '2026-08-24T10:00:00.000Z', notes: 'parent, newest' }),
+        prior({ attempt_number: 1, ended_at: '2026-08-20T10:00:00.000Z', notes: 'child, older' }),
       ]),
     );
-
-    const groups = screen.getAllByTestId(/^prior-group-/);
-    expect(groups).toHaveLength(2);
-    expect(groups[0]!.getAttribute('data-testid')).toBe(`prior-group-${CHILD_CAMPAIGN.id}`);
-    expect(groups[0]!.getAttribute('data-current')).toBe('true');
-    expect(groups[1]!.getAttribute('data-testid')).toBe(`prior-group-${PARENT_CAMPAIGN.id}`);
-  });
-
-  it('names the ancestor campaign and says "This campaign" for the agent’s own', async () => {
-    await onCall(
-      attempt([prior({ ...PARENT_CAMPAIGN_FIELDS() }), prior({ attempt_number: 1 })]),
-    );
-
-    expect(
-      within(screen.getByTestId(`prior-group-${CHILD_CAMPAIGN.id}`)).getByText('This campaign'),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId(`prior-group-${PARENT_CAMPAIGN.id}`)).getByText('Q3 Winback'),
-    ).toBeTruthy();
-  });
-
-  it('keeps each group newest-first, as the API ordered them', async () => {
-    await onCall(
-      attempt([
-        prior({ attempt_number: 3, notes: 'third' }),
-        prior({ attempt_number: 2, notes: 'second' }),
-        prior({ attempt_number: 1, notes: 'first' }),
-      ]),
-    );
-
-    const items = within(screen.getByTestId(`prior-group-${CHILD_CAMPAIGN.id}`)).getAllByRole(
-      'listitem',
-    );
-    expect(items.map((el) => el.textContent)).toEqual([
-      expect.stringContaining('third'),
-      expect.stringContaining('second'),
-      expect.stringContaining('first'),
+    expect(lastCallRows().map((el) => el.textContent)).toEqual([
+      expect.stringContaining('parent, newest'),
+      expect.stringContaining('child, older'),
     ]);
   });
 
-  it('counts every attempt in the heading, across all groups', async () => {
-    // The cap is 20 across the whole lineage, so a per-group count would not
-    // add up to what the agent can see.
+  it('keeps at most the three newest', async () => {
     await onCall(
-      attempt([prior({ ...PARENT_CAMPAIGN_FIELDS() }), prior(), prior({ attempt_number: 2 })]),
+      attempt([
+        prior({ attempt_number: 4, ended_at: '2026-08-24T10:00:00.000Z', notes: 'fourth' }),
+        prior({ attempt_number: 3, ended_at: '2026-08-23T10:00:00.000Z', notes: 'third' }),
+        prior({ attempt_number: 2, ended_at: '2026-08-22T10:00:00.000Z', notes: 'second' }),
+        prior({ attempt_number: 1, ended_at: '2026-08-21T10:00:00.000Z', notes: 'first' }),
+      ]),
     );
-    expect(screen.getByTestId('prior-attempts').textContent).toContain('Prior attempts (3)');
+    expect(lastCallRows().map((el) => el.textContent)).toEqual([
+      expect.stringContaining('fourth'),
+      expect.stringContaining('third'),
+      expect.stringContaining('second'),
+    ]);
   });
 
   it('renders two attempts that each call themselves "attempt 1"', async () => {
@@ -309,8 +250,8 @@ describe('prior attempts across a lineage', () => {
         notes: 'parent note',
       })]),
     );
-    expect(screen.getByText('child note')).toBeTruthy();
-    expect(screen.getByText('parent note')).toBeTruthy();
+    expect(screen.getByText('“child note”')).toBeTruthy();
+    expect(screen.getByText('“parent note”')).toBeTruthy();
   });
 });
 
@@ -323,15 +264,8 @@ describe('a disposition code this campaign has no label for', () => {
       attempt([prior({ ...PARENT_CAMPAIGN_FIELDS(), disposition_code: 'ptp', notes: 'promised' })]),
     );
 
-    const group = screen.getByTestId(`prior-group-${PARENT_CAMPAIGN.id}`);
-    expect(within(group).getByText('ptp')).toBeTruthy();
+    expect(within(screen.getByTestId('last-calls')).getByText('ptp')).toBeTruthy();
     expect(screen.queryByText('Unknown outcome')).toBeNull();
-  });
-
-  it('marks it as an unresolved code rather than passing it off as prose', async () => {
-    await onCall(attempt([prior({ ...PARENT_CAMPAIGN_FIELDS(), disposition_code: 'ptp' })]));
-    const code = within(screen.getByTestId(`prior-group-${PARENT_CAMPAIGN.id}`)).getByText('ptp');
-    expect(code.getAttribute('data-unlabelled')).toBe('true');
   });
 
   it('does not leak the parent’s catalog onto the agent’s screen', async () => {
@@ -345,11 +279,9 @@ describe('a disposition code this campaign has no label for', () => {
 
   it('still names a code this campaign does hold', async () => {
     await onCall(attempt([prior({ disposition_code: 'sale' })]));
-    // Scoped to the history: the disposition pad renders "Sale" too, and a
-    // page-wide query would pass on the pad's card while the history showed a
-    // bare code.
-    const label = within(screen.getByTestId(`prior-group-${CHILD_CAMPAIGN.id}`)).getByText('Sale');
-    expect(label.getAttribute('data-unlabelled')).toBeNull();
+    // Scoped to the history: the outcome tiles say "Sale" too on What happened?.
+    expect(within(screen.getByTestId('last-calls')).getByText('Sale')).toBeTruthy();
+    expect(within(screen.getByTestId('last-calls')).queryByText('sale')).toBeNull();
   });
 });
 

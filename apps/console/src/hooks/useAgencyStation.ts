@@ -207,6 +207,8 @@ export function useAgencyStation(
     releasedAt,
     lastError,
     dialing,
+    campaignReason,
+    nextRetryAt,
     missedPings,
     manualCall,
     queue,
@@ -944,7 +946,7 @@ export function useAgencyStation(
         case 'campaign_state': {
           // `dialing` and not `status`: deriving the predicate from `status`
           // forces every client to re-derive it, and they will disagree.
-          dispatch({ type: 'campaign_state', dialing: frame.dialing });
+          dispatch({ type: 'campaign_state', dialing: frame.dialing, reason: frame.reason });
           logDiagnostic('campaign_state', `${frame.status} (${frame.reason})`);
           return;
         }
@@ -1541,6 +1543,8 @@ export function useAgencyStation(
 
       const delay = backoffFor(retryCountRef.current);
       retryCountRef.current += 1;
+      // Screen 09 counts down to it (spec 5.6: the delay was local to this function).
+      dispatch({ type: 'retry_scheduled', at: Date.now() + delay });
       retryRef.current = setTimeout(() => {
         void connect();
       }, delay);
@@ -1725,6 +1729,10 @@ export function useAgencyStation(
     missedRelease,
     lastError,
     dialing,
+    /** Why the campaign last changed state (`campaign_state.reason`); null until one says. */
+    campaignReason,
+    /** When the reconnect ladder tries next (local epoch ms), while `reconnecting`; else null. */
+    nextRetryAt,
     missedPings,
     diagnostics: diagnostics.entries,
     manualCall,

@@ -378,3 +378,22 @@ describe('stationReducer — dial activity (late binding)', () => {
     expect(state.dialActivity).toBeNull();
   });
 });
+
+describe('the station screen\'s two client-side facts (spec 02c, 09)', () => {
+  it('keeps the campaign_state reason beside dialing, and clears it with a frame that has none', () => {
+    const paused = stationReducer(INITIAL_STATION_STATE, { type: 'campaign_state', dialing: false, reason: 'paused_by_supervisor' });
+    expect(paused.dialing).toBe(false);
+    expect(paused.campaignReason).toBe('paused_by_supervisor');
+    expect(stationReducer(paused, { type: 'campaign_state', dialing: true }).campaignReason).toBeNull();
+  });
+
+  it('holds the next retry while reconnecting, and drops it on any other connection state', () => {
+    const reconnecting = stationReducer(INITIAL_STATION_STATE, { type: 'connection', connection: 'reconnecting' });
+    const scheduled = stationReducer(reconnecting, { type: 'retry_scheduled', at: 12_345 });
+    expect(scheduled.nextRetryAt).toBe(12_345);
+    // A second `reconnecting` (the retry's own connect) keeps the countdown's target.
+    expect(stationReducer(scheduled, { type: 'connection', connection: 'reconnecting' }).nextRetryAt).toBe(12_345);
+    expect(stationReducer(scheduled, { type: 'connection', connection: 'open' }).nextRetryAt).toBeNull();
+    expect(stationReducer(scheduled, { type: 'connection', connection: 'disconnected' }).nextRetryAt).toBeNull();
+  });
+});

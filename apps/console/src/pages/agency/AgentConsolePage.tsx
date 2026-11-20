@@ -1,17 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Ban, Check, CircleCheck, Coffee, Info, MessageSquare, MicOff, Play, RefreshCw, TriangleAlert, WifiOff, X } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { mayManageEveryCampaignDnc } from '../../utils/dncScopeWords';
+import { useOptionalTheme } from '../../contexts/ThemeContext';
 import { usePermission } from '../../hooks/usePermission';
 import { useAgencyConsole, type AgencyConsoleState } from './useAgencyConsole';
-import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch, type StationJoin } from './station/useStationJoin';
+import { useStationJoin, useLiveSessionTouch, type StationJoin } from './station/useStationJoin';
 import { useStationExit } from './station/useStationExit';
-import { useStationShortcuts } from './station/useStationShortcuts';
+import {
+  useStationShortcuts,
+  type BreakMenuHandle,
+  type DncControlHandle,
+  type StationScreenKeys,
+} from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp, type StationHelp } from './station/useStationHelp';
+import { useDeviceChecks } from './station/useDeviceChecks';
+import { useMyDay } from './station/useMyDay';
+import { useMyCallLaters } from './station/useMyCallLaters';
 import {
   FloorAssistAnnouncer,
   SupervisorMessages,
@@ -22,88 +31,97 @@ import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
 import { useInboundCall } from '../../hooks/useInboundCall';
 import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
-import { StateRail } from '../../components/agency/StateRail';
-import {
-  DispositionPad,
-  type DispositionPadHandle,
-} from '../../components/agency/DispositionPad';
-import type { DncControlHandle } from '../../components/agency/DncControl';
-import { NotesField } from '../../components/agency/NotesField';
-import { WrapupRedial } from '../../components/agency/WrapupRedial';
-import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
+import { CueFlashBand } from '../../components/agency/StateRail';
+import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
 import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
 import { StationFatal } from '../../components/agency/StationFatal';
 import { StationHeader } from '../../components/agency/StationHeader';
-import { ContactPanel } from '../../components/agency/ContactPanel';
-import { ContactDetail } from '../../components/agency/ContactDetail';
-import { IdleGuide } from '../../components/agency/IdleGuide';
+import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';
+import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWaitingPill';
+import { CueSettingsFields } from '../../components/agency/CueSettings';
+import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
+import { MoreMenu, NeedHelpButton, StationBanner, StationFrame } from '../../components/agency/station/StationFrame';
+import { KeptCountdown, RetryCountdown, SinceClock, TimeLeftRing } from '../../components/agency/station/StationClocks';
+import { CustomerCardView, LastCallsCard, NoteCard } from '../../components/agency/station/StationCustomer';
+import { WhatHappened } from '../../components/agency/station/WhatHappened';
+import {
+  BreakCard,
+  CallLaterCard,
+  DeviceCheckTiles,
+  ListenNoticeLine,
+  MyDayCard,
+  NoInternetCard,
+  OtherDeviceCard,
+  StartOfDayBody,
+  StationDialog,
+  StopCallingDialog,
+  WaitingCard,
+  WhatToDo,
+  WhichBreakDialog,
+  type WorkMode,
+} from '../../components/agency/station/StationScreens';
+import stationStyles from '../../components/agency/station/Station.module.css';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useDialActivityDisplay } from '../../hooks/useDialActivityDisplay';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
+import { useReadAloud } from '../../hooks/useSpeech';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
 import { trackAgencyStationNothingDue } from '../../analytics/events';
-import { StationActionBar } from '../../components/agency/StationActionBar';
 import {
   LEAVE_CONFIRM_ACTION,
   LEAVE_CONFIRM_MESSAGE,
   LEAVE_CONFIRM_TITLE,
 } from '../../utils/agencyStationExit';
 import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
-import { resolveContextFields } from '../../utils/agencyContext';
+import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
+import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
+import { findDisposition } from '../../utils/agencyDispositionForm';
+import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
+import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
+import { messageSender } from '../../utils/agency/stationHelp';
+import { brand } from '../../brand';
+import {
+  STATION_BLOCK_COPY,
+  STATION_COPY,
+  helpAnsweredLine,
+  helpRefusedLine,
+  missedReleaseLine,
+  releaseBanner,
+} from '../../utils/agency/stationCopy';
+import { clockTime, runningClock } from '../../utils/agency/stationFormat';
+import { customerCard, lastCallRows } from '../../utils/agency/stationCustomer';
+import { MAIN_ACTION_KEY, stationView, type MoreItem, type StationView } from '../../utils/agency/stationView';
 import styles from '../../components/agency/AgentStation.module.css';
 
 /**
- * The Agent Console — Phase 2.
+ * The agent's station (`/station?campaign=…`), redesigned (AS1–AS18, `docs/agent-station.md`;
+ * screens and copy in `docs/agent-station/design-spec.md`).
  *
- * Phase 1 shipped this page with a local `describeRail`, a bare "Go available"
- * button and a hang-up. Everything Phase 2 needs already existed as tested
- * components; **nothing composed them**, which is the state this file ends.
+ * ── One state, one screen ────────────────────────────────────────────────────
+ * The view model (`utils/agency/stationView.ts`) turns the server's agent state, the socket's
+ * connection state and a few client facts into the screen, its band (colour, icon, title,
+ * subtitle), its one main action and what Need help and ⋮ More offer. This page composes that
+ * screen from the station's existing flows, which are unchanged: the station socket
+ * (`useAgencyStation`), the console's sequencing (`useAgencyConsole`), join and its conflicts,
+ * the hang-up, the outcome save, notes autosave, breaks, wrap-up redial, DNC, help and supervisor
+ * messages, the soft phone and inbound calls.
  *
- * Three structural rules drive the markup and are each easy to undo by accident:
- *
- *  1. **Geometry is frozen.** Column widths and order never change between
- *     states. A control that moves 12px between "ringing" and "connected" is a
- *     misclick, and a misclick on this screen hangs up on a human being. Every
- *     region renders in every state; only content and colour change.
- *  2. **Only authoritative frames move the UI.** Everything visual is derived
- *     from `useAgencyConsole`, which routes bridge-originated `status`/`ended` to
- *     a diagnostic sink. The connect treatment keys off `bridgedAt` — set by
- *     `bridged` and nothing else.
- *  3. **Tab order is fixed and does not vary by state**: rail →
- *     column 1 → column 2 → column 3 (pad, then notes) → action bar (Break →
- *     Save → Hang up). Inactive controls are `disabled` so they are *skipped*
- *     rather than reordered, which is the mechanism that keeps the order stable —
- *     and the reason every region renders in every state.
- *
- * The `⚙` station menu obeys all three: it is in the **header**
- * beside cue settings — never the action bar, whose Break → Save → Hang up
- * sequence rule 3 pins — and its items are refused in place with a stated reason
- * rather than disappearing, so nothing moves. (They are refused on *different*
- * states: Exit is additionally refused while `available`, because it leaves the
- * agent in the dialable pool with no console attached. The whole argument lives
- * at the predicates in `agencyStationExit.ts`.) There
- * is deliberately no single-key shortcut for either:'s keys are for the
- * call in front of the agent, and a stray keypress that ends a session would be
- * the worst possible thing to bind a letter to.
- *
- * `C` (callback), `D` (mark DNC) and `/` (contact-panel field filter)
- * ARE wired, now — `C` through the pad's handle so the
- * selection and the focus move together, `D` through the DNC control's, so the
- * key opens the same confirmation the button does, and `/` by focusing the
- * filter input directly, since it owns no confirmation and no selection to
- * hand off.
- *
- * ── How the page is put together ─────────────────────────────────────────────
- * The page is the composition and the layout. The flows are hooks under
- * `./station/` (join and the conflict switch, leave/exit, the keyboard map, the
- * hang-up, DNC), the console's state is `useAgencyConsole`, and the regions are
- * components under `components/agency/` (header, contact panel and detail, action
- * bar, the two screens shown instead of a console). The sections below stay here
- * because they ARE the geometry: every region renders in every state.
+ * ── The rules that replace "geometry is frozen" (AS1, spec §6.1) ───────────────
+ *  1. **Hide, don't disable.** A control that does not belong to the screen is not on it. The one
+ *     exception is Save on What happened? before a tile is picked: faded, and pressing it shakes the
+ *     tiles and says what is missing.
+ *  2. **The main button never moves.** It is the footer's last control, bottom right; End call is
+ *     never where another button was a moment ago (Call coming has no button at all, AS11).
+ *  3. **Nothing moves while a state is on screen.** Screens change only on a state change.
+ *  4. **Only authoritative frames move the screen** (unchanged): the view model reads the station
+ *     state, never the bridge's diagnostic `status` frames.
+ *  5. **Focus moves once per call** (unchanged): to the station body when a call is coming, never
+ *     at connect, keyed on the ringing attempt's id.
  */
 export default function AgentConsolePage() {
   const [params] = useSearchParams();
@@ -115,12 +133,7 @@ export default function AgentConsolePage() {
   const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
   const { station } = cons;
 
-  /*
-    ── Floor assist (LF4, LF5, LF24–LF26) ──────────────────────────────────────
-    Need help, in the action bar while the flag is on, and supervisors' messages, laid over every
-    view of the station (the campaign's, an inbound call's, the soft phone's): a message reaches
-    the agent wherever they are, and never moves or covers the controls that act on the call.
-  */
+  // Floor assist (LF4, LF5, LF24–LF26): Need help and supervisors' messages.
   const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
   const help = useStationHelp({
     offered: floorAssistOn,
@@ -130,28 +143,42 @@ export default function AgentConsolePage() {
     station,
   });
   /*
-    What supervisors say, out loud (LF25): held here, above every screen the station shows, and
-    rendered once after it, so moving between the campaign's screen, an inbound call and the soft
-    phone neither remounts the region nor says anything again. The card stack comes after the
-    screen's own controls, so it is after them in Tab order too.
+    What supervisors say, out loud (LF25): held here, above every screen, and rendered once after
+    it, so moving between screens neither remounts the region nor says anything again.
   */
   const announced = useFloorAssistAnnouncer(station.supervisorMessages, help.announcement);
 
   return (
     <>
       <StationScreen campaignId={campaignId} join={join} cons={cons} help={help} />
-      <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
       <FloorAssistAnnouncer lines={announced} />
     </>
   );
 }
 
-/**
- * What the station shows: the screen for a join that did not open (a conflict, the soft phone
- * elsewhere, another device, an error), or the station on an inbound call, on the soft phone or on
- * its campaign. The page renders it in one place, so moving between them leaves the page's floor
- * assist (the cards and their live region) where it is.
- */
+/** The hang-up's words on the station (AS3): the same hold and `E` `E`, said plainly. */
+const END_CALL_COPY: HoldToConfirmCopy = {
+  idPrefix: 'hangup',
+  labels: {
+    idle: STATION_COPY.endCall,
+    holding: STATION_COPY.endCallHolding,
+    armed: STATION_COPY.endCallArmed,
+    ending: STATION_COPY.endCallEnding,
+    failed: STATION_COPY.endCall,
+  },
+  hint: STATION_COPY.endCallHint,
+  failedCopy: STATION_COPY.endCallFailed,
+  shortcutScope: 'window',
+  confirmation: 'external',
+  analyticsControl: 'hangup',
+};
+
+/** 02b's "The last call did not connect": how long it stays (or until the next call). */
+export const LAST_CALL_BANNER_MS = 6_000;
+
+/** The My calls page, opened in a new tab from ⋮ More. */
+const MY_CALLS_PATH = '/dialer/attempts';
+
 function StationScreen({
   campaignId,
   join,
@@ -164,26 +191,19 @@ function StationScreen({
   help: StationHelp;
 }) {
   const { tenantId, accountId, role } = useTenant();
-  const { user, memberships } = useAuth();
+  const { user } = useAuth();
+  const themeContext = useOptionalTheme();
+  const theme = themeContext?.theme ?? 'light';
+  const readAloud = useReadAloud();
   const { bootstrap } = join;
 
-  const consoleRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const breakMenuRef = useRef<BreakMenuHandle | null>(null);
   const padRef = useRef<DispositionPadHandle | null>(null);
   const dncRef = useRef<DncControlHandle | null>(null);
-  const fieldFilterRef = useRef<HTMLInputElement>(null);
 
-  // Floor is `agent` (level 5), so every agent holds it — but a supervisor
-  // watching a station from a lower-privileged membership does not, and a bare
-  // greyed button on this screen reads as an outage.
   const mayMarkDnc = usePermission('agency.dnc.write');
-  // The tenant-wide escalation is a DIFFERENT, higher floor — `agency.dnc.manage`
-  // (`account_admin`) on a membership of the WHOLE organisation (DS3), as the server
-  // requires: an admin of one account cannot block a number in other accounts' campaigns.
-  // Marking campaign-scoped stays at `agent`; only the wider, harder-to-undo
-  // escalation is gated behind this.
-  const mayMarkDncTenantWide = mayManageEveryCampaignDnc(memberships ?? [], tenantId, accountId);
 
   const { station, clock, audio } = cons;
   const { connection, agentState, live, release, dialing, missedPings } = station;
@@ -191,14 +211,7 @@ function StationScreen({
 
   useLiveSessionTouch({ tenantId, bootstrap, agentState, connection });
 
-  /*
-    ── Contact assignment ────────────────────────────────────────────────────
-    "Nothing due now": on a strict / preferred campaign an agent with nothing due
-    is not reserved, so the idle guide says why instead of promising a call. The
-    queue is the socket's once it has stated one, the bootstrap's until then.
-    Not flag-gated: the flag gates the surface, and pacing keeps a stored strict
-    mode with it off — the sentence is true either way.
-  */
+  // ── The agent's own queue (contact assignment) ──────────────────────────────
   const queue = effectiveQueue(station.queue, bootstrap?.queue);
   const nothingDue = nothingDueCopy(queue, formatSpineTimestamp);
   const nothingDueReason = nothingDue !== null ? queue?.reason ?? null : null;
@@ -207,57 +220,38 @@ function StationScreen({
     trackAgencyStationNothingDue({ campaign_id: bootstrap.campaign_id, reason: nothingDueReason });
   }, [nothingDueReason, bootstrap]);
 
-  /*
-    My contacts: a panel over the station (see `MyContactsPanel` for why not a
-    column or a page). The header button is fixed for the shift — shown when the
-    flag is on and the campaign assigns contacts or lets agents retry, both read
-    from the bootstrap — and refused in place, with the reason, while a call is
-    reserved, live or in wrap-up, so nothing moves under a cursor. The panel is
-    unmounted the moment that lock applies: a reservation never lands behind it.
-  */
+  // ── My customers (today's My contacts panel) ────────────────────────────────
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
-  const myContactsOffered = assignmentEnabled && bootstrap !== null && (
-    (bootstrap.assignment_mode !== undefined && bootstrap.assignment_mode !== 'pool')
-    || bootstrap.allow_agent_retry === true
-  );
+  const assigns = bootstrap?.assignment_mode !== undefined && bootstrap.assignment_mode !== 'pool';
+  const myContactsOffered = assignmentEnabled && bootstrap !== null && (assigns || bootstrap.allow_agent_retry === true);
   const myContactsLock = myContactsLockReason(agentState, connection === 'open');
   const [myContactsOpen, setMyContactsOpen] = useState(false);
   useEffect(() => {
     if (myContactsLock !== null) setMyContactsOpen(false);
   }, [myContactsLock]);
-  /** The panel is on screen (the same condition its mount below reads). */
   const myContactsShown = myContactsOpen && myContactsLock === null && bootstrap !== null;
 
-  /**
-   * Focus moves exactly ONCE per call — to the console root, on reservation — and
-   * never at connect. Stealing focus at connect would interrupt a screen-reader
-   * user mid-sentence at the worst possible moment.
-   *
-   * **Keyed on the ringing attempt's id, never on `live` itself.** A `ready` on
-   * reconnect replaces `live` with a fresh object for the same attempt, and an
-   * effect keyed on the object read that as a new call and pulled focus back to
-   * the console root a second time, mid-ring, from wherever the agent had put it.
-   */
+  // ── Focus moves once per call, to the station body, keyed on the ringing attempt's id ──
   const ringingAttemptId = live && live.bridgedAt === null ? live.attempt.attempt_id : null;
   useEffect(() => {
-    if (ringingAttemptId !== null) consoleRef.current?.focus();
+    if (ringingAttemptId !== null) bodyRef.current?.focus();
   }, [ringingAttemptId]);
 
-  /**
-   * The attempt whose details stay on screen — live, retained through wrap-up, or
-   * carried onto a redial whose `reserved` never arrived (`cons.panelAttempt`).
-   */
   const { panelAttempt } = cons;
-
-  const resolved = useMemo(
-    () => (panelAttempt ? resolveContextFields(panelAttempt.context, bootstrap?.context_display) : null),
+  const card = useMemo(
+    () => (panelAttempt ? customerCard(panelAttempt, bootstrap?.context_display) : null),
     [panelAttempt, bootstrap?.context_display],
+  );
+  const lastCalls = useMemo(
+    () => (panelAttempt ? lastCallRows(panelAttempt, bootstrap?.disposition_catalog) : []),
+    [panelAttempt, bootstrap?.disposition_catalog],
   );
 
   const exit = useStationExit({ campaignId, bootstrap, tenantId, accountId, role, agentState });
   const { hangup, hangupFailure } = useHangup({ live, bootstrap, tenantId, accountId, clock });
   const dnc = useDncAction({
-    liveAttemptId: live?.attempt.attempt_id ?? null,
+    // On What happened? the call is over; the number is still the one on screen.
+    liveAttemptId: live?.attempt.attempt_id ?? panelAttempt?.attempt_id ?? null,
     panelAttemptId: panelAttempt?.attempt_id ?? null,
     bootstrap,
     tenantId,
@@ -272,13 +266,7 @@ function StationScreen({
     userId: user?.id ?? null,
   });
 
-  /*
-    ── An inbound call (P2, `docs/inbound.md` §6) ──────────────────────────────
-    Offered to this session while it was available, or connected, or ended owing its outcome:
-    the inbound panel takes the station in place, like the soft phone, on this station's
-    socket, microphone and header. Its routes finish a call the inbound flag may have been
-    turned off under, so nothing here reads the flag.
-  */
+  // ── An inbound call (P2, `docs/inbound.md` §6): its own view, on this station ──
   const inbound = useInboundCall({
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
@@ -291,44 +279,254 @@ function StationScreen({
   });
   const inboundActive = inbound.call !== null;
 
-  /*
-    ── Hidden dials (late binding) ──────────────────────────────────────────────
-    A dial placed for this agent that they are shown only if it is answered. Said in the idle
-    slot and the rail, and only there: the agent is available, the campaign dials, nothing
-    (outbound or inbound) is on screen and the socket is open. Outside that it is not shown and
-    the gap hold is dropped. Early binding is never sent the frame, so this stays null there.
-  */
+  // ── Hidden dials (late binding) ─────────────────────────────────────────────
   const dialActivity = useDialActivityDisplay(
     station.dialActivity,
-    agentState === 'available'
-      && dialing
-      && connection === 'open'
-      && panelAttempt === null // null whenever `live` is: it is `live.attempt` first
-      && !inboundActive,
+    agentState === 'available' && dialing && connection === 'open' && panelAttempt === null && !inboundActive,
   );
   const diallingCustomer = dialActivity?.dialling === true;
-  // "Nothing due now" with no dial ringing: the guide says no call is coming, so the panel
-  // leaves out "No answer from the last N numbers" too, as the agent app does. A dial ringing
-  // still outranks "Nothing due now" (the guide below), count line and all.
-  const panelDialActivity = nothingDue !== null && !diallingCustomer ? null : dialActivity;
 
-  // Suspended under the soft phone (its own keyboard), under an inbound call (its own) and
-  // under My contacts: the panel is a modal with its own focus trap, and a station key behind
-  // it (`b` opening the break menu, `/` pulling focus out of the trap) acts on a screen the
-  // agent cannot see.
-  useStationShortcuts(
-    { agentState, cons, bootstrap, suspended: softphone.active || inboundActive || myContactsShown },
-    { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef },
-  );
+  // ── Start of day ────────────────────────────────────────────────────────────
+  const notWorkingYet = agentState === 'offline' && live === null;
+  const checks = useDeviceChecks(notWorkingYet && bootstrap !== null);
+  const [workMode, setWorkMode] = useState<WorkMode>('calls_come');
+  const myDay = useMyDay({
+    campaignId: bootstrap?.campaign_id ?? null,
+    tenantId,
+    accountId,
+    agentState,
+    enabled: bootstrap !== null,
+  });
+  const callLaters = useMyCallLaters({
+    campaignId: bootstrap?.campaign_id ?? null,
+    tenantId,
+    accountId,
+    agentState,
+    enabled: bootstrap !== null && assignmentEnabled && assigns,
+  });
+  const listenOn = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
+
+  // ── The screen's own state ──────────────────────────────────────────────────
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [breakDialog, setBreakDialog] = useState<null | 'now' | 'after_save'>(null);
+  const [stopAsk, setStopAsk] = useState<null | { code: string | null; origin: 'shortcut' | 'click' }>(null);
+  const [soundOpen, setSoundOpen] = useState(false);
+  const [saveShake, setSaveShake] = useState(0);
+  const [saveBlock, setSaveBlock] = useState<string | null>(null);
+
+  // A call arriving closes Finish work's question: the agent is working.
+  const callOnScreen = live !== null || agentState === 'reserved' || agentState === 'on_call' || agentState === 'wrapup';
+  useEffect(() => {
+    if (callOnScreen) setFinishOpen(false);
+  }, [callOnScreen]);
+  // A call coming closes the Sound settings: the agent needs to see who is coming, and focus
+  // moves to the station body for it (once per call).
+  useEffect(() => {
+    if (ringingAttemptId !== null) setSoundOpen(false);
+  }, [ringingAttemptId]);
+  // A new pick, or a new call, retires the early-Save line.
+  useEffect(() => {
+    setSaveBlock(null);
+  }, [cons.form.selectedCode, cons.form.callbackAt, cons.form.promiseDate, panelAttempt?.attempt_id]);
+
+  // ── What happened? ──────────────────────────────────────────────────────────
+  const wrapup = station.wrapup;
+  const outcomeOwed =
+    live === null &&
+    (agentState === 'wrapup' || hasWrapup(wrapup) || (agentState === 'on_call' && release !== null && release.requires_disposition));
+  const holding = wrapup ? wrapupView(wrapup, clock.now(), cons.dispositionSubmitted).holding : false;
+
+  // ── Breaks ──────────────────────────────────────────────────────────────────
+  const onBreak = agentState === 'break';
+  /*
+    07 turns into 08 with time alone. The root does not repaint on a clock (the timers are their own
+    leaves), so it renders once more at the instant the limit passes, and only then.
+  */
+  const breakSinceMs = onBreak ? clock.corrected(station.agentStateSince) : null;
+  const breakOverAt = breakSinceMs !== null && cons.breakLimitMinutes !== null ? breakSinceMs + cons.breakLimitMinutes * 60_000 : null;
+  useRenderAt(breakOverAt === null ? null : breakOverAt + 1);
+  const breakElapsedMs = onBreak ? clock.since(station.agentStateSince) : null;
+  const reservedBreak = onBreak
+    && station.breakReasonCode !== null
+    && station.breakReasonCode !== SOFTPHONE_BREAK_REASON
+    && reservedBreakReasonLabel(station.breakReasonCode) !== null;
+
+  // ── The call kept through a drop (10) ───────────────────────────────────────
+  const [droppedAt, setDroppedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (connection === 'open') setDroppedAt(null);
+    else if ((connection === 'reconnecting' || connection === 'disconnected') && live !== null) {
+      setDroppedAt((was) => was ?? Date.now());
+    }
+  }, [connection, live]);
+
+  // ── The view model ──────────────────────────────────────────────────────────
+  const firstName = (user?.display_name ?? '').trim().split(/\s+/)[0] || null;
+  const view: StationView = stationView({
+    firstName,
+    connection,
+    agentState,
+    call: live === null ? 'none' : live.bridgedAt === null ? 'ringing' : 'connected',
+    outcomeOwed,
+    dialing,
+    campaignReason: station.campaignReason,
+    queue,
+    diallingCustomer,
+    breakReasonLabel: cons.breakReasonLabel,
+    breakLimitMinutes: cons.breakLimitMinutes,
+    breakElapsedMs,
+    reservedBreak,
+    checks,
+    finishOpen,
+    helpOffered: help.offered,
+    helpOpen: help.open,
+    softphoneAvailable: softphone.available,
+    myContactsOffered,
+  });
+  // The other-device screen the JOIN decided (OS3): the same 12, with the join's own way back.
+  const joinOtherDevice = join.onOtherDevice;
+  const shownView: StationView = joinOtherDevice
+    ? {
+      ...view,
+      screen: 'other_device',
+      tone: 'quiet',
+      icon: 'device',
+      title: STATION_COPY.otherDeviceTitle,
+      subtitle: STATION_COPY.otherDeviceSubtitle,
+      needHelp: false,
+      menu: [],
+      main: 'use_this_computer',
+      footHint: null,
+    }
+    : view;
+  const screen = shownView.screen;
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+  const startWork = () => {
+    if (cons.presenceBusy) return;
+    if (workMode === 'dial_myself' && softphone.available) {
+      // The click is the gesture the audio path needs, as Start work's own preflight is.
+      audio.preflight();
+      cons.requestSoftphone();
+    } else {
+      cons.goAvailable('click');
+    }
+  };
+  const checkAgain = () => {
+    checks.recheck();
+    if (connection === 'reconnecting' || connection === 'disconnected') station.reconnect();
+  };
+  /** Save & next call. Before a tile is picked it says what is missing and shakes the tiles (spec §6.1). */
+  const trySave = (): boolean => {
+    if (!cons.padEnabled || cons.submitting || cons.dispositionSubmitted) return false;
+    const block = cons.blockAt(clock.now());
+    if (block !== null) {
+      setSaveShake((n) => n + 1);
+      setSaveBlock(STATION_BLOCK_COPY[block]);
+      if (block === 'note_required') notesRef.current?.focus();
+      return false;
+    }
+    cons.submit();
+    return true;
+  };
+  const saveAndBreak = () => {
+    if (!cons.padEnabled || cons.blockAt(clock.now()) !== null) {
+      trySave();
+      return;
+    }
+    setBreakDialog('after_save');
+  };
+  const pickBreak = (code: string) => {
+    const afterSave = breakDialog === 'after_save';
+    setBreakDialog(null);
+    // Save & take break (spec 5.4, backend plan G): book the break first, then save.
+    cons.requestBreak(code);
+    if (afterSave) trySave();
+  };
+  const askStop = (code: string | null, origin: 'shortcut' | 'click') => {
+    const suppress = code ?? cons.catalog.find((e) => e.suppress)?.code ?? null;
+    if (suppress === null && !mayMarkDnc) return;
+    setStopAsk({ code: suppress, origin });
+  };
+  const confirmStop = () => {
+    if (!stopAsk) return;
+    if (stopAsk.code !== null) {
+      // An outcome that stops calls: picking it IS the answer; saving records it.
+      cons.noteCodeSelectionMethod('click');
+      cons.setForm({ ...cons.form, selectedCode: stopAsk.code });
+      setStopAsk(null);
+      return;
+    }
+    dnc.confirm('campaign', stopAsk.origin);
+  };
+  useEffect(() => {
+    if (dnc.outcome) setStopAsk(null);
+  }, [dnc.outcome]);
 
   /*
-    The join conflict, ahead of `joinError` — both are "the station did not
-    open", and this one is the case with a remedy in it. One live session per
-    agent per TENANT (deliberate: the earlier per-campaign limit was
-    superseded), so being refused here means they are still joined
-    somewhere else, and the link is the way to the Leave-station control that
-    frees them.
+    The handles the keyboard drives (`useStationShortcuts`): B opens Which break? (AS10: on a call
+    it books the break for after it), D asks Don't call again on a call or on What happened?.
   */
+  breakMenuRef.current = {
+    open: () => {
+      if (screen === 'on_break' || screen === 'break_over' || screen === 'finish' || screen === 'other_device' || screen === 'work_ended') return;
+      setBreakDialog('now');
+    },
+  };
+  dncRef.current = {
+    open: () => {
+      if (screen !== 'on_call' && screen !== 'happened' && screen !== 'coming') return;
+      if (panelAttempt === null) return;
+      askStop(null, 'shortcut');
+    },
+  };
+
+  /*
+    C picks the call-later outcome. On What happened? the tiles own it (and move focus to Call
+    when?); on the call, where the tiles are not on screen yet, it is picked so What happened?
+    opens with it chosen, as the pad on the old screen did.
+  */
+  const keyPadRef = useRef<DispositionPadHandle | null>(null);
+  keyPadRef.current = {
+    selectCallback: () => {
+      if (padRef.current) return padRef.current.selectCallback();
+      if (!cons.padEnabled) return false;
+      const entry = cons.catalog.find((option) => option.requires_datetime);
+      if (!entry) return false;
+      cons.noteCodeSelectionMethod('click');
+      cons.setForm({ ...cons.form, selectedCode: entry.code });
+      return true;
+    },
+  };
+
+  const enterFor: Partial<Record<StationView['screen'], () => void>> = {
+    start: startWork,
+    check_failed: checkAgain,
+    happened: () => void trySave(),
+    other_device: joinOtherDevice ? join.useThisWindow : station.reconnect,
+  };
+  const screenKeys: StationScreenKeys = {
+    enter: enterFor[screen] ?? null,
+    r: connection !== 'open' && connection !== 'idle' && connection !== 'connecting' ? station.reconnect : null,
+    m: audio.sending ? audio.toggleMute : null,
+    // While the leave is in flight the question stays: a failure must land on a screen that is there.
+    escape: screen === 'finish' ? () => { if (!exit.leaving) setFinishOpen(false); } : null,
+  };
+
+  // Suspended under the soft phone and an inbound call (their own keyboards), under My customers,
+  // and under the station's own dialogs.
+  useStationShortcuts(
+    {
+      agentState,
+      cons,
+      bootstrap,
+      suspended: softphone.active || inboundActive || myContactsShown || breakDialog !== null || stopAsk !== null || soundOpen,
+      screenKeys,
+    },
+    { breakMenuRef, notesRef, padRef: keyPadRef, dncRef },
+  );
+
+  // ── Screens the join decides (unchanged) ────────────────────────────────────
   if (join.joinConflict) {
     return (
       <JoinConflictScreen
@@ -344,13 +542,6 @@ function StationScreen({
       />
     );
   }
-
-  /*
-    The agent's live session is a SOFT-PHONE session (`session_on_softphone`):
-    one session per agent across tenants (OS1), and that one has no campaign to name, so the
-    remedy is closing the soft phone — one click here, unless a call there is not
-    finished.
-  */
   if (join.onSoftphoneElsewhere) {
     return (
       <SoftphoneJoinScreen
@@ -361,70 +552,26 @@ function StationScreen({
       />
     );
   }
-
-  /*
-    OS3: this page's join did not take the station over (the browser reloaded the tab by itself)
-    and another device or window holds it. Nothing moves until the agent says so.
-  */
-  if (join.onOtherDevice) {
-    return (
-      <StationFatal
-        message={STATION_ON_OTHER_DEVICE_COPY}
-        toCampaign={exit.canExitToCampaign}
-        campaignId={exit.stationCampaignId}
-        action={{ label: 'Use this window instead', onClick: join.useThisWindow }}
-      />
-    );
-  }
-
   if (join.joinError) {
-    return (
-      <StationFatal
-        message={join.joinError}
-        toCampaign={exit.canExitToCampaign}
-        campaignId={exit.stationCampaignId}
-      />
-    );
+    return <StationFatal message={join.joinError} toCampaign={exit.canExitToCampaign} campaignId={exit.stationCampaignId} />;
   }
 
-  const micBanner = (
-    <>
-      {micNotice ? (
-        <p className={styles.micFailure} role="alert" data-testid="mic-failure">
-          <strong>{micNotice.headline}</strong> {micNotice.remedy}
-          {/*
-            The button IS the fix, not a link to it. A browser's autoplay policy
-            is lifted by any user gesture, so for `audio_blocked` the click that
-            dismisses the banner is the same click that resumes both contexts —
-            and on a mid-call reload it is the only control the agent has any
-            reason to press. `agencyAudioNotice` supplies `action` for exactly
-            that one kind; every other failure needs something done outside the
-            page, and a button there would be a promise we cannot keep.
-          */}
-          {micNotice.action ? (
-            <button
-              type="button"
-              className={styles.micFailureAction}
-              onClick={audio.resume}
-              data-testid="mic-resume"
-            >
-              {micNotice.action}
-            </button>
-          ) : null}
-        </p>
+  const legacyMicBanner = micNotice ? (
+    <p className={styles.micFailure} role="alert" data-testid="mic-failure">
+      <strong>{micNotice.headline}</strong> {micNotice.remedy}
+      {micNotice.action ? (
+        <button type="button" className={styles.micFailureAction} onClick={audio.resume} data-testid="mic-resume">
+          {micNotice.action}
+        </button>
       ) : null}
-    </>
-  );
+    </p>
+  ) : null;
 
   const leaveDialog = (
     <ConfirmDialog
       open={exit.leaveConfirm}
       title={LEAVE_CONFIRM_TITLE}
-      message={
-        exit.leaveFailure
-          ? `Your station is still open — ${exit.leaveFailure}`
-          : LEAVE_CONFIRM_MESSAGE
-      }
+      message={exit.leaveFailure ? `Your station is still open — ${exit.leaveFailure}` : LEAVE_CONFIRM_MESSAGE}
       confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
       disabled={exit.leaving}
       onConfirm={exit.confirmLeave}
@@ -432,19 +579,10 @@ function StationScreen({
     />
   );
 
-  /*
-    ── On an inbound call (P2) ─────────────────────────────────────────────────
-    The caller's panel in place of the campaign's, under this station's header. Leaving is
-    refused by the menu's own "finish this call first" rule while it is live or owes its
-    outcome (the server refuses `/leave` too), read off the call as the soft phone's is.
-  */
+  // ── On an inbound call, and on the soft phone: their own views (not redesigned, spec §8) ──
   if (inbound.call) {
     return (
-      <div
-        className={styles.shell}
-        data-testid="station-inbound"
-        data-connect-flash={cons.connectFlashAttemptId === inbound.call.id ? 'true' : undefined}
-      >
+      <div className={styles.shell} data-testid="station-inbound" data-connect-flash={cons.connectFlashAttemptId === inbound.call.id ? 'true' : undefined}>
         <StationHeader
           user={user}
           campaignName={bootstrap?.campaign_name}
@@ -460,7 +598,7 @@ function StationScreen({
           connection={connection}
           missedPings={missedPings}
         />
-        {micBanner}
+        {legacyMicBanner}
         <InboundCallView
           ib={inbound}
           call={inbound.call}
@@ -470,19 +608,12 @@ function StationScreen({
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
+        <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
         {leaveDialog}
       </div>
     );
   }
 
-  /*
-    ── On the soft phone (SP7) ─────────────────────────────────────────────────
-    The session is on `break/soft_phone`: the soft phone renders in place, on this
-    station's socket and microphone, under this station's header. Its rail
-    replaces the station's — whose break arm offers End break, which a soft-phone
-    break must never show — and Return to campaign sits in the header, disabled
-    with its reason while a call is live or owes its outcome.
-  */
   if (softphone.active) {
     const busy = softphone.sp.call !== null;
     return (
@@ -495,8 +626,6 @@ function StationScreen({
           muted={audio.muted}
           cuePrefs={cons.cuePrefs}
           onCuePrefsChange={cons.setCuePrefs}
-          // Leaving while a soft-phone call is unsettled would cut the customer off:
-          // the menu's own "finish this call first" rule, read off the call.
           agentState={busy ? 'on_call' : agentState}
           canExit={exit.canExitToCampaign}
           leaving={exit.leaving}
@@ -530,7 +659,7 @@ function StationScreen({
             </>
           }
         />
-        {micBanner}
+        {legacyMicBanner}
         <SoftphoneView
           sp={softphone.sp}
           connection={connection}
@@ -539,264 +668,662 @@ function StationScreen({
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
+        <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
         {leaveDialog}
       </div>
     );
   }
 
-  return (
-    /*
-      `data-connect-flash` is set ONLY when the audible cue could not carry the
-      connect — a muted console, an `AudioContext` the browser refuses to run, or
-      the agent's own `always`. For a hearing agent with working sound it is never
-      set, which is the point: an unconditional flash 200 times a day is the visual
-      equivalent of the haptics defect.
+  // ── The redesigned station ──────────────────────────────────────────────────
+  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
+  const workName = bootstrap?.campaign_name ?? null;
+  const internet: 'ok' | 'checking' | 'offline' =
+    connection === 'open' ? 'ok' : connection === 'reconnecting' || connection === 'disconnected' ? 'offline' : 'checking';
 
-      **Connect, and only connect, lights the whole shell.** The three cues each get
-      a rail flash (`StateRail`, keyed off `VISUAL_CUE_SPECS`); *scope* is the fourth
-      axis separating them, and it is spent here, on the one event that means a
-      stranger has started speaking to the agent. A ring and a hang-up do not earn
-      the whole screen.
-    */
-    <div
-      className={styles.shell}
-      data-connect-flash={cons.connectFlashAttemptId !== null ? 'true' : undefined}
+  const onMenu = (item: MoreItem) => {
+    switch (item) {
+      case 'my_customers': setMyContactsOpen(true); break;
+      case 'dial_myself': cons.requestSoftphone(); break;
+      case 'sound': setSoundOpen(true); break;
+      case 'theme': themeContext?.toggleTheme(); break;
+      case 'finish': setFinishOpen(true); break;
+      case 'my_calls': break;
+    }
+  };
+
+  // ── Banners: at most one state banner and one supervisor line (spec §3) ──────
+  /*
+    The microphone banner stands apart from the one state banner: a microphone that does not work
+    is the one failure with no other symptom (the call connects and the customer hears nothing), so
+    nothing may outrank it, and it may not hide the answer to the agent's own press either.
+  */
+  const micBannerNode = micNotice ? (
+    <StationBanner
+      tone="problem"
+      icon={<MicOff size={22} />}
+      role="alert"
+      testId="mic-failure"
+      action={micNotice.action ? (
+        <button type="button" className={stationStyles.btn} onClick={audio.resume} data-testid="mic-resume">{STATION_COPY.turnSoundOn}</button>
+      ) : undefined}
     >
-      <StationHeader
-        user={user}
-        campaignName={bootstrap?.campaign_name}
-        recordCalls={Boolean(bootstrap?.record_calls)}
-        muted={audio.muted}
-        cuePrefs={cons.cuePrefs}
-        onCuePrefsChange={cons.setCuePrefs}
-        agentState={agentState}
-        canExit={exit.canExitToCampaign}
-        leaving={exit.leaving}
-        onLeave={exit.openLeave}
-        onExit={exit.exitStation}
-        connection={connection}
-        missedPings={missedPings}
-        extra={myContactsOffered ? (
-          <span className={styles.myContactsSlot}>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setMyContactsOpen(true)}
-              disabled={myContactsLock !== null}
-              aria-describedby={myContactsLock !== null ? 'my-contacts-lock' : undefined}
-              title={myContactsLock ?? 'Your assigned contacts: search, retry the ones you missed, or call one'}
-              data-testid="my-contacts-open"
-            >
-              My contacts
-            </button>
-            {myContactsLock !== null ? (
-              <span id="my-contacts-lock" className={styles.srOnly}>{myContactsLock}</span>
-            ) : null}
-          </span>
-        ) : undefined}
-      />
+      <b>{micNotice.headline}</b> <small>{micNotice.remedy}</small>
+    </StationBanner>
+  ) : null;
+  const stateBanner = ((): ReactNode => {
+    if (screen === 'happened' && connection !== 'open') {
+      return (
+        <StationBanner
+          tone="problem"
+          icon={<WifiOff size={22} />}
+          role="status"
+          testId="happened-internet"
+          action={<button type="button" className={stationStyles.btn} onClick={station.reconnect} data-testid="happened-try-again">{STATION_COPY.tryAgainNow}</button>}
+        >
+          {STATION_COPY.internetOnHappened}
+        </StationBanner>
+      );
+    }
+    if (hangupFailure) {
+      return <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="hangup-failure">{hangupFailure}</StationBanner>;
+    }
+    if (cons.presenceRefusal) {
+      return <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="presence-refusal">{cons.presenceRefusal}</StationBanner>;
+    }
+    if (inbound.notice) {
+      return <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner>;
+    }
+    if (screen === 'happened' && holding && !cons.dispositionSubmitted) {
+      const supervisor = wrapup?.heldReason === 'supervisor_hold';
+      return (
+        <StationBanner tone="over" icon={<TriangleAlert size={22} />} testId={supervisor ? 'supervisor-hold' : 'time-over'}>
+          {supervisor ? STATION_COPY.heldBySupervisor : STATION_COPY.timeOverBanner}
+        </StationBanner>
+      );
+    }
+    if (screen === 'happened' && release?.reason === 'agent_disconnected') {
+      return <StationBanner tone="problem" icon={<WifiOff size={22} />} testId="call-was-cut">{STATION_COPY.callWasCut}</StationBanner>;
+    }
+    if (screen === 'on_call' && audio.muted) {
+      return <StationBanner tone="break" icon={<MicOff size={22} />} testId="on-mute">{STATION_COPY.onMute}</StationBanner>;
+    }
+    if (cons.lostDispositionNotice && (screen === 'ready' || screen === 'no_calls')) {
+      return <StationBanner tone="quiet" icon={<Info size={22} />} testId="lost-disposition">{cons.lostDispositionNotice}</StationBanner>;
+    }
+    if (station.missedRelease && (screen === 'ready' || screen === 'no_calls' || screen === 'happened')) {
+      return <StationBanner tone="quiet" icon={<Info size={22} />} testId="missed-release">{missedReleaseLine(station.missedRelease.reason)}</StationBanner>;
+    }
+    if (cons.breakAlreadyStarted) {
+      return <StationBanner tone="break" icon={<Coffee size={22} />} testId="break-already-started">{STATION_COPY.breakAlreadyStarted}</StationBanner>;
+    }
+    if (cons.softphoneRejection) {
+      return <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="status" testId="switch-to-softphone-refused">{cons.softphoneRejection}</StationBanner>;
+    }
+    if (dnc.failure && stopAsk === null) {
+      return <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="dnc-failure">{dnc.failure}</StationBanner>;
+    }
+    if (dnc.outcome) {
+      return <StationBanner tone="ready" icon={<Ban size={22} />} role="status" testId="dnc-outcome">{dnc.outcome}</StationBanner>;
+    }
+    if (release && (screen === 'ready' || screen === 'no_calls')) {
+      // A call that ended owing an outcome but whose wrap-up never came (the server went straight
+      // back to the pool): said until the next call, so the agent knows what became of it.
+      if (release.requires_disposition) {
+        return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="unexplained-release">{STATION_COPY.lastCallEnded}</StationBanner>;
+      }
+      const line = releaseBanner(release.reason);
+      if (line) return <TimedBanner key={station.releasedAt ?? 0} at={station.releasedAt} line={line} />;
+    }
+    if (station.customerWaiting) {
+      return (
+        <StationBanner tone="coming" icon={<Info size={22} />} testId="customer-waiting-banner">
+          <CustomerWaitingPill waiting={station.customerWaiting} />
+        </StationBanner>
+      );
+    }
+    return null;
+  })();
 
-      {/*
-        The microphone banner. `role="alert"` and above the rail, because this is
-        the one console failure that is otherwise **completely invisible**: the
-        panel populates, `bridged` arrives, the talk timer runs and the agent
-        talks into nothing. It is not scoped to a call — a blocked microphone
-        found during pre-flight has to be fixable before the first one arrives.
-      */}
-      {micBanner}
-
-      {/* The rail is the call's one polite live region. (Floor assist has its own, LF25:
-          `FloorAssistAnnouncer`, for what supervisors say, never about the call.) */}
-      <StateRail
-        agentState={agentState}
-        agentStateSince={station.agentStateSince}
-        breakReasonLabel={cons.breakReasonLabel}
-        breakLimitMinutes={cons.breakLimitMinutes}
-        connection={connection}
-        live={live}
-        release={release}
-        wrapup={station.wrapup}
-        dispositionSubmitted={cons.dispositionSubmitted}
-        dialing={dialing}
-        clock={clock}
-        presenceBusy={cons.presenceBusy}
-        onGoAvailable={cons.goAvailable}
-        onEndBreak={cons.endBreak}
-        waitingForDialer={cons.waitingForDialer}
-        wrapupCountdownStopped={cons.redial.countdownStopped}
-        cueFlash={cons.cueFlash}
-        // The API's reconnect window.
-        deferredHangupMs={bootstrap?.intervals.deferred_hangup_ms ?? null}
-        /*
-          The way back from `superseded` / `disconnected`. Handed straight from the
-          station hook: reclaiming a station and reconnecting to one are the same
-          act, because the API gives the station to whoever attaches last.
-        */
-        onReconnect={station.reconnect}
-        diallingCustomer={diallingCustomer}
-      />
-
-      {/*
-        A refusal is a response, not an alarm: the API declines `/available` while a
-        disposition is outstanding, and that refusal is what makes the disposition
-        mandatory. Rendered under the rail with the remedy the API stated, never in
-        the rail — the rail is the call's state.
-      */}
-      {cons.presenceRefusal ? (
-        <p className={styles.presenceRefusal}>{cons.presenceRefusal}</p>
+  /*
+    The supervisor line (spec 02b): a supervisor's message, one at a time with the rest counted, OK
+    showing the next; else what became of a help request (answered, lapsed) or why it was refused.
+  */
+  const message = station.supervisorMessages[0] ?? null;
+  const helpNotice = station.helpNotice;
+  const helpRefusal = help.refusalKind ? helpRefusedLine(help.refusalKind) : null;
+  const sentAt = message ? Date.parse(message.sent_at) : NaN;
+  const supervisorBanner = message ? (
+    <StationBanner
+      message
+      icon={<MessageSquare size={22} />}
+      testId="supervisor-message"
+      action={
+        <button type="button" className={stationStyles.btn} onClick={() => station.dismissSupervisorMessage(message.id)} data-testid="supervisor-message-ok">
+          {STATION_COPY.messageOk}
+        </button>
+      }
+    >
+      <small>
+        <strong>{messageSender(message.from_name)}</strong> {STATION_COPY.supervisorSuffix}
+        {Number.isNaN(sentAt) ? null : <> · <time dateTime={message.sent_at}>{clockTime(sentAt)}</time></>}
+      </small>
+      <p data-testid="supervisor-message-text">{message.text}</p>
+      {station.supervisorMessages.length > 1 ? (
+        <small data-testid="supervisor-messages-more">{STATION_COPY.moreMessages(station.supervisorMessages.length - 1)}</small>
       ) : null}
-      {/* Why the inbound call that was on screen has gone, when the agent did not end it. */}
-      {inbound.notice ? (
-        <p className={styles.presenceRefusal} data-testid="inbound-notice">{inbound.notice}</p>
-      ) : null}
+    </StationBanner>
+  ) : helpRefusal ? (
+    <StationBanner tone="problem" icon={<Info size={22} />} role="status" testId="need-help-refusal">
+      {helpRefusal}
+    </StationBanner>
+  ) : helpNotice ? (
+    <StationBanner
+      tone={helpNotice.kind === 'answered' ? 'ready' : 'quiet'}
+      icon={helpNotice.kind === 'answered' ? <CircleCheck size={22} /> : <Info size={22} />}
+      testId="need-help-status"
+      action={help.dismissible ? (
+        <button type="button" className={stationStyles.btn} onClick={help.dismiss} data-testid="need-help-dismiss">{STATION_COPY.messageOk}</button>
+      ) : undefined}
+    >
+      {helpNotice.kind === 'expired' ? STATION_COPY.helpExpired : helpAnsweredLine(helpNotice.by_name, helpNotice.how)}
+    </StationBanner>
+  ) : null;
 
-      {/* Assertive region, used ONLY for connect, disconnect and the direct
-          result of a button the agent just pressed (the call has exactly two
-          live regions, and this is the second; floor assist's polite one,
-          LF25, is outside them). */}
-      <div className={styles.srOnly} role="alert" aria-live="assertive">
-        {cons.announcement}
-      </div>
+  // ── The band's right side ───────────────────────────────────────────────────
+  let bandSide: ReactNode = null;
+  if (screen === 'ready' && station.agentStateSince) {
+    bandSide = <span className={stationStyles.bandSide}><SinceClock anchor={station.agentStateSince} clock={clock} className={stationStyles.bandClock} testId="waiting-clock" /></span>;
+  } else if (screen === 'coming') {
+    bandSide = (
+      <span className={stationStyles.bandSide}>
+        <span className={stationStyles.pill}>{STATION_COPY.connecting}<span className={stationStyles.dots} aria-hidden="true"><i /><i /><i /></span></span>
+      </span>
+    );
+  } else if (screen === 'on_call') {
+    bandSide = (
+      <span className={stationStyles.bandSide}>
+        {bootstrap?.record_calls ? (
+          <span className={stationStyles.pill} data-testid="call-recorded"><span className={stationStyles.recDot} aria-hidden="true" />{STATION_COPY.callRecorded}</span>
+        ) : null}
+        {live?.bridgedAt ? <SinceClock anchor={live.bridgedAt} clock={clock} className={stationStyles.bandClock} testId="talk-timer" /> : null}
+      </span>
+    );
+  } else if (screen === 'happened' && hasWrapup(wrapup) && !cons.redial.countdownStopped) {
+    // A redial placed stops the wrap-up's timer on the server, so its ring is withheld.
+    bandSide = <span className={stationStyles.bandSide}><TimeLeftRing anchor={wrapup} clock={clock} submitted={cons.dispositionSubmitted} /></span>;
+  } else if ((screen === 'on_break' || screen === 'break_over') && station.agentStateSince) {
+    bandSide = <span className={stationStyles.bandSide}><SinceClock anchor={station.agentStateSince} clock={clock} className={stationStyles.bandClock} testId="break-clock" /></span>;
+  } else if (screen === 'internet') {
+    bandSide = <RetryCountdown at={station.nextRetryAt} />;
+  } else if (screen === 'call_problem' && droppedAt !== null && bootstrap?.intervals.deferred_hangup_ms) {
+    bandSide = <KeptCountdown from={droppedAt} windowMs={bootstrap.intervals.deferred_hangup_ms} />;
+  }
+  const bandSideWithFlash = (
+    <>
+      {/* The cue's visual channel, for an agent who cannot hear it (today's three cues, unchanged). */}
+      {cons.cueFlash ? <CueFlashBand key={`${cons.cueFlash.cue}:${cons.cueFlash.attemptId}`} flash={cons.cueFlash} /> : null}
+      {bandSide}
+    </>
+  );
+  const bandSubtitle: ReactNode | undefined = screen === 'on_call' && card
+    ? [card.name ?? card.phone, card.place].filter(Boolean).join(' · ')
+    : screen === 'break_over' && breakOverAt !== null
+      ? <LateBy overAt={breakOverAt} />
+      // Late binding: a hidden dial ringing is said in the band, the station's polite status region.
+      : screen === 'ready' && diallingCustomer
+        ? STATION_COPY.diallingSubtitle
+        : undefined;
 
-      {/*
-        ── The retry banner ──────────────────────────────────────────────────
-        "Retry 1 of 'Q3 Winback' — these contacts were previously voicemail,
-        callback, no answer." One line, above the contact panel, so the agent
-        knows before the first call lands that the person they are about to
-        speak to has been called before and roughly why they are being called
-        again.
-
-        **It does not violate rule 1 (geometry is frozen).** That rule is about
-        the console not moving BETWEEN CALL STATES — a control that shifts 12px
-        between "ringing" and "connected" is a misclick, and a misclick here
-        hangs up on a human being. This is read from the session bootstrap,
-        which is fixed at join and never changes for the life of the station, so
-        it is present for the whole shift or absent for the whole shift. It
-        cannot appear or disappear under a cursor. Anything derived from a FRAME
-        must not be placed here.
-
-        **`selection_summary` is rendered as received.** The API builds it from the
-        frozen selector on the child campaign's row, so the sentence the agent
-        reads and the query that put this contact in front of them cannot
-        disagree. Re-deriving it from anything this client holds would be a
-        second answer to the same question — and this client does not even have
-        the input, because the selector is deliberately not on the bootstrap.
-
-        Not a live region: it is standing context, not an event, and the console
-        has exactly two live regions for the call, both spent on the call itself
-        (floor assist's, LF25, carries only what supervisors say).
-      */}
-      {bootstrap?.retry_context ? (
-        <p className={styles.retryBanner} data-testid="retry-context">
-          <strong className={styles.retryBannerLead}>
-            Retry {bootstrap.retry_context.generation} of “
-            {bootstrap.retry_context.parent_campaign_name}”
-          </strong>
-          <span className={styles.retryBannerBody}>
-            — these contacts were previously {bootstrap.retry_context.selection_summary}
-          </span>
-        </p>
-      ) : null}
-
-      <div className={styles.body} ref={consoleRef} tabIndex={-1}>
-        <section className={styles.colContact} aria-label="Contact">
-          <ContactPanel
-            attempt={panelAttempt}
-            resolved={resolved}
-            contextDisplay={bootstrap?.context_display}
-            dialing={dialing}
-            release={release}
-            missedRelease={station.missedRelease}
-            lostDisposition={cons.lostDispositionNotice}
-            dialActivity={panelDialActivity}
+  // ── The main action, bottom right (AS1) ─────────────────────────────────────
+  const keyHint = (main: NonNullable<StationView['main']>) =>
+    MAIN_ACTION_KEY[main] ? <span className={stationStyles.key} aria-hidden="true">{MAIN_ACTION_KEY[main]}</span> : null;
+  const big = `${stationStyles.btn} ${stationStyles.btnBig}`;
+  let mainButton: ReactNode = null;
+  switch (shownView.main) {
+    case 'start_work':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnGo}`} onClick={startWork} aria-disabled={cons.presenceBusy || undefined} aria-keyshortcuts="Enter A" data-testid="start-work">
+          <Play size={24} aria-hidden="true" />{cons.presenceBusy ? STATION_COPY.starting : STATION_COPY.startWork}{keyHint('start_work')}
+        </button>
+      );
+      break;
+    case 'check_again':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnBrand}`} onClick={checkAgain} aria-keyshortcuts="Enter" data-testid="check-again">
+          <RefreshCw size={24} aria-hidden="true" />{STATION_COPY.checkAgain}{keyHint('check_again')}
+        </button>
+      );
+      break;
+    case 'take_break':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnBreak}`} onClick={() => setBreakDialog('now')} aria-keyshortcuts="B" data-testid="take-break">
+          <Coffee size={24} aria-hidden="true" />{STATION_COPY.takeBreak}{keyHint('take_break')}
+        </button>
+      );
+      break;
+    case 'end_call':
+      mainButton = (
+        <span className={stationStyles.endCallWrap}>
+          <HoldToConfirmButton
+            attemptId={live?.attempt.attempt_id ?? null}
+            enabled={Boolean(live)}
+            onConfirm={hangup}
+            copy={END_CALL_COPY}
+            buttonClassName={stationStyles.endCall}
           />
-        </section>
+        </span>
+      );
+      break;
+    case 'save_next':
+      mainButton = (
+        <SaveNextButton
+          cons={cons}
+          now={clock.now}
+          onSave={() => void trySave()}
+          blockLine={saveBlock}
+          shake={saveShake}
+          keyHint={keyHint('save_next')}
+        />
+      );
+      break;
+    case 'start_calls':
+      mainButton = (
+        <button
+          type="button"
+          className={`${big} ${stationStyles.btnGo}`}
+          onClick={() => !cons.presenceBusy && cons.endBreak('click')}
+          aria-disabled={cons.presenceBusy || undefined}
+          aria-keyshortcuts="A"
+          data-testid="start-calls"
+        >
+          <Play size={24} aria-hidden="true" />{STATION_COPY.startCallsAgain}{keyHint('start_calls')}
+        </button>
+      );
+      break;
+    case 'try_again':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnBrand}`} onClick={station.reconnect} aria-keyshortcuts="R" data-testid="try-again">
+          <RefreshCw size={24} aria-hidden="true" />{STATION_COPY.tryAgainNow}{keyHint('try_again')}
+        </button>
+      );
+      break;
+    case 'keep_working':
+      mainButton = (
+        <button
+          type="button"
+          className={`${big} ${stationStyles.btnGo}`}
+          onClick={() => !exit.leaving && setFinishOpen(false)}
+          aria-disabled={exit.leaving || undefined}
+          aria-keyshortcuts="Escape"
+          data-testid="keep-working"
+        >
+          {STATION_COPY.keepWorking}{keyHint('keep_working')}
+        </button>
+      );
+      break;
+    case 'use_this_computer':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnBrand}`} onClick={joinOtherDevice ? join.useThisWindow : station.reconnect} aria-keyshortcuts="Enter" data-testid="use-this-computer">
+          {STATION_COPY.useThisComputer}{keyHint('use_this_computer')}
+        </button>
+      );
+      break;
+    case 'open_work_again':
+      mainButton = (
+        <button type="button" className={`${big} ${stationStyles.btnBrand}`} onClick={() => window.location.reload()} data-testid="open-work-again">
+          {STATION_COPY.openWorkAgain}
+        </button>
+      );
+      break;
+    default:
+      mainButton = null;
+  }
 
-        <section className={styles.colDetail} aria-label="Contact detail">
-          {panelAttempt && resolved ? (
-            /*
-              Keyed on the panel's attempt: a genuinely different contact mounts
-              a fresh detail column, which is what clears the field filter — on
-              the next `reserved`, and NOT at hangup, since the attempt retained
-              through wrap-up keeps the same id. See `ContactDetail`.
-            */
-            <ContactDetail
-              key={panelAttempt.attempt_id}
-              attempt={panelAttempt}
-              resolved={resolved}
-              currentCatalog={bootstrap?.disposition_catalog}
-              filterInputRef={fieldFilterRef}
-            />
-          ) : (
-            // A dial ringing for them outranks "Nothing due now": one is in fact happening.
-            <IdleGuide dialing={dialing} nothingDue={diallingCustomer ? null : nothingDue} />
-          )}
-        </section>
+  // ── Secondary actions, bottom left ──────────────────────────────────────────
+  /*
+    04b: a break booked for after the call is a chip with ✕ (spec §3), in the footer beside the
+    call's own controls, so no banner can push it off the screen while it is still going to happen.
+  */
+  const queuedBreakChip = cons.pendingBreakLabel ? (
+    <span className={`${stationStyles.btn} ${stationStyles.btnOn}`} role="status" data-testid="queued-break">
+      <Coffee size={20} aria-hidden="true" />
+      {cons.pendingSoftphone ? STATION_COPY.dialAfterCall : STATION_COPY.breakAfterCall(cons.pendingBreakLabel)}
+      <button
+        type="button"
+        className={stationStyles.chipClose}
+        onClick={() => !cons.cancelling && cons.cancelBreak()}
+        aria-label={STATION_COPY.cancelBreakAfterCall}
+        aria-disabled={cons.cancelling || undefined}
+        data-testid="queued-break-cancel"
+      >
+        <X size={18} aria-hidden="true" />
+      </button>
+      {cons.cancelFailed ? <small role="alert">{STATION_COPY.breakCancelFailed}</small> : null}
+    </span>
+  ) : null;
+  let footLeft: ReactNode = null;
+  let footHint: ReactNode = shownView.footHint;
+  let footRightLead: ReactNode = null;
+  if (screen === 'start' && listenOn) footHint = <ListenNoticeLine />;
+  if (screen === 'on_call' && audio.sending) {
+    // Hidden while there is nothing to mute (AS1): a call whose microphone failed.
+    footLeft = (
+      <button
+        type="button"
+        className={`${stationStyles.btn} ${audio.muted ? stationStyles.btnOn : ''}`}
+        onClick={audio.toggleMute}
+        aria-pressed={audio.muted}
+        aria-keyshortcuts="M"
+        data-testid="mute-toggle"
+      >
+        <MicOff size={22} aria-hidden="true" />{audio.muted ? STATION_COPY.unmute : STATION_COPY.mute}
+        <span className={stationStyles.key} aria-hidden="true">M</span>
+      </button>
+    );
+  }
+  if (screen === 'happened') {
+    const redial = cons.redial;
+    footLeft = (
+      <>
+        {!cons.dispositionSubmitted && cons.breakReasons.length > 0 ? (
+          <button type="button" className={stationStyles.btn} onClick={saveAndBreak} data-testid="save-and-break">
+            <Coffee size={22} aria-hidden="true" />{STATION_COPY.saveAndBreak}
+          </button>
+        ) : null}
+        {redial.offered && (redial.enabled || redial.inFlight) ? (
+          <button
+            type="button"
+            className={stationStyles.btn}
+            onClick={() => redial.enabled && redial.redial()}
+            aria-disabled={!redial.enabled || undefined}
+            data-testid="wrapup-redial"
+          >
+            <RefreshCw size={22} aria-hidden="true" />
+            {redial.inFlight ? STATION_COPY.callingAgain : STATION_COPY.callAgain}
+            {redial.remaining !== null && !redial.inFlight ? <>{' '}<small>· {STATION_COPY.callAgainLeft(redial.remaining)}</small></> : null}
+          </button>
+        ) : null}
+        {redial.refusal ? <span className={stationStyles.refusal} role="alert" data-testid="wrapup-redial-refusal">{redial.refusal}</span> : null}
+        {saveBlock ? <span id="save-block" className={stationStyles.refusal} role="status" data-testid="save-block">{saveBlock}</span> : null}
+      </>
+    );
+  }
+  if (queuedBreakChip && (screen === 'coming' || screen === 'on_call' || screen === 'happened' || screen === 'call_problem')) {
+    footLeft = <>{footLeft}{queuedBreakChip}</>;
+  }
+  if (screen === 'on_break' || screen === 'break_over') {
+    footLeft = (
+      <button type="button" className={`${stationStyles.btn} ${stationStyles.btnQuiet}`} onClick={() => setFinishOpen(true)} data-testid="break-finish-work">
+        {STATION_COPY.menuFinish}
+      </button>
+    );
+  }
+  if (screen === 'finish') {
+    footRightLead = (
+      <button
+        type="button"
+        className={`${stationStyles.btn} ${stationStyles.btnStopOutline}`}
+        onClick={() => !exit.leaving && exit.confirmLeave()}
+        aria-disabled={exit.leaving || undefined}
+        data-testid="yes-finish"
+      >
+        {exit.leaving ? STATION_COPY.finishing : STATION_COPY.yesFinish}
+      </button>
+    );
+  }
 
-        {/* Column 3 — the outcome and the note. Rendered in every state so the
-            geometry never shifts; disabled with a stated reason when there is
-            nothing to act on. */}
-        <section className={styles.colOutcome} aria-label="Outcome">
-          <DispositionPad
+  // ── The body ────────────────────────────────────────────────────────────────
+  const noteCard = (
+    <NoteCard
+      ref={notesRef}
+      value={cons.notes}
+      onAgentEdit={cons.onNotesEdit}
+      status={cons.notesStatusLine}
+      foreignWrite={cons.notesForeignWrite}
+      enabled={cons.notesEnabled}
+      onSubmit={() => void trySave()}
+      needed={Boolean(findDisposition(cons.catalog, cons.form.selectedCode)?.requires_note)}
+    />
+  );
+  const amountDue = card?.facts.find((f) => f.kind === 'money')?.value ?? null;
+  let body: ReactNode = null;
+  let bodyClass: string | undefined = '';
+  switch (screen) {
+    case 'start':
+      bodyClass = stationStyles.bodyCenter;
+      body = (
+        <StartOfDayBody
+          checks={checks}
+          internet={internet}
+          workName={workName ?? ''}
+          myDay={myDay}
+          callLaterCount={callLaters ? callLaters.rows.length : null}
+          softphoneOffered={softphone.available}
+          mode={workMode}
+          onMode={setWorkMode}
+        />
+      );
+      break;
+    case 'check_failed': {
+      const steps =
+        connection === 'reconnecting' || connection === 'disconnected'
+          ? STATION_COPY.stepsNoInternet
+          : checks.microphone === 'blocked'
+            ? STATION_COPY.stepsMicBlocked
+            : checks.microphone === 'not_found'
+              ? STATION_COPY.stepsMicMissing
+              : checks.microphone === 'in_use'
+                ? STATION_COPY.stepsMicInUse
+                : STATION_COPY.stepsMicOther;
+      bodyClass = stationStyles.bodyEven;
+      body = (
+        <>
+          <section className={stationStyles.card}><DeviceCheckTiles checks={checks} internet={internet} /></section>
+          <WhatToDo steps={steps} />
+        </>
+      );
+      break;
+    }
+    case 'ready':
+    case 'no_calls': {
+      const quiet = screen === 'no_calls';
+      const showDay = myDay !== null && (myDay.calls !== null || myDay.talkSeconds !== null || myDay.willPay !== null);
+      const showLater = callLaters !== null && callLaters.rows.length > 0;
+      bodyClass = showDay || showLater ? stationStyles.body2 : stationStyles.bodyCenter;
+      // "Nothing due now" with no dial ringing leaves the count out too, as the agent app does.
+      const unanswered = !quiet && dialActivity ? dialActivity.unansweredInARow : 0;
+      body = (
+        <>
+          <WaitingCard
+            quiet={quiet}
+            headline={quiet ? STATION_COPY.noCallsBody : diallingCustomer ? STATION_COPY.dialling : STATION_COPY.nextCallComing}
+            waiting={station.agentStateSince ? <>{STATION_COPY.waiting}: <b><SinceClock anchor={station.agentStateSince} clock={clock} /></b></> : null}
+            line={unanswered > 0 ? STATION_COPY.noAnswerFromLast(unanswered) : null}
+          />
+          {showDay || showLater ? (
+            <div className={stationStyles.col}>
+              {showDay ? <MyDayCard day={myDay} /> : null}
+              {showLater ? <CallLaterCard list={callLaters} now={clock.now} /> : null}
+            </div>
+          ) : null}
+        </>
+      );
+      break;
+    }
+    case 'coming':
+      bodyClass = stationStyles.body2;
+      body = (
+        <>
+          {card ? <CustomerCardView card={card} /> : <section className={stationStyles.card} />}
+          {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+        </>
+      );
+      break;
+    case 'on_call':
+      bodyClass = stationStyles.bodyEven;
+      body = (
+        <>
+          {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
+          <div className={stationStyles.col}>
+            {panelAttempt ? <LastCallsCard rows={lastCalls} /> : null}
+            {noteCard}
+          </div>
+        </>
+      );
+      break;
+    case 'happened':
+      bodyClass = stationStyles.bodyWideLeft;
+      body = (
+        <>
+          <WhatHappened
             catalog={cons.catalog}
             form={cons.form}
             onChange={(next) => {
-              // Every change reaching the pad's own `onChange` — a card click,
-              // or the `C` shortcut's `selectCallback()`, which reports back
-              // through this same prop — is a non-digit selection. Only the
-              // digit branch above calls `setForm` directly and marks
-              // `number_key` itself; without this, a click AFTER any number
-              // key kept reporting `selection_method: 'number_key'` forever,
-              // because nothing ever set it back.
+              // Every pick through the tiles is a click; the digits set the form themselves.
               cons.noteCodeSelectionMethod('click');
               cons.setForm(next);
             }}
             enabled={cons.padEnabled}
-            disabledReason={cons.padDisabledReason}
+            now={clock.now}
+            handleRef={padRef}
+            amountDue={amountDue}
+            comesToMe={assigns}
             rejection={cons.padRejection}
             keysRemapped={cons.keysRemapped}
-            now={clock.now}
             onNeedsNote={() => notesRef.current?.focus()}
-            handleRef={padRef}
+            readAloud={readAloud}
+            onAskDontCallAgain={(code) => askStop(code, 'click')}
+            dontCallAgainOffered={mayMarkDnc && panelAttempt !== null}
+            shake={saveShake}
           />
-          {/* Wrap-up redial: shown only while the wrap-up offers it, after the
-              call has ended — see `WrapupRedial`. */}
-          <WrapupRedial redial={cons.redial} />
-          <NotesField
-            ref={notesRef}
-            value={cons.notes}
-            onAgentEdit={cons.onNotesEdit}
-            status={cons.notesStatusLine}
-            foreignWrite={cons.notesForeignWrite}
-            enabled={cons.notesEnabled}
-            disabledReason={cons.notesDisabledReason}
-            onSubmit={cons.submit}
-          />
-        </section>
-      </div>
+          <div className={stationStyles.col}>
+            {card ? <CustomerCardView card={card} compact /> : null}
+            {noteCard}
+          </div>
+        </>
+      );
+      break;
+    case 'on_break':
+    case 'break_over':
+      bodyClass = stationStyles.bodyCenter;
+      body = (
+        <BreakCard
+          label={reservedBreak ? null : cons.breakReasonLabel}
+          since={station.agentStateSince}
+          clock={clock}
+          limitMinutes={cons.breakLimitMinutes}
+          over={screen === 'break_over'}
+        />
+      );
+      break;
+    case 'internet':
+      bodyClass = stationStyles.body2;
+      body = (
+        <>
+          <NoInternetCard />
+          <WhatToDo steps={STATION_COPY.stepsInternet} />
+        </>
+      );
+      break;
+    case 'call_problem':
+      bodyClass = stationStyles.bodyEven;
+      body = (
+        <>
+          {card ? <CustomerCardView card={card} showLastSaid={false} /> : <section className={stationStyles.card} />}
+          <WhatToDo steps={STATION_COPY.stepsCallProblem} />
+        </>
+      );
+      break;
+    case 'finish':
+      bodyClass = stationStyles.bodyCenter;
+      body = (
+        <div className={`${stationStyles.col} ${stationStyles.cardNarrow}`} data-testid="finish-card">
+          {myDay ? <MyDayCard day={myDay} /> : null}
+          {callLaters && callLaters.rows.length > 0 ? <CallLaterCard list={callLaters} now={clock.now} /> : null}
+          {exit.leaveFailure ? <p className={stationStyles.refusal} role="alert" data-testid="finish-failure">{STATION_COPY.finishFailed}</p> : null}
+        </div>
+      );
+      break;
+    case 'other_device':
+      bodyClass = stationStyles.bodyCenter;
+      body = <OtherDeviceCard title={STATION_COPY.otherDeviceBody} hint={STATION_COPY.otherDeviceHint} />;
+      break;
+    case 'work_ended':
+      bodyClass = stationStyles.bodyCenter;
+      body = <OtherDeviceCard title={STATION_COPY.workEndedTitle} hint={STATION_COPY.workEndedSubtitle} />;
+      break;
+  }
 
-      <StationActionBar
-        cons={cons}
-        breakMenuRef={breakMenuRef}
-        dncRef={dncRef}
-        mayMarkDnc={mayMarkDnc}
-        mayMarkDncTenantWide={mayMarkDncTenantWide}
-        dnc={dnc}
-        onHangup={hangup}
-        hangupFailure={hangupFailure}
-        softphoneAvailable={softphone.available}
-        help={help}
+  const needHelp = (
+    <>
+      {/* LS2: the standing "a supervisor may listen" line, behind its info button (only while the flag is on). */}
+      <StationListenNotice />
+      {shownView.needHelp ? <NeedHelpButton help={help} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} /> : null}
+    </>
+  );
+  const menu = (
+    <MoreMenu
+      items={themeContext ? shownView.menu : shownView.menu.filter((item) => item !== 'theme')}
+      theme={theme}
+      onSelect={onMenu}
+      myCallsTo={MY_CALLS_PATH}
+    />
+  );
+
+  return (
+    <>
+      <StationFrame
+        view={shownView}
+        agentName={agentName}
+        workName={workName}
+        brandMark={brand.shortName}
+        needHelp={needHelp}
+        menu={menu}
+        bandSide={bandSideWithFlash}
+        bandSubtitle={bandSubtitle}
+        banners={<>{micBannerNode}{stateBanner}{supervisorBanner}<StationListenFirstNotice /></>}
+        bodyClassName={bodyClass}
+        bodyRef={bodyRef}
+        connectFlash={cons.connectFlashAttemptId !== null}
+        footHint={footHint}
+        footLeft={footLeft}
+        footRight={footRightLead || mainButton ? <>{footRightLead}{mainButton}</> : null}
+      >
+        {/* The call's one assertive region: connect, disconnect and the result of the agent's own press. */}
+        <div className={stationStyles.srOnly} role="alert" aria-live="assertive">{cons.announcement}</div>
+        {body}
+      </StationFrame>
+
+      <WhichBreakDialog
+        open={breakDialog !== null}
+        reasons={cons.breakReasons}
+        busy={cons.breakBusy}
+        // The station's own words, never the server's sentence (AS15).
+        rejection={cons.breakRejection ? STATION_COPY.breakRefused : null}
+        onPick={pickBreak}
+        onClose={() => {
+          setBreakDialog(null);
+          // Back to Take break, never `<body>` (the dialog's own restore runs first and may land there).
+          window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="take-break"]')?.focus(), 0);
+        }}
       />
+      <StopCallingDialog
+        open={stopAsk !== null}
+        who={card ? [card.name, card.phone].filter(Boolean).join(' · ') : null}
+        busy={dnc.inFlight}
+        failure={stopAsk?.code === null ? dnc.failure : null}
+        onYes={confirmStop}
+        onNo={() => setStopAsk(null)}
+      />
+      <StationDialog open={soundOpen} onClose={() => setSoundOpen(false)} title={STATION_COPY.soundTitle} small testId="station-sound">
+        <CueSettingsFields prefs={cons.cuePrefs} onChange={cons.setCuePrefs} />
+        <div className={stationStyles.dialogFoot}>
+          <button type="button" className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`} onClick={() => setSoundOpen(false)}>
+            {STATION_COPY.messageOk}
+          </button>
+        </div>
+      </StationDialog>
 
-      {/*
-        The shared `ConfirmDialog`, not a console-local one: it already owns the
-        focus trap, the Escape handling and the focus restore this needs, and its
-        footer order is a documented safety property.
-
-        A failed leave replaces the message rather than adding a second line —
-        the original sentence describes what confirming will do, and once it has
-        failed the only news is that it did not.
-      */}
       {myContactsShown && bootstrap ? (
         <MyContactsPanel
           campaignId={bootstrap.campaign_id}
@@ -810,8 +1337,80 @@ function StationScreen({
           onCalled={() => setMyContactsOpen(false)}
         />
       ) : null}
+    </>
+  );
+}
 
-      {leaveDialog}
-    </div>
+/** 02b's "The last call did not connect": shown for {@link LAST_CALL_BANNER_MS}, or until the next call. */
+function TimedBanner({ at, line }: { at: number | null; line: string }) {
+  useRepaintTick(at !== null);
+  if (at === null || Date.now() - at > LAST_CALL_BANNER_MS) return null;
+  return <StationBanner tone="quiet" icon={<Info size={22} />} role="status" testId="last-call-banner">{line}</StationBanner>;
+}
+
+/**
+ * Renders its caller once more at `at` (a local epoch ms), and never otherwise: what turns 07 into
+ * 08 without a clock on the station's root.
+ */
+function useRenderAt(at: number | null): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (at === null) return undefined;
+    const wait = at - Date.now();
+    if (wait <= 0) return undefined;
+    const timer = window.setTimeout(() => setTick((n) => n + 1), wait);
+    return () => window.clearTimeout(timer);
+  }, [at]);
+}
+
+/** 08's subtitle, "You are 2:05 late. Start calls now.": a leaf, because it counts. */
+function LateBy({ overAt }: { overAt: number }) {
+  useRepaintTick();
+  return <>{STATION_COPY.breakOverSubtitle(runningClock(Date.now() - overAt))}</>;
+}
+
+/**
+ * Save & next call, the main action on What happened?, as its own leaf: a picked call-later time
+ * can slide into the past with nobody touching anything, and Save has to fade when it does. It
+ * repaints for that itself, only while a time-bound outcome is picked; the root does not.
+ *
+ * AS1's one exception: it stays in place, faded, until it can save (spec §6.1); pressing it then
+ * shakes the tiles and says what is missing.
+ */
+function SaveNextButton({
+  cons,
+  now,
+  onSave,
+  blockLine,
+  shake,
+  keyHint,
+}: {
+  cons: AgencyConsoleState;
+  now: () => number;
+  onSave: () => void;
+  blockLine: string | null;
+  shake: number;
+  keyHint: ReactNode;
+}) {
+  useRepaintTick(cons.blockChangesWithTime);
+  const saved = cons.dispositionSubmitted || cons.waitingForDialer !== null;
+  const block = cons.blockAt(now());
+  return (
+    <button
+      type="button"
+      className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`}
+      onClick={onSave}
+      aria-disabled={block !== null || !cons.padEnabled || cons.submitting || saved || undefined}
+      aria-describedby={blockLine ? 'save-block' : undefined}
+      aria-keyshortcuts="Enter Control+Enter"
+      data-shake={shake > 0 && blockLine ? 'true' : undefined}
+      key={`save-${shake}`}
+      data-block={block ?? undefined}
+      data-testid="save-next"
+    >
+      <Check size={24} aria-hidden="true" />
+      {cons.submitting ? STATION_COPY.saving : saved ? STATION_COPY.saved : STATION_COPY.saveAndNext}
+      {keyHint}
+    </button>
   );
 }
