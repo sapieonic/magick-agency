@@ -271,6 +271,8 @@ Future<SoftphoneHarness> pumpSoftphone(
       stationListenNoticeProvider.overrideWithValue(listenNotice),
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
+      // Need help on the station's soft phone (AS5): the account's flag, off unless a test says.
+      stationNeedHelpProvider.overrideWithValue(false),
     ],
   );
   addTearDown(container.dispose);
