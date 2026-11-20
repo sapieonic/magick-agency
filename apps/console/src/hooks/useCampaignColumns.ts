@@ -13,9 +13,12 @@ export const CAMPAIGN_COLUMNS_IMPORTS_MAX = 3;
  * root's, as the server's write checks them. Each name once, newest import first.
  *
  * Read from the upload history (`GET …/insights/uploads`, `agency.supervise`) and then each of the
- * newest {@link CAMPAIGN_COLUMNS_IMPORTS_MAX} imports. Read only once; a failure is no columns
- * (the pickers then say to upload a list first), never an error on the page: the server still
- * checks every name a save sends, and lists the columns in its refusal.
+ * newest {@link CAMPAIGN_COLUMNS_IMPORTS_MAX} imports. Read only once: the caller enables it only
+ * once the campaign is loaded (so a retry campaign's one read already names its root), and an
+ * absent root (`undefined`, not loaded) and no root (`null`) are the same read, so the campaign
+ * arriving never reads it all again. A failure is no columns (the pickers then say to upload a
+ * list first), never an error on the page: the server still checks every name a save sends, and
+ * lists the columns in its refusal. Disabled, it is not loading (`useAsyncResource`).
  */
 export function useCampaignColumns(
   campaignId: string | undefined,
@@ -24,9 +27,11 @@ export function useCampaignColumns(
   accountId: string | null | undefined,
   enabled: boolean,
 ): { columns: string[]; loading: boolean } {
+  // One value for "no other root", whatever shape the campaign gave it: a new fetcher is a new read.
+  const root = rootCampaignId && rootCampaignId !== campaignId ? rootCampaignId : null;
   const fetcher = useCallback(async (): Promise<string[]> => {
     if (!campaignId || !tenantId || !accountId) return [];
-    const lineage = rootCampaignId && rootCampaignId !== campaignId ? [campaignId, rootCampaignId] : [campaignId];
+    const lineage = root ? [campaignId, root] : [campaignId];
     try {
       const pages = await Promise.all(lineage.map((id) => getInsightsUploads(id, tenantId, accountId)));
       const done = pages
@@ -49,7 +54,7 @@ export function useCampaignColumns(
     } catch {
       return [];
     }
-  }, [campaignId, rootCampaignId, tenantId, accountId]);
+  }, [campaignId, root, tenantId, accountId]);
   const { data, loading } = useAsyncResource(fetcher, {
     initialData: [] as string[],
     enabled: enabled && Boolean(campaignId && tenantId && accountId),

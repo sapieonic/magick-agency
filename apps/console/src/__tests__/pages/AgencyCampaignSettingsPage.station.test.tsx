@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ApiError } from '../../api/client';
 import type { AgencyCampaign } from '../../types/agency-campaign';
@@ -80,6 +80,8 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
     retry_policy: {},
     break_reasons: [],
     context_display: { hero: ['Due Amount'], hidden: ['PAN'] },
+    // As the server sends it: null on a campaign that is not a retry.
+    root_campaign_id: null,
     ...over,
   };
 }
@@ -269,6 +271,43 @@ describe('Settings › What agents see: the customer facts (BE-6)', () => {
       roles: { name: 'Borrower', amount_due: 'Due Amount' },
       types: { 'Due Date': 'date' },
     });
+  });
+
+  it('reads the columns once, after the campaign loads, and a retry campaign’s one read names its root', async () => {
+    /** The columns' reads of the upload history (the page's history section reads it too, for camp-1). */
+    const uploadReads = (campaignId: string) => mocks.getInsightsUploads.mock.calls.filter((c) => c[0] === campaignId).length;
+    const settle = async () => {
+      const name = await screen.findByTestId('fact-role-name');
+      await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    };
+
+    renderPage();
+    await settle();
+    const history = 1;
+    expect(uploadReads('camp-1')).toBe(1 + history);
+    expect(mocks.getIngestJob).toHaveBeenCalledTimes(2);
+
+    cleanup();
+    vi.clearAllMocks();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ root_campaign_id: 'camp-root' }));
+    mocks.getInsightsUploads.mockImplementation(async (campaignId: string) => ({
+      campaign_id: campaignId,
+      uploads: campaignId === 'camp-root'
+        ? [upload('job-root', '2026-10-01T10:00:00Z')]
+        : [upload('job-new', '2026-11-10T10:00:00Z')],
+      generated_at: '2026-11-20T10:00:00Z',
+    }));
+    mocks.getIngestJob.mockImplementation(async (id: string) => ({
+      id,
+      context_columns: id === 'job-root' ? ['Branch'] : ['Borrower', 'City'],
+    }));
+    renderPage();
+    await settle();
+    expect(uploadReads('camp-1')).toBe(1 + history);
+    expect(uploadReads('camp-root')).toBe(1);
+    expect(mocks.getIngestJob.mock.calls.map((c) => c[0])).toEqual(['job-new', 'job-root']);
+    expect(within(screen.getByTestId('fact-role-name')).queryByRole('option', { name: 'Branch' })).not.toBeNull();
   });
 
   it('holds Save on one column in two roles', async () => {
