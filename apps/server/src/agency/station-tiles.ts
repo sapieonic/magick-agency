@@ -31,7 +31,8 @@ export interface StationTileIssue {
   message: string;
 }
 
-const ICON_MESSAGE = `icon must be one of the tile pictures (${AGENCY_TILE_ICONS.join(', ')}). Leave it out for none.`;
+/** Words for a supervisor (AS15): no field name, no picture keys. `field` says which tile. */
+const ICON_MESSAGE = 'Choose one of the tile pictures, or no picture.';
 
 function entries(value: unknown): Array<[number, Record<string, unknown>]> {
   if (!Array.isArray(value)) return [];
@@ -55,7 +56,7 @@ export function tileIconIssues(record: Record<string, unknown>): StationTileIssu
 export function phoneDisplayIssues(record: Record<string, unknown>): StationTileIssue[] {
   const value = record['phone_display'];
   if (value === undefined || (AGENCY_PHONE_DISPLAYS as readonly unknown[]).includes(value)) return [];
-  return [{ field: 'phone_display', message: `phone_display must be one of: ${AGENCY_PHONE_DISPLAYS.join(', ')}.` }];
+  return [{ field: 'phone_display', message: 'Choose how agents see the customer’s number: in full, or with the middle digits hidden.' }];
 }
 
 /** Both rules: what each campaign-config validator adds for these settings. */
