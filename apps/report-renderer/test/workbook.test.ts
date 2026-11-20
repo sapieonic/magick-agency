@@ -92,9 +92,36 @@ describe('agent workbook', async () => {
       ['Success rate', 'success_rate'],
       ['Average handle time', 'aht'],
       ['Drops', 'drops'],
+      ['Breaks over their limit', 'break_overruns'],
+      ['Time over break limits', 'break_overruns'],
       ['Callbacks booked', 'callbacks_booked'],
       ['Analysed calls', 'sentiment'],
     ]);
+  });
+
+  it('writes the breaks over their limit (BE-12): the count and the time over, after Drops', () => {
+    const ws = wb.getWorksheet('Summary')!;
+    const metrics: string[] = [];
+    const cells = new Map<string, import('exceljs').Cell>();
+    ws.eachRow((r, n) => {
+      if (n === 1) return;
+      metrics.push(String(r.getCell(1).value));
+      cells.set(String(r.getCell(1).value), r.getCell(2));
+    });
+    const o = d.presence.break_overruns!;
+    expect(cells.get('Breaks over their limit')!.value).toBe(o.breaks);
+    const over = cells.get('Time over break limits')!;
+    expect(serial(over.value)).toBeCloseTo(o.seconds_over / 86400, 6);
+    expect(over.numFmt).toBe('[h]:mm:ss');
+    expect(metrics.indexOf('Breaks over their limit')).toBe(metrics.indexOf('Drops') + 1);
+  });
+
+  it('a dataset built before the break overruns has neither row', async () => {
+    const older = await readWorkbook(await build({ ...d, presence: { ...d.presence, break_overruns: undefined } }, details));
+    const metrics: unknown[] = [];
+    older.getWorksheet('Summary')!.eachRow((r) => { metrics.push(r.getCell(1).value); });
+    expect(metrics).not.toContain('Breaks over their limit');
+    expect(metrics).not.toContain('Time over break limits');
   });
 
   it('writes the detail sheets with every row, a frozen header and an autofilter', () => {
