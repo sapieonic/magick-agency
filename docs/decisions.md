@@ -992,3 +992,12 @@ bytes used to rescue. Decided 2026-11-19 on review of that change:
 | ID | Decision | Status |
 |---|---|---|
 | TR1 | Identical audio gets one re-transcription. A fetch whose bytes match the audio last found short is transcribed again while those bytes have come back short only once; once they have come back short twice, in this attempt or the job's earlier ones, a fetch of them is not transcribed and counts as still truncated. Different audio is always transcribed and starts its own count. The fingerprint and the count ride in the `AUDIO_TOO_SHORT` requeue's `error_message` (`[recording sha256=… bytes=… covered=…s shortCount=N]`, a tag without the count read as 1), read only under that error code and only while the call's current duration still finds it short, so any other ending in between starts afresh: a retryable `TRANSCRIPTION_FAILED` (a vendor 5xx or timeout, through `requeueForRetry`), a re-fetch that throws, a rate-limited requeue or a manual retry. The trade-off: an unchanged truncated recording costs 2 transcriptions per unbroken run of attempts ending `AUDIO_TOO_SHORT`, so 2 per job when every attempt ends that way, and at worst 2 per attempt (up to 2 × `DIALER_ANALYSIS_MAX_ATTEMPTS`, more with manual retries) when other endings come between (was ~9 per job before the fingerprint, 1 with it), and a transcriber's miss on a complete file is rescued when the second transcription covers the call; a transcriber that misses twice on the same bytes is not tried a third time, and the job fails `AUDIO_TOO_SHORT` (a manual retry starts afresh) | **Default, pending Manas** |
+
+## Agent station redesign (AS)
+
+The rulings AS1–AS18 (one state per screen, AI last, end call kept protected, target, will pay,
+call-later routing unchanged, phone display per campaign, break over-time alerts, device speech,
+light by default, Indian English, supervisor alerts on every page, scope, old app builds) are in
+[`agent-station.md`](agent-station.md) §1, with the build plan beside them. Decided by Manas
+on 2026-11-20.
+

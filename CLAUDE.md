@@ -20,6 +20,7 @@ only; never cite another system, repo or external design doc.
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns) |
 | `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/listening.md` | you work on live call listening (the live calls list, the listener tap and socket, listen sessions) |
+| `docs/agent-station.md` | you work on the agent station (console or app) or its data: the redesign's rulings AS1–AS18, the build plan and status; spec, backend plan and mock-ups in `docs/agent-station/` |
 | `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `REPORTS_SETUP.md` | you set reports up for the first time, on a dev machine or in a deployment (the renderer, the Lambda, the flag) |
 | `db-hygiene.md` | you touch the pg pool's session settings, write a migration on a large table, or run database maintenance (backups, statistics, timeouts) |
@@ -86,8 +87,9 @@ tooling/             test-env resolver, release-please guard, contract-literal e
   same commit (`pnpm test:release`).
 - **Scoped git:** `git add <paths>` only; no `git add -A`, no `git stash`. Nothing is pushed
   without Manas; a request from Manas to push or to open a PR is that go-ahead.
-- **User-facing copy is British English** (cancelled, dialled, redialled), in every app and in
-  server messages. Wire codes and identifiers are never respelled (`canceled`, `redialed`).
+- **User-facing copy is simple Indian English with British spelling** (cancelled, dialled,
+  redialled; ₹1,25,000; "20 Nov", "3:00 PM"), in every app and in server messages (AS15). Wire
+  codes and identifiers are never respelled (`canceled`, `redialed`).
 
 ## Commands
 
