@@ -212,14 +212,14 @@ final stationCallLaterProvider = FutureProvider.family<CallLaterList, CallLaterK
 /// `comes_to_me` when the server sends it; else whether the campaign assigns contacts
 /// ([StationView.assignsContacts]: `strict` or `preferred` yes, `pool` no), as the console decides
 /// (`AgentConsolePage`'s `assigns`). Never the `queue` frame: since BE-5 it comes on `pool` too.
-final stationComesToMeProvider = Provider<bool>((ref) {
+bool watchComesToMe(WidgetRef ref) {
   final key = ref.watch(
     stationViewProvider.select((v) => v == null ? null : (campaignId: v.campaignId, offered: v.myContactsOffered)),
   );
   final assigns = ref.watch(stationViewProvider.select((v) => v?.assignsContacts ?? false));
   if (key == null) return false;
   return ref.watch(stationCallLaterProvider(key)).value?.comesToMe ?? assigns;
-});
+}
 
 /// Reads My day and the call-later list again (Ready opened again after a call or a break); what
 /// was shown stays until the new answer lands.

@@ -562,7 +562,7 @@ class CallLaterCard extends ConsumerWidget {
     // The server's word when it says (AS8, `comes_to_me`); else a campaign that assigns contacts
     // keeps the agent's own call-laters theirs (strict, preferred), and a pool campaign may give one
     // to another agent.
-    final own = ref.watch(stationComesToMeProvider);
+    final own = watchComesToMe(ref);
     final now = ref.watch(stationClockProvider);
     final s = context.stateTokens;
     final t = context.tokens;
