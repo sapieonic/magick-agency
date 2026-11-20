@@ -70,7 +70,7 @@ by the lead's run of lint and the touched packages' suites.
 | M1 | In progress | |
 | S1 | In progress | |
 | S2 | In progress | |
-| S3 | In progress | |
+| S3 | Merged 2026-11-20 | Domain 360 passed; contracts 617; server unit 10,590 passed (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 213, wall-clock 4 (relevant files); lint clean |
 | C2 | Not started | |
 
 Nothing here has run on a real phone, a real carrier or with real agents.
