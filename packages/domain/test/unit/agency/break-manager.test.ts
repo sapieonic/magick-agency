@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 // ---------------------------------------------------------------------------
 
 import {
+  breakOverrun,
   DEFAULT_BREAK_REASONS,
   resolveBreakReasons,
   validateBreakReason,
@@ -293,5 +294,35 @@ describe('break limits (LF6, LF20)', () => {
     expect(breakLimitMinutes('nap', stored)).toBeNull();
     expect(breakLimitMinutes(null, stored)).toBeNull();
     expect(breakLimitMinutes('lunch', stored)).toBe(20);
+  });
+});
+
+describe('breakOverrun (agent station BE-12, AS12)', () => {
+  const start = new Date('2026-11-20T10:00:00.000Z');
+  const at = (ms: number) => new Date(start.getTime() + ms);
+  const tea = [{ code: 'tea', label: 'Tea', limit_minutes: 15 }];
+
+  it('past the limit: the limit and the whole seconds past it (floored)', () => {
+    expect(breakOverrun({ code: 'tea', configured: tea, startedAt: start, endedAt: at(17 * 60_000 + 30_900) }))
+      .toEqual({ limit_minutes: 15, overrun_seconds: 150 });
+    // The built-ins when the campaign lists none: Lunch 30.
+    expect(breakOverrun({ code: 'lunch', configured: [], startedAt: start, endedAt: at(31 * 60_000) }))
+      .toEqual({ limit_minutes: 30, overrun_seconds: 60 });
+  });
+
+  it('not over: at the limit, under it, or less than a whole second past it', () => {
+    // FALSIFIED: with the limit left out of the sum, or `> 0` turned into `>= 0`, these red.
+    for (const ms of [15 * 60_000, 14 * 60_000, 15 * 60_000 + 999]) {
+      expect(breakOverrun({ code: 'tea', configured: tea, startedAt: start, endedAt: at(ms) }), String(ms)).toBeNull();
+    }
+    expect(breakOverrun({ code: 'tea', configured: tea, startedAt: start, endedAt: at(15 * 60_000 + 1_000) }))
+      .toEqual({ limit_minutes: 15, overrun_seconds: 1 });
+  });
+
+  it('never for a reason with no limit, an unknown code, a reserved break or no code', () => {
+    const hours = at(5 * 3_600_000);
+    for (const code of ['break', 'nap', 'soft_phone', 'device_away', 'phone_call', 'away_ring', null]) {
+      expect(breakOverrun({ code, configured: [], startedAt: start, endedAt: hours }), String(code)).toBeNull();
+    }
   });
 });

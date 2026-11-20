@@ -115,7 +115,7 @@ describe('setState records the transition it just performed', () => {
     // agent-transition-ordering.test.ts, which holds a real lock; this only guards
     // the clause from being dropped.
     expect(sql).toContain('FOR UPDATE');
-    expect(sql).toMatch(/WITH prev AS \(\s*SELECT id, state, break_reason, away_ring_since FROM agency_agent_sessions\s+WHERE id = \$1 FOR UPDATE/);
+    expect(sql).toMatch(/WITH prev AS \(\s*SELECT id, state, break_reason, away_ring_since, state_since FROM agency_agent_sessions\s+WHERE id = \$1 FOR UPDATE/);
     expect(sql).toContain('prev.state AS from_state');
     expect(sql).toContain('s.state AS to_state');
     // The mirror's own behaviour is unchanged — the log is additive. (`$4` is the caller's
@@ -135,6 +135,8 @@ describe('setState records the transition it just performed', () => {
     expect(eventParams()).toEqual([
       ['sess-1'], ['t1'], ['a1'], ['camp-1'], ['u-ravi'],
       ['available'], ['on_call'], [null], [MUTATED_AT],
+      // BE-12: no break ended here, so no overrun (limit and seconds) on the event.
+      [null], [null],
     ]);
   });
 
@@ -192,7 +194,7 @@ describe('`at` comes from the statement that performed the transition', () => {
     // As UTC text with microseconds (`.US`), so two transitions the row lock serialises within
     // one millisecond keep distinct, correctly ordered instants; a `Date` would tie them.
     expect(mutationSql()).toContain(`to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
-    expect(eventSql()).toContain('break_reason, at)');
+    expect(eventSql()).toContain('break_reason, at, break_limit_minutes, break_overrun_seconds)');
     expect(eventSql()).toContain('$9::timestamptz[]');
     expect(eventParams()[8]).toEqual([MUTATED_AT]);
   });
@@ -254,7 +256,7 @@ describe('`at` comes from the statement that performed the transition', () => {
     // that reached the table first because the earlier one is still held open.
     expect(inserts.map((p) => (p[6] as string[])[0])).toEqual(['on_call', 'wrapup']);
     expect(settled).toEqual(['wrapup']);
-    expect(eventSql()).toContain('break_reason, at)');
+    expect(eventSql()).toContain('break_reason, at, break_limit_minutes, break_overrun_seconds)');
     expect(eventSql()).toContain('$9::timestamptz[]');
 
     releaseFirstInsert?.();

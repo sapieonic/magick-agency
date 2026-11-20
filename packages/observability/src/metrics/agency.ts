@@ -1216,3 +1216,19 @@ export function trackSupervisorMessage(result: SupervisorMessageResult): void {
 export function trackSupervisorMessageMarkFailed(): void {
   agencySupervisorMessageMarkFailuresTotal.inc();
 }
+
+// ─── Breaks over their limit (agent station BE-12, AS12) ─────────────────────
+//
+// A break that ran past its reason's `limit_minutes`, counted once when the event that ends it is
+// written (`agency_agent_session_events.break_overrun_seconds`, 0060), by the process that wrote the
+// transition (sum across processes). By tenant, as the dialer's per-tenant counters are; the agent
+// report and the event rows name the agent and the account.
+
+export const agencyBreakOverrunsTotal = counter<'tenant_id'>(meter, 'agency_break_overruns_total', {
+  description: 'Breaks that ran past their reason\'s limit, counted when the break ended (a reserved break, a reason with no limit and a break cut by a restart never count)',
+});
+
+/** One break ended past its limit. */
+export function trackBreakOverrun(tenantId: string): void {
+  agencyBreakOverrunsTotal.inc({ tenant_id: tenantId });
+}

@@ -112,6 +112,28 @@ export function breakLimitMinutes(
   return resolveBreakReasons(configured).find((r) => r.code === code)?.limit_minutes ?? null;
 }
 
+/**
+ * Agent station (BE-12, AS12): a break that ran past its reason's limit, judged when it ends. The
+ * break began at `startedAt` (the session's `state_since` on entering it) and ended at `endedAt`;
+ * its limit is `breakLimitMinutes(code, configured)` (so a reserved break, a reason with no limit of
+ * its own and a code the catalog does not know never count). Over: the limit and the WHOLE seconds
+ * past it (floored, so a break a fraction of a second over is not counted), both as
+ * `agency_agent_session_events.break_limit_minutes` / `break_overrun_seconds` (0060) take them.
+ * Null when it did not run over, or when there is no limit to run over.
+ */
+export function breakOverrun(input: {
+  code: string | null | undefined;
+  configured: AgencyBreakReason[] | null | undefined;
+  startedAt: Date;
+  endedAt: Date;
+}): { limit_minutes: number; overrun_seconds: number } | null {
+  const limit = breakLimitMinutes(input.code, input.configured);
+  if (limit === null) return null;
+  const overMs = input.endedAt.getTime() - input.startedAt.getTime() - limit * 60_000;
+  const seconds = Math.floor(overMs / 1000);
+  return Number.isFinite(seconds) && seconds > 0 ? { limit_minutes: limit, overrun_seconds: seconds } : null;
+}
+
 /** Whether `code` is accepted, and the valid set to echo back when it is not. */
 export function validateBreakReason(
   configured: AgencyBreakReason[] | null | undefined,
