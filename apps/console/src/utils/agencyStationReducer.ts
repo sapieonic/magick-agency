@@ -10,6 +10,7 @@ import type {
   AgencyStationReleasedFrame,
 } from '../types/agency';
 import type {
+  AgencyCampaignChangeReason,
   AgencyHelpAnswerHow,
   AgencySessionHelp,
   AgencyStationHelpAnsweredFrame,
@@ -73,6 +74,18 @@ export interface StationState {
   releasedAt: number | null;
   lastError: AgencyStationErrorFrame | null;
   dialing: boolean;
+  /**
+   * Why the campaign last changed state (`campaign_state.reason`), so the station can say why
+   * calls stopped in its own words (spec 02c) rather than show the frame's English sentence.
+   * Null until a `campaign_state` frame arrives.
+   */
+  campaignReason: AgencyCampaignChangeReason | null;
+  /**
+   * When the reconnect ladder will try next (a local epoch ms), while one is scheduled; null
+   * otherwise. Screen 09's "Trying again in 0:08" counts down to it. Cleared once the socket opens
+   * again, or the ladder gives up.
+   */
+  nextRetryAt: number | null;
   missedPings: number;
   /** The session's soft-phone call, as the newest `manual_call` frame stated it. */
   manualCall: AgencyManualCall | null;
@@ -177,6 +190,8 @@ export const INITIAL_STATION_STATE: StationState = {
   releasedAt: null,
   lastError: null,
   dialing: true,
+  campaignReason: null,
+  nextRetryAt: null,
   missedPings: 0,
   manualCall: null,
   queue: undefined,
@@ -203,7 +218,9 @@ export type StationAction =
    * whose panel stays up through wrap-up, or null — see the module note.
    */
   | { type: 'released'; frame: AgencyStationReleasedFrame; at: number; retain: AgencyReservedAttempt | null }
-  | { type: 'campaign_state'; dialing: boolean }
+  | { type: 'campaign_state'; dialing: boolean; reason?: AgencyCampaignChangeReason | null }
+  /** The reconnect ladder scheduled its next try (`at`, local epoch ms), or stopped (`null`). */
+  | { type: 'retry_scheduled'; at: number | null }
   /** `offsetMs`: the estimator's new offset, or null when the pong carried no sample. */
   | { type: 'pong'; offsetMs: number | null }
   | { type: 'error'; frame: AgencyStationErrorFrame }
@@ -263,7 +280,16 @@ function breakQueue(
 export function stationReducer(state: StationState, action: StationAction): StationState {
   switch (action.type) {
     case 'connection':
-      return patch(state, { connection: action.connection });
+      // A retry belongs to `reconnecting`: any other connection state ends the countdown.
+      return patch(
+        state,
+        action.connection === 'reconnecting'
+          ? { connection: action.connection }
+          : { connection: action.connection, nextRetryAt: null },
+      );
+
+    case 'retry_scheduled':
+      return patch(state, { nextRetryAt: action.at });
 
     case 'missed_pings':
       return patch(state, { missedPings: action.count });
@@ -391,7 +417,7 @@ export function stationReducer(state: StationState, action: StationAction): Stat
     }
 
     case 'campaign_state':
-      return patch(state, { dialing: action.dialing });
+      return patch(state, { dialing: action.dialing, campaignReason: action.reason ?? null });
 
     case 'pong':
       return patch(
