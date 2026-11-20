@@ -243,20 +243,19 @@ String dncFailureCopy(Object error) {
   return detail != null ? 'Couldn’t mark Do Not Call: $detail' : 'Couldn’t mark Do Not Call. Nothing was changed.';
 }
 
-/// Why a campaign entry could not be written, and what that leaves open: the tail of every
-/// `dnc_recorded: false` sentence for this campaign's list (console `DNC_CAMPAIGN_NOT_LISTED`).
-const dncCampaignNotListedCopy =
-    'It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, '
-    'so a new upload could bring it back. Ask an admin to check the number.';
+/// Don't call again went through (campaign scope only: the agent role cannot reach the
+/// workspace-wide list). In the station's words, and never the number (AS9: the campaign may mask
+/// it): the console's `dncDoneLine`. [recorded] false: the number could not go on the list, so
+/// only this customer is stopped and a supervisor should check the number.
+String dncDoneCopy({required bool recorded}) => recorded
+    ? 'Done. We will not call this number again.'
+    : 'We will not call this customer again from this list. Ask your supervisor to check the number.';
 
-/// Campaign scope only: the agent role cannot reach the workspace-wide list.
-String dncOutcomeCopy(DncResponse response) => response.dncRecorded
-    ? '${response.phoneE164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.'
-    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. $dncCampaignNotListedCopy';
+String dncOutcomeCopy(DncResponse response) => dncDoneCopy(recorded: response.dncRecorded);
 
-/// A saved outcome that suppresses (DS8) whose Do Not Call entry could not be written
-/// (`dnc_recorded: false`): only this contact is suppressed (console `SUPPRESS_OUTCOME_NOT_LISTED`).
-const suppressOutcomeNotListedCopy = 'This contact won’t be dialled again. $dncCampaignNotListedCopy';
+/// A saved outcome that stops calling (DS8) whose number could not go on the list
+/// (`dnc_recorded: false`): only this customer is stopped (the console's `savedLine` tail).
+const suppressOutcomeNotListedCopy = 'We will not call this customer again. Ask your supervisor to check the number.';
 
 const dncNeedsCallCopy = 'Available while you are on a call';
 

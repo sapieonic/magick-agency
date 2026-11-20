@@ -859,7 +859,7 @@ void main() {
       await pumpStation(tester, wrap(saved: 'do_not_call', dnc: suppressOutcomeNotListedCopy));
       expect(find.byKey(const Key('outcome-saved')), findsOneWidget);
       expect(find.byKey(const Key('dnc-outcome')), findsOneWidget);
-      expect(find.textContaining('It couldn’t go on this campaign’s Do Not Call list'), findsOneWidget);
+      expect(find.text('We will not call this customer again. Ask your supervisor to check the number.'), findsOneWidget);
     });
   });
 }

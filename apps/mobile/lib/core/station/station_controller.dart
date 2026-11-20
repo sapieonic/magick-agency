@@ -20,7 +20,6 @@ import '../ring/ring_channel.dart';
 import '../ring/ring_copy.dart';
 import '../ring/ring_rules.dart';
 import '../ring/station_ring.dart';
-import '../softphone/call_labels.dart' show formatDialNumber;
 import '../softphone/call_state.dart';
 import '../softphone/refusal_copy.dart' show refusalBodyOf, softphoneErrorCopy;
 import '../softphone/softphone_api.dart';
@@ -3327,11 +3326,7 @@ class StationController extends Notifier<StationView?>
       switch (result) {
         case InboundOk(:final value):
           _log.info('marked do not call', {'recorded': value.dncRecorded});
-          final campaign = value.scope == DncEntryScope.campaign ? call.match?.campaignName : null;
-          _inboundDnc = (
-            callId: call.id,
-            text: inboundDncOutcomeCopy(formatDialNumber(value.phoneE164), campaignName: campaign),
-          );
+          _inboundDnc = (callId: call.id, text: inboundDncOutcomeCopy);
         case InboundRefused(:final refusal):
           _actionError = inboundDncFailedCopy(refusal);
       }

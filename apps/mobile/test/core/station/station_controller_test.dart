@@ -849,8 +849,9 @@ void main() {
         app.run(app.controller.markDnc(reason: 'asked'));
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc').single.body, {'scope': 'campaign', 'reason': 'asked'});
         expect(app.view!.actionError, isNull);
-        expect(app.view!.dncOutcome,
-            '+919876543210 won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.');
+        // AS9: the station's words, never the number (the campaign may mask it).
+        expect(app.view!.dncOutcome, 'Done. We will not call this number again.');
+        expect(app.view!.dncOutcome, isNot(contains('9876543210')));
         app.routes['POST /proxy/agency/attempts/att-1/dnc'] = (_) => json(403, {'code': 'not_your_attempt', 'message': 'x'});
         app.run(app.controller.markDnc());
         expect(app.view!.actionError, 'This call has moved on — it isn’t yours to mark any more.');
@@ -872,7 +873,7 @@ void main() {
               'dnc_recorded': false,
             });
         app.run(app.controller.markDnc());
-        expect(app.view!.dncOutcome, contains('It couldn’t go on'));
+        expect(app.view!.dncOutcome, 'We will not call this customer again from this list. Ask your supervisor to check the number.');
         app.releasedFrame('att-1', requiresDisposition: false);
         app.agentStateFrame('available');
         app.reserved('att-2');
@@ -945,7 +946,6 @@ void main() {
           app.run(app.controller.submitDisposition('do_not_call'));
           expect(app.view!.dispositionSaved, 'do_not_call');
           expect(app.view!.dncOutcome, suppressOutcomeNotListedCopy);
-          expect(app.view!.dncOutcome, contains('It couldn’t go on this campaign’s Do Not Call list'));
           app.dispose();
 
           final listed = App(async)..start();
