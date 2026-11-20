@@ -5,7 +5,7 @@ import { addDays, formatPromiseDay } from '@magick-agency/domain/promise-to-pay'
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
 import { findDisposition, localDay, type DispositionFormState } from '../../../utils/agencyDispositionForm';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
-import { calendarDay, clockTime, halfAmount, rupees, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
+import { calendarDay, clockTime, halfAmount, promisedAmount, rupees, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
 import { NUMBER_KEY_COUNT, type DispositionPadHandle } from '../DispositionPad';
 import { outcomeIcon, outcomeTileLayout } from '../../../utils/agency/stationTiles';
 import type { AgencyDisposition } from '../../../types/agency';
@@ -274,8 +274,8 @@ function PayDateRow({
       </div>
       <div className={styles.ask}>
         <span className={styles.askLabel}><IndianRupee size={20} aria-hidden="true" />{STATION_COPY.amount}</span>
-        <label className={styles.money}>
-          <span aria-hidden="true">₹</span>
+        {/* A promised amount carries no currency (PT5): no ₹ here, as in the app. */}
+        <label className={styles.money} data-testid="promise-amount">
           <input
             type="text"
             inputMode="decimal"
@@ -300,7 +300,7 @@ function PayDateRow({
       </div>
       {date ? (
         <p className={`${styles.fine} ${styles.fineStrong}`} data-testid="promise-resolved">
-          {STATION_COPY.willPayOn(calendarDay(date), amount.trim() ? rupees(amount) ?? amount : null)}
+          {STATION_COPY.willPayOn(calendarDay(date), amount.trim() ? promisedAmount(amount) ?? amount : null)}
         </p>
       ) : null}
       {followUp ? <p className={styles.fine} data-testid="promise-follow-up">{followUp}</p> : null}

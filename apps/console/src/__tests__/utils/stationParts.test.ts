@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calendarDay, clockTime, halfAmount, hoursMinutes, initials, runningClock, rupees } from '../../utils/agency/stationFormat';
+import { calendarDay, clockTime, halfAmount, hoursMinutes, initials, promisedAmount, runningClock, rupees } from '../../utils/agency/stationFormat';
 import { breakIcon, outcomeIcon, outcomeTileLayout } from '../../utils/agency/stationTiles';
 import { customerCard, factTilesInOrder, lastCallRows, phoneForDisplay } from '../../utils/agency/stationCustomer';
 import { headsetCheckFrom, microphoneCheckFrom } from '../../utils/agency/stationDevices';
@@ -225,6 +225,15 @@ describe('the customer card (spec 03/04, today’s data)', () => {
       ['12 Nov', 'Call later', '“Asked to call after salary.”'],
       ['5 Nov', 'No answer', null],
     ]);
+  });
+
+  it('says a promised amount with Indian grouping and no ₹: no currency is stored with a promise (PT5)', () => {
+    expect(promisedAmount('125000')).toBe('1,25,000');
+    expect(promisedAmount('6250.50')).toBe('6,250.50');
+    expect(promisedAmount('twelve')).toBeNull();
+    const prior = { ...ATTEMPT.prior_attempts[0]!, disposition_code: 'ptp', promise_date: '2026-11-01', promise_amount: '12500.00' };
+    const [row] = lastCallRows({ ...ATTEMPT, prior_attempts: [prior] }, [{ code: 'ptp', label: 'Will pay', requires_promise: true }]);
+    expect(row!.outcome).toBe('Will pay · 12,500 on 1 Nov');
   });
 });
 

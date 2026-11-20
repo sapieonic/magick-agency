@@ -9,7 +9,7 @@ import type {
 import { resolveContextFields } from '../agencyContext';
 import { priorDispositionLabel } from '../agencyPriorAttempts';
 import { ATTEMPT_OUTCOME_WORDS } from './stationCopy';
-import { calendarDay, clockTime, dayMonth, initials, rupees } from './stationFormat';
+import { calendarDay, clockTime, dayMonth, initials, promisedAmount, rupees } from './stationFormat';
 
 /**
  * The customer card on Call coming, On call and What happened? (spec §3 03/04, §5.3), from the
@@ -236,7 +236,7 @@ export function lastCallRows(
         ? ATTEMPT_OUTCOME_WORDS[p.outcome] ?? p.outcome
         : 'Not finished';
     const promise = p.promise_date
-      ? `${p.promise_amount ? `${rupees(p.promise_amount) ?? p.promise_amount} on ` : 'On '}${calendarDay(p.promise_date)}`
+      ? `${p.promise_amount ? `${promisedAmount(p.promise_amount) ?? p.promise_amount} on ` : 'On '}${calendarDay(p.promise_date)}`
       : null;
     const note = p.notes?.trim() ? `“${p.notes.trim()}”` : null;
     return {
