@@ -20,13 +20,22 @@ import {
  * late frame about an earlier request never clears a newer one.
  *
  * One control: it raises while nothing is open and cancels while one is (its label says which),
- * so focus stays on the same button across the press. Raising is offered only on a call or in
- * wrap-up (the server's `help_not_on_call` rule, said before asking); cancelling always, since a
+ * so focus stays on the same button across the press. Cancelling is always offered, since a
  * request outlives the call it was raised on until it is answered, cancelled or lapses.
+ *
+ * ── Where raising is offered (BE-9) ─────────────────────────────────────────
+ * With `everywhere` (the redesigned station), in every state of a joined session: the server
+ * accepts a raise on Ready, on a break and offline after joining as much as on a call. An older
+ * server still refuses off a call with `409 help_not_on_call`; the first such refusal narrows this
+ * session back to calls and wrap-up (`everywhere` reads false from then on, and the station hides
+ * the button off a call again), until the next session. Without `everywhere`, raising is offered
+ * only on a call or in wrap-up (LF13, said before asking).
  */
 export interface StationHelp {
   /** `agency_floor_assist_enabled` is on: the control is shown at all. */
   offered: boolean;
+  /** Raising is offered in every state (BE-9); false once an older server refused off a call. */
+  everywhere: boolean;
   /** A request is open. */
   open: boolean;
   /** A raise or a cancel is in flight. */
@@ -54,12 +63,15 @@ export interface StationHelp {
 
 export function useStationHelp({
   offered,
+  everywhere: everywhereAsked = false,
   sessionId,
   tenantId,
   accountId,
   station,
 }: {
   offered: boolean;
+  /** Offer raising in every state of the session (BE-9). */
+  everywhere?: boolean;
   sessionId: string | null;
   tenantId?: string;
   accountId?: string;
@@ -76,6 +88,10 @@ export function useStationHelp({
   const helpRef = useLatestRef(help);
   const noticeRef = useLatestRef(helpNotice);
 
+  // An older server's `help_not_on_call` narrows this session back to calls (BE-9).
+  const [narrowedFor, setNarrowedFor] = useState<string | null>(null);
+  const everywhere = everywhereAsked && (sessionId === null || narrowedFor !== sessionId);
+
   // A refusal is about the state it was pressed in; a new state makes it stale.
   useEffect(() => {
     setRefusal(null);
@@ -83,13 +99,13 @@ export function useStationHelp({
   }, [agentState]);
 
   const open = help !== null;
-  const raisable = helpRaisable(agentState);
+  const raisable = everywhere || helpRaisable(agentState);
 
   const press = useCallback(() => {
     if (!offered || !sessionId || busyRef.current) return;
     const cancelling = helpRef.current !== null;
     const raisedAt = helpRef.current?.raised_at ?? null;
-    if (!cancelling && !helpRaisable(agentState)) return;
+    if (!cancelling && !raisable) return;
     busyRef.current = true;
     setBusy(true);
     setRefusal(null);
@@ -105,6 +121,7 @@ export function useStationHelp({
         if (cancelling && !answered) say(STATION_HELP_COPY.cancelledAnnouncement);
       })
       .catch((err: unknown) => {
+        if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
         const text = helpRefusalText(err, cancelling ? 'cancel' : 'raise');
         setRefusal(text);
         setRefusalKind({ action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) });
@@ -114,7 +131,7 @@ export function useStationHelp({
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, agentState, helpRef, noticeRef, setHelp, say]);
+  }, [offered, sessionId, tenantId, accountId, raisable, helpRef, noticeRef, setHelp, say]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers
@@ -139,6 +156,7 @@ export function useStationHelp({
 
   return {
     offered,
+    everywhere,
     open,
     busy,
     blockedReason: open || raisable ? null : STATION_HELP_COPY.notOnCall,

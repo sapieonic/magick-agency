@@ -184,14 +184,32 @@ describe('Need help: offered', () => {
     expect(helpButton().hasAttribute('disabled')).toBe(false);
   });
 
-  it('is not on the screen off a call (AS5, phase 0: hidden, not disabled), so nothing can be sent', async () => {
+  it('is on every working screen (BE-9): Ready and a break, never Start of day', async () => {
     await mounted();
     expect(screen.queryByTestId('need-help-button')).toBeNull();
-    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:00:00.000Z' });
-    expect(screen.queryByTestId('need-help-button')).toBeNull();
     await frame({ event: 'agent_state', state: 'break', since: '2026-11-19T09:00:00.000Z', break_reason: 'tea' });
+    expect(helpButton()).toBeTruthy();
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:00:00.000Z' });
+    await pressHelp();
+    expect(mocks.raiseHelp).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
+  });
+
+  it('an older server’s help_not_on_call narrows it back to calls for this session', async () => {
+    await mounted();
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:00:00.000Z' });
+    mocks.raiseHelp.mockRejectedValueOnce(new ApiError(409, { error: 'Conflict', code: 'help_not_on_call', message: 'raw' }));
+    await pressHelp();
+    // Hidden off a call from now on (AS1), with the reason said once.
     expect(screen.queryByTestId('need-help-button')).toBeNull();
-    expect(mocks.raiseHelp).not.toHaveBeenCalled();
+    expect(screen.getByTestId('need-help-refusal-body').textContent).toBe('You can ask for help on a call, or while you choose what happened.');
+    await frame({ event: 'agent_state', state: 'break', since: '2026-11-19T09:05:00.000Z', break_reason: 'tea' });
+    expect(screen.queryByTestId('need-help-button')).toBeNull();
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:20:00.000Z' });
+    // On a call it is offered again.
+    await frame({ event: 'reserved', attempt: ATTEMPT });
+    await frame({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-19T10:00:04.000Z' });
+    expect(helpButton()).toBeTruthy();
+    expect(mocks.raiseHelp).toHaveBeenCalledTimes(1);
   });
 
   it('is offered in wrap-up too', async () => {

@@ -139,6 +139,7 @@ export default function AgentConsolePage() {
   const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
   const help = useStationHelp({
     offered: floorAssistOn,
+    everywhere: true,
     sessionId: bootstrap?.session_id ?? null,
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
@@ -385,6 +386,7 @@ function StationScreen({
     finishOpen,
     helpOffered: help.offered,
     helpOpen: help.open,
+    helpEverywhere: help.everywhere,
     softphoneAvailable: softphone.available,
     myContactsOffered,
   });

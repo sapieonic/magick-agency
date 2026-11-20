@@ -259,10 +259,11 @@ function bandFor(screen: StationScreen, input: StationViewInput): Pick<StationVi
 }
 
 /**
- * Need help, top right (AS5). Today the server accepts a raise only on a call or while choosing
- * what happened, so it is shown on 04 and 05 only; an open request stays reachable wherever it is
- * (its press cancels). Never on 11 or 12, and not while the internet is down (the press cannot
- * reach anyone; 09 says to call the supervisor to the desk).
+ * Need help, top right (AS5). On every working screen once the server accepts a raise there
+ * (BE-9, `helpEverywhere`); on 04 and 05 only when an older server has said it does not; an open
+ * request stays reachable wherever it is (its press cancels). Never on Start of day, 11 or 12,
+ * and not while the internet is down (the press cannot reach anyone; 09 says to call the
+ * supervisor to the desk).
  */
 function needHelpShown(screen: StationScreen, input: StationViewInput): boolean {
   if (!input.helpOffered) return false;
