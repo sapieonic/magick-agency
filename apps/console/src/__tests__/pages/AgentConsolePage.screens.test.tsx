@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   hangupAttempt: vi.fn(),
   useTenant: vi.fn(),
   getMyStats: vi.fn(),
+  getMyDay: vi.fn(),
 }));
 vi.mock('../../api/agency', () => ({
   createAgencySession: mocks.createAgencySession,
@@ -27,6 +28,7 @@ vi.mock('../../api/agency', () => ({
 vi.mock('../../api/agencyStats', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyStats')>()),
   getMyStats: mocks.getMyStats,
+  getMyDay: mocks.getMyDay,
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
@@ -37,6 +39,8 @@ import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { STATION_COPY } from '../../utils/agency/stationCopy';
 import { FakeSocket, latestSocket as latest } from '../helpers/fakeSocket';
 import { stubStationMicrophone } from '../helpers/stationDevices';
+import { agentReadsFixture } from '../helpers/agentReads';
+import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -96,6 +100,8 @@ beforeEach(() => {
   mocks.setAgentBreak.mockResolvedValue({ session_id: 'sess-1', state: 'wrapup', pending_state: 'break', break_reason: 'tea' });
   mocks.submitDisposition.mockResolvedValue({ attempt_id: 'att-1', contact_id: 'c-1', disposition_code: 'ptp', contact_state: 'completed', next_attempt_at: null, agent_state: 'available' });
   mocks.getMyStats.mockResolvedValue({ totals: { attempts: 61, connected: 42, talk_seconds: 6720, successes: 12 }, buckets: [] });
+  // A server without my-day (404): the station falls back to my-stats, as phase 0 read.
+  mocks.getMyDay.mockRejectedValue(new ApiError(404, { error: 'Not Found' }));
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket);
 });
 
@@ -185,16 +191,62 @@ describe('01 Start of day', () => {
     plain.remove();
   });
 
-  it('shows My day from today’s my-stats on Ready: calls and talk time, and nothing it does not have', async () => {
+  it('falls back to today’s my-stats when my-day fails: calls, talk time and numbers dialled, no target', async () => {
     await mounted();
     await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
     const day = await screen.findByTestId('my-day');
     expect(within(day).getByTestId('my-day-calls').textContent).toContain('42');
     expect(within(day).getByTestId('my-day-talk').textContent).toContain('1h 52m');
-    // No target and no will-pay today (BE-1, BE-2): not shown at all.
+    // No will pay from my-stats: the third tile is Numbers dialled, as on the app.
+    expect(within(day).queryByTestId('my-day-will-pay')).toBeNull();
+    expect(within(day).getByTestId('my-day-dialled').textContent).toBe('Numbers dialled61');
+    expect(day.textContent).not.toContain('/');
+    expect(mocks.getMyDay).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+    expect(mocks.getMyStats).toHaveBeenCalledWith(expect.objectContaining({ campaign_id: 'camp-1', bucket: 'day' }), 'tenant-1', 'account-1');
+  });
+});
+
+describe('My day from my-day (BE-1 to BE-3)', () => {
+  it('shows calls against the target, talk time and Will pay, and the call-later list with names, never numbers', async () => {
+    mocks.getMyDay.mockResolvedValue(agentReadsFixture().my_day);
+    await mounted();
+    const target = await screen.findByTestId('start-target');
+    expect(target.textContent).toContain('120 calls');
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    const day = await screen.findByTestId('my-day');
+    expect(within(day).getByTestId('my-day-calls').textContent).toContain('42 / 120');
+    expect(within(day).getByTestId('my-day-will-pay').textContent).toBe('Will pay12');
+    expect(within(day).queryByTestId('my-day-dialled')).toBeNull();
+    const rows = within(screen.getByTestId('call-later-list')).getAllByTestId('call-later-row');
+    expect(rows.map((r) => r.querySelector('span')?.textContent)).toEqual(['Sunita Patil', 'Customer', 'Imran Shaikh']);
+    // The overdue one says so.
+    expect(rows[0]!.textContent).toContain('Late');
+    expect(screen.getByTestId('call-later-list').textContent).toContain('These calls will come to you on time.');
+    expect(screen.getByTestId('station').textContent).not.toMatch(/\+?91\d{10}/);
+    expect(mocks.getMyStats).not.toHaveBeenCalled();
+  });
+
+  it('on a pool campaign with no target and no promises: Numbers dialled, no call-later list', async () => {
+    mocks.getMyDay.mockResolvedValue({ ...agentReadsFixture().my_day_pool_no_target, calls: 3, dialed: 17, talk_seconds: 400 });
+    await mounted();
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    const day = await screen.findByTestId('my-day');
+    expect(within(day).getByTestId('my-day-dialled').textContent).toBe('Numbers dialled17');
     expect(within(day).queryByTestId('my-day-will-pay')).toBeNull();
     expect(day.textContent).not.toContain('/');
-    expect(mocks.getMyStats).toHaveBeenCalledWith(expect.objectContaining({ campaign_id: 'camp-1', bucket: 'day' }), 'tenant-1', 'account-1');
+    expect(screen.queryByTestId('call-later-list')).toBeNull();
+    expect(screen.queryByTestId('start-target')).toBeNull();
+  });
+
+  it('Finish work says how many call-laters are left and where they go', async () => {
+    mocks.getMyDay.mockResolvedValue(agentReadsFixture().my_day);
+    await mounted();
+    await frames({ event: 'agent_state', state: 'available', since: '2026-11-20T10:00:00.000Z' });
+    await screen.findByTestId('my-day');
+    fireEvent.click(screen.getByRole('button', { name: STATION_COPY.more }));
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    const at = new Date('2026-11-20T09:30:00.000Z').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    expect(screen.getByTestId('finish-left').textContent).toBe(`2 call-laters are left for today (first at ${at}). They wait for you.`);
   });
 });
 

@@ -93,6 +93,9 @@ export const STATION_COPY = {
   callsToday: 'Calls today',
   talkTime: 'Talk time',
   willPay: 'Will pay',
+  numbersDialled: 'Numbers dialled',
+  customer: 'Customer',
+  late: 'Late',
   myCallLaterList: 'My call-later list',
   callLaterComesToMe: 'These calls will come to you on time.',
   callLaterPool: 'We will call them on time. Another agent may get the call.',
@@ -242,6 +245,12 @@ export const STATION_COPY = {
   keepWorking: 'No, keep working',
   yesFinish: 'Yes, finish work',
   finishing: 'Finishing…',
+  leftForToday: (n: number, at: string, goesTo: 'pool' | 'waits_for_me' | null) => {
+    const head = n === 1 ? `1 call later is left for today (${at}).` : `${n} call-laters are left for today (first at ${at}).`;
+    if (goesTo === 'pool') return `${head} Another agent will make ${n === 1 ? 'it' : 'them'}.`;
+    if (goesTo === 'waits_for_me') return `${head} ${n === 1 ? 'It waits' : 'They wait'} for you.`;
+    return head;
+  },
   finishFailed: 'Your work is still open. Try again.',
 
   // 12 Open on another device

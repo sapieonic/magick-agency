@@ -20,7 +20,6 @@ import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp, type StationHelp } from './station/useStationHelp';
 import { useDeviceChecks } from './station/useDeviceChecks';
 import { useMyDay } from './station/useMyDay';
-import { useMyCallLaters } from './station/useMyCallLaters';
 import {
   FloorAssistAnnouncer,
   SupervisorMessages,
@@ -50,6 +49,7 @@ import { WhatHappened } from '../../components/agency/station/WhatHappened';
 import {
   BreakCard,
   CallLaterCard,
+  FinishCard,
   DeviceCheckTiles,
   ListenNoticeLine,
   MyDayCard,
@@ -293,19 +293,13 @@ function StationScreen({
   const notWorkingYet = agentState === 'offline' && live === null;
   const checks = useDeviceChecks(notWorkingYet && bootstrap !== null);
   const [workMode, setWorkMode] = useState<WorkMode>('calls_come');
-  const myDay = useMyDay({
+  const { myDay, callLaters } = useMyDay({
     campaignId: bootstrap?.campaign_id ?? null,
     tenantId,
     accountId,
     agentState,
     enabled: bootstrap !== null,
-  });
-  const callLaters = useMyCallLaters({
-    campaignId: bootstrap?.campaign_id ?? null,
-    tenantId,
-    accountId,
-    agentState,
-    enabled: bootstrap !== null && assignmentEnabled && assigns,
+    callLaterFallback: assignmentEnabled && assigns,
   });
   const listenOn = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
 
@@ -1100,7 +1094,7 @@ function StationScreen({
           internet={internet}
           workName={workName ?? ''}
           myDay={myDay}
-          callLaterCount={callLaters ? callLaters.rows.length : null}
+          callLaterCount={callLaters ? callLaters.today : null}
           softphoneOffered={softphone.available}
           mode={workMode}
           onMode={setWorkMode}
@@ -1130,7 +1124,7 @@ function StationScreen({
     case 'ready':
     case 'no_calls': {
       const quiet = screen === 'no_calls';
-      const showDay = myDay !== null && (myDay.calls !== null || myDay.talkSeconds !== null || myDay.willPay !== null);
+      const showDay = myDay !== null && (myDay.calls !== null || myDay.talkSeconds !== null || myDay.willPay !== null || myDay.dialled !== null);
       const showLater = callLaters !== null && callLaters.rows.length > 0;
       bodyClass = showDay || showLater ? stationStyles.body2 : stationStyles.bodyCenter;
       // "Nothing due now" with no dial ringing leaves the count out too, as the agent app does.
@@ -1240,11 +1234,7 @@ function StationScreen({
     case 'finish':
       bodyClass = stationStyles.bodyCenter;
       body = (
-        <div className={`${stationStyles.col} ${stationStyles.cardNarrow}`} data-testid="finish-card">
-          {myDay ? <MyDayCard day={myDay} /> : null}
-          {callLaters && callLaters.rows.length > 0 ? <CallLaterCard list={callLaters} now={clock.now} /> : null}
-          {exit.leaveFailure ? <p className={stationStyles.refusal} role="alert" data-testid="finish-failure">{STATION_COPY.finishFailed}</p> : null}
-        </div>
+        <FinishCard myDay={myDay} callLaters={callLaters} now={clock.now} failure={exit.leaveFailure ? STATION_COPY.finishFailed : null} />
       );
       break;
     case 'other_device':

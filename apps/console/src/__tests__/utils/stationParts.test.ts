@@ -3,8 +3,11 @@ import { calendarDay, clockTime, halfAmount, hoursMinutes, initials, runningCloc
 import { breakIcon, outcomeIcon, outcomeTileLayout } from '../../utils/agency/stationTiles';
 import { customerCard, factTilesInOrder, lastCallRows, phoneForDisplay } from '../../utils/agency/stationCustomer';
 import { headsetCheckFrom, microphoneCheckFrom } from '../../utils/agency/stationDevices';
-import { helpAnsweredLine, releaseBanner } from '../../utils/agency/stationCopy';
+import { helpAnsweredLine, releaseBanner, STATION_COPY } from '../../utils/agency/stationCopy';
 import { pickVoice } from '../../hooks/useSpeech';
+import { callLaterRowsFor, fromMyDay } from '../../pages/agency/station/useMyDay';
+import { agentReadsFixture } from '../helpers/agentReads';
+import type { AgencyMyContact } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
 
 describe('how the station writes numbers (AS15)', () => {
@@ -245,5 +248,38 @@ describe('the station’s own words, keyed on codes (AS15)', () => {
     expect(pickVoice([{ lang: 'en-US' }, { lang: 'en_IN' }, { lang: 'hi-IN' }])).toBe(1);
     expect(pickVoice([{ lang: 'hi-IN' }, { lang: 'en-GB' }])).toBe(1);
     expect(pickVoice([{ lang: 'hi-IN' }])).toBe(-1);
+  });
+});
+
+describe('My day and the call-later list (BE-1 to BE-3)', () => {
+  it('reads my-day into the station’s shapes', () => {
+    const { myDay, callLaters } = fromMyDay(agentReadsFixture().my_day);
+    expect(myDay).toEqual({ calls: 42, target: 120, talkSeconds: 6720, willPay: 12, dialled: 131 });
+    expect(callLaters?.rows.map((r) => [r.name, r.overdue])).toEqual([
+      ['Sunita Patil', true],
+      [null, false],
+      ['Imran Shaikh', false],
+    ]);
+    expect(callLaters).toMatchObject({ today: 2, comesToMe: true, leftTodayGoesTo: 'waits_for_me' });
+    const pool = fromMyDay(agentReadsFixture().my_day_pool_no_target);
+    expect(pool.myDay).toMatchObject({ target: null, willPay: null });
+    expect(pool.callLaters).toMatchObject({ rows: [], comesToMe: false, leftTodayGoesTo: 'pool' });
+  });
+
+  it('the fallback list never names a customer by their number', () => {
+    const now = new Date(2026, 10, 20, 12, 0);
+    const contact = (id: string, hour: number, hero: { name: string; value: string }[]) =>
+      ({ id, phone_e164: '+919800000000', next_attempt_at: new Date(2026, 10, 20, hour).toISOString(), hero }) as unknown as AgencyMyContact;
+    const rows = callLaterRowsFor([contact('b', 15, []), contact('a', 10, [{ name: 'Name', value: 'Ravi' }])], now);
+    expect(rows.map((r) => [r.id, r.name, r.overdue])).toEqual([
+      ['a', 'Ravi', true],
+      ['b', null, false],
+    ]);
+  });
+
+  it('says where the call-laters left at Finish work go', () => {
+    expect(STATION_COPY.leftForToday(1, '3:00 PM', 'pool')).toBe('1 call later is left for today (3:00 PM). Another agent will make it.');
+    expect(STATION_COPY.leftForToday(2, '3:00 PM', 'waits_for_me')).toBe('2 call-laters are left for today (first at 3:00 PM). They wait for you.');
+    expect(STATION_COPY.leftForToday(2, '3:00 PM', null)).toBe('2 call-laters are left for today (first at 3:00 PM).');
   });
 });

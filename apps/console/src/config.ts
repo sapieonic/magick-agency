@@ -130,6 +130,8 @@ export const ENDPOINTS = {
      */
     agency: {
       myStats: `${API_BASE}/proxy/agency/my-stats`,
+      /** The agent's own day on one campaign: My day, the call-later list, Finish work (BE-1 to BE-3). */
+      myDay: `${API_BASE}/proxy/agency/my-day`,
       agentStats: (userId: string) =>
         `${API_BASE}/proxy/agency/agents/${encodeURIComponent(userId)}/stats`,
       /**
