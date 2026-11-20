@@ -88,8 +88,9 @@ tooling/             test-env resolver, release-please guard, contract-literal e
 - **Scoped git:** `git add <paths>` only; no `git add -A`, no `git stash`. Nothing is pushed
   without Manas; a request from Manas to push or to open a PR is that go-ahead.
 - **User-facing copy is simple Indian English with British spelling** (cancelled, dialled,
-  redialled; ₹1,25,000; "20 Nov", "3:00 PM"), in every app and in server messages (AS15). Wire
-  codes and identifiers are never respelled (`canceled`, `redialed`).
+  redialled; "20 Nov", "3:00 PM"; ₹1,25,000 on amounts typed as money, but no ₹ on a promised
+  amount, PT5), in every app and in server messages (AS15). Wire codes and identifiers are never
+  respelled (`canceled`, `redialed`).
 
 ## Commands
 

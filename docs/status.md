@@ -8,7 +8,7 @@ invariants, and what to do next. Read it before planning work on the repo, or be
 ## Summary
 
 The application is built: phases 1 to 9 of the delivery plan
-([`intent-and-plan.md`](intent-and-plan.md)) are complete on the code side, every suite is green,
+([`intent-and-plan.md`](intent-and-plan.md)) are complete on the code side, every suite is green apart from the audio-decoder tests this build container cannot run (see "Agent station redesign"),
 and Manas's rulings on the open questions are implemented. Nothing has yet run against a real
 carrier, a real Firebase sign-in, production data or a deployed environment. The launch (phase
 10) and the gated checks that need vendor accounts or real data are still to do.
@@ -2393,7 +2393,8 @@ keyset pages, the customer's name never the number (`0053_account_callbacks_inde
 the overdue page on 25 campaigns of 40,000 contacts, 3.4 s before it). Phase 4 (Join call, whisper,
 LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks at the fixed 30
 minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
-phone views nor the app's soft phone screens (LF24, LF39); the Callbacks page's campaign filter
+phone views nor the app's soft phone screens (LF24, LF39; since done by the agent station redesign,
+2026-11-20); the Callbacks page's campaign filter
 lists the board's first 25 campaigns. Test counts below.
 
 ### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
@@ -3404,8 +3405,9 @@ files are listed in [`modules.md`](modules.md).
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
-control on the cards. Phase 3's follow-ups: break limits on the campaign Agents tab (LF33), Need
-help on the console's inbound and soft phone views and the app's soft phone screens (LF24, LF39).
+control on the cards. Phase 3's follow-up: break limits on the campaign Agents tab (LF33). (Need
+help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done by the agent
+station redesign.)
 
 **Launch work** (phase 10):
 
