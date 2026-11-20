@@ -65,7 +65,7 @@ by the lead's run of lint and the touched packages' suites.
 
 | Stream | Status | Evidence |
 |---|---|---|
-| F | Merged 2026-11-20 | Migrations 0056–0060; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
+| F | Merged 2026-11-20 | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
 | C1 | In progress | |
 | M1 | Phase 0 merged 2026-11-20; wiring in progress | `flutter analyze` clean; `flutter test` 2121 passed on the merged branch |
 | S1 | In progress | |
