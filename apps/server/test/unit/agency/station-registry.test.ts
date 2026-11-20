@@ -379,6 +379,34 @@ describe('StationRegistry frame delivery', () => {
 // answer on the one screen a supervisor acts from. So this method throws instead,
 // and the route maps that to `connected: null` = unknown.
 // ---------------------------------------------------------------------------
+describe('StationRegistry.disconnectedSince (agent station BE-11)', () => {
+  it('records when a held station went; a reattach forgets it; a superseded socket closing records nothing', async () => {
+    // FALSIFIED: with the record dropped from `detach`, or the forget dropped from `attach`, this reds.
+    vi.useFakeTimers({ now: new Date('2026-11-20T10:00:00.000Z') });
+    try {
+      const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+      const first = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: first as any, ...ENTRY });
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      vi.setSystemTime(new Date('2026-11-20T10:01:00.000Z'));
+      await reg.detach('s1', first as any);
+      expect(reg.disconnectedSince(['s1', 's2'])).toEqual(new Map([['s1', new Date('2026-11-20T10:01:00.000Z')]]));
+      expect(reg.goneSessionIds()).toEqual(['s1']);
+      const second = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: second as any, ...ENTRY });
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      // A third socket supersedes the second; the second's late close is not a detach.
+      const third = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: third as any, ...ENTRY });
+      await reg.detach('s1', second as any);
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      expect(reg.goneSessionIds()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('StationRegistry.connectedBySession', () => {
   it('reports a held station as connected and an expired one as not', async () => {
     const redis = fakeRedis();

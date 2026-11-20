@@ -41,6 +41,7 @@ import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { publishCacheInvalidation } from '../../../cache/cache-invalidation.js';
 import { CAMPAIGN_STATS_CACHE } from '../../../agency/campaign-stats-reads.js';
 import { agentScriptForBootstrap } from '../../../agency/agent-script.js';
+import { dispositionsWithKnownIcons, phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 /**
  * `/available`, force-available and `/leave` while a wrap-up redial is in flight
@@ -324,7 +325,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       campaign_status: campaign.status,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
       station_token_expires_at: minted.expiresAt.toISOString(),
-      disposition_catalog: campaign.disposition_catalog ?? [],
+      // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
+      disposition_catalog: dispositionsWithKnownIcons(campaign.disposition_catalog),
       wrapup_seconds: campaign.wrapup_seconds,
       wrapup_auto_return: campaign.wrapup_auto_return,
       // Wrap-up redial (0008): the campaign's setting at join. `=== true` so the
@@ -348,6 +350,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // Agent station (BE-8): the campaign's script, absent when it has none, so the station
       // shows its no-script call screen and an older client gets the payload it knew.
       ...(script ? { script } : {}),
+      // Agent station (AS9): how the station shows the customer's number; the number is still sent.
+      phone_display: phoneDisplayOf(campaign.phone_display),
     };
     return reply.code(201).send(bootstrap);
   });

@@ -17,6 +17,7 @@ import type {
   AgencyBreakReason,
   AgencyContextDisplay,
   AgencyAgentScript,
+  AgencyPhoneDisplay,
   AgencyDisposition,
   AgencyManualCallDispositionSource,
   AgencyManualCallEndReason,
@@ -30,7 +31,6 @@ import type {
   AgencyOutcomeDispositions,
   AgencyOverrideKind,
   CarrierAccountPauseReason,
-  AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -127,8 +127,6 @@ export interface AgencyCampaignRecord {
    * `AGENCY_DAILY_TARGET_CALLS_MAX`; null: no target. Served on the campaign and in My day.
    */
   daily_target_calls: number | null;
-  /** Agent station (0056, AS9): how the station shows the customer's number. Copied by a retry. */
-  phone_display: AgencyPhoneDisplay;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
@@ -144,6 +142,12 @@ export interface AgencyCampaignRecord {
    * Written by the PATCH (`src/agency/agent-script.ts`); served on the bootstrap as `script`.
    */
   agent_script: AgencyAgentScript;
+  /**
+   * Agent station (AS9, 0056): how the station shows the customer's number, `full` (the column
+   * default) or `masked`. A display choice; the number is still sent. Written by the create and the
+   * PATCH (`src/agency/station-tiles.ts` checks it); served on the bootstrap as `phone_display`.
+   */
+  phone_display: AgencyPhoneDisplay;
   record_calls: boolean;
   analysis_profile_id: string | null;
   status: AgencyCampaignStatus;
@@ -501,6 +505,12 @@ export interface AgencyAgentSessionRecord {
   help_answered_at: Date | null;
   /** Need help: who answered it. */
   help_answered_by: string | null;
+  /**
+   * Need help (0059, agent station BE-9): the agent's state when the open request was raised
+   * (`AgencySessionHelp.state_at_raise`); NULL when none is raised, or raised before 0059. Cleared in
+   * every statement that clears `help_raised_at` (`ck_agency_agent_sessions_help_state`).
+   */
+  help_state: AgencyAgentState | null;
   /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;

@@ -14,6 +14,7 @@ import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
 import { stationCaps } from './station-upgrade.js';
+import { StationDetachTimes, type StationDisconnectsReader } from './station-detach-times.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -88,8 +89,14 @@ export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number
  * multi-replica change later is one `DialDispatcher` implementation rather than a
  * rewrite of the dial path.
  */
-export class StationRegistry {
+export class StationRegistry implements StationDisconnectsReader {
   private readonly stations = new Map<string, StationEntry>();
+  /**
+   * Agent station (BE-11): when each session's station went, in memory (`station-detach-times.ts`):
+   * written by {@link detach}, forgotten by {@link attach}. The floor's `disconnected_since` and the
+   * supervisors' `disconnected` alert read it ({@link disconnectedSince}).
+   */
+  private readonly detachTimes = new StationDetachTimes();
   /** A mobile station's protocol-ping probe, by session: its stop function. See {@link startProbe}. */
   private readonly probes = new Map<string, () => void>();
 
@@ -161,6 +168,7 @@ export class StationRegistry {
     // superseded socket's pongs must not keep its replacement alive.
     this.stopProbe(entry.sessionId);
     this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
+    this.detachTimes.attached(entry.sessionId);
     if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
     log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.caps.has('inbound') },
@@ -238,6 +246,7 @@ export class StationRegistry {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
+    this.detachTimes.detached(sessionId);
     const station: StationDetached = {
       sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
       agentUserId: entry.agentUserId, clientKind: entry.clientKind, caps: entry.caps,
@@ -364,6 +373,20 @@ export class StationRegistry {
 
   isLocallyOwned(sessionId: string): boolean {
     return this.stations.has(sessionId);
+  }
+
+  /**
+   * Agent station (BE-11): for each of these sessions whose station this process held and saw go
+   * (and has not seen come back), when it went. Memory only: empty after a restart. Says nothing
+   * about whether a station is held now (that is {@link connectedBySession}); a reader pairs the two.
+   */
+  disconnectedSince(sessionIds: readonly string[]): Map<string, Date> {
+    return this.detachTimes.disconnectedSince(sessionIds);
+  }
+
+  /** Every session whose station went here and has not come back (the alerts read's candidates). */
+  goneSessionIds(): string[] {
+    return this.detachTimes.goneSessionIds();
   }
 
   /**

@@ -124,6 +124,11 @@ function PresencePage({ d, meta, self }: { d: AgentReviewDataset; meta: string[]
                 Breaks by reason: {p.break_by_reason.map((b) => `${b.label} ${duration(b.seconds)}`).join(' · ')}
               </p>
             ) : null}
+            {p.break_overruns && p.break_overruns.breaks > 0 ? (
+              <p className="small muted" style={{ marginTop: 3 }}>
+                Breaks over their limit: {count(p.break_overruns.breaks)}, {duration(p.break_overruns.seconds_over)} over in all
+              </p>
+            ) : null}
           </>
         ) : (
           <p className="empty">No time on station in this window.</p>

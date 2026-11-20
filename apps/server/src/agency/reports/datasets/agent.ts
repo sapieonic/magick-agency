@@ -165,7 +165,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
   const statsQuery = parseAgentStatsQuery({ from: run.range_from.toISOString(), to: run.range_to.toISOString(), bucket: 'day' });
   if (!statsQuery.ok) throw new Error(`agent record window refused: ${statsQuery.issues.map((i) => `${i.param} ${i.message}`).join('; ')}`);
 
-  const [stats, roster, intervals, attemptDays, outcomeCounts, callbacks, dncMarked, softphoneCalls, sentiment, names, softphoneSettings] = await Promise.all([
+  const [stats, roster, intervals, attemptDays, outcomeCounts, callbacks, dncMarked, softphoneCalls, sentiment, names, softphoneSettings, breakOverruns] = await Promise.all([
     agencyAgentStatsRepository.stats({ tenantId: run.tenant_id, accountId, agentUserId }, statsQuery.filters).then(wire),
     readAccountRoster({ tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to, includeInactive: true }),
     agencyReportDatasetRepository.agentStateIntervals(scope),
@@ -177,6 +177,8 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     supervisor ? agencyReportDatasetRepository.agentSentiment(scope) : Promise.resolve([]),
     agentNamesOrNone([agentUserId], run.tenant_id, 'report agent review'),
     agencySoftphoneSettingsRepository.get(run.tenant_id, accountId),
+    // BE-12: the breaks that ended in the window past their limit.
+    agencyReportDatasetRepository.agentBreakOverruns(scope),
   ]);
 
   signal?.throwIfAborted();
@@ -246,6 +248,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
         .map(([reason, seconds]) => ({ reason, label: breakReasonLabel(reason, breakCatalogs), seconds }))
         .sort((a, b) => b.seconds - a.seconds || a.reason.localeCompare(b.reason)),
       drops: daily.reduce((s, x) => s + x.drops, 0),
+      break_overruns: breakOverruns,
     },
     daily,
     timeline: buildTimeline(intervals, days, daily, clipEnd),

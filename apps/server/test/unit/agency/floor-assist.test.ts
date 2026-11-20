@@ -43,7 +43,7 @@ let repo: Record<string, ReturnType<typeof vi.fn>>;
 beforeEach(() => {
   vi.clearAllMocks();
   repo = {
-    raise: vi.fn(async () => ({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: 'call-1' }, expired: null })),
+    raise: vi.fn(async () => ({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: 'call-1', state: 'on_call' }, expired: null })),
     cancel: vi.fn(async () => ended({ expired: false })),
     answer: vi.fn(async () => ({ ...ended(), expired: false, answered_at: new Date(RAISED.getTime() + 42_000) })),
     endWithSession: vi.fn(async () => ended({ expired: false })),
@@ -69,24 +69,33 @@ const service = () => new FloorAssistService(deps);
 const events = () => deps.frames.map(([, f]) => f);
 
 describe('raise', () => {
-  it('raises once: the open request answered, one audit row by the agent, one metric; no frame (the HTTP answer says it)', async () => {
-    const out = await service().raise(SESSION, 'call-1');
-    expect(out).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
+  it('raises once: the open request answered with the state it was raised in, one audit row by the agent, one metric; no frame (the HTTP answer says it)', async () => {
+    const out = await service().raise(SESSION, 'call-1', 'on_call');
+    expect(out).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1', state_at_raise: 'on_call' });
     expect(repo['raise']).toHaveBeenCalledWith({
-      sessionId: SESSION.id, tenantId: 't-1', accountId: 'a-1', callId: 'call-1', expiryMs: AGENCY_HELP_EXPIRY_MS,
+      sessionId: SESSION.id, tenantId: 't-1', accountId: 'a-1', callId: 'call-1', state: 'on_call', expiryMs: AGENCY_HELP_EXPIRY_MS,
     });
     expect(deps.audits).toEqual([expect.objectContaining({
       action: 'agency_session.help_raised', actor_type: 'human', user_id: 'agent-1', resource_type: 'agency_session',
       resource_id: SESSION.id, tenant_id: 't-1', account_id: 'a-1', campaign_id: 'c-1',
-      details: { raised_at: RAISED.toISOString(), call_id: 'call-1', campaign_id: 'c-1' },
+      details: { raised_at: RAISED.toISOString(), call_id: 'call-1', state: 'on_call', campaign_id: 'c-1' },
     })]);
     expect(metrics.raised).toHaveBeenCalledTimes(1);
+    expect(metrics.raised).toHaveBeenCalledWith('on_call');
     expect(events()).toEqual([]);
   });
 
+  it('BE-9: raised while Ready (no call), the state recorded; a request raised before the state was recorded has no state_at_raise', async () => {
+    repo['raise']!.mockResolvedValue({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null, state: 'available' }, expired: null });
+    expect(await service().raise(SESSION, null, 'available')).toEqual({ raised_at: RAISED.toISOString(), call_id: null, state_at_raise: 'available' });
+    expect(metrics.raised).toHaveBeenCalledWith('available');
+    repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null, state: null }, expired: null });
+    expect(await service().raise(SESSION, null, 'break')).toEqual({ raised_at: RAISED.toISOString(), call_id: null });
+  });
+
   it('raising again while one is open is idempotent: the open one answered, no audit row, no metric', async () => {
-    repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expired: null });
-    expect(await service().raise(SESSION, 'call-2')).toEqual({ raised_at: RAISED.toISOString(), call_id: null });
+    repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null, state: 'wrapup' }, expired: null });
+    expect(await service().raise(SESSION, 'call-2', 'on_call')).toEqual({ raised_at: RAISED.toISOString(), call_id: null, state_at_raise: 'wrapup' });
     expect(deps.audits).toEqual([]);
     expect(metrics.raised).not.toHaveBeenCalled();
   });
@@ -96,7 +105,7 @@ describe('raise', () => {
     repo['raise']!.mockResolvedValue({
       raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expired: ended({ raised_at: old }),
     });
-    await service().raise(SESSION, null);
+    await service().raise(SESSION, null, 'wrapup');
     expect(events()).toEqual([{ event: 'help_cleared', raised_at: old.toISOString(), reason: 'expired' }]);
     expect(deps.audits.map((a) => [a['action'], a['actor_type']])).toEqual([
       ['agency_session.help_expired', 'system'], ['agency_session.help_raised', 'human'],
@@ -106,7 +115,7 @@ describe('raise', () => {
 
   it('a session that left meanwhile: no help, nothing written', async () => {
     repo['raise']!.mockResolvedValue({ raised: false, help: null, expired: null });
-    expect(await service().raise(SESSION, null)).toBeNull();
+    expect(await service().raise(SESSION, null, 'available')).toBeNull();
     expect(deps.audits).toEqual([]);
   });
 });

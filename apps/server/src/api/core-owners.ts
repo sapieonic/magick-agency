@@ -130,6 +130,10 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   // The Live floor (`agency/floor.ts`, decision B28b): SQL, and the station registry's Redis keys
   // for liveness (`connectedBySession`), which every process reads alike; no session's own state.
   'GET /floor': 'none',
+  // The supervisors' alerts (agent station AS16, `agency/floor-alerts.ts`): SQL, the liveness keys and
+  // the detach times the runtime holds for the whole server (the primary's directory with media
+  // workers), as the floor.
+  'GET /floor/alerts': 'none',
 };
 
 /** A matched internal route: its owner kind and the path's `:id`, if it has one. */

@@ -1146,8 +1146,7 @@ what was built.
 - **BE-2 write**: `daily_target_calls` on PATCH (patchable at any status, `null` clears) and on
   create; `validateDailyTargetCalls` in both campaign-config validators (a whole number 1 to 2000 or
   null). Audited like every setting (`agency_campaign.config_changed` with `{ from, to }`). A create
-  also stores `phone_display` (refused unless `full` / `masked`, in the create handler; S2's
-  validator replaces that check when it lands) and `agent_script` (S3's `agentScriptIssues`,
+  also stores `phone_display` (S2's `phoneDisplayIssues`, `full` / `masked`) and `agent_script` (S3's `agentScriptIssues`,
   stored through `normalizeAgentScript`), outside `CAMPAIGN_INSERT_COLUMNS_SQL` so the retry create's
   positions do not move. A retry copies all three from the parent (not `config_overrides` keys).
 - **BE-3 booker**: `callbackBookerOf` (`agency/call-later.ts`) in the disposition route: the agent's

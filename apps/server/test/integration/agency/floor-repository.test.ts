@@ -291,6 +291,7 @@ describe('another account of the tenant: left_at, and the wrap-up window served'
 });
 
 describe('the internal handler, GET /floor', () => {
+  const TEA_WENT = new Date('2026-11-20T09:00:00.000Z');
   let app: FastifyInstance;
   let connected: (ids: readonly string[]) => Promise<Map<string, boolean>>;
 
@@ -299,7 +300,14 @@ describe('the internal handler, GET /floor', () => {
     clearLiveCallAhtCacheForTests();
     connected = async (ids) => new Map(ids.map((id) => [id, id !== sessions['tea']]));
     app = Fastify({ logger: false });
-    const runtime = { stations: { connectedBySession: (ids: readonly string[]) => connected(ids) } };
+    // BE-11: the tea agent's station went at TEA_WENT (the runtime's detach times); the others are held.
+    const runtime = {
+      stations: { connectedBySession: (ids: readonly string[]) => connected(ids) },
+      stationDisconnects: {
+        disconnectedSince: (ids: readonly string[]) => new Map(ids.filter((id) => id === sessions['tea']).map((id) => [id, TEA_WENT])),
+        goneSessionIds: () => [sessions['tea']!],
+      },
+    };
     await app.register(async (sub) => registerFloorRoutes(sub, runtime as never), { prefix: '/api/v1/agency' });
     await app.ready();
   });
@@ -324,12 +332,12 @@ describe('the internal handler, GET /floor', () => {
         call_id: liveCallId, origin: 'campaign', correlation_id: expect.any(String), customer_name: 'Ada Lovelace',
         connected_at: ago(80_000).toISOString(), aht_seconds: expect.anything(), recording: true, listener_user_ids: [],
       },
-      calls_today: 5, left_at: null, help: null,
+      calls_today: 5, left_at: null, help: null, disconnected_since: null,
     });
     expect(JSON.stringify(body)).not.toContain('9811122233');
     // LF6, LF20: the soft phone's break has no limit (never a long break); Tea has its catalog's.
     expect(of('soft')).toMatchObject({ break_reason: 'soft_phone', break_label: 'Soft phone', break_limit_minutes: null, campaign_id: null, call: null });
-    expect(of('tea')).toMatchObject({ break_label: 'Tea', break_limit_minutes: 12, connected: false });
+    expect(of('tea')).toMatchObject({ break_label: 'Tea', break_limit_minutes: 12, connected: false, disconnected_since: TEA_WENT.toISOString() });
     // Not on a break: no limit, whatever the column's last reason (`lunch`, a built-in with one).
     expect(of('onCompleted')).toMatchObject({ break_reason: null, break_limit_minutes: null });
     expect(of('never')).toMatchObject({ connected: null, calls_today: 0, left_at: null, call: null });

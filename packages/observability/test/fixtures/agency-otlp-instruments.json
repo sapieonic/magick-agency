@@ -148,6 +148,14 @@
     ]
   },
   {
+    "name": "agency_break_overruns_total",
+    "kind": "Counter",
+    "description": "Breaks that ran past their reason's limit, counted when the break ended (a reserved break, a reason with no limit and a break cut by a restart never count)",
+    "attributes": [
+      "tenant_id"
+    ]
+  },
+  {
     "name": "agency_campaign_slots_allocated",
     "kind": "ObservableGauge",
     "description": "Live attempts of a running campaign plus the new dials the pacing round granted it (contended accounts only)",
@@ -201,8 +209,10 @@
   {
     "name": "agency_help_requests_raised_total",
     "kind": "Counter",
-    "description": "Need help requests raised by agents (a repeated raise while one is open is not counted)",
-    "attributes": []
+    "description": "Need help requests raised by agents, by the agent's state when they raised it: offline, available, reserved, on_call, wrapup or break (a repeated raise while one is open is not counted)",
+    "attributes": [
+      "state"
+    ]
   },
   {
     "name": "agency_inbound_answer_seconds",

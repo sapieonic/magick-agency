@@ -7,11 +7,11 @@ import { getTenantId, getAccountId, getOriginator } from '../../middleware/auth.
 import { auditLogger } from '../../../audit/audit-logger.js';
 import { agencyAgentCallerIdRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import { AGENCY_CALLER_ID_DEDICATED_CODE } from '@magick-agency/contracts/api/agency/agent-caller-id';
-import { AGENCY_PHONE_DISPLAYS } from '@magick-agency/contracts/agency';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type {
   AgencyAssignmentMode,
+  AgencyPhoneDisplay,
   AgencyCallbackFallback,
   AgencyCampaignStatus,
   AgencyOnUnstaff,
@@ -163,11 +163,6 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // '20:00' }` alone stores 20:00–20:00 and never dials. Validating the body in
     // isolation cannot see that, and the default path is the ordinary one.
     if (configRejected(reply, body, CAMPAIGN_CONFIG_COLUMN_DEFAULTS)) return reply;
-    // AS9: the number display, `full` or `masked` (0056's CHECK, refused here as a 400, not a 500).
-    if (body?.phone_display !== undefined
-      && !(AGENCY_PHONE_DISPLAYS as readonly unknown[]).includes(body.phone_display)) {
-      return replyValidationFailed(reply, { phone_display: `phone_display must be one of: ${AGENCY_PHONE_DISPLAYS.join(', ')}.` });
-    }
 
     if (await abandonAnnouncementRejected(request, reply, body?.abandon_announcement_id)) return reply;
 
@@ -211,11 +206,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       outcome_dispositions: body?.outcome_dispositions,
       // Inbound sticky routing (0024). Omitted ⇒ `true`; shape-checked by `configRejected`.
       inbound_sticky_enabled: body?.inbound_sticky_enabled as boolean | undefined,
-      // The agent station's settings (0056), each checked above: the daily target (BE-2; omitted
-      // or null ⇒ none), the number display (AS9; omitted ⇒ `full`) and the script (BE-8, stored
-      // with its texts trimmed as the PATCH stores it; omitted ⇒ none).
+      // The agent station's settings (0056), each shape-checked by `configRejected`: the daily
+      // target (BE-2; omitted or null ⇒ none), the number display (AS9; omitted ⇒ `full`) and the
+      // script (BE-8, stored with its texts trimmed as the PATCH stores it; omitted ⇒ none).
       daily_target_calls: body?.daily_target_calls as number | null | undefined,
-      phone_display: body?.phone_display as string | undefined,
+      phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
       agent_script: body?.agent_script !== undefined ? normalizeAgentScript(body.agent_script) : undefined,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,

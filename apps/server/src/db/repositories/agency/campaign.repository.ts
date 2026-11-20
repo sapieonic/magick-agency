@@ -15,6 +15,7 @@ import {
 } from '../../models/agency.model.js';
 import type {
   AgencyAssignmentMode,
+  AgencyPhoneDisplay,
   AgencyCallbackFallback,
   AgencyCampaignActor,
   AgencyCampaignLineage,
@@ -81,6 +82,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // Agent station (BE-8, 0056): the script, an operator setting patchable at any status; a
   // session reads it at join (the bootstrap). JSONB, so it is in the list below too.
   'agent_script',
+  // Agent station (AS9, 0056): how the station shows the customer's number; an operator setting
+  // patchable at any status, read by a session at join (the bootstrap).
+  'phone_display',
 ]);
 
 /**
@@ -144,7 +148,7 @@ export class AgencyCampaignRepository {
     /** Agent station (0056, BE-2). Omitted or null ⇒ NULL, no target. */
     daily_target_calls?: number | null;
     /** Agent station (0056, AS9). Omitted ⇒ `'full'`, the column DEFAULT. */
-    phone_display?: string;
+    phone_display?: AgencyPhoneDisplay;
     /** Agent station (0056, BE-8), already normalised (`normalizeAgentScript`). Omitted ⇒ `{}`, no script. */
     agent_script?: unknown;
   }): Promise<AgencyCampaignRecord> {

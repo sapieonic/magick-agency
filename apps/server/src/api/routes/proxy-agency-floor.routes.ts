@@ -4,6 +4,8 @@ import { hasPermission } from '@magick-agency/contracts/rbac';
 import {
   AGENCY_FLOOR_QUERY_ERROR_CODE,
   type AgencyFloorAgent,
+  type AgencyFloorAlert,
+  type AgencyFloorAlertsResponse,
   type AgencyFloorResponse,
 } from '@magick-agency/contracts/api/agency/floor';
 import {
@@ -25,7 +27,7 @@ import { dialerEnabled } from './helpers/dialer-gate.js';
 import { noStoreHook } from './helpers/no-store.js';
 import { sendRefusal } from './helpers/refusal.js';
 import { notListenableReason } from './proxy-agency-live-calls.routes.js';
-import type { CoreFloorAgent, CoreFloorResponse } from './agency/floor.js';
+import type { CoreFloorAgent, CoreFloorAlertsResponse, CoreFloorResponse } from './agency/floor.js';
 
 const log = createChildLogger({ component: 'proxy-agency-floor' });
 
@@ -48,6 +50,11 @@ const log = createChildLogger({ component: 'proxy-agency-floor' });
  *    of the account's flags per poll. The floor needs neither (the live calls routes refuse without
  *    the listening flag): a flag store that cannot be read makes every call unlistenable and every
  *    row's `help` null, never the floor a 503.
+ *  - `GET /floor/alerts` (agent station AS16): the account's open alerts (`agency/floor-alerts.ts`,
+ *    through `callCore`) with each agent's name. `help` alerts only while
+ *    `agency_floor_assist_enabled` is on for the account (none while it is off or cannot be read,
+ *    as the floor's `help`); `break_over` and `disconnected` whatever it says. Polled every 5 s from
+ *    the console's shell by every supervisor tab.
  *  - `GET /promises/summary?from=&to=`: the promises to pay recorded in the window, per campaign
  *    (`AgencyPromiseSummaryRepository`, SQL only, this layer's own read as the insights reads
  *    are), and the account's active campaigns whose catalog asks for a promise.
@@ -78,6 +85,12 @@ const defaultFloorRouteDeps: FloorRouteDeps = {
   promiseCampaignIds: (t, a) => agencyPromiseSummaryRepository.promiseCampaignIds(t, a),
   now: () => new Date(),
 };
+
+function isCoreFloorAlerts(body: unknown): body is CoreFloorAlertsResponse {
+  if (!body || typeof body !== 'object') return false;
+  const b = body as Record<string, unknown>;
+  return Array.isArray(b['alerts']) && typeof b['as_of'] === 'string';
+}
 
 function isCoreFloor(body: unknown): body is CoreFloorResponse {
   if (!body || typeof body !== 'object') return false;
@@ -207,12 +220,43 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
           left_at: rest.left_at,
           // Need help (LF4), only while the floor assist flag is on (LF11).
           help: assist ? rest.help ?? null : null,
+          // BE-11: when the station went (memory; null after a restart and whenever `connected` is not false).
+          disconnected_since: rest.disconnected_since ?? null,
         };
       });
       const body: AgencyFloorResponse = {
         agents,
         totals: { on_shift: core.totals.on_shift, assigned: core.totals.assigned },
         as_of: core.as_of,
+      };
+      return reply.send(body);
+    },
+  );
+
+  // ── GET /floor/alerts ─────────────────────────────────────────────────────
+  app.get(
+    '/floor/alerts',
+    { preHandler: [requirePermission('agency.supervise')] },
+    async (request, reply) => {
+      const scoped = await scope(request, reply);
+      if (!scoped) return reply;
+      const [result, snapshot] = await Promise.all([
+        deps.callCore({ method: 'GET', path: '/agency/floor/alerts', ...scoped }),
+        accountFlags(scoped.tenantId, scoped.accountId),
+      ]);
+      if (result.status !== 200) return reply.code(result.status).send(result.body);
+      if (!isCoreFloorAlerts(result.body)) {
+        log.error({ tenantId: scoped.tenantId }, 'floor alerts: the internal handler answered an unrecognised body');
+        return reply.code(502).send({ error: 'Bad Gateway', message: 'The alerts could not be read.' });
+      }
+      const assist = floorAssist(snapshot, scoped.tenantId);
+      const kept = result.body.alerts.filter((a) => assist || a.kind !== 'help');
+      const names = kept.length > 0
+        ? await deps.names(kept.map((a) => a.agent_user_id), scoped.tenantId)
+        : new Map<string, string | null>();
+      const body: AgencyFloorAlertsResponse = {
+        alerts: kept.map((a) => ({ ...a, agent_name: names.get(a.agent_user_id) ?? null }) as AgencyFloorAlert),
+        as_of: result.body.as_of,
       };
       return reply.send(body);
     },
