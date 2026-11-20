@@ -114,6 +114,16 @@ describe('What happened?\'s pay date row (the redesigned station, spec 05)', () 
     expect(screen.getByTestId('promise-resolved').textContent).toBe('Will pay on 18 Aug');
     expect(screen.getByTestId('promise-follow-up').textContent).toBe('We will call again on 21 Aug.');
   });
+
+  it('offers Full and Half of the amount due as plain numbers, and fills the amount with either', () => {
+    const onChange = tiles('ptp', {}, '12500');
+    const full = screen.getByRole('button', { name: 'Full · 12,500' });
+    fireEvent.click(full);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseAmount: '12500' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Half · 6,250' }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseAmount: '6250' }));
+    expect(screen.getByTestId('promise-row').textContent).not.toMatch(/₹/);
+  });
 });
 
 describe('printing a promise (PT5: no currency, en-IN grouping, the customer\'s day)', () => {

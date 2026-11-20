@@ -23,6 +23,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import { VISUAL_CUE_SPECS, visualCueSignature } from '../../utils/agencyCues';
 import { CUE_PREFS_STORAGE_KEY } from '../../utils/agencyCuePrefs';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
@@ -180,7 +181,10 @@ const BOOTSTRAP: AgencySessionBootstrap = {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
+// A microphone that opens: `A` is Start of day's Start work, which 01b (no microphone) does not offer.
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   FakeAudioContext.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
@@ -207,6 +211,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   window.localStorage.clear();

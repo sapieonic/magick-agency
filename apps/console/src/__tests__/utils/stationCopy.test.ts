@@ -10,6 +10,7 @@ import {
   presenceRefusedLine,
   redialRefusedLine,
   saveRefusedLine,
+  breakRefusedLine,
   savedLine,
   STATION_BLOCK_COPY,
   STATION_COPY,
@@ -22,10 +23,10 @@ import {
   softphoneSwitchRefusedLine,
   missedReleaseLine,
   noCallsSubtitle,
+  NO_CALLS_STOPPED_WORDS,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
 import { STATION_HELP_COPY } from '../../utils/agency/stationHelp';
-import { BREAK_REJECTED_COPY } from '../../hooks/useBreakQueue';
 import { AGENCY_SOFTPHONE_ERROR_CODES } from '../../types/softphone';
 
 /**
@@ -97,6 +98,7 @@ const ALL = [
     redialRefusedLine(code, 409),
     redialRefusedLine(code, null),
     saveRefusedLine(code),
+    breakRefusedLine(code),
   ]),
   ...JOIN_CODES.flatMap((code) => [403, 404, 409, 500, 503, null].flatMap((status) => [
     joinRefusedLine({ code, status }),
@@ -106,7 +108,6 @@ const ALL = [
     ['station_on_other_device', 'session_ended', null].map((code) => switchFailedLine(stage, 'Renewals', code))),
   ...everyString(SOFTPHONE_CLOSE_COPY),
   ...everyString(STATION_HELP_COPY),
-  BREAK_REJECTED_COPY,
   ...[...AGENCY_SOFTPHONE_ERROR_CODES, 'unknown', null].flatMap((code) => [softphoneSwitchRefusedLine(code), backToCallsRefusedLine(code)]),
   ...['permission_denied', 'no_device', 'device_busy', 'device_lost', 'audio_blocked', 'unsupported', 'x'].flatMap((k) => Object.values(micProblemLine(k)).filter((v): v is string => typeof v === 'string')),
   savedLine({ label: 'Call later', nextAttemptAt: '2026-11-20T09:30:00.000Z', callbackRequestedAt: '2026-11-20T03:30:00.000Z', dncRecorded: false }),
@@ -121,13 +122,21 @@ const ALL = [
     helpRefusedLine({ action: 'raise', code, status: 403 }),
     helpRefusedLine({ action: 'raise', code, status: 500 }),
   ]),
-  ...(['list_exhausted', 'paused_by_supervisor', null] as const).flatMap((campaignReason) =>
+  ...everyString(NO_CALLS_STOPPED_WORDS),
+  ...(['list_exhausted', 'paused_by_supervisor', 'stopped_by_supervisor', 'auto_paused', 'started', 'resumed', null] as const).flatMap((campaignReason) =>
     (['queue_empty', 'waiting_for_retry', 'callbacks_later', 'outside_calling_hours', null] as const).flatMap((queueReason) => [
       noCallsSubtitle({ campaignReason, dialing: false, queueReason, nextDueAt: null }),
       noCallsSubtitle({ campaignReason, dialing: true, queueReason, nextDueAt: '2026-11-20T09:30:00Z' }),
     ]),
   ),
 ].filter(Boolean);
+
+describe('02c: why calls stopped, one table (spec §3 02c)', () => {
+  it('blames the supervisor only for a supervisor’s pause or stop', () => {
+    const blaming = Object.entries(NO_CALLS_STOPPED_WORDS).filter(([, line]) => /supervisor/i.test(line)).map(([reason]) => reason);
+    expect(blaming.sort()).toEqual(['paused_by_supervisor', 'stopped_by_supervisor']);
+  });
+});
 
 describe('the station’s own words (AS15, spec §6.6)', () => {
   it('collects a real body of copy, so the checks below cannot pass on nothing', () => {

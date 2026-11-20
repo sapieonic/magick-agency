@@ -259,11 +259,11 @@ function bandFor(screen: StationScreen, input: StationViewInput): Pick<StationVi
 }
 
 /**
- * Need help, top right (AS5). On every working screen once the server accepts a raise there
- * (BE-9, `helpEverywhere`); on 04 and 05 only when an older server has said it does not; an open
- * request stays reachable wherever it is (its press cancels). Never on Start of day, 11 or 12,
- * and not while the internet is down (the press cannot reach anyone; 09 says to call the
- * supervisor to the desk).
+ * Need help, top right (AS5, spec §3: every screen but 11 and 12). On every screen once the server
+ * accepts a raise there (BE-9, `helpEverywhere`; a joined agent not yet working is accepted too, so
+ * Start of day and 01b have it); on 04 and 05 only when an older server has said it does not; an
+ * open request stays reachable wherever it is (its press cancels). Never on 11 or 12, and not while
+ * the internet is down (the press cannot reach anyone; 09 says to call the supervisor to the desk).
  */
 function needHelpShown(screen: StationScreen, input: StationViewInput): boolean {
   if (!input.helpOffered) return false;
@@ -271,8 +271,8 @@ function needHelpShown(screen: StationScreen, input: StationViewInput): boolean 
   if (input.connection !== 'open') return false;
   if (input.helpOpen) return true;
   if (screen === 'on_call' || screen === 'happened') return true;
-  // BE-9: every working screen once the server accepts a raise there.
-  return input.helpEverywhere === true && screen !== 'start' && screen !== 'check_failed';
+  // BE-9: every screen once the server accepts a raise there, Start of day included.
+  return input.helpEverywhere === true;
 }
 
 /**

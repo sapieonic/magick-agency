@@ -120,8 +120,9 @@ describe('the customer card (spec 03/04, today’s data)', () => {
     expect(card.initials).toBe('RG');
     expect(card.place).toBe('Siddipet');
     expect(card.phone).toBe('+91 98765 43321');
+    // An older server's untyped amount is shown as written: ₹ only on a fact typed `money`.
     expect(card.facts.map((f) => [f.label, f.value])).toEqual([
-      ['Amount due', '₹12,500'],
+      ['Amount due', '12500'],
       ['Due date', '20 Nov'],
       ['Last call', '12 Nov'],
     ]);
@@ -297,6 +298,15 @@ describe('My day and the call-later list (BE-1 to BE-3)', () => {
     const pool = fromMyDay(agentReadsFixture().my_day_pool_no_target);
     expect(pool.myDay).toMatchObject({ target: null, willPay: null });
     expect(pool.callLaters).toMatchObject({ rows: [], comesToMe: false, leftTodayGoesTo: 'pool' });
+  });
+
+  it('draws a target only for a metric it knows (calls), as the app does', () => {
+    const day = agentReadsFixture().my_day;
+    expect(fromMyDay({ ...day, target: { metric: 'calls', value: 120 } }).myDay?.target).toBe(120);
+    // A metric a newer server adds is not shown as a number of calls.
+    expect(fromMyDay({ ...day, target: { metric: 'will_pay' as never, value: 30 } }).myDay?.target).toBeNull();
+    expect(fromMyDay({ ...day, target: { metric: 'calls', value: 0 } }).myDay?.target).toBeNull();
+    expect(fromMyDay({ ...day, target: null }).myDay?.target).toBeNull();
   });
 
   it('the fallback list never names a customer by their number', () => {

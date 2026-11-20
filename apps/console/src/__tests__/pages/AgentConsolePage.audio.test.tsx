@@ -897,12 +897,16 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     gumResult = denied;
 
     await mounted();
+
+    // The redesigned station checks the microphone when Start of day opens (spec 01b): the band
+    // says it is blocked before the agent has pressed anything, and Start work (or `A`) is not
+    // on that screen, so nothing goes available over a microphone that cannot work.
+    await waitFor(() => expect(screen.getByTestId('band-title').textContent).toBe('Microphone is blocked'));
     act(() => {
       fireEvent.keyDown(document, { key: 'a' });
     });
-
-    const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('blocked');
+    await act(async () => {});
+    expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
     // And no attempt was ever reserved — the point is that this happened early.
     expect(screen.queryByText('+91 98765 43210')).toBeNull();
   });

@@ -5,7 +5,8 @@ import styles from './Station.module.css';
 
 /**
  * The campaign's script on the call screens (BE-8, spec 03 and 04). The lines arrive filled
- * (`stationScript.ts`); each has a speaker that reads it aloud where the browser can speak (AS13).
+ * (`stationScript.ts`). The opening line has a speaker that reads it aloud where the browser can
+ * speak (AS13), until the call connects; What to say, on the call, has none.
  */
 export interface ReadAloud {
   available: boolean;
@@ -41,7 +42,12 @@ export function ScriptOpeningCard({ line, readAloud }: { line: string; readAloud
  * Where the agent is lives on this screen only (the server keeps none): the page mounts it keyed
  * on the call, so it starts afresh with each call.
  */
-export function ScriptStepsCard({ steps, readAloud }: { steps: readonly string[]; readAloud: ReadAloud }) {
+/*
+  No speaker on the steps: they are on screen only while the customer is on the line, and the
+  device's speech can reach the customer through the agent's microphone (Read aloud is kept to
+  before the call connects and to What happened?).
+*/
+export function ScriptStepsCard({ steps }: { steps: readonly string[] }) {
   const [done, setDone] = useState(0);
   const count = Math.min(done, steps.length);
   return (
@@ -67,7 +73,6 @@ export function ScriptStepsCard({ steps, readAloud }: { steps: readonly string[]
                 <span className={styles.scriptNumber} aria-hidden="true">{isDone ? <Check size={16} strokeWidth={3} /> : i + 1}</span>
                 <span className={styles.scriptText}>{line}</span>
               </button>
-              <SpeakButton line={line} label={STATION_COPY.readStepAloud(i + 1)} readAloud={readAloud} testId={`script-step-say-${i + 1}`} />
             </li>
           );
         })}

@@ -21,8 +21,8 @@ import { calendarDay, clockTime, dayMonth, initials, phoneForDisplay, promisedAm
  * ₹ with Indian grouping goes only on a `money` fact the server could read, "20 Nov" only on a
  * read `date`; any other value shows exactly as uploaded. Tiles go amount due, due date, then the
  * rest (the app's order, `factTilesInOrder`). From an older server without `facts`, the card keeps
- * phase 0's reading: name and place guessed from the column names, ₹ and "20 Nov" only when the
- * text plainly is an amount or a date.
+ * phase 0's reading: name and place guessed from the column names, "20 Nov" when the text plainly
+ * is a date, and an amount shown as written (no ₹ on a guess).
  */
 export interface CustomerFact {
   /** Stable key for React and tests. */
@@ -62,10 +62,14 @@ const PLACE = /city|town|district|village|branch|region|zone|state|place|locatio
 const MONEY_LABEL = /amount|balance|due(?!.*date)|outstanding|premium|emi|total|overdue|arrear/i;
 const DATE_LABEL = /date|due.?on|due.?by|day/i;
 
+/**
+ * Phase 0's reading of an untyped hero column (an older server without `facts`). An amount is only
+ * recognised, for the Full / Half chips, and shown exactly as uploaded: ₹ goes only on a fact the
+ * server typed `money` (Manas, 2026-11-20), never on a guess. A plain date reads as "20 Nov".
+ */
 function factFrom(label: string, value: string, index: number): CustomerFact {
-  if (MONEY_LABEL.test(label)) {
-    const money = rupees(value);
-    if (money) return { key: `hero-${index}`, label, value: money, kind: 'money' };
+  if (MONEY_LABEL.test(label) && promisedAmount(value) !== null) {
+    return { key: `hero-${index}`, label, value: value.trim(), kind: 'money' };
   }
   if (DATE_LABEL.test(label)) {
     const day = calendarDay(value);

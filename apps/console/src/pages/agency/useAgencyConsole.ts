@@ -14,7 +14,7 @@ import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { breakLimitFor } from '../../utils/agency/breakLimits';
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
-import { useBreakQueue } from '../../hooks/useBreakQueue';
+import { useBreakQueue, type BreakRefusal } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
 import { useWrapupRedial, type RedialPadBlock, type WrapupRedialState } from '../../hooks/useWrapupRedial';
 import { useRedialCarry } from '../../hooks/useRedialCarry';
@@ -133,8 +133,10 @@ export interface AgencyConsoleState {
   /** `method` is analytics-only — which input triggered the change. */
   goAvailable: (method?: 'shortcut' | 'click') => void;
   endBreak: (method?: 'shortcut' | 'click') => void;
-  requestBreak: (code: string) => void;
-  breakRejection: string | null;
+  /** Resolves true once the server took the break, false when it refused (`breakRejection` says why). */
+  requestBreak: (code: string) => Promise<boolean>;
+  breakRejection: BreakRefusal | null;
+  clearBreakRejection: () => void;
   breakBusy: boolean;
   pendingBreakLabel: string | null;
   cancelBreak: () => void;
@@ -514,6 +516,7 @@ export function useAgencyConsole(
     endBreak: (method?: 'shortcut' | 'click') => void goAvailable(method, 'end_break'),
     requestBreak: breaks.requestBreak,
     breakRejection: breaks.breakRejection,
+    clearBreakRejection: breaks.clearBreakRejection,
     breakBusy: breaks.breakBusy,
     pendingBreakLabel: labelFor(breaks.pendingBreakCode),
     cancelBreak: breaks.cancelBreak,
