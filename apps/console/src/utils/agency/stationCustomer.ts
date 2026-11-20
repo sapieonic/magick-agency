@@ -1,25 +1,28 @@
 import type {
   AgencyContextDisplay,
+  AgencyCustomerFacts,
   AgencyDisposition,
+  AgencyFactTile,
   AgencyPriorAttempt,
   AgencyReservedAttempt,
 } from '../../types/agency';
 import { resolveContextFields } from '../agencyContext';
 import { priorDispositionLabel } from '../agencyPriorAttempts';
 import { ATTEMPT_OUTCOME_WORDS } from './stationCopy';
-import { calendarDay, dayMonth, initials, rupees } from './stationFormat';
+import { calendarDay, clockTime, dayMonth, initials, rupees } from './stationFormat';
 
 /**
  * The customer card on Call coming, On call and What happened? (spec §3 03/04, §5.3), from the
- * reserved attempt and the campaign's `context_display`, with only today's data.
+ * reserved attempt, the campaign's `context_display` and the bootstrap's `phone_display` (AS9).
  *
- * ── Where new data slots in ──────────────────────────────────────────────────
- * Phase 0 guesses the name and place from the hero columns' names, and shows the other hero
- * columns as they were uploaded (with ₹ and "20 Nov" only when the text plainly is an amount or a
- * date). When the server sends typed facts (`attempt.facts`, BE-6) and column roles
- * (`context_display.roles`), {@link customerCard} takes them first and the guesses go; when it
- * sends the campaign's `phone_display` (AS9), `phone` is masked here. A field that is not there
- * yet is simply not shown.
+ * ── Typed facts first (BE-6) ─────────────────────────────────────────────────
+ * When the panel carries `attempt.facts`, the server has already said which value is the name, the
+ * place and each tile, and parsed the money and dates: the card shows those and guesses nothing.
+ * ₹ with Indian grouping goes only on a `money` fact the server could read, "20 Nov" only on a
+ * read `date`; any other value shows exactly as uploaded. Tiles go amount due, due date, then the
+ * rest (the app's order, `factTilesInOrder`). From an older server without `facts`, the card keeps
+ * phase 0's reading: name and place guessed from the column names, ₹ and "20 Nov" only when the
+ * text plainly is an amount or a date.
  */
 export interface CustomerFact {
   /** Stable key for React and tests. */
@@ -40,10 +43,16 @@ export interface CustomerCard {
   /** "What they said last time": the latest earlier call's note. */
   lastSaid: string | null;
   /**
-   * "Call later · You said you will call at 3:00 PM" (spec 03b). Needs `attempt.callback` (BE-4),
-   * which the server does not send yet, so null today.
+   * "Call later · You said you will call at 3:00 PM" (spec 03b) from `attempt.callback` (BE-4);
+   * "Call later · Booked for 3:00 PM" when someone else booked it. Null on any other call.
    */
   callLaterTag: string | null;
+  /**
+   * The amount the Full / Half chips read on What happened?, as a plain decimal: the typed
+   * `amount_due` tile's parsed value (null when the server could not read it, which hides the
+   * chips). From an older server, phase 0's guess: the first hero that reads as money.
+   */
+  amountDue: string | null;
   /** "Calling again · 1 of 2" on a wrap-up redial. */
   redial: { number: number; of: number } | null;
 }
@@ -89,11 +98,60 @@ export function latestPrior(prior: readonly AgencyPriorAttempt[]): AgencyPriorAt
   return best;
 }
 
-export function customerCard(
+/** The typed tiles in the order the station shows them: amount due, due date, then the rest. */
+export function factTilesInOrder(facts: AgencyCustomerFacts): AgencyFactTile[] {
+  const name = facts.name?.trim();
+  const place = facts.place?.trim();
+  const shown = facts.tiles.filter((t) => {
+    const raw = t.raw.trim();
+    return raw !== '' && raw !== name && raw !== place;
+  });
+  return [
+    ...shown.filter((t) => t.role === 'amount_due'),
+    ...shown.filter((t) => t.role === 'due_date'),
+    ...shown.filter((t) => t.role !== 'amount_due' && t.role !== 'due_date'),
+  ];
+}
+
+/** A typed fact as the station writes it: `₹12,500` for read money, `20 Nov` for a read date, else as uploaded. */
+export function factText(tile: AgencyFactTile): string {
+  if (tile.value === null) return tile.raw;
+  if (tile.type === 'money') return rupees(tile.value) ?? tile.raw;
+  if (tile.type === 'date') return calendarDay(tile.value);
+  return tile.raw;
+}
+
+function typedFact(tile: AgencyFactTile, index: number): CustomerFact {
+  const kind: CustomerFact['kind'] = tile.value === null ? 'text' : tile.type;
+  return { key: `fact-${index}`, label: tile.column, value: factText(tile), kind };
+}
+
+/** The 03b tag for a booked call-later, in the station's words. */
+export function callLaterTagFor(callback: AgencyReservedAttempt['callback']): string | null {
+  if (!callback) return null;
+  const at = Date.parse(callback.due_at);
+  if (!Number.isFinite(at)) return null;
+  return callback.booked_by_me
+    ? `Call later · You said you will call at ${clockTime(at)}`
+    : `Call later · Booked for ${clockTime(at)}`;
+}
+
+/** Name, place, hero facts and the Full / Half amount: typed facts when sent, else phase 0's guesses. */
+function customerFacts(
   attempt: AgencyReservedAttempt,
   display: AgencyContextDisplay | undefined,
-  options: { phoneDisplay?: 'full' | 'masked' } = {},
-): CustomerCard {
+): { name: string | null; place: string | null; heroFacts: CustomerFact[]; amountDue: string | null } {
+  const facts = attempt.facts;
+  if (facts) {
+    const tiles = factTilesInOrder(facts);
+    const due = facts.tiles.find((t) => t.role === 'amount_due' && t.type === 'money');
+    return {
+      name: facts.name?.trim() || null,
+      place: facts.place?.trim() || null,
+      heroFacts: tiles.map(typedFact),
+      amountDue: due?.value ?? null,
+    };
+  }
   const resolved = resolveContextFields(attempt.context, display);
   // Every non-empty column, heroes first, for the name and place guesses.
   const columns = [...resolved.hero, ...resolved.fields].filter((f) => !f.isEmpty);
@@ -102,6 +160,22 @@ export function customerCard(
   const heroFacts = resolved.hero
     .filter((f) => !f.isEmpty && f !== nameField && f !== placeField)
     .map((f, i) => factFrom(f.label, f.value, i));
+  const money = heroFacts.find((f) => f.kind === 'money');
+  const rawDue = money ? resolved.hero.find((f) => f.label === money.label)?.value.trim() ?? null : null;
+  return {
+    name: nameField?.value.trim() || null,
+    place: placeField?.value.trim() || null,
+    heroFacts,
+    amountDue: rawDue,
+  };
+}
+
+export function customerCard(
+  attempt: AgencyReservedAttempt,
+  display: AgencyContextDisplay | undefined,
+  options: { phoneDisplay?: 'full' | 'masked' } = {},
+): CustomerCard {
+  const { name, place, heroFacts, amountDue } = customerFacts(attempt, display);
 
   const latest = latestPrior(attempt.prior_attempts);
   const latestAt = latest ? Date.parse(latest.ended_at ?? latest.dialed_at ?? '') : NaN;
@@ -113,16 +187,16 @@ export function customerCard(
   const withNote = [...attempt.prior_attempts]
     .filter((p) => p.notes?.trim())
     .sort((a, b) => Date.parse(b.ended_at ?? b.dialed_at ?? '') - Date.parse(a.ended_at ?? a.dialed_at ?? ''));
-  const name = nameField?.value.trim() || null;
 
   return {
     name,
     initials: initials(name),
-    place: placeField?.value.trim() || null,
+    place,
     phone: phoneForDisplay(attempt.phone_e164, options.phoneDisplay ?? 'full'),
     facts,
     lastSaid: withNote[0]?.notes?.trim() ?? null,
-    callLaterTag: null,
+    callLaterTag: callLaterTagFor(attempt.callback),
+    amountDue,
     redial: attempt.redial ? { number: attempt.redial.number, of: attempt.redial.number + attempt.redial.remaining } : null,
   };
 }

@@ -239,8 +239,11 @@ function StationScreen({
 
   const { panelAttempt } = cons;
   const card = useMemo(
-    () => (panelAttempt ? customerCard(panelAttempt, bootstrap?.context_display) : null),
-    [panelAttempt, bootstrap?.context_display],
+    () =>
+      panelAttempt
+        ? customerCard(panelAttempt, bootstrap?.context_display, { phoneDisplay: bootstrap?.phone_display ?? 'full' })
+        : null,
+    [panelAttempt, bootstrap?.context_display, bootstrap?.phone_display],
   );
   const lastCalls = useMemo(
     () => (panelAttempt ? lastCallRows(panelAttempt, bootstrap?.disposition_catalog) : []),
@@ -1085,7 +1088,7 @@ function StationScreen({
       needed={Boolean(findDisposition(cons.catalog, cons.form.selectedCode)?.requires_note)}
     />
   );
-  const amountDue = card?.facts.find((f) => f.kind === 'money')?.value ?? null;
+  const amountDue = card?.amountDue ?? null;
   let body: ReactNode = null;
   let bodyClass: string | undefined = '';
   switch (screen) {

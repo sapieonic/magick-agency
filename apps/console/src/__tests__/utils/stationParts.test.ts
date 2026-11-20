@@ -115,14 +115,84 @@ describe('the customer card (spec 03/04, today’s data)', () => {
       ['Last call', '12 Nov'],
     ]);
     expect(card.lastSaid).toBe('Asked to call after salary.');
-    // BE-4 is not on the wire yet.
     expect(card.callLaterTag).toBeNull();
+    expect(card.amountDue).toBe('12500');
   });
 
   it('falls back to the phone as the title when no column reads as a name', () => {
     const card = customerCard({ ...ATTEMPT, context: { Loan: 'L-1' }, prior_attempts: [] }, {});
     expect(card.name).toBeNull();
     expect(card.initials).toBe('');
+  });
+
+  it('takes the typed facts when the server sends them, and guesses nothing (BE-6)', () => {
+    const card = customerCard(
+      {
+        ...ATTEMPT,
+        // The columns' names would guess differently: the typed facts win.
+        context: { Name: 'Wrong Guess', Branch: 'Nowhere', 'Amount due': '99' },
+        facts: {
+          name: 'Sunita Patil',
+          place: 'Pune',
+          tiles: [
+            { column: 'Loan', type: 'text', raw: 'L-77', value: null },
+            { column: 'Due on', role: 'due_date', type: 'date', raw: '20/11/2026', value: '2026-11-20' },
+            { column: 'Balance', role: 'amount_due', type: 'money', raw: 'Rs 1,25,000/-', value: '125000.00' },
+            { column: 'City', type: 'text', raw: 'Pune', value: null },
+          ],
+        },
+      },
+      { hero: ['Name', 'Branch', 'Amount due'] },
+    );
+    expect(card.name).toBe('Sunita Patil');
+    expect(card.initials).toBe('SP');
+    expect(card.place).toBe('Pune');
+    // Amount due, due date, then the rest; the place is not a tile again; Last call last.
+    expect(card.facts.map((f) => [f.label, f.value, f.kind])).toEqual([
+      ['Balance', '₹1,25,000', 'money'],
+      ['Due on', '20 Nov', 'date'],
+      ['Last call', '12 Nov', 'last_call'],
+    ]);
+    expect(card.amountDue).toBe('125000.00');
+  });
+
+  it('shows an untyped or unread value exactly as written, and no ₹ on it', () => {
+    const card = customerCard(
+      {
+        ...ATTEMPT,
+        prior_attempts: [],
+        facts: {
+          tiles: [
+            { column: 'Balance', role: 'amount_due', type: 'money', raw: 'about 12k', value: null },
+            { column: 'EMI', type: 'text', raw: '4500', value: null },
+            { column: 'Next', type: 'date', raw: 'after Diwali', value: null },
+          ],
+        },
+      },
+      undefined,
+    );
+    expect(card.name).toBeNull();
+    expect(card.place).toBeNull();
+    expect(card.facts.map((f) => [f.label, f.value, f.kind])).toEqual([
+      ['Balance', 'about 12k', 'text'],
+      ['EMI', '4500', 'text'],
+      ['Next', 'after Diwali', 'text'],
+    ]);
+    // An amount the server could not read hides Full / Half.
+    expect(card.amountDue).toBeNull();
+  });
+
+  it('tags a booked call-later arriving (03b), in the agent’s own words or as booked', () => {
+    const due = new Date(2026, 10, 20, 15, 0).toISOString();
+    const mine = customerCard({ ...ATTEMPT, callback: { due_at: due, booked_by_me: true, source: 'outcome' } }, undefined);
+    expect(mine.callLaterTag).toBe('Call later · You said you will call at 3:00 PM');
+    const theirs = customerCard({ ...ATTEMPT, callback: { due_at: due, booked_by_me: false, source: 'promise' } }, undefined);
+    expect(theirs.callLaterTag).toBe('Call later · Booked for 3:00 PM');
+  });
+
+  it('masks the number on the card when the campaign says so (AS9)', () => {
+    expect(customerCard(ATTEMPT, undefined, { phoneDisplay: 'masked' }).phone).toBe('98••• ••321');
+    expect(customerCard(ATTEMPT, undefined).phone).toBe('+919876543321');
   });
 
   it('masks the number only when the campaign says so (AS9)', () => {
