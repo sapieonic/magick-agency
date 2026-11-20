@@ -25,17 +25,16 @@ import { closeSoftphoneSession } from './softphone/closeSoftphoneSession';
 import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { readCuePrefs } from '../../utils/agencyCuePrefs';
 import { agentLandingPath } from '../../utils/agencyStationExit';
-import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
-import { StationEscape } from '../../components/agency/StationEscape';
 import { SoftphoneScreen } from '../../components/softphone/StationSoftphone';
 import { SOFTPHONE_LEAVE_BLOCKED_COPY, SOFTPHONE_STAYS_OPEN_COPY } from '../../components/softphone/SoftphoneHeader';
 import { AgentNav } from '../../components/agency/AgentNav';
-import { StationBanner } from '../../components/agency/station/StationFrame';
+import { StationBanner, StationFrame, type FrameView } from '../../components/agency/station/StationFrame';
+import { EscapeLink, JoinFrame, type Who } from '../../components/agency/station/StationJoinScreens';
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { useReadAloud } from '../../hooks/useSpeech';
-import { SIDE_COPY } from '../../utils/agency/sideViewCopy';
-import { SOFTPHONE_CLOSE_COPY, STATION_COPY } from '../../utils/agency/stationCopy';
+import { SIDE_COPY, SOFTPHONE_PAGE_COPY } from '../../utils/agency/sideViewCopy';
+import { DOING_WORDS, SOFTPHONE_CLOSE_COPY, STATION_COPY } from '../../utils/agency/stationCopy';
 import { brand } from '../../brand';
 import stationStyles from '../../components/agency/station/Station.module.css';
 import side from '../../components/agency/station/SideView.module.css';
@@ -44,7 +43,6 @@ import { useSoftphoneSession } from './softphone/useSoftphoneSession';
 import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
 import type { AgencyManualCall, AgencySoftphoneSessionResponse } from '../../types/softphone';
 import type { TenantAccount } from '../../types/auth';
-import station from '../../components/agency/AgentStation.module.css';
 
 /** The Close soft phone confirmation: where it lands, and how to come back. */
 export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
@@ -90,41 +88,54 @@ export default function SoftphonePage() {
 
   if (state.status === 'off') return <CapabilityUnavailable />;
 
+  // Every screen before the soft phone opens is in the station's frame and words (AS15).
+  const who: Who = { agentName: user?.display_name?.trim() || user?.email || 'Agent', brandMark: brand.shortName };
+
   if (state.status === 'off_stranded') {
-    return <StrandedScreen sessionId={state.sessionId} call={state.call} tenantId={tenantId} sessionAccountId={state.sessionAccountId} />;
+    return <StrandedScreen who={who} sessionId={state.sessionId} call={state.call} tenantId={tenantId} sessionAccountId={state.sessionAccountId} />;
   }
 
   if (state.status === 'on_campaign') {
-    return <CampaignSessionScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} />;
+    return <CampaignSessionScreen who={who} refusal={state.refusal} tenantId={tenantId} accountId={accountId} />;
   }
 
   if (state.status === 'softphone_elsewhere') {
-    return <ElsewhereScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} onClosed={retry} />;
+    return <ElsewhereScreen who={who} refusal={state.refusal} tenantId={tenantId} accountId={accountId} onClosed={retry} />;
   }
 
   if (state.status === 'error') {
     return (
-      <div className={station.shell}>
-        <div className={station.fatal} role="alert">
-          <h1>Can’t open the soft phone</h1>
-          <p>{state.message}</p>
-          <button type="button" className={station.fatalAction} onClick={retry}>
-            Try again
+      <JoinFrame
+        who={who}
+        view={{ screen: 'softphone_failed', tone: 'problem', icon: 'warning', title: SOFTPHONE_PAGE_COPY.failedTitle, subtitle: SOFTPHONE_PAGE_COPY.failedSubtitle }}
+        testId="softphone-failed"
+        footLeft={<EscapeLink toCampaign={false} campaignId="" />}
+        footRight={(
+          <button type="button" className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnBrand}`} onClick={retry} data-testid="softphone-retry">
+            {SOFTPHONE_PAGE_COPY.tryAgain}
           </button>
-          <StationEscape toCampaign={false} campaignId="" />
-        </div>
-      </div>
+        )}
+      >
+        {/* The station's words for the refusal's code; with no answer at all, the internet. */}
+        <p className={stationStyles.fatalLine}>{state.refusal ? refusalCopy(state.refusal) : SOFTPHONE_PAGE_COPY.failedNoAnswer}</p>
+      </JoinFrame>
     );
   }
 
   if (state.status === 'loading') {
     return (
-      <div className={station.shell}>
-        <div className={station.fatal} aria-busy="true">
+      <StationFrame
+        view={{ screen: 'softphone_opening', tone: 'start', icon: 'phone', title: SOFTPHONE_PAGE_COPY.openingTitle, subtitle: SOFTPHONE_PAGE_COPY.openingSubtitle }}
+        agentName={who.agentName}
+        workName={null}
+        brandMark={who.brandMark}
+        bodyClassName={stationStyles.bodyCenter}
+      >
+        <section className={`${stationStyles.card} ${stationStyles.cardNarrow}`} aria-busy="true" data-testid="softphone-opening">
           <LoadingSpinner />
-          <p>Opening your soft phone…</p>
-        </div>
-      </div>
+          <p className={stationStyles.fatalLine}>{SOFTPHONE_PAGE_COPY.openingBody}</p>
+        </section>
+      </StationFrame>
     );
   }
 
@@ -269,6 +280,11 @@ function SoftphoneConsole({
 
   const micNotice = agencyAudioNotice(audio.error);
   const readAloud = useReadAloud();
+  // Read aloud stops when the screen moves on (a new phase of the call), as on the station.
+  const { stop: stopReading } = readAloud;
+  useEffect(() => {
+    stopReading();
+  }, [sp.phase, stopReading]);
   const recoverable = connection === 'disconnected' || connection === 'superseded';
   const leaveReason = sp.call ? STATION_COPY.finishCallFirst : null;
 
@@ -369,33 +385,28 @@ function SoftphoneConsole({
   );
 }
 
-/** The soft phone is off here and the agent's session is in another account: what is true, and who can finish it. */
-export const SOFTPHONE_STRANDED_COPY = {
-  title: 'Your soft phone is open in another account',
-  detail: 'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this organisation. Switch to that account to finish there, or close it here.',
-  owed: 'Your last call there still needs its outcome. A supervisor can save it for you from Soft-phone calls.',
-  close: 'Close the soft phone so you can join a campaign.',
-} as const;
-
 /**
  * `off_stranded`: the soft phone is off for this account and the agent's
  * soft-phone session is in a SIBLING account of the tenant, which this account
  * cannot rehydrate (the server rehydrates only a session in the account asked
  * for, docs/softphone.md §6) and cannot open beside (one live session per agent
  * per tenant). The one thing this page can still do is close the session — so
- * the agent is not locked out of campaigns by it — and say who can save an
- * outcome it still owes (a supervisor, on the agent's behalf).
+ * the agent is not locked out of their calls by it — and say who can save what
+ * happened on a call it still owes (a supervisor, on the agent's behalf).
  *
  * The close is sent with the SESSION's account: `leave` is scoped to the
  * session's account, and this account's would be the 404 of a session that does
- * not exist here.
+ * not exist here. A failed close says the soft phone is still open, in the
+ * station's words (`SOFTPHONE_CLOSE_COPY`), never the error's.
  */
 function StrandedScreen({
+  who,
   sessionId,
   call,
   tenantId,
   sessionAccountId,
 }: {
+  who: Who;
   sessionId: string;
   call: AgencyManualCall | null;
   tenantId: string | null;
@@ -403,42 +414,43 @@ function StrandedScreen({
 }) {
   const navigate = useNavigate();
   const [closing, setClosing] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const onClose = async () => {
+    if (closing) return;
     setClosing(true);
-    setFailure(null);
+    setFailed(false);
     try {
       await leaveAgencySession(sessionId, tenantId ?? undefined, sessionAccountId);
       navigate(agentLandingPath('station'));
-    } catch (err) {
-      setFailure(err instanceof Error ? err.message : 'Try again in a moment.');
+    } catch {
+      setFailed(true);
       setClosing(false);
     }
   };
   return (
-    <div className={station.shell}>
-      <div className={station.fatal} role="alert" data-testid="softphone-stranded">
-        <h1>{SOFTPHONE_STRANDED_COPY.title}</h1>
-        <p>{SOFTPHONE_STRANDED_COPY.detail}</p>
-        {call && call.requires_disposition ? <p>{SOFTPHONE_STRANDED_COPY.owed}</p> : null}
-        <p>{SOFTPHONE_STRANDED_COPY.close}</p>
+    <JoinFrame
+      who={who}
+      view={{ screen: 'softphone_stranded', tone: 'quiet', icon: 'device', title: SOFTPHONE_PAGE_COPY.elsewhereTitle, subtitle: SOFTPHONE_PAGE_COPY.strandedSubtitle }}
+      testId="softphone-stranded"
+      footLeft={<EscapeLink toCampaign={false} campaignId="" />}
+      footRight={(
         <button
           type="button"
-          className={station.fatalAction}
+          className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnBrand}`}
           onClick={() => void onClose()}
-          disabled={closing}
+          aria-disabled={closing || undefined}
+          aria-busy={closing || undefined}
           data-testid="softphone-stranded-close"
         >
-          {closing ? 'Closing…' : 'Close soft phone'}
+          {closing ? SOFTPHONE_PAGE_COPY.closing : SIDE_COPY.closeSoftphone}
         </button>
-        {failure ? (
-          <p className="error-text" data-testid="softphone-stranded-failure">
-            Your soft phone is still open — {failure}
-          </p>
-        ) : null}
-        <StationEscape toCampaign={false} campaignId="" />
-      </div>
-    </div>
+      )}
+    >
+      <p className={stationStyles.fatalLine}>{SOFTPHONE_PAGE_COPY.strandedBody}</p>
+      {call && call.requires_disposition ? <p className={stationStyles.fatalLine} data-testid="softphone-stranded-owed">{SOFTPHONE_PAGE_COPY.strandedOwed}</p> : null}
+      <p className={stationStyles.fatalLine}>{SOFTPHONE_PAGE_COPY.strandedClose}</p>
+      {failed ? <p className={stationStyles.refusal} data-testid="softphone-stranded-failure">{SOFTPHONE_CLOSE_COPY.stillOpen}</p> : null}
+    </JoinFrame>
   );
 }
 
@@ -457,19 +469,6 @@ function siblingAccount(
   return { name: refusal.account_name ?? listed?.name ?? null, switchable: listed !== null };
 }
 
-/** `softphone_elsewhere`: the soft phone is on here and open in a sibling account. */
-export const SOFTPHONE_ELSEWHERE_COPY = {
-  title: 'Your soft phone is open in another account',
-  detail: (account: string | null) =>
-    account
-      ? `Your soft-phone session is open in ${account}. You can only have one session at a time.`
-      : 'Your soft-phone session is open in another account of this organisation. You can only have one session at a time.',
-  close: 'Close it and open the soft phone here',
-  callPending: (account: string | null) =>
-    `Your soft phone ${account ? `in ${account}` : 'in the other account'} has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.`,
-  goThere: (account: string | null) => (account ? `Use the soft phone in ${account}` : 'Use the soft phone in that account'),
-} as const;
-
 /**
  * `softphone_elsewhere`: the soft phone is on for this account, and the agent's
  * soft-phone session is open in a SIBLING account of the tenant. The server never
@@ -485,11 +484,13 @@ export const SOFTPHONE_ELSEWHERE_COPY = {
  * rehydrates the session — the way to finish a call it still holds.
  */
 function ElsewhereScreen({
+  who,
   refusal,
   tenantId,
   accountId,
   onClosed,
 }: {
+  who: Who;
   refusal: SoftphoneSessionOnSoftphoneRefusal;
   tenantId: string | null;
   accountId: string | null;
@@ -521,58 +522,53 @@ function ElsewhereScreen({
     }
     setClosing(false);
     if (closed.kind === 'call_pending') setCallPending(true);
-    else setFailure(closed.kind === 'failed' ? closed.message : 'Your soft phone is still open. Try again.');
+    // The station's words by what happened, never the close's error (AS15).
+    else setFailure(closed.kind === 'no_session' ? SOFTPHONE_CLOSE_COPY.notFound : SOFTPHONE_CLOSE_COPY.stillOpen);
   };
 
+  const goThere = there.switchable ? (
+    <button
+      ref={goThereRef}
+      type="button"
+      className={callPending ? `${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}` : `${stationStyles.btn} ${stationStyles.btnQuiet}`}
+      // The switch reloads the console (B26), so the soft phone's own path goes with it: the
+      // agent came here to use the soft phone in that account.
+      onClick={() => !closing && setActiveAccountId(refusal.account_id, { path: SOFTPHONE_SURFACE.to })}
+      aria-disabled={closing || undefined}
+      data-testid="softphone-elsewhere-go-there"
+    >
+      {SOFTPHONE_PAGE_COPY.goThere(there.name)}
+    </button>
+  ) : null;
+  const close = (
+    <button
+      type="button"
+      className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnBrand}`}
+      onClick={() => void onClose()}
+      aria-disabled={closing || undefined}
+      aria-busy={closing || undefined}
+      data-testid="softphone-elsewhere-close"
+    >
+      {closing ? SOFTPHONE_PAGE_COPY.closing : SOFTPHONE_PAGE_COPY.elsewhereClose}
+    </button>
+  );
+
   return (
-    <div className={station.shell}>
-      <div className={station.fatal} role="alert" data-testid="softphone-elsewhere">
-        <h1>{SOFTPHONE_ELSEWHERE_COPY.title}</h1>
-        <p>{SOFTPHONE_ELSEWHERE_COPY.detail(there.name)}</p>
-        {callPending ? (
-          <p className="error-text" data-testid="softphone-elsewhere-call-pending">
-            {SOFTPHONE_ELSEWHERE_COPY.callPending(there.name)}
-          </p>
-        ) : (
-          <button
-            type="button"
-            className={station.fatalAction}
-            onClick={() => void onClose()}
-            disabled={closing}
-            aria-busy={closing || undefined}
-            data-testid="softphone-elsewhere-close"
-          >
-            {closing ? 'Closing…' : SOFTPHONE_ELSEWHERE_COPY.close}
-          </button>
-        )}
-        {failure ? (
-          <p className="error-text" data-testid="softphone-elsewhere-failure">
-            {failure}
-          </p>
-        ) : null}
-        {there.switchable ? (
-          <button
-            ref={goThereRef}
-            type="button"
-            className={callPending ? station.fatalAction : station.fatalEscape}
-            // The switch reloads the console (B26), so the soft phone's own path goes
-            // with it: the agent came here to use the soft phone in that account.
-            onClick={() => setActiveAccountId(refusal.account_id, { path: SOFTPHONE_SURFACE.to })}
-            disabled={closing}
-            data-testid="softphone-elsewhere-go-there"
-          >
-            {SOFTPHONE_ELSEWHERE_COPY.goThere(there.name)}
-          </button>
-        ) : null}
-        <StationEscape toCampaign={false} campaignId="" />
-      </div>
-    </div>
+    <JoinFrame
+      who={who}
+      view={{ screen: 'softphone_elsewhere', tone: 'quiet', icon: 'device', title: SOFTPHONE_PAGE_COPY.elsewhereTitle, subtitle: SOFTPHONE_PAGE_COPY.elsewhereSubtitle }}
+      testId="softphone-elsewhere"
+      footLeft={<><EscapeLink toCampaign={false} campaignId="" />{callPending ? null : goThere}</>}
+      footRight={callPending ? goThere : close}
+    >
+      <p className={stationStyles.fatalLine}>{SOFTPHONE_PAGE_COPY.elsewhereBody(there.name)}</p>
+      {callPending ? (
+        <p className={stationStyles.fatalLine} data-testid="softphone-elsewhere-call-pending">{SOFTPHONE_PAGE_COPY.elsewhereCallOpen(there.name)}</p>
+      ) : null}
+      {failure ? <p className={stationStyles.refusal} data-testid="softphone-elsewhere-failure">{failure}</p> : null}
+    </JoinFrame>
   );
 }
-
-/** The honest screen for a campaign session in an account the console cannot switch to. */
-export const SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY = (campaign: string, account: string | null) =>
-  `You’re live on ${campaign} in ${account ?? 'another account'} — switch to that account to use the soft phone there.`;
 
 /**
  * The 409 `session_on_campaign` answer: the agent is still at a campaign station.
@@ -593,10 +589,12 @@ export const SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY = (campaign: string, account: str
  * the screen says where the session is and offers no button that would fail.
  */
 function CampaignSessionScreen({
+  who,
   refusal,
   tenantId,
   accountId,
 }: {
+  who: Who;
   refusal: SoftphoneSessionOnCampaignRefusal;
   tenantId: string | null;
   accountId: string | null;
@@ -607,9 +605,16 @@ function CampaignSessionScreen({
   const [failure, setFailure] = useState<string | null>(null);
   const stationPath = `/station?campaign=${encodeURIComponent(refusal.campaign_id)}`;
   const midCall = refusal.state === 'reserved' || refusal.state === 'on_call' || refusal.state === 'wrapup';
-  const stateLabel = AGENCY_FLOOR_STATE_LABELS[refusal.state]?.toLowerCase() ?? refusal.state;
   const elsewhere = refusal.account_id !== accountId;
   const there = siblingAccount(accounts, refusal);
+  const placeName = elsewhere ? there.name ?? 'another account' : null;
+  const view: FrameView = {
+    screen: 'softphone_on_calls',
+    tone: 'quiet',
+    icon: 'device',
+    title: SOFTPHONE_PAGE_COPY.onCallsTitle,
+    subtitle: SOFTPHONE_PAGE_COPY.onCallsSubtitle,
+  };
 
   /**
    * To the station, in the session's account when it is another. Switching
@@ -622,6 +627,7 @@ function CampaignSessionScreen({
   };
 
   const onSwitch = async () => {
+    if (switching) return;
     setSwitching(true);
     setFailure(null);
     const result = await switchToSoftphone(refusal.session_id, tenantId ?? undefined, refusal.account_id);
@@ -636,65 +642,54 @@ function CampaignSessionScreen({
       return;
     }
     setSwitching(false);
+    // The station's words for the refusal's code (AS15), the status sense of `dial_failed`.
     setFailure(refusalCopy(result.refusal, 'status'));
   };
 
   if (elsewhere && !there.switchable) {
     return (
-      <div className={station.shell}>
-        <div className={station.fatal} role="alert" data-testid="softphone-on-campaign">
-          <h1>You’re live on {refusal.campaign_name} in {there.name ?? 'another account'}</h1>
-          <p data-testid="softphone-on-campaign-elsewhere">
-            {SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY(refusal.campaign_name, there.name)}
-          </p>
-          <StationEscape toCampaign={false} campaignId="" />
-        </div>
-      </div>
+      <JoinFrame who={who} view={view} testId="softphone-on-campaign" footLeft={<EscapeLink toCampaign={false} campaignId="" />}>
+        <p className={stationStyles.fatalLine} data-testid="softphone-on-campaign-elsewhere">
+          {SOFTPHONE_PAGE_COPY.onCallsCannotMove(refusal.campaign_name, there.name)}
+        </p>
+      </JoinFrame>
     );
   }
 
-  const where = elsewhere ? ` in ${there.name ?? 'another account'}` : '';
+  const goTo = elsewhere ? (
+    <button type="button" className={`${stationStyles.btn} ${stationStyles.btnQuiet}`} onClick={goToStation} data-testid="softphone-go-to-station">
+      {SOFTPHONE_PAGE_COPY.goToCalls(refusal.campaign_name, placeName)}
+    </button>
+  ) : (
+    <Link className={`${stationStyles.btn} ${stationStyles.btnQuiet}`} to={stationPath} data-testid="softphone-go-to-station">
+      {SOFTPHONE_PAGE_COPY.goToCalls(refusal.campaign_name, null)}
+    </Link>
+  );
   return (
-    <div className={station.shell}>
-      <div className={station.fatal} role="alert" data-testid="softphone-on-campaign">
-        <h1>
-          {elsewhere
-            ? `You’re live on ${refusal.campaign_name}${where}`
-            : `You’re still at the ${refusal.campaign_name} station`}
-        </h1>
-        <p>
-          You’re joined to {refusal.campaign_name}{where} — {stateLabel}. You can only have one session at a time.
-        </p>
-        <p>
-          {midCall
-            ? 'Switch that station to the soft phone and it switches after this call and its wrap-up. You stay on the campaign and can go back to it from the station.'
-            : 'Switch that station to the soft phone. You stay on the campaign and can go back to it from the station.'}
-          {elsewhere ? ` This takes you to ${there.name ?? 'that account'}.` : ''}
-        </p>
+    <JoinFrame
+      who={who}
+      view={view}
+      testId="softphone-on-campaign"
+      footLeft={<><EscapeLink toCampaign={false} campaignId="" />{goTo}</>}
+      footRight={(
         <button
           type="button"
-          className={station.fatalAction}
+          className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`}
           onClick={() => void onSwitch()}
-          disabled={switching}
+          aria-disabled={switching || undefined}
+          aria-busy={switching || undefined}
           data-testid="softphone-switch-from-campaign"
         >
-          {switching ? 'Switching…' : elsewhere ? `Switch to soft phone${where}` : 'Switch to soft phone'}
+          {switching ? SOFTPHONE_PAGE_COPY.switching : SOFTPHONE_PAGE_COPY.useSoftphone(placeName)}
         </button>
-        {failure ? (
-          <p className="error-text" data-testid="softphone-switch-failure">
-            {failure}
-          </p>
-        ) : null}
-        {elsewhere ? (
-          <button type="button" className={station.fatalEscape} onClick={goToStation} data-testid="softphone-go-to-station">
-            Go to station{where}
-          </button>
-        ) : (
-          <Link className={station.fatalEscape} to={stationPath} data-testid="softphone-go-to-station">
-            Go to station
-          </Link>
-        )}
-      </div>
-    </div>
+      )}
+    >
+      <p className={stationStyles.fatalLine}>{SOFTPHONE_PAGE_COPY.onCallsDoing(refusal.campaign_name, placeName, DOING_WORDS[refusal.state] ?? DOING_WORDS.available)}</p>
+      <p className={stationStyles.fatalLine}>
+        {midCall ? SOFTPHONE_PAGE_COPY.onCallsAfterCall : SOFTPHONE_PAGE_COPY.onCallsNow}
+        {placeName ? ` ${SOFTPHONE_PAGE_COPY.onCallsMoves(placeName)}` : ''}
+      </p>
+      {failure ? <p className={stationStyles.refusal} data-testid="softphone-switch-failure">{failure}</p> : null}
+    </JoinFrame>
   );
 }

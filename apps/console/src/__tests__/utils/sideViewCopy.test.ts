@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DIAL_BLOCK_WORDS,
   SIDE_COPY,
+  SOFTPHONE_PAGE_COPY,
   STICKY_WORDS,
   sideSaveBlockLine,
   waitedFor,
@@ -131,6 +132,8 @@ const HOOK_LINES = [
 
 const ALL = [
   ...everyString(SIDE_COPY),
+  // `/dialer/phone`'s screens before the soft phone opens.
+  ...everyString(SOFTPHONE_PAGE_COPY),
   ...everyString(STICKY_WORDS),
   ...everyString(DIAL_BLOCK_WORDS),
   ...BLOCKS.map(sideSaveBlockLine),
