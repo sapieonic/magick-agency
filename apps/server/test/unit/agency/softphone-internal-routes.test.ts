@@ -587,6 +587,18 @@ describe('GET /softphone/bootstrap', () => {
     expect(sup.taggable_campaigns).toHaveLength(2);
   });
 
+  it('BE-13: an outcome\'s icon the contract does not list is dropped, tagged and untagged; a known one is kept', async () => {
+    const catalog = [{ code: 'paid', label: 'Paid', icon: 'rupee' }, { code: 'odd', label: 'Odd', icon: 'unicorn' }];
+    repos.campaign.listSoftphoneTaggable.mockResolvedValue([{ ...campaign(CAMPAIGN, 'Staffed'), disposition_catalog: catalog }]);
+    repos.settings.get.mockResolvedValue({
+      disposition_catalog: catalog, call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null, updated_at: null,
+    });
+    const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json();
+    const expected = [{ code: 'paid', label: 'Paid', icon: 'rupee' }, { code: 'odd', label: 'Odd' }];
+    expect(boot.taggable_campaigns[0].disposition_catalog).toEqual(expected);
+    expect(boot.untagged.disposition_catalog).toEqual(expected);
+  });
+
   it('the settings\' default caller ID while still assigned; the live session with a queued switch', async () => {
     repos.settings.get.mockResolvedValue({
       disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: '+919000000002', updated_at: null,

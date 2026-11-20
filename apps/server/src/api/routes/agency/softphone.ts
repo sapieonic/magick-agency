@@ -67,6 +67,7 @@ import {
   type SoftphoneSettingsAudit,
   type SoftphoneSwitchAudit,
 } from './softphone-answer.js';
+import { dispositionsWithKnownIcons } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'agency-softphone-routes' });
 
@@ -179,7 +180,8 @@ function taggableCampaign(
     campaign_name: campaign.name,
     status: campaign.status,
     caller_ids: usableCallerIds(campaign),
-    disposition_catalog: resolveManualCatalog(campaign, true, { disposition_catalog: [] }).catalog,
+    // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
+    disposition_catalog: dispositionsWithKnownIcons(resolveManualCatalog(campaign, true, { disposition_catalog: [] }).catalog),
     calling_window: window,
     calling_window_open: callingWindowState(window, now) === 'open',
     record_calls: campaign.record_calls,
@@ -269,7 +271,7 @@ async function buildBootstrap(
     untagged: {
       caller_ids: callerIds,
       default_caller_id: defaultCallerId,
-      disposition_catalog: resolveManualCatalog(null, false, settings).catalog,
+      disposition_catalog: dispositionsWithKnownIcons(resolveManualCatalog(null, false, settings).catalog),
       record_calls: settings.record_calls,
       analysis_profile: settings.analysis_profile_id ? profiles.get(settings.analysis_profile_id) ?? null : null,
     },
