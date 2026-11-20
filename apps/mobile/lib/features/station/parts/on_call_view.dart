@@ -6,7 +6,6 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../station_copy.dart';
 import '../widgets/action_buttons.dart';
-import '../widgets/read_aloud_button.dart';
 import 'banners.dart';
 import 'call_band.dart';
 import 'hang_up.dart';
@@ -39,12 +38,10 @@ class OnCallView extends ConsumerWidget {
         if (muted && interrupted == AudioInterruption.none) const _MutedBanner(),
         if (call != null) CustomerCard(call: call),
         const SizedBox(height: Space.md),
-        // The script (BE-8), above Last calls; without one, 04c's Last calls and note.
-        if (call != null)
-          ScriptStepsCard(
-            callId: call.attemptId,
-            trailing: (line) => ReadAloudButton(key: const Key('read-aloud-step'), text: line),
-          ),
+        // The script (BE-8), above Last calls; without one, 04c's Last calls and note. No read
+        // aloud here: the customer is on the line, and the phone's speaker can reach them through
+        // the microphone (AS13).
+        if (call != null) ScriptStepsCard(callId: call.attemptId),
         if (call != null && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
         const SizedBox(height: Space.md),
         StationNotesField(controller: notes),

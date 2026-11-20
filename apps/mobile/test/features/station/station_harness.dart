@@ -157,12 +157,19 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
 
 /// Records what would be read aloud.
 class FakeReadAloud implements ReadAloud {
-  final said = <String>[];
+  FakeReadAloud({this.available = true});
 
+  /// What [canSpeak] answers: a phone with an engine and a language.
+  final bool available;
+  final said = <String>[];
+  int stops = 0;
+
+  @override
+  Future<bool> canSpeak() async => available;
   @override
   Future<void> speak(String text) async => said.add(text);
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async => stops++;
 }
 
 class SoftphoneHolder extends Notifier<SoftphoneView> {
@@ -340,6 +347,7 @@ Future<StationHarness> pumpStation(
   bool? callLaterComesToMe,
   bool? callLaterGoesToPool,
   void Function()? onMyDayRead,
+  bool readAloudAvailable = true,
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -360,7 +368,7 @@ Future<StationHarness> pumpStation(
   });
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
-  final readAloudFake = FakeReadAloud();
+  final readAloudFake = FakeReadAloud(available: readAloudAvailable);
   final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
   final softphoneHolder = NotifierProvider<SoftphoneHolder, SoftphoneView>(() => SoftphoneHolder(softphone));
   final availabilityHolder = NotifierProvider<AvailabilityHolder, SoftphoneAvailability>(() => AvailabilityHolder(availability));
@@ -385,6 +393,8 @@ Future<StationHarness> pumpStation(
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
       stationAgentNameProvider.overrideWithValue(agentName),
       readAloudProvider.overrideWithValue(readAloudFake),
+      // Answered at once (the device asks the platform once per run).
+      readAloudAvailableProvider.overrideWith((ref) => readAloudAvailable),
       stationMyDayProvider.overrideWith((ref, id) async {
         onMyDayRead?.call();
         return myDay;

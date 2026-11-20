@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/softphone/softphone_view.dart';
+import '../../core/speech/read_aloud.dart';
 import '../../core/station/station_view.dart';
 import '../missed/rang_while_away.dart';
 import '../softphone/softphone_panel.dart';
@@ -198,6 +199,10 @@ class _StationScreenState extends ConsumerState<StationScreen> {
     // The call on screen, campaign or inbound: a new call gets a new notes controller.
     final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+    // A new screen stops whatever was being read aloud: never over a call that just connected.
+    ref.listen<StationStage>(stationViewProvider.select((v) => stationStageOf(v, widget.campaignId)), (prev, next) {
+      if (prev != next) unawaited(ref.read(readAloudProvider).stop());
+    });
 
     // Built while the station is: a return from a pause is then asked about (IQ50).
     ref.listen(rangWhileAwayProvider, (_, _) {});

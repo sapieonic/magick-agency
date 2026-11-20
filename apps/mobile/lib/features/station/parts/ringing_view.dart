@@ -58,11 +58,16 @@ class RingingView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // The countdown is not shown; without it here the card does not rebuild every second.
     final call = ref.watch(stationViewProvider.select((v) => _contactOnly(v?.call)));
+    // Read aloud only before the customer is on the line (AS13): once it connects, the phone's
+    // speaker can reach them through the microphone.
+    final connected = call?.bridgedAt != null;
     return CallPage(
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),
-          OpeningLineCard(trailing: (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line)),
+          OpeningLineCard(
+            trailing: connected ? null : (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line),
+          ),
         ],
       ],
       actions: const ConnectsByItself(),
