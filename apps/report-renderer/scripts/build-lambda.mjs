@@ -21,6 +21,21 @@ const outDir = join(root, 'dist', 'lambda');
 const zipPath = join(root, 'dist', 'report-renderer-lambda.zip');
 const require = createRequire(join(root, 'package.json'));
 
+// The workspace packages bundled in (every @magick-agency/* the renderer declares) and their
+// versions, for every Lambda log line (src/version.ts). Sorted, so the bytes stay reproducible.
+// The server's build does the same (apps/server/scripts/package-versions.mjs); the renderer may
+// not depend on the server, so the few lines are kept in both.
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const packageVersions = Object.fromEntries(
+  Object.keys({ ...pkg.dependencies })
+    .filter((name) => name.startsWith('@magick-agency/'))
+    .sort()
+    .map((name) => [
+      name.slice('@magick-agency/'.length),
+      JSON.parse(readFileSync(join(root, 'node_modules', name, 'package.json'), 'utf8')).version,
+    ]),
+);
+
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, 'fonts'), { recursive: true });
 
@@ -41,7 +56,10 @@ const result = await build({
   metafile: true,
   // The layer provides it; see src/lambda/chromium.ts.
   external: ['@sparticuz/chromium'],
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    __REPORT_RENDERER_PACKAGE_VERSIONS__: JSON.stringify(packageVersions),
+  },
   // Bundled CommonJS dependencies call require() for Node built-ins.
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
   logLevel: 'warning',

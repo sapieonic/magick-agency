@@ -11,6 +11,8 @@
  * it, so this attempt's callback could only be acknowledged as `stale` (RP13).
  *
  * Logs are JSON lines with run id, attempt and timings, never dataset contents (personal data).
+ * Every line carries the renderer's `version` and the bundled packages' versions (`packages`), so
+ * a CloudWatch line names the release that wrote it, as the callback's `renderer_version` does.
  */
 import { S3Client } from '@aws-sdk/client-s3';
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
@@ -21,6 +23,7 @@ import { CallbackRefusedError, postCallback, type PostDeps } from './lambda/call
 import { launchLambdaChromium } from './lambda/chromium';
 import { s3IO, type S3Like } from './lambda/s3-io';
 import { renderRun } from './render-run';
+import { BUNDLED_PACKAGE_VERSIONS, RENDERER_VERSION } from './version';
 
 export interface HandlerDeps extends PostDeps {
   s3: S3Like;
@@ -31,8 +34,16 @@ export interface HandlerDeps extends PostDeps {
   tmpDir?: string;
 }
 
+/**
+ * One Lambda log record: the event's own fields, then the time and versions, which an event
+ * field of the same name cannot replace.
+ */
+export function logRecord(line: Record<string, unknown>, at: Date = new Date()): Record<string, unknown> {
+  return { ...line, ts: at.toISOString(), version: RENDERER_VERSION, packages: BUNDLED_PACKAGE_VERSIONS };
+}
+
 function jsonLog(line: Record<string, unknown>): void {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), ...line }));
+  console.log(JSON.stringify(logRecord(line)));
 }
 
 export function createHandler(deps: HandlerDeps): (event: SQSEvent) => Promise<SQSBatchResponse> {

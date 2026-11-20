@@ -10,7 +10,7 @@ only; never cite another system, repo or external design doc.
 
 | Doc | Read it when |
 |---|---|
-| `docs/status.md` | you need where things stand, test counts, open decisions |
+| `docs/status.md` | you need where things stand, open decisions |
 | `docs/architecture.md` | you need how the pieces fit |
 | `docs/modules.md` | you are looking for a module and the tests that cover it |
 | `docs/decisions.md` | a comment cites an ID (B16, Q6, SP3, ...) |
@@ -49,7 +49,8 @@ tooling/             test-env resolver, release-please guard, contract-literal e
 - **Test counts are evidence.** A run without printed counts is not a run. Never
   `--reporter=basic` (Vitest 4: runs nothing, exits 0). Run a package's tests from inside its
   directory (dotenv resolves from cwd). Record counts only from a green run; a run with failures
-  is reported as its failures, not as a count.
+  is reported as its failures, not as a count. Counts go in the PR description, never in the docs:
+  a shared log in `docs/status.md` that every PR appended to made every PR conflict.
 - **Real Postgres for repository and SQL tests.** A mocked pool hides SQL drift.
 - **Ports:** Postgres 5436, Redis 6383 (db 0 dev, dbs 1-4 test), server 3021, console 5175,
   super-admin 5176. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).

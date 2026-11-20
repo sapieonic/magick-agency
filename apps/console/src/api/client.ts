@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase/auth';
-import { ORIGINATOR_HEADER, ORIGINATOR } from '../config';
+import { CLIENT_HEADERS } from '../config';
 import { captureApiError } from './error-analytics';
 import { clearSessionStart } from '../utils/session';
 import { isLoginPath, sessionExpiredLoginUrl } from '../utils/returnPath';
@@ -61,7 +61,7 @@ export async function apiFetch<T>(
   const token = user ? await user.getIdToken() : null;
 
   const headers: Record<string, string> = {
-    [ORIGINATOR_HEADER]: ORIGINATOR,
+    ...CLIENT_HEADERS,
     ...((options.headers as Record<string, string>) || {}),
   };
 

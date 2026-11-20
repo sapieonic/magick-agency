@@ -63,17 +63,21 @@ by the lead's run of lint and the touched packages' suites.
 
 ## 3. Status
 
-| Stream | Status | Evidence |
+Test counts are in the pull request, not here (repo rule). "Green" means every suite the stream
+touched passed, apart from the audio-decoder tests this build container cannot run
+(`inbound-recordings.test.ts`, `inbound-clips-routes.test.ts`).
+
+| Stream | Status | Notes |
 |---|---|---|
-| F | Merged 2026-11-20 | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
-| C1 | Phases 0–2 merged 2026-11-20 | Console unit 7,906 passed and web-ui 244 on the merged branch; lint clean. The two pieces it left are done by C3 and C4 |
-| C3 | Merged 2026-11-20 | The agent's work picker (`AgentHomePage`) as big tiles; join, switch and help refusals in the station's own words; dead copy removed. Console unit 7,845 passed; lint clean |
-| C4 | Merged 2026-11-20 | The inbound call, the station's soft phone and `/dialer/phone` in the station's look; soft-phone and inbound refusals in the station's words; the agent nav's "My work"; no ₹ on promised amounts (PT5, Manas 2026-11-20: "not yet"). Console unit 7,872 passed, web-ui 244, super-admin 514, server unit: no failures except the 3 audio-decoder ones, as before; lint clean |
-| M1 | Phases 0–2 merged 2026-11-20 | `flutter analyze` clean; `flutter test` 2152 passed and `agency_wire` 761 on the merged branch. Read aloud and the new fields not yet run on a phone or against a live server |
-| S1 | Merged 2026-11-20 | Server unit: no failures except the 3 in `inbound-recordings.test.ts` (no audio decoders in the build container); integration rest 243 (relevant files), wall-clock lane 31; grafana 34; tooling 20; lint clean |
-| S2 | Merged 2026-11-20 | Server unit: no failures except the 3 in `inbound-recordings.test.ts` (no audio decoders in the build container); domain 364; grafana 34; renderer 94; integration rest 266, wall-clock 5 (relevant files); lint clean |
-| S3 | Merged 2026-11-20 | Domain 360 passed; contracts 617; server unit: no failures except the 3 in `inbound-recordings.test.ts` (no audio decoders in the build container); integration rest 213, wall-clock 4 (relevant files); lint clean |
-| C2 | Merged 2026-11-20 | Console unit 7,960 passed before C1's wiring merged, super-admin 514, web-ui 244 on the merged branch; lint clean |
-| Review | Fixed and merged 2026-11-20 | Five fresh-context reviews (server and data; console station; supervisor console and super-admin; the app and its wire; rulings, docs and loose ends) and four fix streams. Final run on the merged branch: lint clean; console 7,926, web-ui 244, super-admin 514, contracts 617, domain 378, db unit 457, observability 23, renderer 97, db integration 880, server wall-clock lane 31, `flutter test` 2,204, `agency_wire` 763, release 10, tooling 20, grafana 34, all passed. Server unit and the rest lane are not green in the build container, and only for missing audio decoders: 3 failures in `inbound-recordings.test.ts` and 11 in `inbound-clips-routes.test.ts`, areas the redesign did not touch; nothing else failed |
+| F | Merged 2026-11-20 | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts, fixtures and literals; the Dart mirror. Green |
+| S1 | Merged 2026-11-20 | My day, daily target, call-later booker and tag, pool queue reasons. Green in both integration lanes |
+| S2 | Merged 2026-11-20 | Need help in any state, the alerts read, break overrun, tile icons, `phone_display`. Green in both integration lanes |
+| S3 | Merged 2026-11-20 | Typed customer facts, the script, the Collections starter set. Green in both integration lanes |
+| C1 | Merged 2026-11-20 | The console station's screens, phases 0–2. Green |
+| C2 | Merged 2026-11-20 | Supervisor alerts on every page, campaign Settings, New campaign's Collections set, super-admin light. Green |
+| C3 | Merged 2026-11-20 | The agent's work picker as big tiles; join, switch and help refusals in the station's words. Green |
+| C4 | Merged 2026-11-20 | The inbound call, the soft phone and `/dialer/phone` in the station's look; "My work"; no ₹ on promised amounts (PT5, Manas 2026-11-20: "not yet"). Green |
+| M1 | Merged 2026-11-20 | The app station's screens, phases 0–2, and read aloud. Green |
+| Review | Fixed and merged 2026-11-20 | Five fresh-context reviews (server and data; console station; supervisor console and super-admin; the app and its wire; rulings, docs and loose ends) and four fix streams: `0061_session_event_break_limit_comment.sql`, the `queue_pool` capability (AS18), My day's owner-mode list and `will_pay` over every spine, `phone_display` on the agent's own rows, station drop metrics and alert, LF41, and the console and app fixes listed in the PR. Every suite green on the final run, both integration lanes and db integration included |
 
 Nothing here has run on a real phone, a real carrier or with real agents.

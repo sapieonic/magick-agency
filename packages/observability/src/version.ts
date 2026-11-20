@@ -7,6 +7,12 @@
  */
 declare const __MAGICK_AGENCY_VERSION__: string | undefined;
 
+/**
+ * The bundled workspace packages' versions (`{ contracts: '0.26.0', … }`), injected by the same
+ * build (apps/server/scripts/package-versions.mjs, which validates them); empty outside a build.
+ */
+declare const __MAGICK_AGENCY_PACKAGE_VERSIONS__: Record<string, string> | undefined;
+
 function readVersion(): string {
   try {
     if (typeof __MAGICK_AGENCY_VERSION__ === 'string' && __MAGICK_AGENCY_VERSION__.length > 0) {
@@ -19,3 +25,5 @@ function readVersion(): string {
 }
 
 export const APP_VERSION = readVersion();
+export const PACKAGE_VERSIONS: Readonly<Record<string, string>> =
+  typeof __MAGICK_AGENCY_PACKAGE_VERSIONS__ === 'undefined' ? {} : __MAGICK_AGENCY_PACKAGE_VERSIONS__;

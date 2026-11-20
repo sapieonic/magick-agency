@@ -1,7 +1,7 @@
 # Status
 
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
-the last test counts, what is not built, what is still open and with whom, the deployment
+what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
 "is it done". As of 2026-11-20.
 
@@ -42,7 +42,7 @@ super-admins add (not env). Built in steps:
 | 3 Plivo adapter | Done | `feat(server): Plivo carrier module (adapter, μ-law media, callbacks, V3 signatures)` and `feat(server): fetch BYOC recordings on the tenant's credential (B21)`. Dial on the fixed API host returning the `request_uuid`, `time_limit` on every dial, cancel by request id and hang up by call id (an empty or malformed id refused before any URL is built), answer XML with a session `<Record>` and a bidirectional μ-law `<Stream>`, V3 signatures against the current and grace tokens, a per-account calls-per-second gate in Redis, `carrier_dial_refusals_total`; recordings through `telephony/recording-access.ts` (Plivo: `media.plivo.com` exactly, the credential on the first request only; since 2026-11-18 its regional subdomains too, PL6 as amended). Tests: `test/unit/telephony/plivo/` (`plivo.adapter`, `plivo-signature`, `plivo-dial-rate`, `plivo-config`, and `plivo-carrier.fixture.test.ts` over `plivo-carrier.fixture.json`), `audio-fir-mulaw.test.ts`, `carrier-errors.test.ts`, `recording-access.test.ts`, `recording-proxy.test.ts`, `recording-fetcher.test.ts` |
 | 4 Dialler integration | Done | `feat(server,console,contracts,db,domain): pin campaigns to a tenant carrier credential and sync its numbers` (migration `0019_plivo_numbers_and_carrier_pause.sql`, numbered 0018 before main's `0018_agent_caller_ids.sql` was merged: the `plivo` provider row active, `phone_numbers.telephony_credential_id`, pause reason `carrier_auth`); `feat(server): dial Plivo on the campaign's credential through the bridge`; `feat(server): serve Plivo's answer, status and recording callbacks`; `feat(server): forward Plivo callbacks to the media worker that holds the call`; `feat(console,super-admin): choose the campaign's carrier and sync a credential's numbers`; `fix(db): offer no caller ID from a carrier credential that cannot dial`; `feat(server,console,contracts,db): pause a campaign whose carrier account is no longer active` (migration `0020_carrier_account_unavailable_pause.sql`). Every step-2 obligation is met: the bridge dials through `getForCredentialId(provider, id, 'dial', tenantId)`; the call row's INSERT re-checks the credential is `active` (`credential-call-insert.repository.test.ts`); a campaign pins only an `active` credential of its tenant; the dial's `request_uuid` is persisted to `provider_request_id` and a teardown before the answer cancels by it. Tests: `campaign-carrier-pinning.test.ts` (integration), `dialer-carrier-refusals.test.ts`, `webrtc-bridge-plivo.test.ts`, `plivo-webhooks.test.ts`, `plivo-callback-forwarding.test.ts`, `credential-number-sync.test.ts`, `proxy-agency-carriers.test.ts`, the db suites `plivo-numbers-migration`, `carrier-account-unavailable-migration` and `phone-number-sync.repository`, the console's `CampaignBuilderPage.carrier`, `AgencyCampaignSettingsPage.carrier` and `agencyCarriers`. End to end against the scriptable mock carrier (`apps/server/test/mocks/plivo/`, checked by `test/unit/load/mock-plivo-carrier.test.ts`, which runs the real `PlivoAdapter` against it): `test/integration/telephony/plivo-call-e2e.test.ts` (a full call; cancelled while ringing; unsigned, forged and other-tenant callbacks refused; a 401 pausing `carrier_auth`; a disabled credential pausing `carrier_account_unavailable`; the previous token accepted inside the rotation grace) and `plivo-cluster-forwarding.test.ts` (callbacks forwarded to a media worker and verified there), in the rest lane. An account on a per-carrier concurrency breakdown needs a `plivo` row, set in the super-admin console (`operations.md`, "Enabling Plivo for a tenant"); since the review fixes a campaign without one is refused at start (PL14) |
 | Review fixes (2026-11-07) | Done | An independent review (principal engineer, product and QA) of steps 3 and 4 found no critical defect; every finding is fixed with a test that fails without it (mutation-checked). Dial path: a dial the adapter refuses before sending is unplaced and uncharged (`CarrierDialNotSentError`), and a contact number the carrier will never dial is suppressed `invalid`; `PLIVO_WEBHOOK_BASE_URL` validated at load; five carrier refusals in a row pause the campaign `carrier_refusing_calls` (migration `0021_carrier_refusing_calls_pause.sql`, PL11); a carrier that cannot dial is not offered and its campaigns do not start (PL12); a failed hangup gives back its one-hangup claim; a replayed signed callback is refused; an unanswered call ends soon after the carrier's ring timeout; the calls-per-second gate is a sliding window; tenants never see a carrier's raw error text. Campaigns: a retired caller ID no longer locks the settings and is no longer dialled (PL13); start is refused when the carrier has no concurrency allocation on a per-carrier breakdown (PL14); the health strip shows automatic carrier pauses and campaigns that cannot dial. Copy: "contact support" (PL15), super-admin names carriers "Alias (Vendor)" (PL16), no vendor name or UUID in the Activity trail, British spelling guarded in both web UIs. Agent app: the ringing warning only on a carrier that cannot cancel, `can_cancel_ringing` decoded in `agency_wire` |
-| Merge with main (2026-11-07) | Done | `main`'s dedicated caller ID per agent (#51, DN1–DN10) and the Insights tabs (#53) merged in (a merge commit; the branch is published). `main`'s `0018_agent_caller_ids.sql` is released and kept; this branch's unreleased migrations moved up one, to `0019_plivo_numbers_and_carrier_pause.sql`, `0020_carrier_account_unavailable_pause.sql` and `0021_carrier_refusing_calls_pause.sql` (headers, tests, `BASELINE.md`, the down → up ledger). The two caller-ID rules are one: every dial path hands `resolveCallerId` (DN2) the campaign's DIALABLE caller IDs (PL13), so on a tenant's own carrier account a dedicated number retired or revoked there falls back to the rotation, and the rotation is the dialable pool minus the dedicated numbers; a service-account campaign behaves as on `main` (`decisions.md`, PL13's addendum). The supervisor's caller-ID list and PUT and the agent's My contacts see the same pool; removing a retired number still dedicated is refused `caller_id_dedicated`, naming it. Tests: `pacing-engine.test.ts` and `dedicated-caller-ids.test.ts` ("over the dialable pool"), `agency-agent-caller-ids.test.ts` (a pinned campaign end to end), each mutation-checked; counts under "Test counts" |
+| Merge with main (2026-11-07) | Done | `main`'s dedicated caller ID per agent (#51, DN1–DN10) and the Insights tabs (#53) merged in (a merge commit; the branch is published). `main`'s `0018_agent_caller_ids.sql` is released and kept; this branch's unreleased migrations moved up one, to `0019_plivo_numbers_and_carrier_pause.sql`, `0020_carrier_account_unavailable_pause.sql` and `0021_carrier_refusing_calls_pause.sql` (headers, tests, `BASELINE.md`, the down → up ledger). The two caller-ID rules are one: every dial path hands `resolveCallerId` (DN2) the campaign's DIALABLE caller IDs (PL13), so on a tenant's own carrier account a dedicated number retired or revoked there falls back to the rotation, and the rotation is the dialable pool minus the dedicated numbers; a service-account campaign behaves as on `main` (`decisions.md`, PL13's addendum). The supervisor's caller-ID list and PUT and the agent's My contacts see the same pool; removing a retired number still dedicated is refused `caller_id_dedicated`, naming it. Tests: `pacing-engine.test.ts` and `dedicated-caller-ids.test.ts` ("over the dialable pool"), `agency-agent-caller-ids.test.ts` (a pinned campaign end to end), each mutation-checked |
 | 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` and its subdomains only, and never follows a redirect with it; staging's account records on `aps1.media.plivo.com`); the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure; and the call detail record the ring deadline reads (`GET Call/{call_uuid}/`): the values of its `call_state` for a busy, unanswered, cancelled, failed and answered call (the SDK names the field, not its values; `plivo-carrier.fixture.json` `cdr` holds illustrative ones), its `hangup_cause_name` catalogue, and that it answers 404 while the call is live |
 
 ### Tidy-up 2026-10-16/17
@@ -1168,7 +1168,7 @@ silence. **P2 is built** (connecting agents, console stations, one process, IB8)
 a looped hold, the queue, sticky routing (loose and strict), the offer and the bind, the release
 hook taking an agent from wrap-up, `inbound_waiting` holding pacing back, the in-flight clash (§5.4),
 voicemail, the outcome routes and the console's panel, then an independent review's fixes
-(`inbound.md` §12, P2 row), then a verification pass's two test fixes (below, "Test counts").
+(`inbound.md` §12, P2 row), then a verification pass's two test fixes.
 **The fix pass is done** (two rounds, decisions IQ25–IQ45 in [`decisions.md`](decisions.md) §4,
 "Inbound fix pass"; the P2 plan's build rulings are IQ1–IQ24 there): independent engineering,
 product and QA reviews of P1 and P2, then a review of the first round, each behaviour fix pinned by a
@@ -1287,8 +1287,7 @@ passed + 9 expected fail + 2 skipped, `wall-clock` 5 files, 21; contracts 13 fil
 connector races +3 (25), the review fixes +2 (23), eligibility +1 (49), the registry +1 (31), the
 upgrade +17 (30). Eleven guards mutation-checked (each red, then restored). Run on a UTF8 test
 database: the machine's local databases were `SQL_ASCII`, on which `softphone-policy-routes`' emoji
-case fails (`char_length` counts bytes there), whatever the branch. The run on the finished branch
-is under "Test counts".
+case fails (`char_length` counts bytes there), whatever the branch.
 
 **Not verified:** nothing has run on a real phone or a real carrier; the app's flow is tested with
 the contract's sample frames and answers, the server's with a simulated phone station. iOS does not
@@ -1474,7 +1473,7 @@ the Android Gradle plugin (`:app:testDevDebugUnitTest`, `:agent_audio:testDebugU
 Locally the same Kotlin compiled with `kotlinc` against the framework jar and its 115 + 7 tests
 passed on a JVM. **Not verified:** nothing has run on a phone, against FCM or APNs, or with a
 real caller. The Play Console full-screen-intent declaration is not filed. iOS is a design only
-(`mobile.md` "iOS: the design (Mode B)"). Test counts: "Test counts", the Mode B entry.
+(`mobile.md` "iOS: the design (Mode B)").
 
 ### Terraform state in S3 2026-11-13
 
@@ -1552,7 +1551,7 @@ their own index (dropped; the row purge's comes with its window, as BRIN); the f
 invalidation not reaching the primary with media workers; the pooler assumptions; and runbook SQL
 that did not run.
 
-Evidence: see "Test counts" below (2026-11-14). **Not verified:** whether Supabase's session
+**Not verified:** whether Supabase's session
 pooler forwards `application_name` and clears session state between clients (the code no longer
 depends on either; `db-hygiene.md` 4.1 has the post-deploy check); every operator step in
 `db-hygiene.md` (they run against production).
@@ -2159,7 +2158,7 @@ public layer's masking, its export audit row and its outage answer
 (`agency-activity-service.test.ts`); the live list's and number's outage 403 and an unmasked 503
 (`proxy-agency-live-calls.routes.test.ts`); the policy's override check, bulk check, global
 refusal and blank reason (`super-admin-feature-flags.test.ts`); the registry's global-On guard
-(`SAFeatureFlagsPage.test.tsx`). Counts under "Test counts".
+(`SAFeatureFlagsPage.test.tsx`).
 
 ### Live call listening, the two persona-review branches merged 2026-11-16 (LS18–LS22)
 
@@ -2207,7 +2206,7 @@ bar's target; the live list's 503 read as final; the merge's gap at its edge and
 retry, its `feature_disabled`, its truncation toast, its `ph-no-capture`, its cursor, its export
 with the draft filters; the util's purged-call link, its exclusive `to`, its "Withheld"; the
 client's truncation header and its filters; the Settings line's loading state and its unrecorded
-line; the nav entry's flag; the route inventory without the CSV path. Counts under "Test counts".
+line; the nav entry's flag; the route inventory without the CSV path.
 
 ### Live call listening, the final review fixes 2026-11-17 (LS17 a, LS22 l, n–u, [`listening.md`](listening.md) §10)
 
@@ -2259,7 +2258,6 @@ restored with `git checkout`), 5: the server's flag gate re-added
 (`proxy-agency-listen-history.routes.test.ts`, 9 red); the nav entry's flag re-added
 (`consoleNav.test.ts`, `consoleSearch.test.ts`, 3 red); `RequireFlag` back on the route
 (`ListenHistoryPage.test.tsx`); a 503 read as final; the page reading the flag itself (21 red).
-Counts under "Test counts".
 
 ### Analysis: why the AI vendor refuses, and an alert when it does not stop 2026-11-18
 
@@ -2360,7 +2358,7 @@ Phase 3 replaced all of them but Join call (below); Phase 4 (Join call, whisper,
 "Not built".
 Known limits: the dialler-conversations count reads the day's attempts deployment-wide before it
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
-moment until the promises read answers. Test counts below.
+moment until the promises read answers.
 
 ### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF39 built as defaults, pending Manas)
 
@@ -2395,7 +2393,7 @@ LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks
 minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
 phone views nor the app's soft phone screens (LF24, LF39; since done by the agent station redesign,
 2026-11-20); the Callbacks page's campaign filter
-lists the board's first 25 campaigns. Test counts below.
+lists the board's first 25 campaigns.
 
 ### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
 
@@ -2433,976 +2431,43 @@ every requeued job completed once the vendor answered). Reviewed by a fresh-cont
 findings (one short transcript failing a complete recording for good, the delay staying on through
 a drain, the scan behind it, a missing `modules.md` entry) are fixed with tests. Mutation-checked,
 each red then restored. Not verified: a real Gemini transcription, the real UI in a browser, the
-query plan on production-sized data. Test counts below.
+query plan on production-sized data.
+
+### Every package's version in logs 2026-11-19
+
+Each deployable now says which release of every package produced a line (`operations.md` "Where the
+running version shows"). The server's bundled packages (`contracts`, `db`, `domain`,
+`observability`: its `dependencies`, checked against what esbuild inlined at build time) are OTel
+resource attributes, `magick_agency.package.<name>.version`, on every exported log, span and
+metric, and the listening line logs them as `packages`. The console and super-admin send
+`X-Client: <originator>/<version>` (web-ui's `clientHeaders`), which the server logs as
+`clientApp` / `clientVersion` on every line of the request; the console's PostHog events carry
+`$app_version`. The report renderer Lambda stamps `version` and its bundled `contracts` on every
+CloudWatch line. Not covered: the console's station and listener WebSockets (a browser cannot set
+the header), and the packages inside a web build, which the app's release tag gives.
 
 ### Agent station redesign, phases 0 to 2 2026-11-20 (AS1–AS18, [`agent-station.md`](agent-station.md))
 
 The agent's working screen redesigned on the console and the app from mock-ups made with agents:
 one state per screen, a coloured band, big numbers, picture tiles and one main button; light by
-default everywhere (AS14); simple Indian English copy (AS15). Built in seven streams merged into
-one branch; the plan, rulings and per-stream evidence are in [`agent-station.md`](agent-station.md) §3.
-
-| Part | What | Evidence (on the merged branch) |
-|---|---|---|
-| Wire | `0056_campaign_station_settings.sql` to `0060_session_event_break_overrun.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display; the Dart mirror in `agency_wire` | contracts 617, db unit 457, db integration 880, `agency_wire` 763 |
-| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons (BE-5); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` (AS9) | server unit and the rest lane: no failures except 3 in `inbound-recordings.test.ts` and 11 in `inbound-clips-routes.test.ts`, both for this build container's missing audio decoders, in areas the redesign did not touch; wall-clock lane 31 passed; domain 378, observability 23, renderer 97 |
-| Console station | Every screen of the spec on today's data, then wired to the new fields; hold to end call; the agent's work picker as big tiles; the inbound call, the soft phone (in the station and on `/dialer/phone`) and the join screens in the same look; station words keyed on codes, never a server sentence; the agent nav's "My work"; no ₹ on promised amounts (PT5 stands) | console 7,926, web-ui 244, lint clean |
-| Console supervisor | Alerts banner and chime on every page; campaign Settings for target, number display, script, customer facts and tile pictures; the Collections set in New campaign (AS4); super-admin light by default | included in the console count; super-admin 514 |
-| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice (AS13) | `flutter analyze` clean; `flutter test` 2,204 |
-
-Guards: `test:release` 10, `test:tooling` 20, `test:grafana` 34. A review by five fresh-context
-reviewers and four fix streams followed the build on the same day (the "Review" row of
-[`agent-station.md`](agent-station.md) §3); the counts above are from the final run after it. Not
-built: supervisor inbound screens (the route editor, Missed calls) can still show a server sentence
-for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17). Not verified:
-nothing has run on a real phone, a real carrier or with real agents; read aloud has not run on a
-device.
-
-## Test counts
-
-**Staging reports of 2026-11-17, 2026-11-19.** Branch `claude-mgkvc/happy-hypatia-6n4t7z`, rebased
-onto main after #102 (Live floor Phase 3) and #103, its migrations renumbered 0054 and 0055, on the
-tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and Redis on
-6383 run locally, not in Docker; `mpg123` and `sndfile-programs` installed). From the root:
-`pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
-`apps/server` 10606 passed + 1 expected fail (533 files), `apps/console` 7838 (421 files),
-`packages/db` 457 (28 files), `packages/contracts` 576 (18 files). Integration: `packages/db` 857
-(96 files); `apps/server` `INTEGRATION_LANE=rest` 3109 passed + 9 expected fail + 2 skipped (281
-files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 passed (8 files). Every run was green
-the first time. The changed files' own counts are in [`modules.md`](modules.md). After the
-clean-up commit (no behaviour change; the test for a count-less TR1 tag removed, the tag having
-never left this branch): `pnpm lint` clean; unit `apps/server` 10605 passed + 1 expected fail (533
-files), `apps/console` 7838 (421 files), `packages/db` 457 (28 files); integration `packages/db`
-857 (96 files), `apps/server` `INTEGRATION_LANE=rest` 3109 passed + 9 expected fail + 2 skipped
-(281 files passed, 2 skipped), all green the first time.
-
-**Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
-
-After the console's cleanup refactors (2026-11-19: one polled daily read for Today so far and the promises, `useNow` and one 5 s risk clock ranking the floor once for the cards and the break rows, derived rank and badge, one late-callbacks figure, Got it split once): `apps/console` 7652 (411 files), `pnpm lint` clean. After the PR review's fixes (2026-11-19: one polling core for the floor and the daily reads, Retry overtaking a read in flight, a stale card's Pause or Resume re-reading the board, the grouped calling-hours Got it held per campaign, Listen taking only the fields it reads, the agent cards' memo, the stop time stamped on the campaign row by `0051_campaign_stopping_at.sql`): `apps/console` 7666 (412 files); `apps/server` unit 10501 passed + 1 expected fail (530 files), `INTEGRATION_LANE=rest` 3046 passed + 9 expected fail + 2 skipped (277 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files); `packages/db` unit 457 (28 files), integration 835 (93 files); `packages/contracts` 551; `agency_wire` `dart test` 688, run on Dart 3.14.1 outside the Flutter workspace (the package copied with its `resolution: workspace` line removed, against this tree's fixtures); `pnpm lint` clean.
-
-**Live floor Phase 3, 2026-11-19.** Branch `claude-mgkvc/loving-wozniak-s4am09` (LF4–LF7, LF11–LF39; the 0052 and 0053 migrations; after three independent reviews' fixes), every suite run one after another on the final tree (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (74 vocabularies, 3 label maps). Unit: `apps/server` 10583 passed + 1 expected fail (533 files), `apps/console` 7815 (420 files), `apps/super-admin` 509 (37 files), `packages/contracts` 575 (18 files), `packages/domain` 283 (14 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 848 (95 files); `apps/server` `INTEGRATION_LANE=rest` 3105 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files). Mobile, on Flutter 3.47.7: `flutter analyze` no issues, `flutter test` 2032, `agency_wire` `dart test` 718. `plivo-inbound-e2e.test.ts` failed in some rest-lane runs on a loaded machine while other agents ran integration in parallel (green alone and in this run); the late-callbacks race test was made to assert what LF21 promises and passed 20 runs of its file. After the `/simplify` cleanup (one statement per Need help transition, one flag snapshot and one rows read per floor poll, station capabilities as one set, the registry's help-clear memory moved to the clients, the staging names dropped, shared helpers reused), the same suites on the final tree: `apps/console` 7818 (420 files), `apps/server` unit 10583 passed + 1 expected fail (533 files), `INTEGRATION_LANE=rest` 3106 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files), `packages/db` 457 and 848 (95 files), `packages/contracts` 575, `apps/super-admin` 509, `packages/web-ui` 244, `packages/domain` 283, `packages/observability` 23, `flutter test` 2034, `agency_wire` 718, `flutter analyze` no issues; lint, build, grafana 34, release 10, tooling 20, literals up to date. After PR #102's review comments (an answer stamped no earlier than its raise, LF14; a listen's `by_name` trimmed and cut like `from_name`, LF15; a malformed session id on a supervisor message pinned as the uniform 404; a cancel that lost the race to a supervisor's answer now says who answered, LF35; the expiry's minutes from `AGENCY_HELP_EXPIRY_MS` through `literals.json`'s new `help_expiry_ms`; the Give dialog counting and naming only the agents who receive callbacks, LF30), every suite on the final tree: `apps/console` 7820 (420 files), `apps/server` unit 10584 passed + 1 expected fail (533 files), `INTEGRATION_LANE=rest` 3107 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files), `packages/db` 457 (28 files) and 848 (95 files), `packages/contracts` 576 (18 files), `apps/super-admin` 509, `packages/web-ui` 244, `packages/domain` 283, `packages/observability` 23, `flutter test` 2041, `agency_wire` 719, `flutter analyze` no issues; lint, build, grafana 34, release 10, tooling 20, `contracts-literals.mjs --check` up to date (75 vocabularies, 3 label maps). After Live floor's two panes became one scrolling pane (LF40: Needs you now and Campaigns scroll inside a fixed height with "N more below", the cap lifted on a phone-width page): `apps/console` 7835 (422 files), `pnpm lint` clean, the console's build clean; checked in Chromium at 1280, 820 and 390 px wide.
-
-**The recording-host re-queue script removed, 2026-11-18.** Branch
-`claude-mgkvc/wizardly-dirac-gxwzam`, on the tree of this entry's commit, every suite run one after
-another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root:
-`pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
-`apps/server` 10471 passed + 1 expected fail (528 files), `packages/db` 457 (28 files).
-Integration: `packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3022 passed + 9
-expected fail + 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed
-(7 files). The rest lane went red twice before this green run, each time on a different timing
-check that passes alone (`inbound-connector-review-fixes.test.ts` IQ50 "back within the grace",
-`timed out: offered`; `load/concurrency-cap.test.ts`, seed 24301 round 16, counters 11 against 14
-live attempts, which does not reproduce with `LOAD_SEED=24301`); this change touches neither.
-
-**Plivo's regional recording media hosts, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`,
-on the tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and
-Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana`
-34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10487 passed + 1 expected
-fail (529 files), `packages/db` 457 (28 files). Integration: `packages/db` 832 (91 files);
-`apps/server` `INTEGRATION_LANE=rest` 3025 passed + 9 expected fail + 2 skipped (275 files passed,
-2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The changed files' own counts are in
-[`modules.md`](modules.md).
-
-**Analysis vendor refusals, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`, on the
-tree of this entry's commit (after the cleanup pass), every suite run one after another (Postgres 16 on 5436 and Redis on
-6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana` 34,
-`pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10430 passed + 1 expected fail
-(528 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files). Integration:
-`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
-+ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The
-changed files' own counts are in [`modules.md`](modules.md).
-
-**Live call listening, the history without the flag, 2026-11-17.** Branch `ccr-364c489c-zeoxwy`,
-on the tree of `4858093`, every suite run one after another. From the root: `pnpm lint` clean;
-`pnpm test:tooling` 20; `pnpm --filter @magick-agency/console build` clean. `apps/server` unit
-10391 passed + 1 expected fail (524 files); `INTEGRATION_LANE=rest pnpm test:integration` 3018
-passed + 9 expected fail + 2 skipped (274 files passed, 2 skipped). `apps/console` `pnpm test`
-7459 (396 files). `packages/contracts` `pnpm test` 549 (16 files; a comment changed);
-`agency_wire` 688 (`dart test`). The wall-clock lane not rerun (no file in it changed).
-
-**Live call listening, the final review and the merge of `main`, 2026-11-17.** Branch
-`ccr-364c489c-zeoxwy`, on the tree of the merge of `main` (`25d1d81`: `main`'s console and web-ui
-insights change and its release), every suite run one after another on a 4-CPU machine. From the
-root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10, `pnpm test:tooling` 20;
-`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps); `pnpm build` clean.
-Unit: `packages/contracts` 549 (16 files), `packages/domain` 278 (14), `packages/db` 457 (28),
-`packages/observability` 23 (5), `packages/web-ui` 244 (21), `apps/server` 10391 passed + 1
-expected fail (524 files), `apps/console` 7457 (396 files), `apps/super-admin` 509 (37 files),
-`apps/report-renderer` 94 passed + 2 skipped (12 files passed, 1 skipped). Integration:
-`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
-+ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files; the
-listen load check's timing bounds asserted, 4 CPUs). Mobile: `agency_wire` 688 (`dart test`),
-`apps/mobile` `flutter analyze` no issues, `flutter test` 1980. The listening files' own counts,
-run file by file before the merge, are in [`modules.md`](modules.md).
-
-**Live call listening, the persona review's console, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on
-the tree of this entry's commits. From the root: `pnpm lint` clean; `pnpm test:tooling` 20;
-`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `apps/console` `pnpm
-test` 7426 (393 files), `pnpm --filter @magick-agency/console build` clean; `apps/server` unit
-10375 passed + 1 expected fail (523 files; `agency-route-table.test.ts` 9). `packages/contracts`
-not touched (not rerun); integration not run (no server source, SQL or contract change).
-
-**Live call listening, the two persona-review branches merged, 2026-11-16.** Branch
-`ccr-364c489c-zeoxwy`, on the tree of the merge's integration-fix commit (its code and tests as run). From the
-root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:tooling` 20; `contracts-literals.mjs
---check` up to date (71 vocabularies, 3 label maps). `packages/contracts` `pnpm test` 549 (16
-files). `apps/server` unit 10375 passed + 1 expected fail (523 files); `INTEGRATION_LANE=rest pnpm
-test:integration` 3015 passed + 9 expected fail + 2 skipped (273 files passed, 2 skipped);
-`INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7 files; 4 CPUs, the load check's
-timing bounds asserted). `apps/console` `pnpm test` 7340 (387 files); `apps/super-admin` `pnpm test`
-509 (37 files); `packages/db` `pnpm test:integration` 826 (90 files); `agency_wire` 688 (`dart
-test`).
-
-**Live call listening, the server persona-review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`,
-on the tree of `b3114f9`. From `apps/server`: `pnpm lint` clean; unit 10355 passed + 1 expected fail
-(522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3005 passed + 9 expected fail + 2 skipped
-(272 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7
-files; the listen load check's timing bounds asserted, the machine has 4 CPUs). A first rest-lane
-run was stopped and is not counted: a `vitest list` of the db package's integration files, run
-beside it to count tests, ran that package's global setup, which drops and re-migrates the shared
-test database under a running suite (dozens of unrelated reds followed). `packages/db` `pnpm test`
-457 (28 files), `pnpm test:integration` 826 (90 files); `packages/contracts` `pnpm test` 546 (15
-files) and lint clean; `packages/observability` 23 (5 files); `contracts-literals.mjs --check` up to
-date (71 vocabularies, 3 label maps); `agency_wire` 688 (`dart test`). From the root: `pnpm
-test:grafana` 33, `pnpm test:tooling` 20. `apps/console` lint clean against the contract changes.
-
-**Live call listening, the persona review's history and guard rails, 2026-11-16.** Worktree branch
-`worktree-agent-a316307ab48001ee7` (on `ccr-364c489c-zeoxwy` at `a13635b`), run on the tree of
-`3538f66` with its own test database. From `apps/server`: `pnpm lint` clean; unit 10357 passed + 1
-expected fail (522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3008 passed + 9 expected
-fail + 2 skipped (273 files passed, 2 skipped); the wall-clock lane not run here (its load check is
-the coordinator's). `apps/super-admin` `pnpm lint` clean, `pnpm test` 509 (37 files);
-`packages/contracts` `pnpm lint` clean, `pnpm test` 548 (16 files), the literal extractor's check up
-to date; `apps/console` `pnpm lint` clean (tests not rerun: no console file changed);
-`agency_wire` 688 (`dart test`); `apps/mobile` `station_listen_notice_test.dart` 4. From the root:
-`pnpm test:grafana` 33, `pnpm test:tooling` 20.
-
-**Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
-tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
-files); `INTEGRATION_LANE=rest pnpm test:integration` 2999 passed + 9 expected fail + 2 skipped (272
-files passed, 2 skipped; run on `09053e6`, before the load suite's fix, which is outside that lane);
-`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the listen load check among
-them). From the root: `pnpm test:tooling` 20 passed.
-
-**Live call listening, the voice review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on a
-clean checkout of `618108f` (this worktree also held another agent's work in progress). From
-`apps/server`: `pnpm lint` clean; unit 10309 passed + 1 expected fail (520 files); the bridge files
-alone: `webrtc-bridge-listen-tap.test.ts` 46, `webrtc-bridge-manager.seams.test.ts` 13,
-`webrtc-bridge-inbound-connect.test.ts` 29, `carrier-modules.test.ts` 30. `packages/observability`
-23 (5 files). From the root: `pnpm test:grafana` 33. Integration not run (another agent held it).
-
-**Live call listening, the load check, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree
-of `626404c` (the mask fix, the load suite, the media suite's flake fix). From `apps/server`: `pnpm
-lint` clean; unit 10296 passed + 1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm
-test:integration` 2995 passed + 9 expected fail + 2 skipped (271 files passed, 2 skipped);
-`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the load check now among
-them). `listen-media-load.test.ts` as committed (listeners out of process, paired windows): 4 of 4 green
-(three alone, one in the lane), the last after its p95 slack went from 20 to 30 ms (the last commit;
-the earlier designs, compared across runs or with the listeners in process, failed their timing
-bounds 3 times in 10 while another worktree's Flutter tests loaded the machine, `listening.md` §10);
-`voicelink-media-ws-load.test.ts` alone 9 of 9, three times. From the root: `pnpm test:tooling` 20
-passed.
-
-**Live call listening, console and mobile review fixes, 2026-11-16.** Branch
-`ccr-364c489c-zeoxwy`, run on `2da9910` (the console fixes; the mobile and docs commits beside it
-change no console file). From inside each directory: `apps/console` `pnpm lint` clean, `pnpm test`
-7311 (387 files); `apps/mobile` `flutter analyze` clean, `flutter test` 1968;
-`agency_wire` 688 (`dart test`); `pnpm test:tooling` 20. Not rerun (untouched): the server and
-the other packages (the server's own fix round runs in this worktree beside it).
-
-**Live call listening, console and mobile persona-review fixes, 2026-11-16.** Branch
-`ccr-364c489c-zeoxwy`, on `b6e2cb1` (console) and `3760eae` (mobile). From inside each directory:
-`apps/console` `pnpm lint` clean, `pnpm test` 7340 (387 files); `apps/mobile` `flutter analyze`
-clean, `flutter test` 1979; from the root `pnpm test:tooling` 20. Not rerun: `agency_wire` (no wire
-change), the server and the other packages (the server's own fix round runs in this worktree).
-
-**Live call listening, phase 3, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
-`5bf78f5` (the server side and its fixes). From `apps/server`: `pnpm lint` clean; unit 10296 passed +
-1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm test:integration` 2995 passed + 9 expected
-fail + 2 skipped (271 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration`
-26 passed (6 files). From the root: `pnpm test:grafana` 33 passed, `pnpm test:tooling` 20 passed.
-`packages/contracts` `pnpm test` 545 (15 files) and its lint clean; `contracts-literals.mjs --check`
-up to date (71 vocabularies, 3 label maps); `agency_wire` 687 (`dart test`). The first rest-lane run
-(on `9de8c3b`) had two reds: the chaos suite's lease-provenance scan named the listen token's TTL
-(fixed in `5bf78f5`, the token's window allow-listed by name beside the station token's), and
-`load/voicelink-media-ws-load.test.ts`'s bad-codec case settled `provider_start_timeout` once under
-the parallel run (green alone, 9 of 9, and green in the run above; the same case failed once in an
-earlier run on this branch, before phase 3: a timing flake under load, not filed as fixed). The
-console's `lint` fails only in its test helper `src/__tests__/helpers/liveCalls.ts`, which builds an
-`AgencyLiveCall` without the two fields phase 3 added (`correlation_id`, `aht_seconds`); the console
-is the console phase's to wire.
-
-**Live call listening, phase 6, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
-`554eebd` (the notice's words and WAV), with phase 3's server work in progress beside it in the same
-worktree (uncommitted, its own tests not yet there). From inside each directory: `packages/contracts`
-`pnpm test` 545 (15 files), `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label
-maps), `pnpm --filter @magick-agency/contracts lint` clean. `apps/server` unit 10222 passed + 1
-expected fail (513 files); `pnpm vitest run test/unit -t inbound` 228 passed (49 files). `apps/console`
-`pnpm test` 7265 (386 files). `agency_wire` 687 (`dart test`). The server's and the console's `lint`
-fail only in phase 3's uncommitted files (`src/agency/listen/`, and the console's live-call test
-helper against its in-progress `live-calls.ts` contract), none of which this phase touches. Not run
-here (phase 3 holds the integration runs in this worktree): the server's integration files that
-read the standard recordings, `inbound-clips-routes`, `inbound-call-router`,
-`inbound-connector-review-fixes`, `inbound-routes`, `inbound-connect-e2e`,
-`inbound-clash-voicemail-e2e` and `inbound-mobile-e2e` (all in the rest lane).
-
-**Live call listening, phases 4 and 5, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on
-`f81879b` (the console and mobile commits; no server file touched). From inside each directory:
-`apps/console` `pnpm lint` clean, `pnpm test` 7265 (386 files); the run before this phase, on
-`d3335a8` with none of its changes, had 7054 passed and 1 failed of 7055 (`AgencyCampaignSettingsPage.test.tsx` "highlights the
-section scrolled into view", which passed alone, 77 of 77: a timing flake under the full run's load,
-not this phase's). `apps/mobile` `flutter analyze` clean, `flutter test` 1968. Not rerun
-(untouched): `agency_wire` (no wire change), `packages/web-ui`, the server and the other packages.
-`pnpm test:tooling` 20 (the CI scope rules over the new tests' reads).
-
-**Live call listening, phase 2, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on `9a40de3` (this
-phase's later commit changes docs only; the console's commits beside it touch no server file), from
-inside `apps/server`, on a local Postgres 16 and Redis on the
-agency ports with no other run sharing them; the integration as two lanes run one after the other.
-`pnpm --filter @magick-agency/server lint` clean; `pnpm test:grafana` 33. `apps/server`: unit
-10222 passed + 1 expected fail (513 files); rest lane 2978 passed, 9 expected fail, 2 skipped (268
-files passed, 2 skipped); wall-clock lane 26 (6 files). A first rest-lane run had one failure,
-`load/voicelink-media-ws-load.test.ts` "start negotiation failures" (a `media_before_bad_start`
-call ended `provider_start_timeout` under the run's load); the file passed alone three times
-(9 each) and the lane passed in full on the rerun above. Not rerun (untouched): the other
-packages and apps.
-
-**Live call listening, phase 1, 2026-11-16.** Branch `ccr-364c489c-zeoxwy` on `e229e06`, run on
-`b7a59d8` (later commits change docs and one test comment only). Each package from inside its
-directory, one suite at a time, on a local Postgres 16 and Redis on the agency ports with no other
-run sharing them; the server's integration as two lanes run one after the other. `pnpm lint`
-clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
-`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
-544 (15 files); `packages/db` unit 457 (28 files), integration 822 (89 files);
-`packages/observability` 23 (5 files). `apps/server`: unit 10186 passed + 1 expected fail (512
-files); rest lane 2978 passed, 9 expected fail, 2 skipped (268 files passed, 2 skipped); wall-clock
-lane 26 (6 files). `apps/console` 7055 (376 files). `agency_wire` 687 (`dart test`). Not rerun
-(untouched): `packages/domain`, `packages/web-ui`, `apps/super-admin`, `apps/report-renderer`,
-the app's `flutter test`.
-
-**Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the fresh-context review and its fix round).** Branch
-`ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `7ee887b` (later commits change docs only). Each
-package from inside its directory, on a local Postgres 16 and Redis on the agency ports with no
-other run sharing them, integration with 4 workers; the server's integration as two lanes run one
-after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm build`
-clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
-`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
-534 (15 files); `packages/domain` 278 (14 files); `packages/db` unit 457 (28 files), integration
-815 (88 files); `packages/observability` 21 (5 files); `packages/web-ui` 240 (20 files).
-`apps/server`: unit 10178 passed + 1 expected fail (511 files); rest lane 2967 passed, 9 expected
-fail, 2 skipped (267 files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 7055
-(376 files); `apps/super-admin` 506 (37 files); `apps/report-renderer` 94 passed, 2 skipped (12
-files, 1 skipped). `apps/mobile`: `flutter analyze` 118 infos, all `deprecated_member_use`, no
-warnings; 1964 (`flutter test`); `agency_wire` 687 (`dart test`, run outside the Flutter
-workspace). One run, no failures, no reruns.
-
-**Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
-`ccr-43b095f3-7qzgsk` on `62ea1f6`, run on the branch's final tree (this entry changes docs only).
-Each package from inside its directory, one suite at a time, on a local Postgres 16 and Redis on
-the agency ports with no other run sharing them; the server's integration as two lanes run one
-after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm test:grafana`
-33, `pnpm test:release` 10 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to
-date (70 vocabularies, 2 label maps). `packages/contracts` 533 (15 files). `apps/server`: unit
-10058 passed + 1 expected fail (506 files; the tally's own suite went with the class, its expiry
-now one `late-binding.test.ts` case); rest lane 2868 passed, 9 expected fail, 2 skipped (259
-files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 6964 (373 files).
-`apps/mobile`: `flutter analyze` clean; 1939 (`flutter test`); `agency_wire` 679 (`dart test`).
-No failures in these runs. Earlier in the day, runs made while other suites ran beside them had
-one flake each (a soft-phone reconnect case in the rest lane, which passed alone, and an unnamed
-console test); neither recurred. Other packages untouched by the branch were not re-run.
-
-**Database hygiene, 2026-11-14 (after the PR review fixes).** Branch `claude-mgkvc/epic-shannon-lesp56`
-on `182fab4`, run on `560cfe5` (this entry's commit changes docs only). Each package from inside
-its directory, one suite at a time, on the local Postgres 16 and Redis on the agency ports with no
-other run sharing them; the server's integration as two lanes; `mpg123` and `sndfile-programs`
-installed. `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
-`pnpm test:tooling` 16 pass. `packages/db`: unit 457 (28 files), integration 789 (84 files).
-`apps/server`: unit 10038 passed + 1 expected fail (506 files); rest lane 2868 passed, 9 expected
-fail, 2 skipped (259 files passed, 2 skipped); wall-clock lane 26 (6 files). No failures, no
-reruns. Other packages untouched by the branch were not re-run.
-
-**Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
-on `main` `b3894d2`, run on `d6ec1a0`, after the Mode B cleanup pass (`47edcfd`–`d6ec1a0`: dead
-code dropped, one read per step, shared helpers; this entry's commit changes docs only). Each
-package from inside its directory, one suite at a time, on the local Postgres 16 (test databases
-`UTF8`) and Redis 7 on the agency ports with no other run sharing them, integration with 4
-workers. `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
-`pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to date (70 vocabularies, 2 label
-maps). No flakes and no reruns. Not run: the Gradle build and its unit tests (no Android SDK).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `packages/contracts` | 530 (15 files) | — |
-| `packages/domain` | 262 (13 files) | — |
-| `packages/db` | 436 (27 files) | 765 (80 files) |
-| `packages/observability` | 21 (5 files) | — |
-| `packages/web-ui` | 240 (20 files) | — |
-| `apps/server` | 9977 passed + 1 expected fail (501 files) | rest lane 2841 passed, 9 expected fail, 2 skipped (257 files passed, 2 skipped); wall-clock lane 26 (6 files) |
-| `apps/console` | 6870 (368 files) | — |
-| `apps/super-admin` | 506 (37 files) | — |
-| `apps/report-renderer` | 90 passed, 2 skipped (12 files, 1 skipped) | — |
-| `apps/mobile` | `flutter analyze` clean; 1905 (`flutter test`); `agency_wire` 670 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
-| Android Kotlin (JVM, `kotlinc` and JUnit outside Gradle) | ring logic 115; `agent_audio` `PhoneCalls` 7; the app module's Kotlin compiled against the framework jar (105 classes, no errors) | — |
-
-**Mode B "Stop ringing" on the server, 2026-11-13 (server, observability).** Branch
-`claude-mgkvc/gracious-faraday-rw6nnx`, run on `d47f78b` (IQ83, the amended IQ75, IQ79 and N5;
-`inbound.md` §6.1, §12); later commits change docs and the observability OTLP snapshot only. On the
-local Postgres 16 and Redis 7 on the agency ports with no other integration run sharing them, 4
-workers. `pnpm lint` clean; `pnpm test:grafana` 33 and `pnpm test:tooling` 16 pass;
-`packages/observability` 21 (5 files, on `ea0f5ba`). `apps/server` unit 9972 passed + 1 expected
-fail (501 files), rest lane 2841 passed, 9 expected fail, 2 skipped (257 files passed, 2 skipped),
-wall-clock lane 26 (6 files). `packages/contracts` and `agency_wire` were not touched. The app's
-side of this round is [`mobile.md`](mobile.md)'s.
-
-**Mode B ring refactor, 2026-11-13 (server).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`, run on
-`3cba2de` (the ring in `inbound-ring.ts`, one end for every ring, one ring rule: IQ78, `inbound.md`
-§6.1, §12). On the local Postgres 16 and Redis 7 on the agency ports with no other integration run
-sharing them, 4 workers. `pnpm lint` clean; `pnpm test:tooling` 16 pass. `apps/server` unit 9967
-passed + 1 expected fail (501 files), rest lane 2834 passed, 9 expected fail, 2 skipped (257 files
-passed, 2 skipped), wall-clock lane 26 (6 files). `packages/contracts` and `agency_wire` were not
-touched.
-
-**Mode B second review round, 2026-11-13 (server, contracts, `agency_wire`, observability,
-Grafana).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`, run on `257c582` and its docs commits
-(IQ75–IQ77, `inbound.md` §6.1, §12). Each package from inside its directory, on the local Postgres 16
-and Redis 7 on the agency ports with no other integration run sharing them, 4 workers. `pnpm lint`
-clean; `pnpm test:grafana` 33 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to
-date (70 vocabularies). `packages/contracts` 530 (15 files); `packages/observability` 21 (5 files);
-`apps/server` unit 9967 passed + 1 expected fail (501 files), rest lane 2830 passed, 9 expected
-fail, 2 skipped (257 files passed, 2 skipped), wall-clock lane 26 (6 files); `agency_wire` 670
-(`dart test`). `packages/db` was not touched in this round. The app's own counts are in
-[`mobile.md`](mobile.md).
-
-The 2026-11-12 run's flakes, each rerun: the console's first full run failed
-`AgencyCampaignSettingsPage.test.tsx` "highlights the section scrolled into view" (a file this
-branch does not touch); alone it passed 3 times out of 3 and the full suite then passed. The first
-rest-lane run (3 failed | 2808 passed) overlapped that console rerun;
-`telephony/plivo-call-e2e.test.ts` (e) and `telephony/plivo-inbound-e2e.test.ts` "open: …" each
-passed alone twice (11 and 18 tests), and the rest-lane rerun, with nothing else running, passed
-them.
-
-**`softphone-policy-routes.test.ts` "override note … emoji"** is not a branch failure, and not a
-code failure on `main` either: it fails identically on `main` `b3894d2` (checked in its own
-worktree and database: 1 failed | 17 passed, the same `ck_agency_manual_call_dnc_override` CHECK
-refusing the insert, a 500 at `placeAndRingOut`). The cause is the sandbox's Postgres cluster,
-initialised `SQL_ASCII`: there `char_length` counts bytes, so 499 characters plus a 4-byte emoji are
-503 and the CHECK's 500 refuses them (`UTF8`: 500). CI's `postgres:16-alpine` initialises `UTF8`.
-With the test database recreated `UTF8` (`TEMPLATE template0`) the whole rest lane passes, emoji
-case included; the db integration and wall-clock counts above are from that database too (both
-were also green on the `SQL_ASCII` one: 765 and 26).
-
-Not run for the 2026-11-12 run: `pnpm build`, and the Gradle build and its unit tests (no Android SDK).
-
-Latest run, 2026-11-12, one station per agent (OS1–OS8, above), rebased on `main` after the
-console navigation redesign (#76): its migration is `0035_one_station_per_agent.sql` (`main` took
-0034), and its `session_in_other_tenant` copy says "organisation", as the console and the app now
-do:
-
-Run from inside each package on a local Postgres 16 (`max_connections` 300) and Redis 7 on the
-agency ports with no other run sharing them, integration with 4 workers. `pnpm lint` clean;
-`pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33 pass;
-`contracts-literals --check` up to date. `apps/mobile` (Flutter 3.47.9): `flutter analyze` no
-issues, `flutter test` 1797 passed; `agency_wire` `dart test` 609 passed. Not run (untouched):
-`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/observability`,
-`agent_audio`. One console run is not counted: with three suites sharing four cores,
-`organisationWording.test.ts` (which parses every console source file) timed out at 5 s; it passes
-alone, and the console count is from a run on its own.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9805 passed + 1 expected fail (494 files) | rest lane 2729 passed + 9 expected fail + 2 skipped (253 files + 2 skipped); wall-clock lane 23 (5 files) |
-| `packages/db` | 435 (26 files) | 751 (78 files) |
-| `apps/console` | 6869 (368 files) | — |
-| `packages/contracts` | 481 (15 files) | — |
-| `packages/domain` | 261 (13 files) | — |
-| `apps/mobile` | 1797 (`flutter test`); `agency_wire` 609 (`dart test`) | — |
-
-Previous run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
-fixes: the QA run 20261112-110644, the three-persona review, and the automated review of PR #76
-with its review comments (campaign Settings saves only what was changed and drops stale reads;
-"Got it" per person, by the browser's day, back on a new pause; DNC search's `+` floor by calling
-code and `00` numbers; Home's today figures keyed by the zone's day; invite scope; flag-gated agent
-twins), on `feat/console-nav-redesign`:
-
-Run on commit `ea9e894`, one package after another, integration with 2 workers per run
-(`TEST_WORKERS=2`: this machine's Postgres still has `max_connections` 100) on the branch's own
-test databases and Redis dbs. `pnpm lint` clean, `pnpm build` clean, `pnpm test:tooling` 16 and
-`pnpm test:release` 10 pass, `contracts-literals --check` up to date. Run before this round, which
-changed neither: `pnpm test:grafana` 33, `apps/mobile` `flutter analyze` no issues and `flutter
-test` 1786 passed, `agency_wire` `dart test` 605 passed. **Not green, so no counts recorded for
-them:** `apps/server` unit had 3 failures, all in `inbound-recordings.test.ts` (9727 passed + 1
-expected fail): this machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file
-fails the same way on a branch with no server code change. `apps/server` integration: the
-wall-clock lane is green (below); the rest lane had 16 failures (2705 passed + 9 expected fail + 2
-skipped), all in `agency-reports-e2e.test.ts` (the in-process renderer answers `render_failed`) and
-`inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`), the same 16 that fail on `main`
-on this machine. Not run (untouched): `apps/super-admin`, `packages/web-ui`,
-`apps/report-renderer`, `agent_audio`.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/console` | 6856 (367 files) | — |
-| `packages/domain` | 261 (13 files) | — |
-| `packages/contracts` | 481 (15 files) | — |
-| `packages/db` | 435 (26 files) | 746 (77 files) |
-| `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
-
-Previous run, 2026-11-12, on `main` (#74): integration files in parallel (one database and Redis db per worker,
-the database copied afresh before each file, `tooling/test-env.ts`):
-
-Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 with `max_connections`
-300 and Redis 7 on the agency ports), nothing else sharing them. `pnpm lint` clean; `pnpm
-test:tooling` 16 and `pnpm test:release` 10 pass. `packages/db` unit 435 (26 files: the
-worker-target tests are new) and integration 744 (76 files), green on ten runs in a row.
-`apps/server` unit 9682 passed + 1 expected fail (488 files); rest lane 2678 passed + 9 expected
-fail + 2 skipped (251 files + 2 skipped, with the new Redis range guard file), green on 3 of 4
-runs: the fourth failed the inbound clash test, which read the agent's frames between the
-connected row and the connected frame (fixed: it now waits for the frame, as the other inbound
-files do; 3 of 3 green since). Wall-clock lane 23 (5 files). Postgres client connections peaked
-at 95 across the four rest runs (they had reached 100, the old limit, before it was raised).
-Wall time against a serial run (`TEST_WORKERS=1`) on the same machine the same day: rest lane
-1139 s → 420–445 s; wall-clock lane 133 s (its files sum to 320 s run one after another);
-`packages/db` integration 137 s → 48 s. Not run (untouched): the web UIs, `packages/contracts`,
-`packages/domain`, `packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm
-test:grafana`.
-
-Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
-
-Run on commit `c41091e` (the docs commits after it change no code), one after another from inside
-each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
-on its first run. `pnpm lint` clean; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm
-test:grafana` 33 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`:
-`flutter analyze` no issues, `flutter test` 1781 passed; `agency_wire` `dart test` 605 passed;
-`agent_audio` `flutter test` 139 passed (Dart; the Kotlin tests were not run). Not run (untouched):
-`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9682 passed + 1 expected fail (488 files) | rest lane 2673 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
-| `packages/db` | 428 (25 files) | 744 (76 files) |
-| `apps/console` | 6161 (325 files) | — |
-| `packages/contracts` | 476 (14 files) | — |
-| `packages/domain` | 254 (12 files) | — |
-| `packages/observability` | 18 (4 files) | — |
-| `apps/mobile` | 1781 (`flutter test`); `agency_wire` 605 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
-
-Previous run, 2026-11-11, inbound calls on the mobile app after the persona review:
-
-Run on commit `e4e1451` (the docs commit after it changes no code), one after another from inside
-each package on a UTF8 test database and Redis db 1 with no other run sharing them. `pnpm lint`
-clean in 9 packages; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33
-pass; `contracts-literals --check` up to date (62 vocabularies); `packages/observability` 18 (4
-files). `apps/mobile`: `flutter analyze` no issues, `flutter test` 1705 passed; `agency_wire` `dart
-test` 595 passed; `agent_audio` `flutter test` 136 passed (Dart; the Kotlin tests were not run).
-The rest lane's first run failed one test, `agent-transition-ordering.test.ts`'s two concurrent
-`setState` calls (the timing case already seen once, "Load and scenario suites" above; this branch
-does not touch it), which passed three times alone; the whole lane was then rerun green, and those
-are its counts. Not run (untouched by this change): `packages/db`, `apps/super-admin`,
-`packages/web-ui`, `apps/report-renderer`. These counts are the branch's before `main`'s combined
-duplicate key (#69, below) was merged into it; CI checks the merged result.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9643 passed + 1 expected fail (488 files) | rest lane 2654 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
-| `apps/console` | 6114 (325 files) | — |
-| `packages/contracts` | 463 (13 files) | — |
-| `packages/domain` | 253 (12 files) | — |
-| `apps/mobile` | 1705 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
-
-Previous run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
-after both review rounds:
-
-Run on commit `cd6be77` (the docs commits after it change no code), one after another from inside
-each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
-on its first run. `pnpm lint` clean in 9 packages; `pnpm test:tooling` 16 and `pnpm test:release`
-10 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`: `flutter analyze`
-no issues, `flutter test` 1637 passed; `agency_wire` `dart test` 595 passed; `agent_audio`
-`flutter test` 136 passed (Dart; the Kotlin tests were not run). Not run (untouched by this
-change): `packages/db`, `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`,
-`packages/observability`, `pnpm test:grafana`.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9641 passed + 1 expected fail (488 files) | rest lane 2648 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 21 (5 files) |
-| `apps/console` | 6114 (325 files) | — |
-| `packages/contracts` | 463 (13 files) | — |
-| `packages/domain` | 253 (12 files) | — |
-| `apps/mobile` | 1637 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
-
-Run of 2026-11-10 on `main`, the combined duplicate key and its review fixes (`29f66d7`), one after
-another from inside each package on `magick_agency_test` and Redis db 1, nothing else sharing them.
-`pnpm lint` clean; `pnpm build` green; `test:grafana`, `test:release` 10 and `test:tooling` 16 pass.
-`agency_wire`'s `dart test` was not run (no Dart SDK on that machine); the change reaches no type it
-models and no literal the extractor reads.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9636 passed + 2 expected fail (488 files) | rest lane: 1 failure, `load/voicelink-media-ws-load.test.ts` "start negotiation failures and garbage frames" (below); every other file passed. Wall-clock lane 19 (4 files) |
-| `packages/db` | 428 (25 files) | 737 (74 files) |
-| `apps/console` | 6136 (325 files) | — |
-| `apps/super-admin` | 506 (37 files) | — |
-| `packages/contracts` | 372 (13 files) | — |
-| `packages/domain` | 253 (12 files) | — |
-| `packages/web-ui` | 240 (20 files) | — |
-| `apps/report-renderer` | 90 passed + 2 skipped (12 files + 1 skipped) | — |
-| `packages/observability` | 18 (4 files) | — |
-
-The console's first full run in this sequence failed `AgencyCampaignRosterAssignment.test.tsx`
-("Escape closes the dialog, but not while a preview is in flight"), which passed alone three times
-and in the full rerun counted above.
-
-**Open defect, found in this run: a carrier `start` lost behind early media.** The VoiceLink load
-case `media_before_bad_start` failed in both full rest-lane runs of this branch (plans 24 and 17,
-seed 24301: `provider_start_timeout` where `unsupported_media_format` is expected) and passes alone
-(3 of 3); the parent commit `cc40c1d`'s rest lane passed once. This branch does not touch the voice
-path. Cause: `PSTN_EARLY_FRAME_CAP` (16, `src/core/webrtc-bridge-manager.ts`) bounds the frames held
-while the provider token is checked, and this case sends a burst of media before its `start`; under
-a full lane's load the check outlasts the burst, the `start` lands past the cap and is dropped, and
-the call times out. A fix holds a `start` frame whatever the cap (dropping only media past it).
-Not changed here; it needs a ruling on the seam.
-
-Run of 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
-§12), on the merged branch:
-
-Run one after another from inside each package on the default test database
-(`magick_agency_test`) and Redis db 1 with no other run sharing them. The integration lanes, `pnpm
-build`, `test:grafana`, `test:release`, lint and every unit suite ran again on `dbdbc72`, after
-the behaviour-preserving cleanup pass (shared helpers, dead code removed, fewer reads on the answer
-path; no contract or migration change). `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and `pnpm
-test:release` 10 pass; `pnpm build` green. `apps/mobile/packages/agency_wire` `dart test` 510 passed
-and `dart analyze` clean (Dart 3.13.7 only, the package run outside the Flutter workspace with the
-contract fixtures linked; `agent_audio` and the app need Flutter and were not run).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9614 passed + 1 expected fail (488 files) | rest lane 2631 passed + 9 expected fail + 2 skipped (249 files + 2 skipped, the opt-in scale suites); wall-clock lane 19 (4 files) |
-| `packages/db` | 428 (25 files) | 731 (73 files) |
-| `apps/console` | 6100 (323 files) | — |
-| `apps/super-admin` | 506 (37 files) | — |
-| `packages/contracts` | 372 (13 files) | — |
-| `packages/domain` | 253 (12 files) | — |
-| `packages/web-ui` | 240 (20 files) | — |
-| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped) | — |
-| `packages/observability` | 18 (4 files) | — |
-
-One failure on the first unit run, fixed and not a product fault: `apps/super-admin`
-`SAUsagePage` read a stat card's text while its count-up animation (`useCountUp`) was mid-frame
-("0:02:02" for "2:02:02"), about one run in three; the cards' settled `aria-label` is read instead
-(`044aab9`), green 10 runs in a row; the super-admin tests now run with reduced motion, so the cards
-show their settled value and the test reads the visible text again. Known flakes the fix pass removed: the `packages/db` plan tests
-that flipped with autovacuum's statistics (0003, 0004, 0005, 0011, 0015, 0017 and the usage read now
-plan over rows of their own), `report-assembler-deadline`'s unhandled timer, and the audit drain's
-threshold at `LOAD_SCALE=3`.
-
-Previous run, 2026-11-09, inbound calls P1 and P2 complete (`inbound.md` §12, after the P2 review
-fix pass and the verification pass's two test fixes), on commit `6840f9b`, run one after another
-from inside each package on the default test database (`magick_agency_test`) and Redis db 1 with no
-other run sharing them; every step green on its first run, no flake seen: `pnpm lint` clean in 9
-packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass. Not run: `pnpm build` and
-`apps/mobile` (no Flutter or Dart here: P2's `agency_wire` changes are untested by `dart test`).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9467 passed + 1 expected fail + 42 skipped (478 files) | rest lane 2520 passed + 9 expected fail + 2 skipped (239 files + 2 skipped, the opt-in scale suites); wall-clock lane 19 (4 files) |
-| `packages/db` | 428 (25 files) | 696 (68 files) |
-| `apps/console` | 6016 (316 files) | — |
-| `apps/super-admin` | 500 (37 files) | — |
-| `packages/contracts` | 367 (13 files) | — |
-| `packages/domain` | 253 (12 files) | — |
-| `packages/web-ui` | 240 (20 files) | — |
-| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-The previous full run (on `2f68f55`) failed three tests, each a test that read a state before the
-code under test had settled it, not a product fault (commits `be46605`, `6840f9b`):
-
-- `packages/db` `attempt-indexes-migration` (`idx_agency_contacts_connected`) and
-  `contacts-in-flight-index-migration` (`idx_agency_contacts_in_flight`): their EXPLAIN plans ran
-  over whatever earlier files left. In the failing file order `agency_contacts` was analyzed empty
-  (reltuples 0, no column statistics), both partial indexes were bloated by earlier files' dead
-  rows (5 pages) and `idx_agency_contacts_insights` was 1 page, rebuilt by the last down → up
-  across `0026` (which rebuilds it); priced by pages, the planner served both sweeps from the
-  insights index with `state` on its second column. Reproduced red in that order and on a scratch
-  database in that state. Over a campaign-shaped roster with fresh statistics both sweeps use their
-  partial indexes, with or without `0026`, so this is not a production regression; it is the same
-  latent fragility the busy-probe test had, exposed by the inbound work (`0026`'s rebuild on every
-  down → up across it, more rolled-back rosters). Both tests now insert and ANALYZE a roster and
-  its attempts inside their rolled-back transaction (`insertPlanRoster`, `test/integration/fixtures.ts`).
-  Mutation-checked: each partial predicate widened to take `pending`, and each made one the query
-  does not imply, turns the plan assertion red. A rolled-back ANALYZE still leaves the table's and
-  indexes' `reltuples` / `relpages` (written in place) and the rows' index entries behind, so a
-  plan test that seeds nothing can still follow what an earlier file did.
-- `apps/server` `inbound-connect-e2e` 2b (the sticky wait lapses, the team takes the caller): it
-  read B's `inbound_call` frame and A's last `customer_waiting` at the instant the spine row read
-  `offered`, which the connector commits before it sends the frames (and A's socket carries the
-  first call's audio ahead of the notice). Under CPU load the old test failed 1 run in 9 (on B's
-  frame); the full lane failed it on A's. The connector's order is right (one resolved panel
-  promise, frames in call order; an offered caller is out of every search). The test now waits for
-  both frames and pins A's notices for the call as exactly [waiting, cleared]: 28 of 28 runs under
-  CPU load green; mutation-checked (re-notifying on every search, and not clearing on the offer,
-  each red).
-
-Previous run, 2026-11-09, inbound calls P1 (the foundation, the three slices and the review's fixes,
-`inbound.md` §12), from inside each package, on this worktree's own test database and Redis db with
-no other run sharing them: `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and
-`pnpm test:release` 10 pass; `contracts-literals --check` up to date (51 vocabularies). Not rerun
-(untouched by the fix pass): `apps/report-renderer`, `packages/web-ui`, `packages/domain`,
-`pnpm build`, and `apps/mobile` (no Flutter or Dart here; the only contract change since the
-slices is a super-admin error code, which the app does not decode).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9305 passed + 1 expected fail + 42 skipped (468 files) | rest lane 2416 passed + 9 expected fail + 2 skipped (231 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 684 (67 files) |
-| `apps/console` | 5913 (309 files) | — |
-| `apps/super-admin` | 500 (37 files) | — |
-| `packages/contracts` | 361 (12 files) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-Inbound's own files within those counts: server unit `plivo-inbound-webhooks` 17,
-`inbound-service` 17, `plivo-inbound-adapter` 12, `agency/inbound/*` 25, `webrtc-bridge-inbound`
-12; server integration `inbound-call-router` 15, `inbound-call-repository` 20, `inbound-follow-up`
-17, `inbound-route-repository` 18, `api/inbound-routes` 13, `plivo-inbound-e2e` 18,
-`plivo-inbound-admin` 22; db integration `inbound-migration` 31, `inbound-live-indexes-migration` 6,
-`phone-number-inbound.repository` 7. `multiple-running-campaigns-migration`'s busy-probe plan test,
-which failed once in a full `packages/db` run and passed alone, now seeds and analyzes its own
-roster inside its rolled-back transaction: its plan had followed the statistics and index sizes
-earlier files left on `agency_contacts`. Reproduced red on the old test (and green on the new) with
-the live-number index bloated by earlier inserts and `idx_agency_contacts_customer_history` rebuilt
-small, as another file's down → up leaves it: the planner then served the probe from that index.
-Not caused by the inbound indexes or a widened probe (`numberLiveSql` is unchanged).
-
-Previous run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
-gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
-the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
-Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
-report polling paused in a hidden tab and backed off) and the PR review's fixes (a bounded
-pipeline shutdown, subscription runs counted after commit, the per-user rate counted in the
-insert, lower-cased header ids, re-enable resolving the subject, one build deadline over detail
-streaming, superseded renders dropped, the renderer out of the production image), from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
-9 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
-`contracts-literals --check` up to date (51 vocabularies); `aws/terraform` `terraform test` 9 pass and
-`validate` clean. `apps/mobile` was not run (no Flutter or Dart in this environment).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 9152 passed + 1 expected fail + 42 skipped (457 files) | rest lane 2293 passed + 9 expected fail + 2 skipped (224 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 632 (64 files) |
-| `apps/console` | 5876 (305 files) | — |
-| `apps/super-admin` | 471 (35 files) | — |
-| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
-| `packages/contracts` | 352 (12 files) | — |
-| `packages/web-ui` | 240 (20 files) | — |
-| `packages/domain` | 142 (9 files) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-Previous run, 2026-11-07, the eight PR #56 review fixes on top of `8423bae` (the PL11 breaker counts
-4xx only, a sync takes over a revoked same-account credential's numbers, the dialable caller-ID
-cache's in-flight race and its media-worker invalidation, an unsent dial no longer resets the
-streak, a keyring fault is a bridge failure, the Plivo CDR's `call_state`, the breaker's `DEL`
-memo), from inside each package, with no other run sharing this worktree's database: `pnpm lint`
-clean in 8 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
-`contracts-literals --check` up to date (51 vocabularies). `apps/mobile` with Flutter 3.47.7:
-`flutter test` 1466, `agency_wire` `dart test` 510 (a platform contract type changed).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 8883 passed + 1 expected fail + 42 skipped (443 files) | rest lane 2151 passed + 9 expected fail + 1 skipped (213 files + 1 skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 614 (62 files) |
-| `apps/console` | 5685 (294 files) | — |
-| `apps/super-admin` | 471 (35 files) | — |
-| `packages/contracts` | 335 (11 files) | — |
-| `packages/web-ui` | 237 (20 files) | — |
-| `packages/domain` | 137 (8 files) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-Previous run, 2026-11-07, the Plivo branch after merging `main` (#51 dedicated caller IDs, #53
-Insights tabs) and integrating the two caller-ID rules, from inside each package, with no other
-run sharing this worktree's database: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
-`pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51
-vocabularies). `apps/mobile` with Flutter 3.47.7: `flutter test` 1466, `agency_wire` `dart test` 510.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 8837 passed + 1 expected fail + 42 skipped (443 files) | rest lane 2150 passed + 9 expected fail + 1 skipped (213 files + 1 skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 612 (62 files) |
-| `apps/console` | 5685 (294 files) | — |
-| `apps/super-admin` | 471 (35 files) | — |
-| `packages/contracts` | 335 (11 files) | — |
-| `packages/web-ui` | 237 (20 files) | — |
-| `packages/domain` | 137 (8 files) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-The first server unit run of the merge failed one case, the repository guard against another
-repository's migration numbers (`no-external-references.test.ts`): `decisions.md` said "migration
-0020" in prose, which the guard reads as a three-digit number; it now names the file. The counts
-above are from the full rerun after that fix.
-
-Run of 2026-11-07, the Plivo review fixes on `f7f06dc`, from inside each package, with no
-other run sharing Postgres or Redis: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
-`pnpm test:release` 10 pass; `pnpm build` clean. `apps/mobile` with Flutter 3.47.7 (Dart 3.13.5):
-`flutter analyze` clean.
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 8741 passed + 1 expected fail + 42 skipped | rest lane 2100 passed + 9 expected fail + 1 skipped; wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 607 (61 files), see below |
-| `apps/console` | 5596 | — |
-| `apps/super-admin` | 469 | — |
-| `packages/contracts` | 333 | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 137 | — |
-| `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1466, `agency_wire` `dart test` 510 | — |
-
-`packages/db` integration failed one plan case in that run (`insights-foundation-migration.test.ts`,
-the 0011 roster bucket count: the planner chose `idx_agency_contacts_assignee` over the covering
-index on the near-empty table); it passed 3 of 3 alone and in a full rerun (607). Earlier runs of
-these fixes failed `usage-counts.repository.test.ts`'s plan case the same way, once each, and
-`flows/concurrency-guards.test.ts`'s Redis eval count while other agents' suites shared the Redis
-server (it counts every eval on the server). None touches code this work changed; the plan cases
-look sensitive to background statistics (autovacuum) on near-empty tables. Open: make those plan
-cases ANALYZE inside their own rolled-back transaction, as `insights-reads.test.ts` does.
-
-Run of 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
-Dart suites cannot run where it was built (no SDK), so there is no `apps/mobile` row for this run.
-The mobile CI job on PR #50 ran them before the review fixes, green (`flutter analyze`,
-`flutter test`, `agency_wire` `dart test` 493, `agent_audio` 124, the Android build); the review
-fixes' Dart changes are checked by its next run.
-
-From inside each package: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
-`pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51
-vocabularies).
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 8231 passed + 1 expected fail + 42 skipped (412 files) | rest lane 2036 passed + 9 expected fail + 1 skipped (205 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 574 (56 files) |
-| `apps/console` | 5500 (287 files) | — |
-| `apps/super-admin` | 446 (33 files) | — |
-| `packages/contracts` | 332 (10 files) | — |
-| `packages/web-ui` | 235 (20 files) | — |
-| `packages/domain` | 137 (8 files) | — |
-| `packages/observability` | 14 (3 files) | — |
-
-Two earlier full rest-lane runs of this work failed `insights-reads.test.ts`'s pace plan case:
-`customer-history.test.ts` ran a bare `ANALYZE` on its bulk seed, and the statistics outlived the
-rows into the later file's plan. Its plans (and the 0016 migration test's) now ANALYZE inside the
-plan's rolled-back transaction, as `insights-reads.test.ts` does; the run above is after that fix.
-One of those runs also failed `load/voicelink-media-ws-load.test.ts` once (seed 24301, 1 of 2
-alone; code this branch does not touch).
-
-The counts above are after the `/simplify` cleanup (named SQL fragments, one callbacks
-statement, a count-only export statement, the shared audit bounds and dialer gate). Its first rest
-run failed `softphone-policy-routes.test.ts`'s emoji note case only because a stand-in local
-Postgres had a `SQL_ASCII` database (byte lengths, not characters); recreated as UTF8, as the
-Docker image is, the lane above is green.
-
-The counts above are after the PR #50 review fixes. Two plan tests outside this feature tied on
-the test database's near-empty tables and followed whatever rows earlier files left (the file
-order changed with the new files): 0003's `countLive` plan (0005's `idx_agency_attempts_account_live`
-carries the same predicate; the test now drops it inside its rolled-back transaction) and
-`insights-reads.test.ts`'s pace (its contacts side now ANALYZEd inside the rolled-back
-transaction too). The CH14 placeholder seeds (200,000 rows, rolled back) are followed by a
-`VACUUM`, so their dead pages do not size a later file's tables. One run failed
-`local-cache-invalidation.test.ts` and `agent-transition-ordering.test.ts` (Redis and timing;
-green alone and in the full rerun) and one `load/voicelink-media-ws-load.test.ts` (seed 24301).
-
-After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
-`/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8
-packages; unit as in the table (`apps/server` 8036 + 42 skipped, `packages/contracts` 281,
-`contracts-literals --check` up to date); `apps/server` rest lane 1916 passed + 9 expected fail + 1
-skipped, wall-clock lane 15; `packages/db` integration 562. One earlier rest-lane run on this work
-failed `pacing-skip.test.ts` ("the skip path was never exercised"), the flake `main` fixed in #37,
-not yet merged here; it passed 3 of 3 alone, before and after the change.
-
-After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
-assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest
-lane 1743 passed + 9 expected fail + 1 failed (185 files), the one failure being the scale test
-below timing out at 20 s (alone: 18 passed, that test in ~1.1 s); `pnpm lint` clean,
-`pnpm test:release` 10 pass.
-
-**Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
-10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on
-the build container it passed the 20 s test timeout when it ran in the middle of the lane (each
-time the lane was otherwise 1730 passed; the second run also had the known `agent-churn`
-intermittent). It passed in the two runs where it ran first and last, and in the run above. Ruled out: lock waits (no
-lock-timeout errors), stale planner statistics, rows left by earlier files, and CPU contention
-alone (the second failure was on a quiet machine). Not ruled out: I/O stalls on that disk
-(checkpoints ran through both windows, but through the passing ones too). Its timeout is
-unchanged; if CI shows it, record per-phase timings before deciding between a fix and a longer
-timeout for this one test. Seen on the way and pre-existing: `agency_contacts.source_contact_id`
-(`ON DELETE SET NULL`) has no index, so deleting a contact checks the whole table for rows naming
-it; the likely reason a 200 000-row `DELETE` in a scratch test ran for minutes.
-
-Run of 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
-each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10
-pass; details and the one file that fails only in the combined run: "Wrap-up redial 2026-11-03"):
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
-| `packages/db` | 427 | 519 (48 files) |
-| `apps/console` | 5015 (256 files) | — |
-| `apps/super-admin` | 446 | — |
-| `packages/contracts` | 252 | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 61 | — |
-| `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1316, `agency_wire` 341 | — |
-
-Since PR #29's run: one expected fail fewer there (`disposition-storm.test.ts` case 5 is now an `it`).
-
-Run of 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
-package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
-`pnpm test:release` 10 pass):
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
-| `packages/db` | 427 | 512 (47 files) |
-| `apps/console` | 4944 (252 files) | — |
-| `apps/super-admin` | 446 | — |
-| `packages/contracts` | 249 | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 61 | — |
-| `packages/observability` | 14 | — |
-
-The 1 failed is `load/agent-churn.test.ts`, the known intermittent (below: 2 of 8 on `c9fd548`):
-its seed (24301) replayed green 3 of 3, and 6 more random seeds were green.
-
-Run of 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
-clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` pass):
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
-| `packages/db` | 427 | 506 (46 files) |
-| `apps/console` | 4917 (251 files) | — |
-| `apps/super-admin` | 446 | — |
-| `packages/contracts` | 249 | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 61 | — |
-| `packages/observability` | 14 | — |
-
-The baseline before it, the same day: server 7334 unit + 4 expected fail + 42 skipped (352 files).
-`flows/concurrency-guards.test.ts` ("costs exactly ONE Redis eval") counts evals with Redis's
-server-wide `INFO commandstats`, so it fails when another suite shares the Redis instance; it
-passes on a Redis of its own.
-
-Run of 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
-test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
-`pnpm test:release` 10 pass):
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 7170 passed + 4 expected fail (340 files) | 1476 passed + 10 expected fail (154 files) |
-| `packages/db` | 427 | 495 (44 files) |
-| `apps/console` | 4808 (245 files) | — |
-| `apps/super-admin` | 446 | — |
-| `packages/contracts` | 94 | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 55 | — |
-| `packages/observability` | 14 | — |
-
-Two load-suite files failed intermittently before the branch and passed in this run:
-`load/agent-churn.test.ts` (see above) and `load/voicelink-media-ws-load.test.ts` ("start
-negotiation failures", which once ended a call `provider_start_timeout` under a full run's load;
-8 of 8 alone on this branch and on `c9fd548`).
-The baseline before the soft phone, on `c9fd548`: server 6947 unit / 1301 integration, db 426 /
-469, console 4560.
-
-Latest run, 2026-10-23, after the load and scenario suites, `apps/server` only, from inside the
-package: lint clean in 8 packages; unit 6755 passed + 4 expected fail + 42 skipped (332 files);
-integration 1288 passed + 10 expected fail (141 files, about 9.5 min on 4 CPUs; the load files add about 5). Other packages are unchanged since the run below.
-
-Run of 2026-10-23, after release-please and the version display (B24), unit suites from
-inside each package (integration not re-run: neither change touches SQL):
-
-| Package | Unit |
+default everywhere (AS14); simple Indian English copy (AS15). Built in nine streams, then reviewed
+by five fresh-context reviewers and fixed by four more streams on the same day; the plan, rulings
+and per-stream status are in [`agent-station.md`](agent-station.md) §3, the test counts in the PR.
+
+| Part | What |
 |---|---|
-| `apps/server` | 6703 passed + 42 skipped |
-| `packages/db` | 426 |
-| `packages/domain` | 53 |
-| `packages/contracts` | 77 |
-| `packages/observability` | 14 |
-| `packages/web-ui` | 235 |
-| `apps/console` | 4416 |
-| `apps/super-admin` | 423 |
-| `grafana` (`pnpm test:grafana`) | 31 |
-| `tooling` (`pnpm test:release`) | 10 |
-| `tooling` (`pnpm test:tooling`) | 16 |
+| Wire | `0056_campaign_station_settings.sql` to `0061_session_event_break_limit_comment.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display and the `queue_pool` capability; the Dart mirror in `agency_wire` |
+| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons, only to stations that declare `queue_pool` (BE-5, AS18); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9, no throttle needed: LF41); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); station drop and reconnect metrics with the `agy-station-drops-burst` alert (BE-11); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` on the bootstrap and on the agent's own call and contact rows (AS9) |
+| Console station | Every screen of the spec, wired to the new fields; hold to end call, `E` `E` on a ringing call; the agent's work picker as big tiles; the inbound call, the soft phone (in the station and on `/dialer/phone`) and the join screens in the same look; station words keyed on codes, never a server sentence; the agent nav's "My work"; no ₹ on promised amounts (PT5 stands) |
+| Console supervisor | Alerts banner and chime on every page; Live floor says what a help request was raised in, how long an agent has been disconnected, and answers "I'm coming"; campaign Settings for target, number display, script, customer facts and tile pictures; the Collections set in New campaign (AS4); super-admin light by default |
+| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice, never over a live call (AS13); the inbound call and the soft phone's What happened? in the station's look |
 
-`pnpm lint`: clean in 8 packages.
-
-Run of 2026-10-17, after the tidy-up, from inside each package:
-
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 6703 passed + 42 skipped | 1211 |
-| `packages/db` | 426 | 469 |
-| `packages/domain` | 53 | — |
-| `packages/contracts` | 77 | — |
-| `packages/observability` | 14 | — |
-| `packages/web-ui` | 231 | — |
-| `apps/console` | 4410 | — |
-| `apps/super-admin` | 421 | — |
-| `grafana` (`pnpm test:grafana`) | 31 | — |
-
-`pnpm lint`: clean in 8 packages.
-
-Earlier runs follow, oldest first.
-
-Final full run on 2026-10-09, after `pnpm install --frozen-lockfile`, from inside each package.
-
-| Package | Lint | Unit | Integration | Build |
-|---|---|---|---|---|
-| `apps/server` | clean | 6412 (302 files)¹ | 1172 (105 files) | OK |
-| `packages/db` | clean | 409 | 417 | — |
-| `packages/domain` | clean | 50 | — | — |
-| `packages/contracts` | clean | 73 | — | — |
-| `packages/observability` | clean | 14 | — | — |
-| `apps/console` | clean | 4367 (218 files) | — | OK |
-| `apps/super-admin` | clean | 366 (24 files) | — | OK |
-
-¹ 6350 in 298 files, plus the self-containment guard's 32
-(`apps/server/test/unit/branding/no-external-references.test.ts`) and the production packaging's
-30: 6 decoder-packaging tests (`apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts`)
-and 24 deployment tests (`apps/server/test/unit/deploy/`).
-
-Unit re-run on 2026-10-10, after the AI client layer, audio analysis, the wizard's recording box
-and the S3 Terraform: lint clean in 7 packages; `apps/server` 6507 (307 files); `apps/console` 4374
-(218 files); `apps/super-admin` 366; `packages/db` 409; `packages/contracts` 73;
-`packages/domain` 50; `packages/observability` 14. Integration and build were not re-run then,
-apart from the pipeline and runtime-e2e integration files.
-
-Re-run on 2026-10-11, after the brand logo and favicon (B17 amended): `apps/console` lint clean,
-4389 unit (218 files), build OK; `apps/super-admin` lint clean, 374 unit (26 files), build OK.
-
-Re-run on 2026-10-11, after the campaigns landing page redesign and reading the campaign list
-past its first page (analytics): `apps/console` lint clean, 4433 unit (221 files), build OK.
-
-Re-run on 2026-10-11, after the campaign list's `status` filter (the campaigns home reads every
-active campaign, however old): `apps/console` lint clean, 4440 unit (221 files); `apps/server`
-lint clean, 6512 of 6513 unit (308 files), the one failure being the branding guard reading an
-uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
-
-Re-run on 2026-10-11, after Plivo steps 1–2 and the credential review fixes (shred hold, verify
-races, `peek`, uncached providers, keyboard-reachable credential rows): lint clean in 7 packages;
-unit `apps/server` 6627 + 42 skipped (314 files), `packages/db` 410 (24 files),
-`packages/contracts` 74, `apps/super-admin` 392 (27 files); integration `packages/db` 448
-(39 files); `apps/server` integration lanes `rest` 1162 (103 files) and `wall-clock` 11 (2 files).
-Two of three local `rest` runs failed 3 cases of `agency-double-reservation.test.ts` (two dials per
-pacing tick instead of one); the file passes alone (10 of 10 runs) and the third full run passed,
-so the failure depends on file order and is not yet explained.
-
-CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
-in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
-Redis 7 service containers on the same ports. On a pull request and a push to `main` it runs only
-what the change reaches (`tooling/ci-scope.mjs`; the `full-ci` label, a manual run and the weekly
-run run everything; [`operations.md`](operations.md),
-"What CI runs"). Per-module test
-files are listed in [`modules.md`](modules.md).
+Every suite was green on the final run apart from the audio-decoder tests this build container
+cannot run (`inbound-recordings.test.ts`, `inbound-clips-routes.test.ts`, areas the redesign did
+not touch). Not built: supervisor inbound screens (the route editor, Missed calls) can still show a
+server sentence for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17).
+Not verified: nothing has run on a real phone, a real carrier or with real agents; read aloud has
+not run on a device.
 
 ## Not built
 

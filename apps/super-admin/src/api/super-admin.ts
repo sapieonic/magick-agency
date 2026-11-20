@@ -1,4 +1,4 @@
-import { API_BASE, ORIGINATOR_HEADER, ORIGINATOR } from '../config';
+import { API_BASE, CLIENT_HEADERS } from '../config';
 import { parseApiErrorBody } from '@magick-agency/web-ui/apiErrorBody';
 import type { Account, CreateAccountBody, CreateAccountResponse } from '@magick-agency/contracts/api/platform/auth';
 import type {
@@ -101,7 +101,7 @@ function saError(res: Response, details: unknown): SuperAdminApiError {
 export async function saFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
-    [ORIGINATOR_HEADER]: ORIGINATOR,
+    ...CLIENT_HEADERS,
     ...((options.headers as Record<string, string>) || {}),
   };
   if (options.body) {
@@ -138,7 +138,7 @@ export async function saFetch<T>(url: string, options: RequestInit = {}): Promis
 export async function superAdminLogin(email: string, password: string): Promise<SuperAdminLoginResponse> {
   const res = await fetch(`${SA_BASE}/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', [ORIGINATOR_HEADER]: ORIGINATOR },
+    headers: { 'Content-Type': 'application/json', ...CLIENT_HEADERS },
     body: JSON.stringify({ email, password }),
   });
 

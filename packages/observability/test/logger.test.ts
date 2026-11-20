@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createChildLogger, logger, SERVICE_NAME, APP_VERSION } from '../src/index.js';
+import { createChildLogger, logger, SERVICE_NAME, APP_VERSION, PACKAGE_VERSIONS } from '../src/index.js';
 import { maskPhone } from '../src/crypto.js';
 
 describe('observability', () => {
@@ -14,6 +14,10 @@ describe('observability', () => {
 
   it('falls back to the version sentinel outside a build', () => {
     expect(APP_VERSION).toBe('0.0.0');
+  });
+
+  it('has no bundled package versions outside a build', () => {
+    expect(PACKAGE_VERSIONS).toEqual({});
   });
 
   it('carries PII masking', () => {

@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase/auth';
-import { ORIGINATOR, ORIGINATOR_HEADER } from '../config';
+import { CLIENT_HEADERS } from '../config';
 
 export async function buildAuthHeaders(
   tenantId?: string,
@@ -8,7 +8,7 @@ export async function buildAuthHeaders(
   const user = getAuth().currentUser;
   const token = user ? await user.getIdToken() : null;
 
-  const headers: Record<string, string> = { [ORIGINATOR_HEADER]: ORIGINATOR };
+  const headers: Record<string, string> = { ...CLIENT_HEADERS };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (tenantId) headers['X-Tenant-Id'] = tenantId;
   if (accountId) headers['X-Account-Id'] = accountId;

@@ -4,7 +4,7 @@
 import { shutdownOtelSdk } from './instrumentation.js';
 import Redis from 'ioredis';
 import { initDbPool, closePool } from '@magick-agency/db';
-import { APP_VERSION, logger } from '@magick-agency/observability';
+import { APP_VERSION, logger, PACKAGE_VERSIONS } from '@magick-agency/observability';
 import { config } from './config/index.js';
 import { buildApp } from './app.js';
 import type { AppContext } from './app-context.js';
@@ -182,7 +182,11 @@ async function main(): Promise<void> {
   await app.listen({ port: config.server.port, host: config.server.host });
   // Every record already carries `version` (the logger's base) and the OTel resource carries
   // `service.version`; the version in the message makes each deploy one readable line in Grafana.
-  logger.info({ port: config.server.port, otelExport: config.otel.exporting }, `magick-agency v${APP_VERSION} listening`);
+  // `packages`: the bundled packages' versions on stdout, where there is no OTel resource.
+  logger.info(
+    { port: config.server.port, otelExport: config.otel.exporting, packages: PACKAGE_VERSIONS },
+    `magick-agency v${APP_VERSION} listening`,
+  );
 }
 
 main().catch(async (err) => {
