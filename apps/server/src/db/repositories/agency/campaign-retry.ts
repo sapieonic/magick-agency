@@ -378,7 +378,8 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
         `INSERT INTO agency_campaigns
              (${CAMPAIGN_INSERT_COLUMNS_SQL},
               parent_campaign_id, root_campaign_id, retry_generation, retry_selector,
-              retry_idempotency_key)
+              retry_idempotency_key,
+              daily_target_calls, phone_display, agent_script)
            VALUES ($1,$2,$3,$4,$5,
                    $6,$7,$8,$9,
                    $10,$11,$12::jsonb,$13::jsonb,
@@ -386,7 +387,8 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                    $19,$20,$21,
                    $22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,$31,
                    $32,$33,$34,$35::jsonb,
-                   $36)
+                   $36,
+                   $37,$38,$39::jsonb)
            RETURNING *`,
         [
           input.parent.tenant_id, input.parent.account_id, input.name,
@@ -425,6 +427,12 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
           // NULL for an unkeyed caller, which the partial unique
           // index treats as no constraint at all.
           input.idempotencyKey,
+          // The agent station's settings (0056): the parent's daily target, number display and
+          // script, copied as they are. Not `config_overrides` keys (a retry is the same
+          // campaign again for a subset; these are edited on the child afterwards).
+          input.parent.daily_target_calls ?? null,
+          input.parent.phone_display ?? 'full',
+          JSON.stringify(input.parent.agent_script ?? {}),
         ],
       );
       const campaign = created.rows[0]!;

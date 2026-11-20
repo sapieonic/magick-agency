@@ -112,6 +112,9 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-contacts',
   'GET /proxy/agency/my-contacts/summary',
   'GET /proxy/agency/my-stats',
+  // Agent station BE-1 (contracts api/agency/my-day.ts): `agency.station.connect`. The subject is always
+  // the caller; a campaign they are not on is the route's 403 `not_staffed`, past the guards.
+  'GET /proxy/agency/my-day',
   // The agent's own station actions: `agency.station.connect`,
   // `agency.attempts.handle|dispose` and `agency.dnc.write` all floor at `agent`. The internal handler instance then
   // enforces the reservation (`not_your_attempt`). `force-available` is NOT here: it is

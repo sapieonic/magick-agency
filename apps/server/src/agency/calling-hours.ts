@@ -299,6 +299,19 @@ export function localDayEnd(timezone: string, now: Date): Date | null {
 }
 
 /**
+ * The instant the local calendar day holding `now` began in `timezone` (its local midnight), or
+ * null when the zone is unusable. With {@link localDayEnd}, the agent's day on My day
+ * (`[localDayStart, localDayEnd)`, agent station BE-1): in Asia/Kolkata it starts at 18:30 UTC
+ * the evening before.
+ */
+export function localDayStart(timezone: string, now: Date): Date | null {
+  if (!isUsableTimezone(timezone)) return null;
+  const p = localParts(timezone, now);
+  if (!p) return null;
+  return instantForLocalTime(timezone, p.year, p.month, p.day, 0);
+}
+
+/**
  * When today's calling window closes: for a same-day window on a calling day, the end of the
  * window on the local date; for an overnight window, the end of the stretch open now (the small
  * hours belong to yesterday's window), else tomorrow morning's end of the window opening today.

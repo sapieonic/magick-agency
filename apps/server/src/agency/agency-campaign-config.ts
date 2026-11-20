@@ -9,6 +9,7 @@ import {
   reservedDispositionCodeMessage,
   validateAssignmentSettings,
   validateBreakReasons,
+  validateDailyTargetCalls,
   validateOutcomeDispositions,
 } from './campaign-config.js';
 import { contextDisplayIssues } from './customer-facts.js';
@@ -686,6 +687,8 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   }
   // Contact assignment and agent retry (0009): the internal handler's rules, imported.
   issues.push(...validateAssignmentSettings(record));
+  // Agent station (BE-2): the daily target, or null to clear it; the internal handler's rule, imported.
+  issues.push(...validateDailyTargetCalls(record));
   issues.push(...validateCallingWindow(record));
   // Agent station (BE-6): `context_display.roles` / `.types`, the internal handler's shape rule
   // (this layer holds no roster, so the columns are the internal handler's to check).

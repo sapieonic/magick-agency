@@ -1104,7 +1104,7 @@ what was built.
   `{}` clears it. The bootstrap's `script` is absent when there is no opening and no step; a
   malformed stored part is left out, never a failed join. A create does not store `agent_script`
   (`CAMPAIGN_INSERT_COLUMNS_SQL` is shared with the retry create): New campaign sets it with a
-  PATCH after the create.
+  PATCH after the create. *(Superseded by S1: a create now stores it, trimmed, see below.)*
 - **AS4** (`packages/contracts/src/agency/campaign-defaults.ts`, re-exported on the console wire):
   `AGENCY_COLLECTIONS_STARTER_CATALOG`: `will_pay` "Will pay" (`requires_promise`, `is_success`,
   `rupee`; no follow-up call, PT2's default), `callback` "Call later" (`requires_datetime`,
@@ -1112,3 +1112,68 @@ what was built.
   "Refused" (`requires_note`, `thumbs_down`), `wrong_number` "Wrong number" (`terminal`,
   `wrong_number`), `do_not_call` "Don't call again" (`suppress`, `stop`). New campaign sends it as
   the create's `disposition_catalog`.
+
+## S1. Station data: as built
+
+Built on branch `station/sa` (stream S1, 2026-11-20). Where this list and §3 differ, this list is
+what was built.
+
+- **BE-1 / BE-2 / BE-3 read**: `GET /proxy/agency/my-day?campaign_id=` (`api/routes/proxy-agency-my-day.routes.ts`,
+  rules `agency/my-day.ts`, SQL `db/repositories/agency/my-day.repository.ts`), `agency.station.connect`,
+  the caller as the subject, `400 account_scope_required`, the dialer flag (`403 feature_disabled`),
+  `400 invalid_my_day_query` (only `campaign_id`, a UUID; any other key is refused, never ignored),
+  then `403 not_staffed` unless the campaign is in the caller's account and the caller is staffed
+  on it or holds a live session on it (not the contact-assignment flag). `no-store`. No metric of
+  its own. The day: the campaign's `default_timezone`, local midnight to the next, server clock
+  (`localDayStart` added to `calling-hours.ts`); an unreadable zone is served as `UTC`.
+  - `dialed`, `calls`, `successes`, `talk_seconds`: the agent record's own frozen
+    `AGENCY_ATTEMPT_METRICS_SQL` (`my-stats`' numbers), over the attempts of the agent's sessions on
+    the campaign (sessions open during the day first), `dialed_at` in the day. `calls` is
+    `CONVERSATION_ATTEMPT_SQL` (a redialled conversation once); talk time is every bridged leg.
+  - `will_pay`: attempts of those sessions with `promise_date` whose `dispositioned_at` is in the
+    day (a corrected promise re-stamps the same row, so it counts once). Null when the campaign's
+    catalog (the default one when empty) has no `requires_promise` entry. Soft-phone and inbound
+    promises are not counted, as the contract says.
+  - `target`: `daily_target_calls`, null without one.
+  - `call_later`: the booked half (`callback_booked_by_user_id` = the caller, on
+    `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
+    `MY_CALLBACKS_INDEX_PREDICATE_SQL`) union, on `strict` / `preferred`, the assigned half
+    (`assigned_user_id` = the caller, on `idx_agency_contacts_assignee`); each pending, not DNC, a
+    call-later by `isCallbackSql`, due before the day's end; oldest first, at most 20 rows; `today`
+    and `overdue` uncapped. `customer_name`: the campaign's `name` role column, else `matchName`.
+    `comes_to_me`: `strict` / `preferred`. `left_today_goes_to`: `waits_for_me` only on
+    `strict` / `preferred` with `callback_fallback = 'wait'`, else `pool`.
+- **BE-2 write**: `daily_target_calls` on PATCH (patchable at any status, `null` clears) and on
+  create; `validateDailyTargetCalls` in both campaign-config validators (a whole number 1 to 2000 or
+  null). Audited like every setting (`agency_campaign.config_changed` with `{ from, to }`). A create
+  also stores `phone_display` (S2's `phoneDisplayIssues`, `full` / `masked`) and `agent_script` (S3's `agentScriptIssues`,
+  stored through `normalizeAgentScript`), outside `CAMPAIGN_INSERT_COLUMNS_SQL` so the retry create's
+  positions do not move. A retry copies all three from the parent (not `config_overrides` keys).
+- **BE-3 booker**: `callbackBookerOf` (`agency/call-later.ts`) in the disposition route: the agent's
+  own call-later (`requires_datetime`) or promise follow-up (PT2) stamps the reserved agent and
+  now; a supervisor's on-behalf save stamps nothing, and on a replay keeps the agent's booker only
+  while the due time does not move (cleared when the supervisor moves it); anything else clears.
+  Written by `releaseFromDisposition`'s guarded UPDATE (`$13`, `$14`), never on a contact left
+  anything but `pending` nor a DNC-suppressed one. Cleared, as `callback_source` is, by
+  `chargeAttempt` (the next placed dialler call), `settleFromManual` (a placed soft-phone call that
+  held the contact) and `settleFromInbound` (the customer reached inbound). An `unclaim` and an
+  our-fault redial keep it. `bookInboundCallback` leaves it.
+- **BE-4**: `attemptCallbackOf`, called in `buildPanel`: `inbound` (never `booked_by_me`) when
+  `callback_source` is set; else `outcome` / `promise` when the last outcome connected and its code
+  is a callback code of the campaign's catalog; `due_at` is the claimed contact's
+  `next_attempt_at` (the claims do not rewrite it); none on a wrap-up redial. `booked_by_me` compares
+  the booker with `DialCommand.agentUserId` (new, optional; set by pacing from its reservation and by
+  the agent's own dial). **No capability gate**: it is an optional key on existing frames (the
+  `reserved` frame and `ready.active_attempt`), the console ignores unknown keys and the Dart
+  decoder reads named keys only (`ReservedAttempt.callback` is read leniently, F).
+- **BE-5**: `readPoolQueueState` (`pacing/agent-queue.ts`) over `probeCampaignQueue` (the campaign's
+  earliest open contact, and whether any open one is not a call-later; owners ignored), through
+  `queueStateFrom`, so the four reasons mean what they do on `strict` / `preferred`. The pacing
+  engine sends it to every available agent of a pool campaign on a change
+  (`sendPoolQueueFrames`), read once per campaign through a TTL cache (`PACING_CACHE_TTL_MS`,
+  invalidated by `campaign_changed` and `contacts_changed`; a forced tick reads through); a failed
+  probe sends nothing and never changes the tick. Who is dialled is unchanged. `readAgentQueueState`
+  answers it for `pool`, so the bootstrap, `ready` (the campaign read now happens for every campaign
+  session) and the My contacts summary carry it; `station_ready` is published for pool sessions too.
+  No capability: every build already decodes `queue`.
+

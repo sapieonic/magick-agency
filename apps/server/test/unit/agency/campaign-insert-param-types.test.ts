@@ -189,8 +189,7 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.
-    // 31 shared columns plus `phone_display` (agent station AS9), appended to create()'s list only.
-    expect(pairs).toHaveLength(32);
+    expect(pairs).toHaveLength(34);
     expect(types['calling_window_start']).toBe('time');
     expect(types['calling_window_end']).toBe('time');
     expect(types['calling_days']).toBe('smallint[]');

@@ -436,7 +436,11 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(back.frames.indexOf(states[0]!)).toBeLessThan(back.frames.indexOf(ready));
     // The frames have the shape of the app's golden samples (`packages/contracts/fixtures/agent/station.json`).
     expect(Object.keys(states[0]!).sort()).toEqual(Object.keys(STATION_FIXTURES.agent_state_after_away_ring_return).sort());
-    expect(Object.keys(ready).sort()).toEqual(Object.keys(STATION_FIXTURES.ready_after_away_ring_return).sort());
+    // On a pool campaign `ready` also carries the campaign's shared queue (agent station BE-5): an
+    // optional key every build already decodes, and not part of the away-ring sample.
+    expect(ready['queue']).toMatchObject({ due: expect.any(Boolean) });
+    expect(Object.keys(ready).filter((k) => k !== 'queue').sort())
+      .toEqual(Object.keys(STATION_FIXTURES.ready_after_away_ring_return).sort());
     for (const k of ['event', 'state', 'break_reason'] as const) {
       expect(states[0]![k]).toBe(STATION_FIXTURES.agent_state_after_away_ring_return[k]);
       expect(ready[k]).toBe(STATION_FIXTURES.ready_after_away_ring_return[k]);

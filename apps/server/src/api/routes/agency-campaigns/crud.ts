@@ -206,8 +206,12 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       outcome_dispositions: body?.outcome_dispositions,
       // Inbound sticky routing (0024). Omitted ⇒ `true`; shape-checked by `configRejected`.
       inbound_sticky_enabled: body?.inbound_sticky_enabled as boolean | undefined,
-      // Agent station (AS9). Omitted ⇒ `full`; shape-checked by `configRejected`.
+      // The agent station's settings (0056), each shape-checked by `configRejected`: the daily
+      // target (BE-2; omitted or null ⇒ none), the number display (AS9; omitted ⇒ `full`) and the
+      // script (BE-8, stored with its texts trimmed as the PATCH stores it; omitted ⇒ none).
+      daily_target_calls: body?.daily_target_calls as number | null | undefined,
       phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
+      agent_script: body?.agent_script !== undefined ? normalizeAgentScript(body.agent_script) : undefined,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,
