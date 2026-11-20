@@ -69,7 +69,7 @@ by the lead's run of lint and the touched packages' suites.
 | C1 | In progress | |
 | M1 | Phase 0 merged 2026-11-20; wiring in progress | `flutter analyze` clean; `flutter test` 2121 passed on the merged branch |
 | S1 | In progress | |
-| S2 | In progress | |
+| S2 | Merged 2026-11-20 | Server unit 10,617 passed on the merged branch (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); domain 364; grafana 34; renderer 94; integration rest 266, wall-clock 5 (relevant files); lint clean |
 | S3 | Merged 2026-11-20 | Domain 360 passed; contracts 617; server unit 10,590 passed (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 213, wall-clock 4 (relevant files); lint clean |
 | C2 | Not started | |
 
