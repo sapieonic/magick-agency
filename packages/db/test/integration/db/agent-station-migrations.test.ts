@@ -6,6 +6,7 @@
 //   0059_session_help_state.sql             agency_agent_sessions.help_state
 //   0060_session_event_break_overrun.sql    agency_agent_session_events.break_limit_minutes, break_overrun_seconds
 //   0061_session_event_break_limit_comment.sql  break_limit_minutes's comment: the limit when the break ended
+//   0062_session_suspended_break.sql        agency_agent_sessions.suspended_break_since
 // globalSetup has applied every migration. Pins each column (type, nullability, default: the large
 // tables' columns nullable with no default, so their ADD COLUMNs rewrite nothing), each CHECK both
 // ways and whether it is validated, the index by its definition (the invalid-index refusal, one built
@@ -37,6 +38,7 @@ const FILES = [
   '0059_session_help_state.sql',
   '0060_session_event_break_overrun.sql',
   '0061_session_event_break_limit_comment.sql',
+  '0062_session_suspended_break.sql',
 ] as const;
 
 function stepsDownTo(file: string): number {
@@ -343,6 +345,34 @@ describe('0061 — break_limit_minutes says the limit it holds: the catalog\'s w
       expect(await columns('agency_agent_session_events', ['break_limit_minutes'])).toEqual({ break_limit_minutes: 'smallint' });
       await migrate('up', 1);
       expect(await columnComment('agency_agent_session_events', 'break_limit_minutes')).toMatch(/when the break ended/);
+    } finally {
+      await migrate('up');
+    }
+  });
+});
+
+describe('0062 — the start of a break a station drop suspended', () => {
+  it('adds suspended_break_since nullable with no default and no CHECK, commented; a session has none', async () => {
+    expect(await columns('agency_agent_sessions', ['suspended_break_since'])).toEqual({ suspended_break_since: 'timestamp with time zone' });
+    expect(await columnComment('agency_agent_sessions', 'suspended_break_since')).toMatch(/BE-12/);
+    const campaign = await insertCampaign();
+    expect(await insertSession(campaign.id)).toMatchObject({ suspended_break_since: null });
+    expect(upStatements(FILES[6])).toEqual([
+      "SET LOCAL lock_timeout = '10s'",
+      'ALTER TABLE agency_agent_sessions ADD COLUMN IF NOT EXISTS suspended_break_since TIMESTAMPTZ',
+      expect.stringMatching(/^COMMENT ON COLUMN agency_agent_sessions\.suspended_break_since IS/),
+    ]);
+  });
+
+  it('down drops it; up adds it back NULL on the sessions there', async () => {
+    const campaign = await insertCampaign();
+    const s = await insertSession(campaign.id, { state: 'offline', break_reason: 'lunch', suspended_break_since: new Date() });
+    await migrate('down', stepsDownTo(FILES[6]));
+    try {
+      expect(await columns('agency_agent_sessions', ['suspended_break_since'])).toEqual({});
+      await migrate('up', 1);
+      const { rows } = await pool().query('SELECT suspended_break_since, break_reason FROM agency_agent_sessions WHERE id = $1', [s.id]);
+      expect(rows).toEqual([{ suspended_break_since: null, break_reason: 'lunch' }]);
     } finally {
       await migrate('up');
     }

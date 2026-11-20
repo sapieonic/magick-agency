@@ -1793,6 +1793,19 @@ writes `pg_description`) after `SET LOCAL lock_timeout = '10s'`. **Down** puts 0
 word for word. **Tests**: `test/integration/db/agent-station-migrations.test.ts` (the comment, an
 Up of comments only, down then up) and the down → up inventory suite.
 
+### 0062 — `migrations/0062_session_suspended_break.sql`
+
+A break split by a station drop is one break (BE-12, AS12). **`agency_agent_sessions.suspended_break_since`**
+`TIMESTAMPTZ NULL`: the start of the break the session was on when its station went (the
+reason-keeping `offline` that `setState` writes from `break`, truncated to the millisecond), kept by
+another such write and NULL after every other one. The rehydrate that restores the same named break,
+while it is under 4 hours old, carries it as `state_since`, so the break is judged once at its real
+end; any other move out of the suspension judges the break as ended at the drop, on the drop's own
+event. No CHECK (a constraint here could only fail a state transition) and no index (read only on
+the row a transition locks). Catalog-only on a small table after `SET LOCAL lock_timeout = '10s'`.
+**Down** drops the column. **Tests**: `test/integration/db/agent-station-migrations.test.ts` and the
+down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

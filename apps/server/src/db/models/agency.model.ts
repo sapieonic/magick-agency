@@ -521,6 +521,13 @@ export interface AgencyAgentSessionRecord {
   state: AgencyAgentState;
   break_reason: string | null;
   state_since: Date;
+  /**
+   * Agent station (0062, BE-12): the start of the break the session was on when its station went
+   * (the reason-keeping `offline` from `break`), to the millisecond; NULL otherwise. The rehydrate
+   * that restores the same named break carries it as `state_since`, so a break split by a drop is
+   * judged once (`agent-session.repository.ts`, `sessionTransitionSql`).
+   */
+  suspended_break_since: Date | null;
   owner_replica: string | null;
   last_heartbeat: Date;
   joined_at: Date;
