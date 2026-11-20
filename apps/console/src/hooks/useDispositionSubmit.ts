@@ -8,6 +8,7 @@ import {
 } from '../analytics/events';
 import {
   EMPTY_DISPOSITION_FORM,
+  NUMBER_KEY_COUNT,
   blockReason,
   buildSubmitPayload,
   findDisposition,
@@ -21,7 +22,6 @@ import { resyncCatalog, selectionAfterResync, numberKeysRemapped } from '../util
 import { errorBody, errorStatus } from '../utils/agencyErrors';
 import { notesStorageKey } from '../utils/agencyNotes';
 import type { DiagnosticsSink } from '../utils/agencyDiagnostics';
-import { NUMBER_KEY_COUNT } from '../components/agency/DispositionPad';
 import { useLatestRef } from './useLatestRef';
 import type { ServerClock } from './useServerClock';
 import type { UseAgencyStationResult } from './useAgencyStation';

@@ -3,10 +3,9 @@ import { Ban, Calendar, Check, Clock, IndianRupee, MoreHorizontal, Volume2 } fro
 import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
 import { addDays, formatPromiseDay } from '@magick-agency/domain/promise-to-pay';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
-import { findDisposition, localDay, type DispositionFormState } from '../../../utils/agencyDispositionForm';
+import { NUMBER_KEY_COUNT, findDisposition, localDay, type DispositionFormState, type DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
 import { calendarDay, clockTime, halfAmount, promisedAmount, rupees, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
-import { NUMBER_KEY_COUNT, type DispositionPadHandle } from '../DispositionPad';
 import { outcomeIcon, outcomeTileLayout } from '../../../utils/agency/stationTiles';
 import type { AgencyDisposition } from '../../../types/agency';
 import { StationTileIcon } from './stationIcons';

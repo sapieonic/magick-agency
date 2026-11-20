@@ -4,7 +4,7 @@ import { isTextEntryTarget } from '../../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../../utils/agencyDispositionForm';
 import { trackAgencyShortcutUsed, trackAgencyDispositionBlocked } from '../../../analytics/events';
 import type { AgencyConsoleState } from '../useAgencyConsole';
-import type { DispositionPadHandle } from '../../../components/agency/DispositionPad';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 
 /** `B`: open Which break? (the station's break choice). */
 export interface BreakMenuHandle {

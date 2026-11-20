@@ -29,7 +29,7 @@ import { InboundCallView } from '../../components/agency/inbound/InboundCallView
 import type { SideFrameProps } from '../../components/agency/station/SideCall';
 import { useInboundCall } from '../../hooks/useInboundCall';
 import { CueFlashBand } from '../../components/agency/CueFlashBand';
-import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
+import type { DispositionPadHandle } from '../../utils/agencyDispositionForm';
 import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';
 import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWaitingPill';
