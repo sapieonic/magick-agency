@@ -904,7 +904,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     const banner = await screen.findByTestId('mic-failure');
     expect(banner.textContent).toContain('blocked');
     // And no attempt was ever reserved — the point is that this happened early.
-    expect(screen.queryByText('+919876543210')).toBeNull();
+    expect(screen.queryByText('+91 98765 43210')).toBeNull();
   });
 
   it('holds no microphone open after a successful pre-flight', async () => {
@@ -1509,7 +1509,7 @@ describe('a blocked pre-flight leaves a banner the agent can actually clear', ()
     const banner = await screen.findByTestId('mic-failure');
     expect(banner.textContent).toContain('Sound is off');
     // No customer is involved yet, which is the entire value of probing here.
-    expect(screen.queryByText('+919876543210')).toBeNull();
+    expect(screen.queryByText('+91 98765 43210')).toBeNull();
 
     view.unmount();
   });

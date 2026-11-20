@@ -32,6 +32,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { ApiError } from '../../api/client';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -1004,7 +1005,7 @@ describe('a call whose wrap-up the API never announced', () => {
 
     expect(screen.queryByTestId('unexplained-release')).toBeNull();
     // The new contact is on screen, so the screen is not merely blank.
-    expect(within(screen.getByTestId('customer-card')).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(within(screen.getByTestId('customer-card')).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
   });
 });
 

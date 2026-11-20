@@ -360,7 +360,7 @@ describe('pressing Redial', () => {
     });
     expect(screen.getByTestId('band-title').textContent).toBe('On call');
     expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
-    expect(screen.getByTestId('customer-card').textContent).toContain('+919820041772');
+    expect(screen.getByTestId('customer-card').textContent).toContain('+91 98200 41772');
 
     await act(async () => {
       latest().emit({
