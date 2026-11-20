@@ -238,14 +238,102 @@ assist") are sent on every connect, a re-minted one included.
   - A give-up (silence, flapping, 1011) is the agent's to undo with Reconnect; returning to the app
     retries only a silence give-up.
 
+## The station's screens (the agent station redesign, phase 0)
+
+The station follows the redesign ([`agent-station.md`](agent-station.md), rulings AS1–AS18;
+[`agent-station/design-spec.md`](agent-station/design-spec.md), the phone column of its §4) on the data
+the server sends today (backend plan BE-0). Nothing changed under the screens: the socket, the
+reducer, the foreground rule and `device_away`, Mode B, inbound, the soft phone's hand-over, the wake
+lock, the app gate's 401 rules and the media path are as they were.
+
+**One state, one screen (AS1).** `stationStageOf` (`station_screen.dart`) maps the view to one
+screen; every screen is a `StationPage` (`parts/layouts.dart`): the top bar (`parts/top_bar.dart`:
+the agent and the work, Need help, ⋮ More), a full-width band in the state's colour with its icon,
+title and subtitle (`widgets/state_band.dart`; the colours are `StateTokens` in
+`app/theme/tokens.dart`, mirrored from `agent-station/mockups/tokens.css`, light and dark), the
+content, and the main action full width at the bottom in thumb reach (`widgets/action_buttons.dart`,
+64 dp). What does not belong to the state is hidden, not greyed; the one exception is Save on What
+happened?, faded until it is ready, whose press says what is missing ("Choose one first."). At 200%
+text the band scrolls with the content and the main action keeps its place.
+
+| Screen | When | Main action |
+|---|---|---|
+| 01 Start of day | the pre-flight (before the join), and `offline` after it | Start work |
+| 01b A check failed | the microphone or the internet check failed | its fix (Allow microphone, Open Settings, Check again) |
+| 02 Ready, 02b banners | `available`, calls coming | Take break |
+| 02c No calls right now | `available`, calls stopped by the supervisor or nothing due (contact assignment) | Take break |
+| 03 Call coming | `reserved` | none: "The call connects by itself." (AS11) |
+| 04 On call (04c), 04b | `on_call` | Slide to end call (AS3); Mute and Speaker beside it |
+| 05 What happened?, 05b–05d | `wrapup` | Save & next call; Save & break; Call again · N left |
+| 06 Which break? | a bottom sheet over 02 or 05 | a tile |
+| 07 On break, 08 Break over | `break` (past its reason's `limit_minutes`: 08, red-orange) | Start calls again |
+| Paused | the app's own `device_away` / `away_ring` pause | Start calls again |
+| 09 Internet problem | the line down with no call on screen (not the app's own pause) | Try again now, once the retries gave up |
+| 10 Call problem | the line down on a call: the customer card stays, "Call is kept for 0:12" | Try again now, once the retries gave up |
+| 11 Finish work | ⋮ More, or the quiet link on 07/08 | No, keep working (Yes, finish work under it) |
+| 12 Open on another device | 4409 | Use this phone |
+
+- **Start work in one press.** The pre-flight is Start of day: the checks as tiles (Microphone,
+  Headset, Internet, Battery; the sound check while it listens or when it found a problem, the
+  battery saver only when it is in the way), today's work, How will you work? (Calls come to me / I
+  dial the number, the second only while the soft phone may start calls) and Start work, which joins.
+  The press is kept (`startWorkIntentProvider`) and acted on at the station's first open: it goes
+  ready (`/available`), or switches to the soft phone; a station that opens on a break or a call is
+  left as it is. The join is still a separate request; the server is never asked for `/available`
+  before the socket is open.
+- **Need help** is in the top bar on 04 and 05 only (AS5 as today's server takes it: a raise
+  elsewhere is refused `409 help_not_on_call`); an open request shows on any screen as "Help asked ·
+  0:42", and pressing it again cancels. With no internet it says "Call your supervisor to your desk."
+- **⋮ More**: My customers (contact assignment), Dial a number myself (SP7), Monitoring and
+  recording (listening on), Sound (sounds, vibration and the dark screen), Finish work for today.
+  On a call and on What happened? it holds only Sound.
+- **Ready**: My day as three tiles from the agent's own `/my-stats` for today on this campaign
+  (calls today = connected, talk time, numbers dialled), and the call-later list from
+  `/my-contacts?bucket=callback` (today's only, soonest first) where My contacts serves it. Both are
+  read again each time the agent is back to Ready (`station_reads.dart`). The list's line follows the
+  routing (AS8): "These calls will come to you on time." on a campaign that assigns contacts, else
+  "We will call them on time. Another agent may get the call." A call that ended without needing an
+  outcome is the one-line banner "The last call did not connect. You do not need to do anything." for
+  6 s, in the station's own words (AS15).
+- **On call**: the customer card (its first two hero fields and the last call's date as tiles; a tap
+  opens every field), Last calls, the note; no script and nothing about AI (AS2); no break button
+  (AS10: Save & break on the next screen). Don't call again is on the call only when the campaign's
+  outcomes have no such tile, because today's server marks a live call only.
+- **What happened?**: one tile per outcome of the campaign's own list, two across, with a picture by
+  the outcome's flags (₹, a clock, a stop sign, a thumbs-up, a dot) until outcomes carry their own;
+  the pay date or the call-later time in a bottom sheet with large chips (Call when?: In 1 hour, Today
+  6:00 PM while it is more than an hour away, Tomorrow 10:00 AM, Tomorrow 6:00 PM, Other time) and OK,
+  then one summary row with Change; the note with Speak a note (it puts the cursor in the note, so the
+  keyboard's own microphone dictates, AS13). Don't call again asks on a bottom sheet. Save & break
+  asks which break (queued behind this screen) and then saves; a break picked after the screen has
+  gone is still sent and saves nothing. The time running out with nothing picked turns the band
+  red-orange, "Time is over" (05d); nothing is ever picked for the agent.
+- **Read aloud (AS13) is not built.** The platform's text-to-speech needs a plugin (`flutter_tts`)
+  whose Android 11+ use needs a `<queries>` entry for the TTS service in the manifest, which could not
+  be checked on a phone here; the tiles have no speaker icon.
+- **Light by default (AS14).** The app opens light whatever the phone's setting until the agent
+  turns the dark theme on (the Me tab, or ⋮ More → Sound); every station screen is tested in light
+  and its colours' contrast in both.
+
+**Where the next data slots in** (stream F's optional fields, AS18; a field not sent means its tile
+or line is not shown): the daily target and Will pay (`MyDayView.target`, `.willPay`, filled by the
+my-day read, BE-1/BE-2: "/ 120", the bar, the Will pay tile); `attempt.callback` (the "Call later ·
+You said you will call at 3:00 PM" tag above the name in `CustomerCard`, BE-4); `attempt.facts` and
+the column roles and types (the card's name, place and its money and date tiles, BE-6); the script
+(`RingingView`'s "First, say this" and On call's "What to say", above Last calls, BE-8);
+`phone_display` (the number in `CustomerCard` and the Don't call again sheet, AS9); outcome and break
+icons (`outcomeIcon`, `breakIcon`, BE-13); Need help in every state (`NeedHelpButton`'s
+`offered`, BE-9); the call-later booker's own list and `comes_to_me` (`stationCallLaterProvider`,
+`CallLaterCard`'s line, BE-3).
+
 ## Wrap-up redial
 
-On a campaign with `allow_wrapup_redial` (decisions WR1–WR13), the wrap-up view shows **Redial**
-beside **Save outcome** while an outcome is owed: "N redials left", disabled at "No redials left"
-(at most 2 per call). The `wrapup` frame's `redial_remaining` decides; the bootstrap's
+On a campaign with `allow_wrapup_redial` (decisions WR1–WR13), What happened? shows **Call again ·
+N left** beside Save & break, under Save & next call, while an outcome is owed and a redial is left
+(at most 2 per call); spent, it is hidden. The `wrapup` frame's `redial_remaining` decides; the bootstrap's
 `allow_wrapup_redial` is decoded but not used to gate it. Pressing it sends
 `POST /proxy/agency/sessions/:id/redial` `{ attempt_id }`. The redial then runs on the station
-socket like any call (`reserved` with `attempt.redial`, shown as "Redial 1 of 2", `bridged`,
+socket like any call (`reserved` with `attempt.redial`, shown as "Calling again · 1 of 2", `bridged`,
 `released`), and ends in a new wrap-up on the redial attempt, whether or not it connected. The
 pad, Save and Redial are locked from the press. Notes typed in the last 2 s are saved to the call
 first (bounded at 2 s), because the server copies the call's saved notes onto the redial. Once
@@ -263,10 +351,11 @@ minus refused is not the number placed.
 
 ## Promise to pay
 
-An outcome whose catalogue entry sets `requires_promise` (decisions PT1–PT14) shows "When will
-the customer pay?" under the pad: chips for Today, Tomorrow and In a week, a date picker (a day
+An outcome whose catalogue entry sets `requires_promise` (decisions PT1–PT14) asks "When will
+the customer pay?" (on the station, in What happened?'s follow-up sheet, then one summary row "Will
+pay on Sun 1 Nov · 12,500"; on the soft phone and inbound, under the pad): chips for Today, Tomorrow and In a week, a date picker (a day
 before today up to 30 days ahead; the server judges the customer's today), and an optional
-amount (digits and a point). Save stays disabled with the reason until a date is picked and the
+amount (digits and a point). Save stays held, with the reason, until a date is picked and the
 amount reads as a number with at most two places; the request carries `promise_date` and the
 amount's two-place string only for that outcome. The line under it says whether saving books a
 call ("We'll call again N days after this date, in calling hours", from the entry's
@@ -297,16 +386,16 @@ client-exposed flag `agency_live_listen_enabled`, read as `FeatureFlags.liveList
 (`agency_wire`, pinned against the contract's `platform.json` fixture) through
 `stationListenNoticeProvider` (`lib/features/station/station_providers.dart`):
 
-- A "Monitoring and recording" info button in the station header
-  (`lib/features/station/parts/banners.dart`: the idle, incoming and link screens; the on-call
-  band has none) and in the soft phone's header on both surfaces (the Phone tab and the station's),
-  opening a sheet with the standing line "Calls may be listened to by a supervisor for quality and
-  training." (`StationCopy.listenNotice`).
+- "Monitoring and recording" under the station's ⋮ More between calls (`parts/top_bar.dart`; on a
+  call the menu holds only Sound), the line "Your supervisor may listen to calls for training." on
+  Start of day, and an info button in the soft phone's header on both surfaces (the Phone tab and the
+  station's), each opening a sheet with the standing line "Calls may be listened to by a supervisor
+  for quality and training." (`StationCopy.listenNotice`).
 - `ListenFirstNoticeCard` at the top of the station's idle and call layouts and of the soft phone,
   shown the first time per agent and account on this phone until Got it (LS22 u):
   `listenFirstNoticeProvider`, kept in the app's key-value store under
   `listen.agent_notice_seen:<user:tenant:account>`. Between calls it says the line can be read again
-  under the button; on a call, where the band has no button, it says so "between calls"
+  under ⋮ More; on a call, where the menu holds only Sound, it says so "between calls"
   (`StationCopy.listenFirstDetailOnCall`).
 
 Tests: `test/features/station/station_listen_notice_test.dart`. Not run on a phone (below).
@@ -1101,13 +1190,14 @@ the flag is on). Break limits are not behind it.
   an attach must not answer a ring (N5, `declareInbound` off) it declares `floor_assist` alone
   (`StationSocket.capabilities`). Without it the server sends a phone none of the three frames,
   leaves `ready.help` out and refuses a supervisor's message `409 agent_not_live` (LF16, LF34).
-- **Need help** (`lib/features/station/parts/need_help.dart`, `NeedHelpCard`; core
+- **Need help** (the top bar's `NeedHelpButton`, `lib/features/station/parts/top_bar.dart`; how it
+  ended under the band, `NeedHelpCard`, `parts/need_help.dart`; core
   `lib/core/station/floor_assist.dart`). On a call and in wrap-up (a campaign call or an inbound
-  one), "Need help" raises it (`POST /proxy/agency/sessions/:id/help`); open, the card says "Help
-  requested · Your supervisors can see it · asked 0:42 ago" with Cancel (`DELETE`). It has its own
+  one), "Need help" raises it (`POST /proxy/agency/sessions/:id/help`); open, the button turns solid
+  red and reads "Help asked · 0:42", and pressing it again cancels (`DELETE`). It has its own
   stage, never the station's busy state, so asking for help never holds up hanging up or saving the
   outcome. A request raised in wrap-up stays open after the outcome is saved (the server's rule): the
-  card shows it, and Cancel, on the waiting screen too, but offers no new raise there (LF35).
+  button shows it, and cancels it, on the waiting screen too, but offers no new raise there (LF35).
   - **Which request.** One at a time, identified by its `raised_at`. It is open from the raise's
     answer, or `ready.help` after a reconnect or a relaunch, until the `help_cleared` that names that
     same instant, or the cancel's answer. A frame about another request never touches the one shown.
@@ -1156,10 +1246,12 @@ the flag is on). Break limits are not behind it.
   arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
   (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
-  `break_reasons`, found by the break's code as its label is), the break card counts down from the
-  `agent_state` frame's `since`: "4:30 left of your 15 min" (rounded up, as every countdown here, so
-  "0:00 left" never shows), then "Over your 15 min break by 2:05" in the warning tone, on the card's
-  one ticking clock. None on a reason with no limit, and never on a
+  `break_reasons`, found by the break's code as its label is), On break counts from the
+  `agent_state` frame's `since`: "4:18 / 15:00", a bar, "10:42 left of your 15 minutes." (rounded up,
+  as every countdown here, so "0:00 left" never shows); at the limit the screen turns red-orange,
+  Break over (08): "Break time is over", "You are 2:05 late. Start calls now.", "Your break was 15
+  minutes. Your supervisor can see this." A reason with no limit shows only the time used and, after
+  30 minutes, "You have been on break for 30 minutes.". None on a reason with no limit, and never on a
   reserved code (the app's own pauses, the soft phone), whatever a catalog says
   (`StationViewMapper.breakLimitMinutes`). A limit edited mid-shift reaches the agent at their next
   join (the server's rule).
@@ -1294,8 +1386,9 @@ packages/
 - 48 dp touch targets, reduced-motion respected, layouts tested at 200% text on a 360×640 phone.
 - A tab label that would wrap (five tabs on a 360 dp phone leave about 72 dp each) takes its short
   name: "Performance" → "Stats", "My calls" → "Calls". Measured at the bar's own 1.3× text cap.
-- Live-region announcements for station phases ("Ringing", "On call", "Wrap-up", "Outcome saved").
-- Copy follows the console's words wherever the console has them.
+- Live-region announcements for station phases ("Call coming", "On call", "What happened?", "Saved").
+- Copy follows the console's words wherever the console has them; on the station's screens it is the
+  redesign's simple Indian English (AS15), keyed on codes, never a server sentence.
 
 ## Builds and releases
 
@@ -1384,6 +1477,10 @@ from the browser or file manager it was opened from.
   (R8-minified) build of the app has run anywhere, nor the upload. The first push to `main` after
   merging runs the release build; the first APK needs `MOBILE_ENV_STAGING` and the signing secrets,
   then a run by hand for `mobile-v0.12.0` or the next mobile release.
+- **The station's redesigned screens (2026-11-20) are widget-tested only** (`flutter test`, light
+  theme, 390×844 and 360×640 at 200% text, with the frame sequences the server sends): Slide to end
+  call, the bottom sheets and Start work in one press have not been used on a phone, and Speak a note
+  depends on the phone's keyboard offering a microphone.
 - **The listening notice (2026-11-16/17) is widget-tested only**: the button, the sheet and `ListenFirstNoticeCard` have not been seen on a phone.
 - **Floor assist (2026-11-19) has run only against the fixtures and fakes.** Need help, the message
   banner and the break countdown are unit- and widget-tested with the contract's sample frames in the

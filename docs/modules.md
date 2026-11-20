@@ -2671,13 +2671,15 @@ added (2026-11-12) are counted the same static way.
 Start-up (`main.dart`: client identity and Firebase, each failure logged and survived), the
 root widget, the router (the gate's redirect, then the station's, which holds a live or owed
 soft-phone call on its screen), the tab shell (the Phone tab at index 1 where the soft phone is
-available), the splash, theme tokens mirrored from `packages/web-ui`, and shared widgets.
+available), the splash, theme tokens mirrored from `packages/web-ui` and the station's state colours
+(`StateTokens`, from `docs/agent-station/mockups/tokens.css`; light until the agent picks dark, AS14),
+and shared widgets.
 
 Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `app/routes.dart`, `app/shell.dart`, `app/splash_screen.dart`, `app/theme/app_theme.dart`, `app/theme/tokens.dart`, `ui/primitives.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls) | ~24 |
+| `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls; light by default) | ~28 |
 | `apps/mobile/test/app/softphone_navigation_test.dart` (with floor assist's message seam plugged in) | ~29 |
 | `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "N more messages", Dismiss by id; each announced once, one queued at mount too; no live region (nothing said twice, nor on a dismissal), plain text, 48 dp; a 500-character message at 200% text) | 7 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
@@ -2954,34 +2956,54 @@ Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_
 
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
-Pre-flight (pure grading apart from the device measurements) and the station screens: one
-screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
-link-state screens; Need help on the call and wrap-up screens (`parts/need_help.dart`, LF35) and the
-break's countdown against its reason's limit (`BreakLimitLine` in `parts/idle_views.dart`, LF38); a
-supervisor's message banner the shell shows over every tab (`supervisor_message_banner.dart`, LF36);
-the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
-only `StationView.inbound`), the neutral "A call is coming through · Connecting…" screen, and the banners
-above every layout ("Your customer is waiting", why the last inbound call left).
+Pre-flight (pure grading apart from the device measurements) and the station screens, rebuilt to the
+agent station redesign ([`agent-station.md`](agent-station.md), phase 0 on today's data, 2026-11-20):
+one screen per state (`StationStage`, `station_screen.dart`), each a `StationPage`
+(`parts/layouts.dart`: the top bar, the state's band, the content, the pinned actions). The top bar
+(`parts/top_bar.dart`: the agent and the work, `NeedHelpButton` (AS5, on a call and while finishing
+one; "Help asked · 0:42", pressed again cancels; offline it says to call the supervisor to the desk),
+`MoreButton` (⋮ More: My customers, Dial a number myself, Monitoring and recording, Sound with the
+dark screen switch, Finish work; only Sound on a call)); the band (`widgets/state_band.dart`,
+`StateBand` in a `StationTone`'s colours, `StateTokens` in `app/theme/tokens.dart`); the buttons
+(`widgets/action_buttons.dart`: `MainActionButton` 64 dp, go / stop / rest, `SecondaryActionButton`,
+`QuietActionButton`) and Slide to end call (`widgets/slide_to_confirm.dart`, AS3). The pre-flight is
+Start of day (01, 01b: the checks as tiles, `WorkCard`'s today's work and How will you work?, Start work,
+whose press the station acts on once open, `startWorkIntentProvider`); `parts/idle_views.dart` holds
+Start of day after the join, Ready and No calls right now (My day, `MyDayCard`; the call-later list,
+`CallLaterCard`), On break and Break over, Paused (`device_away`); `parts/ringing_view.dart` Call coming
+(`CustomerCard`, no button, AS11) and `LastCallsCard`; `parts/on_call_view.dart` On call (04c, Mute,
+Speaker); `parts/wrapup_view.dart` What happened? (`OutcomeTiles`, the follow-up sheet, Save & break,
+Call again; `DispositionGrid` stays for the soft phone and inbound); `parts/sheets.dart` Which break?,
+Finish work and the Don't call again confirm (`confirmSheet`); `parts/link_screens.dart` Internet
+problem (09) and Open on another device (12); `parts/call_band.dart` the call's band (Call problem, 10).
+The reads beside the live view are `station_reads.dart` (`stationMyDayProvider` from `/my-stats`,
+`stationCallLaterProvider` from `/my-contacts?bucket=callback`; read again on each return to Ready).
+A supervisor's message banner the shell shows over every tab (`supervisor_message_banner.dart`, LF36);
+the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading only
+`StationView.inbound`), and the banners above every layout ("Your customer is waiting", why the last
+inbound call left).
 
-Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `supervisor_message_banner.dart`, `logic/*`, `parts/*`, `widgets/*`)
+Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_reads.dart`, `station_copy.dart`, `supervisor_message_banner.dart`, `logic/*`, `parts/*`, `widgets/*`)
 
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/features/preflight/device_preflight_checks_test.dart` | ~15 |
-| `apps/mobile/test/features/preflight/preflight_screen_test.dart` | ~20 |
-| `apps/mobile/test/features/station/station_a11y_test.dart` | ~15 |
-| `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
-| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help behind the flag, offered on a call and in wrap-up only, asking, open with its ticking age and Cancel, only the status a live region (never the ticking age), Cancel's semantics (acts, then "Cancelling…" and disabled), cancelling, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break countdown, left rounded up (never "0:00 left"), over in the warning tone, none without a limit or on a reserved code, 200% text) | 19 |
-| `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
-| `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
-| `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the "Monitoring and recording" button and sheet on the station header and both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 16 |
+| `apps/mobile/test/features/preflight/preflight_screen_test.dart` (Start of day: the tiles, 01b's band, steps and fix where Start work was, Start work's press handed to the station) | ~22 |
+| `apps/mobile/test/features/station/station_a11y_test.dart` (Slide to end call: short slides, one fire, haptics, a call ending under it, none on Call coming, the screen reader's confirm; announcements; 200% text) | ~16 |
+| `apps/mobile/test/features/station/station_contrast_test.dart` (with every `StationTone`, light and dark: band ink, deep on card and tint, go and stop) | ~5 |
+| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help in the top bar behind the flag, on a call and while finishing one only, asking, "Help asked · 0:42" ticking and cancelling, only the status a live region (never the ticking age), Cancel's semantics, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break against its limit: left rounded up (never "0:00 left"), Break over in red-orange with how late, none without a limit or on a reserved code, 200% text) | 19 |
+| `apps/mobile/test/features/station/station_dial_activity_test.dart` (Ready's "Dialling a customer…", the count line, ringing over No calls right now, stopped calls unchanged, the live region only while dialling, 200% text) | 7 |
+| `apps/mobile/test/features/station/station_link_test.dart` (Internet problem and Call problem, Try again now only once the retries gave up, Need help offline, another device, work ended) | ~12 |
+| `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: Monitoring and recording under ⋮ More and on both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; Start of day's line; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 15 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
-| `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
-| `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |
-| `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~9 |
-| `apps/mobile/test/features/station/station_phases_test.dart` | ~39 |
-| `apps/mobile/test/features/station/station_redial_test.dart` | ~12 |
-| `apps/mobile/test/features/station/station_softphone_test.dart` | ~19 |
+| `apps/mobile/test/features/station/station_modals_test.dart` (sheets and dialogs that close with their call; Save & break; Finish work with no line) | ~22 |
+| `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~18 |
+| `apps/mobile/test/features/station/station_nothing_due_test.dart` (No calls right now and its reason; My customers in ⋮ More) | ~10 |
+| `apps/mobile/test/features/station/station_phases_test.dart` (every screen of the redesign, AS1–AS15) | ~61 |
+| `apps/mobile/test/features/station/station_promise_test.dart` (the pay date in the follow-up sheet, its summary row) | ~5 |
+| `apps/mobile/test/features/station/station_redesign_test.dart` (which screen a state is, Start work in one press, My day and the call-later reads, pictures and Call when? chips) | ~13 |
+| `apps/mobile/test/features/station/station_redial_test.dart` (Call again · N left, hidden when spent) | ~12 |
+| `apps/mobile/test/features/station/station_softphone_test.dart` (Dial a number myself in ⋮ More and in Which break?) | ~19 |
 
 ### `apps/mobile/lib/features/softphone/`
 
