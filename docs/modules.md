@@ -2010,7 +2010,7 @@ Agent station redesign, supervisor side (`docs/agent-station.md`): `layout/Super
 | `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
-| `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
+| `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 44 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/InsightsHeadline.test.tsx` | ~26 |
 | `apps/console/src/__tests__/components/InsightsSections.test.tsx` | ~39 |
@@ -2236,6 +2236,7 @@ Agent station redesign, supervisor side: `useFloorAlerts.ts` (AS16: `GET /proxy/
 | `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignInsights.test.tsx` | 13 |
+| `apps/console/src/__tests__/hooks/useDoubleKey.test.tsx` (the shared E then E: fires once inside the window, a held key's repeat ignored, text fields and Ctrl/Cmd/Alt ignored, Escape, blur and focus moving into a text field call it off, `suspended`, `enabled`, `resetKey`, element scope) | 18 |
 | `apps/console/src/__tests__/hooks/useKeepInViewport.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
@@ -2297,7 +2298,7 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` (one state, one screen; the keyboard path through a whole call; focus once per call; the hang-up, the refusal, the missed release, the queued break, 12 and 10) | 42 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.screens.test.tsx` (the redesign's screens the older files do not reach: Start of day's checks and 01b, Enter as the main action, My day from my-day and its fallback, the call-later list and Finish work's line, the tiles and follow-up, Save before a tile is picked, Save & take break, Which break?'s limits, read aloud and Speak a note, 04's card; 03 and 04 with typed facts, the call-later tag, the masked number and the script; the supervisor's tile pictures drawn with the shared `TileIcon`) | 25 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.review.test.tsx` (the console station review's fixes: a refused break said on Which break? by its code, by Take break and by Save & take break, which then saves nothing; `E` `E` while a call rings and on a call; `A` and Need help on Start of day and 01b; the supervisor's hold after Save; 05d's red ring and banner; the call cut by the internet; 08's static spoken subtitle; `R`; the queued break's ✕ failing or finding the break started; Which break? closing for a call; Read aloud off a live call and stopped on a screen change; My calls masking from ⋮ More) | 20 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.review.test.tsx` (the console station review's fixes: a refused break said on Which break? by its code, by Take break and by Save & take break, which then saves nothing; `E` `E` while a call rings and on a call; `A` and Need help on Start of day and 01b; the supervisor's hold after Save; 05d's red ring and banner; the call cut by the internet; 08's static spoken subtitle; `R`; the queued break's ✕ failing or finding the break started; Which break? closing for a call; Read aloud off a live call and stopped on a screen change; My calls masking from ⋮ More) | 24 |
 | `apps/console/src/__tests__/components/stationTimers.test.tsx` (02b's banner goes after 6 s on one timer and leaves none; the call-later list renders again only when a minute changes it) | 3 |
 | `apps/console/src/__tests__/components/stationContrast.test.ts` (05d's red ring on its white pill at 4.5:1 or more in both themes, from the tokens) | 1 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.floorAssist.test.tsx` (floor assist on the station, LF24–LF26: Need help offered, raised, cancelled, every refusal, restored from `ready.help`, answered and cleared only for its own `raised_at`; supervisor messages as text, announced politely, never taking focus, one at a time under the band with the rest counted and after the call controls in the DOM; the polite region never clobbered, the same words said again, one region through a move to an inbound call; no "cancelled" for an answered request; the break against its limit, 07 and 08) | 36 |
