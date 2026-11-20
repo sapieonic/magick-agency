@@ -131,7 +131,7 @@ void main() {
         )!.toJson(),
         {'disposition_code': 'sale'},
       );
-      expect(dispositionBlockCopy[DispositionBlock.promiseRequired], 'This outcome needs the date the customer promised to pay.');
+      expect(dispositionBlockCopy[DispositionBlock.promiseRequired], 'Choose the pay date.');
     });
 
     test('the station sends the promise with the outcome', () {
@@ -144,7 +144,7 @@ void main() {
         app.start();
         app.inWrapup('att-1');
         app.run(app.controller.submitDisposition('ptp'));
-        expect(app.view!.actionError, 'This outcome needs the date the customer promised to pay.');
+        expect(app.view!.actionError, 'Choose the pay date.');
         expect(app.sent.where((s) => s.path.endsWith('/disposition')), isEmpty);
         app.routes['POST /proxy/agency/attempts/att-1/disposition'] = (_) => json(200, {
               'campaign_id': 'camp-1',
@@ -214,7 +214,7 @@ void main() {
       expect(viewWith(date: DateTime(2028, 1, 1)).saveBlockAt(now), SoftphoneSaveBlock.promiseDateInvalid);
       expect(viewWith(date: DateTime(2026, 8, 18), amount: 'lots').saveBlockAt(now), SoftphoneSaveBlock.promiseAmountInvalid);
       expect(viewWith(date: DateTime(2026, 8, 18), amount: '99.5').saveBlockAt(now), isNull);
-      expect(softphoneSaveBlockCopy[SoftphoneSaveBlock.promiseRequired], 'This outcome needs the date the customer promised to pay.');
+      expect(softphoneSaveBlockCopy[SoftphoneSaveBlock.promiseRequired], 'Choose the pay date.');
     });
   });
 

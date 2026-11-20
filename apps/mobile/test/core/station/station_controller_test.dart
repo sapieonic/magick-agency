@@ -957,13 +957,13 @@ void main() {
           final app = App(async)..start();
           app.inWrapup('att-1');
           app.run(app.controller.submitDisposition('not_interested'));
-          expect(app.view!.actionError, 'This disposition needs a note.');
+          expect(app.view!.actionError, 'Write a note for this one.');
           app.run(app.controller.submitDisposition('callback'));
-          expect(app.view!.actionError, 'This disposition needs a callback time.');
+          expect(app.view!.actionError, 'Choose when to call.');
           app.run(app.controller.submitDisposition('callback', callbackAt: app.now().subtract(const Duration(minutes: 1))));
-          expect(app.view!.actionError, 'That time has already passed. Pick when we should call back.');
+          expect(app.view!.actionError, 'That time is over. Choose a new time.');
           app.run(app.controller.submitDisposition('nope'));
-          expect(app.view!.actionError, 'Pick a disposition to save this call.');
+          expect(app.view!.actionError, 'Choose one first.');
           expect(app.sent.where((s) => s.path.endsWith('/disposition')), isEmpty);
           app.dispose();
         });

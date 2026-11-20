@@ -120,18 +120,12 @@ abstract final class SoftphoneCopy {
   static const notesRequired = 'Notes (required)';
   static const notesHint = 'What did the customer say?';
 
-  // ── Outcome ──
-  static const outcome = 'Outcome';
-  static String outcomeFrom(String? campaign) => campaign == null ? 'From the soft phone’s outcome list' : 'From $campaign’s outcome list';
-  static const saveOutcome = 'Save outcome';
+  // ── What happened? (the station's words, AS15) ──
+  static const saveOutcome = 'Save';
   static const saving = 'Saving…';
-  static const dialBlockedOwed = 'Dialling is blocked until this call has an outcome.';
-  static String closesIn(String clock) => 'Without one, it closes in $clock.';
-  static const closingNoOutcome = 'Closing with no outcome…';
-
-  /// A callback on a call the campaign is not waiting on stays on the call.
-  static const callbackNote =
-      'The callback time is saved on this call. It isn’t added to a campaign’s queue, so make a note to call back yourself.';
+  static const dialBlockedOwed = 'You cannot dial until you save what happened on this call.';
+  static String closesIn(String clock) => 'If you do not choose, it closes in $clock.';
+  static const closingNoOutcome = 'Closing…';
 
   // ── Recent calls ──
   static const recentCalls = 'Recent calls';

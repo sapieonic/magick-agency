@@ -15,14 +15,14 @@ import 'call_labels.dart' show formatDialNumber;
 /// its keyboard hint).
 const softphoneMutedAtAnswerCopy = 'You are muted. The customer can’t hear you.';
 
-const softphoneOutcomeSavedCopy = 'Outcome saved.';
+const softphoneOutcomeSavedCopy = 'Saved.';
 
-String softphoneOutcomeNotSavedCopy(String reason) => 'The outcome wasn’t saved. $reason';
+String softphoneOutcomeNotSavedCopy(String reason) => 'It did not save. $reason';
 
 // ── Disabled reasons ──
 
 const softphoneNotesDisabledCopy = 'Notes open when a call starts.';
-const softphonePadDisabledCopy = 'Outcomes open when the customer answers.';
+const softphonePadDisabledCopy = 'You can choose once the customer picks up.';
 
 /// Close soft phone while a call is live or owed (the console's `SOFTPHONE_LEAVE_BLOCKED_COPY`).
 const softphoneLeaveBlockedCopy = 'Finish this call and save its outcome first — leaving now would cut the customer off.';

@@ -1,6 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_copy.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/station/promise_rules.dart' show promiseRefusalCopy;
+import 'package:magick_agency_agent/core/station/station_copy.dart' show dispositionBlockCopy;
+import 'package:magick_agency_agent/features/softphone/softphone_copy.dart';
 
 import '../../support/station_jargon.dart';
 
@@ -68,6 +73,23 @@ void main() {
       expect(bad, isEmpty, reason: bad.join('\n'));
     });
   }
+
+  test('the soft phone\'s What happened?, and the save and promise lines the station shares, say none of the jargon', () {
+    final lines = [
+      ...softphoneSaveBlockCopy.values,
+      ...dispositionBlockCopy.values,
+      ...promiseRefusalCopy.values,
+      softphonePadDisabledCopy,
+      softphoneOutcomeSavedCopy,
+      softphoneOutcomeNotSavedCopy(''),
+      SoftphoneCopy.saveOutcome,
+      SoftphoneCopy.dialBlockedOwed,
+      SoftphoneCopy.closesIn('1:42'),
+      SoftphoneCopy.closingNoOutcome,
+    ];
+    final bad = [for (final l in lines) if (jargonIn(l).isNotEmpty) '"$l": ${jargonIn(l).join(', ')}'];
+    expect(bad, isEmpty, reason: bad.join('\n'));
+  });
 
   test('the guard finds what it is looking for', () {
     expect(jargonIn('Pick a disposition'), isNotEmpty);

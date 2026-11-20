@@ -445,7 +445,6 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
             )
           else ...[
             CallbackPicker(
-              plain: true,
               form: _form,
               attemptId: widget.attemptId,
               onPick: (at, choice) => setState(() => _form = _form.withCallback(at, choice)),
@@ -634,12 +633,23 @@ int? _redialRemaining(StationView? v) {
 /// Each tile has a speaker that reads its label aloud (AS13), hidden on a phone that cannot speak.
 /// Ten or more: the first eight and a More tile (spec §6.2).
 class OutcomeTiles extends StatefulWidget {
-  const OutcomeTiles({super.key, required this.options, required this.selected, required this.enabled, required this.onSelect});
+  const OutcomeTiles({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.enabled,
+    required this.onSelect,
+    this.readAloud = true,
+  });
 
   final List<DispositionOption> options;
   final String? selected;
   final bool enabled;
   final ValueChanged<String> onSelect;
+
+  /// The speaker on each tile (AS13); false while a customer is on the line (the soft phone's
+  /// tiles open when the customer picks up): the phone's speaker could reach them.
+  final bool readAloud;
 
   /// Up to nine fit; past that the first eight and a More tile that opens the rest (spec §6.2, the
   /// console's `outcomeTileLayout`).
@@ -682,6 +692,7 @@ class _OutcomeTilesState extends State<OutcomeTiles> {
                   option: o,
                   big: big,
                   selected: o.code == selected,
+                  readAloud: widget.readAloud,
                   onTap: enabled ? () => onSelect(o.code) : null,
                 ),
               ),
@@ -764,11 +775,12 @@ IconData outcomeIcon(DispositionOption o) {
 }
 
 class _OutcomeTile extends StatelessWidget {
-  const _OutcomeTile({required this.option, required this.big, required this.selected, required this.onTap});
+  const _OutcomeTile({required this.option, required this.big, required this.selected, required this.onTap, this.readAloud = true});
 
   final DispositionOption option;
   final bool big;
   final bool selected;
+  final bool readAloud;
   final VoidCallback? onTap;
 
   @override
@@ -831,7 +843,8 @@ class _OutcomeTile extends StatelessWidget {
                 if (selected)
                   Positioned(top: 4, right: 4, child: Icon(Icons.check_circle, size: 22, color: s.ready.deep)),
                 // Read the label aloud (AS13); a screen reader reads the tile itself.
-                Positioned(
+                if (readAloud)
+                  Positioned(
                   top: 0,
                   left: 0,
                   child: ExcludeSemantics(
@@ -839,120 +852,6 @@ class _OutcomeTile extends StatelessWidget {
                   ),
                 ),
               ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The outcome buttons, two across, in the server's order (never re-sorted:
-/// an agent's muscle memory is the position). Success and Do-Not-Call codes
-/// carry a word and an icon, not only a colour.
-class DispositionGrid extends StatelessWidget {
-  const DispositionGrid({super.key, required this.options, required this.selected, required this.enabled, required this.onSelect});
-
-  final List<DispositionOption> options;
-  final String? selected;
-  final bool enabled;
-  final ValueChanged<String> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final scale = MediaQuery.textScalerOf(context).scale(15) / 15;
-        final columns = scale > 1.6 || c.maxWidth < 280 ? 1 : 2;
-        final w = ((c.maxWidth - Space.sm * (columns - 1)) / columns).floorToDouble();
-        return Wrap(
-          spacing: Space.sm,
-          runSpacing: Space.sm,
-          children: [
-            for (var i = 0; i < options.length; i++)
-              SizedBox(
-                width: w,
-                child: _OutcomeButton(
-                  index: i,
-                  option: options[i],
-                  selected: options[i].code == selected,
-                  onTap: enabled ? () => onSelect(options[i].code) : null,
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _OutcomeButton extends StatelessWidget {
-  const _OutcomeButton({required this.index, required this.option, required this.selected, required this.onTap});
-
-  final int index;
-  final DispositionOption option;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    final edge = option.suppresses ? t.danger : (option.isSuccess ? t.success : null);
-    final border = selected ? t.accent : (edge?.withValues(alpha: 0.45) ?? t.border);
-    final fg = option.suppresses ? t.danger : t.textPrimary;
-    final marker = option.suppresses
-        ? StationCopy.stopsCalling
-        : option.isSuccess
-        ? StationCopy.success
-        : null;
-    return Semantics(
-      button: true,
-      selected: selected,
-      enabled: onTap != null,
-      label: marker == null ? option.label : '${option.label}, $marker',
-      excludeSemantics: true,
-      onTap: onTap,
-      child: Material(
-        color: selected ? t.accentSubtle : t.bgSecondary,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(Radii.md),
-          side: BorderSide(color: border, width: selected ? 2 : 1),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: Key('outcome-${option.code}'),
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 60),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
-              child: Row(
-                children: [
-                  if (index < 9) ...[
-                    Container(
-                      width: 22,
-                      height: 22,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(color: t.bgTertiary, borderRadius: BorderRadius.circular(6)),
-                      child: Text('${index + 1}', style: text.labelSmall),
-                    ),
-                    const SizedBox(width: Space.sm),
-                  ],
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(option.label, style: text.labelLarge!.copyWith(color: fg)),
-                        if (marker != null) Text(marker, style: text.labelSmall!.copyWith(color: edge)),
-                      ],
-                    ),
-                  ),
-                  if (option.isSuccess) Icon(Icons.check_circle_outline, size: 18, color: t.success),
-                  if (option.suppresses) Icon(Icons.block, size: 18, color: t.danger),
-                ],
-              ),
             ),
           ),
         ),

@@ -25,15 +25,14 @@ const Map<String, String> promiseRefusalCopy = {
   'promise_needs_contact': promiseNeedsContactCopy,
 };
 
-const promiseRequiredCopy = 'This outcome needs the date the customer promised to pay.';
-const promiseDateRefusedCopy =
-    'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.';
-const promiseAmountRefusedCopy = 'Enter the amount as a number, with up to two decimal places and no commas.';
-const promiseNotExpectedCopy =
-    'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.';
+// A refused promise, in the station's words (AS15).
+const promiseRequiredCopy = 'Choose the pay date.';
+const promiseDateRefusedCopy = 'That pay date cannot be used. Choose a date from today up to 30 days ahead.';
+const promiseAmountRefusedCopy = 'Write the amount in numbers only, like 12500.';
+const promiseNotExpectedCopy = 'This choice does not take a pay date. Clear the pay date, or choose the one that does.';
 const promiseNeedsContactCopy =
-    'A promise to pay can’t be saved on this call: the number isn’t an open contact on the campaign’s list. '
-    'Pick another outcome and put the promise in the note.';
+    'A pay date cannot be saved on this call: this number is not a customer on the list. '
+    'Choose another, and write the promise in the note.';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
