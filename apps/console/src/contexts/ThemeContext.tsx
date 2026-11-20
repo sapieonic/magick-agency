@@ -66,3 +66,8 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) throw new Error('useTheme must be used within ThemeProvider');
   return ctx;
 }
+
+/** The theme where a page may render without the provider (the station's tests): null then. */
+export function useOptionalTheme(): ThemeContextValue | null {
+  return useContext(ThemeContext) ?? null;
+}

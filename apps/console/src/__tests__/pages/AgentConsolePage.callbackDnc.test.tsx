@@ -39,15 +39,8 @@ vi.mock('../../analytics/events', async (importOriginal) => {
 });
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import {
-  CALLBACK_GROUND_TRUTH_COPY,
-  CALLBACK_TIMEZONE_COPY,
-} from '../../components/agency/DispositionPad';
-import {
-  DNC_CAMPAIGN_ACTION_LABEL,
-  DNC_CONFIRM_TITLE,
-  DNC_TENANT_ACTION_LABEL,
-} from '../../utils/agencyDncCopy';
+import { STATION_COPY } from '../../utils/agency/stationCopy';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -130,7 +123,9 @@ class FakeSocket {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   analyticsMocks.trackAgencyDncMarked.mockReset();
@@ -153,6 +148,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -188,50 +184,62 @@ function press(key: string, target: Element | Document = document) {
   });
 }
 
-describe('the callback copy says “we”, never “I”', () => {
-  /**
-   * This is the **entire** mitigation for Shared pool: a callback returns the contact to
-   * `pending` and the pacing engine hands it to whichever agent is free, so the
-   * agent who booked it is not the agent who makes it. Nothing in the product
-   * enforces the promise — only this copy bounds it, and until now nothing
-   * pinned the copy.
-   */
-  it('renders the ground truth beside the time picker, on the page', async () => {
-    await onCall();
-    press('c');
+/** The call ends owing an outcome: What happened? (05), where the tiles and Call when? are. */
+async function whatHappened() {
+  await act(async () => {
+    latest().emit({ event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: true, message: 'x' });
+    latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:02:00.000Z' });
+  });
+}
 
-    const groundTruth = await screen.findByTestId('callback-ground-truth');
-    expect(groundTruth.textContent).toBe(CALLBACK_GROUND_TRUTH_COPY);
-    expect(groundTruth.textContent).toContain('It may not be you who makes it');
+const saveNext = () => screen.getByRole('button', { name: /save & next call/i });
+
+describe('the call-later copy promises only what is true (spec §6.6, AS8)', () => {
+  /**
+   * On a pool campaign a call-later goes back into the queue and whichever agent is free makes
+   * it, so the agent who booked it may not be the one who calls. The copy says so; it never
+   * promises "this call will come to you" there, and never says "I".
+   */
+  it('on a pool campaign says another agent may get the call', async () => {
+    await onCall();
+    await whatHappened();
+    press('c');
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
+    const resolved = screen.getByTestId('callback-resolved');
+    expect(resolved.textContent).toMatch(/^We will call on .+ at 10:00 AM\. Another agent may get the call\.$/);
   });
 
-  it('asks the question in the plural too', async () => {
+  it('on a campaign that assigns contacts says the call comes back to this agent', async () => {
+    mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, assignment_mode: 'strict' });
     await onCall();
+    await whatHappened();
     press('c');
-    expect(await screen.findByText('When should we call back?')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
+    expect(screen.getByTestId('callback-resolved').textContent).toMatch(/^This call will come to you on .+ at 10:00 AM\.$/);
+  });
+
+  it('asks the question plainly', async () => {
+    await onCall();
+    await whatHappened();
+    press('c');
+    expect(await screen.findByText(STATION_COPY.callWhen)).toBeTruthy();
   });
 
   it('contains no first-person-singular promise ANYWHERE the agent can read', async () => {
-    // A regex over the whole rendered console, not over one string: the rule is
-    // about what an agent might read aloud, and a future edit that reintroduces
-    // "I'll call you back" would land in some other element.
+    // A regex over the whole rendered station, not over one string: the rule is about what an
+    // agent might read aloud, and a future edit that reintroduces "I'll call you back" would
+    // land in some other element.
     const view = await onCall();
+    await whatHappened();
     press('c');
-    await screen.findByTestId('callback-ground-truth');
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
 
     const text = view.container.textContent ?? '';
     expect(text).not.toMatch(/\bI['’]ll\b/i);
     expect(text).not.toMatch(/\bI will call\b/i);
     expect(text).not.toMatch(/\byou'?ll take this one\b/i);
     // And the positive form is present, so the test cannot pass on an empty page.
-    expect(text).toContain('call back');
-  });
-
-  it('names whose clock the picker is on, because it is not the customer’s', async () => {
-    await onCall();
-    press('c');
-    const note = await screen.findByTestId('callback-timezone-note');
-    expect(note.textContent).toBe(CALLBACK_TIMEZONE_COPY);
+    expect(text).toContain('We will call');
   });
 });
 
@@ -268,12 +276,12 @@ describe('the confirmation after a callback is saved', () => {
     });
 
     await onCall();
+    await whatHappened();
     press('c');
-    await screen.findByTestId('callback-ground-truth');
-    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10am' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+      fireEvent.click(saveNext());
     });
 
     const live = await assertiveRegion();
@@ -296,12 +304,12 @@ describe('the confirmation after a callback is saved', () => {
     });
 
     await onCall();
+    await whatHappened();
     press('c');
-    await screen.findByTestId('callback-ground-truth');
-    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10am' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+      fireEvent.click(saveNext());
     });
 
     const live = await assertiveRegion();
@@ -319,10 +327,11 @@ describe('the confirmation after a callback is saved', () => {
     });
 
     await onCall();
+    await whatHappened();
     press('c');
-    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10am' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Tomorrow 10:00 AM' }));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+      fireEvent.click(saveNext());
     });
 
     const live = await assertiveRegion();
@@ -345,9 +354,14 @@ describe('the confirmation after a suppress outcome is saved (DS8)', () => {
 
   async function saveDoNotCall() {
     await onCall();
-    fireEvent.click(await screen.findByRole('button', { name: /Do not call/ }));
+    await whatHappened();
+    // The one outcome that asks (05c): picking the tile opens the question, Yes picks it.
+    fireEvent.click(screen.getByTestId('outcome-do_not_call'));
+    expect(screen.getByRole('dialog', { name: STATION_COPY.stopCallingTitle })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: STATION_COPY.yesStopCalls }));
+    expect(screen.getByTestId('outcome-do_not_call').getAttribute('aria-pressed')).toBe('true');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+      fireEvent.click(saveNext());
     });
     return assertiveRegion();
   }
@@ -370,246 +384,184 @@ describe('the confirmation after a suppress outcome is saved (DS8)', () => {
 describe('the C shortcut', () => {
   it('selects the datetime-bearing code by its FLAG, not by the string “callback”', async () => {
     await onCall();
+    await whatHappened();
     press('c');
-
-    const option = await screen.findByRole('button', { name: /Ring me later/ });
-    expect(option.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('outcome-ring_me_later').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('moves focus into the time row, not just the selection', async () => {
     // Selecting without focusing is a shortcut that half-works, and the agent
     // reaches for the mouse anyway.
     await onCall();
+    await whatHappened();
     press('c');
     const firstChip = await screen.findByRole('button', { name: 'In 1 hour' });
     await waitFor(() => expect(document.activeElement).toBe(firstChip));
   });
 
-  it('does nothing while the pad is disabled', async () => {
+  it('picks it on the call too, so What happened? opens with it chosen', async () => {
+    await onCall();
+    press('c');
+    await whatHappened();
+    expect(screen.getByTestId('outcome-ring_me_later').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('does nothing while no call is on screen', async () => {
     await mounted();
     press('c');
-    expect(screen.queryByText('When should we call back?')).toBeNull();
+    expect(screen.queryByText(STATION_COPY.callWhen)).toBeNull();
+    expect(screen.queryByTestId('outcome-ring_me_later')).toBeNull();
   });
 });
 
-describe('mark DNC', () => {
-  it('is composed into the console and disabled off-call, with the reason stated', async () => {
+/**
+ * Don't call again (spec 05c, §6.2). With an outcome that stops calls on the list, D (on the
+ * call) and its tile (on What happened?) ask once and pick that outcome; saving records it. With
+ * none, the red "Don't call again" row and D ask the same question and mark the number for this
+ * work (today's Mark DNC, campaign scope only: the tenant-wide option stays with admins, off the
+ * station).
+ */
+const NO_SUPPRESS: AgencySessionBootstrap = {
+  ...BOOTSTRAP,
+  disposition_catalog: BOOTSTRAP.disposition_catalog.filter((entry) => !entry.suppress),
+};
+
+async function onCallNoSuppress() {
+  mocks.createAgencySession.mockResolvedValue(NO_SUPPRESS);
+  return onCall();
+}
+
+const question = () => screen.queryByRole('dialog', { name: STATION_COPY.stopCallingTitle });
+const yes = () => screen.getByRole('button', { name: new RegExp(`${STATION_COPY.yesStopCalls}|${STATION_COPY.stoppingCalls}`) });
+
+describe('Don’t call again, with an outcome that stops calls', () => {
+  it('D on the call asks, and Yes picks that outcome for What happened? — nothing is sent yet', async () => {
+    await onCall();
+    press('d');
+    expect(question()).toBeTruthy();
+    expect(question()!.textContent).toContain('+919820041772');
+    fireEvent.click(yes());
+    expect(question()).toBeNull();
+    expect(mocks.markContactDnc).not.toHaveBeenCalled();
+    await whatHappened();
+    expect(screen.getByTestId('outcome-do_not_call').getAttribute('aria-pressed')).toBe('true');
+    // No separate red row: the tile is the one way to say it.
+    expect(screen.queryByTestId('dont-call-again-row')).toBeNull();
+  });
+
+  it('No, go back leaves nothing picked', async () => {
+    await onCall();
+    await whatHappened();
+    fireEvent.click(screen.getByTestId('outcome-do_not_call'));
+    fireEvent.click(screen.getByRole('button', { name: STATION_COPY.noGoBack }));
+    expect(question()).toBeNull();
+    expect(screen.getByTestId('outcome-do_not_call').getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+describe('Don’t call again, with no outcome that stops calls (today’s mark)', () => {
+  it('is not offered when no call is on screen', async () => {
+    mocks.createAgencySession.mockResolvedValue(NO_SUPPRESS);
     await mounted();
-    expect((screen.getByTestId('dnc-button') as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain('on a call');
+    press('d');
+    expect(question()).toBeNull();
+    expect(screen.queryByTestId('dont-call-again-row')).toBeNull();
   });
 
   it('requires confirmation — D alone sends nothing', async () => {
-    await onCall();
+    await onCallNoSuppress();
     press('d');
-
-    // The dialog is up, and no request has been made.
-    expect(screen.getByText(DNC_CONFIRM_TITLE)).toBeTruthy();
+    expect(question()).toBeTruthy();
     expect(mocks.markContactDnc).not.toHaveBeenCalled();
   });
 
-  it('states the DEFAULT option’s scope with the number and campaign in it, and never overstates it', async () => {
-    // The single action became a choice: the default is
-    // scoped to the campaign the agent is on, and its own copy must not borrow
-    // the wider, workspace-wide claim that belongs to the escalation below.
-    await onCall();
+  it('says who and what, for this work only, and that it cannot be undone', async () => {
+    await onCallNoSuppress();
     press('d');
-    const message = screen.getByText(/won.t be called again by Renewals/);
-    expect(message.textContent).toContain('+919820041772');
-    expect(message.textContent).toContain('Renewals');
-    expect(message.textContent).toContain('undo');
-    expect(message.textContent).not.toContain('any campaign in this organisation');
+    const text = question()!.textContent ?? '';
+    expect(text).toContain('Asha · +919820041772');
+    expect(text).toContain(STATION_COPY.stopCallingBody);
+    // Never the wider, organisation-wide claim: that escalation is not on the station.
+    expect(text).not.toContain('any campaign in this organisation');
   });
 
-  it('states the ESCALATION’s scope and permanence with the number in it, unmistakably', async () => {
-    // beforeEach's `tenant_owner` holds `agency.dnc.manage`, so the escalation
-    // is on offer. Its hint carries the compliance-bearing claim the default
-    // must not make: every campaign, forever, admin-only to reverse.
-    await onCall();
+  it('sends the campaign-scoped mark on Yes, and never offers the tenant-wide one, even to an owner', async () => {
+    await onCallNoSuppress();
     press('d');
-    const hint = screen.getByTestId('confirm-secondary-hint');
-    expect(hint.textContent).toContain('+919820041772');
-    expect(hint.textContent).toContain('any campaign in this organisation');
-    expect(hint.textContent).toContain('permanently');
-    expect(hint.textContent).toContain('undo');
-  });
-
-  it('sends the campaign-scoped mark when the agent picks the default', async () => {
-    await onCall();
-    press('d');
+    expect(screen.queryByRole('button', { name: /every campaign|whole organisation|all campaigns/i })).toBeNull();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+      fireEvent.click(yes());
     });
-    expect(mocks.markContactDnc).toHaveBeenCalledWith(
-      'att-1',
-      { scope: 'campaign' },
-      'tenant-1',
-      'account-1',
-    );
+    expect(mocks.markContactDnc).toHaveBeenCalledWith('att-1', { scope: 'campaign' }, 'tenant-1', 'account-1');
+    expect(mocks.markContactDnc).toHaveBeenCalledTimes(1);
+    // The question closes once the mark lands, and the result is said.
+    expect(question()).toBeNull();
+    expect(await screen.findByTestId('dnc-outcome')).toBeTruthy();
   });
 
   /**
-   * `opened_via` on `trackAgencyDncMarked` used to be hardcoded to `'click'`
-   * regardless of how the dialog was opened — pinning both origins here so a
-   * regression to the hardcoded version fails a test instead of just under-
-   * reporting shortcut usage silently.
+   * `opened_via` on `trackAgencyDncMarked` used to be hardcoded to `'click'` regardless of how
+   * the question was opened — pinning both origins so a regression fails a test.
    */
-  it('analytics: reports opened_via "click" when the button opened the dialog', async () => {
-    await onCall();
+  it('analytics: reports opened_via "click" when the red row opened it', async () => {
+    await onCallNoSuppress();
+    await whatHappened();
+    fireEvent.click(screen.getByTestId('dont-call-again-row'));
     await act(async () => {
-      fireEvent.click(screen.getByTestId('dnc-button'));
+      fireEvent.click(yes());
     });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
-    });
-    expect(analyticsMocks.trackAgencyDncMarked).toHaveBeenCalledWith(
-      expect.objectContaining({ opened_via: 'click' }),
-    );
+    expect(analyticsMocks.trackAgencyDncMarked).toHaveBeenCalledWith(expect.objectContaining({ opened_via: 'click' }));
   });
 
-  it('analytics: reports opened_via "shortcut" when the D key opened the dialog', async () => {
-    await onCall();
+  it('analytics: reports opened_via "shortcut" when D opened it', async () => {
+    await onCallNoSuppress();
     press('d');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+      fireEvent.click(yes());
     });
-    expect(analyticsMocks.trackAgencyDncMarked).toHaveBeenCalledWith(
-      expect.objectContaining({ opened_via: 'shortcut' }),
-    );
-  });
-
-  it('sends the tenant-wide mark when the agent picks the escalation, and only then', async () => {
-    await onCall();
-    press('d');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_TENANT_ACTION_LABEL }));
-    });
-    expect(mocks.markContactDnc).toHaveBeenCalledWith(
-      'att-1',
-      { scope: 'tenant' },
-      'tenant-1',
-      'account-1',
-    );
-    expect(mocks.markContactDnc).toHaveBeenCalledTimes(1);
-  });
-
-  it('hides the tenant-wide escalation from an admin of ONE account, as the server refuses it them (DS3)', async () => {
-    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin' });
-    auth.memberships = [membership('account_admin', 'account-1')];
-    await onCall();
-    press('d');
-
-    expect(screen.queryByRole('button', { name: DNC_TENANT_ACTION_LABEL })).toBeNull();
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
-    });
-    expect(mocks.markContactDnc).toHaveBeenCalledWith('att-1', { scope: 'campaign' }, 'tenant-1', 'account-1');
-  });
-
-  it('hides the tenant-wide escalation for a role lacking agency.dnc.manage — the campaign default still works', async () => {
-    // `agent` (level 5) holds `agency.dnc.write` (floor: `agent`) but not
-    // `agency.dnc.manage` (floor: `account_admin`, level 30) — the same floor
-    // the API already uses for REMOVING an entry. Hiding the wider escalation
-    // must not disable the narrower, default action.
-    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
-    auth.memberships = [membership('agent')];
-    await onCall();
-    press('d');
-
-    expect(screen.queryByRole('button', { name: DNC_TENANT_ACTION_LABEL })).toBeNull();
-    expect(screen.queryByTestId('confirm-secondary-hint')).toBeNull();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
-    });
-    expect(mocks.markContactDnc).toHaveBeenCalledWith(
-      'att-1',
-      { scope: 'campaign' },
-      'tenant-1',
-      'account-1',
-    );
+    expect(analyticsMocks.trackAgencyDncMarked).toHaveBeenCalledWith(expect.objectContaining({ opened_via: 'shortcut' }));
   });
 
   it('sends nothing when the agent backs out', async () => {
-    await onCall();
+    await onCallNoSuppress();
     press('d');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      fireEvent.click(screen.getByRole('button', { name: STATION_COPY.noGoBack }));
     });
     expect(mocks.markContactDnc).not.toHaveBeenCalled();
-    expect(screen.queryByText(DNC_CONFIRM_TITLE)).toBeNull();
+    expect(question()).toBeNull();
   });
 
-  it('weakens the ESCALATION’s outcome to this campaign when the list write is in flight', async () => {
-    mocks.markContactDnc.mockResolvedValue({
-      attempt_id: 'att-1',
-      contact_id: 'c-1',
-      phone_e164: '+919820041772',
-      contact_state: 'suppressed',
-      dnc_recorded: false,
-    });
-
-    await onCall();
+  it('the outcome never claims the wider scope, even once the list write landed', async () => {
+    mocks.markContactDnc.mockResolvedValue({ attempt_id: 'att-1', contact_id: 'c-1', phone_e164: '+919820041772', contact_state: 'suppressed', dnc_recorded: true });
+    await onCallNoSuppress();
     press('d');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_TENANT_ACTION_LABEL }));
+      fireEvent.click(yes());
     });
-
     const outcome = await screen.findByTestId('dnc-outcome');
     expect(outcome.textContent).toContain('this campaign');
     expect(outcome.textContent).not.toContain('No campaign in this organisation');
   });
 
-  it('the DEFAULT’s outcome never claims the wider scope, even once the list write landed', async () => {
-    // `dnc_recorded: true` is the strongest response the default can get, so it
-    // is the case in which an overstatement would be easiest to excuse. The
-    // campaign-scoped mark still may not borrow the escalation's wording.
-    //
-    // (This arm DOES read `dnc_recorded` — see `agencyDncCopy.ts`. It once did
-    // not, on the reasoning that the API suppresses the roster row directly; that is
-    // true of the ROSTER and false of the LIST the sentence names. The
-    // `dnc_recorded: false` wording is pinned in `agencyDncCopy.test.ts`.)
-    mocks.markContactDnc.mockResolvedValue({
-      attempt_id: 'att-1',
-      contact_id: 'c-1',
-      phone_e164: '+919820041772',
-      contact_state: 'suppressed',
-      dnc_recorded: true,
-    });
-
-    await onCall();
+  it('reports a failure inline, in words, on the question it answers', async () => {
+    mocks.markContactDnc.mockRejectedValue(Object.assign(new Error('Forbidden'), { details: { code: 'not_your_attempt' } }));
+    await onCallNoSuppress();
     press('d');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+      fireEvent.click(yes());
     });
-
-    const outcome = await screen.findByTestId('dnc-outcome');
-    expect(outcome.textContent).toContain('this campaign');
-    expect(outcome.textContent).not.toContain('No campaign in this organisation');
-  });
-
-  it('reports a failure inline, in words, rather than as a support message', async () => {
-    mocks.markContactDnc.mockRejectedValue(
-      Object.assign(new Error('Forbidden'), { details: { code: 'not_your_attempt' } }),
-    );
-
-    await onCall();
-    press('d');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
-    });
-
-    const failure = await screen.findByTestId('dnc-failure');
-    expect(failure.textContent).toContain('moved on');
+    expect(question()).toBeTruthy();
+    expect(within(question()!).getByRole('alert').textContent).toContain('moved on');
   });
 
   it('clears the previous call’s result when the next call arrives', async () => {
-    // An outcome about customer A, still on screen while the agent talks to
-    // customer B, is worse than no message at all.
-    await onCall();
+    // An outcome about customer A, still on screen while the agent talks to customer B, is
+    // worse than no message at all.
+    await onCallNoSuppress();
     press('d');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+      fireEvent.click(yes());
     });
     await screen.findByTestId('dnc-outcome');
 
@@ -622,43 +574,24 @@ describe('mark DNC', () => {
     expect(screen.queryByTestId('dnc-outcome')).toBeNull();
   });
 
-  it('does not open the dialog for a user the RBAC mirror denies', async () => {
-    // `agency.dnc.write` floors at `agent`, which is level 5 — BELOW `viewer`.
-    // So no role in the hierarchy lacks it, and the only denying state is a user
-    // with no membership role at all. Worth knowing before someone "fixes" this
-    // test by picking a lower role: there isn't one.
+  it('is not offered to a user the RBAC mirror denies', async () => {
+    // `agency.dnc.write` floors at `agent`, so the only denying state is a user with no role at all.
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: undefined });
-    await onCall();
+    await onCallNoSuppress();
     press('d');
-    expect(screen.queryByText(DNC_CONFIRM_TITLE)).toBeNull();
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain('permission');
+    expect(question()).toBeNull();
+    await whatHappened();
+    expect(screen.queryByTestId('dont-call-again-row')).toBeNull();
   });
 });
 
 /**
- * The DNC result belongs to the **contact**, not to `live`.
- *
- * `released` sets `live` to null while `panelAttempt` (`live?.attempt ??
- * retainedAttempt`) keeps that same contact on screen for the whole wrap-up
- * window. Everything DNC-shaped was keyed on `live`, so the confirmation for a
- * compliance action the console had already taken vanished at hangup — at exactly
- * the moment the agent is deciding what to write in the note.
- *
- * ── Why these tests drive the button rather than `D` ─────────────────────────
- * The `press()` helper above is prophylactic **in this file**, and that is
- * measured rather than assumed: inverting the page's `inTextField` suppression so
- * that every single-key shortcut fires inside a text field leaves all of this
- * file's cases green. It fires at `document` rather than at the focused element,
- * so it cannot see that guard at all. (`AgentConsolePage.test.tsx` does catch it,
- * in the two cases written for it — the coverage exists, just not here.) A new
- * assertion routed through `press()` would therefore inherit coverage it has not
- * earned. Nothing here is about the shortcut, so nothing here goes near it —
- * `dnc-button` and the dialog's own confirm are the whole input surface.
+ * The mark's result belongs to the **customer on screen**, not to `live`: `released` clears
+ * `live` while What happened? keeps that customer for the whole wrap-up window.
  *
  * ── Why the deferred promise ─────────────────────────────────────────────────
- * The interesting cases are all about *when* the response lands relative to
- * `released` and `reserved`, and a `mockResolvedValue` lands whenever the
- * scheduler feels like it. `deferredDnc()` puts that ordering in the test's hands.
+ * The interesting cases are all about *when* the response lands relative to `released` and
+ * `reserved`; `deferredDnc()` puts that ordering in the test's hands.
  */
 function deferredDnc(): {
   resolve: (value: unknown) => void;
@@ -683,45 +616,15 @@ const DNC_RESPONSE = {
   dnc_recorded: true,
 };
 
-/**
- * Open the confirmation from the button and commit the DEFAULT (campaign-scoped)
- * choice. No keyboard involved. This suite is about the wrap-up/hangup lifecycle
- * of a mark already in flight, not about which of the two scopes was picked, so
- * it exercises whichever choice is reachable in every role this file uses.
- */
+/** Ask with D and say Yes. */
 async function markDnc() {
+  press('d');
   await act(async () => {
-    fireEvent.click(screen.getByTestId('dnc-button'));
-  });
-  await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+    fireEvent.click(yes());
   });
 }
 
-/** The customer hangs up with a disposition still owed — the wrap-up window. */
-async function customerHangsUp() {
-  await act(async () => {
-    latest().emit({
-      event: 'released',
-      attempt_id: 'att-1',
-      reason: 'completed',
-      requires_disposition: true,
-      message: 'Call ended.',
-    });
-    latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:02:00.000Z' });
-  });
-}
-
-/**
- * The contact panel — the region whose contents `panelAttempt` drives.
- *
- * Named rather than reached through a bare `getByText`: the number is also on the
- * rail and inside the outcome's own sentence, so "the panel still shows this
- * contact" has to be asked of the panel.
- */
-const contactPanel = () => within(screen.getByRole('region', { name: 'Contact' }));
-
-/** The next customer arrives, which is the one event that clears the panel. */
+/** The next customer arrives, which is the one event that clears the screen's customer. */
 async function nextCallArrives() {
   await act(async () => {
     latest().emit({
@@ -737,146 +640,72 @@ async function nextCallArrives() {
   });
 }
 
-describe('the DNC result survives the hangup it was marked before', () => {
-  it('keeps the confirmation, naming the contact it is about, through the whole wrap-up window', async () => {
-    await onCall();
+describe('the mark’s result survives the hangup it was made before', () => {
+  it('keeps the confirmation, naming the customer it is about, through What happened?', async () => {
+    await onCallNoSuppress();
     await markDnc();
     await screen.findByTestId('dnc-outcome');
 
-    await customerHangsUp();
+    await whatHappened();
 
-    // (a) — and "positively identified", not "something is rendered". The
-    // confirmation carries the number it is a claim about, and the panel behind
-    // it is still that same contact.
     const outcome = screen.getByTestId('dnc-outcome');
     expect(outcome.textContent).toContain('+919820041772');
     expect(outcome.textContent).toContain('Do Not Call list');
-    expect(contactPanel().getByText('+919820041772')).toBeTruthy();
-    expect(contactPanel().getByText('Attempt 1')).toBeTruthy();
+    expect(within(screen.getByTestId('customer-card')).getByText('Asha')).toBeTruthy();
   });
 
-  it('clears it when the next contact arrives, so wrap-up is a window and not forever', async () => {
-    // (b). The sibling test above clears on a `reserved` that interrupts a live
-    // call; this one goes the long way round — through `released` and a wrap-up
-    // the outcome deliberately survives — so "still visible at hangup" cannot be
-    // satisfied by an effect that simply never fires.
-    await onCall();
+  it('clears it when the next customer arrives, so What happened? is a window and not forever', async () => {
+    await onCallNoSuppress();
     await markDnc();
     await screen.findByTestId('dnc-outcome');
-    await customerHangsUp();
+    await whatHappened();
     expect(screen.getByTestId('dnc-outcome')).toBeTruthy();
 
     await nextCallArrives();
 
     expect(screen.queryByTestId('dnc-outcome')).toBeNull();
-    // Non-vacuous: the new contact really is on screen, so the assertion above
-    // is about the outcome having been cleared and not about an empty console.
-    expect(contactPanel().getByText('+919000000000')).toBeTruthy();
+    expect(within(screen.getByTestId('customer-card')).getByText('Ravi')).toBeTruthy();
   });
 
   it('resolves a mark that was still in flight when the customer hung up', async () => {
-    /**
-     * (c) — **the case the one-line fix breaks.**
-     *
-     * Re-keying the reset effect to the panel's attempt without moving the
-     * handlers' ref with it leaves all three of `.then`/`.catch`/`.finally`
-     * returning early at `released`, and removes the only other thing that
-     * cleared `dncInFlight`. The agent is left with a control that is disabled
-     * and says "Marking…" for the whole wrap-up window, showing neither an
-     * outcome nor a failure — strictly worse than the missing confirmation this
-     * ticket was filed about.
-     */
     const dnc = deferredDnc();
-    await onCall();
+    await onCallNoSuppress();
     await markDnc();
+    // In flight, and the question says so.
+    expect(yes().textContent).toBe(STATION_COPY.stoppingCalls);
 
-    // In flight, and the console says so.
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain('Marking');
-
-    await customerHangsUp();
+    await whatHappened();
     await act(async () => {
       dnc.resolve(DNC_RESPONSE);
     });
 
     const outcome = await screen.findByTestId('dnc-outcome');
     expect(outcome.textContent).toContain('+919820041772');
-    // …and the control is released rather than wedged: the stated reason is the
-    // ordinary off-call one, which is only reachable once `dncInFlight` is false
-    // (`dncBlockReason` reports `in_flight` ahead of `no_live_attempt`).
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain(
-      'Available while you are on a call',
-    );
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).not.toContain('Marking');
+    // …and nothing is left wedged: the question is answered and gone.
+    expect(question()).toBeNull();
   });
 
   it('reports a failure that landed after the hangup, rather than swallowing it', async () => {
-    // The other half of (c): a mark the agent believes happened, which did not.
-    // Silence here is the same defect as the missing confirmation, pointed the
-    // more dangerous way — the agent tells the customer they are off the list.
     const dnc = deferredDnc();
-    await onCall();
+    await onCallNoSuppress();
     await markDnc();
-    await customerHangsUp();
+    await whatHappened();
 
     await act(async () => {
       dnc.reject(Object.assign(new Error('Forbidden'), { details: { code: 'unknown_attempt' } }));
     });
 
-    const failure = await screen.findByTestId('dnc-failure');
-    expect(failure.textContent).toContain('Nothing was marked');
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).not.toContain('Marking');
+    expect(within(question()!).getByRole('alert').textContent).toContain('Nothing was marked');
+    expect(yes().textContent).toBe(STATION_COPY.yesStopCalls);
   });
 
-  it('frees the control when the call ends owing no disposition and the mark is still in flight', async () => {
-    /**
-     * The other side of the reset effect, and the reason `setDncInFlight(false)`
-     * stays in it.
-     *
-     * A `released` with `requires_disposition: false` retains nothing, so the
-     * panel's attempt really does go away and the handlers really do return
-     * early — this effect is the only thing left that can free the control, and
-     * without it the station takes its next call with "Marking…" still on it.
-     */
+  it('never paints the previous customer’s result onto the call that replaced them', async () => {
     const dnc = deferredDnc();
-    await onCall();
+    const view = await onCallNoSuppress();
     await markDnc();
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain('Marking');
+    fireEvent.click(screen.getByRole('button', { name: STATION_COPY.noGoBack }));
 
-    await act(async () => {
-      latest().emit({
-        event: 'released',
-        attempt_id: 'att-1',
-        reason: 'no_answer',
-        requires_disposition: false,
-        message: 'No answer.',
-      });
-      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:02:00.000Z' });
-    });
-
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).not.toContain('Marking');
-
-    // And the late response changes nothing: there is no contact on screen for
-    // it to be about.
-    await act(async () => {
-      dnc.resolve(DNC_RESPONSE);
-    });
-    expect(screen.queryByTestId('dnc-outcome')).toBeNull();
-    expect(screen.getByTestId('dnc-disabled-reason').textContent).toContain(
-      'Available while you are on a call',
-    );
-  });
-
-  it('never paints the previous contact’s result onto the call that replaced them', async () => {
-    /**
-     * (d) — the guarantee the stale-response guard was written for, unbroken by
-     * the re-key. `panelAttemptRef` still moves on `reserved`; that is now the
-     * *only* thing that moves it.
-     */
-    const dnc = deferredDnc();
-    const view = await onCall();
-    await markDnc();
-
-    await customerHangsUp();
+    await whatHappened();
     await nextCallArrives();
 
     // The response for att-1 lands while att-2 is on the line.
@@ -885,13 +714,7 @@ describe('the DNC result survives the hangup it was marked before', () => {
     });
 
     expect(screen.queryByTestId('dnc-outcome')).toBeNull();
-    // Stronger than the absence of one element: the previous customer's number
-    // must not appear anywhere on the console the agent is reading.
     expect(view.container.textContent ?? '').not.toContain('+919820041772');
-    // Non-vacuous on both sides — att-2 is rendered, so the negative above is a
-    // statement about att-1 and not about an empty page; and the control is
-    // usable for the new customer, so nothing was left wedged in flight.
     expect(view.container.textContent ?? '').toContain('+919000000000');
-    expect((screen.getByTestId('dnc-button') as HTMLButtonElement).disabled).toBe(false);
   });
 });

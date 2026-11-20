@@ -11,7 +11,6 @@ import { SOFTPHONE_BREAK_REASON } from '../types/softphone';
 import { refusalCopy } from '../utils/softphone/refusalCopy';
 import { errorBody } from '../utils/agencyErrors';
 import { resyncCatalog, numberKeysRemapped } from '../utils/agencyCatalogSync';
-import { BREAK_REJECTED_COPY } from '../components/agency/BreakMenu';
 import { useLatestRef } from './useLatestRef';
 import type { AgencyAgentState, AgencyBreakReason, AgencySessionBootstrap } from '../types/agency';
 
@@ -32,6 +31,9 @@ import type { AgencyAgentState, AgencyBreakReason, AgencySessionBootstrap } from
  * wins the instant after a click, then the frames confirm or correct it"), with
  * nothing to keep in step.
  */
+/** For `unknown_break_reason`: the list was re-read from the server's `allowed_codes`. */
+export const BREAK_REJECTED_COPY = 'You cannot take that break now. Choose another.';
+
 export interface BreakQueueState {
   breakReasons: AgencyBreakReason[];
   /** The queued break's code, or null. */

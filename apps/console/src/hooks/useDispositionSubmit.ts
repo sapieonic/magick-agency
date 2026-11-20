@@ -232,7 +232,7 @@ export function useDispositionSubmit(options: {
    * This hook does NOT repaint for it. It runs in the console root, and a tick
    * here re-rendered the whole console four times a second for as long as a
    * callback code was selected. So the block is handed out as a function of the
-   * present: the Save control (`StationActionBar`) evaluates it on its own tick
+   * present: the Save control (the station's `SaveNextButton`) evaluates it on its own tick
    * while `blockChangesWithTime` says it must, and the shortcut and `submit`
    * evaluate it with `clock.now()` at fire time.
    */

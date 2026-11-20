@@ -55,6 +55,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import { FakeSocket, latestSocket } from '../helpers/fakeSocket';
 import { BOOTSTRAP as SP_BOOTSTRAP, CAMPAIGN, manualCall, step } from '../helpers/softphone';
 import type { AgencySessionBootstrap } from '../../types/agency';
@@ -105,7 +106,17 @@ const frame = async (f: unknown) => {
   });
 };
 
+/** ⋮ More → Dial a number myself: where "Switch to soft phone" moved (spec §8). */
+async function dialMyself() {
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('station-menu-dial_myself'));
+  });
+}
+
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket);
   Object.values(mocks).forEach((m) => (typeof m === 'function' && 'mockReset' in m ? m.mockReset() : undefined));
@@ -122,6 +133,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
 });
 
@@ -134,9 +146,7 @@ describe('that a supervisor may listen (LS2)', () => {
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
     expect(screen.getByRole('button', { name: 'Monitoring and recording' })).toBeTruthy();
     expect(screen.getByTestId('listen-first-notice')).toBeTruthy();
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
+    await dialMyself();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Monitoring and recording' })).toBeTruthy();
@@ -147,31 +157,48 @@ describe('that a supervisor may listen (LS2)', () => {
 });
 
 describe('Switch to soft phone', () => {
-  it('is offered in the action bar and as the break menu’s last entry, with the flag on', async () => {
+  it('is offered under ⋮ More as Dial a number myself, and never in Which break?', async () => {
     await mounted();
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
-    expect(screen.getByTestId('switch-to-softphone')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /^Break/ }));
-    const items = within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.textContent);
-    expect(items).toEqual(['Lunch', 'Switch to soft phone']);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByTestId('station-menu-dial_myself').textContent).toBe('Dial a number myself');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: /take break/i }));
+    const tiles = within(screen.getByRole('dialog', { name: 'Which break?' })).getAllByRole('button').map((b) => b.textContent);
+    expect(tiles.some((t) => /soft phone|dial/i.test(t ?? ''))).toBe(false);
+  });
+
+  it('is offered on Start of day as “I dial the number”, which Start work then switches to', async () => {
+    mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'break', break_reason: 'soft_phone' } });
+    await mounted();
+    const tile = screen.getByTestId('work-dial-myself');
+    expect(screen.getByTestId('work-calls-come').getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(tile);
+    expect(tile.getAttribute('aria-checked')).toBe('true');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start work/i }));
+    });
+    expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
+    expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
   });
 
   it('is not offered with the flag off', async () => {
     mocks.flags = new Set();
     await mounted();
-    expect(screen.queryByTestId('switch-to-softphone')).toBeNull();
+    expect(screen.queryByTestId('work-dial-myself')).toBeNull();
+    await frame({ event: 'agent_state', state: 'available', since: SINCE });
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-dial_myself')).toBeNull();
   });
 
   it('immediate: the station becomes the soft phone on agent_state break/soft_phone, with the campaign as the tag', async () => {
     mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'break', break_reason: 'soft_phone' } });
     await mounted();
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
+    await dialMyself();
     expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
     // Nothing queued: the frame is what switches the screen.
-    expect(screen.queryByTestId('queued-break-chip')).toBeNull();
+    expect(screen.queryByTestId('queued-break')).toBeNull();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
     expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
@@ -183,45 +210,23 @@ describe('Switch to soft phone', () => {
     expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
   });
 
-  it('queued: while on a call it shows "switching after this call", cancellable like a queued break', async () => {
-    mocks.switchToSoftphone.mockResolvedValue({
-      ok: true,
-      value: { session_id: 'sess-1', state: 'on_call', pending_state: 'break', break_reason: 'soft_phone' },
-    });
-    mocks.cancelQueuedBreak.mockResolvedValue({ session_id: 'sess-1', state: 'on_call' });
+  it('is not offered during a call (⋮ More holds only Sound there, spec §3)', async () => {
     await mounted();
+    await frame({ event: 'reserved', attempt: { attempt_id: 'att-1', campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals', contact_id: 'c-1', phone_e164: '+919876543210', caller_id: '+911234567890', attempt_number: 1, context: {}, prior_attempts: [] } });
     await frame({ event: 'agent_state', state: 'on_call', since: SINCE });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
-    expect(screen.getByTestId('queued-break-chip').textContent).toMatch(/Switching to the soft phone after this call/);
-    // The button stays in place, disabled, while its request is queued (disable, don't remove).
-    const queued = screen.getByTestId('switch-to-softphone');
-    expect(queued.getAttribute('aria-disabled')).toBe('true');
-    expect(queued.textContent).toBe('Switching after this call');
-    fireEvent.click(queued);
-    expect(mocks.switchToSoftphone).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Cancel the switch to the soft phone' }));
-    });
-    expect(mocks.cancelQueuedBreak).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
-    expect(screen.queryByTestId('queued-break-chip')).toBeNull();
-    expect(screen.getByTestId('switch-to-softphone').getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('switch-to-softphone').textContent).toBe('Switch to soft phone');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-dial_myself')).toBeNull();
+    expect(screen.getByTestId('station-menu-sound')).toBeTruthy();
   });
 
-  it('queued, then applied at the end of wrap-up by the frame', async () => {
-    mocks.switchToSoftphone.mockResolvedValue({
-      ok: true,
-      value: { session_id: 'sess-1', state: 'on_call', pending_state: 'break', break_reason: 'soft_phone' },
-    });
+  it('a switch queued behind the call shows “after this call” with its ✕, then is applied at the end of wrap-up by the frame', async () => {
+    mocks.cancelQueuedBreak.mockResolvedValue({ session_id: 'sess-1', state: 'wrapup' });
     await mounted();
-    await frame({ event: 'agent_state', state: 'on_call', since: SINCE });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
+    await frame({ event: 'reserved', attempt: { attempt_id: 'att-1', campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals', contact_id: 'c-1', phone_e164: '+919876543210', caller_id: '+911234567890', attempt_number: 1, context: {}, prior_attempts: [] } });
+    await frame({ event: 'released', attempt_id: 'att-1', reason: 'remote_hangup', requires_disposition: true, message: '' });
     await frame({ event: 'agent_state', state: 'wrapup', since: SINCE, pending_state: 'break', pending_break_reason: 'soft_phone' });
-    expect(screen.getByTestId('queued-break-chip').textContent).toMatch(/Switching to the soft phone/);
+    expect(screen.getByTestId('queued-break').textContent).toMatch(/Dial a number myself after this call/);
+    expect(screen.getByRole('button', { name: 'Cancel the break after this call' })).toBeTruthy();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
   });
@@ -229,18 +234,16 @@ describe('Switch to soft phone', () => {
   it('says why when the switch is refused', async () => {
     mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
     await mounted();
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
+    await frame({ event: 'agent_state', state: 'available', since: SINCE });
+    await dialMyself();
     expect(screen.getByTestId('switch-to-softphone-refused').textContent).toMatch(/turned off for this account/);
   });
 
   it('a switch Redis did not take says the status did not change, not that a call was not placed', async () => {
     mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 503, message: 'x' } });
     await mounted();
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('switch-to-softphone'));
-    });
+    await frame({ event: 'agent_state', state: 'available', since: SINCE });
+    await dialMyself();
     expect(screen.getByTestId('switch-to-softphone-refused').textContent).toBe('Couldn’t change your status just now; nothing changed. Try again.');
   });
 });
@@ -403,11 +406,11 @@ describe('on the soft phone, in the station', () => {
     });
   });
 
-  it('an ordinary break stays an ordinary break, with End break', async () => {
+  it('an ordinary break stays an ordinary break, with Start calls again', async () => {
     await mounted();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'lunch', since: SINCE });
     expect(screen.queryByTestId('station-softphone')).toBeNull();
-    expect(screen.getByRole('button', { name: /End break/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Start calls again/ })).toBeTruthy();
   });
 });
 
@@ -438,7 +441,7 @@ describe('joining a campaign while on the soft phone', () => {
     await act(async () => {
       latestSocket().open();
     });
-    expect(screen.getByTestId('rail-label')).toBeTruthy();
+    expect(screen.getByTestId('band-title')).toBeTruthy();
   });
 
   describe('a soft-phone session in another account of the workspace', () => {

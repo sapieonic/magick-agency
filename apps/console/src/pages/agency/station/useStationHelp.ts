@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cancelHelp, raiseHelp } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
+import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
 import {
   STATION_HELP_COPY,
@@ -40,6 +41,11 @@ export interface StationHelp {
   dismissible: boolean;
   /** The refusal of the agent's last press, stated. */
   refusal: string | null;
+  /**
+   * What the refusal was, for a screen that says it in its own words (the agent station, AS15):
+   * the press that was refused and the server's code and status. Null with no refusal.
+   */
+  refusalKind: { action: 'raise' | 'cancel'; code: string | null; status: number | null } | null;
   /** The last thing worth saying out loud, with a counter so the same words are said again. */
   announcement: { text: string; seq: number } | null;
   press: () => void;
@@ -62,6 +68,7 @@ export function useStationHelp({
   const { agentState, help, helpNotice, setHelp, dismissHelpNotice } = station;
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusalKind, setRefusalKind] = useState<StationHelp['refusalKind']>(null);
   const [announcement, setAnnouncement] = useState<{ text: string; seq: number } | null>(null);
   const say = useCallback((text: string) => setAnnouncement((was) => ({ text, seq: (was?.seq ?? 0) + 1 })), []);
   // Read at press time: a double press while the first is in flight sends nothing more.
@@ -72,6 +79,7 @@ export function useStationHelp({
   // A refusal is about the state it was pressed in; a new state makes it stale.
   useEffect(() => {
     setRefusal(null);
+    setRefusalKind(null);
   }, [agentState]);
 
   const open = help !== null;
@@ -85,6 +93,7 @@ export function useStationHelp({
     busyRef.current = true;
     setBusy(true);
     setRefusal(null);
+    setRefusalKind(null);
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
     request
       .then((answer) => {
@@ -98,6 +107,7 @@ export function useStationHelp({
       .catch((err: unknown) => {
         const text = helpRefusalText(err, cancelling ? 'cancel' : 'raise');
         setRefusal(text);
+        setRefusalKind({ action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) });
         say(text);
       })
       .finally(() => {
@@ -138,6 +148,7 @@ export function useStationHelp({
     status,
     dismissible: help === null && helpNotice !== null,
     refusal,
+    refusalKind,
     announcement,
     press,
     dismiss: dismissHelpNotice,

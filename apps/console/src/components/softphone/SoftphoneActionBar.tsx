@@ -18,9 +18,8 @@ export const SOFTPHONE_HANGUP_COPY: HoldToConfirmCopy = {
 
 /**
  * The soft phone's action bar: Save outcome → Mark DNC → Mute → Hang up, in that
- * order in every state — the station's own order (`StationActionBar`: Save →
- * Mark DNC → Mute → Hang up), so when the station swaps the soft phone in place
- * (SP7) nothing the agent reaches for changes sides. The group sits right, with
+ * order in every state — the order the station's own bar had before the redesign (the station
+ * now keeps its main action bottom right, AS1; the soft phone is not redesigned yet, spec §8). The group sits right, with
  * Save's stated reason growing left into the spacer, so a reason appearing moves
  * nothing either.
  *

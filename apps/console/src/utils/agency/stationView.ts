@@ -234,7 +234,7 @@ function bandFor(screen: StationScreen, input: StationViewInput): Pick<StationVi
       return { tone: 'happened', icon: 'check', title: STATION_COPY.happenedTitle, subtitle: STATION_COPY.happenedSubtitle };
     case 'on_break':
       return input.reservedBreak
-        ? { tone: 'break', icon: 'cup', title: STATION_COPY.pausedTitle, subtitle: STATION_COPY.pausedSubtitle }
+        ? { tone: 'break', icon: 'pause', title: STATION_COPY.pausedTitle, subtitle: input.breakReasonLabel ?? STATION_COPY.pausedSubtitle }
         : { tone: 'break', icon: 'cup', title: STATION_COPY.onBreakTitle(input.breakReasonLabel), subtitle: STATION_COPY.onBreakSubtitle };
     case 'break_over': {
       const lateMs = (input.breakElapsedMs ?? 0) - (input.breakLimitMinutes ?? 0) * 60_000;

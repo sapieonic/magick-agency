@@ -30,6 +30,7 @@ export const STATION_COPY = {
   menuDialMyself: 'Dial a number myself',
   menuMyCalls: 'My calls today',
   menuSound: 'Sound',
+  soundTitle: 'Sound and flash',
   menuLightScreen: 'Light screen',
   menuDarkScreen: 'Dark screen',
   menuFinish: 'Finish work for today',
@@ -96,11 +97,13 @@ export const STATION_COPY = {
   callLaterComesToMe: 'These calls will come to you on time.',
   callLaterPool: 'We will call them on time. Another agent may get the call.',
   callLaterSoon: (minutes: number) => (minutes <= 0 ? 'now' : `in ${minutes} min`),
-  noAnswerFromLast: (n: number) => `No answer from the last ${n} numbers.`,
+  noAnswerFromLast: (n: number) => (n === 1 ? 'No answer from the last number.' : `No answer from the last ${n} numbers.`),
+  diallingSubtitle: 'We are calling a customer for you. Stay on this screen.',
   takeBreak: 'Take break',
 
   // 02b banners
   lastCallDidNotConnect: 'The last call did not connect. You do not need to do anything.',
+  lastCallEnded: 'The last call ended.',
   messageOk: 'OK',
   moreMessages: (n: number) => (n === 1 ? '1 more message' : `${n} more messages`),
   supervisorSuffix: '(supervisor)',
@@ -203,7 +206,7 @@ export const STATION_COPY = {
   minutes: (n: number) => `${n} min`,
   cancel: 'Cancel',
   noBreakReasons: 'No breaks are set up. Ask your supervisor.',
-  breakRefused: 'That break is not available now. Choose another.',
+  breakRefused: 'You cannot take that break now. Choose another.',
 
   // 07 / 08 Breaks
   onBreakTitle: (label: string | null) => (label ? `On break · ${label}` : 'On break'),
@@ -324,11 +327,23 @@ export function helpAnsweredLine(byName: string | null, how: 'listen' | 'message
   return who ? `Help is here. ${who} answered you.` : 'Help is here. A supervisor answered you.';
 }
 
-/** The station's words for a refused raise or cancel; one sentence, the server's code decides only the case. */
-export function helpRefusedLine(code: string | null): string {
-  if (code === 'help_not_on_call') return 'You can ask for help on a call, or while you choose what happened.';
-  if (code === 'floor_assist_disabled') return 'Need help is not turned on. Call your supervisor to your desk.';
-  return STATION_COPY.helpRefused;
+/** The station's words for a refused raise or cancel (AS15), by the server's code, then its status. */
+export function helpRefusedLine(refusal: { action: 'raise' | 'cancel'; code: string | null; status: number | null }): string {
+  switch (refusal.code) {
+    case 'floor_assist_disabled':
+      return 'Need help is not turned on. Call your supervisor to your desk.';
+    case 'help_not_on_call':
+      return 'You can ask for help on a call, or while you choose what happened.';
+    case 'session_ended':
+      return 'Your work was closed. Open today’s work again to ask for help.';
+    case 'account_scope_required':
+      return 'Open your work from your account to ask for help.';
+    default:
+      break;
+  }
+  if (refusal.status === 404) return 'Your work was not found. Open today’s work again to ask for help.';
+  if (refusal.status === 403) return 'You cannot ask for help here. Call your supervisor to your desk.';
+  return refusal.action === 'raise' ? STATION_COPY.helpRefused : 'Your request could not be cancelled. Try again.';
 }
 
 /** Why Save is not ready yet, in the station's words (spec §6.1), keyed on today's block reasons. */
@@ -344,3 +359,22 @@ export const STATION_BLOCK_COPY: Record<
   promise_date_invalid: 'Choose a pay date from today up to 30 days ahead.',
   promise_amount_invalid: 'Write the amount in numbers only, like 12500.',
 };
+
+/** A call that ended while the internet was down (`ready.missed_release`), said once it is back. */
+export function missedReleaseLine(reason: string): string {
+  switch (reason) {
+    case 'remote_hangup':
+      return 'While your internet was down, the customer hung up.';
+    case 'agent_disconnected':
+      return 'While your internet was down, the call was cut.';
+    case 'no_answer':
+    case 'busy':
+    case 'failed':
+    case 'invalid':
+    case 'abandoned':
+    case 'reservation_expired':
+      return 'While your internet was down, the last call did not connect.';
+    default:
+      return 'While your internet was down, the last call ended.';
+  }
+}
