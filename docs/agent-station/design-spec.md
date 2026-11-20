@@ -250,6 +250,8 @@ Copy is exact. Sample data in the mock-ups: agent Sunita Yadav, work "Sahyadri F
 | Dialogs | Centred | Bottom sheet |
 | Banners | One line | Up to two lines |
 | Leaving the app | Not relevant | Server pauses the agent; shown as amber "Paused" |
+| Inbound call, soft phone, join refusals | The station's frame and band ("Customer is calling", On call, What happened?, "Dial a number"); the inbound call and the soft phone keep their own three columns under it, Finish work in ⋮ More while the soft phone is idle, Back to my calls bottom right | As built in the app |
+| Words for refusals and notices | The station's own, keyed on the server's code (AS15); never the server's sentence | The same |
 
 Console scale-down: under about 1060 px the two columns stack; under about 720 px tiles go 2 across and the main button goes full width. No horizontal scroll at 900 or 640 px.
 
