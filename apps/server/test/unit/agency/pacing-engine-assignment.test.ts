@@ -115,12 +115,16 @@ function makeAgents(states: Record<string, string>) {
   };
 }
 
-function makeStations(owned: string[], send = vi.fn((_id: string, _frame: unknown) => true)) {
+/** `withoutQueuePool`: stations that did not declare `queue_pool` (AS18: an older console or app). */
+function makeStations(owned: string[], send = vi.fn((_id: string, _frame: unknown) => true), withoutQueuePool: string[] = []) {
   return {
     isLocallyOwned: vi.fn((id: string) => owned.includes(id)),
     ownerOf: vi.fn(async (id: string) => (owned.includes(id) ? 'r1' : null)),
     broadcast: vi.fn(() => owned.length),
     send,
+    get: vi.fn((id: string) => (owned.includes(id)
+      ? { campaignId: 'camp-1', caps: new Set(withoutQueuePool.includes(id) ? [] : ['queue_pool']) }
+      : undefined)),
   };
 }
 
@@ -601,6 +605,26 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     await e.tickOnce('camp-1');
     const due = { event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null };
     expect(queueFrames(send)).toEqual([['s1', due], ['s2', due], ['s3', due]]);
+  });
+
+  // AS18: a station that did not declare `queue_pool` (a console or app built before the redesign)
+  // hears nothing of a pool campaign's queue, as before BE-5; with none that declared it, no probe.
+  // FALSIFIED: with the capability filter dropped from `sendPoolQueueFrames`, s2 is sent a frame and this reds.
+  it('pool mode: only the stations that declared queue_pool are told; with none, nothing is read', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: LATER, hasNonCallback: false });
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send, ['s2']), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+    await e.tickOnce('camp-1');
+    expect(queueFrames(send).map(([id]) => id)).toEqual(['s1', 's3']);
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
+
+    repos.contact.probeCampaignQueue.mockClear();
+    const none = vi.fn((_id: string, _frame: unknown) => true);
+    const old = engine(makeStations(['s1', 's2'], none, ['s1', 's2']), makeAgents({ s1: 'available', s2: 'available' }));
+    await old.e.tickOnce('camp-1');
+    expect(queueFrames(none)).toHaveLength(0);
+    expect(repos.contact.probeCampaignQueue).not.toHaveBeenCalled();
   });
 
   it('pool mode: a failed probe sends nothing and costs the tick nothing', async () => {

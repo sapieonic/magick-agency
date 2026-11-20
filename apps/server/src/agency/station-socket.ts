@@ -10,7 +10,7 @@ import type {
   AgencyStationMediaFormat,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
-import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, AGENCY_STATION_QUEUE_POOL_CAPABILITY, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import {
@@ -19,7 +19,7 @@ import {
   stationCaps,
   type StationUpgradeQuery,
 } from './station-upgrade.js';
-import { readAgentQueueState } from './pacing/agent-queue.js';
+import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
 import { trackStationDisconnect } from '@magick-agency/observability/metrics/agency';
@@ -100,6 +100,28 @@ export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boole
   if (live.state === 'break') return AGENT_LEASE_MS.break;
   if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;
   return null;
+}
+
+/** The station entry `socket` holds for `sessionId` (whose, which app), or undefined. Total: a metric never fails a close. */
+function stationHeldBy(runtime: AgencyRuntime, sessionId: string, socket: WebSocket): { tenantId: string; clientKind: 'web' | 'mobile' } | undefined {
+  try {
+    const held = runtime.stations.get(sessionId);
+    return held && held.ws === socket ? held : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The agent's state as their station went, its read ISSUED now (not awaited: see the close
+ * handler), and whether a soft-phone call is live. Null when it cannot be asked. Total.
+ */
+function readDrop(runtime: AgencyRuntime, sessionId: string): { state: Promise<AgentLiveState | null>; softPhoneCallLive: boolean } | null {
+  try {
+    return { state: runtime.agents.get(sessionId), softPhoneCallLive: runtime.manualDialer.hasLiveCall(sessionId) };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -453,8 +475,7 @@ export async function handleStationSocket(
       // Agent station (BE-11): the station as this socket held it (whose, which app), read before
       // the detach forgets it; only when this socket is the session's entry (a superseded one's
       // close is not a drop).
-      const held = runtime.stations.get(sessionId);
-      const dropped = held && held.ws === socket ? held : undefined;
+      const dropped = stationHeldBy(runtime, sessionId, socket);
       // Order matters: detach FIRST, so anything that asks "is this agent here?"
       // between here and the end of this handler gets the truthful answer.
       await runtime.stations.detach(sessionId, socket);
@@ -492,15 +513,14 @@ export async function handleStationSocket(
       // Not awaited: the read is ISSUED here, before the release below issues its offline write on
       // the same Redis connection, which applies commands in issue order, so it reads the state the
       // drop interrupted and adds no await between the supersede read and the release.
-      const stateAtDrop = dropped && !superseded ? runtime.agents.get(sessionId) : null;
-      const softPhoneCallLive = runtime.manualDialer.hasLiveCall(sessionId);
+      const drop = dropped && !superseded ? readDrop(runtime, sessionId) : null;
       // Presence is the heartbeat — but a drop mid-attempt is the deferred
       // hangup's to resolve, not ours. `false` means it kept the agent.
       const wentOffline = superseded
         ? false
         : await runtime.releaseStationOnClose(sessionId, socket);
-      if (stateAtDrop && dropped) {
-        void stateAtDrop.then((live) => countStationDrop(dropped, live?.state ?? null, softPhoneCallLive)).catch(() => undefined);
+      if (drop && dropped) {
+        void drop.state.then((live) => countStationDrop(dropped, live?.state ?? null, drop.softPhoneCallLive)).catch(() => undefined);
       }
       log.info({ sessionId, superseded, wentOffline, mediaFormat, ignoredMediaFrames }, 'Station socket closed');
     })();
@@ -607,16 +627,20 @@ export async function handleStationSocket(
   }
 
   // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, and
-  // (agent station BE-5) the campaign's shared queue on a `pool` one, so a reconnect shows
-  // "nothing due, and why" at once (pacing's `queue` frame is sent only on a change, so a
-  // reconnecting station cannot wait for one). Read here, before the fence below, so no await
-  // sits between the fence and the side effects. Best effort: a failed read omits the field and
-  // the station keeps the reconnect. A soft-phone session (no campaign) reads nothing.
+  // (agent station BE-5) the campaign's shared queue on a `pool` one, only to a station that
+  // declared `queue_pool` (AS18: a build before the redesign words it for an owner's own contacts),
+  // so a reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
+  // change, so a reconnecting station cannot wait for one). Read here, before the fence below, so
+  // no await sits between the fence and the side effects. Best effort: a failed read omits the
+  // field and the station keeps the reconnect. A soft-phone session (no campaign) reads nothing.
   const campaignId = session.campaign_id;
+  const poolQueue = caps.has(AGENCY_STATION_QUEUE_POOL_CAPABILITY);
   const queueRead = campaignId
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
-      .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
+      .then((campaign) => (campaign && (poolQueue || ownerModeOf(campaign) !== null)
+        ? readAgentQueueState(campaign, session.agent_user_id)
+        : undefined))
       .catch((err: unknown) => {
         log.warn({ err, sessionId }, 'Could not read the agent queue for ready');
         return undefined;

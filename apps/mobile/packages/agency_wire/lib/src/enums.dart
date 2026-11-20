@@ -1182,7 +1182,8 @@ enum InboundRingDeclineReason implements WireEnum {
 
 /// What a station takes beyond its session's own work, declared on the
 /// station upgrade as `caps=` (comma-separated). The app sends `caps=inbound`
-/// so the server offers it inbound calls (`inbound_call`, `customer_waiting`).
+/// so the server offers it inbound calls (`inbound_call`, `customer_waiting`),
+/// `floor_assist` and `queue_pool`.
 ///
 /// Contract: `AGENCY_STATION_CAPABILITIES` (`agency/station.ts`).
 enum StationCapability implements WireEnum {
@@ -1192,6 +1193,12 @@ enum StationCapability implements WireEnum {
   /// The station shows a supervisor's messages and its Need help's answers
   /// (floor assist): without it a phone is sent none of those frames.
   floorAssist('floor_assist'),
+
+  /// The station shows a `pool` campaign's queue state ("Nothing due now"
+  /// and why) in the redesign's words (agent station BE-5, AS18): without
+  /// it the station is sent no `queue` frame and no `ready.queue` on a pool
+  /// campaign, as before the redesign.
+  queuePool('queue_pool'),
   unknown('');
 
   const StationCapability(this.wire);

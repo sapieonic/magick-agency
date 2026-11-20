@@ -224,6 +224,14 @@ dialer's `AgencyStationServerFrame` and this one, as the dialer's types unchange
 outside both until the app could decode them (LF16), and `AgencyStationCapability` gained
 `floor_assist` with them (the app's station declares `caps=floor_assist`).
 
+Agent station, pool queue state (BE-5, AS18). `AgencyStationCapability` gained `queue_pool`
+(`AGENCY_STATION_QUEUE_POOL_CAPABILITY`, in `AGENCY_STATION_CAPABILITIES` and the app's
+`station_capabilities` vocabulary): a station that declares it is sent a `pool` campaign's queue state
+(the `queue` frame and `ready.queue`). Unlike the other two, a console must declare it too: a console
+tab or app build from before the redesign words queue state for an owner's own contacts, so it gets
+none on `pool`, exactly as before BE-5. The bootstrap's `queue` is owner-mode only again (it is read
+before the socket declares anything). No type changed shape; `strict` / `preferred` are unchanged.
+
 Live floor Phase 3, break limits and callbacks (decisions LF6, LF7, LF20–LF22).
 `AgencyBreakReason.limit_minutes` (optional, 1–240 whole minutes) is declared once, in the dialer
 contract (`agency/session.ts`), and re-exported here like the rest of `AgencyBreakReason`: the

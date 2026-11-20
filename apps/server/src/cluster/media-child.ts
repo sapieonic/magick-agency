@@ -101,8 +101,8 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   });
 
   // ── Stations: tell the primary where they are ────────────────────────────
-  runtime.stations.onAttached(({ sessionId, campaignId, tenantId, accountId }) => {
-    channel.emit('station.attached', { sessionId, campaignId, tenantId, accountId, replicaId: runtime.replicaId });
+  runtime.stations.onAttached(({ sessionId, campaignId, tenantId, accountId, caps }) => {
+    channel.emit('station.attached', { sessionId, campaignId, tenantId, accountId, caps: [...caps], replicaId: runtime.replicaId });
   });
   runtime.stations.onDetached((sessionId) => {
     channel.emit('station.detached', { sessionId });
@@ -115,7 +115,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     channel.emit('station.snapshot', {
       replicaId: runtime.replicaId,
       sessions: runtime.stations.all().map((e) => ({
-        sessionId: e.sessionId, campaignId: e.campaignId, tenantId: e.tenantId, accountId: e.accountId,
+        sessionId: e.sessionId, campaignId: e.campaignId, tenantId: e.tenantId, accountId: e.accountId, caps: [...e.caps],
       })),
     });
   };

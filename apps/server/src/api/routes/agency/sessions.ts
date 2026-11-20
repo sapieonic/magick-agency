@@ -37,7 +37,7 @@ import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './s
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
 import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
-import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
+import { ownerModeOf, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { publishCacheInvalidation } from '../../../cache/cache-invalidation.js';
 import { CAMPAIGN_STATS_CACHE } from '../../../agency/campaign-stats-reads.js';
 import { agentScriptForBootstrap } from '../../../agency/agent-script.js';
@@ -299,16 +299,20 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // Resolved here rather than in the object literal below so its `await` is
     // plainly outside the frame path.
     // Contact assignment (CA3): this agent's own queue at join, on a `strict` / `preferred`
-    // campaign; the campaign's shared queue on a `pool` one (agent station BE-5). Best effort, as
-    // the retry context is: a failed read omits the field rather than refusing the join, and
-    // pacing's `queue` frame follows.
+    // campaign. None on a `pool` one (agent station AS18): the bootstrap is read before the station
+    // declares what it can show, and a build before the redesign words queue state for an owner's
+    // own contacts, so a `pool` campaign's shared queue (BE-5) comes on `ready.queue` and the
+    // `queue` frame, to a station that declared `queue_pool`. Best effort, as the retry context is:
+    // a failed read omits the field rather than refusing the join, and pacing's `queue` frame follows.
     // The two reads are independent and run together, each with its own error handling.
     const [retryContext, queue] = await Promise.all([
       resolveRetryContext(campaign),
-      Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
-        log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
-        return undefined;
-      }),
+      ownerModeOf(campaign) === null
+        ? undefined
+        : Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
+          log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
+          return undefined;
+        }),
     ]);
 
     const script = agentScriptForBootstrap(campaign.agent_script);
@@ -333,7 +337,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // payload always carries a boolean, never `undefined` or `null`.
       allow_wrapup_redial: campaign.allow_wrapup_redial === true,
       // Contact assignment (0009): the campaign's mode and agent-retry setting at join, and
-      // this agent's queue in `strict` / `preferred` mode, the campaign's in `pool` mode (BE-5).
+      // this agent's queue in `strict` / `preferred` mode (absent in `pool` mode: AS18, above).
       assignment_mode: campaign.assignment_mode ?? 'pool',
       allow_agent_retry: campaign.allow_agent_retry === true,
       ...(queue ? { queue } : {}),

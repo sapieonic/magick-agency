@@ -231,10 +231,10 @@ void main() {
   });
 
   group('the station controller', () {
-    test('declares floor_assist on its upgrade, beside inbound', () {
+    test('declares floor_assist on its upgrade, beside inbound and queue_pool (AS18: a pool campaign\'s queue state)', () {
       fakeAsync((async) {
         final app = App(async)..start();
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         app.dispose();
       });
     });

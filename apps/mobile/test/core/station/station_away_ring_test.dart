@@ -388,7 +388,7 @@ void main() {
         expect(r.channel.named('peekStopRinging'), hasLength(1));
         expect(reasons(app), ['away_ring', 'device_away']);
         expect(app.connector.attempts, 2, reason: 'attached only once device_away applied');
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist', reason: 'paused: no ring can be un-answered now');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool', reason: 'paused: no ring can be un-answered now');
         expect(r.channel.named('clearStopRinging'), hasLength(1), reason: 'native keeps the tap until device_away applied');
         expect(r.channel.named('moveTaskToBack'), hasLength(1));
         expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
@@ -481,7 +481,7 @@ void main() {
         expect(app.connector.attempts, 1);
         async.elapse(const Duration(seconds: 1));
         expect(app.connector.attempts, 2);
-        expect(app.socket.url.queryParameters['caps'], 'floor_assist',
+        expect(app.socket.url.queryParameters['caps'], 'floor_assist,queue_pool',
             reason: 'the last answer said reserved: an attach with caps=inbound would answer the ring (N5)');
         expect(app.socket.url.queryParameters['client'], 'mobile');
         expect(app.container.read(ringNoticeProvider), isNull, reason: 'not paused yet as far as the app knows');
@@ -491,7 +491,7 @@ void main() {
         // The attach without inbound calls ends away_ring as device_away (the contract's frames).
         backFromAwayRing(app);
         expect(app.connector.attempts, 3, reason: 'attached afresh to declare inbound calls');
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
         expect(r.channel.named('moveTaskToBack'), hasLength(1));
         expect(r.channel.named('clearStopRinging'), hasLength(1));
@@ -516,12 +516,12 @@ void main() {
         app.readyFrame('reserved');
         async.flushMicrotasks();
         expect(app.connector.attempts, 2);
-        expect(app.socket.url.queryParameters['caps'], 'floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'floor_assist,queue_pool');
         // A drop's retry connects without it too.
         app.socket.serverClose();
         async.elapse(const Duration(seconds: 1));
         expect(app.connector.attempts, 3);
-        expect(app.socket.url.queryParameters['caps'], 'floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'floor_assist,queue_pool');
         app.dispose();
       });
     });
@@ -539,7 +539,7 @@ void main() {
         expect(app.container.read(ringNoticeProvider), 'Couldn’t stop ringing. Open your station to pause.');
         expect(r.channel.named('moveTaskToBack'), isEmpty);
         expect(r.channel.named('clearStopRinging'), isEmpty);
-        expect(app.socket.url.queryParameters['caps'], 'floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'floor_assist,queue_pool');
         app.dispose();
       });
     });
@@ -553,7 +553,7 @@ void main() {
         app.lifecycle.show();
         async.flushMicrotasks();
         expect(app.connector.attempts, 2);
-        expect(app.socket.url.queryParameters['caps'], 'floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'floor_assist,queue_pool');
         app.dispose();
       });
     });
@@ -578,7 +578,7 @@ void main() {
         expect(app.connector.attempts, 1);
         async.elapse(const Duration(seconds: 3));
         expect(app.connector.attempts, 2, reason: 'device_away applied: the hold ends');
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         app.dispose();
       });
     });
@@ -705,7 +705,7 @@ void main() {
         async.flushMicrotasks();
         expect(app.connector.attempts, 2);
         expect(app.socket.url.queryParameters['token'], 'accept1', reason: 'the accept minted the token');
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         expect(app.mints, 0, reason: 'no second mint: it would replace the accept\'s token');
         expect(r.channel.named('showAwayNotification').last, 'showAwayNotification:false');
         expect(app.engine.calls.where((c) => c == 'fgs.start'), hasLength(2), reason: 'the on-duty service started again');

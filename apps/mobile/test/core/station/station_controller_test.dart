@@ -25,7 +25,7 @@ void main() {
         final join = app.requests('POST', '/proxy/agency/sessions').single;
         // OS3: this phone, taking the station ("Go on duty" is the agent's own choice).
         expect(join.body, {'campaign_id': 'camp-1', 'device_id': testDeviceId, 'take_over': true});
-        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8&caps=inbound%2Cfloor_assist');
+        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8&caps=inbound%2Cfloor_assist%2Cqueue_pool');
         expect(app.view!.link, StationLink.open);
         expect(app.view!.campaignName, 'Renewals');
         expect(app.view!.dispositions.map((d) => d.code), ['interested', 'callback', 'not_interested', 'do_not_call']);

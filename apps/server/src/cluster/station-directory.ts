@@ -20,7 +20,14 @@ import type { AgencyStationCapability, AgencyStationServerFrame } from '@magick-
 import type { PacingStations } from '../agency/pacing-engine.js';
 import { StationDetachTimes, type StationDetachScope, type StationDisconnectsReader } from '../agency/station-detach-times.js';
 
-const NO_CAPS: ReadonlySet<AgencyStationCapability> = new Set();
+/**
+ * A worker's station's capabilities as the directory answers them (`get`): what the worker reported,
+ * minus `inbound` (IB8, IQ13: with media workers no inbound caller is put through to an agent, so
+ * pacing never holds a worker's station back for one).
+ */
+function directoryCaps(reported: readonly AgencyStationCapability[] | undefined): ReadonlySet<AgencyStationCapability> {
+  return new Set((reported ?? []).filter((c) => c !== 'inbound'));
+}
 
 interface Entry {
   slot: number;
@@ -28,6 +35,7 @@ interface Entry {
   replicaId: string;
   /** Whose station (BE-11: a detach is recorded with it, so the alerts read filters in memory). */
   scope: StationDetachScope;
+  caps: ReadonlySet<AgencyStationCapability>;
 }
 
 /** One station as a worker reports it (`station.attached`, `station.snapshot`). */
@@ -36,6 +44,8 @@ export interface DirectoryStation {
   campaignId: string | null;
   tenantId: string;
   accountId: string;
+  /** What the station declared (`StationRegistry`'s `caps`); absent: none. */
+  caps?: readonly AgencyStationCapability[];
 }
 
 export interface StationDirectoryDeps {
@@ -95,6 +105,7 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
     if (this.liveReplicas.get(replicaId) !== slot) return; // a late event from a dead incarnation
     this.entries.set(station.sessionId, {
       slot, campaignId: station.campaignId, replicaId, scope: { tenantId: station.tenantId, accountId: station.accountId },
+      caps: directoryCaps(station.caps),
     });
     this.detachTimes.attached(station.sessionId);
   }
@@ -127,6 +138,7 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
     for (const s of sessions) {
       this.entries.set(s.sessionId, {
         slot, campaignId: s.campaignId, replicaId, scope: { tenantId: s.tenantId, accountId: s.accountId },
+        caps: directoryCaps(s.caps),
       });
       this.detachTimes.attached(s.sessionId);
     }
@@ -152,13 +164,14 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
   }
 
   /**
-   * The station's campaign. No capability is known here (`caps` is empty): with media workers no
-   * inbound caller is put through to an agent (IB8; IQ13: every open route answers with the
-   * call-back message), so pacing never holds a worker's station back for one.
+   * The station's campaign and capabilities, as its worker reported them, never `inbound`: with
+   * media workers no inbound caller is put through to an agent (IB8; IQ13: every open route answers
+   * with the call-back message), so pacing never holds a worker's station back for one. `queue_pool`
+   * (AS18) is kept: pacing sends a `pool` campaign's `queue` frame only to a station that has it.
    */
   get(sessionId: string): { campaignId: string | null; caps: ReadonlySet<AgencyStationCapability> } | undefined {
     const e = this.entries.get(sessionId);
-    return e ? { campaignId: e.campaignId, caps: NO_CAPS } : undefined;
+    return e ? { campaignId: e.campaignId, caps: e.caps } : undefined;
   }
 
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number {

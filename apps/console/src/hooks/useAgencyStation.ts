@@ -20,6 +20,7 @@ import {
   isSendableAlawMessage,
   readAgencyMediaPayload,
   uplinkFrameFormat,
+  withStationCapsQuery,
   withStationMediaQuery,
   type AgencyUplinkFrame,
 } from '../utils/agencyMedia';
@@ -1266,7 +1267,8 @@ export function useAgencyStation(
     socketFormatRef.current = format;
     setSocketFormat(format);
 
-    const socket = new WebSocket(toAbsoluteWsUrl(withStationMediaQuery(url, format)));
+    // The format, and what this station can show (`caps=queue_pool`, AS18).
+    const socket = new WebSocket(toAbsoluteWsUrl(withStationMediaQuery(withStationCapsQuery(url), format)));
     // `alaw8` audio arrives as binary messages: as `ArrayBuffer`, never the default
     // `Blob`, whose bytes can only be read through a promise per 20 ms frame.
     socket.binaryType = 'arraybuffer';

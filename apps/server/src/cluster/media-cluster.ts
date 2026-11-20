@@ -171,7 +171,7 @@ export class MediaCluster implements WsHandoffTarget {
       if (body.role === 'media' && body.slot === slot && body.replicaId) this.directory.workerUp(slot, body.replicaId);
     });
     channel.onEvent('station.attached', (b) => this.directory.attached(slot, {
-      sessionId: b.sessionId, campaignId: b.campaignId, tenantId: b.tenantId, accountId: b.accountId,
+      sessionId: b.sessionId, campaignId: b.campaignId, tenantId: b.tenantId, accountId: b.accountId, caps: b.caps,
     }, b.replicaId));
     channel.onEvent('station.detached', (b) => this.directory.detached(slot, b.sessionId));
     channel.onEvent('station.ended', (b) => this.directory.ended(b.sessionId));

@@ -56,6 +56,15 @@ describe('StationDirectory', () => {
     expect(d.countForSlot(1)).toBe(1);
   });
 
+  it('AS18: the station\'s capabilities as its worker reported them, never inbound (IB8): pacing sends a pool queue frame only to queue_pool', () => {
+    const { d } = dir();
+    d.workerUp(0, 'r0');
+    d.attached(0, { ...st('s1', 'c1'), caps: ['inbound', 'floor_assist', 'queue_pool'] }, 'r0');
+    expect(d.get('s1')).toEqual({ campaignId: 'c1', caps: new Set(['floor_assist', 'queue_pool']) });
+    d.snapshot(0, 'r0', [{ ...st('s1', 'c1'), caps: ['inbound'] }]);
+    expect(d.get('s1')).toEqual({ campaignId: 'c1', caps: new Set() });
+  });
+
   it("ownerOf trusts the Redis key only when it names a live replica (a crashed worker's key is no owner)", async () => {
     const live = dir('r-live');
     live.d.workerUp(0, 'r-live');

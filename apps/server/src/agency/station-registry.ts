@@ -58,7 +58,7 @@ interface StationEntry {
 }
 
 /** A station as `onAttached` tells it: which session, its campaign, and whose. */
-export type StationAttached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId'>>;
+export type StationAttached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'caps'>>;
 
 /** A station as it was when it detached (`onDetached`): who it was, with no socket. */
 export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'caps'>>;
@@ -183,7 +183,9 @@ export class StationRegistry implements StationDisconnectsReader {
       'Station socket attached');
     for (const listener of this.attachListeners) {
       try {
-        listener({ sessionId: entry.sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId });
+        listener({
+          sessionId: entry.sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId, caps: entry.caps,
+        });
       } catch (err) {
         log.warn({ err, sessionId: entry.sessionId }, 'Station attach listener threw');
       }
@@ -736,4 +738,6 @@ const CAPABILITY_FOR_EVENT: ReadonlyMap<AgencyStationServerFrame['event'], Agenc
 const CAPABILITY_REFUSAL_LOG: Readonly<Record<AgencyStationCapability, string>> = {
   inbound: 'Inbound station frame not sent to a station that cannot take inbound calls',
   floor_assist: 'Floor assist station frame not sent to a station that cannot receive it',
+  // No event needs it (a pool campaign's `queue` frame is filtered by pacing, AS18): never logged.
+  queue_pool: 'Pool queue frame not sent to a station that did not declare queue_pool',
 };
