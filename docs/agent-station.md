@@ -67,7 +67,7 @@ by the lead's run of lint and the touched packages' suites.
 |---|---|---|
 | F | Merged 2026-11-20 | Migrations 0056–0060; contracts 616 passed; db unit 457, integration 877; `agency_wire` 761; app `flutter test` 2041; lint clean |
 | C1 | In progress | |
-| M1 | In progress | |
+| M1 | Phase 0 merged 2026-11-20; wiring in progress | `flutter analyze` clean; `flutter test` 2121 passed on the merged branch |
 | S1 | In progress | |
 | S2 | In progress | |
 | S3 | Merged 2026-11-20 | Domain 360 passed; contracts 617; server unit 10,590 passed (3 failures in `inbound-recordings.test.ts`: no audio decoders in the build container); integration rest 213, wall-clock 4 (relevant files); lint clean |
