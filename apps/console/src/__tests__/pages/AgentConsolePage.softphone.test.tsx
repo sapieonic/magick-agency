@@ -201,8 +201,9 @@ describe('Switch to soft phone', () => {
     expect(screen.queryByTestId('queued-break')).toBeNull();
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
-    expect(screen.getByTestId('rail-detail').textContent).toMatch(/campaign's dialler does not reserve you here/);
+    // The station's band (ruling 2), with Back to my calls bottom right.
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.getByTestId('return-to-campaign').textContent).toBe('Back to my calls');
     expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
     // A soft-phone break is never ended as an ordinary one.
     expect(screen.queryByRole('button', { name: /End break/ })).toBeNull();
@@ -254,6 +255,22 @@ describe('on the soft phone, in the station', () => {
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
   }
 
+  it('Finish work for today is in ⋮ More while nothing is dialled: 11 opens, and No, keep working comes back', async () => {
+    mocks.leaveAgencySession.mockResolvedValue(undefined);
+    await onSoftphone();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    expect(screen.queryByTestId('station-softphone')).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Finish work for today?');
+    fireEvent.click(screen.getByTestId('keep-working'));
+    expect(screen.getByTestId('station-softphone')).toBeTruthy();
+    // During a call: only Sound and the colour, as on 04.
+    await frame({ event: 'manual_call', call: step(manualCall({ session_id: 'sess-1' }), 3, { state: 'ringing' }) });
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByTestId('station-menu-finish')).toBeNull();
+    expect(screen.getByTestId('station-menu-sound')).toBeTruthy();
+  });
+
   it('Return to campaign ends the soft-phone break', async () => {
     mocks.returnFromSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'available' } });
     await onSoftphone();
@@ -265,16 +282,17 @@ describe('on the soft phone, in the station', () => {
     expect(screen.queryByTestId('station-softphone')).toBeNull();
   });
 
-  it('Return to campaign is disabled, with its reason, while a manual call is live or owes its outcome', async () => {
+  it('Back to my calls is hidden, with its reason, while a manual call is live or owes its outcome (AS1)', async () => {
     await onSoftphone();
     await frame({ event: 'manual_call', call: step(manualCall({ session_id: 'sess-1' }), 3, { state: 'ringing' }) });
-    expect((screen.getByTestId('return-to-campaign') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId('return-to-campaign')).toBeNull();
     expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish this call and save its outcome first.');
     await frame({
       event: 'manual_call',
       call: step(manualCall({ session_id: 'sess-1' }), 60, { state: 'ended', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' }),
     });
-    expect((screen.getByTestId('return-to-campaign') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId('return-to-campaign')).toBeNull();
+    expect(mocks.returnFromSoftphone).not.toHaveBeenCalled();
   });
 
   it('shows the server’s manual_call_live refusal when it says so first', async () => {

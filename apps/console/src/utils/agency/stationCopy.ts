@@ -119,6 +119,13 @@ export const STATION_COPY = {
   // 03 Call coming
   comingTitle: 'Call coming',
   comingSubtitle: 'Get ready. Say Namaste first.',
+  customerCallingTitle: 'Customer is calling',
+  softphoneReadyTitle: 'Dial a number',
+  softphoneReadySubtitle: 'Type the number and press Call.',
+  softphoneCallingTitle: 'Calling',
+  softphoneCallingSubtitle: 'Wait for the customer to pick up.',
+  backToCalls: 'Back to my calls',
+  backingToCalls: 'Going back…',
   inboundTitle: 'Customer is calling',
   connecting: 'Connecting',
   connectsByItself: 'The call connects by itself.',

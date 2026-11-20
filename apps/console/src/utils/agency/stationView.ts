@@ -320,3 +320,56 @@ function mainFor(screen: StationScreen): MainAction | null {
     case 'work_ended': return 'open_work_again';
   }
 }
+
+/**
+ * Where a call on the station's other views stands (ruling 2: one look across the station): an
+ * inbound call, or the soft phone. `idle` is the soft phone with nothing dialled; `coming` an
+ * inbound call offered, or a soft-phone call dialling and ringing.
+ */
+export type SideCallPhase = 'idle' | 'coming' | 'on_call' | 'happened';
+
+/**
+ * The band over an inbound call or the soft phone, in the same colours and words as screens 02–05,
+ * 09, 10 and 12. As on the twelve, the socket outranks the call. `who` is the customer's name or
+ * number, said under On call (the soft phone's dialled number under Calling).
+ */
+export function sideViewBand(input: {
+  kind: 'inbound' | 'softphone';
+  connection: StationConnection;
+  phase: SideCallPhase;
+  who: string | null;
+}): Pick<StationView, 'tone' | 'icon' | 'title' | 'subtitle'> & { screen: string } {
+  const screen = `${input.kind}_${input.phase}`;
+  const band = (tone: StationTone, icon: BandIcon, title: string, subtitle: string | null) => ({ screen, tone, icon, title, subtitle });
+  switch (input.connection) {
+    case 'superseded':
+      return band('quiet', 'device', STATION_COPY.otherDeviceTitle, STATION_COPY.otherDeviceSubtitle);
+    case 'session_gone':
+      return band('quiet', 'log_out', STATION_COPY.workEndedTitle, STATION_COPY.workEndedSubtitle);
+    case 'reconnecting':
+    case 'disconnected':
+      if (input.phase === 'coming' || input.phase === 'on_call') {
+        return band('problem', 'wifi_off', STATION_COPY.callProblemTitle, STATION_COPY.callProblemSubtitle);
+      }
+      return band(
+        'problem',
+        'wifi_off',
+        STATION_COPY.internetTitle,
+        input.connection === 'disconnected' ? STATION_COPY.internetGaveUpSubtitle : STATION_COPY.internetSubtitle,
+      );
+    default:
+      break;
+  }
+  switch (input.phase) {
+    case 'idle':
+      return band('ready', 'phone', STATION_COPY.softphoneReadyTitle, STATION_COPY.softphoneReadySubtitle);
+    case 'coming':
+      return input.kind === 'inbound'
+        ? band('coming', 'phone_in', STATION_COPY.customerCallingTitle, STATION_COPY.comingSubtitle)
+        : band('coming', 'phone', input.who ? `${STATION_COPY.softphoneCallingTitle} ${input.who}` : STATION_COPY.softphoneCallingTitle, STATION_COPY.softphoneCallingSubtitle);
+    case 'on_call':
+      return band('oncall', 'phone', STATION_COPY.onCallTitle, input.who);
+    case 'happened':
+      return band('happened', 'check', STATION_COPY.happenedTitle, STATION_COPY.happenedSubtitle);
+  }
+}

@@ -131,8 +131,10 @@ describe('the offer', () => {
     await call(inboundCall());
 
     expect(screen.getByTestId('station-inbound')).toBeTruthy();
-    expect(screen.getByTestId('rail-label').textContent).toBe('Incoming call from Asha Rao');
-    expect(screen.getByTestId('rail-detail').textContent).toMatch(/connecting you now/);
+    // The station's band (ruling 2): the same words and colour as an outbound call coming.
+    expect(screen.getByTestId('band-title').textContent).toBe('Customer is calling');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Get ready. Say Namaste first.');
+    expect(screen.getByTestId('station-band').getAttribute('data-tone')).toBe('coming');
     expect(screen.getByTestId('inbound-caller-name').textContent).toBe('Asha Rao');
     expect(screen.getByTestId('inbound-caller-number').textContent).toMatch(/98204/);
     expect(screen.getByTestId('inbound-route').textContent).toBe('Customer care');
@@ -195,14 +197,15 @@ describe('the frozen geometry', () => {
     for (const label of ['Resolved', 'Call back', 'Complaint']) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
   });
 
-  it('the rail carries a talk timer while connected and the lapse countdown while the outcome is owed', async () => {
+  it('the band carries a talk timer while connected and the lapse countdown while the outcome is owed', async () => {
     await mounted();
     await call(connected());
-    expect(screen.getByTestId('rail-label').textContent).toBe('On a call with Asha Rao');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Asha Rao');
     expect(screen.getByTestId('inbound-talk-timer')).toBeTruthy();
     expect(screen.queryByTestId('inbound-lapse')).toBeNull();
     await call(owing());
-    expect(screen.getByTestId('rail-label').textContent).toBe('Outcome needed');
+    expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
     expect(screen.queryByTestId('inbound-talk-timer')).toBeNull();
     expect(screen.getByTestId('inbound-lapse').textContent).toMatch(/^Without one, it closes in(Closes in)? \d+:\d\d/);
     expect(screen.getByTestId('inbound-lapse').textContent).toMatch(/the call closes at \d\d:\d\d/);

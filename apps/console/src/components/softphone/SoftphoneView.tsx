@@ -36,6 +36,7 @@ export function SoftphoneView({
   fromCampaign,
   onReconnect,
   shortcutsEnabled = true,
+  rail = true,
 }: {
   sp: SoftphoneState;
   connection: StationConnection;
@@ -44,6 +45,8 @@ export function SoftphoneView({
   fromCampaign: boolean;
   onReconnect?: () => void;
   shortcutsEnabled?: boolean;
+  /** False when the host shows the call's state itself (the campaign station's band, ruling 2). */
+  rail?: boolean;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const numberInputRef = useRef<HTMLInputElement>(null);
@@ -71,15 +74,17 @@ export function SoftphoneView({
 
   return (
     <>
-      <SoftphoneRail
-        connection={connection}
-        call={sp.call}
-        lastCall={sp.lastCall}
-        fromCampaign={fromCampaign}
-        contactName={name}
-        clock={clock}
-        onReconnect={onReconnect}
-      />
+      {rail ? (
+        <SoftphoneRail
+          connection={connection}
+          call={sp.call}
+          lastCall={sp.lastCall}
+          fromCampaign={fromCampaign}
+          contactName={name}
+          clock={clock}
+          onReconnect={onReconnect}
+        />
+      ) : null}
 
       {sp.bootstrapError && !sp.bootstrap ? (
         <p className={station.presenceRefusal} role="alert" data-testid="softphone-bootstrap-error">

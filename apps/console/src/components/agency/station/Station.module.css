@@ -678,3 +678,7 @@
 /* ── Before work opens: the join screens ── */
 .fatalLine { margin: 0 0 12px; font-size: 19px; line-height: 1.5; color: var(--text-primary); }
 .fatalLine:last-child { margin-bottom: 0; }
+
+/* ── An inbound call and the soft phone: their own three columns and action bar, in the frame ── */
+.bodySide { padding: 0; display: flex; flex-direction: column; gap: 0; }
+.bodySide > * { min-width: 0; }

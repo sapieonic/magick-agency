@@ -529,7 +529,7 @@ describe('supervisor messages on a phone', () => {
     expect(afterBanner(helpButton())).toBe(true);
     expect(afterBanner(screen.getByRole('button', { name: 'Hold to end call' }))).toBe(true);
     const after = (control: Element) =>
-      Boolean(control.compareDocumentPosition(screen.getByTestId('supervisor-messages')) & Node.DOCUMENT_POSITION_FOLLOWING);
+      Boolean(control.compareDocumentPosition(screen.getByTestId('supervisor-message')) & Node.DOCUMENT_POSITION_FOLLOWING);
     await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
     await frame({ event: 'inbound_call', call: inboundCall() });
     const bar = screen.getByTestId('inbound-action-bar');

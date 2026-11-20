@@ -69,6 +69,7 @@ export function InboundCallView({
   cueFlash,
   onReconnect,
   shortcutsEnabled = true,
+  rail: withRail = true,
 }: {
   ib: InboundCallState;
   /** `ib.call`, narrowed by the host: the view renders only with a call on the station. */
@@ -79,6 +80,8 @@ export function InboundCallView({
   cueFlash: CueFlash | null;
   onReconnect?: () => void;
   shortcutsEnabled?: boolean;
+  /** False when the host shows the call's state itself (the station's band, ruling 2). */
+  rail?: boolean;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
@@ -93,7 +96,7 @@ export function InboundCallView({
 
   return (
     <>
-      <InboundRail call={call} connection={connection} clock={clock} cueFlash={cueFlash} onReconnect={onReconnect} />
+      {withRail ? <InboundRail call={call} connection={connection} clock={clock} cueFlash={cueFlash} onReconnect={onReconnect} /> : null}
 
       {/* The assertive region: the direct result of a button the agent just pressed. */}
       <div className={station.srOnly} role="alert" aria-live="assertive">
@@ -197,7 +200,7 @@ export function InboundRail({
   );
 }
 
-function TalkTimer({ from, clock }: { from: string; clock: ServerClock }) {
+export function TalkTimer({ from, clock }: { from: string; clock: ServerClock }) {
   useRepaintTick();
   const ms = clock.since(from);
   if (ms === null) return null;
