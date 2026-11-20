@@ -42,7 +42,8 @@ import { resolveMyAgentId } from './proxy-agency-staffing.routes.js';
  *
  *  - `GET /my-day?campaign_id=`: the day is the campaign's own (`myDayWindow`, its local midnight to
  *    the next, by the server's clock); the agent's numbers (`AgencyMyDayRepository.counts`) and own
- *    call-laters (`.callLaters`, the assigned half on `strict` / `preferred` only) read together.
+ *    call-laters (`.callLaters`: the assigned ones on `strict` / `preferred`, the booked ones on
+ *    `pool`) read together.
  *    No metric of its own: the HTTP histogram covers it.
  */
 

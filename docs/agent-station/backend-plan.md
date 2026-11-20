@@ -1154,17 +1154,18 @@ what was built.
     soft-phone promises on `idx_agency_manual_calls_agent` or the 0050 index, the inbound ones on
     `idx_agency_inbound_calls_promise_written`, never a whole table.
   - `target`: `daily_target_calls`, null without one.
-  - `call_later`: the booked half (`callback_booked_by_user_id` = the caller, on
-    `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
-    `MY_CALLBACKS_INDEX_PREDICATE_SQL`) union, on `strict` / `preferred`, the assigned half
+  - `call_later`: on `pool`, the ones the caller booked (`callback_booked_by_user_id` = the caller,
+    on `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
+    `MY_CALLBACKS_INDEX_PREDICATE_SQL`); on `strict` / `preferred`, the ones assigned to the caller
     (`assigned_user_id` = the caller, on `idx_agency_contacts_assignee`); each pending, not DNC, a
     call-later by `isCallbackSql`, due before the day's end; oldest first, at most 20 rows; `today`
     and `overdue` uncapped. **On `strict` / `preferred` only what will come to the agent** (the
-    lead's ruling, fix stream): the booked half also needs `assigned_user_id` = the caller, a separate
-    AND after 0058's predicate (kept byte for byte), so a call-later the agent booked that a
-    supervisor gave to another agent (LF21) or that the CA5 fallback returned to the pool leaves their
-    list, and the new owner sees it through their assigned half; the planner may then read the
-    booked half on the assignee index. On `pool` the booked half is the list. `customer_name`: the
+    lead's ruling, fix stream): a call-later the agent booked that a supervisor gave to another agent
+    (LF21) or that the CA5 fallback returned to the pool leaves their list, and the new owner sees it
+    as assigned to them. The fix stream read this as a booked half (needing the assignment too)
+    union an assigned half; the booked half's rows were then all in the assigned half, so the
+    PR review left one scan, the assigned one (a call-later the agent booked and still holds is
+    assigned to them). `customer_name`: the
     campaign's `name` role column, else `matchName`, never a column in `context_display.hidden`
     (matched ignoring case; fix stream).
   - The day (`myDayWindow`, `localDayStart` / `localDayEnd`): the first instant of the local day to

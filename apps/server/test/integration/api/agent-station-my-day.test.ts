@@ -22,10 +22,11 @@ import { randomUUID } from 'node:crypto';
  *    the new owner sees it), due before the day's end, oldest first, the overdue ones counted apart; never tomorrow's, another
  *    agent's, a closed or DNC contact's; `comes_to_me` and `left_today_goes_to` by the routing; the
  *    name, never the number; at most 20 rows, the counts uncapped.
- *  - the plans: the booked half on `idx_agency_contacts_my_callbacks` (0058, its predicate kept byte
- *    for byte and the assignment a separate AND), the assigned half on `idx_agency_contacts_assignee`,
- *    never the roster; the counts on the agent's sessions, their attempts and the 0050 promise
- *    indexes, never a whole call table.
+ *  - the call-later read is one scan: on pool the booked ones on `idx_agency_contacts_my_callbacks`
+ *    (0058, its predicate kept byte for byte), on strict / preferred the assigned ones on
+ *    `idx_agency_contacts_assignee` (a call-later the agent booked and still holds is one of them,
+ *    listed and counted once), never the roster; the counts on the agent's sessions, their attempts
+ *    and the 0050 promise indexes, never a whole call table.
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -174,13 +175,15 @@ beforeAll(async () => {
   };
   // P: pool, the agent holds a live session on it but is not staffed. Q: no promise outcome,
   // staffed. S: strict, fallback wait, staffed. R: the cap. X: neither. Y: another account.
+  // O: preferred, staffed, one call-later the agent booked and still holds.
   await campaign('P', { name: 'Pool', daily_target_calls: 80 });
   await campaign('Q', { name: 'No promise', disposition_catalog: JSON.stringify(NO_PROMISE_CATALOG) });
   await campaign('S', { name: 'Strict', assignment_mode: 'strict', callback_fallback: 'wait' });
   await campaign('R', { name: 'Cap' });
+  await campaign('O', { name: 'Preferred', assignment_mode: 'preferred', callback_fallback: 'wait' });
   await campaign('X', { name: 'Not mine' });
   await campaign('Y', { name: 'Other account', account_id: otherAccount.id });
-  for (const k of ['Q', 'S', 'R']) await staff(c[k]!, me.id);
+  for (const k of ['Q', 'S', 'R', 'O']) await staff(c[k]!, me.id);
   await staff(c['S']!, other.id);
   await getTestPool().query(
     'INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)',
@@ -260,6 +263,8 @@ beforeAll(async () => {
   // P (pool): only the booked half.
   await callLater('poolBooked', c['P']!, 45, booked(me.id));
   await callLater('poolAssigned', c['P']!, 45, { assigned_user_id: me.id, assigned_at: at(-60) });
+  // O (preferred): booked by me and still mine, the agent's only call-later there.
+  await callLater('ownBooked', c['O']!, 40, { ...booked(me.id), assigned_user_id: me.id, assigned_at: at(-60) });
   // R: more than a page.
   for (let i = 0; i < 22; i++) await callLater(`r${i}`, c['R']!, i < 10 ? -10 + i : 5 + i, booked(me.id));
 });
@@ -352,6 +357,14 @@ describe('GET /proxy/agency/my-day — the agent\'s call-laters', () => {
     expect(theirs.call_later).toMatchObject({ today: 1, overdue: 0, comes_to_me: true });
   });
 
+  it('preferred: a call-later I booked and still hold is listed and counted exactly once', async () => {
+    // Read once, as one of the agent's assigned call-laters: the booking adds no second row and no
+    // second count (the list is one scan, not the booked ones and the assigned ones together).
+    const day = await ok(c['O']!);
+    expect(rowNames(day)).toEqual(['ownBooked']);
+    expect(day.call_later).toMatchObject({ today: 1, overdue: 0, comes_to_me: true });
+  });
+
   it('pool: only the ones I booked; another agent may get them', async () => {
     const day = await ok(c['P']!);
     expect(rowNames(day)).toEqual(['poolBooked']);
@@ -406,11 +419,19 @@ describe('the call-later read\'s plan, on a seeded roster', () => {
     return nodes(rows[0]!['QUERY PLAN']);
   }
 
-  it('on strict and preferred the booked half keeps 0058\'s predicate and adds the assignment as its own AND', () => {
+  it('one scan of the agent\'s contacts: the assigned ones on strict and preferred, the booked ones on pool', () => {
+    // FALSIFIED: with the booked ones read beside the assigned ones on strict / preferred (a UNION
+    // of the two, as the fix stream had it), the owner-mode text reads the booker column too.
     const text = (ownerMode: boolean) => myCallLaterStatement({
       campaignId: c['S']!, agentUserId: w.me, ownerMode, callbackCodes: [], dueBefore: DAY.end, now, limit: 20,
     }).text;
-    expect(text(true)).toContain(`AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}\n           AND assigned_user_id = $2::uuid`);
+    for (const ownerMode of [true, false]) {
+      expect(text(ownerMode)).not.toMatch(/\bUNION\b/);
+      expect(text(ownerMode).match(/FROM agency_contacts\b/g)).toHaveLength(1);
+    }
+    expect(text(true)).toContain('assigned_user_id = $2::uuid');
+    expect(text(true)).not.toContain('callback_booked_by_user_id');
+    expect(text(false)).toContain(`callback_booked_by_user_id = $2::uuid\n           AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}`);
     expect(text(false)).not.toContain('assigned_user_id');
   });
 
@@ -421,13 +442,12 @@ describe('the call-later read\'s plan, on a seeded roster', () => {
     }).text).toContain(MY_CALLBACKS_INDEX_PREDICATE_SQL);
   });
 
-  it.each([false, true])('pool: the booked half on idx_agency_contacts_my_callbacks; strict (%s): the agent\'s own contacts on idx_agency_contacts_assignee; never the roster', async (ownerMode) => {
+  it.each([false, true])('pool: the booked ones on idx_agency_contacts_my_callbacks; strict (%s): the assigned ones on idx_agency_contacts_assignee; never the roster', async (ownerMode) => {
     const p = await plan(ownerMode);
     const used = p.map((n) => [n['Node Type'], n['Index Name'] ?? n['Relation Name']]);
-    // On pool the booked half is the list, on its own index. On strict / preferred both halves
-    // need the agent as the assignee, so the planner may read the booked half on the assignee
-    // index too (the agent's own contacts, which the assigned half reads anyway): either way a
-    // read the size of the agent's contacts, never the roster.
+    // On pool the booked ones, on their own index; on strict / preferred the agent's own
+    // contacts, on the assignee index: either way a read the size of the agent's contacts, never
+    // the roster.
     if (!ownerMode) expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_my_callbacks'), JSON.stringify(used)).toBe(true);
     if (ownerMode) expect(p.some((n) => n['Index Name'] === 'idx_agency_contacts_assignee'), JSON.stringify(used)).toBe(true);
     expect(p.some((n) => n['Node Type'] === 'Seq Scan' && n['Relation Name'] === 'agency_contacts'), JSON.stringify(used)).toBe(false);
