@@ -34,6 +34,11 @@ operator applies to Supabase or to the server's environment (sections 2 to 6).
 | Floor assist (LF4, LF5): four nullable Need help columns on agent sessions with a NOT VALID CHECK, a partial index of the requests not answered, and the supervisor messages table | `0052_floor_assist.sql` | Columns and CHECK catalog only, no rewrite; the index build reads `agency_agent_sessions` once (small: a row per agent per shift) and writes an empty index, under the ACCESS EXCLUSIVE the ADD COLUMNs took; cannot be built beforehand (its columns are new) |
 | When the AI vendor last refused an analysis job and when one last completed (AD1: the summary delay), two nullable columns with no default | `0054_analysis_vendor_answers.sql` | Catalog only, instant, no rewrite (ACCESS EXCLUSIVE on `dialer_analysis_jobs` for the moment it takes) |
 | The summary delay's two partial indexes, out of 0054's ACCESS EXCLUSIVE | `0055_analysis_vendor_answer_indexes.sql` | One read of `dialer_analysis_jobs` per index under SHARE; the columns are new, so the completions index is built empty, while the refusals index (its predicate on `status` and `error_code`) takes the queued `RATE_LIMITED` rows already there under a NULL key, about a backlog's worth during an outage; cannot be pre-built. Fails if one left under its name is invalid |
+| The agent station's campaign settings (`daily_target_calls`, `agent_script` with a constant default, `phone_display` with a constant default) and their CHECKs | `0056_campaign_station_settings.sql` | Catalog only, no rewrite; the validated CHECKs read `agency_campaigns` once (small) under its ACCESS EXCLUSIVE |
+| Who booked a contact's call-later (BE-3): two nullable columns with no default and a NOT VALID CHECK on `agency_contacts` | `0057_contact_callback_booker.sql` | Catalog only, instant, no rewrite (ACCESS EXCLUSIVE on `agency_contacts` for the moment it takes) |
+| My day's call-later index, out of 0057's ACCESS EXCLUSIVE, and 0057's CHECK validated | `0058_contact_callback_booker_index.sql` | One read of `agency_contacts` under SHARE, writing an empty index (the column is new), then one more to validate the CHECK; cannot be pre-built on a database without 0057. Fails if one left under its name is invalid |
+| The state Need help was raised in (BE-9): a nullable column with a NOT VALID CHECK on agent sessions | `0059_session_help_state.sql` | Catalog only, instant, no rewrite (small table) |
+| A break over its limit (BE-12): two nullable columns with a NOT VALID CHECK on `agency_agent_session_events` | `0060_session_event_break_overrun.sql` | Catalog only, instant, no rewrite (ACCESS EXCLUSIVE on the event log for the moment it takes) |
 | `SET LOCAL lock_timeout = '10s'` in each new migration | each migration file above | A migration blocked by a lock fails in 10 s instead of hanging the deploy (section 6 says what to do then) |
 | Every connection carries an `application_name` (`magick-agency-server`, `-media<N>`, `-analysis<N>`, `-migrate`, `-cli`), sent at connect and set again as SQL | `packages/db/src/connection.ts`, `apps/server/src/db-session.ts` | `pg_stat_activity` shows which process holds each connection |
 | TCP keepalive on pool connections, first probe after 30 s idle | `packages/db/src/connection.ts` | A connection dropped on the network path is found dead in minutes instead of hours |
@@ -85,6 +90,8 @@ but each build reads its whole table). The migration's `CREATE INDEX IF NOT EXIS
 brief lock), adds their comments and records itself. A migration cannot use `CONCURRENTLY` itself:
 node-pg-migrate runs each SQL file in a transaction. `0045_promise_contacts_index.sql`'s index cannot
 be built this way (its column is 0041's, in the same release); its build writes an empty index.
+Neither can `0058_contact_callback_booker_index.sql`'s (its column is 0057's, in the same release):
+on the release that adds them its build writes an empty index after one read of `agency_contacts`.
 
 Check the sizes first (Supabase SQL editor):
 
