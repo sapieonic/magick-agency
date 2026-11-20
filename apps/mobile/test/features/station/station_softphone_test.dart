@@ -40,6 +40,25 @@ void main() {
   });
 
   group('on the soft phone (break/soft_phone)', () {
+    testWidgets('Need help is there too (AS5), beside the way back; its answer shows under it', (tester) async {
+      final h = await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn, needHelp: true);
+      await settle(tester);
+      expect(find.byKey(const Key('need-help')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('need-help')));
+      await tester.pump();
+      expect(h.actions.count('raiseHelp'), 1);
+      await h.setView(station(
+        phase: AgentPhase.onBreak,
+        onBreak: softphoneBreak,
+        help: const HelpView(notice: 'Anitha N answered with a message.', noticeTone: HelpNoticeTone.success),
+      ));
+      expect(find.byKey(const Key('help-notice')), findsOneWidget);
+      // Off for the account: not there.
+      await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn);
+      await settle(tester);
+      expect(find.byKey(const Key('need-help')), findsNothing);
+    });
+
     testWidgets('the station renders the soft-phone panel in place, without End break or the break menu', (tester) async {
       final h = await pumpStation(tester, onSoftphone(), softphone: readyView(), availability: softphoneOn);
       await settle(tester);
@@ -50,7 +69,7 @@ void main() {
       expect(find.byKey(const Key('end-break')), findsNothing);
       expect(find.byKey(const Key('take-break')), findsNothing);
       expect(find.byKey(const Key('switch-softphone')), findsNothing);
-      expect(find.text(StationCopy.endBreak), findsNothing);
+      expect(find.text('End break'), findsNothing);
 
       await tester.tap(find.byKey(const Key('softphone-return')));
       await settle(tester);
@@ -96,12 +115,12 @@ void main() {
       await h.setView(onSoftphone());
       expect(said(), 'On the soft phone');
       await h.setView(station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea break')));
-      expect(said(), 'On break — Tea break');
+      expect(said(), 'On break · Tea break');
       // Break to soft phone is the same phase: the change is still said.
       await h.setView(onSoftphone());
       expect(said(), 'On the soft phone');
       await h.setView(station(phase: AgentPhase.available));
-      expect(said(), 'Available. Waiting for a call');
+      expect(said(), 'Ready. Next call is coming');
       semantics.dispose();
     });
 
@@ -131,19 +150,19 @@ void main() {
     }
   });
 
-  group('Switch to soft phone', () {
-    testWidgets('waiting: offered while the soft phone may start calls, and applied by the host', (tester) async {
+  group('Dial a number myself (Switch to soft phone)', () {
+    testWidgets('Ready: in ⋮ More while the soft phone may start calls, and applied by the host', (tester) async {
       final h = await pumpStation(tester, station(), availability: softphoneOn);
-      expect(find.byKey(const Key('switch-softphone')), findsOneWidget);
-      expect(find.text(StationCopy.switchToSoftphone), findsOneWidget);
-
+      expect(find.byKey(const Key('switch-softphone')), findsNothing, reason: 'not on the screen: in ⋮ More');
+      await openMore(tester);
+      expect(find.text(StationCopy.dialMyself), findsOneWidget);
       await tester.tap(find.byKey(const Key('switch-softphone')));
       await settle(tester);
       expect(h.host.calls, ['switchToSoftphone']);
       expect(h.actions.calls, isNot(contains('takeBreak')));
     });
 
-    testWidgets('at 200% text on 360×640, waiting and on a break, it fits and can be reached', (tester) async {
+    testWidgets('at 200% text on 360×640, Ready and on a break, ⋮ More fits and the item can be reached', (tester) async {
       const size = Size(360, 640);
       final h = await pumpStation(tester, station(phase: AgentPhase.available), availability: softphoneOn, textScale: 2, size: size);
       for (final v in [
@@ -152,44 +171,50 @@ void main() {
       ]) {
         await h.setView(v);
         await expectNoOverflow(tester);
-        await tester.ensureVisible(find.byKey(const Key('switch-softphone')));
-        await tester.pump();
+        await openMore(tester);
+        await expectNoOverflow(tester);
         final r = tester.getRect(find.byKey(const Key('switch-softphone')));
         expect(r.top >= 0 && r.bottom <= size.height, isTrue, reason: '${v.phase}: switch at $r');
+        await tester.tapAt(const Offset(4, 600));
+        await settle(tester);
       }
     });
 
-    testWidgets('on a break: offered beside End break', (tester) async {
+    testWidgets('on a break: in ⋮ More beside Start calls again on the screen', (tester) async {
       final h = await pumpStation(
         tester,
         station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea break')),
         availability: softphoneOn,
       );
       expect(find.byKey(const Key('end-break')), findsOneWidget);
-      await tester.ensureVisible(find.byKey(const Key('switch-softphone')));
-      await tester.tap(find.byKey(const Key('switch-softphone')));
-      await settle(tester);
+      await tapMore(tester, 'switch-softphone');
       expect(h.host.count('switchToSoftphone'), 1);
     });
 
     testWidgets('not offered while the soft phone cannot start calls (hidden, or finish mode)', (tester) async {
       final h = await pumpStation(tester, station());
+      await openMore(tester);
       expect(find.byKey(const Key('switch-softphone')), findsNothing);
+      await tester.tapAt(const Offset(4, 600));
+      await settle(tester);
 
       h.container.read(h.availability.notifier).set(const SoftphoneAvailability(visible: true, loaded: true));
       await settle(tester);
+      await openMore(tester);
       expect(find.byKey(const Key('switch-softphone')), findsNothing);
+      await tester.tapAt(const Offset(4, 600));
+      await settle(tester);
 
       h.container.read(h.availability.notifier).set(softphoneOn);
       await settle(tester);
+      await openMore(tester);
       expect(find.byKey(const Key('switch-softphone')), findsOneWidget);
     });
 
     testWidgets('a refusal is said; nothing changed', (tester) async {
       final h = await pumpStation(tester, station(), availability: softphoneOn);
       h.host.switchResult = const SoftphoneSwitchRefused('Couldn’t change your status just now; nothing changed. Try again.');
-      await tester.tap(find.byKey(const Key('switch-softphone')));
-      await settle(tester);
+      await tapMore(tester, 'switch-softphone');
       expect(find.byKey(const Key('switch-refused')), findsOneWidget);
       expect(find.text('Couldn’t change your status just now; nothing changed. Try again.'), findsOneWidget);
     });
@@ -207,25 +232,30 @@ void main() {
       expect(h.actions.calls, isNot(contains('takeBreak')));
     });
 
-    testWidgets('during a call the break-sheet entry is queued: it says so, and the host queues it', (tester) async {
-      final h = await pumpStation(tester, station(phase: AgentPhase.onCall, call: call()), availability: softphoneOn);
+    StationView inWrapup() => station(phase: AgentPhase.wrapup, call: call(), release: hungUpRelease, wrapup: wrapup());
+
+    testWidgets('Save & break offers it, queued behind this call: it says so, the host queues it, then it saves', (tester) async {
+      final h = await pumpStation(tester, inWrapup(), availability: softphoneOn);
       h.host.switchResult = const SoftphoneSwitchQueued();
-      await tester.ensureVisible(find.byKey(const Key('break-after-call')));
-      await tester.tap(find.byKey(const Key('break-after-call')));
+      await tester.tap(find.byKey(const Key('outcome-interested')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('save-and-break')));
       await settle(tester);
-      expect(find.text(StationCopy.breakSheetQueued), findsOneWidget);
+      expect(find.text(StationCopy.whichBreakAfterCall), findsOneWidget);
       expect(find.text(StationCopy.switchAfterCallHint), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('break-switch-softphone')));
       await settle(tester);
       expect(h.host.calls, ['switchToSoftphone']);
       expect(h.actions.calls, isNot(contains('takeBreak')));
+      expect(h.actions.args['submitDisposition'], ['interested', null, null]);
     });
 
-    testWidgets('the break sheet leaves it out while the soft phone cannot start calls', (tester) async {
-      await pumpStation(tester, station(phase: AgentPhase.onCall, call: call()));
-      await tester.ensureVisible(find.byKey(const Key('break-after-call')));
-      await tester.tap(find.byKey(const Key('break-after-call')));
+    testWidgets('Which break? leaves it out while the soft phone cannot start calls', (tester) async {
+      await pumpStation(tester, inWrapup());
+      await tester.tap(find.byKey(const Key('outcome-interested')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('save-and-break')));
       await settle(tester);
       expect(find.byKey(const Key('break-switch-softphone')), findsNothing);
       expect(find.byKey(const Key('break-lunch')), findsOneWidget);
@@ -261,7 +291,7 @@ void main() {
         station(phase: AgentPhase.onCall, call: call(), queuedBreak: const BreakInfo(code: 'tea', label: 'Tea break')),
       );
       await tester.ensureVisible(find.byKey(const Key('queued-break')));
-      expect(find.text(StationCopy.breakQueued('Tea break')), findsOneWidget);
+      expect(find.text(StationCopy.breakAfterThisCall('Tea break')), findsOneWidget);
       await tester.tap(find.byKey(const Key('cancel-queued-break')));
       await settle(tester);
       expect(h.actions.calls, contains('cancelQueuedBreak'));

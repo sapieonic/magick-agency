@@ -8,10 +8,9 @@ import {
   trackAgencySoftphoneSwitch,
 } from '../analytics/events';
 import { SOFTPHONE_BREAK_REASON } from '../types/softphone';
-import { refusalCopy } from '../utils/softphone/refusalCopy';
+import { STATION_COPY, softphoneSwitchRefusedLine } from '../utils/agency/stationCopy';
 import { errorBody } from '../utils/agencyErrors';
 import { resyncCatalog, numberKeysRemapped } from '../utils/agencyCatalogSync';
-import { BREAK_REJECTED_COPY } from '../components/agency/BreakMenu';
 import { useLatestRef } from './useLatestRef';
 import type { AgencyAgentState, AgencyBreakReason, AgencySessionBootstrap } from '../types/agency';
 
@@ -32,12 +31,24 @@ import type { AgencyAgentState, AgencyBreakReason, AgencySessionBootstrap } from
  * wins the instant after a click, then the frames confirm or correct it"), with
  * nothing to keep in step.
  */
+/**
+ * A break the server refused (or that never reached it): its code, for the station's own words
+ * (`breakRefusedLine`, AS15), never the server's sentence. `code` is null when no answer came.
+ * `unknown_break_reason` has already re-read the list from the server's `allowed_codes`.
+ */
+export interface BreakRefusal {
+  code: string | null;
+}
+
 export interface BreakQueueState {
   breakReasons: AgencyBreakReason[];
   /** The queued break's code, or null. */
   pendingBreakCode: string | null;
-  requestBreak: (code: string) => void;
-  breakRejection: string | null;
+  /** Resolves true once the server took the break (applied or queued), false when it refused. */
+  requestBreak: (code: string) => Promise<boolean>;
+  breakRejection: BreakRefusal | null;
+  /** Which break? closed: its refusal goes with it. */
+  clearBreakRejection: () => void;
   breakBusy: boolean;
   cancelBreak: () => void;
   cancelling: boolean;
@@ -87,7 +98,7 @@ export function useBreakQueue(options: {
 
   const [breakReasons, setBreakReasons] = useState<AgencyBreakReason[]>([]);
   const [breakBusy, setBreakBusy] = useState(false);
-  const [breakRejection, setBreakRejection] = useState<string | null>(null);
+  const [breakRejection, setBreakRejection] = useState<BreakRefusal | null>(null);
   /** The click's own answer, valid only while no newer frame has stated the queue. */
   const [override, setOverride] = useState<{ code: string | null; atStatement: number } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -146,8 +157,8 @@ export function useBreakQueue(options: {
   }, [agentState, writeQueue]);
 
   const requestBreak = useCallback(
-    async (code: string) => {
-      if (!bootstrap) return;
+    async (code: string): Promise<boolean> => {
+      if (!bootstrap) return false;
       setBreakBusy(true);
       setBreakRejection(null);
       setBreakAlreadyStarted(false);
@@ -178,6 +189,7 @@ export function useBreakQueue(options: {
           // the `B` shortcut only opens the menu, it does not select a reason.
           method: 'click',
         });
+        return true;
       } catch (err) {
         const body = errorBody(err);
         if (body?.code === 'unknown_break_reason' && body.allowed_codes) {
@@ -186,16 +198,18 @@ export function useBreakQueue(options: {
           // warn about a remap.
           onKeysRemapped(numberKeysRemapped(breakReasons, next, 0));
           setBreakReasons(next);
-          setBreakRejection(BREAK_REJECTED_COPY);
+          setBreakRejection({ code: 'unknown_break_reason' });
           trackAgencyBreakRejected({
             campaign_id: bootstrap.campaign_id,
             code: 'unknown_break_reason',
             catalog_resynced: true,
           });
         } else {
-          setBreakRejection(body?.message ?? 'That break could not be started.');
+          // The code, for the station's own words; never the server's sentence (AS15).
+          setBreakRejection({ code: body?.code ?? null });
           trackAgencyBreakRejected({ campaign_id: bootstrap.campaign_id, code: 'other', catalog_resynced: false });
         }
+        return false;
       } finally {
         setBreakBusy(false);
       }
@@ -236,13 +250,13 @@ export function useBreakQueue(options: {
          */
         writeQueue(null);
         setBreakAlreadyStarted(true);
-        announce('Your break already started.');
+        announce(STATION_COPY.breakAlreadyStarted);
         trackAgencyQueuedBreakResolved({ campaign_id: bootstrap.campaign_id, outcome: 'already_applied' });
       } else {
         // The break is still queued, which is the truth, and pressing ✕ again is
         // the right next action.
         setCancelFailed(true);
-        announce("Couldn't cancel. Try again.");
+        announce(STATION_COPY.breakCancelFailed);
         trackAgencyQueuedBreakResolved({ campaign_id: bootstrap.campaign_id, outcome: 'cancel_failed' });
       }
     } finally {
@@ -263,24 +277,27 @@ export function useBreakQueue(options: {
       // Queued: the pill. Immediate: nothing to queue — the `agent_state` frame that
       // follows is what puts the soft phone on screen.
       writeQueue(queued ? (result.value.break_reason ?? SOFTPHONE_BREAK_REASON) : null);
-      if (queued) announce('Switching to the soft phone after this call.');
+      if (queued) announce(STATION_COPY.dialAfterCall);
       trackAgencySoftphoneSwitch({ action: 'start', queued, outcome: 'accepted', code: null });
       return;
     }
-    const copy = refusalCopy(result.refusal, 'status');
+    // The station's own words keyed on the code (AS15), never the server's sentence.
+    const copy = softphoneSwitchRefusedLine(result.refusal.code);
     setSoftphoneRejection(copy);
-    announce(`Couldn’t switch to the soft phone. ${copy}`);
+    announce(copy);
     trackAgencySoftphoneSwitch({ action: 'start', queued: false, outcome: 'refused', code: result.refusal.code });
   }, [bootstrap, breakBusy, tenantId, accountId, writeQueue, announce]);
 
   const clearBreakAlreadyStarted = useCallback(() => setBreakAlreadyStarted(false), []);
+  const clearBreakRejection = useCallback(() => setBreakRejection(null), []);
   const clearQueuedBreak = useCallback(() => writeQueue(null), [writeQueue]);
 
   return {
     breakReasons,
     pendingBreakCode,
-    requestBreak: (code: string) => void requestBreak(code),
+    requestBreak,
     breakRejection,
+    clearBreakRejection,
     breakBusy,
     cancelBreak: () => void cancelBreak(),
     cancelling,

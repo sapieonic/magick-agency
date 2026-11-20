@@ -367,6 +367,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/my-day",
+      "source": "apps/console/src/api/agencyStats.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.myDay): the agent station's My day, call-later list and Finish work"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/agents/:userId/stats",
       "source": "apps/console/src/api/agencyStats.ts",
       "status": "served",
@@ -2799,6 +2806,13 @@
       "source": "apps/console/src/api/agencyFloor.ts",
       "status": "served",
       "reason": "Live floor: the promises to pay recorded over a window, per campaign, served by the public API layer (decision B28b; contracts api/agency/promises.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/floor/alerts",
+      "source": "apps/console/src/api/agencyFloor.ts",
+      "status": "served",
+      "reason": "Supervisor alerts on every page: open Need help requests, breaks over their limit and agents whose station is gone, in one light read polled every 5 s from the console's shell (agent station AS16, BE-10, BE-11, AS12; agency.supervise; contracts api/agency/floor.ts). Served by the public API layer; the console's shell calls it (`getAgencyFloorAlerts`, `useFloorAlerts`, `SupervisorAlerts`)"
     },
     {
       "method": "POST",

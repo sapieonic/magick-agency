@@ -32,14 +32,14 @@ export function CallFieldsForm({
   if (fields.length === 0 && loading) {
     return (
       <p className={styles.emptyFields} data-testid="call-fields-loading">
-        Loading the call details…
+        Loading…
       </p>
     );
   }
   if (fields.length === 0) {
     return (
       <p className={styles.emptyFields} data-testid="call-fields-empty">
-        Your account has no call details to fill in. An admin can add them in Settings → Soft phone.
+        There are no call details to fill in.
       </p>
     );
   }

@@ -5,7 +5,11 @@ import {
   stationCaps,
   stationHas,
 } from '../../../src/agency/station-upgrade.js';
-import { AGENCY_STATION_CAPABILITIES, AGENCY_STATION_FLOOR_ASSIST_CAPABILITY } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_STATION_CAPABILITIES,
+  AGENCY_STATION_FLOOR_ASSIST_CAPABILITY,
+  AGENCY_STATION_QUEUE_POOL_CAPABILITY,
+} from '@magick-agency/contracts/agency';
 import { stationIntervalsFor, STATION_INTERVALS } from '../../../src/api/routes/agency/helpers.js';
 import { MOBILE_STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
 
@@ -113,7 +117,7 @@ describe('stationHas: floor_assist (LF4, LF5, LF16)', () => {
   });
 
   it('the capability is listed, so a phone can declare it: parsed from caps= in contract order, alone or beside inbound', () => {
-    expect(AGENCY_STATION_CAPABILITIES).toEqual(['inbound', 'floor_assist']);
+    expect(AGENCY_STATION_CAPABILITIES).toEqual(['inbound', 'floor_assist', 'queue_pool']);
     expect(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY).toBe('floor_assist');
     const both = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'floor_assist,inbound' });
     expect(both).toEqual({ ok: true, query: { client: 'mobile', media: 'alaw8', caps: ['inbound', 'floor_assist'] } });
@@ -144,10 +148,34 @@ describe('stationIntervalsFor', () => {
 });
 
 describe('stationCaps', () => {
-  it('a console has every capability, whatever it declares; a phone those it declared', () => {
-    expect([...stationCaps(DEFAULT_STATION_UPGRADE)]).toEqual([...AGENCY_STATION_CAPABILITIES]);
+  it('a console has every capability but queue_pool whatever it declares (queue_pool only declared, AS18); a phone those it declared', () => {
+    expect([...stationCaps(DEFAULT_STATION_UPGRADE)]).toEqual(AGENCY_STATION_CAPABILITIES.filter((c) => c !== 'queue_pool'));
     expect([...stationCaps({ client: 'mobile', caps: [] })]).toEqual([]);
     expect([...stationCaps({ client: 'mobile', caps: ['floor_assist'] })]).toEqual(['floor_assist']);
     expect([...stationCaps({ client: 'mobile', caps: ['inbound', 'floor_assist'] })]).toEqual(['inbound', 'floor_assist']);
   });
 });
+
+describe('stationHas: queue_pool (agent station BE-5, AS18)', () => {
+  // FALSIFIED: with queue_pool treated as the other capabilities (a console always has it), the
+  // first expectation reds: an older console tab would be sent a pool campaign's queue state.
+  it('only when declared, by a console as by a phone', () => {
+    expect(stationHas({ client: 'web', caps: [] }, 'queue_pool')).toBe(false);
+    expect(stationHas(DEFAULT_STATION_UPGRADE, 'queue_pool')).toBe(false);
+    expect(stationHas({ client: 'web', caps: ['queue_pool'] }, 'queue_pool')).toBe(true);
+    expect(stationHas({ client: 'mobile', caps: ['inbound', 'floor_assist'] }, 'queue_pool')).toBe(false);
+    expect(stationHas({ client: 'mobile', caps: ['inbound', 'floor_assist', 'queue_pool'] }, 'queue_pool')).toBe(true);
+    expect(AGENCY_STATION_QUEUE_POOL_CAPABILITY).toBe('queue_pool');
+  });
+
+  it('parsed from caps= beside the others; a console that declares it keeps every other capability', () => {
+    const web = parseStationUpgradeQuery({ media: 'pcm16', caps: 'queue_pool' });
+    expect(web).toEqual({ ok: true, query: { client: 'web', media: 'pcm16', caps: ['queue_pool'] } });
+    expect(web.ok && [...stationCaps(web.query)].sort()).toEqual(['floor_assist', 'inbound', 'queue_pool']);
+    const phone = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound,floor_assist,queue_pool' });
+    expect(phone.ok && [...stationCaps(phone.query)]).toEqual(['inbound', 'floor_assist', 'queue_pool']);
+    const older = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound,floor_assist' });
+    expect(older.ok && stationCaps(older.query).has('queue_pool')).toBe(false);
+  });
+});
+

@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show KeysetPage, PhoneDisplay;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -156,6 +157,19 @@ void main() {
     await tester.pump();
     expect(api.q(2).keys, ['limit']);
     expect(find.text('Any day'), findsOneWidget);
+  });
+
+  testWidgets('each row masks its number as its campaign does (AS9), in the list and in the detail', (tester) async {
+    await open(tester);
+    api.answer(0, KeysetPage(rows: [attempt(1, display: PhoneDisplay.masked), attempt(2, display: PhoneDisplay.full)], limit: 50));
+    await flush(tester);
+    expect(find.text('98••• ••001'), findsOneWidget);
+    expect(find.text('+91 98400 10001'), findsNothing);
+    expect(find.text('+91 98400 10002'), findsOneWidget);
+    await tester.tap(find.text('98••• ••001'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('attempt-detail')), findsOneWidget);
+    expect(find.textContaining('98400 10001'), findsNothing);
   });
 
   testWidgets('tapping a call opens everything it carries, and no recording', (tester) async {

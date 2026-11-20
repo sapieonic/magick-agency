@@ -26,6 +26,7 @@ import { homeAttention, sortByRank, HOME_CAMPAIGN_CAP } from '../../utils/agency
 import {
   breakOverrunItems,
   cardsFor,
+  disconnectedItems,
   floorAgentsWorking,
   floorRowsFor,
   helpItems,
@@ -73,6 +74,9 @@ import styles from './live-floor/LiveFloor.module.css';
  * (each such campaign's mode read once, `useAssignmentModes`). No new timer: everything rides the
  * 5 s risk clock and the reads the page already makes.
  */
+/** What Live floor's chime hears: Need help, from its floor read (the shell's hears every kind). */
+const HELP_ONLY = ['help'] as const;
+
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`'s permission; its capability and flag are `/agency`'s route gates, passed here.
@@ -120,12 +124,21 @@ export default function HomePage() {
     () => (ranked ? helpItems(ranked, board.reads.map((r) => r.campaign), floorNowMs, agentFloor.stale) : []),
     [ranked, board.reads, floorNowMs, agentFloor.stale],
   );
-  const items = useMemo(
-    () => (breaks.length === 0 && helps.length === 0 ? attention : sortByRank([...attention, ...breaks, ...helps])),
-    [attention, breaks, helps],
+  // BE-11: agents whose screen dropped past the alert's 20 s, as the shell's banner lists them (the
+  // banner is not shown on Live floor, so this list says what it would).
+  const dropped = useMemo(
+    () => (ranked ? disconnectedItems(ranked, board.reads.map((r) => r.campaign), floorNowMs, agentFloor.stale) : []),
+    [ranked, board.reads, floorNowMs, agentFloor.stale],
   );
-  // The chime hears every open request on the floor (not only the picked campaign's), once each.
-  const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null);
+  const items = useMemo(
+    () => (breaks.length === 0 && helps.length === 0 && dropped.length === 0
+      ? attention
+      : sortByRank([...attention, ...breaks, ...helps, ...dropped])),
+    [attention, breaks, helps, dropped],
+  );
+  // The chime hears every open request on the floor (not only the picked campaign's), once each on
+  // the page: the shell's alerts chime shares what it has heard, so neither plays for one twice.
+  const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null, HELP_ONLY);
   const { on: chimeOn, toggle: toggleChime } = chime;
   // Moves on every floor read: held in a ref and read at Listen's click, so the memo below (and the
   // memoised Needs you now) outlives a poll that changed nothing else.

@@ -23,9 +23,14 @@ const mocks = vi.hoisted(() => ({
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
   isCapabilityEnabled: vi.fn(),
+  trackConfigSaved: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../analytics/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../analytics/events')>()),
+  trackAgencyCampaignConfigSaved: mocks.trackConfigSaved,
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: mocks.isCapabilityEnabled, map: {}, loading: false, refresh: vi.fn() }),
 }));
@@ -782,3 +787,51 @@ describe('call recording in the builder', () => {
   });
 });
 
+
+describe('the Collections set (agent station AS4)', () => {
+  it('names the six in the offer exactly as their tiles are labelled', async () => {
+    const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
+    await openBehaviour();
+    const offer = () => screen.getByTestId('collections-starter').textContent ?? '';
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
+    expect(offer()).toContain("Wrong number and Don't call again.");
+    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
+  });
+
+  it('reports a reorder against the set as applied, not the outcomes it replaced', async () => {
+    await openBehaviour();
+    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(1));
+    expect(mocks.trackConfigSaved.mock.calls[0]![0]).toMatchObject({ reordered: false });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move Will pay down' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(2));
+    expect(mocks.trackConfigSaved.mock.calls[1]![0]).toMatchObject({ reordered: true });
+  });
+
+  it('replaces the outcomes with the six, each with its picture, editable, and saves them', async () => {
+    const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
+    await openBehaviour();
+    expect(screen.getByTestId('collections-starter').textContent).toMatch(/They replace the outcomes below/);
+    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+
+    expect((screen.getByLabelText('Outcome 1 label') as HTMLInputElement).value).toBe('Will pay');
+    expect((screen.getByLabelText('Outcome 6 label') as HTMLInputElement).value).toBe("Don't call again");
+    expect(screen.queryByLabelText('Outcome 7 label')).toBeNull();
+    expect(screen.getByTestId('outcome-icon-0').getAttribute('aria-label')).toBe('Picture for Will pay: Rupee');
+    expect(screen.getByTestId('collections-starter').textContent).toMatch(/The Collections set is in place/);
+
+    // Still a starting point: rename one before saving.
+    fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Will not pay' } });
+    expect(screen.getByRole('button', { name: 'Start with the Collections set' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    const sent = mocks.updateAgencyCampaign.mock.calls[0]![1].disposition_catalog as Array<Record<string, unknown>>;
+    expect(sent).toEqual(AGENCY_COLLECTIONS_STARTER_CATALOG.map((entry) => (
+      entry.code === 'refused' ? { ...entry, label: 'Will not pay' } : { ...entry }
+    )));
+  });
+});

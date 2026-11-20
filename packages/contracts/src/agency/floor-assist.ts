@@ -7,7 +7,10 @@
  *
  * ── Need help (LF4) ─────────────────────────────────────────────────────────
  * `POST /proxy/agency/sessions/:id/help` raises it on the caller's own live session while they are
- * on a call or in wrap-up (a soft-phone call, live or owing its outcome, counts);
+ * on a call or in wrap-up (a soft-phone call, live or owing its outcome, counts), and from the agent
+ * station's BE-9 (AS5) in any state of a live session (joined and not left), with the state recorded
+ * as {@link AgencySessionHelp.state_at_raise}; with no call, a supervisor's message answers it. The
+ * error code `help_not_on_call` stays in the union (older servers send it, the app knows it);
  * `DELETE /proxy/agency/sessions/:id/help` cancels it. Both answer {@link AgencyHelpResponse}.
  * Raising again while one is open changes nothing and answers the open one. Every
  * `agency.supervise` holder in the account sees it on the floor read (`GET /proxy/agency/floor`,
@@ -41,6 +44,7 @@
  */
 
 import type { AllListed } from '../primitives';
+import type { AgencyAgentState } from './enums';
 import type { AgencyStationCapability, AgencyStationServerFrame } from './station';
 
 // ─── Need help ───────────────────────────────────────────────────────────────
@@ -58,6 +62,13 @@ export interface AgencySessionHelp {
    * connected.
    */
   call_id: string | null;
+  /**
+   * Agent station (BE-9): the agent's state when they raised it (`agency_agent_sessions.help_state`,
+   * 0059), so the floor and the alerts can say what they were doing ("Needs help · on a call",
+   * "· Ready", "· on a break"). Absent from a server older than the field, and on a request raised
+   * before it was recorded.
+   */
+  state_at_raise?: AgencyAgentState;
 }
 
 /**

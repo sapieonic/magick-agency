@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import type { ConnectFlashSetting } from '../../utils/agencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import styles from './CueSettings.module.css';
@@ -59,7 +59,7 @@ const FLASH_OPTIONS: ReadonlyArray<{
   {
     value: 'always',
     label: 'Always show the flash',
-    hint: 'Every ring, connect and hang-up flashes on the rail.',
+    hint: 'Every ring, connect and hang-up flashes the screen.',
   },
   {
     value: 'auto',
@@ -184,77 +184,94 @@ export function CueSettings({ prefs, onChange }: CueSettingsProps) {
             close(true);
           }}
         >
-          {/*
-            A real `fieldset`/`legend` and real radios. The group is one tab stop
-            with arrow keys inside it and announces as "Flash on call events, 1 of
-            3" — none of which a div-with-role reproduces for free.
-          */}
-          <fieldset className={styles.group}>
-            <legend className={styles.legend}>Flash on call events</legend>
-            {FLASH_OPTIONS.map((option, index) => (
-              <label key={option.value} className={styles.option}>
-                <input
-                  ref={index === 0 ? firstFieldRef : undefined}
-                  type="radio"
-                  name="agency-connect-flash"
-                  value={option.value}
-                  checked={prefs.connectFlash === option.value}
-                  aria-describedby={`agency-connect-flash-${option.value}-hint`}
-                  onChange={() => onChange({ ...prefs, connectFlash: option.value })}
-                />
-                <span className={styles.optionText}>
-                  {option.label}
-                  <span
-                    id={`agency-connect-flash-${option.value}-hint`}
-                    className={styles.optionHint}
-                  >
-                    {option.hint}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-
-          <div className={styles.volume}>
-            <label className={styles.volumeLabel} htmlFor="agency-cue-volume">
-              Cue volume
-            </label>
-            <input
-              id="agency-cue-volume"
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={prefs.volume}
-              // The number, not the raw 0–100 position: a screen reader would
-              // otherwise read "70" with no unit, and 0 is a meaningful setting
-              // that needs to read as one.
-              aria-valuetext={prefs.volume === 0 ? 'Off' : `${prefs.volume} percent`}
-              aria-describedby="agency-cue-volume-hint"
-              onChange={(event) => onChange({ ...prefs, volume: Number(event.target.value) })}
-            />
-            <output className={styles.volumeValue} htmlFor="agency-cue-volume">
-              {prefs.volume === 0 ? 'Off' : `${prefs.volume}%`}
-            </output>
-            {/*
-              0% is a permitted setting, not an error — an agent may work
-              in silence and the console's job is to make that safe rather than to
-              argue with them. What it must not do is let them reach silence without
-              knowing the flash is what is left.
-            */}
-            <p id="agency-cue-volume-hint" className={styles.volumeHint}>
-              {prefs.volume > 0
-                ? 'Ring, connect and hang-up cues.'
-                : prefs.connectFlash === 'never'
-                  ? // Silence plus Never is zero channels, and the agent is allowed
-                    // to choose it — but not by accident, and not without being told
-                    // in the one place where both controls are in front of them.
-                    'Cues are silent and the flash is off — nothing will signal a call.'
-                  : 'Cues are silent. The rail flash is your only call signal.'}
-            </p>
-          </div>
+          <CueSettingsFields prefs={prefs} onChange={onChange} firstFieldRef={firstFieldRef} />
         </div>
       ) : null}
     </div>
+  );
+}
+
+
+/**
+ * The settings themselves (the flash choice and the cue volume), without the popover: the agent
+ * station shows them under ⋮ More → Sound.
+ */
+export function CueSettingsFields({
+  prefs,
+  onChange,
+  firstFieldRef,
+}: CueSettingsProps & { firstFieldRef?: RefObject<HTMLInputElement> }) {
+  return (
+    <>
+      {/*
+        A real `fieldset`/`legend` and real radios. The group is one tab stop
+        with arrow keys inside it and announces as "Flash on call events, 1 of
+        3" — none of which a div-with-role reproduces for free.
+      */}
+      <fieldset className={styles.group}>
+        <legend className={styles.legend}>Flash on call events</legend>
+        {FLASH_OPTIONS.map((option, index) => (
+          <label key={option.value} className={styles.option}>
+            <input
+              ref={index === 0 ? firstFieldRef : undefined}
+              type="radio"
+              name="agency-connect-flash"
+              value={option.value}
+              checked={prefs.connectFlash === option.value}
+              aria-describedby={`agency-connect-flash-${option.value}-hint`}
+              onChange={() => onChange({ ...prefs, connectFlash: option.value })}
+            />
+            <span className={styles.optionText}>
+              {option.label}
+              <span
+                id={`agency-connect-flash-${option.value}-hint`}
+                className={styles.optionHint}
+              >
+                {option.hint}
+              </span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+
+      <div className={styles.volume}>
+        <label className={styles.volumeLabel} htmlFor="agency-cue-volume">
+          Cue volume
+        </label>
+        <input
+          id="agency-cue-volume"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={prefs.volume}
+          // The number, not the raw 0–100 position: a screen reader would
+          // otherwise read "70" with no unit, and 0 is a meaningful setting
+          // that needs to read as one.
+          aria-valuetext={prefs.volume === 0 ? 'Off' : `${prefs.volume} percent`}
+          aria-describedby="agency-cue-volume-hint"
+          onChange={(event) => onChange({ ...prefs, volume: Number(event.target.value) })}
+        />
+        <output className={styles.volumeValue} htmlFor="agency-cue-volume">
+          {prefs.volume === 0 ? 'Off' : `${prefs.volume}%`}
+        </output>
+        {/*
+          0% is a permitted setting, not an error — an agent may work
+          in silence and the console's job is to make that safe rather than to
+          argue with them. What it must not do is let them reach silence without
+          knowing the flash is what is left.
+        */}
+        <p id="agency-cue-volume-hint" className={styles.volumeHint}>
+          {prefs.volume > 0
+            ? 'Ring, connect and hang-up cues.'
+            : prefs.connectFlash === 'never'
+              ? // Silence plus Never is zero channels, and the agent is allowed
+                // to choose it — but not by accident, and not without being told
+                // in the one place where both controls are in front of them.
+                'Cues are silent and the flash is off — nothing will signal a call.'
+              : 'Cues are silent. The screen flash is your only call signal.'}
+        </p>
+      </div>
+    </>
   );
 }

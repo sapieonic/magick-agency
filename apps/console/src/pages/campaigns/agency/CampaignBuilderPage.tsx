@@ -49,6 +49,12 @@ import {
   type CampaignConfigState,
 } from '../../../utils/agencyCampaignConfigForm';
 import {
+  collectionsStarterNames,
+  collectionsStarterOutcomes,
+  isCollectionsStarter,
+  withCollectionsStarter,
+} from '../../../utils/agency/collectionsStarter';
+import {
   BUILDER_STEPS,
   basicsBlockReason,
   defaultBuilderCarrier,
@@ -142,8 +148,15 @@ export default function CampaignBuilderPage() {
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
   /**
+   * Bumped when the Collections set replaces the outcomes (AS4): the behaviour editors remount, so
+   * no row keeps state from the list it replaced (which added rows follow their label, which mapped
+   * rows the automatic outcomes follow).
+   */
+  const [catalogEpoch, setCatalogEpoch] = useState(0);
+  /**
    * Analytics-only: the disposition order the wizard started with, to detect
    * whether the row arrows moved anything before the one save this page makes.
+   * Applying the Collections set (AS4) starts it again from the set's order.
    */
   const initialDispositionOrderRef = useRef(config.dispositions.map((d) => d.code));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -878,7 +891,36 @@ export default function CampaignBuilderPage() {
                   <p className={styles.recommend}>
                     Recommended settings are already in place. Continue if they look right.
                   </p>
+                  {/* AS4: the Collections set, offered in place of the outcomes below; edited like any list. */}
+                  <div className={styles.starter} data-testid="collections-starter">
+                    {isCollectionsStarter(config.dispositions) ? (
+                      <p className={styles.starterText} role="status">
+                        {`The Collections set is in place: ${collectionsStarterNames()}. Change any outcome below before you save.`}
+                      </p>
+                    ) : (
+                      <>
+                        <p className={styles.starterText}>
+                          {`Collecting payments? Start with six outcomes made for it: ${collectionsStarterNames()}. They replace the outcomes below.`}
+                        </p>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            setConfig((current) => withCollectionsStarter(current));
+                            // The save's `reordered` compares with the set as applied, not the defaults it replaced.
+                            initialDispositionOrderRef.current = collectionsStarterOutcomes().map((d) => d.code);
+                            setConfigSaved(false);
+                            setCatalogEpoch((n) => n + 1);
+                          }}
+                          data-testid="collections-starter-apply"
+                        >
+                          Start with the Collections set
+                        </button>
+                      </>
+                    )}
+                  </div>
                   <CampaignBehaviourSection
+                    key={catalogEpoch}
                     state={config}
                     onChange={(next) => {
                       setConfig(next);

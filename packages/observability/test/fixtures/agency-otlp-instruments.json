@@ -148,6 +148,14 @@
     ]
   },
   {
+    "name": "agency_break_overruns_total",
+    "kind": "Counter",
+    "description": "Breaks that ran past their reason's limit, counted when the break ended (a reserved break, a reason with no limit and a break cut by a restart never count)",
+    "attributes": [
+      "tenant_id"
+    ]
+  },
+  {
     "name": "agency_campaign_slots_allocated",
     "kind": "ObservableGauge",
     "description": "Live attempts of a running campaign plus the new dials the pacing round granted it (contended accounts only)",
@@ -201,8 +209,10 @@
   {
     "name": "agency_help_requests_raised_total",
     "kind": "Counter",
-    "description": "Need help requests raised by agents (a repeated raise while one is open is not counted)",
-    "attributes": []
+    "description": "Need help requests raised by agents, by the agent's state when they raised it: offline, available, reserved, on_call, wrapup or break (a repeated raise while one is open is not counted)",
+    "attributes": [
+      "state"
+    ]
   },
   {
     "name": "agency_inbound_answer_seconds",
@@ -635,6 +645,40 @@
     "description": "Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)",
     "attributes": [
       "result"
+    ]
+  },
+  {
+    "name": "agency_station_disconnects_total",
+    "kind": "Counter",
+    "description": "Station sockets that closed while their agent was working (available, reserved, on_call, wrapup, or break on a live soft-phone call), by app and state; never a break, a supersede or a leave",
+    "attributes": [
+      "client_kind",
+      "state",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_station_reconnect_seconds",
+    "kind": "Histogram",
+    "description": "How long a station that went was away before a station attached again to the same session in the same process, by app",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        2,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120,
+        300,
+        900,
+        3600
+      ]
+    },
+    "attributes": [
+      "client_kind"
     ]
   },
   {

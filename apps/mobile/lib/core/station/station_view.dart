@@ -38,16 +38,53 @@ enum AgentPhase { offline, available, reserved, onCall, wrapup, onBreak }
 
 enum ReleaseTone { neutral, warning, danger }
 
+/// The picture a supervisor chose for an outcome or break tile (BE-13; the contract's
+/// `AGENCY_TILE_ICONS`, same names). Null on a tile means none was chosen, or a newer one this build
+/// does not know: the station then works one out from the outcome's flags or the break's name.
+enum TilePicture {
+  rupee,
+  clock,
+  calendar,
+  stop,
+  thumbsUp,
+  thumbsDown,
+  check,
+  cross,
+  phoneMissed,
+  phoneBusy,
+  voicemail,
+  wrongNumber,
+  language,
+  question,
+  tea,
+  lunch,
+  washroom,
+  meeting,
+  training,
+  prayer,
+  headset,
+  walk,
+  person,
+  dot,
+}
+
 @immutable
 class BreakOption {
-  const BreakOption({required this.code, required this.label});
+  const BreakOption({required this.code, required this.label, this.limitMinutes, this.icon});
   final String code;
   final String label;
 
+  /// The reason's limit in minutes ("Tea 15 min" on Which break?); null for a reason with none.
+  final int? limitMinutes;
+
+  /// The supervisor's picture for it (BE-13), or null.
+  final TilePicture? icon;
+
   @override
-  bool operator ==(Object other) => other is BreakOption && other.code == code && other.label == label;
+  bool operator ==(Object other) =>
+      other is BreakOption && other.code == code && other.label == label && other.limitMinutes == limitMinutes && other.icon == icon;
   @override
-  int get hashCode => Object.hash(code, label);
+  int get hashCode => Object.hash(code, label, limitMinutes, icon);
 }
 
 /// The break the agent is on, or has queued for after this call.
@@ -183,6 +220,8 @@ class CallView {
     this.redialNumber,
     this.redialLimit,
     this.promise,
+    this.callback,
+    this.facts,
   });
 
   final String attemptId;
@@ -220,6 +259,14 @@ class CallView {
   /// The contact's latest promise to pay (PT9); null without one.
   final PromiseView? promise;
 
+  /// This call is a booked call-later coming due (BE-4, `attempt.callback`); null otherwise, or
+  /// from a server that does not send it.
+  final CallLaterTag? callback;
+
+  /// The customer's facts as the server read them (BE-6, `attempt.facts`); null from a server that
+  /// does not send them: the card then reads the hero fields.
+  final FactsView? facts;
+
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
@@ -243,14 +290,100 @@ class CallView {
       other.recording == recording &&
       other.redialNumber == redialNumber &&
       other.redialLimit == redialLimit &&
-      other.promise == promise;
+      other.promise == promise &&
+      other.callback == callback &&
+      other.facts == facts;
 
   @override
   int get hashCode =>
-      Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length, redialNumber);
+      Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length, redialNumber, callback, facts);
 }
 
-/// Why the last call ended, in the console's words (`agencyReleaseCopy.ts`).
+/// "Call later · You said you will call at 3:00 PM": the booked time (this device's clock) and
+/// whether this agent booked it (only then "You said…").
+@immutable
+class CallLaterTag {
+  const CallLaterTag({required this.dueAt, required this.bookedByMe});
+
+  final DateTime dueAt;
+  final bool bookedByMe;
+
+  @override
+  bool operator ==(Object other) => other is CallLaterTag && other.dueAt == dueAt && other.bookedByMe == bookedByMe;
+  @override
+  int get hashCode => Object.hash(dueAt, bookedByMe);
+}
+
+/// How a fact's value reads (the campaign's column type, BE-6).
+enum FactKind { text, money, date }
+
+/// One fact tile: the column's name as the label, the value as uploaded, and, for a typed column
+/// the server could read, the parsed value (money a decimal string, a date `YYYY-MM-DD`).
+@immutable
+class FactTileView {
+  const FactTileView({required this.label, required this.raw, required this.kind, this.parsed, this.amountDue = false, this.dueDate = false});
+
+  final String label;
+  final String raw;
+  final FactKind kind;
+  final String? parsed;
+
+  /// The tile plays the amount-due role (the script's `{amount_due}`).
+  final bool amountDue;
+
+  /// The tile plays the due-date role (`{due_date}`).
+  final bool dueDate;
+
+  @override
+  bool operator ==(Object other) =>
+      other is FactTileView &&
+      other.label == label &&
+      other.raw == raw &&
+      other.kind == kind &&
+      other.parsed == parsed &&
+      other.amountDue == amountDue &&
+      other.dueDate == dueDate;
+  @override
+  int get hashCode => Object.hash(label, raw, kind, parsed, amountDue, dueDate);
+}
+
+/// The customer's name, place and fact tiles, as the server read them (BE-6).
+@immutable
+class FactsView {
+  const FactsView({this.name, this.place, this.tiles = const []});
+
+  final String? name;
+  final String? place;
+
+  /// In hero order, at most four.
+  final List<FactTileView> tiles;
+
+  static const _eq = ListEquality<FactTileView>();
+
+  @override
+  bool operator ==(Object other) => other is FactsView && other.name == name && other.place == place && _eq.equals(other.tiles, tiles);
+  @override
+  int get hashCode => Object.hash(name, place, tiles.length);
+}
+
+/// The campaign's script (BE-8): the opening line ("First, say this") and the numbered steps
+/// ("What to say"), placeholders still in braces; the screen fills them for the call on screen.
+@immutable
+class ScriptView {
+  const ScriptView({this.opening, this.steps = const []});
+
+  final String? opening;
+  final List<String> steps;
+
+  static const _eq = ListEquality<String>();
+
+  @override
+  bool operator ==(Object other) => other is ScriptView && other.opening == opening && _eq.equals(other.steps, steps);
+  @override
+  int get hashCode => Object.hash(opening, steps.length);
+}
+
+/// Why the last call ended, in the station's words (as the console's `stationCopy.ts`).
 @immutable
 class ReleaseView {
   const ReleaseView({required this.headline, required this.detail, required this.tone, required this.requiresDisposition});
@@ -318,10 +451,14 @@ class DispositionOption {
     this.suppresses = false,
     this.requiresPromise = false,
     this.promiseFollowUpDays,
+    this.icon,
   });
 
   final String code;
   final String label;
+
+  /// The supervisor's picture for it (BE-13), or null.
+  final TilePicture? icon;
   final bool requiresNote;
   final bool requiresCallbackTime;
   final bool isSuccess;
@@ -345,10 +482,11 @@ class DispositionOption {
       other.isSuccess == isSuccess &&
       other.suppresses == suppresses &&
       other.requiresPromise == requiresPromise &&
-      other.promiseFollowUpDays == promiseFollowUpDays;
+      other.promiseFollowUpDays == promiseFollowUpDays &&
+      other.icon == icon;
   @override
   int get hashCode => Object.hash(
-    code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses, requiresPromise, promiseFollowUpDays,
+    code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses, requiresPromise, promiseFollowUpDays, icon,
   );
 }
 
@@ -427,11 +565,11 @@ class AudioView {
   int get hashCode => Object.hash(muted, route, routes.length, micProblem, interruption);
 }
 
-/// What happened while the station could not reach the agent ("While you
-/// were away: the customer hung up").
+/// What happened while the station could not reach the agent, in one sentence that says so
+/// ("While your internet was down, the customer hung up."), with an optional [detail] line.
 @immutable
 class MissedReleaseView {
-  const MissedReleaseView({required this.headline, required this.detail});
+  const MissedReleaseView({required this.headline, this.detail = ''});
   final String headline;
   final String detail;
 
@@ -440,6 +578,11 @@ class MissedReleaseView {
   @override
   int get hashCode => Object.hash(headline, detail);
 }
+
+/// Why the campaign is not dialling, as No calls right now (02c) says it (`campaign_state.reason`):
+/// only a supervisor's pause or stop blames the supervisor; the system's own pause (`auto_paused`)
+/// blames nobody; a finished list says so; no reason yet is a neutral line.
+enum CallsStopped { bySupervisor, autoPaused, listFinished, notStarted }
 
 /// Why nothing is due for the agent on a `strict` or `preferred` campaign
 /// (contact assignment). [other]: a reason this build does not know.
@@ -540,6 +683,7 @@ class InboundCallView {
     this.sticky,
     this.stickyIsYou = false,
     this.campaignName,
+    this.campaignId,
     this.contactState,
     this.heroFields = const [],
     this.heroesConfigured = false,
@@ -577,6 +721,9 @@ class InboundCallView {
 
   /// The matched contact's campaign, or null when the number matched nobody.
   final String? campaignName;
+
+  /// The matched campaign's id (its routing decides who makes a call-later, AS8); null with no match.
+  final String? campaignId;
 
   /// The matched contact's state, in words.
   final String? contactState;
@@ -621,6 +768,7 @@ class InboundCallView {
       other.recording == recording &&
       other.waitedSeconds == waitedSeconds &&
       other.campaignName == campaignName &&
+      other.campaignId == campaignId &&
       other.contactState == contactState &&
       _eqF.equals(other.heroFields, heroFields) &&
       other.heroesConfigured == heroesConfigured &&
@@ -676,7 +824,7 @@ enum HelpNoticeTone { success, warning }
 /// request, and the notice of how the last one ended, show wherever the station is.
 @immutable
 class HelpView {
-  const HelpView({this.stage = HelpStage.none, this.raisedAt, this.notice, this.noticeTone, this.error});
+  const HelpView({this.stage = HelpStage.none, this.raisedAt, this.notice, this.noticeTone, this.error, this.onlyOnCall = false});
 
   final HelpStage stage;
 
@@ -691,6 +839,11 @@ class HelpView {
   /// Why the last raise or cancel did not go through; null for none.
   final String? error;
 
+  /// This server takes a raise only on a call or while finishing one (it refused one elsewhere
+  /// `help_not_on_call`: a server older than BE-9): the button is offered there only, for the rest
+  /// of the session.
+  final bool onlyOnCall;
+
   /// A request is open (or being cancelled): the screen says so and offers Cancel.
   bool get isOpen => stage == HelpStage.open || stage == HelpStage.cancelling;
 
@@ -704,9 +857,10 @@ class HelpView {
       other.raisedAt == raisedAt &&
       other.notice == notice &&
       other.noticeTone == noticeTone &&
-      other.error == error;
+      other.error == error &&
+      other.onlyOnCall == onlyOnCall;
   @override
-  int get hashCode => Object.hash(stage, raisedAt, notice, noticeTone, error);
+  int get hashCode => Object.hash(stage, raisedAt, notice, noticeTone, error, onlyOnCall);
 }
 
 /// A supervisor's message to the agent (floor assist, LF5): plain text, who sent it ("Your
@@ -756,6 +910,7 @@ class StationView {
     this.phaseSince,
     this.campaignDialing = true,
     this.campaignMessage,
+    this.callsStopped,
     this.onBreak,
     this.queuedBreak,
     this.breakOptions = const [],
@@ -777,10 +932,14 @@ class StationView {
     this.queue,
     this.dialActivity,
     this.myContactsOffered = false,
+    this.assignsContacts = false,
     this.inbound,
     this.customerWaiting,
     this.inboundNotice,
     this.help = const HelpView(),
+    this.script,
+    this.maskPhone = false,
+    this.readyCount = 0,
   });
 
   final String campaignId;
@@ -796,6 +955,9 @@ class StationView {
   /// who ring in can still reach the agent: the inbound router does not read campaign status).
   final bool campaignDialing;
   final String? campaignMessage;
+
+  /// Why calls stopped, while [campaignDialing] is false; null while dialling.
+  final CallsStopped? callsStopped;
 
   final BreakInfo? onBreak;
   final BreakInfo? queuedBreak;
@@ -833,8 +995,9 @@ class StationView {
   /// The station cannot open at all (join refused); shown full-screen with a way back.
   final String? fatal;
 
-  /// The agent's own queue (contact assignment): null on a `pool` campaign,
-  /// where the waiting screen keeps its usual words.
+  /// The agent's own queue, from the `queue` frame: sent on every assignment mode since BE-5
+  /// (a `pool` campaign included, for No calls right now's reasons), so it says nothing about
+  /// who makes a call-later. Null before the first frame, or from a server older than it.
   final QueueView? queue;
 
   /// Late binding's hidden dials, when the waiting screen has something to say
@@ -846,6 +1009,11 @@ class StationView {
   /// `pool`) or lets agents retry the ones they did not reach. The
   /// console's rule for its header button; the flag is checked on top.
   final bool myContactsOffered;
+
+  /// The campaign assigns contacts (`strict` or `preferred`, as the join bootstrap says; an
+  /// absent mode reads `pool`): a call-later booked here comes back to this agent (AS8). On a
+  /// `pool` campaign another agent may make it. The console's `assigns` (`AgentConsolePage`).
+  final bool assignsContacts;
 
   /// The inbound caller on the station (offered, on the call, or owing the outcome), or null.
   /// While it is set, [call] is null, and [notes], [dispositions], [dispositionSaved] and
@@ -862,6 +1030,17 @@ class StationView {
   /// The agent's Need help (floor assist): its own stage, never [busy], so asking for help never
   /// holds up hanging up or saving the outcome.
   final HelpView help;
+
+  /// The campaign's script (BE-8); null when it has none, or from a server that does not send it.
+  final ScriptView? script;
+
+  /// The campaign shows the customer's number masked (AS9, `phone_display: 'masked'`): `98••• ••321`
+  /// on every station screen. The number is still in [CallView.phoneE164] for the call itself.
+  final bool maskPhone;
+
+  /// How many `ready` frames this session has had (the first, and one after each reconnect). The
+  /// station reads My day again on each (the my-day contract's "on every `ready` frame").
+  final int readyCount;
 
   /// The call on screen, campaign or inbound: what notes, dialogs and sheets are keyed by.
   String? get callId => call?.attemptId ?? inbound?.callId;
@@ -883,6 +1062,7 @@ class StationView {
       other.phaseSince == phaseSince &&
       other.campaignDialing == campaignDialing &&
       other.campaignMessage == campaignMessage &&
+      other.callsStopped == callsStopped &&
       other.onBreak == onBreak &&
       other.queuedBreak == queuedBreak &&
       _eqB.equals(other.breakOptions, breakOptions) &&
@@ -904,10 +1084,14 @@ class StationView {
       other.queue == queue &&
       other.dialActivity == dialActivity &&
       other.myContactsOffered == myContactsOffered &&
+      other.assignsContacts == assignsContacts &&
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&
       other.inboundNotice == inboundNotice &&
-      other.help == help;
+      other.help == help &&
+      other.script == script &&
+      other.maskPhone == maskPhone &&
+      other.readyCount == readyCount;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);
@@ -1020,6 +1204,8 @@ final class StationElsewhere extends StationStart {
   final String sessionId;
   final String campaignId;
   final String campaignName;
+
+  /// What the agent is doing there, in the station's words ("on a call", `joinDoing`).
   final String stateLabel;
   final bool canLeave;
   final String? accountId;

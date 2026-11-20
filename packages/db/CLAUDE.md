@@ -26,7 +26,12 @@ before writing a repository or a migration.
   by when their outcome was written, 0051 the campaign's `stopping_at`, when Stop was pressed, 0052 floor assist: the session's Need help
   columns and the supervisor messages table, 0053 the account's callbacks list's index of
   the pending contacts that may be callbacks, by due time, 0054 the analysis job's `vendor_refused_at`
-  and `completed_at`, 0055 their partial indexes, the summary delay's two sides). node-pg-migrate,
+  and `completed_at`, 0055 their partial indexes, the summary delay's two sides, 0056 the agent station's campaign
+  settings (`daily_target_calls`, `agent_script`, `phone_display`), 0057 who booked a contact's
+  call-later, 0058 its index and CHECK validation, 0059 the state Need help was raised in, 0060 a
+  break over its limit on the event that ended it, 0061 its limit's column comment corrected: the
+  limit as the catalog stood when the break ended, 0062 the start of a break a station drop
+  suspended). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

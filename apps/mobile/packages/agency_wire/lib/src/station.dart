@@ -14,6 +14,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import 'agent_station.dart';
 import 'enums.dart';
 import 'equality.dart';
 import 'floor_assist.dart';
@@ -1201,6 +1202,8 @@ class ReservedAttempt {
     required List<PriorAttempt> priorAttempts,
     this.redial,
     this.promise,
+    this.callback,
+    this.facts,
   }) : context = frozenMap(context),
        priorAttempts = List.unmodifiable(priorAttempts);
 
@@ -1216,6 +1219,8 @@ class ReservedAttempt {
     priorAttempts: j.list('prior_attempts', PriorAttempt.fromJson),
     redial: RedialInfo.tryFromJson(j['redial']),
     promise: ContactPromise.tryFromJson(j['promise']),
+    callback: AttemptCallback.tryFromJson(j['callback']),
+    facts: CustomerFacts.tryFromJson(j['facts']),
   );
 
   final String attemptId;
@@ -1247,6 +1252,15 @@ class ReservedAttempt {
   /// them; null when there is none (or from a server that predates it).
   final ContactPromise? promise;
 
+  /// Set when this dial is a booked call-later coming due (BE-4): "Call later
+  /// · You said you will call at 3:00 PM" when [AttemptCallback.bookedByMe].
+  /// Null on every other dial, or from an older server.
+  final AttemptCallback? callback;
+
+  /// The customer's name, place and fact tiles, parsed by the server (BE-6);
+  /// null from an older server: read [context] through `ContextDisplay`.
+  final CustomerFacts? facts;
+
   @override
   bool operator ==(Object other) =>
       other is ReservedAttempt &&
@@ -1261,7 +1275,9 @@ class ReservedAttempt {
       jsonEquals(other.context, context) &&
       listEquals(other.priorAttempts, priorAttempts) &&
       other.redial == redial &&
-      other.promise == promise;
+      other.promise == promise &&
+      other.callback == callback &&
+      other.facts == facts;
 
   @override
   int get hashCode => Object.hash(
@@ -1276,6 +1292,8 @@ class ReservedAttempt {
     listHash(priorAttempts),
     redial,
     promise,
+    callback,
+    facts,
   );
 }
 
@@ -1383,6 +1401,8 @@ final class ActiveAttempt extends ReservedAttempt {
     required super.priorAttempts,
     super.redial,
     super.promise,
+    super.callback,
+    super.facts,
     required this.bridgedAt,
     required this.state,
     String? stateRaw,
@@ -1403,6 +1423,8 @@ final class ActiveAttempt extends ReservedAttempt {
       priorAttempts: base.priorAttempts,
       redial: base.redial,
       promise: base.promise,
+      callback: base.callback,
+      facts: base.facts,
       bridgedAt: j.timeOrNull('bridged_at'),
       state: AttemptState.fromWire(state),
       stateRaw: state,

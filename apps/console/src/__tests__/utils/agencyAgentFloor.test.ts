@@ -5,6 +5,7 @@ import {
   cannotTakeInbound,
   AGENCY_FLOOR_RISK_FLAG,
   AGENCY_FLOOR_RISK_NOTE,
+  disconnectedWords,
   AGENCY_FLOOR_RISK_ORDER,
   AGENCY_FLOOR_STATE_LABELS,
   AGENT_ID_FALLBACK_LENGTH,
@@ -95,6 +96,18 @@ describe('the risk ranking', () => {
     for (const risk of AGENCY_FLOOR_RISK_ORDER) {
       expect(isWarningRisk(risk)).toBe(risk !== 'none');
     }
+  });
+
+  it('says a dropped screen in Live floor’s plain words, never the heartbeat (BE-11, AS15)', () => {
+    expect(AGENCY_FLOOR_RISK_NOTE.disconnected).toBe('Disconnected.');
+    expect(AGENCY_FLOOR_RISK_FLAG.disconnected).toBe('Disconnected');
+    expect(AGENCY_FLOOR_RISK_CLAUSE.disconnected).toBe('disconnected');
+    for (const words of [AGENCY_FLOOR_RISK_NOTE, AGENCY_FLOOR_RISK_FLAG, AGENCY_FLOOR_RISK_CLAUSE]) {
+      expect(Object.values(words).join(' ')).not.toMatch(/heartbeat|station/i);
+    }
+    const now = Date.parse('2026-11-20T10:00:00Z');
+    expect(disconnectedWords('2026-11-20T09:57:30Z', now)).toBe('Disconnected for 2 min');
+    expect(disconnectedWords(null, now)).toBe('Disconnected');
   });
 
   it('gives every warning rank a note and `none` none', () => {
@@ -619,7 +632,7 @@ describe('floorRiskSummary — the warnings as one sentence', () => {
       agent({ session_id: 'both', state: 'wrapup', state_since: ago(200), connected: false }),
       agent({ session_id: 'drop', connected: false }),
     ]));
-    expect(summary).toBe('2 agents need a look — 1 past the wrap-up window, 1 with no station heartbeat.');
+    expect(summary).toBe('2 agents need a look — 1 past the wrap-up window, 1 disconnected.');
   });
 
   it('has a clause and a short flag for every warning rank', () => {

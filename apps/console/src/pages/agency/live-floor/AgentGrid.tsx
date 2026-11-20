@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
-import { BellRing, Headphones, LifeBuoy, LogIn, MessageCircle, Smartphone, TriangleAlert } from 'lucide-react';
+import { BellRing, Headphones, LifeBuoy, LogIn, MessageCircle, Smartphone, TriangleAlert, WifiOff } from 'lucide-react';
 import { formatTime } from '@magick-agency/web-ui/format';
 import { AgentFloorDrawer } from '../../../components/agency/AgentFloorDrawer';
 import { ComingSoonButton } from '../../../components/common/ComingSoon';
@@ -17,9 +17,11 @@ import {
   CONVERSATIONS_TODAY_NOTE,
   callsTodayText,
   cardsInState,
+  disconnectedWords,
   floorBadges,
   floorNowLine,
   floorTimerAnchor,
+  helpDetail,
   liveCallOf,
   offersMakeAvailable,
   sameFloorRow,
@@ -29,6 +31,7 @@ import {
   type FloorChipFilter,
   type FloorLiveCall,
 } from '../../../utils/agency/liveFloorAgents';
+import { ComingToDeskButton } from './ComingToDesk';
 import styles from './LiveFloor.module.css';
 
 /**
@@ -41,9 +44,11 @@ import styles from './LiveFloor.module.css';
  * none for a reader who cannot listen at all), Make available on a stuck wrap-up (the campaign
  * floor's drawer, with its confirmation), Talk to agent on a live session and Send reminder on a
  * break past its limit while floor assist is on (`onMessage`, the page's one message dialog, LF5,
- * LF29; hidden while it is off), and Join call, which is coming (Phase 4, LF8) and shown as such.
+ * LF29; hidden while it is off), I’m coming on an agent asking for help (BE-9, one press, while
+ * floor assist is on), and Join call, which is coming (Phase 4, LF8) and shown as such.
  * An agent asking for help (LF4, LF28) is first in the ranking and their card is red, with a
- * "Needs help" tag (never colour alone).
+ * "Needs help" tag (never colour alone) and what they were doing when they asked ("Asked for help
+ * on a break"). A dropped screen says for how long ("Disconnected for 2 min", BE-11).
  *
  * The drawer holds the agent's session id, never a copy of the card: it reads the agent from every
  * new floor, as the campaign floor's does, and closes once the session is gone or no longer offers
@@ -172,6 +177,16 @@ const Elapsed = memo(function Elapsed({ anchor }: { anchor: string | null }) {
   return <>{elapsedMs === null ? '—' : formatDuration(elapsedMs)}</>;
 });
 
+/**
+ * "Disconnected for 2 min" (BE-11), from the row's `disconnected_since` on the server's clock: on the
+ * floor's one-second clock like the card's time in state, so the minutes move without a read.
+ */
+const DisconnectedFor = memo(function DisconnectedFor({ since }: { since: string | null | undefined }) {
+  const offset = useContext(FloorClockOffset);
+  const now = useNow(AGENCY_FLOOR_TICK_MS, usePageVisible());
+  return <>{disconnectedWords(since, now + offset)}</>;
+});
+
 /** Listen on a card: started on the server's clock as the read last gave it, at the click. */
 function ListenButton({ call, displayName, onListen }: {
   call: FloorLiveCall;
@@ -211,7 +226,8 @@ const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMak
   const reasonId = useId();
   const live = state !== 'offline';
   const call = liveCallOf(row);
-  const warning = isWarningRisk(risk) ? floorRiskNote(risk, row.break_limit_minutes, row.break_label) : null;
+  // A dropped screen says for how long, in words (BE-11); the other warnings their sentence.
+  const warning = isWarningRisk(risk) && risk !== 'disconnected' ? floorRiskNote(risk, row.break_limit_minutes, row.break_label) : null;
   const sessionId = row.session_id;
   const notListenable = listen?.canListen && call && !call.listenable && call.not_listenable_reason
     ? notListenableCopy(call.not_listenable_reason)
@@ -249,10 +265,21 @@ const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMak
         </span>
       </div>
 
+      {row.help && (
+        <p className={styles.agentReason} data-testid={`home-agent-help-detail-${row.agent_user_id}`}>
+          {`Asked for help ${helpDetail({ row, state })}`}
+        </p>
+      )}
       {warning && (
         <p className={styles.agentRisk} data-testid={`home-agent-risk-${row.agent_user_id}`}>
           <TriangleAlert size={12} aria-hidden="true" />
           {warning}
+        </p>
+      )}
+      {risk === 'disconnected' && (
+        <p className={styles.agentRisk} data-testid={`home-agent-risk-${row.agent_user_id}`}>
+          <WifiOff size={12} aria-hidden="true" />
+          <DisconnectedFor since={row.disconnected_since} />
         </p>
       )}
       {notListenable && <p id={reasonId} className={styles.agentReason}>{notListenable}</p>}
@@ -283,6 +310,10 @@ const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMak
             >
               <MessageCircle size={15} aria-hidden="true" />
             </button>
+          )}
+          {row.help && onMessage && sessionId && (
+            // BE-9: Need help's one-press answer when the supervisor walks over, call or none.
+            <ComingToDeskButton sessionId={sessionId} name={displayName} compact />
           )}
           {row.call && (
             <ComingSoonButton compact className={`btn-secondary ${styles.iconButton}`} label={`Join ${displayName}’s call`} tooltip="Speak on the call, to the customer and the agent.">

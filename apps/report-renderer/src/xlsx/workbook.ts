@@ -200,6 +200,11 @@ async function agentWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: AgentRev
     { metric: 'Success rate', value: rateCell(agentSuccessRate(d)), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Average handle time', value: d.record.aht_seconds ?? 'No connected calls', type: 'duration_s', definition: def(d, 'aht') },
     { metric: 'Drops', value: d.presence.drops, type: 'int', definition: def(d, 'drops') },
+    // Agent station (BE-12): absent from a dataset built before the field, so its rows only then.
+    ...(d.presence.break_overruns ? [
+      { metric: 'Breaks over their limit', value: d.presence.break_overruns.breaks, type: 'int' as const, definition: def(d, 'break_overruns') },
+      { metric: 'Time over break limits', value: d.presence.break_overruns.seconds_over, type: 'duration_s' as const, definition: def(d, 'break_overruns') },
+    ] : []),
     { metric: 'Callbacks booked', value: ft.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Wrap-up redials placed', value: ft.redials_placed, type: 'int' },
     { metric: 'Wrap-up redials connected', value: ft.redials_connected, type: 'int' },

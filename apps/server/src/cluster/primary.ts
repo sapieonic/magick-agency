@@ -87,6 +87,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
     // The workers dial; each counts its own agents' refusals (`carrier-refusal-breaker.ts`).
     refusalCountShared: true,
     pacingStations: cluster.directory,
+    // Agent station (BE-11): the workers' station detaches, for the floor and the alerts read.
+    stationDisconnects: cluster.directory,
     dispatcher: cluster.dispatcher,
     reservedReturn: cluster.reservedReturn,
     reaper: {

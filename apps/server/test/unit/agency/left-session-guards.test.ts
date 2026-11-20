@@ -174,6 +174,8 @@ async function harness(): Promise<Harness> {
       }),
       heartbeat: vi.fn().mockResolvedValue(true),
       isLocallyOwned: vi.fn(() => true),
+      // Agent station (BE-11): the leave forgets when the session's station went.
+      sessionEnded: vi.fn(),
       socketFor: vi.fn(() => holder.ws),
       silentSince: vi.fn(() => []),
       // Honours `expectedWs` like the real one, so a mis-scoped send shows up here

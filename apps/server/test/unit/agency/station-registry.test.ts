@@ -14,6 +14,12 @@ vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
+const metrics = vi.hoisted(() => ({ trackStationReconnect: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/agency', async (orig) => ({
+  ...(await orig<typeof import('@magick-agency/observability/metrics/agency')>()),
+  trackStationReconnect: metrics.trackStationReconnect,
+}));
+
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 
 function fakeRedis() {
@@ -379,6 +385,68 @@ describe('StationRegistry frame delivery', () => {
 // answer on the one screen a supervisor acts from. So this method throws instead,
 // and the route maps that to `connected: null` = unknown.
 // ---------------------------------------------------------------------------
+describe('StationRegistry.disconnectedSince (agent station BE-11)', () => {
+  it('records when a held station went; a reattach forgets it; a superseded socket closing records nothing', async () => {
+    // FALSIFIED: with the record dropped from `detach`, or the forget dropped from `attach`, this reds.
+    vi.useFakeTimers({ now: new Date('2026-11-20T10:00:00.000Z') });
+    try {
+      const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+      const first = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: first as any, ...ENTRY });
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      vi.setSystemTime(new Date('2026-11-20T10:01:00.000Z'));
+      await reg.detach('s1', first as any);
+      expect(reg.disconnectedSince(['s1', 's2'])).toEqual(new Map([['s1', new Date('2026-11-20T10:01:00.000Z')]]));
+      expect(reg.goneSessionIds()).toEqual(['s1']);
+      const second = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: second as any, ...ENTRY });
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      // A third socket supersedes the second; the second's late close is not a detach.
+      const third = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: third as any, ...ENTRY });
+      await reg.detach('s1', second as any);
+      expect(reg.disconnectedSince(['s1'])).toEqual(new Map());
+      expect(reg.goneSessionIds()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('StationRegistry: the detach times\' scope, the session ending, and the time to reconnect (BE-11)', () => {
+  it('a detach is recorded with the session\'s tenant and account; sessionEnded forgets it and tells the listeners', async () => {
+    const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+    const ws = fakeWs();
+    await reg.attach({ sessionId: 's1', ws: ws as any, ...ENTRY });
+    await reg.detach('s1', ws as any);
+    expect(reg.goneSessionIds({ tenantId: ENTRY.tenantId, accountId: ENTRY.accountId })).toEqual(['s1']);
+    expect(reg.goneSessionIds({ tenantId: ENTRY.tenantId, accountId: 'another-account' })).toEqual([]);
+    const heard = vi.fn();
+    reg.onSessionEnded(heard);
+    // FALSIFIED: with the forget dropped from `sessionEnded`, the ended session stays gone and this reds.
+    reg.sessionEnded('s1');
+    expect(reg.goneSessionIds()).toEqual([]);
+    expect(heard).toHaveBeenCalledWith('s1');
+  });
+
+  it('a station that comes back observes how long it was away, by app; a first attach observes nothing', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-20T10:00:00.000Z') });
+    metrics.trackStationReconnect.mockClear();
+    try {
+      const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+      const first = fakeWs();
+      await reg.attach({ sessionId: 's1', ws: first as any, ...ENTRY, clientKind: 'web' });
+      expect(metrics.trackStationReconnect).not.toHaveBeenCalled();
+      await reg.detach('s1', first as any);
+      vi.setSystemTime(new Date('2026-11-20T10:00:07.500Z'));
+      await reg.attach({ sessionId: 's1', ws: fakeWs() as any, ...ENTRY, clientKind: 'web' });
+      expect(metrics.trackStationReconnect).toHaveBeenCalledWith('web', 7.5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('StationRegistry.connectedBySession', () => {
   it('reports a held station as connected and an expired one as not', async () => {
     const redis = fakeRedis();

@@ -8,19 +8,20 @@ import {
 } from '../analytics/events';
 import {
   EMPTY_DISPOSITION_FORM,
+  NUMBER_KEY_COUNT,
   blockReason,
   buildSubmitPayload,
   findDisposition,
   type DispositionFormState,
   type DispositionBlockReason,
 } from '../utils/agencyDispositionForm';
-import { confirmationCopy, handleSubmitResponse } from '../utils/agencyDispositionSubmit';
+import { handleSubmitResponse } from '../utils/agencyDispositionSubmit';
+import { LAST_OUTCOME_LOST, saveRefusedLine, savedLine } from '../utils/agency/stationCopy';
 import { advisoryAgentState, describeDiscard } from '../utils/agencyStaleResponse';
 import { resyncCatalog, selectionAfterResync, numberKeysRemapped } from '../utils/agencyCatalogSync';
 import { errorBody, errorStatus } from '../utils/agencyErrors';
 import { notesStorageKey } from '../utils/agencyNotes';
 import type { DiagnosticsSink } from '../utils/agencyDiagnostics';
-import { CATALOG_CHANGED_COPY, NUMBER_KEY_COUNT } from '../components/agency/DispositionPad';
 import { useLatestRef } from './useLatestRef';
 import type { ServerClock } from './useServerClock';
 import type { UseAgencyStationResult } from './useAgencyStation';
@@ -232,7 +233,7 @@ export function useDispositionSubmit(options: {
    * This hook does NOT repaint for it. It runs in the console root, and a tick
    * here re-rendered the whole console four times a second for as long as a
    * callback code was selected. So the block is handed out as a function of the
-   * present: the Save control (`StationActionBar`) evaluates it on its own tick
+   * present: the Save control (the station's `SaveNextButton`) evaluates it on its own tick
    * while `blockChangesWithTime` says it must, and the shortcut and `submit`
    * evaluate it with `clock.now()` at fire time.
    */
@@ -310,7 +311,7 @@ export function useDispositionSubmit(options: {
             event: 'disposition_discarded',
             detail: describeDiscard(inFlight, notesRef.current.attemptId, outcome.reason),
           });
-          setLostDispositionNotice("The last call's disposition wasn't saved.");
+          setLostDispositionNotice(LAST_OUTCOME_LOST);
           // `outcome.reason` is already the closed `StaleDiscardReason` union
           // (`'attempt_changed' | 'attempt_id_mismatch'`) — a direct pass-through,
           // never a guess.
@@ -445,9 +446,10 @@ export function useDispositionSubmit(options: {
            * **zero callers** until this line, so the shared-pool mitigation existed, was
            * tested, and never reached a screen.
            */
+          // The station's own words (AS15): what was saved, and when we call again.
           announce(
-            confirmationCopy({
-              dispositionLabel:
+            savedLine({
+              label:
                 findDisposition(catalog, payload.disposition_code)?.label ??
                 payload.disposition_code,
               nextAttemptAt: outcome.nextAttemptAt,
@@ -464,8 +466,8 @@ export function useDispositionSubmit(options: {
         case 'conflict':
           setPadRejection(
             outcome.recordedCode
-              ? `This call is already recorded as ${findDisposition(catalog, outcome.recordedCode)?.label ?? outcome.recordedCode}.`
-              : 'This call already has a different outcome recorded.',
+              ? `What happened is already saved for this call: ${findDisposition(catalog, outcome.recordedCode)?.label ?? outcome.recordedCode}.`
+              : 'Something else is already saved for this call.',
           );
           if (bootstrap) {
             trackAgencyDispositionFailed({
@@ -492,12 +494,13 @@ export function useDispositionSubmit(options: {
             // null, never a neighbouring index: a highlight that looks unchanged
             // over a different value is how the wrong outcome gets recorded.
             setFormState((f) => ({ ...f, selectedCode: selectionAfterResync(f.selectedCode, next) }));
-            setPadRejection(CATALOG_CHANGED_COPY);
+            setPadRejection(saveRefusedLine(outcome.code));
           } else {
-            setPadRejection(outcome.message);
+            // The station's own words keyed on the code, never the server's sentence (AS15).
+            setPadRejection(saveRefusedLine(outcome.code));
           }
           // Nothing clears the notes on any error path.
-          announce(outcome.message);
+          announce(saveRefusedLine(outcome.code));
           if (bootstrap) {
             trackAgencyDispositionFailed({
               campaign_id: bootstrap.campaign_id,

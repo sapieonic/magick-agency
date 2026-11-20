@@ -53,12 +53,14 @@ export type HomeTone = 'danger' | 'warning' | 'info';
  * Where a row stands in Needs you now (decision LF9), most urgent first: an agent asking for help
  * (a customer is on the line; Phase 3, from the floor read: `helpItems` in `liveFloorAgents.ts`,
  * LF28), then what has stopped a campaign dialling
- * (an automatic pause, a compliance or carrier stop: a stall in the danger tone), a break run over
+ * (an automatic pause, a compliance or carrier stop: a stall in the danger tone), a working agent
+ * whose screen has been disconnected past the alert's 20 s (BE-11, from the floor read:
+ * `disconnectedItems`), a break run over
  * the floor's limit (Phase 2, from the floor read: `breakOverrunItems` in `liveFloorAgents.ts`),
  * late callbacks, then any other danger, the warnings and last the information rows. The badge
  * does not read it: it counts tones, not places.
  */
-export const HOME_RANKS = ['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info'] as const;
+export const HOME_RANKS = ['help', 'stop', 'disconnected', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info'] as const;
 type HomeRank = (typeof HOME_RANKS)[number];
 const RANK_ORDER: Record<HomeRank, number> = Object.fromEntries(HOME_RANKS.map((rank, i) => [rank, i])) as Record<HomeRank, number>;
 
@@ -68,11 +70,18 @@ export function homeRank(item: Pick<HomeAttentionItem, 'kind' | 'tone'>): HomeRa
   if (item.kind.startsWith('stall:') && item.tone === 'danger') return 'stop';
   if (item.kind === 'callbacks-overdue') return 'late-callbacks';
   if (item.kind.startsWith('break-overrun')) return 'break-overrun';
+  if (item.kind.startsWith(DISCONNECTED_KIND_PREFIX)) return 'disconnected';
   return item.tone;
 }
 
 /** A Need help row's kind: `help@<raised_at>`, so a new request is a new row (LF28). */
 export const HELP_KIND_PREFIX = 'help@';
+
+/**
+ * A dropped agent's row's kind (BE-11, `disconnectedItems` in `liveFloorAgents.ts`):
+ * `disconnected@<since>`, so a second drop is a new row.
+ */
+export const DISCONNECTED_KIND_PREFIX = 'disconnected@';
 
 /**
  * The agent a row is about (Need help, a break over its limit): the session a message goes to
@@ -393,14 +402,15 @@ export function homeWaiting(items: readonly HomeAttentionItem[]): HomeAttentionI
  * What the sidebar's Home badge counts: the dangers and warnings. Never an information row (nothing
  * is wrong); never the missed calls, which the Inbound entry's own badge already counts (counting
  * them here too would show the same calls twice in the sidebar); and never a break over the limit
- * (LF10) or a Need help request (LF28), which come from the floor read on Live floor alone: a badge
+ * (LF10), a Need help request (LF28) or a dropped agent (BE-11), which come from the floor read on
+ * Live floor alone (the shell's alerts banner says them on every other page): a badge
  * that counted those only while that page is open would change its number by page.
  */
 export function homeBadgeCount(items: readonly Pick<HomeAttentionItem, 'kind' | 'tone'>[]): number {
   return items.filter((item) => {
     if (item.tone === 'info' || item.kind === 'missed') return false;
     const rank = homeRank(item);
-    return rank !== 'break-overrun' && rank !== 'help';
+    return rank !== 'break-overrun' && rank !== 'help' && rank !== 'disconnected';
   }).length;
 }
 

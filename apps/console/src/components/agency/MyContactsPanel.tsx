@@ -6,7 +6,6 @@ import { getMyContactsSummary, listMyContacts } from '../../api/agencyAssignment
 import { callMyContact, retryMyContacts } from '../../api/agencyMyContacts';
 import { errorCode } from '../../utils/agencyErrors';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
-import { CONTACT_BUCKET_LABELS } from '../../utils/agencyAssignmentCopy';
 import { myCallerIdLine } from '../../utils/agencyAgentCallerIdCopy';
 import {
   MY_CONTACT_FILTER_BUCKETS,
@@ -15,6 +14,7 @@ import {
   type CallGate,
   overrideBadge,
   showRetryNotReached,
+  MY_CONTACT_BUCKET_LABELS,
 } from '../../utils/agencyMyContactsCopy';
 import { overrideNoteBlock, overrideNoteLength } from '../../utils/softphone/overrides';
 import { formatCount, plural } from '../../utils/format/number';
@@ -25,6 +25,7 @@ import {
 } from '../../analytics/events';
 import { AGENCY_OVERRIDE_NOTE_MAX, AGENCY_OVERRIDE_NOTE_MIN } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyQueueState } from '../../types/agency';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import type {
   AgencyAgentRetryErrorCode,
   AgencyAssignmentMode,
@@ -97,7 +98,7 @@ export interface MyContactsPanelProps {
 
 /** Why the note prompt opened: the window is closed and this contact may be called outside it. */
 export const NOTE_NEEDED_REASON =
-  'The campaign is outside its calling hours. You may still call this contact — say why in a note.';
+  'It is outside calling hours for this work. You may still call this customer. Say why in a note.';
 
 /** A disabled Call's reason while the note prompt is open for another contact. */
 export const NOTE_PROMPT_OPEN_REASON = 'Finish or cancel the note above first.';
@@ -183,7 +184,7 @@ export function MyContactsPanel({
       setPicked(new Set());
     } catch (err: unknown) {
       if (mine !== seq.current) return;
-      setError(agentRetryRefusal(err, 'Could not load your contacts.'));
+      setError(agentRetryRefusal(err, 'We could not get your customers. Try again.'));
     } finally {
       if (mine === seq.current) setLoading(false);
     }
@@ -203,7 +204,7 @@ export function MyContactsPanel({
       setRows((current) => [...current, ...page.rows]);
       setCursor(page.next_cursor);
     } catch (err: unknown) {
-      setNotice({ tone: 'error', text: agentRetryRefusal(err, 'Could not load more contacts.') });
+      setNotice({ tone: 'error', text: agentRetryRefusal(err, 'We could not get more customers. Try again.') });
     } finally {
       setLoadingMore(false);
     }
@@ -261,7 +262,7 @@ export function MyContactsPanel({
         skipped_total: 0,
         code: errorCode(err) as AgencyAgentRetryErrorCode | null,
       });
-      setNotice({ tone: 'error', text: agentRetryRefusal(err, 'Nothing was retried.') });
+      setNotice({ tone: 'error', text: agentRetryRefusal(err, 'Nobody was called again. Try again.') });
       setConfirmRetry(false);
     } finally {
       setBusy(null);
@@ -304,7 +305,7 @@ export function MyContactsPanel({
         override_applied_count: 0,
         retry_round_spent: false,
       });
-      const message = agentRetryRefusal(err, 'The call wasn’t placed.');
+      const message = agentRetryRefusal(err, 'The call was not placed. Try again.');
       if (code === 'override_note_invalid' && overrideNote === undefined) {
         // The contact's window is closed and it holds an unspent calling-hours
         // override: the server asks for the agent's reason (`override_note_invalid`
@@ -365,9 +366,9 @@ export function MyContactsPanel({
       >
         <div className={styles.header}>
           <div>
-            <h2 className={styles.title} id="my-contacts-title">My contacts</h2>
+            <h2 className={styles.title} id="my-contacts-title">My customers</h2>
             <p className={styles.subtitle}>
-              {campaignName ? `The contacts assigned to you on ${campaignName}.` : 'The contacts assigned to you.'}
+              {campaignName ? `The customers given to you on ${campaignName}.` : 'The customers given to you.'}
             </p>
             {/* A dedicated caller ID (DN1): every call to these contacts goes out
                 from it. Null is the campaign's shared rotation, which needs no line. */}
@@ -375,24 +376,24 @@ export function MyContactsPanel({
               <p className={styles.subtitle} data-testid="my-caller-id">{myCallerIdLine(summary.caller_id)}</p>
             ) : null}
           </div>
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Close My contacts">
+          <button type="button" className={styles.close} onClick={onClose} aria-label="Close My customers">
             <X size={16} />
           </button>
         </div>
 
         <div className={styles.summary} data-testid="my-summary">
-          {countButton('pending', CONTACT_BUCKET_LABELS.pending)}
+          {countButton('pending', MY_CONTACT_BUCKET_LABELS.pending)}
           {countButton(
             'callback',
-            CONTACT_BUCKET_LABELS.callback,
+            MY_CONTACT_BUCKET_LABELS.callback,
             queue?.reason === 'callbacks_later' && queue.next_due_at
               ? `next ${formatSpineTimestamp(queue.next_due_at)}`
               : null,
           )}
-          {countButton('not_reached', CONTACT_BUCKET_LABELS.not_reached)}
-          {countButton('reached', CONTACT_BUCKET_LABELS.reached)}
-          {countButton('exhausted', CONTACT_BUCKET_LABELS.exhausted)}
-          {countButton('suppressed', 'DNC')}
+          {countButton('not_reached', MY_CONTACT_BUCKET_LABELS.not_reached)}
+          {countButton('reached', MY_CONTACT_BUCKET_LABELS.reached)}
+          {countButton('exhausted', MY_CONTACT_BUCKET_LABELS.exhausted)}
+          {countButton('suppressed', MY_CONTACT_BUCKET_LABELS.suppressed)}
         </div>
 
         {retryOffered && summary ? (
@@ -446,7 +447,7 @@ export function MyContactsPanel({
             <select value={bucket} onChange={(e) => setBucket(e.target.value as AgencyMyContactBucket | '')}>
               <option value="">Everyone</option>
               {MY_CONTACT_FILTER_BUCKETS.map((value) => (
-                <option key={value} value={value}>{CONTACT_BUCKET_LABELS[value]}</option>
+                <option key={value} value={value}>{MY_CONTACT_BUCKET_LABELS[value]}</option>
               ))}
             </select>
           </label>
@@ -464,7 +465,7 @@ export function MyContactsPanel({
             <p className={styles.noteReason}>{notePrompt.reason}</p>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>
-                {`Why call ${notePrompt.contact.phone_e164} now? (${AGENCY_OVERRIDE_NOTE_MIN}–${AGENCY_OVERRIDE_NOTE_MAX} characters)`}
+                {`Why call ${phoneForDisplay(notePrompt.contact.phone_e164, notePrompt.contact.phone_display ?? 'full')} now? (${AGENCY_OVERRIDE_NOTE_MIN}–${AGENCY_OVERRIDE_NOTE_MAX} characters)`}
               </span>
               <textarea
                 value={note}
@@ -499,12 +500,12 @@ export function MyContactsPanel({
 
         <div className={styles.listWrap}>
           {error ? <p className={styles.noticeError} role="alert">{error}</p> : null}
-          {loading ? <p className={styles.muted}>Loading your contacts…</p> : null}
+          {loading ? <p className={styles.muted}>Getting your customers…</p> : null}
           {!loading && !error && rows.length === 0 ? (
             <p className={styles.muted} data-testid="my-empty">
               {applied.bucket || applied.phone || applied.q
-                ? 'Nothing matches. Clear the search to see all your contacts.'
-                : 'Nobody is assigned to you on this campaign yet.'}
+                ? 'Nothing matches. Clear the search to see all your customers.'
+                : 'No customers are given to you on this work yet.'}
             </p>
           ) : null}
           {!loading && rows.length > 0 ? (
@@ -523,7 +524,7 @@ export function MyContactsPanel({
                       <input
                         type="checkbox"
                         className={styles.pick}
-                        aria-label={`Include ${contact.phone_e164} in the retry`}
+                        aria-label={`Include ${phoneForDisplay(contact.phone_e164, contact.phone_display ?? 'full')} in the retry`}
                         checked={picked.has(contact.id)}
                         disabled={!contact.retry.eligible}
                         onChange={(event) => {
@@ -538,7 +539,7 @@ export function MyContactsPanel({
                       />
                     ) : <span className={styles.pick} aria-hidden="true" />}
                     <div className={styles.who}>
-                      <span className={styles.phone}>{contact.phone_e164}</span>
+                      <span className={styles.phone} data-testid={`my-phone-${contact.id}`}>{phoneForDisplay(contact.phone_e164, contact.phone_display ?? 'full')}</span>
                       {contact.hero.length > 0 ? (
                         <span className={styles.hero}>
                           {contact.hero.map((field) => field.value).filter(Boolean).join(' · ')}
@@ -547,7 +548,7 @@ export function MyContactsPanel({
                       {badge ? <span className={styles.badge} data-testid={`my-override-${contact.id}`}>{badge}</span> : null}
                     </div>
                     <div className={styles.status}>
-                      <span className={styles.bucket} data-bucket={contact.bucket}>{CONTACT_BUCKET_LABELS[contact.bucket]}</span>
+                      <span className={styles.bucket} data-bucket={contact.bucket}>{MY_CONTACT_BUCKET_LABELS[contact.bucket]}</span>
                       <span className={styles.when}>
                         {contact.state === 'pending' ? `Next ${formatSpineTimestamp(contact.next_attempt_at)}` : ''}
                       </span>
@@ -592,7 +593,7 @@ export function myContactsLockReason(
   connected: boolean,
 ): string | null {
   if (agentState === 'reserved' || agentState === 'on_call') return 'Finish this call first.';
-  if (agentState === 'wrapup') return 'Save the outcome first.';
-  if (!connected) return 'Your station isn’t connected.';
+  if (agentState === 'wrapup') return 'Save what happened first.';
+  if (!connected) return 'Your screen is not connected.';
   return null;
 }

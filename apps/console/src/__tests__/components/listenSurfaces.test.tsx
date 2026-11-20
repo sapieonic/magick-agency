@@ -171,12 +171,13 @@ describe('the campaign screen the agent joins from (LS2)', () => {
   it('says calls may be listened to while listening is on', async () => {
     mocks.flags.add('agency_live_listen_enabled');
     renderHome();
-    await waitFor(() => expect(screen.getByTestId('listen-agent-notice').textContent).toBe(LINE));
+    // The work picker says it in the station's short words, as Start of day does (spec §3 01).
+    await waitFor(() => expect(screen.getByTestId('listen-agent-notice').textContent).toBe('Your supervisor may listen to calls for training.'));
   });
 
   it('says nothing about it while listening is off', async () => {
     renderHome();
-    await screen.findByText('Pick a campaign');
+    await screen.findByText('Choose your work for today.');
     expect(screen.queryByTestId('listen-agent-notice')).toBeNull();
   });
 });

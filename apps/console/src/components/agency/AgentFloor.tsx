@@ -326,7 +326,7 @@ function AgentRow({
               size={13}
               role="img"
               className={styles.offlineIcon}
-              aria-label="Station disconnected — no heartbeat"
+              aria-label="Disconnected"
               data-testid={`floor-offline-${agent.session_id}`}
             />
           )}

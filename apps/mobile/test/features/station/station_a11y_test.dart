@@ -3,105 +3,100 @@ import 'dart:ui' show Tristate;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
 
 import 'station_harness.dart';
 
 void main() {
-  group('hold to hang up', () {
+  group('slide to end call (AS3)', () {
     StationView onCall({StationBusy busy = StationBusy.none}) => station(
       phase: AgentPhase.onCall,
       call: call(bridgedAt: t0),
       busy: busy,
     );
 
-    testWidgets('a hold shorter than 500 ms does nothing', (tester) async {
+    testWidgets('a slide short of the end does nothing, and the knob springs back', (tester) async {
       final h = await pumpStation(tester, onCall());
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      expect(find.text('Keep holding…'), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 480));
-      await gesture.up();
-      await tester.pump(const Duration(milliseconds: 300));
+      await slideToEnd(tester, fraction: 0.5);
+      await settle(tester);
       expect(h.actions.count('hangUp'), 0);
-      expect(find.text('Hold to hang up'), findsOneWidget);
+      expect(find.text(StationCopy.slideToEnd), findsOneWidget);
+      final track = tester.getRect(find.byKey(const Key('hang-up')));
+      expect(tester.getRect(find.byKey(const Key('slide-knob'))).left, lessThan(track.left + 16));
     });
 
-    testWidgets('a 500 ms hold fires once, with the finger still down', (tester) async {
+    testWidgets('a full slide fires once, with a tick as it starts and a heavier one as it fires', (tester) async {
       final h = await pumpStation(tester, onCall());
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 510));
+      final r = tester.getRect(find.byKey(const Key('hang-up')));
+      final gesture = await tester.startGesture(Offset(r.left + 32, r.center.dy));
+      for (var i = 0; i < 12; i++) {
+        await gesture.moveBy(Offset(r.width / 10, 0));
+        await tester.pump();
+      }
       expect(h.actions.count('hangUp'), 1);
-      // Holding on for two more seconds does not fire again.
-      await tester.pump(const Duration(seconds: 2));
+      // Dragging on does not fire again.
+      await gesture.moveBy(Offset(-r.width / 2, 0));
+      await gesture.moveBy(Offset(r.width / 2, 0));
       await gesture.up();
       await tester.pump();
       expect(h.actions.count('hangUp'), 1);
-      // Haptic tick on start, a heavier one on fire.
       expect(h.haptics, containsAllInOrder(['HapticFeedbackType.selectionClick', 'HapticFeedbackType.heavyImpact']));
     });
 
-    testWidgets('sliding off the bar cancels the hold', (tester) async {
+    testWidgets('an up-and-down swipe over it does nothing', (tester) async {
       final h = await pumpStation(tester, onCall());
       final bar = find.byKey(const Key('hang-up'));
-      final gesture = await tester.startGesture(tester.getCenter(bar));
-      await tester.pump(const Duration(milliseconds: 200));
-      await gesture.moveTo(tester.getTopLeft(bar) - const Offset(0, 200));
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
+      await tester.dragFrom(tester.getCenter(bar), const Offset(0, -200));
+      await settle(tester);
       expect(h.actions.count('hangUp'), 0);
     });
 
-    testWidgets('a hold the call ends under lets go without an error', (tester) async {
-      // The customer hangs up first: the stage moves to wrap-up and the bar
-      // leaves the screen with the agent's finger still on it. Reduced motion,
-      // so the old stage leaves on the next frame instead of fading over the hold.
+    testWidgets('a slide the call ends under lets go without an error', (tester) async {
+      // The customer hangs up first: the stage moves to What happened? and the control leaves the
+      // screen with the agent's finger still on it.
       final h = await pumpStation(tester, onCall(), disableAnimations: true);
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
+      final r = tester.getRect(find.byKey(const Key('hang-up')));
+      final gesture = await tester.startGesture(Offset(r.left + 32, r.center.dy));
+      await gesture.moveBy(Offset(r.width / 4, 0));
       await tester.pump(const Duration(milliseconds: 100));
       await h.endCall();
       expect(find.byKey(const Key('hang-up')), findsNothing);
+      await gesture.moveBy(Offset(r.width, 0));
       await gesture.up();
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(h.actions.count('hangUp'), 0);
     });
 
-    testWidgets('works while ringing', (tester) async {
-      final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(countdown: 3)));
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 520));
-      await gesture.up();
-      expect(h.actions.count('hangUp'), 1);
+    testWidgets('Call coming has no End call at all (AS11)', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      expect(find.byKey(const Key('hang-up')), findsNothing);
     });
 
-    testWidgets('while the core is hanging up the bar says Ending… and ignores holds', (tester) async {
+    testWidgets('while the core is ending the call it says Ending… and ignores slides', (tester) async {
       final h = await pumpStation(tester, onCall(busy: StationBusy.hangingUp));
-      expect(find.text('Ending…'), findsOneWidget);
-      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
+      expect(find.text(StationCopy.ending), findsOneWidget);
+      await slideToEnd(tester);
+      await settle(tester);
       expect(h.actions.count('hangUp'), 0);
     });
 
-    testWidgets('screen readers confirm in a dialog instead of holding', (tester) async {
+    testWidgets('screen readers confirm in a dialog instead of sliding', (tester) async {
       final semantics = tester.ensureSemantics();
       final h = await pumpStation(tester, onCall());
       final node = tester.getSemantics(find.byKey(const Key('hang-up')));
-      expect(node.label, 'Hang up');
-      expect(node.hint, 'Press and hold to end the call');
-      tester.semantics.tap(find.semantics.byLabel('Hang up'));
+      expect(node.label, StationCopy.endCall);
+      expect(node.hint, StationCopy.endCallHint);
+      tester.semantics.tap(find.semantics.byLabel(StationCopy.endCall));
       await settle(tester);
       expect(find.text('End this call?'), findsOneWidget);
       await tester.tap(find.text('Keep the call'));
       await settle(tester);
       expect(h.actions.count('hangUp'), 0);
 
-      tester.semantics.tap(find.semantics.byLabel('Hang up'));
+      tester.semantics.tap(find.semantics.byLabel(StationCopy.endCall));
       await settle(tester);
-      await tester.tap(find.widgetWithText(FilledButton, 'Hang up'));
+      await tester.tap(find.widgetWithText(FilledButton, StationCopy.endCall));
       await settle(tester);
       expect(h.actions.count('hangUp'), 1);
       semantics.dispose();
@@ -117,7 +112,7 @@ void main() {
       expect(region.flagsCollection.isLiveRegion, isTrue);
 
       await h.setView(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
-      expect(said(), 'Ringing');
+      expect(said(), 'Call coming');
       expect(h.announcements, hasLength(1));
       expect((h.announcements.single! as Map)['data'], containsPair('assertiveness', 1));
 
@@ -136,7 +131,7 @@ void main() {
           wrapup: wrapup(),
         ),
       );
-      expect(said(), 'Wrap-up');
+      expect(said(), 'What happened?');
       // Polite phases are not pushed as announcements: the live region says them.
       expect(h.announcements, hasLength(1));
       semantics.dispose();
@@ -160,8 +155,8 @@ void main() {
       h.container.read(h.holder.notifier).set(station(phase: AgentPhase.reserved, call: call()));
       await tester.pump();
       await tester.pump();
-      expect(find.text('Waiting for a call'), findsNothing);
-      expect(find.text('Ringing — get ready'), findsOneWidget);
+      expect(find.text(StationCopy.nextCallComing), findsNothing);
+      expect(find.text(StationCopy.callComing), findsOneWidget);
     });
   });
 
@@ -199,7 +194,7 @@ void main() {
       await expectNoOverflow(tester);
       expectOnScreen(tester, find.byKey(const Key('hang-up')));
       // Every control is reachable by scrolling and at least 48 dp.
-      for (final key in ['control-mute', 'control-audio', 'control-details', 'control-dnc']) {
+      for (final key in ['control-mute', 'control-audio', 'control-details']) {
         await tester.ensureVisible(find.byKey(Key(key)));
         await tester.pump();
         final s = tester.getSize(find.byKey(Key(key)));
@@ -213,7 +208,7 @@ void main() {
         station(
           phaseSince: t0,
           dialing: false,
-          missedRelease: const MissedReleaseView(headline: 'The customer hung up', detail: 'The call ended.'),
+          missedRelease: const MissedReleaseView(headline: 'While your internet was down, the customer hung up.'),
         ),
         station(phase: AgentPhase.offline, link: StationLink.disconnected),
         station(
@@ -306,13 +301,13 @@ void main() {
         ),
       );
       final mute = tester.getSemantics(find.byKey(const Key('control-mute')));
-      expect(mute.label, 'Mute');
+      expect(mute.label, StationCopy.unmute);
       expect(mute.flagsCollection.isToggled, Tristate.isTrue);
-      expect(tester.getSemantics(find.byKey(const Key('control-dnc'))).label, 'Mark DNC');
+      expect(tester.getSemantics(find.byKey(const Key('control-audio'))).label, startsWith(StationCopy.speaker));
       semantics.dispose();
     });
 
-    testWidgets('Redial says what it leaves to a screen reader, and when it is spent', (tester) async {
+    testWidgets('Call again says what it leaves to a screen reader, and is gone when it is spent', (tester) async {
       final semantics = tester.ensureSemantics();
       WrapupView w(int remaining) => WrapupView(
         endsAt: t0.add(const Duration(seconds: 30)),
@@ -326,12 +321,10 @@ void main() {
           station(phase: AgentPhase.wrapup, call: call(bridgedAt: t0), release: hungUpRelease, wrapup: w(remaining));
       final h = await pumpStation(tester, v(2));
       final node = tester.getSemantics(find.byKey(const Key('redial')));
-      expect(node.label, 'Redial this customer, 2 redials left');
+      expect(node.label, 'Call again · 2 left');
       expect(node.flagsCollection.isEnabled, Tristate.isTrue);
       await h.setView(v(0));
-      final spent = tester.getSemantics(find.byKey(const Key('redial')));
-      expect(spent.label, 'Redial, no redials left for this call');
-      expect(spent.flagsCollection.isEnabled, Tristate.isFalse);
+      expect(find.byKey(const Key('redial')), findsNothing);
       semantics.dispose();
     });
   });

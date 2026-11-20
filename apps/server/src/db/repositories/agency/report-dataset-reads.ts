@@ -336,6 +336,24 @@ export class AgencyReportDatasetRepository {
   }
 
   /**
+   * Agent station (BE-12, AS12): the agent's breaks in this account that ended in the window past
+   * their reason's limit, from the event that ended each (0060's `break_overrun_seconds`, set only on
+   * a transition out of `break` that ran over), on the agent's events (`idx_agency_session_events_agent`).
+   */
+  async agentBreakOverruns(q: ReportAgentScope): Promise<{ breaks: number; seconds_over: number }> {
+    const { rows } = await getPool().query<{ breaks: number; seconds_over: string }>(
+      `SELECT count(*)::int AS breaks, COALESCE(sum(e.break_overrun_seconds), 0)::text AS seconds_over
+         FROM agency_agent_session_events e
+        WHERE e.agent_user_id = $1::uuid
+          AND e.at >= $2::timestamptz AND e.at < $3::timestamptz
+          AND e.tenant_id = $4::uuid AND e.account_id = $5::uuid
+          AND e.break_overrun_seconds IS NOT NULL`,
+      agentValues(q),
+    );
+    return { breaks: n(rows[0]?.breaks), seconds_over: n(rows[0]?.seconds_over) };
+  }
+
+  /**
    * Do Not Call entries the agent wrote (`source = 'agent'`, `added_by` their user id, bare or
    * `user:`-prefixed) in the window, for this account's campaigns or tenant-wide. The tenant's
    * entries of the range on `idx_dnc_entries_tenant_created`, as Insights' DNC read takes them.

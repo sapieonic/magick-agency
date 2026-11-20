@@ -1165,11 +1165,17 @@ export function trackListenTapError(stage: ListenTapErrorStage): void {
 /** Why a Need help request ended (`agency_help_requests_cleared_total`): the contract's `AgencyHelpClearedReason`. */
 export type HelpClearedMetricReason = 'answered' | 'cancelled' | 'expired' | 'session_ended';
 
+/**
+ * The agent's state when they raised Need help (`agency_help_requests_raised_total`'s `state`; agent
+ * station BE-9): the contract's `AgencyAgentState`, six values.
+ */
+export type HelpRaisedMetricState = 'offline' | 'available' | 'reserved' | 'on_call' | 'wrapup' | 'break';
+
 /** How a message to an agent's station went (`agency_supervisor_messages_total`). */
 export type SupervisorMessageResult = 'delivered' | 'agent_not_live';
 
-export const agencyHelpRequestsRaisedTotal = counter(meter, 'agency_help_requests_raised_total', {
-  description: 'Need help requests raised by agents (a repeated raise while one is open is not counted)',
+export const agencyHelpRequestsRaisedTotal = counter<'state'>(meter, 'agency_help_requests_raised_total', {
+  description: 'Need help requests raised by agents, by the agent\'s state when they raised it: offline, available, reserved, on_call, wrapup or break (a repeated raise while one is open is not counted)',
 });
 
 export const agencyHelpRequestsClearedTotal = counter<'reason'>(meter, 'agency_help_requests_cleared_total', {
@@ -1190,9 +1196,9 @@ export const agencySupervisorMessageMarkFailuresTotal = counter(meter, 'agency_s
   description: 'Supervisor messages a station took whose row could not be marked delivered (tried twice): the supervisor was told it was delivered, the audit row says so, and the stored row still reads delivered = false',
 });
 
-/** One request raised. */
-export function trackHelpRaised(): void {
-  agencyHelpRequestsRaisedTotal.inc();
+/** One request raised, in the agent's state at the raise. */
+export function trackHelpRaised(state: HelpRaisedMetricState): void {
+  agencyHelpRequestsRaisedTotal.inc({ state });
 }
 
 /** One request ended, once per request; an answer with how long it waited. */
@@ -1210,3 +1216,57 @@ export function trackSupervisorMessage(result: SupervisorMessageResult): void {
 export function trackSupervisorMessageMarkFailed(): void {
   agencySupervisorMessageMarkFailuresTotal.inc();
 }
+
+// ─── Breaks over their limit (agent station BE-12, AS12) ─────────────────────
+//
+// A break that ran past its reason's `limit_minutes`, counted once when the event that ends it is
+// written (`agency_agent_session_events.break_overrun_seconds`, 0060), by the process that wrote the
+// transition (sum across processes). By tenant, as the dialer's per-tenant counters are; the agent
+// report and the event rows name the agent and the account.
+
+export const agencyBreakOverrunsTotal = counter<'tenant_id'>(meter, 'agency_break_overruns_total', {
+  description: 'Breaks that ran past their reason\'s limit, counted when the break ended (a reserved break, a reason with no limit and a break cut by a restart never count)',
+});
+
+/** One break ended past its limit. */
+export function trackBreakOverrun(tenantId: string): void {
+  agencyBreakOverrunsTotal.inc({ tenant_id: tenantId });
+}
+
+// ─── A working agent's station going away (agent station BE-11, AS16) ────────
+//
+// Counted by the process that held the station socket, when the socket closes, if the agent was
+// working then: available, reserved, on a call or in wrap-up, or on a soft-phone call (a soft-phone
+// agent sits on `break`/`soft_phone`, so `state` reads `break` for that one). A break, a
+// superseded socket (another device took the station) and the agent's own leave (the lease is
+// cleared first) never count. By tenant, as the dialer's per-tenant counters are; the account is in
+// the floor's alerts (`GET /proxy/agency/floor/alerts`), not a label. The reconnect histogram is
+// how long a station that went was away before one attached again to the same session, in that
+// same process (memory only, so a restart in between is not seen), by app.
+
+/** Which app's station went. */
+export type StationDropClientKind = 'web' | 'mobile';
+
+/** What the agent was doing when their station went (the working states, and `break` for a live soft-phone call). */
+export type StationDropState = 'available' | 'reserved' | 'on_call' | 'wrapup' | 'break';
+
+export const agencyStationDisconnectsTotal = counter<'tenant_id' | 'client_kind' | 'state'>(meter, 'agency_station_disconnects_total', {
+  description: 'Station sockets that closed while their agent was working (available, reserved, on_call, wrapup, or break on a live soft-phone call), by app and state; never a break, a supersede or a leave',
+});
+
+export const agencyStationReconnectSeconds = histogram<'client_kind'>(meter, 'agency_station_reconnect_seconds', {
+  description: 'How long a station that went was away before a station attached again to the same session in the same process, by app',
+  unit: 's',
+  buckets: [1, 2, 5, 10, 20, 30, 60, 120, 300, 900, 3600],
+});
+
+/** A working agent's station went. */
+export function trackStationDisconnect(tenantId: string, clientKind: StationDropClientKind, state: StationDropState): void {
+  agencyStationDisconnectsTotal.inc({ tenant_id: tenantId, client_kind: clientKind, state });
+}
+
+/** A station came back after `seconds` away. */
+export function trackStationReconnect(clientKind: StationDropClientKind, seconds: number): void {
+  agencyStationReconnectSeconds.observe({ client_kind: clientKind }, Math.max(0, seconds));
+}
+

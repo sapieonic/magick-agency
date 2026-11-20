@@ -9,8 +9,8 @@ import 'router.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
 
-/// The root widget. Theme follows the system light/dark setting until the
-/// agent picks one in the Me tab; dark is the product's default look.
+/// The root widget. Light until the agent picks dark in the Me tab (AS14: a call-centre floor is
+/// brightly lit, and the station's bands are read from a distance).
 class AgentApp extends ConsumerWidget {
   const AgentApp({super.key});
 
@@ -45,9 +45,5 @@ class AgentApp extends ConsumerWidget {
   }
 }
 
-/// The agent's choice from the Me tab; none yet follows the phone.
-ThemeMode themeModeFor(bool? darkTheme) => switch (darkTheme) {
-      true => ThemeMode.dark,
-      false => ThemeMode.light,
-      null => ThemeMode.system,
-    };
+/// The agent's choice from the Me tab; none yet is light (AS14), whatever the phone's setting.
+ThemeMode themeModeFor(bool? darkTheme) => darkTheme == true ? ThemeMode.dark : ThemeMode.light;

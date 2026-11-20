@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/speech/read_aloud.dart' show readAloudAvailableProvider;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
 import 'package:magick_agency_agent/features/softphone/phone_screen.dart';
@@ -271,6 +272,10 @@ Future<SoftphoneHarness> pumpSoftphone(
       stationListenNoticeProvider.overrideWithValue(listenNotice),
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
+      // Need help on the station's soft phone (AS5): the account's flag, off unless a test says.
+      stationNeedHelpProvider.overrideWithValue(false),
+      // A phone that can speak, answered at once (What happened?'s speakers, AS13).
+      readAloudAvailableProvider.overrideWith((ref) => true),
     ],
   );
   addTearDown(container.dispose);
@@ -607,7 +612,7 @@ SoftphoneView callView(
     SoftphonePhase.dialing => const SoftphoneRail(tone: SoftphoneRailTone.info, label: 'Dialling +91 98123 45678'),
     SoftphonePhase.ringing => const SoftphoneRail(tone: SoftphoneRailTone.info, label: 'Ringing +91 98123 45678'),
     SoftphonePhase.onCall => SoftphoneRail(tone: SoftphoneRailTone.success, label: 'On call with Rahul Verma', timerFrom: t0),
-    SoftphonePhase.outcome => const SoftphoneRail(tone: SoftphoneRailTone.warning, label: 'Outcome needed'),
+    SoftphonePhase.outcome => const SoftphoneRail(tone: SoftphoneRailTone.warning, label: 'What happened?'),
     SoftphonePhase.ready => const SoftphoneRail(tone: SoftphoneRailTone.neutral, label: 'Ready to dial'),
   };
   return SoftphoneView(
@@ -638,7 +643,7 @@ SoftphoneView callView(
     outcomeCode: outcomeCode,
     callbackAt: callbackAt,
     padEnabled: answered,
-    padDisabledReason: answered ? null : 'Outcomes open when the customer answers.',
+    padDisabledReason: answered ? null : 'You can choose once the customer picks up.',
     saving: saving,
     outcomeDueAt: outcomeDueAt,
     muteTarget: phase == SoftphonePhase.ringing ? SoftphoneMuteTarget.ring : SoftphoneMuteTarget.mic,

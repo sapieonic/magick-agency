@@ -974,6 +974,25 @@ export class AgencyIngestJobRepository {
     for (const job of result.rows ?? []) auditRosterUploadEnded(job);
     return result.rowCount ?? 0;
   }
+
+  /**
+   * The roster columns these campaigns' imports kept (`context_columns`), each name once, in the
+   * order the imports first named them (oldest import first): what a campaign's
+   * `context_display.roles` / `.types` may name (BE-6). Real imports only, never a check
+   * (`dry_run`), whatever their status: a failed import may still have loaded rows. Empty when
+   * none kept any (a campaign with no import yet). A retry campaign passes its lineage root too:
+   * its contacts were copied from there.
+   */
+  async knownContextColumns(campaignIds: readonly string[]): Promise<string[]> {
+    if (campaignIds.length === 0) return [];
+    const { rows } = await getPool().query<{ context_columns: string[] }>(
+      `SELECT context_columns FROM agency_ingest_jobs
+        WHERE campaign_id = ANY($1::uuid[]) AND dry_run = FALSE AND context_columns IS NOT NULL
+        ORDER BY created_at, id`,
+      [[...campaignIds]],
+    );
+    return [...new Set(rows.flatMap((r) => r.context_columns))];
+  }
 }
 
 export const agencyIngestJobRepository = new AgencyIngestJobRepository();

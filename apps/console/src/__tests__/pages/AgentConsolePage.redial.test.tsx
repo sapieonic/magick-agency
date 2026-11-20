@@ -33,14 +33,10 @@ vi.mock('../../analytics/events', async (importOriginal) => {
   return { ...actual, ...analyticsMocks };
 });
 
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import {
-  PAD_REDIALING_COPY,
-  REDIAL_DISABLED_COPY,
-  REDIAL_IN_FLIGHT_COPY,
-  REDIAL_REFUSAL_COPY,
-  REDIAL_UNCERTAIN_COPY,
-} from '../../utils/agencyRedialCopy';
+import { PAD_REDIALING_COPY } from '../../utils/agencyRedialCopy';
+import { STATION_COPY, redialRefusedLine } from '../../utils/agency/stationCopy';
 import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
@@ -150,7 +146,9 @@ const PLACED: AgencyRedialResponse = {
   redial_remaining: 1,
 };
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   Object.values(analyticsMocks).forEach((m) => m.mockReset());
@@ -179,6 +177,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
 });
 
@@ -259,7 +258,11 @@ async function inWrapup(redial: Record<string, unknown>) {
 }
 
 const redialButton = () => screen.queryByTestId('wrapup-redial');
-const saveButton = () => screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
+/** What Call again says (spec 05: "Call again · 2 left"), or null when it is not on the screen (AS1). */
+const redialSays = () => redialButton()?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
+const saveButton = () => screen.getByRole('button', { name: /save & next call/i });
+/** Save is faded (AS1's one exception: it stays in place until it can save). */
+const saveFaded = () => saveButton().getAttribute('aria-disabled') === 'true';
 
 async function pressRedial() {
   await act(async () => {
@@ -280,19 +283,16 @@ describe('whether Redial is offered', () => {
     expect(redialButton()).toBeNull();
   });
 
-  it('is shown disabled at 0, saying no redials are left, and pressing it sends nothing', async () => {
+  it('is hidden at 0 (AS1: hide, not disable), so nothing can be sent', async () => {
     await inWrapup({ redial_remaining: 0 });
-    const button = redialButton()!;
-    expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('No redials left');
-    await pressRedial();
+    expect(redialButton()).toBeNull();
     expect(mocks.redialFromWrapup).not.toHaveBeenCalled();
   });
 
-  it('is enabled with the count when redials are left', async () => {
+  it('is offered with the count when calls again are left', async () => {
     await inWrapup({ redial_remaining: 2 });
     expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('2 redials left');
+    expect(redialSays()).toBe('Call again · 2 left');
   });
 
   it('is not shown on a live call', async () => {
@@ -321,14 +321,15 @@ describe('pressing Redial', () => {
     await inWrapup({ redial_remaining: 2 });
     // An outcome picked before the press must not be saveable while it is out.
     fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
-    expect(saveButton().disabled).toBe(false);
+    expect(saveFaded()).toBe(false);
 
     await pressRedial();
 
     expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('Redialling…');
-    expect(saveButton().disabled).toBe(true);
-    expect(screen.getByText(PAD_REDIALING_COPY)).toBeTruthy();
+    expect(redialSays()).toBe('Calling again…');
+    expect(saveFaded()).toBe(true);
+    // The tiles are locked too: an outcome saved now would land on the call being redialled.
+    expect(screen.getByTestId('outcome-sale').getAttribute('aria-disabled')).toBe('true');
 
     // A second press, and Ctrl+Enter from the notes field, both go nowhere.
     await pressRedial();
@@ -348,8 +349,8 @@ describe('pressing Redial', () => {
       latest().emit({ event: 'reserved', attempt: REDIAL_ATTEMPT });
       latest().emit({ event: 'agent_state', state: 'reserved', since: '2026-08-11T10:01:00.000Z' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('Redial 1 of 2 — calling…');
-    expect(screen.getByTestId('contact-redial-tag').textContent).toContain('Redial 1 of 2');
+    expect(screen.getByTestId('band-title').textContent).toBe('Call coming');
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
     // The wrap-up is over, so its button and its lock are gone.
     expect(redialButton()).toBeNull();
 
@@ -357,8 +358,9 @@ describe('pressing Redial', () => {
       latest().emit({ event: 'bridged', attempt_id: 'att-2', bridged_at: '2026-08-11T10:01:04.000Z' });
       latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:01:04.000Z' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
-    expect(screen.getByTestId('rail-detail').textContent).toBe('Redial 1 of 2 · +919820041772');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
+    expect(screen.getByTestId('customer-card').textContent).toContain('+91 98200 41772');
 
     await act(async () => {
       latest().emit({
@@ -372,9 +374,9 @@ describe('pressing Redial', () => {
       latest().emit(wrapupFrame('att-2', { redial_remaining: 1 }));
     });
     expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('1 redial left');
-    // The contact keeps its redial tag through its own wrap-up.
-    expect(screen.getByTestId('contact-redial-tag').textContent).toContain('Redial 1 of 2');
+    expect(redialSays()).toBe('Call again · 1 left');
+    // The customer keeps the tag through its own What happened?.
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
 
     // And the outcome is saved on the redial's attempt.
     fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
@@ -392,43 +394,43 @@ describe('pressing Redial', () => {
 
 describe('a refused redial leaves the agent in wrap-up with the pad usable', () => {
   const CAMPAIGN_STOPPED = 'The campaign is not running, so the customer cannot be redialled. Save the outcome.';
-  // [code, the server's message, what the agent reads, what the button then says (null: enabled)]
+  // [code, the server's message, what the agent reads, 'retired' when the button then goes (null: enabled)].
+  // The station says its own words keyed on the code, never the server's sentence (AS15).
   it.each([
-    ['redial_not_allowed', CAMPAIGN_STOPPED, CAMPAIGN_STOPPED, REDIAL_DISABLED_COPY.blocked],
-    ['redial_limit_reached', 'x', REDIAL_REFUSAL_COPY.redial_limit_reached, 'No redials left'],
+    ['redial_not_allowed', CAMPAIGN_STOPPED, redialRefusedLine('redial_not_allowed', 409), 'retired'],
+    ['redial_limit_reached', 'x', redialRefusedLine('redial_limit_reached', 409), 'retired'],
     [
       'disposition_already_submitted',
       'x',
-      REDIAL_REFUSAL_COPY.disposition_already_submitted,
-      REDIAL_DISABLED_COPY.blocked,
+      redialRefusedLine('disposition_already_submitted', 409),
+      'retired',
     ],
-    ['redial_blocked_dnc', 'x', REDIAL_REFUSAL_COPY.redial_blocked_dnc, REDIAL_DISABLED_COPY.blocked],
-    ['redial_blocked_calling_hours', 'x', REDIAL_REFUSAL_COPY.redial_blocked_calling_hours, null],
-    ['redial_blocked', 'The number is not valid.', 'Couldn’t redial: The number is not valid.', null],
+    ['redial_blocked_dnc', 'x', redialRefusedLine('redial_blocked_dnc', 409), 'retired'],
+    ['redial_blocked_calling_hours', 'x', redialRefusedLine('redial_blocked_calling_hours', 409), null],
+    ['redial_blocked', 'The number is not valid.', redialRefusedLine('redial_blocked', 409), null],
   ])('%s', async (code, message, copy, disabledLine) => {
     mocks.redialFromWrapup.mockRejectedValue(apiError(409, { error: 'Conflict', code, message }));
     await inWrapup({ redial_remaining: 2 });
     await pressRedial();
 
     await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(copy));
+    if (message !== 'x') expect(screen.getByTestId('station').textContent).not.toContain(message);
     expect(screen.getByTestId('wrapup-redial-refusal').getAttribute('role')).toBe('alert');
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code });
 
     if (disabledLine !== null) {
-      // A refusal that holds for this wrap-up retires the button, and says why
-      // beside it — never "2 redials left" on a button that will not press.
-      expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-      expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(disabledLine);
-      await pressRedial();
+      // A refusal that holds for this wrap-up retires the button (AS1: hidden), and the refusal
+      // says why — never "2 left" on a button that will not press.
+      expect(redialButton()).toBeNull();
       expect(mocks.redialFromWrapup).toHaveBeenCalledTimes(1);
     } else {
       expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-      expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('2 redials left');
+      expect(redialSays()).toBe('Call again · 2 left');
     }
 
     // The outcome can still be saved, on the call that was shown.
     fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
-    expect(saveButton().disabled).toBe(false);
+    expect(saveFaded()).toBe(false);
     await act(async () => {
       fireEvent.click(saveButton());
     });
@@ -445,7 +447,7 @@ describe('a refused redial leaves the agent in wrap-up with the pad usable', () 
     await inWrapup({ redial_remaining: 1 });
     await pressRedial();
     await waitFor(() =>
-      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(REDIAL_UNCERTAIN_COPY),
+      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(redialRefusedLine(null, null)),
     );
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code: null });
 
@@ -467,7 +469,7 @@ describe('a refreshed console brings redial back from `ready`', () => {
       });
     });
     expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('1 redial left');
+    expect(redialSays()).toBe('Call again · 1 left');
 
     await pressRedial();
     expect(mocks.redialFromWrapup).toHaveBeenCalledWith('sess-1', 'att-1', 'tenant-1', 'account-1');
@@ -488,9 +490,8 @@ describe('a refreshed console brings redial back from `ready`', () => {
         },
       });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
-    expect(screen.getByTestId('rail-detail').textContent).toBe('Redial 2 of 2 · +919820041772');
-    expect(screen.getByTestId('contact-redial-tag').textContent).toContain('Redial 2 of 2');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 2 of 2');
   });
 
   it('restores a ringing redial as calling', async () => {
@@ -503,7 +504,8 @@ describe('a refreshed console brings redial back from `ready`', () => {
         active_attempt: { ...REDIAL_ATTEMPT, state: 'dialing', bridged_at: null },
       });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('Redial 1 of 2 — calling…');
+    expect(screen.getByTestId('band-title').textContent).toBe('Call coming');
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
   });
 });
 
@@ -575,6 +577,8 @@ describe('the notes draft follows the customer onto the redial', () => {
         event: 'reserved',
         attempt: { ...ATTEMPT, attempt_id: 'att-3', redial: { of_attempt_id: 'att-2', number: 2, remaining: 0 } },
       });
+      // The note is on the call's screen (04), once it connects.
+      latest().emit({ event: 'bridged', attempt_id: 'att-3', bridged_at: '2026-08-11T10:02:04.000Z' });
     });
     expect(notesField().value).toBe(`${DRAFT} Second drop.`);
   });
@@ -585,6 +589,7 @@ describe('the notes draft follows the customer onto the redial', () => {
 
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: { ...ATTEMPT, attempt_id: 'att-9', contact_id: 'c-9' } });
+      latest().emit({ event: 'bridged', attempt_id: 'att-9', bridged_at: '2026-08-11T10:02:04.000Z' });
     });
     expect(notesField().value).toBe('');
     // The first call's draft is left where it was.
@@ -599,6 +604,7 @@ describe('the notes draft follows the customer onto the redial', () => {
         event: 'reserved',
         attempt: { ...REDIAL_ATTEMPT, redial: { of_attempt_id: 'att-other', number: 1, remaining: 1 } },
       });
+      latest().emit({ event: 'bridged', attempt_id: REDIAL_ATTEMPT.attempt_id, bridged_at: '2026-08-11T10:02:04.000Z' });
     });
     expect(notesField().value).toBe('');
   });
@@ -632,42 +638,38 @@ describe('the press itself', () => {
     expect(analyticsMocks.trackAgencyRedialRequested).toHaveBeenCalledTimes(1);
   });
 
-  it('announces "Redialling…" in the page’s assertive region', async () => {
+  it('announces "Calling again…" in the page’s assertive region', async () => {
     await inWrapup({ redial_remaining: 2 });
     deferredRedial();
     await pressRedial();
     const region = document.querySelector('[aria-live="assertive"]')!;
-    expect(region.textContent).toBe(REDIAL_IN_FLIGHT_COPY);
+    expect(region.textContent).toBe(STATION_COPY.callingAgain);
   });
 });
 
-describe('a disabled Redial states a true reason', () => {
+describe('Call again is hidden while it cannot be used (AS1)', () => {
   it('while the station socket is not open', async () => {
     await inWrapup({ redial_remaining: 2 });
     await act(async () => {
       latest().onclose?.({ code: 1006, reason: '' });
     });
-    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.connection);
-    await pressRedial();
+    expect(redialButton()).toBeNull();
     expect(mocks.redialFromWrapup).not.toHaveBeenCalled();
   });
 
-  it('while the campaign is not dialing (the server refuses a redial on a paused campaign)', async () => {
+  it('while the campaign is not dialing (the server refuses a redial on a paused campaign), and back when it is', async () => {
     await inWrapup({ redial_remaining: 2 });
     await act(async () => {
       latest().emit({ event: 'campaign_state', campaign_id: 'camp-1', status: 'paused', reason: 'manual', dialing: false, message: 'Paused.' });
     });
-    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.notDialing);
-    await pressRedial();
+    expect(redialButton()).toBeNull();
     expect(mocks.redialFromWrapup).not.toHaveBeenCalled();
 
     await act(async () => {
       latest().emit({ event: 'campaign_state', campaign_id: 'camp-1', status: 'running', reason: 'manual', dialing: true, message: 'Running.' });
     });
     expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('2 redials left');
+    expect(redialSays()).toBe('Call again · 2 left');
   });
 
   it('once the outcome is saved', async () => {
@@ -676,8 +678,7 @@ describe('a disabled Redial states a true reason', () => {
     await act(async () => {
       fireEvent.click(saveButton());
     });
-    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.saved);
+    expect(redialButton()).toBeNull();
   });
 });
 
@@ -717,14 +718,14 @@ describe('the wrap-up ends while the request is out', () => {
     await inWrapup({ redial_remaining: 2 });
     const request = deferredRedial();
     await pressRedial();
-    expect(screen.getByText(PAD_REDIALING_COPY)).toBeTruthy();
+    expect(redialSays()).toBe('Calling again…');
 
     // The window lapsed (or a supervisor ended it) before the server took it.
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:01:00.000Z' });
     });
     expect(redialButton()).toBeNull();
-    expect(screen.queryByText(PAD_REDIALING_COPY)).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
 
     await act(async () => {
       request.reject(apiError(409, { error: 'Conflict', code: 'redial_not_allowed', message: 'You are not in wrap-up for this call any more.' }));
@@ -750,10 +751,10 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
     expect(JSON.parse(window.localStorage.getItem('agency.notes.att-2')!).notes).toBe(DRAFT);
     expect(window.localStorage.getItem('agency.notes.att-1')).toBeNull();
     // The panel stays on the same customer, tagged as the redial.
-    expect(screen.getByTestId('contact-redial-tag').textContent).toContain('Redial 1 of 2');
-    // A new wrap-up offers Redial again, on the new attempt.
+    expect(screen.getByTestId('redial-tag').textContent).toBe('Calling again · 1 of 2');
+    // A new wrap-up offers Call again, on the new attempt.
     expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('1 redial left');
+    expect(redialSays()).toBe('Call again · 1 left');
 
     fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
     await act(async () => {
@@ -818,7 +819,7 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
     expect(notesField().value).toBe(DRAFT);
     expect(JSON.parse(window.localStorage.getItem('agency.notes.att-2')!).notes).toBe(DRAFT);
     // There was no panel to restate: the reload had none either.
-    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+    expect(screen.queryByTestId('redial-tag')).toBeNull();
   });
 
   it('does not carry anything after a refusal: nothing was placed', async () => {
@@ -834,7 +835,7 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
     await redialEndsBeforeReserved('att-7');
     expect(notesField().value).toBe('');
     expect(JSON.parse(window.localStorage.getItem('agency.notes.att-1')!).notes).toBe(DRAFT);
-    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+    expect(screen.queryByTestId('redial-tag')).toBeNull();
   });
 
   it('does not carry into a later wrap-up once a call has gone live', async () => {
@@ -847,7 +848,7 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
     // An ordinary paced call, then its own wrap-up.
     await callEndsInto({ ...ATTEMPT, attempt_id: 'att-9', contact_id: 'c-9' }, { redial_remaining: 2 }, '10:05');
     expect(notesField().value).toBe('');
-    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+    expect(screen.queryByTestId('redial-tag')).toBeNull();
   });
 });
 
@@ -895,7 +896,7 @@ describe('a press with no answer, then an ordinary call whose wrap-up keeps no p
     });
     expect(notesField().value).toBe('');
     expect(JSON.parse(window.localStorage.getItem('agency.notes.att-1')!).notes).toBe(DRAFT);
-    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+    expect(screen.queryByTestId('redial-tag')).toBeNull();
   });
 });
 

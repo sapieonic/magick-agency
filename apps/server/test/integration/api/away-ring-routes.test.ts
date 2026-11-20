@@ -53,6 +53,7 @@ import { resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voi
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { resetPushSender, setPushSender } from '../../../src/seams/push-sender.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
+import { getPacingInvalidationBus, type PacingInvalidationEvent } from '../../../src/agency/pacing/invalidation-bus.js';
 import { DEVICE_AWAY_BREAK } from '@magick-agency/domain/break-manager';
 
 async function waitFor<T>(what: string, probe: () => Promise<T | null | undefined | false> | T | null | undefined | false, timeoutMs = 10_000): Promise<T> {
@@ -108,9 +109,9 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     return app.inject({ method, url, headers: h, ...(body === undefined ? {} : { payload: JSON.stringify(body) }) });
   };
 
-  async function connect(stationWsUrl: string): Promise<Station> {
+  async function connect(stationWsUrl: string, caps = 'inbound'): Promise<Station> {
     const frames: Array<Record<string, any>> = [];
-    const ws = new WebSocket(`ws://127.0.0.1:${port}${stationWsUrl}&client=mobile&caps=inbound`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${stationWsUrl}&client=mobile&caps=${caps}`);
     sockets.push(ws);
     const closed = new Promise<void>((r) => ws.on('close', () => r()));
     ws.on('message', (raw) => { try { frames.push(JSON.parse(raw.toString())); } catch { /* media */ } });
@@ -230,6 +231,42 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
   });
 
   // ── 1. The push-device routes ───────────────────────────────────────────────
+
+  // Agent station AS18 on the real app: a pool campaign's queue state reaches only a station that
+  // declared `queue_pool`; the join's bootstrap (read before any socket) carries none on pool.
+  // FALSIFIED: with the bootstrap's owner-mode gate dropped, `queue` is on the join and this reds;
+  // with the ready's capability gate dropped, the older build's `ready` carries it; with the
+  // attach's `station_ready` publish back on every campaign session, the older build publishes it.
+  it('AS18: on a pool campaign the bootstrap has no queue; ready.queue and station_ready only for a station that declared queue_pool', async () => {
+    const agent = await user('agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'running', assignment_mode: 'pool' });
+    await staff(campaign.id as string, agent.id);
+    const join = await send('POST', '/proxy/agency/sessions', agent, { campaign_id: campaign.id, device_id: PHONE });
+    expect(join.statusCode, join.body).toBe(201);
+    expect(join.json().assignment_mode).toBe('pool');
+    expect('queue' in join.json()).toBe(false);
+    const sessionId = join.json().session_id as string;
+    const readies: PacingInvalidationEvent[] = [];
+    const unsubscribe = getPacingInvalidationBus().subscribe((event) => {
+      if (event.type === 'station_ready' && event.sessionId === sessionId) readies.push(event);
+    });
+    try {
+      const older = await connect(join.json().station_ws_url as string, 'inbound,floor_assist');
+      expect('queue' in older.frames.find((f) => f['event'] === 'ready')!).toBe(false);
+      older.ws.close();
+      await older.closed;
+      // Published synchronously after `ready`, so none by now means none for this attach.
+      expect(readies).toEqual([]);
+      const mint = await send('POST', `/proxy/agency/sessions/${sessionId}/station-token`, agent, { device_id: PHONE });
+      expect(mint.statusCode, mint.body).toBe(200);
+      const redesigned = await connect(mint.json().station_ws_url as string, 'inbound,floor_assist,queue_pool');
+      expect(redesigned.frames.find((f) => f['event'] === 'ready')!['queue']).toEqual({ due: false, reason: 'queue_empty', next_due_at: null });
+      await waitFor('station_ready', () => readies.length > 0);
+      expect(readies).toEqual([{ type: 'station_ready', sessionId, campaignId: campaign.id }]);
+    } finally {
+      unsubscribe();
+    }
+  });
 
   it('registers, opts in and out, reads and revokes the agent\'s own device; tokens never answered; audited', async () => {
     const agent = await user('agent');
@@ -436,6 +473,10 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(back.frames.indexOf(states[0]!)).toBeLessThan(back.frames.indexOf(ready));
     // The frames have the shape of the app's golden samples (`packages/contracts/fixtures/agent/station.json`).
     expect(Object.keys(states[0]!).sort()).toEqual(Object.keys(STATION_FIXTURES.agent_state_after_away_ring_return).sort());
+    // On a pool campaign `ready` carries the campaign's shared queue (agent station BE-5) only to a
+    // station that declared `queue_pool` (AS18); this one, an app build that declares `inbound`
+    // alone, gets none, exactly as before the redesign, and the frame is the away-ring sample's.
+    expect('queue' in ready).toBe(false);
     expect(Object.keys(ready).sort()).toEqual(Object.keys(STATION_FIXTURES.ready_after_away_ring_return).sort());
     for (const k of ['event', 'state', 'break_reason'] as const) {
       expect(states[0]![k]).toBe(STATION_FIXTURES.agent_state_after_away_ring_return[k]);

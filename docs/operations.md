@@ -763,15 +763,17 @@ listened.
 and a supervisor to reach each other ([`decisions.md`](decisions.md) LF4, LF5): an agent's **Need
 help** on their own station (`POST`/`DELETE /proxy/agency/sessions/:id/help`), and a supervisor's
 **message** to an agent's station (`POST /proxy/agency/sessions/:id/messages`: Talk to agent, Send
-reminder). While it is off both answer `403 floor_assist_disabled` and the floor read carries no
-`help`. It does not gate break limits, giving late callbacks to free agents or the callbacks list
+reminder). While it is off both answer `403 floor_assist_disabled`, the floor read carries no
+`help` and the alerts read lists no help alert. It does not gate break limits, giving late callbacks to free agents or the callbacks list
 (their gates are permissions). An ordinary flag: no handling policy, so a bulk rollout is allowed.
 `FF_AGENCY_FLOOR_ASSIST=true` turns it on for every tenant (dev and staging).
 
 1. **Who answers.** Every `agency.supervise` holder in the account (account admin and up) sees a Need
-   help on the Live floor, which polls every 5 s; nobody is pushed or paged (LF4). Agree with the
-   tenant who keeps the Live floor open during calling hours. A request nobody answers expires after
-   15 minutes (`agy-help-unanswered` warns).
+   help on every console page, in the alerts banner with a chime (`GET /proxy/agency/floor/alerts`,
+   polled every 5 s, AS16), and on the Live floor's cards; nobody is pushed or paged (LF4). An agent
+   can raise it from any state of their station (BE-9). Agree with the tenant who keeps a console
+   open during calling hours. A request nobody answers expires after 15 minutes
+   (`agy-help-unanswered` warns).
 2. **The record.** Each request is a pair of audit rows (`agency_session.help_raised` and how it
    ended); each message an `agency_session.message_sent` row and a row in
    `agency_supervisor_messages`, kept 90 days (LF5) and deleted by the retention purge. Tell the
@@ -782,8 +784,8 @@ reminder). While it is off both answer `403 floor_assist_disabled` and the floor
 4. **Turn it on.** Super-admin console → the tenant → Feature flags → `agency_floor_assist_enabled`
    → On, at tenant scope or for one account. The console and the app read it (client-exposed) at
    their next flag read.
-5. **Check it.** An agent on a test call presses Need help: the supervisor's Live floor shows it
-   within 5 s. The supervisor sends a message: it shows on the agent's station, and the agent's Need
+5. **Check it.** An agent on a test call presses Need help: the supervisor's console shows it in
+   the alerts banner, on any page, within 5 s. The supervisor sends a message: it shows on the agent's station, and the agent's Need
    help clears ("answered"). Both are on the Audit Log.
 
 To turn it off: Off for the tenant or account. Open requests stay in their rows and expire on their
@@ -1430,27 +1432,56 @@ what failed meanwhile.
 ### `agy-help-unanswered` (the Live floor)
 
 **Means:** at least one agent's Need help (LF4) expired in the last 30 minutes
-(`agency_help_requests_cleared_total{reason="expired"}`): the agent asked on a call or in wrap-up,
-and no supervisor listened to their call or sent them a message within 15 minutes. No call is
-affected; a customer may have been kept waiting on a question only a supervisor could answer.
-Warns only.
+(`agency_help_requests_cleared_total{reason="expired"}`): the agent asked (from any state of their
+station since BE-9: on a call, in wrap-up, Ready or on a break; the raised counter's `state` label
+says which) and no supervisor listened to their call or sent them a message within 15 minutes. No
+call is affected; a customer or the agent may have been kept waiting on something only a supervisor
+could answer. Warns only.
 
 **Check:** the Audit Log, filtered to "Agent's request for help expired unanswered"
 (`agency_session.help_expired`): each row names the session and its campaign, and the matching
 "Agent asked for help" row before it says when it was raised and on which call. Then why nobody
-answered: was any supervisor on the Live floor (it is how Need help reaches them: the floor read,
-polled every 5 s; there is no push), was the help alert's chime muted in their browser, were they
-all busy. The usual response is `agency_help_answer_seconds`; `agency_help_requests_raised_total`
-and the other reasons of `agency_help_requests_cleared_total` say how often agents ask and how
-requests end (in Explore; no dashboard panel yet).
+answered: did any supervisor of the account have a console page open (Need help reaches them on
+every page through the alerts read, `GET /proxy/agency/floor/alerts`, polled every 5 s with a banner
+and a chime, AS16; Live floor keeps its cards; there is no push), was the chime muted in their
+browser, were they all busy. The usual response is `agency_help_answer_seconds`;
+`agency_help_requests_raised_total` and the other reasons of `agency_help_requests_cleared_total`
+say how often agents ask and how requests end (in Explore; no dashboard panel yet).
 
-**Do:** a floor with no supervisor watching is the tenant's to fix (who keeps the Live floor open).
-If supervisors say they never saw the request: check `GET /proxy/agency/floor` answers and carries
-`help` (it is null on every row while `agency_floor_assist_enabled` is off for the account, or when
-the flag cannot be read), and that the agent's raise was answered 200 (a `409 help_not_on_call` is
-an agent who was not on a call or in wrap-up). The expiry is read on every floor read; the sweep that
-sends the agent's station `help_cleared` and writes the audit row runs every 15 s in the primary
-(`component=agency-floor-assist`, "Need help expiry sweep failed" on a failing pass).
+**Do:** a floor with no supervisor watching is the tenant's to fix (who keeps a console open). If
+supervisors say they never saw the request: check `GET /proxy/agency/floor/alerts` answers 200 and
+lists it as a `help` alert (the read drops help alerts while `agency_floor_assist_enabled` is off
+for the account, or when the flag cannot be read), and that the agent's raise was answered 200. The
+expiry is read on every alerts and floor read; the sweep that sends the agent's station
+`help_cleared` and writes the audit row runs every 15 s in the primary (`component=agency-floor-assist`,
+"Need help expiry sweep failed" on a failing pass).
+
+**The same floor's other signals (no rule of their own):** `agency_break_overruns_total`, by
+tenant, counts breaks that ran past their reason's limit, once when each ended (BE-12; the
+dashboard's Agent station row; supervisors see a break over time live as a `break_over` alert, and
+the agent report sums the minutes over). `agency_station_disconnects_total` counts stations that
+went while their agent was working, by tenant, app and state (BE-11), and
+`agency_station_reconnect_seconds` how long they were away; a burst is
+`agy-station-drops-burst` below.
+
+### `agy-station-drops-burst` (the Live floor)
+
+**Means:** five or more stations of one tenant's working agents (available, reserved, on a call,
+in wrap-up, or on a soft-phone call) closed within 5 minutes (`agency_station_disconnects_total`,
+summed by `tenant_id`). A break, a station another device took over and the agent's own Leave
+never count. Warns only. One agent dropping is their wifi; many at once is something they share.
+
+**Check:** the `client_kind` and `state` labels in Explore (web consoles or the app; `on_call`
+means live customers were affected: the deferred hang-up holds a dropped call for its grace, then
+ends it), `agency_station_reconnect_seconds` (did they come back, and how fast), whether the server
+restarted then (a deploy, `agy-service-not-reporting`, `agy-cluster-child-crash`), and the ingress
+or load balancer logs for closed WebSockets. Ask the tenant whether their office network or proxy
+dropped. Supervisors already see each agent gone 20 s or more as a `disconnected` alert on every
+console page (`GET /proxy/agency/floor/alerts`), so they know whom to call.
+
+**Do:** fix the shared cause (ingress timeouts, a proxy closing idle WebSockets, a bad release of
+the app); the stations reconnect by themselves once it is gone, and pacing gives them calls again
+as they attach. Nothing to clean up on the server.
 
 ### `agy-analysis-vendor-refusing`
 

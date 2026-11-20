@@ -5,6 +5,8 @@ import 'package:magick_agency_agent/core/station/disposition_rules.dart';
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
+import '../../support/station_jargon.dart';
+
 const _context = <String, Object?>{
   'First Name': 'Asha',
   'Policy #': 'POL-1',
@@ -165,10 +167,10 @@ void main() {
     });
   });
 
-  group('release copy (port of agencyReleaseCopy.test.ts)', () {
+  group('release copy', () {
     test('every reason the contract knows has words, and none is a raw code', () {
       for (final reason in wire.ReleaseReason.values.where((r) => r != wire.ReleaseReason.unknown)) {
-        final copy = releaseCopy(reason, 'srv');
+        final copy = releaseCopy(reason);
         expect(isKnownReleaseReason(reason), isTrue, reason: reason.wire);
         expect(copy.headline, isNotEmpty);
         // Snake-case codes are the ones that could leak; `busy` is also a word.
@@ -178,23 +180,39 @@ void main() {
       }
     });
 
-    test('an unknown reason still produces a headline and uses the server sentence', () {
-      expect(releaseCopy(wire.ReleaseReason.unknown, '  The line went quiet.  ').subtext, 'The line went quiet.');
-      expect(releaseCopy(wire.ReleaseReason.unknown, '').headline, 'Call ended');
-      expect(releaseCopy(wire.ReleaseReason.unknown, '').subtext, 'The call ended.');
+    test('an unknown reason gets a plain line, never the server\'s sentence (AS15)', () {
+      expect(releaseCopy(wire.ReleaseReason.unknown).headline, 'The call ended');
+      expect(releaseCopy(wire.ReleaseReason.unknown).subtext, 'The call ended.');
       expect(isKnownReleaseReason(wire.ReleaseReason.unknown), isFalse);
     });
 
+    test('no jargon in any release line (spec §6.6)', () {
+      for (final reason in wire.ReleaseReason.values) {
+        final c = releaseCopy(reason);
+        for (final line in [c.headline, c.subtext, missedReleaseCopy(reason)]) {
+          for (final word in stationJargon) {
+            expect(word.hasMatch(line), isFalse, reason: '${reason.wire}: "$line" says ${word.pattern}');
+          }
+        }
+      }
+    });
+
+    test('a call that ended while the internet was down: one sentence that says so (no double prefix)', () {
+      expect(missedReleaseCopy(wire.ReleaseReason.remoteHangup), 'While your internet was down, the customer hung up.');
+      expect(missedReleaseCopy(wire.ReleaseReason.noAnswer), 'While your internet was down, the last call did not connect.');
+      expect(missedReleaseCopy(wire.ReleaseReason.unknown), 'While your internet was down, the last call ended.');
+    });
+
     test('tones match the console', () {
-      expect(releaseCopy(wire.ReleaseReason.agentDisconnected, '').tone, ReleaseTone.danger);
-      expect(releaseCopy(wire.ReleaseReason.abandoned, '').tone, ReleaseTone.warning);
-      expect(releaseCopy(wire.ReleaseReason.completed, '').tone, ReleaseTone.neutral);
+      expect(releaseCopy(wire.ReleaseReason.agentDisconnected).tone, ReleaseTone.danger);
+      expect(releaseCopy(wire.ReleaseReason.abandoned).tone, ReleaseTone.warning);
+      expect(releaseCopy(wire.ReleaseReason.completed).tone, ReleaseTone.neutral);
     });
 
     test('says "we" in every retry promise and never promises this agent will call back', () {
       for (final r in [wire.ReleaseReason.noAnswer, wire.ReleaseReason.busy, wire.ReleaseReason.failed]) {
-        final text = releaseCopy(r, '').subtext;
-        expect(text, contains("We'll"));
+        final text = releaseCopy(r).subtext;
+        expect(text, contains('We will'));
         expect(text.toLowerCase(), isNot(contains("i'll")));
       }
     });
@@ -202,16 +220,50 @@ void main() {
 
   group('join and switch copy (port of agencyJoinConflict.ts)', () {
     test('does not tell a mid-call agent to leave right now', () {
-      expect(joinConflictRemedy('Renewals', wire.AgentState.onCall), startsWith('Finish what you’re doing on Renewals'));
+      expect(joinConflictRemedy('Renewals', wire.AgentState.onCall), 'Finish the call on Renewals first, then come back here.');
       expect(joinConflictRemedy('Renewals', wire.AgentState.onBreak), 'Leave Renewals first, then come back here.');
       expect(conflictIsMidCall(wire.AgentState.wrapup), isTrue);
       expect(conflictIsMidCall(wire.AgentState.available), isFalse);
     });
 
-    test('switch failures name the stage', () {
-      expect(switchFailureCopy(SwitchStage.leave, 'Renewals', null), 'Renewals is still open. Try again.');
-      expect(switchFailureCopy(SwitchStage.rejoin, 'Renewals', 'Not staffed.'),
-          'Left Renewals, but couldn’t join this campaign — Not staffed.');
+    test('switch failures name the stage, never with the server\'s sentence', () {
+      expect(switchFailureCopy(SwitchStage.leave, 'Renewals'), 'Renewals is still open. Nothing changed. Try again.');
+      expect(switchFailureCopy(SwitchStage.rejoin, 'Renewals'), 'You left Renewals, but this work did not open. Go back and open it again.');
+    });
+
+    test('a refused join in the station\'s words, keyed on the code then the status (AS15)', () {
+      expect(joinRefusedCopy(code: 'not_staffed', status: 403), 'You are not on this work. Ask your supervisor to add you.');
+      expect(joinRefusedCopy(code: 'session_in_other_tenant', status: 409, placeName: 'Pune branch'),
+          'You are working in Pune branch. Finish work there first, then come back here.');
+      expect(joinRefusedCopy(code: 'feature_disabled', status: 403), featureDisabledCopy);
+      expect(joinRefusedCopy(code: 'something_new', status: 403), 'You cannot open this work. Ask your supervisor.');
+      expect(joinRefusedCopy(code: null, status: 404), 'This work was not found. Ask your supervisor.');
+      expect(joinRefusedCopy(), 'Check your internet. Then go back and try again.');
+      expect(joinRefusedCopy(code: 'x', status: 500), joinFailedCopy);
+    });
+
+    test('the station\'s refusal lines say none of the jargon (spec §6.6)', () {
+      final lines = [
+        for (final c in [null, 'not_staffed', 'session_in_other_tenant', 'session_on_other_campaign', 'feature_disabled',
+            'account_scope_required', 'dial_failed', 'campaign_not_running'])
+          joinRefusedCopy(code: c, status: 409),
+        for (final c in [null, 'attempt_not_dispositionable', 'inbound_call_live', 'session_ended', 'campaign_not_running'])
+          presenceRefusedCopy(c),
+        for (final c in [null, 'unknown_disposition_code', 'note_required', 'already_dispositioned', 'not_your_attempt'])
+          saveRefusedCopy(c),
+        for (final c in wire.AgencyErrorCode.values) redialRefusalCopy(c),
+        for (final s in SwitchStage.values) switchFailureCopy(s, 'Renewals'),
+        dncDoneCopy(recorded: true),
+        dncDoneCopy(recorded: false),
+        suppressOutcomeNotListedCopy,
+        leaveFailedCopy,
+        breakRejectedCopy,
+        breakFailedCopy,
+        actionFailedCopy,
+      ];
+      for (final line in lines) {
+        expect(jargonIn(line), isEmpty, reason: line);
+      }
     });
   });
 

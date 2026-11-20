@@ -1127,16 +1127,17 @@ class SoftphoneView {
 // word a block differently. The console's sentences (`SAVE_BLOCK_COPY`,
 // `SOFTPHONE_FINISH_*_COPY`), with the mobile substitutions.
 
+/// Why Save cannot save yet, in the station's words (AS15; the console's `sideSaveBlockLine`).
 const Map<SoftphoneSaveBlock, String> softphoneSaveBlockCopy = {
-  SoftphoneSaveBlock.noSelection: 'Pick an outcome to save this call.',
-  SoftphoneSaveBlock.callLive: 'Save unlocks when the call ends.',
-  SoftphoneSaveBlock.noteRequired: 'This disposition needs a note.',
-  SoftphoneSaveBlock.callbackRequired: 'This disposition needs a callback time.',
-  SoftphoneSaveBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
-  SoftphoneSaveBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
-  SoftphoneSaveBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
-  SoftphoneSaveBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
-  SoftphoneSaveBlock.fieldsRequired: 'Fill in the required call details first.',
+  SoftphoneSaveBlock.noSelection: 'Choose one first.',
+  SoftphoneSaveBlock.callLive: 'Save opens when the call ends.',
+  SoftphoneSaveBlock.noteRequired: 'Write a note for this one.',
+  SoftphoneSaveBlock.callbackRequired: 'Choose when to call.',
+  SoftphoneSaveBlock.callbackInPast: 'That time is over. Choose a new time.',
+  SoftphoneSaveBlock.promiseRequired: 'Choose the pay date.',
+  SoftphoneSaveBlock.promiseDateInvalid: 'Choose a pay date from today up to 30 days ahead.',
+  SoftphoneSaveBlock.promiseAmountInvalid: 'Write the amount in numbers only, like 12500.',
+  SoftphoneSaveBlock.fieldsRequired: 'Fill in the call details first.',
 };
 
 /// Finish mode with a call on screen: what still works, and what does not.

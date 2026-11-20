@@ -19,12 +19,13 @@ import {
   inboundForceAvailableCopy,
   owesInboundOutcome,
   secondsInStateBucket,
+  disconnectedWords,
   timeInStateMs,
   type AgencyFloorSort,
+  type FloorAgentRow,
 } from '../../utils/agencyAgentFloor';
 import { formatDuration } from '../../utils/agencyClock';
 import { trackAgencyFloorIntervention } from '../../analytics/events';
-import type { AgencySupervisorAgent } from '../../types/agency-campaign';
 import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloorDrawer.module.css';
 
@@ -50,7 +51,8 @@ import styles from './AgentFloorDrawer.module.css';
 export interface AgentFloorDrawerProps {
   /** Attributes the force-available analytics event to a campaign — never an agent identity. */
   campaignId: string;
-  agent: AgencySupervisorAgent;
+  /** The campaign floor's row, or Live floor's with `disconnected_since` (BE-11). */
+  agent: FloorAgentRow;
   /** The floor's shared ticking clock, so the drawer's duration matches the tile. */
   now: number;
   /** `hasPermission(role, 'agency.supervise')` — the API's gate, mirrored. */
@@ -67,17 +69,21 @@ export interface AgentFloorDrawerProps {
   callsLabel?: string;
 }
 
-/** "Connected", "Disconnected", or the honest third answer. */
-function connectionCopy(connected: boolean | null): { label: string; tone: string } {
-  if (connected === true) return { label: 'Station connected', tone: 'ok' };
-  if (connected === false) return { label: 'Station disconnected — no heartbeat', tone: 'bad' };
+/**
+ * "Connected", "Disconnected for 2 min" (from `disconnected_since` where the read carries it, else
+ * "Disconnected"; Live floor's words, BE-11), or the honest third answer.
+ */
+function connectionCopy(agent: FloorAgentRow, now: number): { label: string; tone: string } {
+  const { connected } = agent;
+  if (connected === true) return { label: 'Connected', tone: 'ok' };
+  if (connected === false) return { label: disconnectedWords(agent.disconnected_since, now), tone: 'bad' };
   /*
     `null` is the API's Redis read having failed, and it gets its own sentence.
     Collapsing it into "Disconnected" would be the console reporting a fault of
     its own as a fact about a person, on the screen where a supervisor decides
     whether to go and find them.
   */
-  return { label: 'Couldn’t check whether their station is connected', tone: 'unknown' };
+  return { label: 'Couldn’t check whether they are connected', tone: 'unknown' };
 }
 
 export function AgentFloorDrawer({
@@ -99,7 +105,7 @@ export function AgentFloorDrawer({
 
   const displayName = agentDisplayName(agent);
   const elapsedMs = timeInStateMs(agent, now);
-  const connection = connectionCopy(agent.connected);
+  const connection = connectionCopy(agent, now);
 
   /*
     Both halves, and both are required. `canForceAvailable` is the SESSION's

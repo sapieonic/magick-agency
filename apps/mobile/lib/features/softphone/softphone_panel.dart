@@ -12,6 +12,8 @@ import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
 import '../../ui/primitives.dart';
 import '../station/parts/banners.dart' show BusyLabel, ListenFirstNoticeCard, ListenInfoButton;
+import '../station/parts/need_help.dart' show NeedHelpCard;
+import '../station/parts/top_bar.dart' show NeedHelpButton;
 import '../station/station_copy.dart';
 import '../station/station_providers.dart';
 import 'parts/call_controls.dart';
@@ -158,6 +160,8 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final callKey = callId ?? 'idle';
     final body = <Widget>[
       _Header(surface: widget.surface),
+      // Need help on the station's soft phone too (AS5): its notice or refusal under the header.
+      if (widget.surface == SoftphoneSurface.station) const NeedHelpCard(),
       const ListenFirstNoticeCard(),
       const _BootstrapError(),
       const _MicProblem(),
@@ -254,7 +258,8 @@ class _DialHead extends StatelessWidget {
 
 /// The title, what is disclosed (recording, muted, where the call is logged,
 /// that a supervisor may listen), and the way out: Close soft phone on the Phone tab, Return to campaign on
-/// the station, each disabled with its reason while a call is live or owed.
+/// the station, each disabled with its reason while a call is live or owed. On the station, Need help
+/// sits beside the way out (AS5), as on every working screen (the console's `StationSoftphone`).
 class _Header extends ConsumerWidget {
   const _Header({required this.surface});
 
@@ -306,18 +311,26 @@ class _Header extends ConsumerWidget {
                   if (listenNotice) const ListenInfoButton(key: Key('softphone-listen-info')),
                 ],
               ),
-              // Merged, so the reason is the button's own hint, read with it.
-              MergeSemantics(
-                child: Semantics(
-                  hint: reason,
-                  child: OutlinedButton(
-                    key: Key(phone ? 'softphone-close' : 'softphone-return'),
-                    onPressed: !allowed || s.busy != SoftphoneSessionBusy.none
-                        ? null
-                        : () => phone ? _close(context, ref) : ref.read(softphoneActionsProvider).returnToCampaign(),
-                    child: BusyLabel(label: label, busy: busy),
+              Wrap(
+                spacing: Space.sm,
+                runSpacing: Space.xs,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (!phone) const NeedHelpButton(),
+                  // Merged, so the reason is the button's own hint, read with it.
+                  MergeSemantics(
+                    child: Semantics(
+                      hint: reason,
+                      child: OutlinedButton(
+                        key: Key(phone ? 'softphone-close' : 'softphone-return'),
+                        onPressed: !allowed || s.busy != SoftphoneSessionBusy.none
+                            ? null
+                            : () => phone ? _close(context, ref) : ref.read(softphoneActionsProvider).returnToCampaign(),
+                        child: BusyLabel(label: label, busy: busy),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),

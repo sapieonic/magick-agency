@@ -65,6 +65,18 @@ void main() {
     expect(find.byKey(const Key('my-contacts-end')), findsOneWidget);
   });
 
+  testWidgets('a contact\'s number is masked when its campaign masks numbers (AS9), aloud too', (tester) async {
+    api.autoPage = contactsPage([contact(1, eligible: true, display: PhoneDisplay.masked), contact(2)]);
+    await pump(tester);
+    expect(find.byKey(const Key('call-k1')), findsOneWidget, reason: 'its Call button is named with the number');
+    expect(find.text('98••• ••001'), findsOneWidget);
+    expect(find.text('+91 98400 10001'), findsNothing);
+    expect(find.text('+91 98400 10002'), findsOneWidget, reason: 'an older server: in full');
+    final semantics = tester.ensureSemantics();
+    expect(find.bySemanticsLabel(RegExp('98400 10001')), findsNothing);
+    semantics.dispose();
+  });
+
   testWidgets('Call shows only on contacts that may be called, while on duty and available here', (tester) async {
     await pump(tester);
     expect(find.byKey(const Key('call-k1')), findsOneWidget, reason: 'retry eligible');

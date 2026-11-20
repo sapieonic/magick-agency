@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { INBOUND_NOTICE_COPY, STATION_BLOCK_COPY, STATION_COPY } from '../utils/agency/stationCopy';
+import { SIDE_COPY } from '../utils/agency/sideViewCopy';
 import {
   dispositionInboundCall,
   getInboundCall,
@@ -11,7 +13,6 @@ import {
 import { errorCode } from '../utils/agencyErrors';
 import { resyncCatalog } from '../utils/agencyCatalogSync';
 import {
-  DISPOSITION_BLOCK_COPY,
   EMPTY_DISPOSITION_FORM,
   blockReason,
   buildSubmitPayload,
@@ -19,8 +20,6 @@ import {
   type DispositionFormState,
 } from '../utils/agencyDispositionForm';
 import type { NotesStatus } from '../utils/agencyNotes';
-import { formatDialNumber } from '../utils/softphone/phoneInput';
-import { INBOUND_REFUSAL_COPY, inboundRefusalCopy } from '../utils/inbound/inboundCopy';
 import {
   INBOUND_PAD_DISABLED_COPY,
   inboundPhase,
@@ -52,33 +51,31 @@ import type { AgencyInboundCall } from '../types/inbound';
 
 export type InboundSaveBlock = DispositionBlockReason | 'call_live';
 
+/** Why Save cannot save yet, in the station's words (AS15). */
 export const INBOUND_SAVE_BLOCK_COPY: Record<InboundSaveBlock, string> = {
-  ...DISPOSITION_BLOCK_COPY,
-  no_selection: 'Pick an outcome to save this call.',
-  note_required: 'This outcome needs a note.',
-  datetime_required: 'This outcome needs a callback time.',
-  call_live: 'Save unlocks when the call ends.',
+  ...STATION_BLOCK_COPY,
+  call_live: SIDE_COPY.saveOpensAfterCall,
 };
 
-/** Why the server refused an outcome (`inbound_disposition_invalid`'s `reason`), in words. */
+/** Why the server refused what the agent chose (`inbound_disposition_invalid`'s `reason`), in the station's words. */
 export const INBOUND_DISPOSITION_RULE_COPY = {
-  unknown_code: 'The outcome list for this call changed. Pick one of these.',
-  note_required: INBOUND_SAVE_BLOCK_COPY.note_required,
-  datetime_required: INBOUND_SAVE_BLOCK_COPY.datetime_required,
-  invalid_callback_at: 'That callback time can’t be used. Pick a time in the future.',
-  promise_required: INBOUND_SAVE_BLOCK_COPY.promise_required,
-  invalid_promise_date: 'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
-  invalid_promise_amount: INBOUND_SAVE_BLOCK_COPY.promise_amount_invalid,
-  promise_not_expected: 'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
+  unknown_code: STATION_COPY.catalogChanged,
+  note_required: STATION_BLOCK_COPY.note_required,
+  datetime_required: STATION_BLOCK_COPY.datetime_required,
+  invalid_callback_at: STATION_BLOCK_COPY.callback_in_past,
+  promise_required: STATION_BLOCK_COPY.promise_required,
+  invalid_promise_date: STATION_BLOCK_COPY.promise_date_invalid,
+  invalid_promise_amount: STATION_BLOCK_COPY.promise_amount_invalid,
+  promise_not_expected: 'This choice does not take a pay date. Clear the pay date, or choose the one that does.',
 } as const;
 
-export const INBOUND_MUTED_AT_CONNECT_COPY = 'You are muted. The caller can’t hear you — press M to unmute.';
-export const INBOUND_HUNG_UP_EARLY_COPY = 'The caller hung up before you were connected.';
-export const INBOUND_REQUEUED_COPY = 'The call went back to the queue while your station was away.';
+export const INBOUND_MUTED_AT_CONNECT_COPY = SIDE_COPY.mutedAtAnswer;
+export const INBOUND_HUNG_UP_EARLY_COPY = INBOUND_NOTICE_COPY.hungUpEarly;
+export const INBOUND_REQUEUED_COPY = INBOUND_NOTICE_COPY.requeued;
 /** The outcome window ended before an outcome was saved: the call was closed without one (`no_disposition`). */
-export const INBOUND_OUTCOME_WINDOW_ENDED_COPY = 'The time to save this call’s outcome ran out, so it was closed without one.';
+export const INBOUND_OUTCOME_WINDOW_ENDED_COPY = INBOUND_NOTICE_COPY.windowEnded;
 /** A supervisor closed the call before its window ended ("Close and make available"). */
-export const INBOUND_CLOSED_BY_SUPERVISOR_COPY = 'A supervisor closed this call without an outcome.';
+export const INBOUND_CLOSED_BY_SUPERVISOR_COPY = INBOUND_NOTICE_COPY.closedBySupervisor;
 
 /**
  * Why an answered call left the station with no outcome saved (settled, bridged, no code): its
@@ -402,7 +399,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     setSaving(false);
     if (result.ok) {
       adoptCall(result.value.call);
-      setAnnouncement('Outcome saved.');
+      setAnnouncement(SIDE_COPY.savedAnnounce);
       return;
     }
     const message = dispositionRefusalCopy(result.refusal, { windowEnded: windowEnded(target, clock) });
@@ -412,7 +409,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     }
     if (refusal.code === 'inbound_outcome_already_saved' || refusal.code === 'inbound_call_not_found') reconcile();
     setPadRejection(message);
-    setAnnouncement(`The outcome wasn’t saved. ${message}`);
+    setAnnouncement(SIDE_COPY.notSaved(message));
   }, [call, tenantId, accountId, clock, saveBlockAt, catalog, fullForm, adoptCall, reconcile, cancelSave]);
 
   // ── Call controls ─────────────────────────────────────────────────────────
@@ -434,7 +431,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
       reconcile();
       return;
     }
-    setHangupFailure(`We couldn’t end the call — you may still be connected. ${inboundRefusalCopy(result.refusal)}`);
+    setHangupFailure(`${SIDE_COPY.endCallFailed} ${inboundCallRefusalWords(result.refusal)}`);
   }, [call, tenantId, accountId, adoptCall, reconcile]);
 
   const muteEnabled = audio.sending && phase === 'connected';
@@ -457,15 +454,11 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     setDncInFlight(false);
     setDncConfirmOpen(false);
     if (result.ok) {
-      const where = result.value.scope === 'campaign' && target.match
-        ? `for ${target.match.campaign_name}`
-        : 'for this account';
-      const text = `${formatDialNumber(result.value.phone_e164)} is on the Do Not Call list ${where}.`;
-      setDncOutcome(text);
-      setAnnouncement(text);
+      setDncOutcome(SIDE_COPY.stoppedCalls);
+      setAnnouncement(SIDE_COPY.stoppedCalls);
       return;
     }
-    const text = `We couldn’t add the number to Do Not Call. ${inboundRefusalCopy(result.refusal)}`;
+    const text = `${SIDE_COPY.stopFailed} ${inboundCallRefusalWords(result.refusal)}`;
     setDncFailure(text);
     setAnnouncement(text);
   }, [call, tenantId, accountId]);
@@ -506,14 +499,30 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
 }
 
 /**
- * An outcome refused, in the console's words: the rule when the server named one. "Already saved"
- * once the call's outcome window has ended (`windowEnded`) is the lapse closing it, not an outcome
- * someone saved: it says the window ended.
+ * What the agent's call refusals say, keyed on the code, in the station's words (AS15). Any code the
+ * agent's call does not expect, and one the console does not know, gets a safe line of ours: never
+ * the server's sentence.
+ */
+export const INBOUND_CALL_REFUSAL_WORDS: Partial<Record<InboundRefusal['code'], string>> = {
+  inbound_disabled: 'Calls from customers are turned off for this account.',
+  inbound_call_live: 'Finish this call first. Choose what happened and press Save.',
+  inbound_call_not_found: 'We cannot find this call. It may be closed already.',
+  inbound_call_not_dispositionable: 'You can choose what happened only after you have talked to the customer.',
+  inbound_disposition_invalid: 'That did not save. Check what you chose, the note and the time.',
+  inbound_outcome_already_saved: 'This call is saved already.',
+};
+
+export function inboundCallRefusalWords(refusal: InboundRefusal): string {
+  return INBOUND_CALL_REFUSAL_WORDS[refusal.code] ?? STATION_COPY.somethingWentWrong;
+}
+
+/**
+ * What the agent chose, refused, in the station's words: the rule when the server named one.
+ * "Already saved" once the call's window has ended (`windowEnded`) is the lapse closing it, not a
+ * save someone made: it says the time ran out.
  */
 export function dispositionRefusalCopy(refusal: InboundRefusal, opts: { windowEnded?: boolean } = {}): string {
   if (refusal.code === 'inbound_outcome_already_saved' && opts.windowEnded) return INBOUND_OUTCOME_WINDOW_ENDED_COPY;
-  if (refusal.code === 'inbound_disposition_invalid') {
-    return refusal.reason ? INBOUND_DISPOSITION_RULE_COPY[refusal.reason] : INBOUND_REFUSAL_COPY.inbound_disposition_invalid;
-  }
-  return inboundRefusalCopy(refusal);
+  if (refusal.code === 'inbound_disposition_invalid' && refusal.reason) return INBOUND_DISPOSITION_RULE_COPY[refusal.reason];
+  return inboundCallRefusalWords(refusal);
 }

@@ -37,6 +37,7 @@ vi.mock('../../analytics/events', () => ({
 }));
 
 import { AgentFloor } from '../../components/agency/AgentFloor';
+import { AgentFloorDrawer } from '../../components/agency/AgentFloorDrawer';
 
 /** Pinned so `state_since` offsets are exact. */
 const NOW = Date.parse('2026-08-15T12:00:00.000Z');
@@ -188,10 +189,31 @@ describe('agent floor — `connected: null` is not “disconnected”', () => {
     expect(screen.queryByText(/Disconnected/)).toBeNull();
   });
 
-  it('renders it on `false`', () => {
+  it('renders it on `false`, in plain words (no heartbeat jargon), the drawer included', () => {
     renderFloor({ stats: stats([agent({ session_id: 'gone', connected: false })]) });
-    expect(screen.getByTestId('floor-offline-gone')).toBeTruthy();
+    expect(screen.getByTestId('floor-offline-gone').getAttribute('aria-label')).toBe('Disconnected');
     expect(screen.getByTestId('floor-row-gone').getAttribute('data-risk')).toBe('disconnected');
+    // The campaign floor's read does not say since when: no time rather than a wrong one.
+    fireEvent.click(screen.getByTestId('floor-row-gone'));
+    const connection = screen.getByTestId('agent-drawer-connection');
+    expect(connection.textContent).toBe('Disconnected');
+    expect(connection.getAttribute('data-tone')).toBe('bad');
+    expect(document.body.textContent).not.toMatch(/heartbeat/i);
+  });
+
+  it('says for how long in the drawer when the row knows since when (Live floor’s, BE-11)', () => {
+    render(
+      <AgentFloorDrawer
+        campaignId="camp-1"
+        agent={{ ...agent({ session_id: 'gone', connected: false }), disconnected_since: ago(150) }}
+        now={NOW}
+        canSupervise
+        sort="risk"
+        onClose={vi.fn()}
+        onForced={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('agent-drawer-connection').textContent).toBe('Disconnected for 2 min');
   });
 
   it('says so in its own words in the drawer, rather than picking a side', () => {

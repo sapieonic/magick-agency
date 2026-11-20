@@ -134,6 +134,8 @@ export const ENDPOINTS = {
      */
     agency: {
       myStats: `${API_BASE}/proxy/agency/my-stats`,
+      /** The agent's own day on one campaign: My day, the call-later list, Finish work (BE-1 to BE-3). */
+      myDay: `${API_BASE}/proxy/agency/my-day`,
       agentStats: (userId: string) =>
         `${API_BASE}/proxy/agency/agents/${encodeURIComponent(userId)}/stats`,
       /**
@@ -199,6 +201,12 @@ export const ENDPOINTS = {
        */
       floor: `${API_BASE}/proxy/agency/floor`,
       promisesSummary: `${API_BASE}/proxy/agency/promises/summary`,
+      /**
+       * The account's open supervisor alerts (agent station AS16: Need help, a break over its
+       * limit, a working agent disconnected), `agency.supervise`; the console's shell polls it
+       * every 5 s on every page (`useFloorAlerts`).
+       */
+      floorAlerts: `${API_BASE}/proxy/agency/floor/alerts`,
     },
   },
   /**

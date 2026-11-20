@@ -73,6 +73,7 @@ import { withTimeoutOr } from '../../utils/with-timeout.js';
 import { inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
 import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
 import type { InboundAgentViewsMemo, InboundConnector } from './inbound-connector.js';
+import { callbackBookerOf } from '../call-later.js';
 
 const log = createChildLogger({ component: 'agency-inbound-calls' });
 
@@ -258,6 +259,15 @@ export class InboundCallService {
       entry, now, callbackAt: callbackAt ?? followUpAt, placed: false, contact, tag,
     });
     const settlement = inboundContactSettlement(entry, decision, nextAttemptAt, { followUp: followUpAt !== null });
+    // Agent station (BE-3): a call-later the agent who answered books on this call is theirs, as on
+    // the station; a supervisor's on-behalf save records no booker (`callbackBookerOf`).
+    const callbackBooker = callbackBookerOf({
+      decisionReason: decision.reason,
+      entry,
+      followUpBooked: followUpAt !== null,
+      onBehalf: found.onBehalf,
+      reservedUserId: row.answered_by_user_id ?? null,
+    });
 
     // Written inside the transaction below (typed wide: TS does not follow writes in a callback).
     let dncEntry = null as InboundDncEntryWritten | null;
@@ -280,7 +290,7 @@ export class InboundCallService {
           dncEntry = (await markCallerDnc(row, row.from_e164, actor.userId, `disposition:${entry.code}`, client)).entry;
         }
         const settled = await agencyContactRepository.settleFromInbound({
-          inboundCallId: row.id, settlement, lastDisposition: entry.code,
+          inboundCallId: row.id, settlement, lastDisposition: entry.code, callbackBooker,
         }, { client });
         if (settled) {
           contactState = settled.state;
@@ -297,7 +307,7 @@ export class InboundCallService {
         // save booked moves with it, as the soft phone's replay does (only while it is still
         // `pending` on this code). Nothing else runs twice: no DNC mark, no settlement.
         const moved = await agencyContactRepository.rescheduleFromInboundReplay({
-          inboundCallId: row.id, dispositionCode: entry.code, nextAttemptAt: settlement.at,
+          inboundCallId: row.id, dispositionCode: entry.code, nextAttemptAt: settlement.at, callbackBooker,
         }, { client });
         if (moved) {
           contactState = moved.state;

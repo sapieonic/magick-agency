@@ -47,8 +47,12 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true, allow_wrapup_redial: false,
     assignment_mode: 'pool', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 30, callback_fallback: 'pool',
     allow_agent_retry: false, agent_retry_rounds: 1, agent_retry_cooldown_minutes: 30, inbound_sticky_enabled: true,
+    // The agent station's settings (0056).
+    daily_target_calls: null,
     retry_policy: {} as never, disposition_catalog: [], outcome_dispositions: {}, break_reasons: [],
     context_display: {} as never, record_calls: false, analysis_profile_id: null,
+    agent_script: {},
+    phone_display: 'full',
     status: 'running',
     abandonment_ceiling_pct: 3, pause_reason: null, paused_at: null,
     pause_abandonment_rate_pct: null,

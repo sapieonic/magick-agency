@@ -2,7 +2,8 @@ import { vi } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { useSoftphone, type SoftphoneAudio } from '../../hooks/useSoftphone';
-import { SoftphoneView } from '../../components/softphone/SoftphoneView';
+import { SoftphoneScreen } from '../../components/softphone/StationSoftphone';
+import { SIDE_COPY } from '../../utils/agency/sideViewCopy';
 import { serverClock } from '../../hooks/useServerClock';
 import type { RingbackTone } from '../../utils/softphone/ringback';
 import type { StationConnection } from '../../hooks/agencyStation/types';
@@ -10,7 +11,7 @@ import type { AgencyManualCall } from '../../types/softphone';
 
 /**
  * The soft phone rendered whole for a test: `useSoftphone` driven by `manual_call` frames into
- * `SoftphoneView`, with stubbed ringback, audio and clock. A suite using it mocks
+ * `SoftphoneScreen` (the soft phone in the station's look, both hosts' screen), with stubbed ringback, audio and clock. A suite using it mocks
  * `api/softphone` itself (`vi.mock` in the suite). Kept apart from `softphone.ts`'s plain
  * fixtures, so the suites that need only those do not load the view.
  */
@@ -69,7 +70,25 @@ export function Harness({
   });
   return (
     <MemoryRouter>
-      <SoftphoneView sp={sp} connection={connection} clock={clock} fromCampaign={fromCampaign} />
+      <SoftphoneScreen
+        sp={sp}
+        connection={connection}
+        clock={clock}
+        testId="softphone-screen"
+        inboundNote={fromCampaign ? SIDE_COPY.inboundNotHere : SIDE_COPY.inboundNotHerePage}
+        frame={{
+          agentName: 'Priya Nair',
+          workName: null,
+          brandMark: 'MA',
+          needHelp: null,
+          menu: () => null,
+          banners: null,
+          cueFlash: null,
+          phoneDisplay: 'full',
+          readAloud: { available: false, say: () => {} },
+        }}
+        wayOut={{ button: null, reason: null }}
+      />
     </MemoryRouter>
   );
 }

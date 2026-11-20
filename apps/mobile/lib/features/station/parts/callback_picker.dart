@@ -9,13 +9,9 @@ import '../station_copy.dart';
 import '../station_providers.dart';
 import 'sheets.dart';
 
-/// When to call back: three chips for the times most callbacks are, and a
-/// picker for the rest. Inline, not a dialog: a chip is one tap.
-///
-/// The chosen time is written out with its zone beside it, because the app
-/// does not know the customer's zone and an agent must not promise a time
-/// they silently converted. "We", never "I": the callback goes back to the
-/// shared queue.
+/// Call when? (05b, in What happened?'s sheet): the station's chips (In 1 hour, Today 6:00 PM,
+/// Tomorrow 10:00 AM, Tomorrow 6:00 PM, Other time) and the time as "Fri 20 Nov at 10:00 AM"; no
+/// timezone paragraph (spec §8). The sheet says who makes the call.
 class CallbackPicker extends ConsumerWidget {
   const CallbackPicker({super.key, required this.form, required this.onPick, this.enabled = true, this.attemptId});
 
@@ -28,6 +24,8 @@ class CallbackPicker extends ConsumerWidget {
   /// gone by then).
   final String? attemptId;
 
+  List<CallbackPreset> presets(DateTime now) => stationCallbackPresets(now);
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final clock = ref.watch(stationClockProvider);
@@ -39,7 +37,10 @@ class CallbackPicker extends ConsumerWidget {
 
     Widget chip(CallbackChoice choice, VoidCallback onTap) => ChoiceChip(
       key: Key('callback-${choice.name}'),
-      label: Text(StationCopy.callbackChip(choice)),
+      label: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Space.xs, vertical: Space.sm),
+        child: Text(StationCopy.stationCallbackChip(choice)),
+      ),
       selected: form.callbackChoice == choice,
       onSelected: enabled ? (_) => onTap() : null,
     );
@@ -48,16 +49,14 @@ class CallbackPicker extends ConsumerWidget {
       key: const Key('callback-picker'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(StationCopy.callbackTitle, style: text.labelMedium),
-        const SizedBox(height: Space.sm),
         Wrap(
           spacing: Space.sm,
           runSpacing: Space.sm,
           children: [
-            for (final p in callbackPresets(now))
+            for (final p in presets(now))
               chip(p.choice, () {
                 // Read the clock at the tap, so "In 1 hour" means from now.
-                final fresh = callbackPresets(clock()).firstWhere((x) => x.choice == p.choice);
+                final fresh = presets(clock()).firstWhere((x) => x.choice == p.choice, orElse: () => p);
                 onPick(fresh.at, p.choice);
               }),
             chip(CallbackChoice.picked, () => _pick(context, clock)),
@@ -66,15 +65,11 @@ class CallbackPicker extends ConsumerWidget {
         if (at != null) ...[
           const SizedBox(height: Space.sm),
           Text(
-            formatCallback(at),
+            formatWhen(at),
             key: const Key('callback-resolved'),
             style: text.titleSmall!.copyWith(color: past ? t.danger : t.textPrimary),
           ),
         ],
-        const SizedBox(height: Space.xs),
-        Text(StationCopy.callbackTimezone(now.timeZoneName), style: text.bodySmall),
-        const SizedBox(height: Space.xs),
-        Text(StationCopy.callbackGroundTruth, key: const Key('callback-ground-truth'), style: text.bodySmall),
       ],
     );
   }
@@ -84,7 +79,7 @@ class CallbackPicker extends ConsumerWidget {
     final scope = sameCall(attemptId, const {AgentPhase.wrapup});
     Widget guarded(BuildContext _, Widget? child) => StationModalGuard(scope: scope, child: child!);
     final now = clock();
-    final start = form.callbackAt ?? callbackPresets(now).first.at;
+    final start = form.callbackAt ?? stationCallbackPresets(now).first.at;
     final today = DateTime(now.year, now.month, now.day);
     final date = await showDatePicker(
       context: context,

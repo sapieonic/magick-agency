@@ -30,7 +30,9 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import { ApiError } from '../../api/client';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -142,7 +144,9 @@ class FakeSocket {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1' });
@@ -163,6 +167,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -249,50 +254,51 @@ function press(key: string, target: Element | Document = document.activeElement 
   });
 }
 
-describe('the station header names the agent and shows the gear', () => {
-  it('puts the signed-in name in the header next to the campaign', async () => {
+describe('the station’s top bar names the agent and today’s work (spec §3)', () => {
+  it('puts the signed-in name in the top bar next to the work', async () => {
     await mounted();
-    const chip = screen.getByTestId('station-identity');
-    expect(chip.textContent).toContain('Asha Kumar');
-    expect(chip.textContent).toContain('Renewals');
-    expect(chip.closest('header')).not.toBeNull();
+    const name = screen.getByTestId('station-agent');
+    expect(name.textContent).toBe('Asha Kumar');
+    expect(screen.getByTestId('station-work').textContent).toBe('Renewals');
+    expect(name.closest('header')).not.toBeNull();
   });
 
-  it('renders a gear svg inside the station-options trigger', async () => {
+  it('offers ⋮ More as a labelled button with its picture', async () => {
     await mounted();
-    const trigger = screen.getByRole('button', { name: 'Station options' });
+    const trigger = screen.getByRole('button', { name: 'More' });
     expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
   });
 
-  it('fills the idle middle column with the key guide, and clears it when a call lands', async () => {
+  it('opens on Start of day, with Start work as its one main action, and moves to Call coming when a call lands', async () => {
     await mounted();
-    expect(screen.getByTestId('idle-guide').textContent).toContain('When a call connects');
-    expect(screen.getByTestId('idle-guide').textContent).toContain('Take a break');
-    // No controls: a button that existed only while idle would enter the
-    // tab order between waiting and connected.
-    expect(screen.getByTestId('idle-guide').querySelector('button')).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Namaste, Asha');
+    expect(screen.getByRole('button', { name: /start work/i })).toBeTruthy();
+    // AS1: nothing that belongs to another state is on the screen, not even disabled.
+    expect(screen.queryByRole('button', { name: /take break/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /save/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /end call/i })).toBeNull();
 
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
       latest().emit({ event: 'agent_state', state: 'reserved', since: '2026-08-11T10:00:00.000Z' });
     });
-    expect(screen.queryByTestId('idle-guide')).toBeNull();
+    expect(screen.getByTestId('band-title').textContent).toBe('Call coming');
+    expect(screen.queryByRole('button', { name: /start work/i })).toBeNull();
   });
 });
 
-describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () => {
-  it('renders the rail, pad, notes, break and hang-up in the offline state', async () => {
+describe('AgentConsolePage: one state, one screen (AS1)', () => {
+  it('shows each state’s own main action and hides the rest', async () => {
     await mounted();
+    expect(screen.getByTestId('station').getAttribute('data-screen')).toBe('start');
 
-    // Every region renders in every state — that is the mechanism keeping tab
-    // order stable, not a cosmetic choice.
-    expect(screen.getByTestId('rail-label').textContent).toBe('Offline');
-    expect(screen.getByRole('button', { name: /go available/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^break/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /save disposition/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /hang up/i })).toBeTruthy();
-    // Disabled, with a stated reason rather than a bare greyed control.
-    expect(screen.getByText('available when connected')).toBeTruthy();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
+    expect(screen.getByRole('button', { name: /take break/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /start work/i })).toBeNull();
   });
 
   it('opens the call on bridged and not on a diagnostic status frame', async () => {
@@ -304,22 +310,28 @@ describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () =
       // off-hook; it does not say audio reaches this agent.
       latest().emit({ event: 'status', attempt_id: 'att-1', status: 'answered' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ringing — get ready');
+    expect(screen.getByTestId('band-title').textContent).toBe('Call coming');
     expect(view.container.querySelector('[data-testid="talk-timer"]')).toBeNull();
+    // AS11: no stop button on Call coming; the call connects by itself.
+    expect(screen.queryByRole('button', { name: /end call/i })).toBeNull();
+    expect(screen.getByText('The call connects by itself.')).toBeTruthy();
 
     await act(async () => {
       latest().emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
+    expect(screen.getByTestId('talk-timer')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hold to end call' })).toBeTruthy();
   });
 });
 
 describe('focus moves once per call, on the reservation', () => {
-  it('moves to the console when a call is reserved', async () => {
+  it('moves to the station body when a call is reserved', async () => {
     await mounted();
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
     });
+    expect(document.activeElement).toBe(screen.getByTestId('station-body'));
     expect(document.activeElement?.getAttribute('tabindex')).toBe('-1');
   });
 
@@ -335,7 +347,7 @@ describe('focus moves once per call, on the reservation', () => {
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
     });
-    const elsewhere = screen.getByRole('button', { name: /^break/i });
+    const elsewhere = screen.getByRole('button', { name: 'More' });
     act(() => elsewhere.focus());
     expect(document.activeElement).toBe(elsewhere);
 
@@ -369,7 +381,8 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
         since: '2026-08-11T10:00:00.000Z',
       });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On break — Lunch');
+    expect(screen.getByTestId('band-title').textContent).toBe('On break · Lunch');
+    expect(screen.getByRole('button', { name: /start calls again/i })).toBeTruthy();
 
     press('a');
     await act(async () => {});
@@ -382,7 +395,9 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'break', break_reason: 'device_away', since: '2026-08-11T10:00:00.000Z' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On break — Away (app in background)');
+    // The app's own pause reads Paused (spec 07), with its label, never the code.
+    expect(screen.getByTestId('band-title').textContent).toBe('Paused');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Away (app in background)');
   });
 
   it('names the app\'s phone-call pause (IQ51) by its label too, never the code', async () => {
@@ -390,32 +405,49 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'break', break_reason: 'phone_call', since: '2026-08-11T10:00:00.000Z' });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('On break — On a phone call');
+    expect(screen.getByTestId('band-title').textContent).toBe('Paused');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('On a phone call');
   });
 
-  it('B opens the break menu and lands focus inside it', async () => {
+  it('B opens Which break? and lands focus inside it', async () => {
     await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
 
     press('b');
 
-    // `role="menu"` present AND focus moved into it: an opened popover a keyboard
-    // agent cannot reach is a defect in a different control.
-    const menu = screen.getByRole('menu');
-    expect(menu).toBeTruthy();
-    expect(menu.contains(document.activeElement)).toBe(true);
+    // A dialog present AND focus moved into it: one a keyboard agent cannot reach is a defect.
+    const dialog = screen.getByRole('dialog', { name: 'Which break?' });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
   });
 
-  it('Esc closes the break menu and returns focus to the Break button', async () => {
+  it('Esc closes Which break? and returns focus to Take break', async () => {
     await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
     press('b');
-    const trigger = screen.getByRole('button', { name: /^break/i });
+    await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+    const trigger = screen.getByRole('button', { name: /take break/i });
 
     press('Escape', document.activeElement ?? document);
 
-    expect(screen.queryByRole('menu')).toBeNull();
-    // Never `<body>`: that strands a keyboard agent at the top of the document,
-    // which on this screen is past the whole contact panel.
-    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // Never `<body>`: that strands a keyboard agent at the top of the document.
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it('a digit in Which break? starts that break, and never picks an outcome under it', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
+    press('b');
+    press('1');
+    await act(async () => {});
+    expect(mocks.setAgentBreak).toHaveBeenCalledWith('sess-1', 'lunch', 'tenant-1', 'account-1');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('a number key picks the catalog entry at that index, in the API’s order', async () => {
@@ -423,9 +455,9 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
 
     press('2');
 
-    // Index 2 is `callback`, which sets `requires_note` — so the note requirement
-    // blocks submit and says why, and focus is moved to the field.
-    expect(screen.getByText('This disposition needs a note.')).toBeTruthy();
+    // Index 2 is `callback`, which sets `requires_note` — so the note card asks for one,
+    // and focus is moved to the field.
+    expect(screen.getByTestId('note-needed').textContent).toBe('Write a note for this one.');
     expect(document.activeElement?.tagName).toBe('TEXTAREA');
   });
 
@@ -487,57 +519,33 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
   });
 
-  it('every control in the action bar is reachable by Tab, in a fixed order', async () => {
+  it('every control in the footer is reachable by Tab, the main action last (AS1)', async () => {
     await onCall();
-    // Pick an outcome first, so Save is enabled. **A disabled control is meant to
-    // be absent from the tab order** — inactive controls are `disabled`
-    // precisely so they are skipped rather than reordered, which is what keeps the
-    // order stable across states. An earlier version of this test expected Save in
-    // the order with nothing selected and was asserting against the spec.
-    press('1');
-
     /**
      * Reachability, not presence. A control rendered inside a container that is
      * `aria-hidden`, or carrying `tabIndex={-1}`, renders and reads correctly and
-     * cannot be tabbed to — which is exactly how `End break` shipped unreachable.
-     * So this walks the document's own tab order.
+     * cannot be tabbed to — which is exactly how `End break` once shipped unreachable.
+     * So this walks the document's own tab order, inside the footer.
      */
-    const tabbable = Array.from(
-      document.querySelectorAll<HTMLElement>('button, textarea, [tabindex]'),
-    ).filter(
-      (el) =>
-        !el.hasAttribute('disabled') &&
-        el.getAttribute('aria-hidden') !== 'true' &&
-        // **The clause that makes this reachability rather than presence.** A
-        // `<button tabindex="-1">` matches the `button` selector, renders, reads
-        // correctly to a screen reader, and cannot be tabbed to. Mutation-testing
-        // this file caught the earlier version passing with `tabIndex={-1}` on
-        // Save — the same "operable but unreachable" shape.
-        el.tabIndex >= 0,
+    const footer = screen.getByTestId('station').querySelector('footer')!;
+    const tabbable = Array.from(footer.querySelectorAll<HTMLElement>('button, textarea, [tabindex]')).filter(
+      (el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' && el.tabIndex >= 0,
     );
-
     const names = tabbable.map((el) => el.textContent?.trim() ?? '');
-    const breakIdx = names.findIndex((n) => n.startsWith('Break'));
-    const saveIdx = names.findIndex((n) => n.startsWith('Save disposition'));
-    const hangupIdx = names.findIndex((n) => n.startsWith('Hang up'));
-
-    expect(breakIdx).toBeGreaterThanOrEqual(0);
-    expect(saveIdx).toBeGreaterThan(breakIdx);
-    expect(hangupIdx).toBeGreaterThan(saveIdx);
-    // Need help is floor assist's, off here (no flag provider): not in the bar at all. Its own
-    // order, last after Hang up, is pinned with the flag on (`AgentConsolePage.floorAssist.test.tsx`).
-    expect(names.findIndex((n) => n.includes('Need help'))).toBe(-1);
+    // The microphone is not open in this file (no capture), so Mute is hidden (AS1); End call is
+    // the footer's last control, bottom right.
+    expect(names[names.length - 1]).toBe('Hold to end call');
+    // AS10: no break button on the call.
+    expect(names.some((n) => /break/i.test(n))).toBe(false);
+    // Need help is floor assist's, off here: not on the screen at all.
+    expect(screen.queryByRole('button', { name: /Need help/ })).toBeNull();
   });
 
-  it('offers no Need help while floor assist is off, and keeps Hang up at the far end of the bar', async () => {
+  it('keeps the main action bottom right: the footer pushes it to the far end (AS1)', async () => {
     await onCall();
-    expect(screen.queryByRole('button', { name: /Need help/ })).toBeNull();
-    expect(screen.queryByTestId('need-help')).toBeNull();
-    // Hang up is still pushed to the far end of the controls before it.
-    const css = readFileSync(resolve(__dirname, '../../components/agency/AgentStation.module.css'), 'utf8')
+    const css = readFileSync(resolve(__dirname, '../../components/agency/station/Station.module.css'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(css).toMatch(/\.actionBar > \.hangup \{[^}]*margin-left: auto;/);
-    expect(css).not.toMatch(/\.actionBar > \*:last-child/);
+    expect(css).toMatch(/\.footRight \{[^}]*margin-left: auto;/);
     // The shortcuts are as they were: Ctrl+Enter still saves.
     press('1');
     act(() => {
@@ -666,7 +674,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
     const pointer = watchForPointerUse();
     try {
       await mounted();
-      expect(screen.getByTestId('rail-label').textContent).toBe('Offline');
+      expect(screen.getByTestId('band-title').textContent).toBe('Namaste, Asha');
 
       // ── 1. Go available ───────────────────────────────────────────────────────
       press('a');
@@ -679,7 +687,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
           since: '2026-08-11T09:59:00.000Z',
         });
       });
-      expect(screen.getByTestId('rail-label').textContent).toBe('Waiting for a call');
+      expect(screen.getByTestId('band-title').textContent).toBe('Ready');
 
       // ── 2. A call is reserved ─────────────────────────────────────────────────
       await act(async () => {
@@ -690,23 +698,12 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
           since: '2026-08-11T10:00:00.000Z',
         });
       });
-      expect(screen.getByTestId('rail-label').textContent).toBe('Ringing — get ready');
+      expect(screen.getByTestId('band-title').textContent).toBe('Call coming');
 
-      // ── 3. Read the context, including narrowing it ────────
-      // The position this has to work from: the console's post-reservation focus
-      // effect lands on the body, not in a text field.
+      // ── 3. Read who is coming ─────────────────────────────────────────────────
+      // The card names the customer from the campaign's columns; focus is on the body, not in a field.
+      expect(screen.getByTestId('customer-name').textContent).toBe('Asha');
       expect(document.activeElement?.tagName).not.toBe('INPUT');
-      press('/');
-      const filter = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-      expect(document.activeElement).toBe(filter);
-      fireEvent.change(filter, { target: { value: 'andheri' } });
-      expect(screen.getByText('Branch')).toBeTruthy();
-      expect(screen.queryByText('Mumbai')).toBeNull();
-      // Esc puts the whole panel back and hands focus out of the field, which is
-      // what the next single-key shortcut needs.
-      press('Escape', filter);
-      expect(screen.getByText('Mumbai')).toBeTruthy();
-      expect(document.activeElement).not.toBe(filter);
 
       // ── 4. The customer answers ───────────────────────────────────────────────
       await act(async () => {
@@ -717,21 +714,18 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
         });
         latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:00:04.000Z' });
       });
-      expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+      expect(screen.getByTestId('band-title').textContent).toBe('On call');
       expect(screen.getByTestId('talk-timer')).toBeTruthy();
 
-      // ── 5. Queue a break for after this call ──────────────────────────────────
+      // ── 5. Book a break for after this call (AS10: `B`, no button on the call) ──
       press('b');
-      const menu = screen.getByRole('menu');
-      expect(menu.contains(document.activeElement)).toBe(true);
-      // `Enter` on the active item, handled by the menu itself — no activation of a
-      // button, so no click.
-      press('Enter', document.activeElement ?? menu);
+      expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
+      // The reason's digit, handled by the dialog itself — no activation of a button, so no click.
+      press('1');
       await act(async () => {});
       expect(mocks.setAgentBreak).toHaveBeenCalledWith('sess-1', 'lunch', 'tenant-1', 'account-1');
-      expect(screen.getByTestId('queued-break-chip').textContent).toContain('Lunch');
-      // Focus came back to the control that opened the menu, rather than to <body>.
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: /^break/i }));
+      expect(screen.getByTestId('queued-break').textContent).toContain('Lunch break after this call');
+      expect(screen.queryByRole('dialog')).toBeNull();
 
       // ── 6. End the call ───────────────────────────────────────────────────────
       press('e');
@@ -763,17 +757,17 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
           },
         });
       });
-      expect(screen.getByTestId('rail-label').textContent).toBe('Wrap-up');
+      expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
       expect(screen.getByTestId('wrapup-digits')).toBeTruthy();
 
-      // ── 8. Pick the disposition with `C` ───────────────────────────
+      // ── 8. Pick Call later with `C` ───────────────────────────────────────────
       press('c');
       // The callback row does not exist until the selection renders it, so the pad
       // defers the focus move by a frame.
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      expect(screen.getByTestId('callback-ground-truth')).toBeTruthy();
+      expect(screen.getByTestId('outcome-callback').getAttribute('aria-pressed')).toBe('true');
       const firstChip = screen.getByRole('button', { name: 'In 1 hour' });
       expect(document.activeElement).toBe(firstChip);
 
@@ -781,7 +775,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       // Computed from the real present rather than hard-coded: `blockReason` refuses
       // a callback in the past, and a fixed date would start failing the day it
       // passed — for a reason that has nothing to do with the keyboard.
-      const picker = screen.getByLabelText('Callback date and time') as HTMLInputElement;
+      const picker = screen.getByLabelText('Other time') as HTMLInputElement;
       fireEvent.change(picker, { target: { value: tomorrowLocal() } });
       expect(screen.getByTestId('callback-resolved')).toBeTruthy();
 
@@ -798,8 +792,8 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       press('Escape', notes);
       expect(notes.value).toBe('Wants a call back tomorrow morning.');
       expect(document.activeElement).not.toBe(notes);
-      const save = screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
-      expect(save.disabled).toBe(false);
+      const save = screen.getByRole('button', { name: /save & next call/i });
+      expect(save.getAttribute('aria-disabled')).toBeNull();
       act(() => {
         fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true });
       });
@@ -816,7 +810,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       await act(async () => {
         latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:05:40.000Z' });
       });
-      expect(screen.getByTestId('rail-label').textContent).toBe('Waiting for a call');
+      expect(screen.getByTestId('band-title').textContent).toBe('Ready');
 
       // The criterion itself: the twelve steps above, and not one pointer event.
       expect(pointer.seen).toEqual([]);
@@ -840,15 +834,15 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
     press('2');
     const notes = document.activeElement as HTMLTextAreaElement;
     expect(notes.tagName).toBe('TEXTAREA');
-    const save = screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
+    // On the call, the outcome is picked by its key and saved from the note; the Save button is
+    // What happened?'s. The note card says what is missing.
 
     // Whitespace is exactly what an agent under time pressure types, and the API
     // rejects it with `note_required` — so the console must not let it through, or
     // the agent watches a submit "succeed" that the server refused.
     fireEvent.change(notes, { target: { value: '   \n\t ' } });
 
-    expect(screen.getByText('This disposition needs a note.')).toBeTruthy();
-    expect(save.disabled).toBe(true);
+    expect(screen.getByTestId('note-needed').textContent).toBe('Write a note for this one.');
     ctrlEnter(notes);
     await act(async () => {});
     expect(mocks.submitDisposition).not.toHaveBeenCalled();
@@ -862,8 +856,7 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
      */
     fireEvent.change(notes, { target: { value: 'Asked to be called back.' } });
 
-    expect(screen.queryByText('This disposition needs a note.')).toBeNull();
-    expect(save.disabled).toBe(false);
+    expect(screen.queryByTestId('note-needed')).toBeNull();
     ctrlEnter(notes);
     await act(async () => {});
 
@@ -894,219 +887,6 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
     await act(async () => {});
 
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('the contact-panel field filter', () => {
-  /**
-   * Re-queried at every read, never held. The detail column is keyed on the
-   * panel's attempt, so a new contact mounts a fresh input — and a node held
-   * from before would keep reading its old value even after being replaced,
-   * which would also let a remount mid-wrap-up pass the "survives" checks.
-   */
-  const filterInput = () =>
-    screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-  it('is reachable and operable from the keyboard, not just present in the DOM', async () => {
-    // Same trap as the tab-order test above: a `<input tabindex="-1">` still
-    // matches an `input` selector and renders correctly, so presence alone would
-    // pass with the box unreachable. `el.tabIndex >= 0` is the check that
-    // distinguishes "in the DOM" from "reachable".
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-    expect(input.tabIndex).toBeGreaterThanOrEqual(0);
-  });
-
-  it('/ focuses the filter from the console at rest — not from inside a text field', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    // The console's own post-reservation focus effect lands on the body, not a
-    // text field — this is the position `/` actually has to work from, and it is
-    // NOT the notes field or the disposition pad (the earlier shape: a
-    // shortcut tested from the one place that doesn't need it).
-    expect(document.activeElement?.tagName).not.toBe('INPUT');
-    expect(document.activeElement?.tagName).not.toBe('TEXTAREA');
-
-    press('/');
-
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-    expect(document.activeElement).toBe(input);
-  });
-
-  it('once focus is inside the filter, a second / is left alone — not re-intercepted', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    press('/');
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-    expect(document.activeElement).toBe(input);
-
-    // `fireEvent.keyDown` returns the DOM dispatch result — `false` only if some
-    // handler called `preventDefault()`. The page's global handler returns early
-    // for `inTextField` before it ever reaches the `/` branch, so nothing here
-    // should cancel the event, and a real browser would insert the character.
-    let notCancelled = true;
-    act(() => {
-      notCancelled = fireEvent.keyDown(input, { key: '/' });
-    });
-    expect(notCancelled).toBe(true);
-  });
-
-  it('filters as you type, matching the VALUE, case-insensitively, and marks the match', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'MUM' } });
-
-    // Positively-identified survivor: City (value "Mumbai") — not merely "the
-    // other three are gone", which would also pass if the whole list vanished.
-    expect(screen.getByText('City')).toBeTruthy();
-    const mark = document.querySelector('mark');
-    expect(mark?.textContent).toBe('Mum');
-
-    // Absence of the losers IS still checked, but alongside the survivor above,
-    // never on its own.
-    expect(screen.queryByText('Branch')).toBeNull();
-    expect(screen.queryByText('Vehicle Model')).toBeNull();
-  });
-
-  it('filters as you type, matching the HEADER, case-insensitively, and marks the match', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'branch' } });
-
-    expect(screen.getByText('Andheri West')).toBeTruthy();
-    const mark = document.querySelector('mark');
-    expect(mark?.textContent).toBe('Branch');
-    expect(screen.queryByText('Mumbai')).toBeNull();
-  });
-
-  it('names the query rather than rendering an ambiguous empty box when nothing matches', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'zzz-no-such-thing' } });
-
-    // Not an assertion satisfied by absence: it names the query that produced
-    // the empty result, which a component that renders nothing at all — a
-    // regression indistinguishable from "filter is broken" — could not do.
-    expect(screen.getByTestId('field-filter-empty').textContent).toContain('zzz-no-such-thing');
-  });
-
-  it('Esc clears the query and blurs, same shape as NotesField’s Esc', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'mum' } });
-    expect(filterInput().value).toBe('mum');
-
-    press('Escape', input);
-
-    expect(filterInput().value).toBe('');
-    expect(document.activeElement).not.toBe(input);
-    // Cleared, not just blurred — City's sibling fields must be back.
-    expect(screen.getByText('Branch')).toBeTruthy();
-  });
-
-  it('clears automatically on the NEXT `reserved` event, not before', async () => {
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'mum' } });
-    expect(screen.queryByText('Branch')).toBeNull();
-
-    // Still the SAME call — no new `reserved` yet. A filter that clears on any
-    // re-render (e.g. `bridged`, `agent_state`) rather than specifically
-    // `reserved` would pass the test below for the wrong reason, so this guards
-    // that it does NOT clear on an unrelated frame first.
-    await act(async () => {
-      latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:05:00.000Z' });
-    });
-    expect(filterInput().value).toBe('mum');
-    expect(screen.queryByText('Branch')).toBeNull();
-
-    // Now the next contact's `reserved` — the trap this rule exists for: a
-    // stale filter hiding this contact's fields the moment the panel
-    // repopulates.
-    await act(async () => {
-      latest().emit({
-        event: 'reserved',
-        attempt: { ...FILTER_ATTEMPT, attempt_id: 'att-2', contact_id: 'c-2' },
-      });
-    });
-
-    expect(filterInput().value).toBe('');
-    expect(screen.getByText('Branch')).toBeTruthy();
-  });
-
-  it('survives the hang-up and the whole wrap-up window, then clears on the next `reserved`', async () => {
-    /**
-     * The regression Copilot and Cursor both caught on `#232`. The reset was keyed
-     * on `live?.attempt.attempt_id`, and `released` clears `live` — so the key went
-     * `att-1 → undefined` at *hangup*, while `panelAttempt`
-     * (`live?.attempt ?? retainedAttempt`) keeps the same contact on screen for the
-     * entire wrap-up. The agent who filtered to find a policy number lost the query
-     * at the exact moment they began writing the note that quotes it.
-     *
-     * The boundary is the next `reserved`, so the panel's attempt is the
-     * right key and `live`'s is not. Both halves are asserted here: it must still be
-     * set through wrap-up, **and** it must still clear afterwards — without the
-     * second half a filter that simply never cleared would satisfy the first.
-     */
-    await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
-    const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'mum' } });
-    expect(filterInput().value).toBe('mum');
-    expect(screen.queryByText('Branch')).toBeNull();
-
-    // The customer hangs up. `released` clears `live` and retains the same attempt
-    // in the same task, which is the frame the old key mistook for a new contact.
-    await act(async () => {
-      latest().emit({
-        event: 'released',
-        attempt_id: FILTER_ATTEMPT.attempt_id,
-        reason: 'remote_hangup',
-        requires_disposition: true,
-        message: 'The customer hung up.',
-      });
-    });
-
-    // Still the SAME contact on screen — positively identified by the hero value, so
-    // this is not merely "a filter box still exists somewhere".
-    expect(screen.getByText('Asha')).toBeTruthy();
-    // ...and the query is intact, with the filter still doing its job.
-    expect(filterInput().value).toBe('mum');
-    expect(screen.getByText('City')).toBeTruthy();
-    expect(screen.queryByText('Branch')).toBeNull();
-
-    // The rest of the window: The API's wrap-up frames land after the release, and
-    // neither of them is the boundary either.
-    await act(async () => {
-      latest().emit({
-        event: 'wrapup',
-        wrapup: {
-          attempt_id: FILTER_ATTEMPT.attempt_id,
-          ends_at: '2026-08-11T10:05:30.000Z',
-          requires_disposition: true,
-          disposition_submitted: false,
-          auto_return: true,
-        },
-      });
-      latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:05:00.000Z' });
-    });
-    expect(filterInput().value).toBe('mum');
-    expect(screen.getByText('Asha')).toBeTruthy();
-
-    // The next contact. This is the half that makes the assertions above mean
-    // something: the filter does clear, just one event later than it used to.
-    await act(async () => {
-      latest().emit({
-        event: 'reserved',
-        attempt: { ...FILTER_ATTEMPT, attempt_id: 'att-2', contact_id: 'c-2' },
-      });
-    });
-
-    expect(filterInput().value).toBe('');
-    expect(screen.getByText('Branch')).toBeTruthy();
   });
 });
 
@@ -1148,16 +928,12 @@ describe('a call whose wrap-up the API never announced', () => {
       latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:05:00.000Z' });
     });
 
-    // The account the wrap-up rail would have carried, in the panel that is now the
-    // only thing on screen. Positively identified by the API's own sentence — a panel
-    // that rendered nothing, or the resting copy, cannot produce this string.
+    // The account What happened? would have carried, as a banner on Ready, in the station's own
+    // words (AS15: never the server's sentence).
     const notice = screen.getByTestId('unexplained-release');
-    expect(notice.textContent).toBe('Call ended.');
-    // Scoped to the contact panel: the rail legitimately says the agent is waiting
-    // for a call, because they are. It is the panel that owed the explanation.
-    const panel = screen.getByRole('region', { name: 'Contact' });
-    expect(panel.contains(notice)).toBe(true);
-    expect(screen.getByTestId('rail-label').textContent).toBe('Waiting for a call');
+    expect(notice.textContent).toBe('The last call ended.');
+    expect(notice.textContent).not.toContain('Call ended.');
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
   });
 
   it('does not read as Offline in the window before the state frame lands', async () => {
@@ -1174,9 +950,9 @@ describe('a call whose wrap-up the API never announced', () => {
       latest().emit(RELEASED);
     });
 
-    expect(screen.getByTestId('rail-label').textContent).not.toBe('Offline');
-    // What it says instead, named: the copy for the reason the API sent.
-    expect(screen.getByTestId('rail-label').textContent).toBe('Wrap-up');
+    expect(screen.getByTestId('band-title').textContent).not.toBe('Namaste, Asha');
+    // What it says instead, named: the outcome is owed, so What happened?.
+    expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
   });
 
   it('says nothing extra once a real wrap-up has already explained the call', async () => {
@@ -1202,17 +978,16 @@ describe('a call whose wrap-up the API never announced', () => {
         },
       });
     });
-    expect(screen.getByTestId('rail-label').textContent).toBe('Wrap-up');
+    expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
 
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:05:40.000Z' });
     });
 
     expect(screen.queryByTestId('unexplained-release')).toBeNull();
-    // Paired with the positive, so this is not an assertion satisfied by a panel
-    // that renders nothing: the resting copy is what should be there instead.
-    const panel = screen.getByRole('region', { name: 'Contact' });
-    expect(within(panel).getByText('Waiting for a call')).toBeTruthy();
+    // Paired with the positive, so this is not an assertion satisfied by a screen that
+    // renders nothing: Ready is what should be there instead.
+    expect(screen.getByTestId('waiting-headline').textContent).toBe('Next call is coming…');
   });
 
   it('drops the account the moment the next customer arrives', async () => {
@@ -1229,10 +1004,8 @@ describe('a call whose wrap-up the API never announced', () => {
     });
 
     expect(screen.queryByTestId('unexplained-release')).toBeNull();
-    // The new contact is on screen, so the panel is not merely blank. Scoped to the
-    // panel because the DNC confirmation names the same number.
-    const panel = screen.getByRole('region', { name: 'Contact' });
-    expect(within(panel).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    // The new contact is on screen, so the screen is not merely blank.
+    expect(within(screen.getByTestId('customer-card')).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
   });
 });
 
@@ -1309,7 +1082,7 @@ describe('hang up actually hangs up', () => {
     await act(async () => {});
 
     const notice = await screen.findByTestId('hangup-failure');
-    expect(notice.textContent).toMatch(/still connected/i);
+    expect(notice.textContent).toMatch(/You are still on the call/);
     // `role="alert"` is the load-bearing half — a polite region would let the
     // agent keep talking to a customer they think they hung up on.
     expect(notice.getAttribute('role')).toBe('alert');
@@ -1380,12 +1153,11 @@ describe('the refusal that makes a disposition mandatory', () => {
     press('a');
     await act(async () => {});
 
-    expect(
-      screen.getByText('Submit a disposition for your last call before going available.'),
-    ).toBeTruthy();
-    // In its own line under the rail, never IN the rail — the rail is the call's
-    // state.
-    expect(screen.getByTestId('rail-label').textContent).toBe('Offline');
+    expect(screen.getByTestId('presence-refusal').textContent).toBe(
+      'Save what happened on your last call first.',
+    );
+    // A banner under the band, never IN the band — the band is the agent's state.
+    expect(screen.getByTestId('band-title').textContent).toBe('Namaste, Asha');
   });
 
   describe('a call that ended while the socket was away', () => {
@@ -1414,16 +1186,11 @@ describe('the refusal that makes a disposition mandatory', () => {
       });
 
       const notice = screen.getByTestId('missed-release');
-      // The prefix is load-bearing: the agent has been watching a reconnect
-      // spinner, and an unprefixed "The customer hung up" reads as a call that
-      // just ended rather than the one they were on.
-      expect(notice.textContent).toContain('While you were disconnected');
-      expect(screen.getByText('The customer hung up.')).toBeTruthy();
-      // It REPLACES the idle copy in the contact panel rather than sitting under
-      // it. Scoped to that region because the rail legitimately says the same
-      // words — the agent is idle, and it is the panel that owes the explanation.
-      const panel = screen.getByRole('region', { name: 'Contact' });
-      expect(within(panel).queryByText('Waiting for a call')).toBeNull();
+      // The prefix is load-bearing: the agent has been watching the internet screen,
+      // and an unprefixed "The customer hung up" reads as a call that just ended
+      // rather than the one they were on. In the station's words, keyed on the reason.
+      expect(notice.textContent).toBe('While your internet was down, the customer hung up.');
+      expect(screen.queryByText('The customer hung up.')).toBeNull();
     });
 
     it('drops the notice the moment the next customer arrives', async () => {
@@ -1504,7 +1271,7 @@ describe('the refusal that makes a disposition mandatory', () => {
       });
       // Nothing on screen about a break: this console never issued the request and
       // the frame that announced it went into the socket that has just died.
-      expect(view.container.querySelector('[data-testid="queued-break-chip"]')).toBeNull();
+      expect(view.container.querySelector('[data-testid="queued-break"]')).toBeNull();
 
       await reconnected();
       await act(async () => {
@@ -1518,10 +1285,10 @@ describe('the refusal that makes a disposition mandatory', () => {
         });
       });
 
-      const chip = screen.getByTestId('queued-break-chip');
+      const chip = screen.getByTestId('queued-break');
       // The catalog label, never the raw code — and the copy states what will
       // happen, not that a request was recorded.
-      expect(chip.textContent).toContain('Break after this call — Lunch');
+      expect(chip.textContent).toContain('Lunch break after this call');
 
       // The ✕ is a real `POST /break/cancel`, not a local hide: the queue lives on
       // the API, so a console that merely stopped rendering the pill would leave the
@@ -1532,10 +1299,10 @@ describe('the refusal that makes a disposition mandatory', () => {
         since: '2026-08-11T10:05:20.000Z',
       });
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Cancel queued break' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel the break after this call' }));
       });
       expect(mocks.cancelQueuedBreak).toHaveBeenCalledWith('sess-1', 'tenant-1', 'account-1');
-      expect(view.container.querySelector('[data-testid="queued-break-chip"]')).toBeNull();
+      expect(view.container.querySelector('[data-testid="queued-break"]')).toBeNull();
     });
   });
 });
@@ -1565,7 +1332,9 @@ describe('a lost station leaves the console a way back, and nothing to type into
       latest().onclose?.({ code: 4409, reason: 'superseded' });
     });
 
-    const button = screen.getByRole('button', { name: 'Use this window instead' });
+    // Screen 12, with its one way back.
+    expect(screen.getByTestId('band-title').textContent).toBe('Your work is open on another device');
+    const button = screen.getByRole('button', { name: /use this computer/i });
     await act(async () => {
       button.click();
     });
@@ -1611,7 +1380,10 @@ describe('a lost station leaves the console a way back, and nothing to type into
 
       // No pong, so the heartbeat gives up — with no second window anywhere.
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
+      // What happened? stays, with the internet banner and its way back.
+      expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
+      expect(screen.getByTestId('happened-internet')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Try again now' })).toBeTruthy();
 
       expect(notes()?.disabled).toBe(false);
 
@@ -1640,7 +1412,9 @@ describe('a lost station leaves the console a way back, and nothing to type into
       latest().onclose?.({ code: 4409, reason: 'superseded' });
     });
 
-    expect(notes()?.disabled).toBe(true);
+    // Screen 12 replaces the call: there is no note field to type into at all.
+    expect(screen.getByTestId('band-title').textContent).toBe('Your work is open on another device');
+    expect(notes()).toBeNull();
 
     view.unmount();
   });
@@ -1651,8 +1425,8 @@ describe('a lost station leaves the console a way back, and nothing to type into
  * `intervals.deferred_hangup_ms` reaches the rail, so an agent whose socket drops
  * mid-call is told how long the call is held — as a bound, not a countdown.
  */
-describe('the reconnect window, on the page', () => {
-  it('tells an agent on a call how long the call is held while the station reconnects', async () => {
+describe('the reconnect window, on the page (10 Call problem)', () => {
+  it('tells an agent on a call how long the call is kept while the station reconnects', async () => {
     mocks.createAgencySession.mockResolvedValue({
       ...BOOTSTRAP,
       intervals: { ...BOOTSTRAP.intervals, deferred_hangup_ms: 30_000 },
@@ -1661,10 +1435,30 @@ describe('the reconnect window, on the page', () => {
     await act(async () => {
       latest().serverClose(1006, '');
     });
-    await waitFor(() =>
-      expect(screen.getByTestId('rail-detail').textContent).toBe(
-        'Stay on the line — we’re reconnecting you. Your call is held for up to 30 seconds.',
-      ),
-    );
+    await waitFor(() => expect(screen.getByTestId('band-title').textContent).toBe('Call problem'));
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Stay here. We are joining the call again.');
+    // The bootstrap's window, counted down from the drop.
+    expect(screen.getByTestId('call-kept').textContent).toMatch(/Call is kept for0:(30|29|28)/);
+    // The customer card stays, and Try again now is the one action.
+    expect(screen.getByTestId('customer-card')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /try again now/i })).toBeTruthy();
+  });
+
+  it('09 counts down to the next try when the agent is not on a call, and R tries now', async () => {
+    mocks.mintStationToken.mockResolvedValue({ session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=R', expires_at: 'x' });
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
+    const before = FakeSocket.instances.length;
+    await act(async () => {
+      latest().serverClose(1006, '');
+    });
+    expect(screen.getByTestId('band-title').textContent).toBe('Internet problem');
+    expect(screen.getByTestId('retry-countdown').textContent).toContain('Trying again in');
+    // With no internet the press cannot reach anyone: step 3 says to call the supervisor over.
+    expect(screen.getByText('Still not working? Call your supervisor to your desk.')).toBeTruthy();
+    press('r');
+    await waitFor(() => expect(FakeSocket.instances.length).toBeGreaterThan(before));
   });
 });

@@ -445,6 +445,34 @@ const VOCABULARIES = {
     'errors.ts#AGENCY_FLOOR_ASSIST_ERROR_CODES',
     () => constList('errors.ts', 'AGENCY_FLOOR_ASSIST_ERROR_CODES'),
   ],
+  // The agent station redesign (docs/agent-station.md): the tile icons an outcome or break may carry
+  // (BE-13; the app reads an unknown one as none), how the number is shown (AS9), where a booked
+  // call-later came from (BE-4), the typed facts' roles and types (BE-6), the script's placeholders
+  // the app fills (BE-8), and My day's target metric and where a call-later left today goes (BE-1, BE-3).
+  tile_icons: ['agency/tile-icons.ts#AGENCY_TILE_ICONS', () => constList('agency/tile-icons.ts', 'AGENCY_TILE_ICONS')],
+  phone_displays: ['agency/session.ts#AGENCY_PHONE_DISPLAYS', () => constList('agency/session.ts', 'AGENCY_PHONE_DISPLAYS')],
+  attempt_callback_sources: [
+    'agency/station.ts#AGENCY_ATTEMPT_CALLBACK_SOURCES',
+    () => constList('agency/station.ts', 'AGENCY_ATTEMPT_CALLBACK_SOURCES'),
+  ],
+  context_roles: ['agency/customer-facts.ts#AGENCY_CONTEXT_ROLES', () => constList('agency/customer-facts.ts', 'AGENCY_CONTEXT_ROLES')],
+  context_field_types: [
+    'agency/customer-facts.ts#AGENCY_CONTEXT_FIELD_TYPES',
+    () => constList('agency/customer-facts.ts', 'AGENCY_CONTEXT_FIELD_TYPES'),
+  ],
+  fact_tile_roles: ['agency/customer-facts.ts#AGENCY_FACT_TILE_ROLES', () => constList('agency/customer-facts.ts', 'AGENCY_FACT_TILE_ROLES')],
+  script_placeholders: [
+    'agency/agent-script.ts#AGENCY_SCRIPT_PLACEHOLDERS',
+    () => constList('agency/agent-script.ts', 'AGENCY_SCRIPT_PLACEHOLDERS'),
+  ],
+  my_day_target_metrics: [
+    'api/agency/my-day.ts#AGENCY_MY_DAY_TARGET_METRICS',
+    () => constList('api/agency/my-day.ts', 'AGENCY_MY_DAY_TARGET_METRICS'),
+  ],
+  my_call_later_left_goes_to: [
+    'api/agency/my-day.ts#AGENCY_MY_CALL_LATER_LEFT_GOES_TO',
+    () => constList('api/agency/my-day.ts', 'AGENCY_MY_CALL_LATER_LEFT_GOES_TO'),
+  ],
 };
 
 /** Each label map the app shows as it is: where it is declared, and how to read it. */

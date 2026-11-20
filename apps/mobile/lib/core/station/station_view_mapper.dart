@@ -109,6 +109,7 @@ class StationViewMapper {
     String? awayNoRing,
     bool dialGapHeld = false,
     HelpView help = const HelpView(),
+    int readyCount = 0,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -150,6 +151,7 @@ class StationViewMapper {
       phaseSince: phaseSince,
       campaignDialing: s.dialing,
       campaignMessage: s.campaignMessage,
+      callsStopped: s.dialing ? null : callsStoppedOf(s.campaignReason),
       onBreak: onBreak,
       queuedBreak: queued,
       breakOptions: _breakOptionsFor(breakReasons),
@@ -171,10 +173,56 @@ class StationViewMapper {
       queue: _queueFor(s.queue),
       dialActivity: dialActivityOf(s, gapHeld: dialGapHeld),
       myContactsOffered: myContactsOfferedBy(bootstrap),
+      assignsContacts: assignsContactsBy(bootstrap),
       inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
       help: help,
+      script: _scriptFor(bootstrap?.script),
+      maskPhone: bootstrap?.masksPhone ?? false,
+      readyCount: readyCount,
+    );
+  }
+
+  wire.AgentScript? _scriptSource;
+  ScriptView? _script;
+
+  /// The campaign's script (BE-8), as plain lines; null without one.
+  ScriptView? _scriptFor(wire.AgentScript? script) {
+    if (identical(script, _scriptSource)) return _script;
+    _scriptSource = script;
+    if (script == null) return _script = null;
+    return _script = ScriptView(
+      opening: script.opening?.trim(),
+      steps: List.unmodifiable([for (final s in script.steps) s.text.trim()]),
+    );
+  }
+
+  /// A supervisor's tile picture (BE-13) by its name; null for none.
+  static TilePicture? pictureOf(wire.TileIcon? icon) => icon == null ? null : TilePicture.values.asNameMap()[icon.name];
+
+  /// The panel's typed facts (BE-6) as the card shows them; null when the server sent none.
+  static FactsView? factsOf(wire.CustomerFacts? facts) {
+    if (facts == null) return null;
+    String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+    return FactsView(
+      name: clean(facts.name),
+      place: clean(facts.place),
+      tiles: List.unmodifiable([
+        for (final t in facts.tiles)
+          FactTileView(
+            label: t.column,
+            raw: t.raw,
+            kind: switch (t.type) {
+              wire.ContextFieldType.money => FactKind.money,
+              wire.ContextFieldType.date => FactKind.date,
+              _ => FactKind.text,
+            },
+            parsed: t.value,
+            amountDue: t.role == wire.FactTileRole.amountDue,
+            dueDate: t.role == wire.FactTileRole.dueDate,
+          ),
+      ]),
     );
   }
 
@@ -228,6 +276,7 @@ class StationViewMapper {
       recording: call.recording,
       waitedSeconds: call.waitedSeconds,
       campaignName: match?.campaignName,
+      campaignId: match?.campaignId,
       contactState: match == null ? null : (inboundContactStateLabels[match.contactState] ?? humaniseCode(match.contactStateRaw)),
       heroFields: same ? previous.heroFields : (resolved == null ? const [] : List.unmodifiable(resolved.hero.map(field))),
       heroesConfigured: heroesWereConfigured(display),
@@ -275,6 +324,19 @@ class StationViewMapper {
   static bool myContactsOfferedBy(wire.SessionBootstrap? bootstrap) =>
       bootstrap != null &&
       (bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire || bootstrap.allowAgentRetry);
+
+  /// 02c's reason for a campaign that is not dialling (`campaign_state.reason`).
+  static CallsStopped callsStoppedOf(wire.CampaignChangeReason? reason) => switch (reason) {
+        wire.CampaignChangeReason.pausedBySupervisor || wire.CampaignChangeReason.stoppedBySupervisor => CallsStopped.bySupervisor,
+        wire.CampaignChangeReason.autoPaused => CallsStopped.autoPaused,
+        wire.CampaignChangeReason.listExhausted => CallsStopped.listFinished,
+        _ => CallsStopped.notStarted,
+      };
+
+  /// AS8: the campaign assigns contacts (`strict`, `preferred`, or a mode this build does not
+  /// know), so a call-later comes back to the agent who booked it; `pool` (or no mode) does not.
+  static bool assignsContactsBy(wire.SessionBootstrap? bootstrap) =>
+      bootstrap != null && bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire;
 
   /// Late binding's hidden dials as the waiting screen shows them: only in
   /// [StationState.dialSlotOpen], and only with something to say. [gapHeld]:
@@ -357,7 +419,7 @@ class StationViewMapper {
   List<BreakOption> _breakOptionsFor(List<wire.BreakReason> reasons) {
     if (identical(reasons, _breakSource)) return _breakOptions;
     _breakSource = reasons;
-    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label)));
+    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label, limitMinutes: r.limitMinutes, icon: pictureOf(r.icon))));
   }
 
   List<DispositionOption> _dispositionsFor(List<wire.Disposition> catalog) {
@@ -373,6 +435,7 @@ class StationViewMapper {
         suppresses: d.suppress ?? false,
         requiresPromise: d.promiseRequired,
         promiseFollowUpDays: d.promiseFollowUpDays,
+        icon: pictureOf(d.icon),
       ),
     ));
   }
@@ -432,6 +495,8 @@ class StationViewMapper {
         redialNumber: previous.redialNumber,
         redialLimit: previous.redialLimit,
         promise: previous.promise,
+        callback: previous.callback,
+        facts: previous.facts,
       );
     }
     _callOffset = _offset;
@@ -460,6 +525,10 @@ class StationViewMapper {
       redialNumber: attempt.redial?.number,
       redialLimit: attempt.redial?.limit,
       promise: promiseViewFor(attempt.promise),
+      callback: attempt.callback == null
+          ? null
+          : CallLaterTag(dueAt: correctedInstant(attempt.callback!.dueAt, _offset)!, bookedByMe: attempt.callback!.bookedByMe),
+      facts: factsOf(attempt.facts),
     );
   }
 
@@ -467,7 +536,7 @@ class StationViewMapper {
     if (identical(frame, _releaseSource)) return _release;
     _releaseSource = frame;
     if (frame == null) return _release = null;
-    final copy = releaseCopy(frame.reason, frame.message);
+    final copy = releaseCopy(frame.reason);
     return _release = ReleaseView(
       headline: copy.headline,
       detail: copy.subtext,
@@ -480,8 +549,8 @@ class StationViewMapper {
     if (identical(missed, _missedSource)) return _missed;
     _missedSource = missed;
     if (missed == null) return _missed = null;
-    final copy = releaseCopy(missed.reason, missed.message);
-    return _missed = MissedReleaseView(headline: '$missedReleasePrefix: ${copy.headline}', detail: copy.subtext);
+    // One sentence, already saying "while your internet was down": the card adds no prefix.
+    return _missed = MissedReleaseView(headline: missedReleaseCopy(missed.reason), detail: '');
   }
 
   /// [redial]: what a refused redial taught the core about this wrap-up's

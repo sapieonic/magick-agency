@@ -298,7 +298,7 @@ void main() {
       fakeAsync((async) {
         final app = App(async)..start();
         // Inbound frames reach only a station that declared it can take them.
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         app.readyFrame('available');
         _dial(app, ringing: true, unanswered: 2);
         // The server's order: the dial's close (not counted), then the inbound connector's

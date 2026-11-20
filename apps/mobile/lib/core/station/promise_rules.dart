@@ -25,15 +25,14 @@ const Map<String, String> promiseRefusalCopy = {
   'promise_needs_contact': promiseNeedsContactCopy,
 };
 
-const promiseRequiredCopy = 'This outcome needs the date the customer promised to pay.';
-const promiseDateRefusedCopy =
-    'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.';
-const promiseAmountRefusedCopy = 'Enter the amount as a number, with up to two decimal places and no commas.';
-const promiseNotExpectedCopy =
-    'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.';
+// A refused promise, in the station's words (AS15).
+const promiseRequiredCopy = 'Choose the pay date.';
+const promiseDateRefusedCopy = 'That pay date cannot be used. Choose a date from today up to 30 days ahead.';
+const promiseAmountRefusedCopy = 'Write the amount in numbers only, like 12500.';
+const promiseNotExpectedCopy = 'This choice does not take a pay date. Clear the pay date, or choose the one that does.';
 const promiseNeedsContactCopy =
-    'A promise to pay can’t be saved on this call: the number isn’t an open contact on the campaign’s list. '
-    'Pick another outcome and put the promise in the note.';
+    'A pay date cannot be saved on this call: this number is not a customer on the list. '
+    'Choose another, and write the promise in the note.';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -121,6 +120,29 @@ String formatPromiseAmount(String amount) {
 }
 
 /// `Promised 18 Nov 2026 · 12,500`, or without the amount.
+/// The Full chip's amount: a money fact's parsed value (a decimal string) as the agent would type
+/// it, `12500` or `12500.50`; null when it is not a plain amount.
+String? plainAmount(String decimal) {
+  final m = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(decimal.trim());
+  if (m == null) return null;
+  final whole = m.group(1)!.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+  final frac = (m.group(2) ?? '').padRight(2, '0');
+  return frac == '00' ? whole : '$whole.$frac';
+}
+
+/// The Half chip's amount: half of [decimal], to the paisa (rounded down), as the agent would type
+/// it; null when it is not a plain amount. The console's `halfAmount`.
+String? halfAmount(String decimal) {
+  final plain = plainAmount(decimal);
+  if (plain == null) return null;
+  final parts = plain.split('.');
+  final paise = BigInt.parse(parts[0]) * BigInt.from(100) + BigInt.parse(parts.length > 1 ? parts[1] : '0');
+  final half = paise ~/ BigInt.two;
+  final rupees = half ~/ BigInt.from(100);
+  final rest = (half % BigInt.from(100)).toInt();
+  return rest == 0 ? '$rupees' : '$rupees.${rest.toString().padLeft(2, '0')}';
+}
+
 String formatPromise(String date, String? amount) {
   final head = 'Promised ${formatPromiseDate(date)}';
   return amount == null || amount.trim().isEmpty ? head : '$head · ${formatPromiseAmount(amount)}';

@@ -379,7 +379,7 @@ void main() {
         app.frame(stationFrame('inbound_call_connected'));
         app.routes['POST $_call/hangup'] = (_) => json(503, {'error': 'Service Unavailable', 'message': 'down'});
         app.run(app.controller.hangUp());
-        expect(app.view!.inbound!.hangupFailure, startsWith('We couldn’t end the call'));
+        expect(app.view!.inbound!.hangupFailure, startsWith('The call did not end.'));
         expect(app.view!.inbound!.stage, InboundStage.connected);
         app.dispose();
       });
@@ -451,7 +451,7 @@ void main() {
           {'notes': ''},
           reason: 'the outcome was refused, so it carried nothing: the clear goes by the notes\' own route',
         );
-        expect(app.view!.actionError, 'This outcome needs a note.');
+        expect(app.view!.actionError, 'Write a note for this one.');
         app.dispose();
       });
     });
@@ -468,7 +468,7 @@ void main() {
         app.routes['POST $_call/disposition'] = (_) => json(400, inboundSample('refusal_disposition_unknown_code'));
         app.run(app.controller.submitDisposition('gone'));
         expect(app.view!.dispositions.map((d) => d.code), ['interested', 'callback', 'query_resolved', 'complaint', 'do_not_call']);
-        expect(app.view!.actionError, 'The outcome list for this call changed. Pick one of these.');
+        expect(app.view!.actionError, 'This list changed. Choose one of these.');
         expect(app.view!.dispositionSaved, isNull);
         app.dispose();
       });
@@ -484,7 +484,8 @@ void main() {
         app.routes['POST $_call/dnc'] = (_) => json(200, inboundSample('call_dnc_response'));
         app.run(app.controller.markDnc(attemptId: fixtureCallId));
         expect(app.requests('POST', '$_call/dnc').single.body, <String, Object?>{});
-        expect(app.view!.dncOutcome, '+91 87654 32109 is on the Do Not Call list for Q4 Renewals — Pune.');
+        // AS9: never the caller's number.
+        expect(app.view!.dncOutcome, 'We will not call this number again.');
         app.dispose();
       });
     });

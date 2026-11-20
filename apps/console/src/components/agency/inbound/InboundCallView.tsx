@@ -1,73 +1,67 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
-import { PhoneIncoming } from 'lucide-react';
-import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import { DispositionPad, type DispositionPadHandle } from '../DispositionPad';
-import { NotesField } from '../NotesField';
-import { ContactDetail } from '../ContactDetail';
-import { CueFlashBand } from '../StateRail';
-import { HoldToConfirmButton, HANGUP_COPY, type HoldToConfirmCopy } from '../HoldToConfirmButton';
-import { formatDuration } from '../../../utils/agencyClock';
-import { resolveContextFields } from '../../../utils/agencyContext';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Ban, Info, MicOff, PhoneIncoming, TriangleAlert, UserRound } from 'lucide-react';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
+import { StationBanner, StationFrame } from '../station/StationFrame';
+import { CustomerCardView, LastCallsCard, NoteCard } from '../station/StationCustomer';
+import { WhatHappened } from '../station/WhatHappened';
+import { StopCallingDialog } from '../station/StationScreens';
+import { SinceClock } from '../station/StationClocks';
+import {
+  OutcomeDueRing,
+  RecordedPill,
+  SideEndCall,
+  SideMute,
+  SideSave,
+  sideEndCallCopy,
+  type SideFrameProps,
+} from '../station/SideCall';
+import { useInboundShortcuts } from './useInboundShortcuts';
+import { useMatchedComesToMe } from './useMatchedComesToMe';
 import { findDisposition } from '../../../utils/agencyDispositionForm';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
-import {
-  INBOUND_DNC_BADGE,
-  INBOUND_DNC_ENQUIRY_COPY,
-  INBOUND_DNC_WITHHELD_COPY,
-  INBOUND_HANGUP_CONNECTING_COPY,
-  INBOUND_HANGUP_ENDED_COPY,
-  LAPSE_PREFIX,
-  NUMBER_WITHHELD,
-  catalogHint,
-  describeInboundRail,
-  inboundCallerNumber,
-  inboundMatchName,
-  matchLine,
-  stickyLine,
-  waitedLine,
-} from '../../../utils/inbound/inboundCall';
-import { useRepaintTick } from '../../../hooks/useRepaintTick';
-import { INBOUND_SAVE_BLOCK_COPY, type InboundCallState } from '../../../hooks/useInboundCall';
-import { useInboundShortcuts } from './useInboundShortcuts';
+import { STATION_COPY } from '../../../utils/agency/stationCopy';
+import { SIDE_COPY, STICKY_WORDS, sideSaveBlockLine, waitedFor } from '../../../utils/agency/sideViewCopy';
+import { inboundCustomerCard, inboundLastCalls } from '../../../utils/agency/sideViewCustomer';
+import { sideViewBand, type SideCallPhase } from '../../../utils/agency/stationView';
+import type { InboundCallState } from '../../../hooks/useInboundCall';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import type { StationConnection } from '../../../hooks/agencyStation/types';
-import type { CueFlash } from '../../../hooks/useAgencyCues';
 import type { AgencyInboundCall } from '../../../types/inbound';
-import station from '../AgentStation.module.css';
-import rail from '../StateRail.module.css';
-import sp from '../../softphone/SoftphoneView.module.css';
-import styles from './InboundCallView.module.css';
+import type { AgencyAssignmentMode } from '@magick-agency/contracts/agency';
+import type { CustomerCard } from '../../../utils/agency/stationCustomer';
+import styles from '../station/Station.module.css';
+import side from '../station/SideView.module.css';
 
-/** The station's hang-up gesture, with its own id prefix so two buttons never share a hint id. */
-export const INBOUND_HANGUP_COPY: HoldToConfirmCopy = {
-  ...HANGUP_COPY,
-  idPrefix: 'inbound-hangup',
-  labels: { ...HANGUP_COPY.labels, idle: 'Hold to hang up', failed: 'Hold to hang up' },
-};
+/** End call on an inbound call: the station's words, its own hint id. */
+export const INBOUND_END_CALL_COPY = sideEndCallCopy('inbound-hangup');
 
 /**
- * An inbound call on the agent's station (P2, `docs/inbound.md` §6), in place of the campaign's
- * panel, under the station's own header: rail, three columns, action bar. The station's frozen
- * geometry (`AgentConsolePage`'s rules, the soft phone's `SoftphoneView`):
+ * An inbound call on the agent's station (P2, `docs/inbound.md` §6), in the station's look (AS1,
+ * spec §3 03–05): the frame and its band ("Customer is calling", On call, What happened?), the
+ * outbound call's customer card, Last calls and the note, and one main button bottom right.
  *
- *  1. **Every region renders in every state** (offered, connected, outcome needed) and only its
- *     content changes, so nothing moves under the agent's cursor as the caller's audio binds.
- *  2. **Every control renders in every state**, disabled with a stated reason when there is
- *     nothing to act on, so the tab order is fixed: column 1 → column 2 → the pad and notes →
- *     Save outcome → Mark DNC → Mute → Hang up (the station's and the soft phone's order).
- *  3. **Focus moves once per call**, to the body when the call is offered, never at connect:
- *     stealing focus as the caller starts speaking would cut a screen-reader user off.
+ *  - **Customer is calling** (the offer, IB1: on screen before the caller's audio binds at
+ *    `connects_at`): the card, About this call (the number they called, the line, how long they
+ *    waited, their work, whether they are the agent's own customer, asked not to be called) and
+ *    Last calls. No button (AS11); "The call connects by itself."
+ *  - **On call**: the card and About this call left, Last calls and the note right; Mute bottom
+ *    left, End call bottom right, held or `E` twice (AS3).
+ *  - **What happened?**: the station's own tiles and follow-ups (`WhatHappened`), the small card
+ *    and the note; Save bottom right, faded until it can save (spec §6.1). Don't call again asks
+ *    first (05c).
  *
- * IB1: the panel is on screen before the caller's audio. The station renders it on the offer
- * frame; the server binds audio at `connects_at`, 1.5 s later.
+ * Hidden, not disabled (AS1): a control that does nothing now is not on screen. The keys are the
+ * panel's own (`useInboundShortcuts`, unchanged): `1`–`9`, `C`, `N`, `Enter`, `M`, `D`, `E` `E`.
+ * Focus moves once per call, to the body when the call is offered, never at connect.
  */
 export function InboundCallView({
   ib,
   call,
   connection,
   clock,
-  cueFlash,
-  onReconnect,
+  frame,
+  connectFlash,
+  station,
   shortcutsEnabled = true,
 }: {
   ib: InboundCallState;
@@ -75,424 +69,298 @@ export function InboundCallView({
   call: AgencyInboundCall;
   connection: StationConnection;
   clock: ServerClock;
-  /** The station's escalated visual cue (connect, disconnect), shown on this rail as on its own. */
-  cueFlash: CueFlash | null;
-  onReconnect?: () => void;
+  frame: SideFrameProps;
+  connectFlash: boolean;
+  /** The station's own campaign and its routing, for whether a matched caller's call-later comes back (AS8). */
+  station: { campaignId: string | null; assignmentMode: AgencyAssignmentMode | null };
   shortcutsEnabled?: boolean;
 }) {
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
-  const padRef = useRef<DispositionPadHandle | null>(null);
-  const fieldFilterRef = useRef<HTMLInputElement>(null);
+  const tilesRef = useRef<DispositionPadHandle | null>(null);
+  const [stopAsk, setStopAsk] = useState<string | null>(null);
+  const [shake, setShake] = useState(0);
+  const [blockLine, setBlockLine] = useState<string | null>(null);
 
-  useInboundShortcuts(ib, clock, { notesRef, padRef, enabled: shortcutsEnabled });
+  /*
+    C picks the call-later outcome. On What happened? the tiles own it (and move focus to Call
+    when?); on the call, where the tiles are not on screen yet, it is picked so What happened?
+    opens with it chosen, as the old pad did.
+  */
+  const keyPadRef = useRef<DispositionPadHandle | null>(null);
+  keyPadRef.current = {
+    selectCallback: () => {
+      if (tilesRef.current) return tilesRef.current.selectCallback();
+      if (!ib.padEnabled) return false;
+      const entry = ib.catalog.find((option) => option.requires_datetime);
+      if (!entry) return false;
+      ib.setForm({ ...ib.form, selectedCode: entry.code });
+      return true;
+    },
+  };
+  useInboundShortcuts(ib, clock, { notesRef, padRef: keyPadRef, enabled: shortcutsEnabled && stopAsk === null });
 
   useEffect(() => {
     bodyRef.current?.focus();
   }, [call.id]);
+  // A new pick retires the early-Save line.
+  useEffect(() => {
+    setBlockLine(null);
+  }, [ib.form.selectedCode, ib.form.callbackAt, ib.form.promiseDate, call.id]);
 
-  return (
-    <>
-      <InboundRail call={call} connection={connection} clock={clock} cueFlash={cueFlash} onReconnect={onReconnect} />
+  const card = useMemo(() => inboundCustomerCard(call, frame.phoneDisplay), [call, frame.phoneDisplay]);
+  const lastCalls = useMemo(() => inboundLastCalls(call), [call]);
+  const phase: SideCallPhase = ib.phase === 'offered' ? 'coming' : ib.phase === 'connected' ? 'on_call' : 'happened';
+  const band = sideViewBand({ kind: 'inbound', connection, phase, who: card.name ?? card.phone });
+  const live = connection === 'open';
+  const selected = findDisposition(ib.catalog, ib.form.selectedCode);
+  const comesToMe = useMatchedComesToMe({
+    campaignId: call.match?.campaign_id ?? null,
+    stationCampaignId: station.campaignId,
+    stationMode: station.assignmentMode,
+    enabled: phase === 'happened',
+  });
 
-      {/* The assertive region: the direct result of a button the agent just pressed. */}
-      <div className={station.srOnly} role="alert" aria-live="assertive">
-        {ib.announcement}
-      </div>
+  const trySave = () => {
+    if (ib.saving) return;
+    const block = ib.saveBlockAt(clock.now());
+    if (block !== null) {
+      setShake((n) => n + 1);
+      setBlockLine(sideSaveBlockLine(block));
+      if (block === 'note_required') notesRef.current?.focus();
+      return;
+    }
+    ib.saveOutcome();
+  };
 
-      <div
-        className={`${station.body} ${styles.body}`}
-        ref={bodyRef}
-        tabIndex={-1}
-        data-testid="inbound-body"
-        data-phase={ib.phase ?? 'none'}
-      >
-        <section className={station.colContact} aria-label="Caller">
-          <CallerColumn call={call} />
-        </section>
-        <section className={station.colDetail} aria-label="Contact">
-          <ContactColumn call={call} filterInputRef={fieldFilterRef} />
-        </section>
-        <section className={station.colOutcome} aria-label="Outcome">
-          <DispositionPad
-            catalog={ib.catalog}
-            form={ib.form}
-            onChange={ib.setForm}
-            enabled={ib.padEnabled}
-            disabledReason={ib.padDisabledReason}
-            rejection={ib.padRejection}
-            now={clock.now}
-            onNeedsNote={() => notesRef.current?.focus()}
-            handleRef={padRef}
-            hint={catalogHint(call)}
-          />
-          <NotesField
-            ref={notesRef}
-            value={ib.notes}
-            onAgentEdit={ib.setNotes}
-            status={ib.notesStatus}
-            enabled={ib.notesEnabled}
-            disabledReason={ib.notesEnabled ? null : 'Notes open when a call is offered.'}
-            onSubmit={ib.saveOutcome}
-          />
-        </section>
-      </div>
-
-      <InboundActionBar ib={ib} call={call} clock={clock} />
-    </>
-  );
-}
-
-// ─── The rail ───────────────────────────────────────────────────────────────
-
-/**
- * The station's rail for an inbound call: the same 64px band, tints and accent bar as
- * `StateRail`, so the signal is read in the same place. It is the screen's polite live region;
- * the talk timer and the lapse countdown inside it are `aria-hidden` and repaint themselves.
- */
-export function InboundRail({
-  call,
-  connection,
-  clock,
-  cueFlash,
-  onReconnect,
-}: {
-  call: AgencyInboundCall;
-  connection: StationConnection;
-  clock: ServerClock;
-  cueFlash: CueFlash | null;
-  onReconnect?: () => void;
-}) {
-  const description = describeInboundRail({ connection, call });
-  const recoverable = connection === 'disconnected' || connection === 'superseded';
-  return (
-    <div
-      className={`${rail.rail} ${rail[`tone_${description.tone}`]}`}
-      role="status"
-      aria-live="polite"
-      data-tone={description.tone}
-      data-testid="inbound-rail"
-    >
-      {cueFlash ? <CueFlashBand key={`${cueFlash.cue}:${cueFlash.attemptId}`} flash={cueFlash} /> : null}
-      <span className={rail.accent} aria-hidden="true" />
-      <PhoneIncoming size={18} aria-hidden="true" className={styles.railIcon} />
-      <span className={rail.label} data-testid="rail-label">
-        {description.label}
-      </span>
-      {description.detail ? (
-        <span className={rail.detail} data-testid="rail-detail">
-          {description.detail}
-        </span>
+  // ── The band's right side ───────────────────────────────────────────────────
+  const bandSide = (
+    <span className={styles.bandSide}>
+      {frame.cueFlash}
+      {phase === 'coming' && live ? (
+        <span className={styles.pill}>{STATION_COPY.connecting}<span className={styles.dots} aria-hidden="true"><i /><i /><i /></span></span>
       ) : null}
-      {description.timerFrom ? <TalkTimer from={description.timerFrom} clock={clock} /> : null}
-      {description.lapseAt ? <LapseCountdown due={description.lapseAt} clock={clock} /> : null}
-      {recoverable && onReconnect ? (
-        <span className={rail.recovery}>
-          <button type="button" className={rail.recoveryPrimary} onClick={onReconnect}>
-            {connection === 'superseded' ? 'Use this window instead' : 'Reconnect'}
-          </button>
-        </span>
+      {(phase === 'coming' || phase === 'on_call') && call.recording ? <RecordedPill testId="inbound-recording" /> : null}
+      {phase === 'on_call' && live && call.bridged_at ? (
+        <SinceClock anchor={call.bridged_at} clock={clock} className={styles.bandClock} testId="inbound-talk-timer" />
       ) : null}
-    </div>
-  );
-}
-
-function TalkTimer({ from, clock }: { from: string; clock: ServerClock }) {
-  useRepaintTick();
-  const ms = clock.since(from);
-  if (ms === null) return null;
-  return (
-    <span className={rail.talkTimer} data-testid="inbound-talk-timer" aria-hidden="true">
-      {formatDuration(ms)}
+      {phase === 'happened' && live && call.outcome_due_at ? (
+        <OutcomeDueRing dueAt={call.outcome_due_at} startedAt={call.ended_at} clock={clock} testId="inbound-lapse" />
+      ) : null}
     </span>
   );
-}
 
-/**
- * "Without one, it closes in 0:24": the route's wrap-up window (IQ52, 30 s by default) an owed
- * outcome waits before the server closes the call `no_disposition` and returns the agent
- * (`outcome_due_at`). The digits are
- * `aria-hidden` (a countdown inside the live region would announce every second); the time it
- * closes at is said once, in words, for a screen reader.
- */
-export function LapseCountdown({ due, clock }: { due: string; clock: ServerClock }) {
-  useRepaintTick();
-  const ms = clock.until(due);
-  const at = clock.corrected(due);
-  if (ms === null || at === null) return null;
-  const clockTime = new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-  return (
-    <span className={styles.lapse} data-testid="inbound-lapse">
-      <span aria-hidden="true">
-        <span className={styles.lapseLong}>{LAPSE_PREFIX}</span>
-        <span className={styles.lapseShort}>Closes in</span>{' '}
-        <span className={styles.lapseDigits}>{formatDuration(ms)}</span>
-      </span>
-      <span className={station.srOnly}>Without an outcome, the call closes at {clockTime}.</span>
-    </span>
-  );
-}
+  // ── The call's own banner (one), before the page's ──────────────────────────
+  const callBanner: ReactNode = ib.hangupFailure ? (
+    <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="inbound-hangup-failure">{SIDE_COPY.endCallFailed}</StationBanner>
+  ) : ib.dncFailure ? (
+    <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="alert" testId="inbound-dnc-failure">{SIDE_COPY.stopFailed}</StationBanner>
+  ) : ib.dncOutcome ? (
+    <StationBanner tone="ready" icon={<Ban size={22} />} role="status" testId="inbound-dnc-outcome">{SIDE_COPY.stoppedCalls}</StationBanner>
+  ) : phase === 'on_call' && ib.muted ? (
+    <StationBanner tone="break" icon={<MicOff size={22} />} testId="inbound-on-mute">{STATION_COPY.onMute}</StationBanner>
+  ) : null;
 
-// ─── Column 1: who rang ─────────────────────────────────────────────────────
-
-function CallerColumn({ call }: { call: AgencyInboundCall }) {
-  const name = inboundMatchName(call);
-  const number = inboundCallerNumber(call.from_e164);
-  const sticky = stickyLine(call);
-  const matched = matchLine(call);
-  return (
-    <div className={sp.column}>
-      <div className={sp.cardHead}>
-        <h2 className={sp.cardTitle}>Caller</h2>
-        <p className={sp.hint}>Inbound call</p>
-      </div>
-
-      <div>
-        {name ? (
-          <p className={styles.callerName} data-testid="inbound-caller-name">
-            {name}
-          </p>
-        ) : null}
-        <p
-          className={`${sp.callingTo} ${call.from_e164 ? '' : styles.withheld}`}
-          data-testid="inbound-caller-number"
-        >
-          {number}
-        </p>
-      </div>
-
-      <ul className={styles.badges} aria-label="About this call">
-        {call.caller_dnc ? (
-          <li className={`${sp.pill} ${styles.dncBadge}`} data-testid="inbound-dnc-badge">
-            {INBOUND_DNC_BADGE}
-          </li>
-        ) : null}
-        {sticky ? (
-          <li className={`${sp.pill} ${call.sticky?.is_you ? sp.pillAccent : ''}`} data-testid="inbound-sticky">
-            {sticky}
-          </li>
-        ) : null}
-        <li className={`${sp.pill} ${call.recording ? sp.pillInfo : ''}`} data-testid="inbound-recording">
-          {call.recording ? (
-            <>
-              <span className={styles.recDot} aria-hidden="true" />
-              Recording
-            </>
-          ) : (
-            'Not recorded'
-          )}
-        </li>
-      </ul>
-
-      {call.caller_dnc ? (
-        <p className={sp.ringWarning} data-testid="inbound-dnc-enquiry">
-          {INBOUND_DNC_ENQUIRY_COPY}
-        </p>
-      ) : null}
-
-      <dl className={sp.factGrid}>
-        <div className={sp.fact}>
-          <dt className={sp.factLabel}>They rang</dt>
-          <dd className={`${sp.factValue} ${sp.mono} ${styles.factNumber}`} data-testid="inbound-to">
-            {formatDialNumber(call.to_e164)}
-          </dd>
-        </div>
-        <div className={sp.fact}>
-          <dt className={sp.factLabel}>Route</dt>
-          <dd className={sp.factValue} data-testid="inbound-route">
-            {call.route?.name ?? '—'}
-          </dd>
-        </div>
-        <div className={sp.fact}>
-          <dt className={sp.factLabel}>Before you</dt>
-          <dd className={sp.factValue} data-testid="inbound-waited">
-            {waitedLine(call.waited_seconds)}
-          </dd>
-        </div>
-        <div className={sp.fact}>
-          <dt className={sp.factLabel}>Campaign</dt>
-          <dd className={sp.factValue} data-testid="inbound-campaign">
-            {matched ?? 'Not on a campaign'}
-          </dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
-// ─── Column 2: the matched contact ──────────────────────────────────────────
-
-function ContactColumn({ call, filterInputRef }: { call: AgencyInboundCall; filterInputRef: RefObject<HTMLInputElement> }) {
-  const match = call.match;
-  const resolved = useMemo(
-    () => (match ? resolveContextFields(match.context, match.context_display) : null),
-    [match],
-  );
-  const source = useMemo(
-    () => (match ? { prior_attempts: match.prior_attempts, campaign_id: match.campaign_id, campaign_name: match.campaign_name } : null),
-    [match],
-  );
-
-  if (!match || !resolved || !source) {
-    return (
-      <div className={sp.column} data-testid="inbound-no-match">
-        <div className={sp.cardHead}>
-          <h2 className={sp.cardTitle}>Contact</h2>
-        </div>
-        <p className={station.emptyState}>
-          {call.from_e164
-            ? 'This number isn’t on any campaign’s contacts. Ask who’s calling and note it.'
-            : `${NUMBER_WITHHELD}: there is no number to match to a contact. Ask who’s calling and note it.`}
-        </p>
-      </div>
+  // ── The footer: one main button bottom right (AS1) ──────────────────────────
+  let footLeft: ReactNode = null;
+  let footRight: ReactNode = null;
+  let footHint: ReactNode = null;
+  if (phase === 'coming') {
+    footHint = STATION_COPY.connectsByItself;
+  } else if (phase === 'on_call') {
+    footLeft = ib.muteEnabled ? (
+      <SideMute muted={ib.muted} onToggle={ib.toggleMute} label={{ off: STATION_COPY.mute, on: STATION_COPY.unmute }} testId="inbound-mute" />
+    ) : null;
+    footRight = ib.hangupEnabled ? <SideEndCall callId={call.id} onConfirm={ib.hangup} copy={INBOUND_END_CALL_COPY} /> : null;
+  } else {
+    footLeft = blockLine ? <span id="inbound-save-block" className={styles.refusal} role="status" data-testid="inbound-save-reason">{blockLine}</span> : null;
+    footRight = (
+      <SideSave
+        blocked={() => ib.saveBlockAt(clock.now()) !== null}
+        ticking={Boolean(selected?.requires_datetime)}
+        saving={ib.saving}
+        onSave={trySave}
+        shake={shake}
+        describedBy={blockLine ? 'inbound-save-block' : null}
+        testId="inbound-save"
+      />
     );
   }
 
-  return (
-    <div data-testid="inbound-match">
-      {resolved.hero.length > 0 ? (
-        <dl className={station.heroList}>
-          {resolved.hero.map((field) => (
-            <div key={field.label} className={station.heroField}>
-              <dt className={station.heroLabel}>{field.label}</dt>
-              <dd className={station.heroValue}>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {/* Keyed on the call: the field filter starts empty for each caller. */}
-      <ContactDetail
-        key={call.id}
-        attempt={source}
-        resolved={resolved}
-        currentCatalog={call.catalog_source === 'campaign' ? call.disposition_catalog : undefined}
-        filterInputRef={filterInputRef}
-        nameCurrentCampaign
-      />
-    </div>
+  // ── The body ────────────────────────────────────────────────────────────────
+  const noteCard = (
+    <NoteCard
+      ref={notesRef}
+      value={ib.notes}
+      onAgentEdit={ib.setNotes}
+      status={ib.notesStatus}
+      enabled={ib.notesEnabled}
+      onSubmit={trySave}
+      needed={Boolean(selected?.requires_note)}
+    />
   );
-}
-
-// ─── The action bar ─────────────────────────────────────────────────────────
-
-/**
- * Save outcome → Mark DNC → Mute → Hang up, in that order in every state: the station's own
- * order, so nothing the agent reaches for changes sides when an inbound call takes the screen.
- */
-function InboundActionBar({ ib, call, clock }: { ib: InboundCallState; call: AgencyInboundCall; clock: ServerClock }) {
-  const number = call.from_e164 ? formatDialNumber(call.from_e164) : '';
-  const dncScope = call.match ? `for ${call.match.campaign_name}` : 'from this account';
-  const hangupReason = ib.hangupEnabled
-    ? null
-    : ib.phase === 'offered'
-      ? INBOUND_HANGUP_CONNECTING_COPY
-      : INBOUND_HANGUP_ENDED_COPY;
-  const dncTitle = call.from_e164 === null ? INBOUND_DNC_WITHHELD_COPY : undefined;
-
-  return (
-    <div className={sp.actionBar} data-testid="inbound-action-bar">
-      <span className={sp.spacer} />
-
-      <SaveControl ib={ib} clock={clock} />
-
-      <button
-        type="button"
-        className={`${station.mute} ${sp.dncButton}`}
-        onClick={ib.openDnc}
-        disabled={!ib.dncEnabled || ib.dncInFlight || ib.dncOutcome !== null}
-        title={dncTitle}
-        aria-keyshortcuts="d"
-        data-testid="inbound-dnc"
-      >
-        {ib.dncInFlight ? 'Adding to Do Not Call…' : ib.dncOutcome ? 'On Do Not Call' : 'Mark DNC'}
-        <span className={sp.kbd} aria-hidden="true" style={{ marginLeft: 8 }}>
-          D
-        </span>
-      </button>
-
-      <button
-        type="button"
-        className={`${station.mute} ${sp.muteButton}`}
-        onClick={ib.toggleMute}
-        disabled={!ib.muteEnabled}
-        aria-pressed={ib.muted}
-        aria-keyshortcuts="m"
-        data-testid="inbound-mute"
-      >
-        {ib.muted ? 'Unmute' : 'Mute'}
-        <span className={sp.kbd} aria-hidden="true" style={{ marginLeft: 8 }}>
-          M
-        </span>
-      </button>
-
-      <div className={sp.hangupSlot}>
-        <HoldToConfirmButton
-          attemptId={ib.hangupEnabled ? call.id : null}
-          enabled={ib.hangupEnabled}
-          disabledReason={hangupReason}
-          reserveReasonLine
-          onConfirm={ib.hangup}
-          copy={INBOUND_HANGUP_COPY}
+  const about = <AboutCallCard call={call} />;
+  let bodyClass = styles.body2;
+  let body: ReactNode;
+  if (phase === 'coming') {
+    body = (
+      <>
+        <CustomerCardView card={card} />
+        <div className={styles.col}>
+          {about}
+          {call.match ? <LastCallsCard rows={lastCalls} /> : null}
+        </div>
+      </>
+    );
+  } else if (phase === 'on_call') {
+    bodyClass = styles.bodyEven;
+    body = (
+      <>
+        <div className={styles.col}>
+          <CustomerCardView card={card} showLastSaid={false} />
+          {about}
+        </div>
+        <div className={styles.col}>
+          {call.match ? <LastCallsCard rows={lastCalls} /> : null}
+          {noteCard}
+        </div>
+      </>
+    );
+  } else {
+    bodyClass = styles.bodyWideLeft;
+    body = (
+      <>
+        <WhatHappened
+          catalog={ib.catalog}
+          form={ib.form}
+          onChange={ib.setForm}
+          enabled={ib.padEnabled}
+          now={clock.now}
+          handleRef={tilesRef}
+          amountDue={card.amountDue}
+          // A matched caller's call-later follows their work's routing (AS8); a caller on no list
+          // is called back by the agent.
+          comesToMe={call.match ? comesToMe : null}
+          callLaterLine={call.match ? undefined : SIDE_COPY.callBackYourself}
+          rejection={ib.padRejection}
+          keysRemapped={false}
+          onNeedsNote={() => notesRef.current?.focus()}
+          readAloud={frame.readAloud}
+          onAskDontCallAgain={(code) => (code ? setStopAsk(code) : ib.openDnc())}
+          dontCallAgainOffered={ib.dncEnabled && ib.dncOutcome === null}
+          shake={shake}
         />
-      </div>
+        <div className={styles.col}>
+          <CustomerCardView card={card} compact />
+          {noteCard}
+        </div>
+      </>
+    );
+  }
 
-      {ib.hangupFailure ? (
-        <p className={sp.actionFailure} role="alert" data-testid="inbound-hangup-failure">
-          {ib.hangupFailure}
-        </p>
-      ) : null}
-      {ib.dncOutcome ? (
-        <p className={sp.actionNotice} data-testid="inbound-dnc-outcome">
-          {ib.dncOutcome}
-        </p>
-      ) : null}
-      {ib.dncFailure ? (
-        <p className={sp.actionFailure} data-testid="inbound-dnc-failure">
-          {ib.dncFailure}
-        </p>
-      ) : null}
+  // Marking the number reaches the matched work, else the whole account; an outcome, its list's.
+  const stopBody = stopAsk !== null
+    ? call.match ? STATION_COPY.stopCallingBody : SIDE_COPY.stopBodyAll
+    : call.match ? SIDE_COPY.stopBodyWork(call.match.campaign_name) : SIDE_COPY.stopBodyAll;
 
-      <ConfirmDialog
-        open={ib.dncConfirmOpen}
-        title="Add this number to Do Not Call?"
-        message={`${number} won’t be called again ${dncScope}. Do this when the customer asks not to be called.`}
-        confirmLabel={ib.dncInFlight ? 'Adding…' : 'Add to Do Not Call'}
-        danger
-        disabled={ib.dncInFlight}
-        onConfirm={ib.confirmDnc}
-        onCancel={ib.cancelDnc}
-      />
-    </div>
-  );
-}
-
-/** Save, and why it is disabled. Repaints while a callback is picked: its time can slide into the past. */
-function SaveControl({ ib, clock }: { ib: InboundCallState; clock: ServerClock }) {
-  const selected = findDisposition(ib.catalog, ib.form.selectedCode);
-  useRepaintTick(Boolean(selected?.requires_datetime));
-  const block = ib.saveBlockAt(clock.now());
-  const disabled = block !== null || ib.saving;
   return (
     <>
-      {block ? (
-        <span id="inbound-save-reason" className={sp.actionStatus} data-testid="inbound-save-reason">
-          {INBOUND_SAVE_BLOCK_COPY[block]}
-        </span>
-      ) : null}
-      <button
-        type="button"
-        className={station.save}
-        onClick={ib.saveOutcome}
-        disabled={disabled}
-        aria-describedby={block ? 'inbound-save-reason' : undefined}
-        aria-keyshortcuts="Enter"
-        data-testid="inbound-save"
+      <StationFrame
+        view={band}
+        agentName={frame.agentName}
+        workName={frame.workName}
+        brandMark={frame.brandMark}
+        needHelp={frame.needHelp}
+        // During a call and on What happened? only Sound and the colour, as on 04 and 05.
+        menu={frame.menu(['sound', 'theme'])}
+        bandSide={bandSide}
+        banners={<>{callBanner}{frame.banners}</>}
+        connectFlash={connectFlash}
+        bodyClassName={bodyClass}
+        bodyRef={bodyRef}
+        footHint={footHint}
+        footLeft={footLeft}
+        footRight={footRight}
+        testId="station-inbound"
       >
-        {ib.saving ? 'Saving…' : 'Save outcome'}
-        <span className={station.shortcut} aria-hidden="true">
-          Enter
-        </span>
-      </button>
+        {/* The assertive region: the direct result of a button the agent just pressed. */}
+        <div className={styles.srOnly} role="alert" aria-live="assertive">{ib.announcement}</div>
+        <div className={side.contents} data-testid="inbound-body" data-phase={ib.phase ?? 'none'}>
+          {body}
+        </div>
+      </StationFrame>
+      <StopCallingDialog
+        open={stopAsk !== null || ib.dncConfirmOpen}
+        who={whoLine(card)}
+        busy={ib.dncInFlight}
+        failure={null}
+        body={stopBody}
+        onYes={() => {
+          if (stopAsk !== null) {
+            ib.setForm({ ...ib.form, selectedCode: stopAsk });
+            setStopAsk(null);
+            return;
+          }
+          ib.confirmDnc();
+        }}
+        onNo={() => (stopAsk !== null ? setStopAsk(null) : ib.cancelDnc())}
+      />
     </>
+  );
+}
+
+function whoLine(card: CustomerCard): string {
+  return [card.name, card.phone].filter(Boolean).join(' · ');
+}
+
+/**
+ * About this call: what only an inbound call has. Whether the caller asked not to be called (a
+ * customer's own call is an enquiry: help them, do not call back), whether they are the agent's own
+ * customer, the number they called, the line, how long they waited and their work. A caller we
+ * do not know is asked their name.
+ */
+function AboutCallCard({ call }: { call: AgencyInboundCall }) {
+  const sticky = call.sticky ? (call.sticky.is_you ? STICKY_WORDS[call.sticky.reason] : SIDE_COPY.otherAgentsCustomer) : null;
+  return (
+    <section className={styles.card} aria-label={SIDE_COPY.aboutCall} data-testid="inbound-about">
+      <h2 className={styles.cardTitle}><PhoneIncoming size={20} aria-hidden="true" />{SIDE_COPY.aboutCall}</h2>
+      {call.caller_dnc || sticky ? (
+        <div className={side.tags}>
+          {call.caller_dnc ? (
+            <span className={`${styles.tag} ${side.tagStop}`} data-testid="inbound-dnc-badge"><Ban size={16} aria-hidden="true" />{SIDE_COPY.dncBadge}</span>
+          ) : null}
+          {sticky ? (
+            <span className={`${styles.tag} ${call.sticky?.is_you ? '' : side.tagQuiet}`} data-testid="inbound-sticky"><UserRound size={16} aria-hidden="true" />{sticky}</span>
+          ) : null}
+        </div>
+      ) : null}
+      {call.caller_dnc ? <p className={side.warnLine} data-testid="inbound-dnc-enquiry">{SIDE_COPY.dncEnquiry}</p> : null}
+      <dl className={side.about}>
+        <div>
+          <dt>{SIDE_COPY.theyCalled}</dt>
+          <dd data-testid="inbound-to">{formatDialNumber(call.to_e164)}</dd>
+        </div>
+        {call.route ? (
+          <div>
+            <dt>{SIDE_COPY.line}</dt>
+            <dd data-testid="inbound-route">{call.route.name}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>{SIDE_COPY.waited}</dt>
+          <dd data-testid="inbound-waited">{waitedFor(call.waited_seconds)}</dd>
+        </div>
+        <div>
+          <dt>{SIDE_COPY.work}</dt>
+          <dd data-testid="inbound-campaign">{call.match?.campaign_name ?? SIDE_COPY.noWork}</dd>
+        </div>
+      </dl>
+      {call.match ? null : (
+        <p className={styles.fine} data-testid="inbound-no-match">
+          <Info size={16} aria-hidden="true" />
+          {call.from_e164 ? SIDE_COPY.newCaller : SIDE_COPY.hiddenCaller}
+        </p>
+      )}
+    </section>
   );
 }

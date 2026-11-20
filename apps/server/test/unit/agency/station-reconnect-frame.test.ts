@@ -61,7 +61,7 @@ const { repos } = vi.hoisted(() => ({
   repos: {
     attempt: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     campaign: { findById: vi.fn() },
-    contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn(), probeAgentQueues: vi.fn() },
+    contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn(), probeAgentQueues: vi.fn(), probeCampaignQueue: vi.fn() },
     session: {
       findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn(),
       // The station attach's session read (it also records `client_kind`): the row `findById` gives.
@@ -198,8 +198,8 @@ async function harness(): Promise<Harness> {
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
-async function ready(h: Harness): Promise<any> {
-  const ws = await h.app.injectWS('/api/v1/agency/station/sess-1?token=tok');
+async function ready(h: Harness, query = ''): Promise<any> {
+  const ws = await h.app.injectWS(`/api/v1/agency/station/sess-1?token=tok${query}`);
   await vi.waitFor(() => expect(h.sent.some((f) => f.event === 'ready')).toBe(true));
   ws.terminate();
   return h.sent.find((f) => f.event === 'ready');
@@ -338,16 +338,36 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u-agent'], expect.anything());
   });
 
-  // FALSIFIED: with the attach's mode gate removed (the campaign read for every campaign
-  // session), the first expectation on `findById` reds.
-  it('omits it on a pool campaign without reading the campaign, on a soft-phone session, and when the read fails', async () => {
-    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', ...ALL_DAY });
-    expect('queue' in (await ready(h))).toBe(false);
-    // The mode came with the session read: a pool campaign's attach reads no campaign row.
-    expect(repos.campaign.findById).not.toHaveBeenCalled();
+  // Agent station BE-5: a pool campaign's reconnect is told the campaign's shared queue, but only
+  // by a station that declared `caps=queue_pool` (AS18), a console's included.
+  // FALSIFIED: with the attach's old mode gate put back (`campaignId && ownerMode`) the first reds;
+  // with the capability gate dropped, the second.
+  it('carries the campaign\'s shared `queue` on a pool campaign to a station that declared queue_pool, one probe for the campaign', async () => {
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+    const later = new Date(Date.now() + 600_000);
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: later, hasNonCallback: false });
+    expect((await ready(h, '&caps=queue_pool')).queue).toEqual({ due: false, reason: 'callbacks_later', next_due_at: later.toISOString() });
+    expect(repos.contact.probeCampaignQueue).toHaveBeenCalledWith('camp-1', []);
     expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
+  });
 
+  it('AS18: a station that did not declare queue_pool (an older console or app) gets no queue on a pool campaign, as before BE-5', async () => {
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: new Date(), hasNonCallback: false });
+    for (const query of ['', '&client=mobile&caps=inbound,floor_assist']) {
+      h.sent.length = 0;
+      expect('queue' in (await ready(h, query)), query).toBe(false);
+    }
+    expect(repos.contact.probeCampaignQueue).not.toHaveBeenCalled();
+    // An owner-mode campaign's queue still reaches every station.
     h.sent.length = 0;
+    repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'strict' });
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
+    repos.contact.probeAgentQueues.mockResolvedValue({ agents: [{ agentUserId: 'u-agent', ownDue: true, ownNextAt: null, ownHasNonCallback: null }], pool: null });
+    expect((await ready(h)).queue).toMatchObject({ due: true });
+  });
+
+  it('omits it on a soft-phone session, and when the read fails', async () => {
     repos.session.findById.mockResolvedValue({
       ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null, campaign_assignment_mode: null,
     });
@@ -386,8 +406,49 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
       ]);
     });
 
-    it('not on a pool campaign, nor on a soft-phone session', async () => {
-      await ready(h);
+    // A whole floor reconnecting after a deploy: an older build on a pool campaign is sent no
+    // queue state (AS18), so its reconnect costs no campaign read and no pacing wake-up here (the
+    // attach's own `agent_available` wakes pacing for it), as before BE-5. The session read's mode
+    // decides, before any read.
+    // FALSIFIED: with the attach's gate back to `campaignId` alone, the pool station without
+    // queue_pool reads the campaign and publishes station_ready, and the first case reds.
+    it('the three stations: pool without queue_pool neither reads nor publishes; pool with it and owner-mode do both', async () => {
+      repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+      repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(), hasNonCallback: null });
+      for (const query of ['', '&client=mobile&caps=inbound,floor_assist']) {
+        h.sent.length = 0;
+        expect('queue' in (await ready(h, query)), query).toBe(false);
+      }
+      expect(repos.campaign.findById).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+
+      h.sent.length = 0;
+      expect((await ready(h, '&client=mobile&caps=inbound,queue_pool')).queue).toMatchObject({ due: true });
+      expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+
+      events.length = 0;
+      h.sent.length = 0;
+      repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'strict' });
+      repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
+      repos.contact.probeAgentQueues.mockResolvedValue({ agents: [{ agentUserId: 'u-agent', ownDue: true, ownNextAt: null, ownHasNonCallback: null }], pool: null });
+      expect((await ready(h, '&client=mobile&caps=inbound')).queue).toMatchObject({ due: true });
+      expect(repos.campaign.findById).toHaveBeenCalledTimes(2);
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+    });
+
+    it('on a pool campaign too (BE-5), never on a soft-phone session', async () => {
+      repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+      repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(), hasNonCallback: null });
+      await ready(h, '&caps=queue_pool');
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+      events.length = 0;
       h.sent.length = 0;
       repos.session.findById.mockResolvedValue({
         ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null, campaign_assignment_mode: null,

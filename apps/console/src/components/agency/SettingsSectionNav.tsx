@@ -98,7 +98,8 @@ export function useSectionInView(
       pickedHash.current = null;
       return;
     }
-    pickedHash.current = null;
+    // A pick's own navigation may not have landed yet (the page became ready between the pick
+    // and its URL change): keep the pick for it, or that navigation scrolls a second time.
     const list = idsKey.split(' ');
     if (!hashId || !list.includes(hashId)) return;
     setActive(hashId);

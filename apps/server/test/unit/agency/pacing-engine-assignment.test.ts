@@ -32,6 +32,7 @@ const { repos, settings } = vi.hoisted(() => ({
       claimDialable: vi.fn().mockResolvedValue([]),
       claimForAgents: vi.fn().mockResolvedValue([]),
       probeAgentQueues: vi.fn(),
+      probeCampaignQueue: vi.fn(),
       unclaim: vi.fn().mockResolvedValue(undefined),
       unclaimMany: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
@@ -114,12 +115,16 @@ function makeAgents(states: Record<string, string>) {
   };
 }
 
-function makeStations(owned: string[], send = vi.fn((_id: string, _frame: unknown) => true)) {
+/** `withoutQueuePool`: stations that did not declare `queue_pool` (AS18: an older console or app). */
+function makeStations(owned: string[], send = vi.fn((_id: string, _frame: unknown) => true), withoutQueuePool: string[] = []) {
   return {
     isLocallyOwned: vi.fn((id: string) => owned.includes(id)),
     ownerOf: vi.fn(async (id: string) => (owned.includes(id) ? 'r1' : null)),
     broadcast: vi.fn(() => owned.length),
     send,
+    get: vi.fn((id: string) => (owned.includes(id)
+      ? { campaignId: 'camp-1', caps: new Set(withoutQueuePool.includes(id) ? [] : ['queue_pool']) }
+      : undefined)),
   };
 }
 
@@ -571,19 +576,154 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     }
   });
 
-  it('pool mode: claimDialable with N, no probe and no queue frame (the tick as it was)', async () => {
+  // Agent station BE-5: a pool campaign's agents hear the campaign's shared queue.
+  // FALSIFIED: with the pool arm removed from `planTick` (no `sendPoolQueueFrames`) this reds.
+  it('pool mode: one campaign probe, every available agent told the shared state on a change; the claim as it was', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: LATER, hasNonCallback: false });
     const send = vi.fn((_id: string, _frame: unknown) => true);
     const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
     const { e } = engine(makeStations(['s1', 's2', 's3'], send), agents);
 
     await e.tickOnce('camp-1');
+    await e.drainPoolQueueReads();
 
+    const later = { event: 'queue', campaign_id: 'camp-1', due: false, reason: 'callbacks_later', next_due_at: LATER.toISOString() };
+    expect(queueFrames(send)).toEqual([['s1', later], ['s2', later], ['s3', later]]);
+    expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(1);
+    expect(repos.contact.probeCampaignQueue).toHaveBeenCalledWith('camp-1', ['callback']);
+    // Told, never decided on: the claim is the pool's own, for every available agent.
     expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
     expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
     expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
     expect(fallback.sweep).not.toHaveBeenCalled();
+
+    // Unchanged: nothing more. Due now: everyone hears it.
+    send.mockClear();
+    await e.tickOnce('camp-1');
+    await e.drainPoolQueueReads();
+    expect(queueFrames(send)).toHaveLength(0);
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(Date.now() - 1_000), hasNonCallback: null });
+    await e.tickOnce('camp-1');
+    await e.drainPoolQueueReads();
+    const due = { event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null };
+    expect(queueFrames(send)).toEqual([['s1', due], ['s2', due], ['s3', due]]);
+  });
+
+  // AS18: a station that did not declare `queue_pool` (a console or app built before the redesign)
+  // hears nothing of a pool campaign's queue, as before BE-5; with none that declared it, no probe.
+  // FALSIFIED: with the capability filter dropped from `sendPoolQueueFrames`, s2 is sent a frame and this reds.
+  it('pool mode: only the stations that declared queue_pool are told; with none, nothing is read', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: LATER, hasNonCallback: false });
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send, ['s2']), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+    await e.tickOnce('camp-1');
+    await e.drainPoolQueueReads();
+    expect(queueFrames(send).map(([id]) => id)).toEqual(['s1', 's3']);
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
+
+    repos.contact.probeCampaignQueue.mockClear();
+    const none = vi.fn((_id: string, _frame: unknown) => true);
+    const old = engine(makeStations(['s1', 's2'], none, ['s1', 's2']), makeAgents({ s1: 'available', s2: 'available' }));
+    await old.e.tickOnce('camp-1');
+    expect(queueFrames(none)).toHaveLength(0);
+    expect(repos.contact.probeCampaignQueue).not.toHaveBeenCalled();
+  });
+
+  it('pool mode: a failed probe sends nothing and costs the tick nothing', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockRejectedValue(new Error('db blip'));
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+
+    await e.tickOnce('camp-1');
+    await e.drainPoolQueueReads();
+
+    expect(queueFrames(send)).toHaveLength(0);
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
+  });
+
+  // The frame is told, never decided on, so the probe is off the dial path: the tick claims
+  // without waiting for it, and the frame follows when it answers. One read per campaign at a time.
+  // FALSIFIED: with the pool arm awaiting the probe again (the read inline before the account
+  // reads), the tick never reaches the claim and this times out.
+  it('pool mode: the claim does not wait for the queue probe; the frames follow when it answers', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    const slow = deferred<{ dueCount: number; nextAt: Date | null; hasNonCallback: boolean | null }>();
+    repos.contact.probeCampaignQueue.mockReturnValue(slow.promise);
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+    try {
+      await e.tickOnce('camp-1');
+      expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 3);
+      expect(queueFrames(send)).toHaveLength(0);
+
+      // A tick while the read is out claims again and starts no second probe.
+      await e.tickOnce('camp-1');
+      expect(repos.contact.claimDialable).toHaveBeenCalledTimes(2);
+      expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(1);
+
+      slow.resolve({ dueCount: 0, nextAt: LATER, hasNonCallback: false });
+      await e.drainPoolQueueReads();
+      const later = { event: 'queue', campaign_id: 'camp-1', due: false, reason: 'callbacks_later', next_due_at: LATER.toISOString() };
+      expect(queueFrames(send)).toEqual([['s1', later], ['s2', later], ['s3', later]]);
+    } finally {
+      await e.stop();
+    }
+  });
+
+  // `halt()` waits for a read in flight, bounded like the ticks and sweeps; one that outlives the
+  // bound is abandoned, and when it answers after the stop it tells no one.
+  // FALSIFIED: with the read left out of `halt()`'s drains, no error is logged; with the
+  // `mayDial` check after the read dropped, the late answer is sent.
+  it('pool mode: a queue probe that never answers does not hold up stop(), and a late answer sends nothing', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    const slow = deferred<{ dueCount: number; nextAt: Date | null; hasNonCallback: boolean | null }>();
+    repos.contact.probeCampaignQueue.mockReturnValue(slow.promise);
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const { e } = engine(makeStations(['s1'], send), makeAgents({ s1: 'available' }));
+    e.tickDrainTimeoutMs = 20;
+
+    await e.tickOnce('camp-1');
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 1);
+    await e.stop();
+    expect(childLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ pending: 1, timeoutMs: 20 }), expect.stringContaining('Pool queue reads did not settle'),
+    );
+
+    slow.resolve({ dueCount: 1, nextAt: new Date(Date.now() - 1_000), hasNonCallback: null });
+    await e.drainPoolQueueReads();
+    expect(queueFrames(send)).toHaveLength(0);
+  });
+
+  it('pool mode: scheduled ticks share one probe per campaign within the cache TTL', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
+    repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 0, nextAt: null, hasNonCallback: null });
+    const clock = { t: 1_000_000 };
+    const e = new PacingEngine(
+      null, '', 'r1', makeStations(['s1']) as any, makeAgents({ s1: 'available' }) as any,
+      { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any,
+      { bus: new InProcessPacingInvalidationBus(), now: () => clock.t },
+    );
+    e.setAutoRounds(false);
+    const ticks: PacingTickObservation[] = [];
+    e.registerTickObserver((o) => ticks.push(o));
+    (e as any).beginLeading({ ...CAMPAIGN, assignment_mode: 'pool' });
+    try {
+      await e.runRound();
+      clock.t += 500;
+      ticks.length = 0;
+      await e.runRound();
+      // The second round ticked in full (not skipped), and read the cached state.
+      expect(ticks).toEqual([expect.objectContaining({ mode: 'full' })]);
+      expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(1);
+      clock.t += 5_000;
+      await e.runRound();
+      expect(repos.contact.probeCampaignQueue).toHaveBeenCalledTimes(2);
+    } finally {
+      await e.stop();
+    }
   });
 });
 

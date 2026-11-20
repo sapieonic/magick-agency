@@ -11,6 +11,7 @@ import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type {
   AgencyAssignmentMode,
+  AgencyPhoneDisplay,
   AgencyCallbackFallback,
   AgencyCampaignStatus,
   AgencyOnUnstaff,
@@ -30,6 +31,8 @@ import { sendRefusal } from '../helpers/refusal.js';
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
+import { contextColumnsRejected } from './guards.js';
+import { normalizeAgentScript } from '../../../agency/agent-script.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
 
 
@@ -203,6 +206,12 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       outcome_dispositions: body?.outcome_dispositions,
       // Inbound sticky routing (0024). Omitted ⇒ `true`; shape-checked by `configRejected`.
       inbound_sticky_enabled: body?.inbound_sticky_enabled as boolean | undefined,
+      // The agent station's settings (0056), each shape-checked by `configRejected`: the daily
+      // target (BE-2; omitted or null ⇒ none), the number display (AS9; omitted ⇒ `full`) and the
+      // script (BE-8, stored with its texts trimmed as the PATCH stores it; omitted ⇒ none).
+      daily_target_calls: body?.daily_target_calls as number | null | undefined,
+      phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
+      agent_script: body?.agent_script !== undefined ? normalizeAgentScript(body.agent_script) : undefined,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,
@@ -323,6 +332,10 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     }
 
     if (configRejected(reply, body, campaign)) return reply;
+    // BE-6: the roles and types against the campaign's customer list, after the shape check.
+    if (await contextColumnsRejected(reply, body, campaign)) return reply;
+    // BE-8: the script is stored with its texts trimmed (the rules counted them trimmed).
+    if ('agent_script' in body) body.agent_script = normalizeAgentScript(body.agent_script);
 
     // After the shape check, so a malformed mode is the 400 that names the field.
     if (assignmentModeChangeRefused(reply, body, campaign)) return reply;

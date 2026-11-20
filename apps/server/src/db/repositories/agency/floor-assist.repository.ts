@@ -3,7 +3,10 @@
  * onwards; `0052_floor_assist.sql`). Two things:
  *
  *  - **Need help** on the agent's session row (`help_raised_at`, `help_call_id`,
- *    `help_answered_at`, `help_answered_by`). A request is OPEN while raised, not answered and
+ *    `help_answered_at`, `help_answered_by`, and from 0059 `help_state`, the agent's state at the
+ *    raise: agent station BE-9). `help_state` is written by the raise and cleared in every statement
+ *    that clears `help_raised_at` (`ck_agency_agent_sessions_help_state` refuses a state on a
+ *    request that is not raised); an answer keeps both. A request is OPEN while raised, not answered and
  *    raised less than the expiry ago (`AGENCY_HELP_EXPIRY_MS`, passed in as `expiryMs` so a test can
  *    shorten it). Every transition is ONE statement, so two at once (an answer and the sweep, a
  *    cancel and a leave) end a request exactly once: the second waits on the row lock and, under
@@ -25,6 +28,7 @@
  * waits for it.
  */
 import { getPool } from '@magick-agency/db';
+import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import { HELP_OPEN_SQL as OPEN, helpOpenSql } from './sql-fragments.js';
 
 /** Raised `$n` ms ago or more: expired. */
@@ -40,6 +44,8 @@ export interface HelpEndedRow {
   agent_user_id: string;
   raised_at: Date;
   call_id: string | null;
+  /** The agent's state when it was raised (0059); null on a request raised before it was recorded. */
+  state: AgencyAgentState | null;
 }
 
 /**
@@ -60,6 +66,8 @@ export interface OpenHelpRow {
   session_id: string;
   raised_at: Date;
   call_id: string | null;
+  /** The agent's state when it was raised (BE-9, 0059); null on a request raised before it was recorded. */
+  state: AgencyAgentState | null;
 }
 
 /** What {@link AgencyFloorAssistRepository.raise} did. */
@@ -87,17 +95,18 @@ export interface SupervisorMessageInsert {
 
 /** What every transition answers: the updated row `s`, and the request as `prior` picked it. */
 const ENDED_COLUMNS = `s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
-            prior.help_raised_at AS raised_at, prior.help_call_id AS call_id, prior.expired`;
+            prior.help_raised_at AS raised_at, prior.help_call_id AS call_id, prior.help_state AS state, prior.expired`;
 
 /**
- * Clear the requests `where` picks (`$1` is the expiry in ms): `help_raised_at` and `help_call_id`
- * NULL, answering what each held and whether it was past the expiry. `limit` bounds a sweep's
+ * Clear the requests `where` picks (`$1` is the expiry in ms): `help_raised_at`, `help_call_id` and
+ * `help_state` NULL (the state goes with the raise: 0059's CHECK refuses one left behind),
+ * answering what each held and whether it was past the expiry. `limit` bounds a sweep's
  * batch; `skipLocked` for the sweep only.
  */
 function clearSql(where: string, opts: { limit?: string; skipLocked?: boolean } = {}): string {
   return `
     WITH prior AS MATERIALIZED (
-      SELECT id, help_raised_at, help_call_id, ${expired('$1')} AS expired
+      SELECT id, help_raised_at, help_call_id, help_state, ${expired('$1')} AS expired
         FROM agency_agent_sessions
        WHERE ${where}
        ORDER BY help_raised_at, id
@@ -105,7 +114,7 @@ function clearSql(where: string, opts: { limit?: string; skipLocked?: boolean } 
        FOR UPDATE${opts.skipLocked ? ' SKIP LOCKED' : ''}
     )
     UPDATE agency_agent_sessions s
-       SET help_raised_at = NULL, help_call_id = NULL
+       SET help_raised_at = NULL, help_call_id = NULL, help_state = NULL
       FROM prior
      WHERE s.id = prior.id
     RETURNING ${ENDED_COLUMNS}`;
@@ -122,7 +131,8 @@ const END_WITH_SESSION_SQL = clearSql(`id = $2::uuid AND ${OPEN}`);
 
 /**
  * A supervisor (`$3`) answers the open request of session `$1` (tenant `$2`): it stays raised, now
- * answered; or, past the expiry (`$4` ms), it is expired instead, cleared as {@link clearSql} clears.
+ * answered (its `help_state` kept with it); or, past the expiry (`$4` ms), it is expired instead,
+ * cleared as {@link clearSql} clears (the state with it).
  *
  * Answered at `GREATEST(now(), help_raised_at)`, never `now()` alone: `now()` is the answering
  * transaction's start, and an answer that waited on the row lock re-reads the row as the holder left
@@ -132,7 +142,7 @@ const END_WITH_SESSION_SQL = clearSql(`id = $2::uuid AND ${OPEN}`);
  */
 const ANSWER_SQL = `
   WITH prior AS MATERIALIZED (
-    SELECT id, help_raised_at, help_call_id, ${expired('$4')} AS expired
+    SELECT id, help_raised_at, help_call_id, help_state, ${expired('$4')} AS expired
       FROM agency_agent_sessions
      WHERE id = $1::uuid AND tenant_id = $2::uuid AND ${OPEN}
      FOR UPDATE
@@ -141,35 +151,38 @@ const ANSWER_SQL = `
      SET help_answered_at = CASE WHEN prior.expired THEN s.help_answered_at ELSE GREATEST(now(), s.help_raised_at) END,
          help_answered_by = CASE WHEN prior.expired THEN s.help_answered_by ELSE $3::uuid END,
          help_raised_at = CASE WHEN prior.expired THEN NULL ELSE s.help_raised_at END,
-         help_call_id = CASE WHEN prior.expired THEN NULL ELSE s.help_call_id END
+         help_call_id = CASE WHEN prior.expired THEN NULL ELSE s.help_call_id END,
+         help_state = CASE WHEN prior.expired THEN NULL ELSE s.help_state END
     FROM prior
    WHERE s.id = prior.id
   RETURNING ${ENDED_COLUMNS}, s.help_answered_at AS answered_at`;
 
 /**
- * Raise a request (call `$4`) on session `$1` (tenant `$2`, account `$3`, not left) unless one is
- * open (`$5` the expiry in ms). One open and fresh: left as it is and answered (`raised_at` null).
+ * Raise a request (call `$4`, the agent's state `$6`, BE-9) on session `$1` (tenant `$2`, account
+ * `$3`, not left) unless one is open (`$5` the expiry in ms). One open and fresh: left as it is and answered (`raised_at` null).
  * One open past the expiry, or none open (never raised, cleared, or answered): raised now, the
  * expired one answered as it was (`prior_*` with `expired`). No row: the session has left (or is
  * not in this account).
  */
 const RAISE_SQL = `
   WITH prior AS MATERIALIZED (
-    SELECT id, tenant_id, account_id, campaign_id, agent_user_id, help_raised_at, help_call_id,
+    SELECT id, tenant_id, account_id, campaign_id, agent_user_id, help_raised_at, help_call_id, help_state,
            (${OPEN}) AS open, (${OPEN} AND ${expired('$5')}) AS expired
       FROM agency_agent_sessions
      WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
      FOR UPDATE
   ), raised AS (
     UPDATE agency_agent_sessions s
-       SET help_raised_at = now(), help_call_id = $4::uuid, help_answered_at = NULL, help_answered_by = NULL
+       SET help_raised_at = now(), help_call_id = $4::uuid, help_state = $6::varchar,
+           help_answered_at = NULL, help_answered_by = NULL
       FROM prior
      WHERE s.id = prior.id AND NOT (prior.open AND NOT prior.expired)
-    RETURNING s.help_raised_at, s.help_call_id
+    RETURNING s.help_raised_at, s.help_call_id, s.help_state
   )
   SELECT prior.id AS session_id, prior.tenant_id, prior.account_id, prior.campaign_id, prior.agent_user_id,
          prior.expired, prior.help_raised_at AS prior_raised_at, prior.help_call_id AS prior_call_id,
-         raised.help_raised_at AS raised_at, raised.help_call_id AS call_id
+         prior.help_state AS prior_state,
+         raised.help_raised_at AS raised_at, raised.help_call_id AS call_id, raised.help_state AS state
     FROM prior LEFT JOIN raised ON true`;
 
 /**
@@ -208,29 +221,34 @@ export class AgencyFloorAssistRepository {
   /**
    * Raise a request on the session (`tenantId`, `accountId` its own, not left) unless one is open,
    * in one statement ({@link RAISE_SQL}): a request found past the expiry is expired by it and
-   * answered in `expired`, never overwritten unaudited.
+   * answered in `expired`, never overwritten unaudited. `state` is the agent's state now (BE-9),
+   * recorded on a request raised by this call; one already open keeps the state it was raised in.
    */
   async raise(input: {
-    sessionId: string; tenantId: string; accountId: string; callId: string | null; expiryMs: number;
+    sessionId: string; tenantId: string; accountId: string; callId: string | null; state: AgencyAgentState; expiryMs: number;
   }): Promise<HelpRaiseResult> {
-    const { rows } = await getPool().query<Omit<HelpEndedRow, 'raised_at' | 'call_id'> & {
-      expired: boolean; prior_raised_at: Date | null; prior_call_id: string | null; raised_at: Date | null; call_id: string | null;
-    }>(RAISE_SQL, [input.sessionId, input.tenantId, input.accountId, input.callId, input.expiryMs]);
+    const { rows } = await getPool().query<Omit<HelpEndedRow, 'raised_at' | 'call_id' | 'state'> & {
+      expired: boolean; prior_raised_at: Date | null; prior_call_id: string | null; prior_state: AgencyAgentState | null;
+      raised_at: Date | null; call_id: string | null; state: AgencyAgentState | null;
+    }>(RAISE_SQL, [input.sessionId, input.tenantId, input.accountId, input.callId, input.expiryMs, input.state]);
     const r = rows[0];
     if (!r) return { raised: false, help: null, expired: null };
     const { session_id, tenant_id, account_id, campaign_id, agent_user_id } = r;
     const expired: HelpEndedRow | null = r.expired
-      ? { session_id, tenant_id, account_id, campaign_id, agent_user_id, raised_at: r.prior_raised_at!, call_id: r.prior_call_id }
+      ? {
+        session_id, tenant_id, account_id, campaign_id, agent_user_id,
+        raised_at: r.prior_raised_at!, call_id: r.prior_call_id, state: r.prior_state,
+      }
       : null;
     return r.raised_at
-      ? { raised: true, help: { session_id, raised_at: r.raised_at, call_id: r.call_id }, expired }
-      : { raised: false, help: { session_id, raised_at: r.prior_raised_at!, call_id: r.prior_call_id }, expired };
+      ? { raised: true, help: { session_id, raised_at: r.raised_at, call_id: r.call_id, state: r.state }, expired }
+      : { raised: false, help: { session_id, raised_at: r.prior_raised_at!, call_id: r.prior_call_id, state: r.prior_state }, expired };
   }
 
   /** The session's open request, or null. */
   async openForSession(sessionId: string, tenantId: string, accountId: string, expiryMs: number): Promise<OpenHelpRow | null> {
     const { rows } = await getPool().query<OpenHelpRow>(
-      `SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id
+      `SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id, help_state AS state
          FROM agency_agent_sessions
         WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
           AND ${helpOpenSql('$4')}`,

@@ -58,7 +58,7 @@ export const AGENT_SURFACES: readonly AgentSurface[] = [
     surface the other two treat as home, so it leads for the same reason a
     breadcrumb's root does.
   */
-  { id: 'campaigns', to: '/dialer', label: 'My campaigns' },
+  { id: 'campaigns', to: '/dialer', label: 'My work' },
   { id: 'performance', to: '/dialer/performance', label: 'My performance' },
   { id: 'attempts', to: '/dialer/attempts', label: 'My calls' },
 ];

@@ -71,6 +71,8 @@ export const REPORT_DEFINITION_KEYS = {
     'days_worked',
     'first_in_last_out',
     'drops',
+    // Agent station (BE-12): breaks over their limit.
+    'break_overruns',
     'callbacks_booked',
     'callbacks_on_time',
     'callbacks_late',

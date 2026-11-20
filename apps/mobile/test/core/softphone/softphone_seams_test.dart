@@ -54,7 +54,7 @@ void main() {
       for (final b in SoftphoneSaveBlock.values) {
         expect(softphoneSaveBlockCopy[b], isNotEmpty, reason: b.name);
       }
-      expect(softphoneSaveBlockCopy[SoftphoneSaveBlock.callLive], 'Save unlocks when the call ends.');
+      expect(softphoneSaveBlockCopy[SoftphoneSaveBlock.callLive], 'Save opens when the call ends.');
     });
   });
 

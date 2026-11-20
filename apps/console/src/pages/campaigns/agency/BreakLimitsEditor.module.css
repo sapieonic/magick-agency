@@ -84,3 +84,11 @@
     text-align: left;
   }
 }
+
+/* The reason's picture (BE-13) beside its name. */
+.named {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}

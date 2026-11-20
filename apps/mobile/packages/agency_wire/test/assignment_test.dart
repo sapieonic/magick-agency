@@ -82,6 +82,15 @@ void main() {
   });
 
   group('my-contacts list', () {
+    test('each row says how its campaign shows the number (AS9); absent is null, unknown is full', () {
+      final p = decodeMyContactsPage(fixture('reads.json', 'my_contacts'));
+      expect(p.rows.map((r) => r.phoneDisplay), everyElement(PhoneDisplay.masked));
+      final row = (fixture('reads.json', 'my_contacts')['rows']! as List<Object?>).first! as Map<String, Object?>;
+      expect(MyContact.fromJson({...row}..remove('phone_display')).phoneDisplay, isNull);
+      expect(MyContact.fromJson({...row, 'phone_display': 'blurred'}).phoneDisplay, PhoneDisplay.full);
+      expect(MyContact.fromJson({...row, 'phone_display': 7}).phoneDisplay, isNull);
+    });
+
     test('a keyset page of the agent\'s own contacts', () {
       final p = decodeMyContactsPage(fixture('reads.json', 'my_contacts'));
       expect(p.rows, hasLength(3));

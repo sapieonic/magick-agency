@@ -141,6 +141,8 @@ function makeStations(owned: string[]) {
     // test config — the frame assertions below all read the second argument.
     broadcast: vi.fn((_campaignId: string, _frame: unknown) => owned.length),
     sessionIdsForCampaign: vi.fn(() => owned),
+    // No station here declared `queue_pool` (AS18): a pool campaign sends them no queue frame.
+    get: vi.fn((_id: string) => undefined),
   };
 }
 

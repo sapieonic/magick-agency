@@ -23,6 +23,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import { VISUAL_CUE_SPECS, visualCueSignature } from '../../utils/agencyCues';
 import { CUE_PREFS_STORAGE_KEY } from '../../utils/agencyCuePrefs';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
@@ -180,7 +181,10 @@ const BOOTSTRAP: AgencySessionBootstrap = {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
+// A microphone that opens: `A` is Start of day's Start work, which 01b (no microphone) does not offer.
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   FakeAudioContext.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
@@ -207,6 +211,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   window.localStorage.clear();
@@ -264,10 +269,18 @@ function expireFlash() {
   });
 }
 
+/** ⋮ More → Sound (spec §3: Sound & flash moved there). Returns ⋮, the control focus goes back to. */
 function openSettings() {
-  const trigger = screen.getByRole('button', { name: /sound & flash/i });
+  const trigger = screen.getByRole('button', { name: 'More' });
   act(() => {
     fireEvent.click(trigger);
+  });
+  act(() => {
+    fireEvent.click(screen.getByTestId('station-menu-sound'));
+  });
+  // The dialog moves focus inside on its own short timer.
+  act(() => {
+    vi.advanceTimersByTime(60);
   });
   return trigger;
 }
@@ -439,7 +452,7 @@ describe('criterion (a) — with audio off, the three cues are three different s
     expect(element.getAttribute('style')).not.toMatch(/colou?r|#[0-9a-f]{3}|rgb/i);
   });
 
-  it('is rendered on the rail, silently, and does not shift the console', async () => {
+  it('is rendered on the band, silently, and does not shift the station', async () => {
     await mounted();
     await goAvailable();
     openSettings();
@@ -449,10 +462,11 @@ describe('criterion (a) — with audio off, the three cues are three different s
     });
 
     const element = flash()!;
-    // On the rail's "single most important component" — not in a corner.
+    // On the band, the state's full-width colour — not in a corner.
+    expect(element.closest('[data-testid="station-band"]')).toBeTruthy();
     expect(element.closest('[role="status"]')).toBeTruthy();
     /**
-     * `aria-hidden`, and deliberately. The rail is this screen's only polite live
+     * `aria-hidden`, and deliberately. The band is this screen's only polite live
      * region: a labelled element appearing inside it would announce on every ring,
      * connect and hang-up, on top of the assertive region that already says so in
      * words. The flash is for eyes that cannot use the sound, not a third narration.
@@ -561,7 +575,7 @@ describe('the connect visual rides `bridged` and nothing else', () => {
     expect(flash()).toBeNull();
     // …and the panel IS restored as live, so the silence above is the dedupe working
     // rather than the frame being dropped.
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
   });
 
   it('lights the whole shell for connect, and for neither of the others', async () => {
@@ -688,7 +702,7 @@ describe('criterion (c) — the preference is settable, not just readable', () =
 
     openSettings();
     setVolume(0);
-    expect(screen.getByText('Cues are silent. The rail flash is your only call signal.')).toBeTruthy();
+    expect(screen.getByText('Cues are silent. The screen flash is your only call signal.')).toBeTruthy();
 
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
@@ -780,9 +794,9 @@ describe('criterion (c) — the preference is settable, not just readable', () =
 });
 
 describe('criterion (d) — the settings surface is reachable without a mouse', () => {
-  it('the trigger is in the tab order, not merely in the DOM', async () => {
+  it('the trigger (⋮ More) is in the tab order, not merely in the DOM', async () => {
     await mounted();
-    const trigger = screen.getByRole('button', { name: /sound & flash/i });
+    const trigger = screen.getByRole('button', { name: 'More' });
 
     /**
      * `el.tabIndex >= 0`, not `[tabindex]:not([tabindex="-1"])`. A
@@ -796,28 +810,28 @@ describe('criterion (d) — the settings surface is reachable without a mouse', 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('opens on Enter from the trigger — the position a keyboard reaches it from', async () => {
-    /**
-     * Fired at the trigger while the trigger holds focus, which is where a keyboard
-     * agent actually is when they press this. Not at `window` (this control owns no
-     * global shortcut, deliberately — every free letter would be new muscle memory
-     * for a preference set once a shift) and not from inside a text field.
-     */
+  it('opens on Enter from the trigger, and Sound from the menu, focus landing on the first control', async () => {
     await mounted();
-    const trigger = screen.getByRole('button', { name: /sound & flash/i });
+    const trigger = screen.getByRole('button', { name: 'More' });
     act(() => {
       trigger.focus();
     });
-    expect(document.activeElement).toBe(trigger);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
 
     press('Enter', trigger);
-
-    const dialog = screen.getByRole('dialog', { name: 'Sound and flash' });
-    expect(dialog).toBeTruthy();
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    // Focus lands *inside*, on the first control — not on a container the arrow keys
-    // do nothing to.
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitem');
+    // Down the menu to Sound, then what Enter on a focused button produces.
+    while (document.activeElement?.textContent !== 'Sound') press('ArrowDown');
+    act(() => {
+      fireEvent.click(document.activeElement!);
+    });
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Sound and flash' })).toBeTruthy();
+    // Focus lands *inside*, on the first control — not on a container the arrow keys do nothing to.
     expect(document.activeElement).toBe(
       screen.getByRole('radio', { name: /always show the flash/i }),
     );
@@ -851,16 +865,15 @@ describe('criterion (d) — the settings surface is reachable without a mouse', 
     expect(screen.getByLabelText('Cue volume').getAttribute('aria-valuetext')).toBe('Off');
   });
 
-  it('Esc closes it and gives focus back to the trigger', async () => {
-    // every transient surface returns focus to the control that opened it.
-    // A popover that closes and drops focus to `<body>` strands a keyboard agent at
-    // the top of the document — on this screen, past the whole contact panel.
+  it('Esc closes it and gives focus back to ⋮ More', async () => {
+    // Every transient surface returns focus to the control that opened it. One that closes
+    // and drops focus to `<body>` strands a keyboard agent at the top of the document.
     await mounted();
     const trigger = openSettings();
-    const dialog = screen.getByRole('dialog', { name: 'Sound and flash' });
+    expect(screen.getByRole('dialog', { name: 'Sound and flash' })).toBeTruthy();
 
     act(() => {
-      fireEvent.keyDown(dialog, { key: 'Escape' });
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     });
 
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -868,51 +881,33 @@ describe('criterion (d) — the settings surface is reachable without a mouse', 
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('does not steal the console’s own single-key shortcuts', async () => {
+  it('holds the station’s single-key shortcuts while it is open (a dialog), and they come back when it closes', async () => {
     /**
-     * `1`–`9` are the disposition pad's and `a`/`b`/`d`/`/` are the page's. A settings
-     * popover that bound a letter would reassign a key by context, which is how
-     * muscle memory gets destroyed — an agent who has learned "b = break" must not
-     * find it means something else whenever a popover happens to be open.
+     * Sound is a dialog now (spec §3, ⋮ More → Sound), so like every station dialog it holds
+     * the keyboard: `b` from inside it must not open Which break? behind it, from the radio or
+     * from the slider. Closed, `b` is the page's again.
      */
     await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T09:59:00.000Z' });
+    });
     openSettings();
-    expect(screen.getByRole('dialog')).toBeTruthy();
-
-    // Focus is on the first radio — the popover puts it there on open — so this
-    // fires from a radio, which is the position the agent is in. That is the whole
-    // test: `press` targets `document.activeElement`, and firing at `document`
-    // instead is what let this pass while `b` was in fact being swallowed by the
-    // page's text-field guard.
     expect((document.activeElement as HTMLInputElement).type).toBe('radio');
-
     press('b');
-    // The break menu opened, from inside the settings popover's lifetime: the page's
-    // shortcut still reaches the page.
-    expect(screen.getByRole('menu', { name: 'Break reasons' })).toBeTruthy();
-  });
+    expect(screen.queryByRole('dialog', { name: 'Which break?' })).toBeNull();
 
-  it('does not steal them from the volume slider either', async () => {
-    /**
-     * The slider is the other focus position inside this popover, and it is a
-     * *different* element type — `<input type="range">` rather than `type="radio"` —
-     * so a guard narrowed by accident to just the one would pass the test above and
-     * still leave the agent stuck here. `range` responds to the arrow keys; it has no
-     * claim on `b`, and's suppression exists for a note that contains the
-     * letter, not for a control that cannot type one.
-     */
-    await mounted();
-    openSettings();
     const slider = screen.getByLabelText('Cue volume') as HTMLInputElement;
     act(() => {
       slider.focus();
     });
-    expect(document.activeElement).toBe(slider);
-    expect(slider.type).toBe('range');
-
     press('b');
+    expect(screen.queryByRole('dialog', { name: 'Which break?' })).toBeNull();
 
-    expect(screen.getByRole('menu', { name: 'Break reasons' })).toBeTruthy();
+    act(() => {
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    });
+    press('b', document.body);
+    expect(screen.getByRole('dialog', { name: 'Which break?' })).toBeTruthy();
   });
 
   it('the signature the CSS consumes is the one the table publishes', async () => {

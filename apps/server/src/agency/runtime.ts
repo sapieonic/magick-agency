@@ -35,7 +35,7 @@ import { StationTokenStore } from './station-token.js';
 import { DncRegistry } from './dnc-registry.js';
 import { notifyAgencyCampaignFinished } from './campaign-completion-notice.js';
 import { WrapupManager } from './wrapup-manager.js';
-import { BreakRegistry } from '@magick-agency/domain/break-manager';
+import { BreakRegistry, isReservedBreakReason } from '@magick-agency/domain/break-manager';
 import { ManualDialer } from './softphone/manual-dialer.js';
 import { SoftphoneService } from './softphone/softphone-service.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
@@ -53,10 +53,34 @@ import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { ListenRegistry, type ListenLimits, type ListenSessionHandle } from './listen/listen-registry.js';
 import { ListenTokenStore } from './listen/listen-token.js';
 import { ListenRowKeeper } from './listen/listen-rows.js';
+import type { StationDisconnectsReader } from './station-detach-times.js';
 import { listenAccessCheck } from './listen/listen-access.js';
 import type { ListenSocketDeps } from './listen/listen-socket.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
+
+/**
+ * How old a break a station drop suspended may be and still be resumed by the rehydrate (0062,
+ * BE-12): 4 hours from its start, Mode B's longest absence (`AGENCY_AWAY_RING_MAX_MS`) and the
+ * longest limit a break may have (240 minutes, LF20). A station back later (the next morning, a
+ * session never left) starts a fresh break, and the suspended one is judged as ended at the drop.
+ */
+export const BREAK_RESUME_MAX_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * The start of the break a station drop suspended, when the rehydrate restoring `breakReason` resumes
+ * it (0062): a named break (a reserved one has no limit to judge, and keeps its own clock), the one
+ * the row still carries, under {@link BREAK_RESUME_MAX_MS} old. Null otherwise: the break starts now.
+ */
+export function resumedBreakSince(
+  row: { break_reason?: string | null; suspended_break_since?: Date | null } | null,
+  breakReason: string | null,
+  nowMs: number,
+): Date | null {
+  const since = row?.suspended_break_since ?? null;
+  if (!since || !breakReason || breakReason !== row?.break_reason || isReservedBreakReason(breakReason)) return null;
+  return nowMs - since.getTime() < BREAK_RESUME_MAX_MS ? since : null;
+}
 
 /**
  * How the runtime is assembled in the primary of a multi-process server
@@ -85,6 +109,12 @@ export interface AgencyRuntimeOptions {
    * process): none.
    */
   listenLiveReplicaIds?: () => readonly string[];
+  /**
+   * Agent station (BE-11): where the floor and the alerts read learn when a station went (the
+   * primary's `StationDirectory`, which hears the workers' detaches). Unset (one process): the
+   * runtime's own registry.
+   */
+  stationDisconnects?: StationDisconnectsReader;
 }
 
 /** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
@@ -188,6 +218,12 @@ export class AgencyRuntime {
    */
   readonly floorAssist: FloorAssistService;
   /**
+   * Agent station (BE-11, AS16): when each station went, for the floor's `disconnected_since` and the
+   * supervisors' `disconnected` alert: this process's registry, or the media workers' directory in
+   * the primary of a multi-process server ({@link AgencyRuntimeOptions.stationDisconnects}).
+   */
+  readonly stationDisconnects: StationDisconnectsReader;
+  /**
    * Set by a multi-process server: end a supervisor's sessions held by OTHER processes past their
    * cap after an admission here (`listen.revoke` over IPC). Null in one process.
    */
@@ -200,6 +236,7 @@ export class AgencyRuntime {
     this.replicaId = process.env.REPLICA_ID || `${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 
     this.stations = new StationRegistry(redis, keyPrefix, this.replicaId);
+    this.stationDisconnects = options.stationDisconnects ?? this.stations;
     this.agents = new AgentStateMachine(redis, keyPrefix);
     this.breaks = new BreakRegistry();
     // The wrap-up manager returns agents through the dialer's own release path, so
@@ -409,7 +446,8 @@ export class AgencyRuntime {
    */
   async rehydrateAgent(
     sessionId: string,
-    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> & Partial<Pick<AgencyAgentSessionRecord, 'away_ring_since'>> | null,
+    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'>
+      & Partial<Pick<AgencyAgentSessionRecord, 'away_ring_since' | 'suspended_break_since'>> | null,
   ): Promise<AgencyAgentState> {
     const row = session ?? null;
     // ── An inbound call's outcome owed (docs/inbound.md §2, "Server restart") ─────────
@@ -509,10 +547,16 @@ export class AgencyRuntime {
     // The break the mirror is written with below, in Redis too: the session row's reason is the one
     // durable record of which break a lapsed lease was on.
     const breakReason = softphoneFlavoured ? SOFTPHONE_BREAK_REASON : absenceSince ? DEVICE_AWAY_BREAK_REASON : row?.break_reason ?? null;
+    // A named break the station's drop suspended (0062, BE-12) is the same break resumed, not a new
+    // one: its start is kept as `since`, in Redis and as the mirror's `state_since`, as `device_away`
+    // keeps an absence's start above, so the floor's break clock (`break_over`) does not restart and
+    // the break is judged once, from that start, when it really ends. Too old, another reason, or
+    // none: a fresh break, and the mirror's write ends the suspended one at the drop.
+    const since = absenceSince ?? (softphoneFlavoured ? null : resumedBreakSince(row, breakReason, Date.now()));
     await this.agents.set(sessionId, 'break', {
       leaseMs: AGENT_LEASE_MS.break,
       breakReason,
-      ...(absenceSince ? { sinceMs: absenceSince.getTime() } : {}),
+      ...(since ? { sinceMs: since.getTime() } : {}),
     });
     returnFromAwayRing(row);
     // Best-effort mirror. Redis is the authority; a failed write here costs a
@@ -521,8 +565,7 @@ export class AgencyRuntime {
     // back to that break, not an unnamed one (`ready` and the bootstrap carry it).
     await (softphoneFlavoured
       ? agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
-      : agencyAgentSessionRepository.setState(sessionId, 'break', absenceSince ? DEVICE_AWAY_BREAK_REASON : row?.break_reason ?? null,
-        { stateSince: absenceSince }))
+      : agencyAgentSessionRepository.setState(sessionId, 'break', breakReason, { stateSince: since }))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
   }

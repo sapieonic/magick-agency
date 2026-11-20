@@ -414,13 +414,16 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 
 - **`/dialer/phone`** (`SoftphonePage`): the soft phone, a fourth agent nav item ("Soft phone",
   shown when the flag is on and the caller has `agency.softphone.dial`). The route is gated like
-  `/station`; the page reads the soft-phone flag itself (finish mode, below). Same frozen geometry as
-  the station: header, state rail (Ready, Dialing, Ringing, On call, Outcome needed), three
-  columns (dial pad with caller ID and "Log to" campaign | call details fields and the roster
-  contact | outcome pad, notes, callback; recent calls when idle, each with its day: Today,
-  Yesterday or a date), action bar (Save outcome, Mark DNC, Mute, Hang up: the station's order, so
-  the in-place swap moves nothing to the other side). The rail, columns
-  and action bar keep identical positions in every state (pinned by a geometry test).
+  `/station`; the page reads the soft-phone flag itself (finish mode, below). Since the agent
+  station redesign (`docs/agent-station.md`, AS1) it is the station soft phone's own screen
+  (`SoftphoneScreen`, below under "The station") in the station's frame: the agent nav ("My work",
+  My calls, Soft phone, …; locked while a call is unsettled) and the listening notice in the top
+  bar, the band (Dial a number, Calling, On call, What happened?), and **Close soft phone** bottom
+  right while nothing is dialled (hidden, with "Finish your call and save what happened first.",
+  while a call holds the page). Recent calls carry their day: Today, or a date, with the time.
+  Every line it says is the station's own words keyed on a code (AS15): refusals, the dial pad's
+  reasons, Save's blocks, announcements and the override dialog; a code the console has no words
+  for gets "That did not go through. Try again in a moment.", never the server's sentence.
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
   trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.
@@ -493,23 +496,31 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   at once to a Missed row ([`inbound.md`](inbound.md) §4.3, §5.1); taking one on the soft phone is
   P3's (§12, "Remaining"). So that a call that never rang does not read as a fault, the dial
   column says so under Call while the soft phone is ready to dial (not during a call, not in
-  finish mode): "Inbound calls don’t ring on the soft phone. They go to agents on a campaign
-  station, or to Missed calls if none is free." then "Join a campaign to take them." on
-  `/dialer/phone`, or "Return to your campaign to take them." on a campaign switched to the soft
-  phone (`SoftphoneInboundNotice`, `role="note"`, never announced). It shows while the account's
+  finish mode): "Customers who call us do not ring here." then "Open today’s work to take them." on
+  `/dialer/phone`, or "Go back to your calls to take them." on a campaign switched to the soft
+  phone (the screen's `inboundNote`, `role="note"`, never announced). It shows while the account's
   `agency_inbound_enabled` flag is on: whether the account has a route or a linked number is read
   only with `agency.inbound.write`, so an agent cannot see it, and no read was added for a note.
   The agent app's Phone tab has no such note yet.
-- **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
-  agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
-  disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`
-  reports `break/soft_phone` the soft phone renders in place on the same socket and microphone,
-  with the campaign preselected as the tag and **Return to campaign** in the header (disabled,
-  with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
+- **The station (SP7).** **Dial a number myself** in ⋮ More, or **I dial the number** on Start of
+  day (the redesign, `docs/agent-station.md`). While the agent is reserved, on a call or in wrap-up
+  the switch is queued: a chip "Dial a number myself after this call" with ✕ cancels it. When
+  `agent_state` reports `break/soft_phone` the soft phone renders in place on the same socket and
+  microphone, with the campaign preselected as the tag, in the station's frame and band and in its
+  look (`StationSoftphone`, AS1): **Dial a number** is the number box, a big keypad and Call (faded,
+  with the reason in the station's words, until it can dial), "Save this call to" and "Call from",
+  the call details and My recent calls, with **Back to my calls** bottom right (hidden, with the
+  reason, while a manual call is live or awaiting its outcome) and Finish work in ⋮ More;
+  **Calling** is the station's customer card (the number dialled, and the roster contact's name and
+  facts when the number is on the tag's list), the SP3 warning while ringing, Mute ring and End
+  call held (or `E` twice); **On call** adds Last calls, the note and the call details; **What
+  happened?** is the station's outcome tiles and follow-ups with Save bottom right, faded until it
+  can save, and Don't call again asked first. The keys are the soft phone's. The ordinary End break
   and the station's own shortcuts are suspended. After a reload during a soft-phone break the
   station reads `session.on_softphone` from the bootstrap. A switch or return refused
   `dial_failed` (the agent state store did not take the write) says the agent's status did not
-  change, not that a call was not placed (`refusalCopy`'s `status` context).
+  change, not that a call was not placed (`refusalCopy`'s `status` context). `/dialer/phone` shows
+  the same screen with its own way out.
 - **Joining a campaign with the soft phone open.** The join's 409 `session_on_softphone` screen
   offers **Close the soft phone and join** (`useStationJoin.closeSoftphoneAndJoin`): it reads the
   soft-phone bootstrap first and closes nothing while a call there is live or owes its outcome
@@ -521,18 +532,25 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   closing the soft phone for something else decides alike. "Open the soft phone" stays as the second way. The soft
   phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
   second tab make an unmount a poor signal); the nav says it stays open instead.
-- **Live on a campaign (`session_on_campaign`).** `/dialer/phone` offers **Switch to soft phone**
+- **Live on a campaign (`session_on_campaign`).** `/dialer/phone` offers **Use the soft phone**
   on that campaign session and goes to its station, which shows the soft phone in place (§4.2). The
   session may be in a sibling account (the refusal's `account_id`): every route on it, and the
   station that shows the soft phone, are scoped to that account, so the switch is sent with it and,
   once taken, the console moves to that account (`setActiveAccountId`, what the account switcher
   does) before going to the station; the soft phone then runs wholly in its session's account, and
-  "Go to station" moves the same way. The screen names the account ("You're live on <campaign> in
-  <account>") and says the switch takes the agent there. When the account is not in the console's
-  account list it says "You're live on <campaign> in <account> — switch to that account to use the
-  soft phone there." ("another account" when the refusal has no name) and offers no switch, since
-  one could not land. A refused switch keeps the
+  "Open <campaign> in <account>" moves the same way. The screen names the account ("You are on
+  <campaign> in <account>, ready for calls.") and says the switch takes the agent there. When the
+  account is not in the console's account list it says "You are working on <campaign> in
+  <account>. Go to that account to use the soft phone there." ("another account" when the refusal
+  has no name) and offers no switch, since one could not land. A refused switch keeps the
   console where it is and says why (`refusalCopy`'s `status` context).
+- **Every screen before the soft phone opens** (opening, did not open, open in another account
+  with the flag off or on, still on the calls) is the station's frame, band and words, as the
+  station's own join screens are (`JoinFrame`): the remedy bottom right, the way home bottom left,
+  the copy `SOFTPHONE_PAGE_COPY` (`utils/agency/sideViewCopy.ts`) keyed on a state or a code. A
+  refusal is said by `refusalCopy`; a close that fails by `SOFTPHONE_CLOSE_COPY`; nothing shows a
+  server's sentence or an exception's message (`closeSoftphoneSession` returns the code,
+  `useSoftphoneSession`'s error the refusal).
 - **The soft phone open in a sibling account (the flag on here).** `POST /softphone/sessions`
   refuses `session_on_softphone` with that session's account (§6), and `/dialer/phone` says "Your
   soft phone is open in another account", naming it (the refusal's `account_name`, else the

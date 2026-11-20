@@ -22,6 +22,9 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
+import { STATION_COPY } from '../../utils/agency/stationCopy';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import { DIAL_GAP_HOLD_MS } from '../../hooks/useDialActivityDisplay';
 import { FakeSocket, latestSocket as latest } from '../helpers/fakeSocket';
 import { inboundCall } from '../helpers/inbound';
@@ -80,8 +83,8 @@ const BOOTSTRAP: AgencySessionBootstrap = {
   },
 };
 
-const DIALLING = 'Dialling a customer…';
-const DIALLING_HINT = 'You’ll be connected as soon as they answer.';
+const DIALLING = STATION_COPY.dialling;
+const WAITING = STATION_COPY.nextCallComing;
 
 const dial = (ringing: boolean, n: number) => ({
   event: 'dial_activity',
@@ -90,7 +93,9 @@ const dial = (ringing: boolean, n: number) => ({
   unanswered_in_a_row: n,
 });
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1' });
@@ -102,6 +107,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -129,26 +135,36 @@ async function emit(...frames: unknown[]) {
   });
 }
 
-const panel = () => screen.getByRole('region', { name: 'Contact' });
-const railLabel = () => screen.getByTestId('rail-label').textContent;
-const headline = () => within(panel()).getByTestId('idle-headline').textContent;
-const unanswered = () => within(panel()).queryByTestId('idle-unanswered')?.textContent ?? null;
+const panel = () => screen.getByTestId('station-body');
+/**
+ * What the station's status says, in the old rail's terms: on Ready the band says Ready and its
+ * subtitle says whether a customer is being dialled, so this reads that as DIALLING or WAITING;
+ * on any other screen it is the band's title (the inbound view keeps its own rail).
+ */
+const railLabel = () => {
+  if (screen.queryByTestId('station-inbound')) return screen.getByTestId('rail-label').textContent;
+  const title = screen.getByTestId('band-title').textContent;
+  if (title !== 'Ready') return title;
+  return screen.getByTestId('band-subtitle').textContent === STATION_COPY.diallingSubtitle ? DIALLING : WAITING;
+};
+const headline = () => within(panel()).getByTestId('waiting-headline').textContent;
+const unanswered = () => within(panel()).queryByTestId('dial-activity')?.textContent ?? null;
 
 describe('the waiting screen says when a customer is being dialled', () => {
   it('a ringing hidden dial shows in the panel and the rail, and nothing about the contact', async () => {
     await available();
-    expect(headline()).toBe('Waiting for a call');
+    expect(headline()).toBe(WAITING);
 
     await emit(dial(true, 0));
 
     expect(headline()).toBe(DIALLING);
-    expect(within(panel()).getByText(DIALLING_HINT)).toBeTruthy();
     expect(unanswered()).toBeNull();
     expect(railLabel()).toBe(DIALLING);
-    // Said politely, once, by the rail: the station's status region.
-    const rail = screen.getByRole('status');
-    expect(rail.getAttribute('aria-live')).toBe('polite');
-    expect(rail.textContent).toContain(DIALLING);
+    // Said politely, once, by the band: the station's status region.
+    const band = screen.getByTestId('station-band');
+    expect(band.getAttribute('role')).toBe('status');
+    expect(band.getAttribute('aria-live')).toBe('polite');
+    expect(band.textContent).toContain(STATION_COPY.diallingSubtitle);
     // No number, no name: the agent is shown the call only if it is answered.
     expect(screen.queryByText(ATTEMPT.phone_e164)).toBeNull();
   });
@@ -160,18 +176,18 @@ describe('the waiting screen says when a customer is being dialled', () => {
     await emit(dial(false, 1), { event: 'agent_state', state: 'available', since: '2026-08-11T10:00:30.000Z' });
     await act(async () => { await vi.advanceTimersByTimeAsync(DIAL_GAP_HOLD_MS); });
 
-    expect(headline()).toBe('Waiting for a call');
-    expect(unanswered()).toBe('No answer from the last number');
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(headline()).toBe(WAITING);
+    expect(unanswered()).toBe('No answer from the last number.');
+    expect(railLabel()).toBe(WAITING);
 
     await emit(dial(true, 1));
     expect(headline()).toBe(DIALLING);
-    expect(unanswered()).toBe('No answer from the last number');
+    expect(unanswered()).toBe('No answer from the last number.');
 
     await emit(dial(false, 2), { event: 'agent_state', state: 'available', since: '2026-08-11T10:01:00.000Z' });
-    expect(unanswered()).toBe('No answer from the last 2 numbers');
+    expect(unanswered()).toBe('No answer from the last 2 numbers.');
     // The count line is not itself a live region: each unanswered dial must not be read out.
-    const line = within(panel()).getByTestId('idle-unanswered');
+    const line = within(panel()).getByTestId('dial-activity');
     expect(line.closest('[aria-live]')).toBeNull();
   });
 
@@ -189,9 +205,9 @@ describe('the waiting screen says when a customer is being dialled', () => {
     expect(railLabel()).toBe(DIALLING);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    expect(headline()).toBe('Waiting for a call');
-    expect(railLabel()).toBe('Waiting for a call');
-    expect(unanswered()).toBe('No answer from the last number');
+    expect(headline()).toBe(WAITING);
+    expect(railLabel()).toBe(WAITING);
+    expect(unanswered()).toBe('No answer from the last number.');
   });
 
   it('the next dial inside the gap never shows "Waiting for a call"', async () => {
@@ -215,15 +231,15 @@ describe('the waiting screen says when a customer is being dialled', () => {
 
     await emit({ event: 'reserved', attempt: ATTEMPT });
 
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
-    expect(within(panel()).queryByTestId('idle-unanswered')).toBeNull();
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
+    expect(within(panel()).queryByTestId('dial-activity')).toBeNull();
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(railLabel()).toBe('Ringing — get ready');
+    expect(railLabel()).toBe('Call coming');
 
     // Answered: the dialer sends `bridged` and no `agent_state` for reserved or on_call.
     await emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:02:04.000Z' });
     expect(railLabel()).toBe('On call');
-    expect(screen.getByTestId('rail-detail').textContent).toBe(ATTEMPT.phone_e164);
+    expect(screen.getByTestId('customer-phone').textContent).toBe(phoneForDisplay(ATTEMPT.phone_e164));
     expect(screen.queryByText(DIALLING)).toBeNull();
 
     // The call ends with no outcome owed, straight back to the pool.
@@ -232,12 +248,12 @@ describe('the waiting screen says when a customer is being dialled', () => {
       { event: 'agent_state', state: 'available', since: '2026-08-11T10:05:00.000Z' },
     );
     // No count is carried over from before the answered call, and no gap hold.
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
+    expect(railLabel()).toBe(WAITING);
 
     await emit(dial(true, 0));
     expect(railLabel()).toBe(DIALLING);
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
   });
 
   it('a reserved inside the gap hold drops the hold at once', async () => {
@@ -247,7 +263,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
     await emit(dial(false, 1));
     expect(railLabel()).toBe(DIALLING);
     await emit({ event: 'reserved', attempt: ATTEMPT });
-    expect(railLabel()).toBe('Ringing — get ready');
+    expect(railLabel()).toBe('Call coming');
     expect(screen.queryByText(DIALLING)).toBeNull();
   });
 
@@ -260,13 +276,13 @@ describe('the waiting screen says when a customer is being dialled', () => {
       dial_activity: { ringing: true, unanswered_in_a_row: 2 },
     });
     expect(headline()).toBe(DIALLING);
-    expect(unanswered()).toBe('No answer from the last 2 numbers');
+    expect(unanswered()).toBe('No answer from the last 2 numbers.');
     expect(railLabel()).toBe(DIALLING);
 
     await emit({ event: 'ready', session_id: 'sess-1', state: 'available' });
-    expect(headline()).toBe('Waiting for a call');
+    expect(headline()).toBe(WAITING);
     expect(unanswered()).toBeNull();
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(railLabel()).toBe(WAITING);
   });
 
   it('ready with a live attempt shows the attempt, not the dial', async () => {
@@ -278,9 +294,9 @@ describe('the waiting screen says when a customer is being dialled', () => {
       state: 'reserved',
       active_attempt: { ...ATTEMPT, bridged_at: null, state: 'ringing' },
     });
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
   });
 
   it('a paused campaign never shows it', async () => {
@@ -296,9 +312,10 @@ describe('the waiting screen says when a customer is being dialled', () => {
       },
       dial(true, 2),
     );
-    expect(headline()).toBe('No calls will come through right now.');
+    expect(headline()).toBe(STATION_COPY.noCallsBody);
     expect(unanswered()).toBeNull();
-    expect(railLabel()).toBe('Campaign paused — no campaign calls for now');
+    expect(railLabel()).toBe('No calls right now');
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Your supervisor has stopped calls. Stay on this screen.');
     expect(screen.queryByText(DIALLING)).toBeNull();
   });
 
@@ -315,7 +332,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
       message: 'paused',
     });
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(railLabel()).toBe('Campaign paused — no campaign calls for now');
+    expect(railLabel()).toBe('No calls right now');
   });
 
   it('a break never shows it', async () => {
@@ -323,17 +340,17 @@ describe('the waiting screen says when a customer is being dialled', () => {
     await emit(dial(true, 1));
     await emit({ event: 'agent_state', state: 'break', since: '2026-08-11T10:00:30.000Z', break_reason: 'lunch' });
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
-    expect(railLabel()).toBe('On break — Lunch');
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
+    expect(railLabel()).toBe('On break · Lunch');
   });
 
   it('a ringing dial outranks "Nothing due now"', async () => {
     await available();
     await emit({ event: 'queue', campaign_id: 'camp-1', due: false, reason: 'queue_empty' });
-    expect(screen.getByTestId('idle-nothing-due')).toBeTruthy();
+    expect(screen.getByTestId('no-calls')).toBeTruthy();
 
     await emit(dial(true, 0));
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
+    expect(screen.queryByTestId('no-calls')).toBeNull();
     expect(headline()).toBe(DIALLING);
   });
 
@@ -343,20 +360,21 @@ describe('the waiting screen says when a customer is being dialled', () => {
     await emit(dial(true, 1));
     await emit({ event: 'queue', campaign_id: 'camp-1', due: false, reason: 'queue_empty' });
     // Ringing outranks it, count line and all.
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
-    expect(unanswered()).toBe('No answer from the last number');
+    expect(screen.queryByTestId('no-calls')).toBeNull();
+    expect(unanswered()).toBe('No answer from the last number.');
 
     await emit(dial(false, 2), { event: 'agent_state', state: 'available', since: '2026-08-11T10:00:30.000Z' });
     await act(async () => { await vi.advanceTimersByTimeAsync(DIAL_GAP_HOLD_MS); });
-    expect(screen.getByTestId('idle-nothing-due')).toBeTruthy();
+    expect(screen.getByTestId('no-calls')).toBeTruthy();
     expect(unanswered()).toBeNull();
-    expect(headline()).toBe('Waiting for a call');
-    expect(railLabel()).toBe('Waiting for a call');
+    // 02c, not Ready: nothing is due and nothing rings.
+    expect(headline()).toBe(STATION_COPY.noCallsBody);
+    expect(railLabel()).toBe('No calls right now');
 
     // Something falls due again: the count line is back.
     await emit({ event: 'queue', campaign_id: 'camp-1', due: true });
-    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
-    expect(unanswered()).toBe('No answer from the last 2 numbers');
+    expect(screen.queryByTestId('no-calls')).toBeNull();
+    expect(unanswered()).toBe('No answer from the last 2 numbers.');
   });
 
   it('the socket dropping mid-dial stops saying it; the rail says the connection', async () => {
@@ -368,8 +386,8 @@ describe('the waiting screen says when a customer is being dialled', () => {
       latest().serverClose(1006, '');
     });
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
-    expect(railLabel()).toBe('Reconnecting');
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
+    expect(railLabel()).toBe('Internet problem');
   });
 
   it('the customer ringing in supersedes it: the inbound panel, nothing about dialling', async () => {
@@ -382,10 +400,10 @@ describe('the waiting screen says when a customer is being dialled', () => {
       { event: 'inbound_call', call: inboundCall() },
     );
     expect(screen.getByTestId('station-inbound')).toBeTruthy();
-    expect(railLabel()).toBe('Incoming call from Asha Rao');
+    expect(screen.getByTestId('band-title').textContent).toBe('Customer is calling');
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
-    expect(screen.queryByTestId('missed-release-dialling')).toBeNull();
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
+    expect(screen.queryByTestId('missed-release')).toBeNull();
   });
 
   it('a break queued mid-ring: no "Dialling", and no gap hold', async () => {
@@ -397,11 +415,11 @@ describe('the waiting screen says when a customer is being dialled', () => {
       { event: 'agent_state', state: 'break', since: '2026-08-11T10:00:30.000Z', break_reason: 'lunch' },
     );
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
-    expect(railLabel()).toBe('On break — Lunch');
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
+    expect(railLabel()).toBe('On break · Lunch');
     await act(async () => { await vi.advanceTimersByTimeAsync(DIAL_GAP_HOLD_MS); });
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(railLabel()).toBe('On break — Lunch');
+    expect(railLabel()).toBe('On break · Lunch');
   });
 
   it('a reconnect mid-ring: the server’s ready{available} with a ringing dial shows it and the count', async () => {
@@ -431,7 +449,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
       dial_activity: { ringing: true, unanswered_in_a_row: 2 },
     });
     expect(headline()).toBe(DIALLING);
-    expect(unanswered()).toBe('No answer from the last 2 numbers');
+    expect(unanswered()).toBe('No answer from the last 2 numbers.');
     expect(railLabel()).toBe(DIALLING);
   });
 
@@ -443,9 +461,9 @@ describe('the waiting screen says when a customer is being dialled', () => {
       state: 'available',
       dial_activity: { ringing: 'yes', unanswered_in_a_row: 2 },
     });
-    expect(headline()).toBe('Waiting for a call');
+    expect(headline()).toBe(WAITING);
     expect(unanswered()).toBeNull();
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(railLabel()).toBe(WAITING);
   });
 
   it('a missed release keeps the slot, and says a dial is ringing under it', async () => {
@@ -463,27 +481,27 @@ describe('the waiting screen says when a customer is being dialled', () => {
       },
       dial_activity: { ringing: true, unanswered_in_a_row: 0 },
     });
-    expect(within(panel()).getByTestId('missed-release').textContent).toMatch(/^While you were disconnected: /);
-    expect(within(panel()).getByTestId('missed-release-dialling').textContent).toBe(DIALLING);
+    expect(screen.getByTestId('missed-release').textContent).toBe('While your internet was down, the last call did not connect.');
+    expect(headline()).toBe(DIALLING);
     expect(railLabel()).toBe(DIALLING);
 
     await emit(dial(false, 1), { event: 'agent_state', state: 'available', since: '2026-08-11T10:00:30.000Z' });
-    // Inside the gap hold it still says so; the missed release stays first.
-    expect(within(panel()).getByTestId('missed-release')).toBeTruthy();
-    expect(within(panel()).getByTestId('missed-release-dialling').textContent).toBe(DIALLING);
+    // Inside the gap hold it still says so; the missed release stays on screen.
+    expect(screen.getByTestId('missed-release')).toBeTruthy();
+    expect(headline()).toBe(DIALLING);
   });
 });
 
 describe('early binding is unchanged', () => {
   it('a call shown from the start, with no dial_activity frames, reads exactly as before', async () => {
     await available();
-    expect(headline()).toBe('Waiting for a call');
-    expect(within(panel()).getByText('Stay on this screen so the next customer reaches you.')).toBeTruthy();
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(headline()).toBe(WAITING);
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('Next call is coming. Stay on this screen.');
+    expect(railLabel()).toBe(WAITING);
 
     await emit({ event: 'reserved', attempt: ATTEMPT });
-    expect(railLabel()).toBe('Ringing — get ready');
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(railLabel()).toBe('Call coming');
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
     // `bridged` alone moves it on: the dialer sends no `agent_state` for an outbound call's
     // reserved or on_call.
     await emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
@@ -493,8 +511,8 @@ describe('early binding is unchanged', () => {
       { event: 'agent_state', state: 'available', since: '2026-08-11T10:05:00.000Z' },
     );
 
-    expect(railLabel()).toBe('Waiting for a call');
+    expect(railLabel()).toBe(WAITING);
     expect(screen.queryByText(DIALLING)).toBeNull();
-    expect(screen.queryByTestId('idle-unanswered')).toBeNull();
+    expect(screen.queryByTestId('dial-activity')).toBeNull();
   });
 });

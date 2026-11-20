@@ -10,6 +10,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useAgentAttempts, type AgentAttemptsSubject } from '../../hooks/useAgentAttempts';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import { campaignLabel } from '../../utils/agencyAgentPerformance';
 import {
   ATTEMPT_RANGE_NOTE,
@@ -583,6 +584,7 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
                     attempt={attempt}
                     campaignNames={campaignNames}
                     linkToCall={!mine}
+                    mine={mine}
                   />
                 ))}
               </tbody>
@@ -629,17 +631,26 @@ function AttemptRow({
   attempt,
   campaignNames,
   linkToCall,
+  mine,
 }: {
   attempt: AgencyAttempt;
   campaignNames: ReadonlyMap<string, string | null>;
   /** Whether this reader can reach the agency call detail — see the header. */
   linkToCall: boolean;
+  /**
+   * The agent's own My calls (AS9): the number as the row's campaign shows it (the server's
+   * `phone_display` on each row, so it masks however the page was opened; `phoneForDisplay`, the
+   * station's one rule). A supervisor's view shows it as stored.
+   */
+  mine: boolean;
 }) {
   const resolved = campaignNames.get(attempt.campaign_id);
   return (
     <tr data-testid={`my-attempt-row-${attempt.id}`}>
       <td className={styles.when}>{formatSpineTimestamp(attempt.created_at)}</td>
-      <td className={styles.numeric}>{attempt.phone_e164}</td>
+      <td className={styles.numeric} data-testid={`my-attempt-phone-${attempt.id}`}>
+        {mine ? phoneForDisplay(attempt.phone_e164, attempt.phone_display ?? 'full') : attempt.phone_e164}
+      </td>
       <td
         className={resolved ? undefined : styles.mutedCell}
         /* The full id in the title, so a supervisor chasing an unresolvable

@@ -51,7 +51,7 @@ ThemeData buildTheme(AppTokens t, Brightness brightness) {
     canvasColor: t.bgPrimary,
     fontFamily: Fonts.body,
     textTheme: text,
-    extensions: [t],
+    extensions: [t, if (brightness == Brightness.dark) StateTokens.dark else StateTokens.light],
     splashFactory: InkSparkle.splashFactory,
     materialTapTargetSize: MaterialTapTargetSize.padded,
     visualDensity: VisualDensity.standard,

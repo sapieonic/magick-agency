@@ -3,12 +3,12 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-19.
+"is it done". As of 2026-11-20.
 
 ## Summary
 
 The application is built: phases 1 to 9 of the delivery plan
-([`intent-and-plan.md`](intent-and-plan.md)) are complete on the code side, every suite is green,
+([`intent-and-plan.md`](intent-and-plan.md)) are complete on the code side, every suite is green apart from the audio-decoder tests this build container cannot run (see "Agent station redesign"),
 and Manas's rulings on the open questions are implemented. Nothing has yet run against a real
 carrier, a real Firebase sign-in, production data or a deployed environment. The launch (phase
 10) and the gated checks that need vendor accounts or real data are still to do.
@@ -2391,7 +2391,8 @@ keyset pages, the customer's name never the number (`0053_account_callbacks_inde
 the overdue page on 25 campaigns of 40,000 contacts, 3.4 s before it). Phase 4 (Join call, whisper,
 LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks at the fixed 30
 minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
-phone views nor the app's soft phone screens (LF24, LF39); the Callbacks page's campaign filter
+phone views nor the app's soft phone screens (LF24, LF39; since done by the agent station redesign,
+2026-11-20); the Callbacks page's campaign filter
 lists the board's first 25 campaigns.
 
 ### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
@@ -2445,11 +2446,35 @@ metric, and the listening line logs them as `packages`. The console and super-ad
 CloudWatch line. Not covered: the console's station and listener WebSockets (a browser cannot set
 the header), and the packages inside a web build, which the app's release tag gives.
 
+### Agent station redesign, phases 0 to 2 2026-11-20 (AS1–AS18, [`agent-station.md`](agent-station.md))
+
+The agent's working screen redesigned on the console and the app from mock-ups made with agents:
+one state per screen, a coloured band, big numbers, picture tiles and one main button; light by
+default everywhere (AS14); simple Indian English copy (AS15). Built in nine streams, then reviewed
+by five fresh-context reviewers and fixed by four more streams on the same day; the plan, rulings
+and per-stream status are in [`agent-station.md`](agent-station.md) §3, the test counts in the PR.
+
+| Part | What |
+|---|---|
+| Wire | `0056_campaign_station_settings.sql` to `0061_session_event_break_limit_comment.sql`; contracts for my-day, the alerts read, facts, the script, tile icons, the number display and the `queue_pool` capability; the Dart mirror in `agency_wire` |
+| Server | `GET /proxy/agency/my-day` (BE-1 to BE-3); daily target (AS6); call-later booker and the ringing call's tag (BE-3, BE-4); pool queue reasons, only to stations that declare `queue_pool` (BE-5, AS18); typed customer facts (BE-6); the script (BE-8); Need help in any state (BE-9, no throttle needed: LF41); `GET /proxy/agency/floor/alerts` for help, break over time and disconnected agents (AS16); station drop and reconnect metrics with the `agy-station-drops-burst` alert (BE-11); break overrun recorded, counted and in the agent report (AS12); tile icons (BE-13); `phone_display` on the bootstrap and on the agent's own call and contact rows (AS9) |
+| Console station | Every screen of the spec, wired to the new fields; hold to end call, `E` `E` on a ringing call; the agent's work picker as big tiles; the inbound call, the soft phone (in the station and on `/dialer/phone`) and the join screens in the same look; station words keyed on codes, never a server sentence; the agent nav's "My work"; no ₹ on promised amounts (PT5 stands) |
+| Console supervisor | Alerts banner and chime on every page; Live floor says what a help request was raised in, how long an agent has been disconnected, and answers "I'm coming"; campaign Settings for target, number display, script, customer facts and tile pictures; the Collections set in New campaign (AS4); super-admin light by default |
+| App station | Every screen of the spec in Flutter, wired to the new fields; slide to end call; read aloud with the phone's own voice, never over a live call (AS13); the inbound call and the soft phone's What happened? in the station's look |
+
+Every suite was green on the final run apart from the audio-decoder tests this build container
+cannot run (`inbound-recordings.test.ts`, `inbound-clips-routes.test.ts`, areas the redesign did
+not touch). Not built: supervisor inbound screens (the route editor, Missed calls) can still show a
+server sentence for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out of scope, AS17).
+Not verified: nothing has run on a real phone, a real carrier or with real agents; read aloud has
+not run on a device.
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
-control on the cards. Phase 3's follow-ups: break limits on the campaign Agents tab (LF33), Need
-help on the console's inbound and soft phone views and the app's soft phone screens (LF24, LF39).
+control on the cards. Phase 3's follow-up: break limits on the campaign Agents tab (LF33). (Need
+help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done by the agent
+station redesign.)
 
 **Launch work** (phase 10):
 

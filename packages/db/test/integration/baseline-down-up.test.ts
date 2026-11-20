@@ -95,6 +95,13 @@ const ALL_MIGRATIONS = [
   '0053_account_callbacks_index',
   '0054_analysis_vendor_answers',
   '0055_analysis_vendor_answer_indexes',
+  '0056_campaign_station_settings',
+  '0057_contact_callback_booker',
+  '0058_contact_callback_booker_index',
+  '0059_session_help_state',
+  '0060_session_event_break_overrun',
+  '0061_session_event_break_limit_comment',
+  '0062_session_suspended_break',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

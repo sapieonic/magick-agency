@@ -32,7 +32,7 @@ export const CAMPAIGN_SETTINGS_SECTIONS: { id: string; label: string; keywords: 
   {
     id: 'wrap-up',
     label: 'Wrap-up and outcomes',
-    keywords: ['wrap-up', 'wrapup', 'outcomes', 'dispositions', 'disposition codes', 'number keys', 'unanswered calls', 'voicemail', 'auto return', 'after-call work'],
+    keywords: ['wrap-up', 'wrapup', 'outcomes', 'dispositions', 'disposition codes', 'number keys', 'unanswered calls', 'voicemail', 'auto return', 'after-call work', 'icon', 'picture', 'outcome picture'],
   },
   {
     id: 'recording',
@@ -42,7 +42,19 @@ export const CAMPAIGN_SETTINGS_SECTIONS: { id: string; label: string; keywords: 
   {
     id: 'agents',
     label: 'Agents',
-    keywords: ['contact assignment', 'assignment mode', 'assign contacts', 'owner', 'own contacts', 'agent retry', 'sticky agent', 'inbound', 'put callers through', 'break', 'breaks', 'break limit', 'break reasons', 'tea', 'lunch'],
+    keywords: ['contact assignment', 'assignment mode', 'assign contacts', 'owner', 'own contacts', 'agent retry', 'sticky agent', 'inbound', 'put callers through', 'break', 'breaks', 'break limit', 'break reasons', 'tea', 'lunch', 'break picture'],
+  },
+  {
+    // Agent station (AS6, AS9, BE-6): the daily target, the number display and the customer facts.
+    id: 'agent-screen',
+    label: 'What agents see',
+    keywords: ['daily target', 'target', 'calls a day', 'goal', 'phone number', 'full number', 'hidden number', 'mask', 'masked', 'hide number', 'customer facts', 'customer name', 'amount due', 'due date', 'place', 'column', 'money', 'date'],
+  },
+  {
+    // Agent station (BE-8): the opening line and the steps agents read out.
+    id: 'script',
+    label: 'Script',
+    keywords: ['script', 'opening line', 'what to say', 'steps', 'pitch', 'placeholder'],
   },
   {
     // The page shows the campaign's lifecycle and its roster upload history here.

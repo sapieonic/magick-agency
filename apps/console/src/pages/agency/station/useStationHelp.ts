@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cancelHelp, raiseHelp } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
+import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
-import {
-  STATION_HELP_COPY,
-  helpNoticeText,
-  helpRaisable,
-  helpRefusalText,
-} from '../../../utils/agency/stationHelp';
+import { STATION_HELP_COPY, helpRaisable } from '../../../utils/agency/stationHelp';
+import { STATION_COPY, helpAnsweredLine, helpRefusedLine } from '../../../utils/agency/stationCopy';
+import type { StationHelpNotice } from '../../../utils/agencyStationReducer';
 
 /**
  * Need help on the agent's station (LF4, LF13, LF15, LF24): the raise and the cancel, and what
@@ -19,13 +17,22 @@ import {
  * late frame about an earlier request never clears a newer one.
  *
  * One control: it raises while nothing is open and cancels while one is (its label says which),
- * so focus stays on the same button across the press. Raising is offered only on a call or in
- * wrap-up (the server's `help_not_on_call` rule, said before asking); cancelling always, since a
+ * so focus stays on the same button across the press. Cancelling is always offered, since a
  * request outlives the call it was raised on until it is answered, cancelled or lapses.
+ *
+ * ── Where raising is offered (BE-9) ─────────────────────────────────────────
+ * With `everywhere` (the redesigned station), in every state of a joined session: the server
+ * accepts a raise on Ready, on a break and offline after joining as much as on a call. An older
+ * server still refuses off a call with `409 help_not_on_call`; the first such refusal narrows this
+ * session back to calls and wrap-up (`everywhere` reads false from then on, and the station hides
+ * the button off a call again), until the next session. Without `everywhere`, raising is offered
+ * only on a call or in wrap-up (LF13, said before asking).
  */
 export interface StationHelp {
   /** `agency_floor_assist_enabled` is on: the control is shown at all. */
   offered: boolean;
+  /** Raising is offered in every state (BE-9); false once an older server refused off a call. */
+  everywhere: boolean;
   /** A request is open. */
   open: boolean;
   /** A raise or a cancel is in flight. */
@@ -40,6 +47,11 @@ export interface StationHelp {
   dismissible: boolean;
   /** The refusal of the agent's last press, stated. */
   refusal: string | null;
+  /**
+   * What the refusal was, for a screen that says it in its own words (the agent station, AS15):
+   * the press that was refused and the server's code and status. Null with no refusal.
+   */
+  refusalKind: { action: 'raise' | 'cancel'; code: string | null; status: number | null } | null;
   /** The last thing worth saying out loud, with a counter so the same words are said again. */
   announcement: { text: string; seq: number } | null;
   press: () => void;
@@ -48,12 +60,15 @@ export interface StationHelp {
 
 export function useStationHelp({
   offered,
+  everywhere: everywhereAsked = false,
   sessionId,
   tenantId,
   accountId,
   station,
 }: {
   offered: boolean;
+  /** Offer raising in every state of the session (BE-9). */
+  everywhere?: boolean;
   sessionId: string | null;
   tenantId?: string;
   accountId?: string;
@@ -62,6 +77,7 @@ export function useStationHelp({
   const { agentState, help, helpNotice, setHelp, dismissHelpNotice } = station;
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusalKind, setRefusalKind] = useState<StationHelp['refusalKind']>(null);
   const [announcement, setAnnouncement] = useState<{ text: string; seq: number } | null>(null);
   const say = useCallback((text: string) => setAnnouncement((was) => ({ text, seq: (was?.seq ?? 0) + 1 })), []);
   // Read at press time: a double press while the first is in flight sends nothing more.
@@ -69,22 +85,28 @@ export function useStationHelp({
   const helpRef = useLatestRef(help);
   const noticeRef = useLatestRef(helpNotice);
 
+  // An older server's `help_not_on_call` narrows this session back to calls (BE-9).
+  const [narrowedFor, setNarrowedFor] = useState<string | null>(null);
+  const everywhere = everywhereAsked && (sessionId === null || narrowedFor !== sessionId);
+
   // A refusal is about the state it was pressed in; a new state makes it stale.
   useEffect(() => {
     setRefusal(null);
+    setRefusalKind(null);
   }, [agentState]);
 
   const open = help !== null;
-  const raisable = helpRaisable(agentState);
+  const raisable = everywhere || helpRaisable(agentState);
 
   const press = useCallback(() => {
     if (!offered || !sessionId || busyRef.current) return;
     const cancelling = helpRef.current !== null;
     const raisedAt = helpRef.current?.raised_at ?? null;
-    if (!cancelling && !helpRaisable(agentState)) return;
+    if (!cancelling && !raisable) return;
     busyRef.current = true;
     setBusy(true);
     setRefusal(null);
+    setRefusalKind(null);
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
     request
       .then((answer) => {
@@ -96,15 +118,19 @@ export function useStationHelp({
         if (cancelling && !answered) say(STATION_HELP_COPY.cancelledAnnouncement);
       })
       .catch((err: unknown) => {
-        const text = helpRefusalText(err, cancelling ? 'cancel' : 'raise');
+        if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
+        // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
+        const kind = { action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) } as const;
+        const text = helpRefusedLine(kind);
         setRefusal(text);
+        setRefusalKind(kind);
         say(text);
       })
       .finally(() => {
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, agentState, helpRef, noticeRef, setHelp, say]);
+  }, [offered, sessionId, tenantId, accountId, raisable, helpRef, noticeRef, setHelp, say]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers
@@ -113,8 +139,8 @@ export function useStationHelp({
   */
   const answeredNow = helpNotice !== null && help !== null && helpNotice.raised_at === help.raised_at;
   const status = help !== null
-    ? (answeredNow ? helpNoticeText(helpNotice) : STATION_HELP_COPY.open)
-    : (helpNotice ? helpNoticeText(helpNotice) : null);
+    ? (answeredNow ? noticeLine(helpNotice) : STATION_HELP_COPY.open)
+    : (helpNotice ? noticeLine(helpNotice) : null);
 
   // Said out loud when it changes: the open request (the direct result of the press), the answer,
   // the lapse. A request that ends silently (cancelled, the session ended) says nothing here.
@@ -129,6 +155,7 @@ export function useStationHelp({
 
   return {
     offered,
+    everywhere,
     open,
     busy,
     blockedReason: open || raisable ? null : STATION_HELP_COPY.notOnCall,
@@ -138,8 +165,14 @@ export function useStationHelp({
     status,
     dismissible: help === null && helpNotice !== null,
     refusal,
+    refusalKind,
     announcement,
     press,
     dismiss: dismissHelpNotice,
   };
+}
+
+/** What became of a request, in the words its banner shows (AS15): who answered and how, or that it lapsed. */
+function noticeLine(notice: StationHelpNotice): string {
+  return notice.kind === 'expired' ? STATION_COPY.helpExpired : helpAnsweredLine(notice.by_name, notice.how);
 }

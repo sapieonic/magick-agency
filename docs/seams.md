@@ -43,7 +43,8 @@ in the agency plugin is `api/routes/proxy-agency-floor.routes.ts` (decision B28b
 `GET /proxy/agency/floor` and `GET /proxy/agency/promises/summary`, no path params (the routes
 validate their query with their own 400s), its hooks the session, the tenant context and
 `Cache-Control: no-store`; the floor reaches the internal `GET /api/v1/agency/floor` (owner `none`
-in `api/core-owners.ts`) through `callCore`. The newest is `api/routes/proxy-agency-floor-assist.routes.ts` (LF4,
+in `api/core-owners.ts`) through `callCore`. The newest is `api/routes/proxy-agency-my-day.routes.ts` (BE-1, the agent's own day on a
+campaign); before it `api/routes/proxy-agency-floor-assist.routes.ts` (LF4,
 LF5): Need help's `POST`/`DELETE /proxy/agency/sessions/:id/help` and a supervisor's
 `POST /proxy/agency/sessions/:id/messages`, in a scope of their own whose malformed-id guard answers
 the agent routes' `Session not found`; its hooks the session and the tenant context; they reach the

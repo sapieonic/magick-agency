@@ -218,9 +218,12 @@ void main() {
       expect(FloorAssistCopy.refusal(http(403, {'code': 'floor_assist_disabled', 'message': 'x'}), raising: true), FloorAssistCopy.disabled);
       expect(FloorAssistCopy.refusal(http(409, {'code': 'help_not_on_call', 'message': 'x'}), raising: true), FloorAssistCopy.notOnCall);
       expect(FloorAssistCopy.refusal(http(409, {'code': 'session_ended', 'message': 'x'}), raising: false), FloorAssistCopy.sessionEnded);
-      expect(FloorAssistCopy.refusal(http(404, {'error': 'Not Found', 'message': 'Session not found'}), raising: true), 'Session not found');
+      // Never the server's sentence (AS15): its code, then its status.
+      expect(FloorAssistCopy.refusal(http(404, {'error': 'Not Found', 'message': 'Session not found'}), raising: true), FloorAssistCopy.notFound);
       expect(FloorAssistCopy.refusal(http(400, {'code': 'account_scope_required', 'message': 'Choose an account.'}), raising: true),
-          'Choose an account.');
+          FloorAssistCopy.accountScope);
+      expect(FloorAssistCopy.refusal(http(403, {'code': 'something_new', 'message': 'A sentence.'}), raising: true), FloorAssistCopy.notAllowed);
+      expect(FloorAssistCopy.refusal(http(409, {'code': 'something_new', 'message': 'A sentence.'}), raising: true), FloorAssistCopy.raiseFailed);
       expect(FloorAssistCopy.refusal(http(500, {'message': 'Internal'}), raising: true), FloorAssistCopy.raiseFailed);
       expect(FloorAssistCopy.refusal(http(502, {}), raising: false), FloorAssistCopy.cancelFailed);
       expect(FloorAssistCopy.refusal(const ApiNetworkError('x'), raising: true), FloorAssistCopy.raiseOffline);
@@ -231,10 +234,10 @@ void main() {
   });
 
   group('the station controller', () {
-    test('declares floor_assist on its upgrade, beside inbound', () {
+    test('declares floor_assist on its upgrade, beside inbound and queue_pool (AS18: a pool campaign\'s queue state)', () {
       fakeAsync((async) {
         final app = App(async)..start();
-        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist');
+        expect(app.socket.url.queryParameters['caps'], 'inbound,floor_assist,queue_pool');
         app.dispose();
       });
     });
@@ -477,7 +480,7 @@ void main() {
           ((_) => json(403, {'error': 'Forbidden', 'code': 'floor_assist_disabled', 'message': 'x'}), FloorAssistCopy.disabled),
           ((_) => json(409, {'error': 'Conflict', 'code': 'help_not_on_call', 'message': 'x'}), FloorAssistCopy.notOnCall),
           ((_) => json(409, {'error': 'Conflict', 'code': 'session_ended', 'message': 'x'}), FloorAssistCopy.sessionEnded),
-          ((_) => json(404, {'error': 'Not Found', 'message': 'Session not found'}), 'Session not found'),
+          ((_) => json(404, {'error': 'Not Found', 'message': 'Session not found'}), FloorAssistCopy.notFound),
           ((_) => json(500, {'error': 'Internal Server Error', 'message': ''}), FloorAssistCopy.raiseFailed),
           ((_) => throw const SocketException('offline'), FloorAssistCopy.raiseOffline),
         ];

@@ -4,18 +4,46 @@ import { isTextEntryTarget } from '../../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../../utils/agencyDispositionForm';
 import { trackAgencyShortcutUsed, trackAgencyDispositionBlocked } from '../../../analytics/events';
 import type { AgencyConsoleState } from '../useAgencyConsole';
-import type { BreakMenuHandle } from '../../../components/agency/BreakMenu';
-import type { DispositionPadHandle } from '../../../components/agency/DispositionPad';
-import type { DncControlHandle } from '../../../components/agency/DncControl';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
+
+/** `B`: open Which break? (the station's break choice). */
+export interface BreakMenuHandle {
+  open: () => void;
+}
+
+/** `D`: ask Don't call again for the customer on screen (spec 05c). */
+export interface DncControlHandle {
+  open: () => void;
+}
 import type { AgencyAgentState, AgencySessionBootstrap } from '../../../types/agency';
 
 /** The controls the shortcuts drive, each by the handle of the component that owns it. */
 export interface StationShortcutTargets {
   breakMenuRef: RefObject<BreakMenuHandle | null>;
   notesRef: RefObject<HTMLTextAreaElement>;
-  fieldFilterRef: RefObject<HTMLInputElement>;
+  /** The old contact panel's field filter (`/`); the redesigned station has none (spec §2). */
   padRef: RefObject<DispositionPadHandle | null>;
   dncRef: RefObject<DncControlHandle | null>;
+}
+
+/**
+ * The redesigned station's own keys (spec §2 table), each null where the screen does not offer
+ * it: `Enter` presses the screen's main action (Start work, Check again, Save & next call, Use this
+ * computer), `R` tries the internet again, `M` mutes, `Esc` answers Finish work's "No".
+ */
+export interface StationScreenKeys {
+  enter: (() => void) | null;
+  r: (() => void) | null;
+  m: (() => void) | null;
+  escape: (() => void) | null;
+  /** `A` on Start of day: the screen's own Start work (its way of working included); null elsewhere. */
+  startWork?: (() => void) | null;
+}
+
+/** Elements whose own Enter press is theirs: a button, a link, a field. Enter there is never the main action. */
+function ownsEnter(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return target.closest('button, a[href], input, textarea, select, [role="button"], [role="menuitem"], [role="radio"], [contenteditable="true"]') !== null;
 }
 
 /**
@@ -45,14 +73,18 @@ export function useStationShortcuts(
      * campaign outcome, and `A` would end the soft-phone break as an ordinary one.
      */
     suspended?: boolean;
+    /** The redesigned station's keys; absent, none of them is bound. */
+    screenKeys?: StationScreenKeys;
   },
-  { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef }: StationShortcutTargets,
+  { breakMenuRef, notesRef, padRef, dncRef }: StationShortcutTargets,
 ): void {
   const shortcutStateRef = useLatestRef(state);
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      const { agentState, cons, bootstrap, suspended } = shortcutStateRef.current;
+      const { agentState, cons, bootstrap, suspended, screenKeys } = shortcutStateRef.current;
       if (suspended) return;
+      // A dialog over the station (Which break?, Don't call again, Sound) owns the keyboard.
+      if (event.defaultPrevented) return;
       // Analytics only: every shortcut reports against the station's campaign.
       const stationCampaign = bootstrap?.campaign_id ?? '';
       const shortcutUsed = (
@@ -82,17 +114,50 @@ export function useStationShortcuts(
         }
         return;
       }
+      if (event.key === 'Escape' && screenKeys?.escape && !inTextField) {
+        event.preventDefault();
+        screenKeys.escape();
+        return;
+      }
       if (inTextField || event.ctrlKey || event.metaKey || event.altKey) return;
 
+      if (event.key === 'Enter') {
+        if (!screenKeys?.enter || ownsEnter(event.target)) return;
+        event.preventDefault();
+        screenKeys.enter();
+        return;
+      }
+
       const key = event.key.toLowerCase();
+
+      if (key === 'r' && screenKeys) {
+        if (screenKeys.r) {
+          event.preventDefault();
+          screenKeys.r();
+        }
+        return;
+      }
+
+      if (key === 'm' && screenKeys) {
+        if (screenKeys.m) {
+          event.preventDefault();
+          screenKeys.m();
+        }
+        return;
+      }
 
       if (key === 'a') {
         // One key for two verbs, because the rail says which one is on offer and
         // the agent is never asked to remember.
         if (agentState === 'offline') {
-          event.preventDefault();
-          cons.goAvailable('shortcut');
-          shortcutUsed('a', true);
+          // The redesigned station: Start work as its button does it, and nothing on a screen
+          // without it (01b, a check failed). Without screen keys, the older bare go-available.
+          const start = screenKeys ? screenKeys.startWork ?? null : () => cons.goAvailable('shortcut');
+          if (start) {
+            event.preventDefault();
+            start();
+          }
+          shortcutUsed('a', start !== null);
         } else if (agentState === 'break') {
           event.preventDefault();
           cons.endBreak('shortcut');
@@ -116,19 +181,6 @@ export function useStationShortcuts(
           notesRef.current?.focus();
         }
         shortcutUsed('n', cons.notesEnabled);
-        return;
-      }
-
-      if (key === '/') {
-        // Focuses the filter input; nothing to enable/disable here — the
-        // box is present at every density and in every call state, so there is
-        // no "refuses" branch the way `C` and `N` have one. Once focus lands
-        // inside the input, `inTextField` above is what stops this branch from
-        // firing again — the second `/` types a literal slash rather than
-        // re-focusing a field that already has focus.
-        event.preventDefault();
-        fieldFilterRef.current?.focus();
-        shortcutUsed('slash', true);
         return;
       }
 

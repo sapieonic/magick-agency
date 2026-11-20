@@ -10,7 +10,7 @@ import type {
   AgencyStationMediaFormat,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
-import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, AGENCY_STATION_QUEUE_POOL_CAPABILITY, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import {
@@ -22,6 +22,8 @@ import {
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
+import { trackStationDisconnect } from '@magick-agency/observability/metrics/agency';
+import { workingState } from './working-state.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -98,6 +100,46 @@ export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boole
   if (live.state === 'break') return AGENT_LEASE_MS.break;
   if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;
   return null;
+}
+
+/** The station entry `socket` holds for `sessionId` (whose, which app), or undefined. Total: a metric never fails a close. */
+function stationHeldBy(runtime: AgencyRuntime, sessionId: string, socket: WebSocket): { tenantId: string; clientKind: 'web' | 'mobile' } | undefined {
+  try {
+    const held = runtime.stations.get(sessionId);
+    return held && held.ws === socket ? held : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The agent's state as their station went, its read ISSUED now (not awaited: see the close
+ * handler), and whether a soft-phone call is live. Null when it cannot be asked. Total.
+ */
+function readDrop(runtime: AgencyRuntime, sessionId: string): { state: Promise<AgentLiveState | null>; softPhoneCallLive: boolean } | null {
+  try {
+    return { state: runtime.agents.get(sessionId), softPhoneCallLive: runtime.manualDialer.hasLiveCall(sessionId) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Agent station (BE-11): count a station that went while its agent was working
+ * (`agency_station_disconnects_total`, by tenant, app and state; `workingState` decides, the
+ * supervisors' `disconnected` alert's rule). A break other than a live soft-phone call, an agent
+ * already `offline` (the leave clears the lease before it closes the station) and an unread state
+ * are not counted. Total.
+ */
+export function countStationDrop(
+  station: { tenantId: string; clientKind: 'web' | 'mobile' },
+  state: AgencyAgentState | null,
+  softPhoneCallLive: boolean,
+): boolean {
+  const working = workingState(state, softPhoneCallLive);
+  if (!working) return false;
+  trackStationDisconnect(station.tenantId, station.clientKind, working);
+  return true;
 }
 
 /**
@@ -430,6 +472,10 @@ export async function handleStationSocket(
       // forward. `releaseStationOnClose` calls it too; whichever arrives first
       // wins and the other returns.
       runtime.dialer.noteStationClosed(sessionId);
+      // Agent station (BE-11): the station as this socket held it (whose, which app), read before
+      // the detach forgets it; only when this socket is the session's entry (a superseded one's
+      // close is not a drop).
+      const dropped = stationHeldBy(runtime, sessionId, socket);
       // Order matters: detach FIRST, so anything that asks "is this agent here?"
       // between here and the end of this handler gets the truthful answer.
       await runtime.stations.detach(sessionId, socket);
@@ -463,11 +509,19 @@ export async function handleStationSocket(
       // second refusal would read here.
       const replacement = runtime.stations.socketFor(sessionId);
       const superseded = replacement !== undefined && replacement !== socket;
+      // BE-11: what the agent was doing as the station went, for `agency_station_disconnects_total`.
+      // Not awaited: the read is ISSUED here, before the release below issues its offline write on
+      // the same Redis connection, which applies commands in issue order, so it reads the state the
+      // drop interrupted and adds no await between the supersede read and the release.
+      const drop = dropped && !superseded ? readDrop(runtime, sessionId) : null;
       // Presence is the heartbeat — but a drop mid-attempt is the deferred
       // hangup's to resolve, not ours. `false` means it kept the agent.
       const wentOffline = superseded
         ? false
         : await runtime.releaseStationOnClose(sessionId, socket);
+      if (drop && dropped) {
+        void drop.state.then((live) => countStationDrop(dropped, live?.state ?? null, drop.softPhoneCallLive)).catch(() => undefined);
+      }
       log.info({ sessionId, superseded, wentOffline, mediaFormat, ignoredMediaFrames }, 'Station socket closed');
     })();
   });
@@ -559,7 +613,7 @@ export async function handleStationSocket(
   // The row as the rehydrate and `ready` read it: re-read after a let-go that ended a ring, which
   // rewrote the break (Mode B: the absence ended as `device_away`; the ring's `reserved` had nulled
   // the reason the attach read), so `ready` names the break the agent is on.
-  let attachedRow: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason' | 'away_ring_since'> = session;
+  let attachedRow: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason' | 'away_ring_since' | 'suspended_break_since'> = session;
   if (inbound && !canTakeInbound) {
     const heldRing = inbound.holdsPushOffer(sessionId);
     await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
@@ -568,22 +622,34 @@ export async function handleStationSocket(
         log.warn({ err, sessionId }, 'Could not re-read the session after a ring was let go');
         return null;
       });
-      if (fresh) attachedRow = { kind: fresh.kind, break_reason: fresh.break_reason, away_ring_since: fresh.away_ring_since };
+      if (fresh) {
+        attachedRow = {
+          kind: fresh.kind, break_reason: fresh.break_reason, away_ring_since: fresh.away_ring_since,
+          suspended_break_since: fresh.suspended_break_since,
+        };
+      }
     }
   }
 
-  // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
-  // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
-  // change, so a reconnecting station cannot wait for one). Read here, before the fence
-  // below, so no await sits between the fence and the side effects. Best effort: a failed
-  // read omits the field and the station keeps the reconnect. The mode comes with the
-  // session read, so a `pool` campaign (no per-agent queue) costs no campaign read.
+  // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, and
+  // (agent station BE-5) the campaign's shared queue on a `pool` one, only to a station that
+  // declared `queue_pool` (AS18: a build before the redesign words it for an owner's own contacts),
+  // so a reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
+  // change, so a reconnecting station cannot wait for one). Read here, before the fence below, so
+  // no await sits between the fence and the side effects. Best effort: a failed read omits the
+  // field and the station keeps the reconnect. A soft-phone session (no campaign) reads nothing.
+  // `wantsQueue` gates the read on the mode the session read already holds, so a pool station
+  // that did not declare `queue_pool` costs no campaign read, as before BE-5; the read's own
+  // check is on the campaign row it reads.
   const campaignId = session.campaign_id;
-  const ownerMode = ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' });
-  const queueRead = campaignId && ownerMode
+  const poolQueue = caps.has(AGENCY_STATION_QUEUE_POOL_CAPABILITY);
+  const wantsQueue = poolQueue || ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' }) !== null;
+  const queueRead = campaignId && wantsQueue
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
-      .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
+      .then((campaign) => (campaign && (poolQueue || ownerModeOf(campaign) !== null)
+        ? readAgentQueueState(campaign, session.agent_user_id)
+        : undefined))
       .catch((err: unknown) => {
         log.warn({ err, sessionId }, 'Could not read the agent queue for ready');
         return undefined;
@@ -689,11 +755,14 @@ export async function handleStationSocket(
     // its own is strictly worse than delivering it to nobody — the replacement
     // has already sent, or is about to send, a `ready` of its own.
   }, socket);
-  // Contact assignment (CA3): the station's queue is now this frame's (or none, when the read
-  // failed), whatever `queue` frame pacing sent it before, including one sent while this run
-  // was reading. Told to the pacing leader, which forgets what it last sent this session and
-  // sends the agent's queue again on its next tick. After the send, never before it.
-  if (readySent && campaignId && ownerMode) {
+  // Contact assignment (CA3), and pool campaigns too (BE-5): the station's queue is now this
+  // frame's (or none, when the read failed), whatever `queue` frame pacing sent it before,
+  // including one sent while this run was reading. Told to the pacing leader, which forgets what
+  // it last sent this session and sends the agent's queue again on its next tick. After the
+  // send, never before it. Only for a station pacing sends `queue` frames to (`wantsQueue`): a
+  // pool station without `queue_pool` is sent none, so there is nothing to forget, and its
+  // reconnect wakes pacing through the attach's own `agent_available`, not this.
+  if (readySent && campaignId && wantsQueue) {
     publishPacingInvalidation({ type: 'station_ready', sessionId, campaignId });
   }
 

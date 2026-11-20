@@ -11,6 +11,10 @@ import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
 import type { AgencyClientKind, AgencyQueueState } from './station';
 import type { AgencyAssignmentMode } from './assignment';
 import type { AgencyStationDeviceFields } from './station-device';
+import type { AgencyTileIcon } from './tile-icons';
+import type { AgencyContextFieldType, AgencyContextRoles } from './customer-facts';
+import type { AgencyAgentScript } from './agent-script';
+import type { AllListed } from '../primitives';
 import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
@@ -69,6 +73,14 @@ export interface AgencyDisposition {
    * here is refused, and so is an override on an entry that `suppress`es or is `terminal`.
    */
   override?: AgencyDispositionOverride;
+  /**
+   * Agent station (BE-13): the tile's picture, chosen by a supervisor from `AGENCY_TILE_ICONS`
+   * (`./tile-icons.ts`). Absent: the station works it out from the flags above. The campaign-config
+   * write refuses a value not in the list; every reader (the server's catalog read, the console, the
+   * app) treats an unknown value as absent, so an app older than an icon falls back to the flag rule
+   * and never fails the bootstrap.
+   */
+  icon?: AgencyTileIcon;
 }
 
 /** The most extra attempts one outcome can grant past `max_attempts`. */
@@ -128,7 +140,36 @@ export interface AgencyContextDisplay {
   order?: string[];
   /** Never rendered. PII the agent has no need to see, internal keys, etc. */
   hidden?: string[];
+  /**
+   * Agent station (BE-6, `./customer-facts.ts`): which column plays each role (the customer's name,
+   * place, amount due, due date). Read by the server to build `AgencyReservedAttempt.facts`, and by
+   * the name lookups (callbacks list, floor, inbound) before their guesses. Absent: the server
+   * guesses as before. A `hidden` column is never a role.
+   */
+  roles?: AgencyContextRoles;
+  /**
+   * Agent station (BE-6): how to read a column, by its header name. A column not named here is
+   * `text`. The `amount_due` and `due_date` roles are read as `money` and `date` whatever this says.
+   */
+  types?: Record<string, AgencyContextFieldType>;
 }
+
+/**
+ * Agent station (AS9): how the station shows the customer's number, a campaign setting
+ * (`agency_campaigns.phone_display`, 0056; default `full`, today's behaviour). `masked` shows
+ * `98••• ••321` on every station screen, console and app. **A display choice, not a privacy
+ * control:** the server still sends `phone_e164` in full (the soft phone and customer history need
+ * it); hiding it on the server is later work (BE-7 step 2).
+ */
+export type AgencyPhoneDisplay = 'full' | 'masked';
+
+export const AGENCY_PHONE_DISPLAYS = ['full', 'masked'] as const satisfies readonly AgencyPhoneDisplay[];
+
+const _allPhoneDisplaysListed: AllListed<AgencyPhoneDisplay, typeof AGENCY_PHONE_DISPLAYS> = true;
+void _allPhoneDisplaysListed;
+
+/** The campaign's `phone_display` when it sets none, and the station's reading of an absent or unknown one. */
+export const AGENCY_PHONE_DISPLAY_DEFAULT: AgencyPhoneDisplay = 'full';
 
 /**
  * A break reason offered to the agent. Phase 1 does not implement `break`
@@ -166,6 +207,12 @@ export interface AgencyBreakReason {
    * from `agent_state.since`, the anchor it already counts a break's time from.
    */
   limit_minutes?: number;
+  /**
+   * Agent station (BE-13): the break tile's picture, from `AGENCY_TILE_ICONS` (`./tile-icons.ts`),
+   * as {@link AgencyDisposition.icon}: refused at the write when not in the list, read as absent
+   * when unknown. Absent: the station guesses from the code and label (a cup as the fallback).
+   */
+  icon?: AgencyTileIcon;
 }
 
 // ─── POST /api/v1/agency/sessions — session bootstrap ───────────────────────
@@ -321,8 +368,10 @@ export interface AgencySessionBootstrap {
    */
   allow_agent_retry?: boolean;
   /**
-   * This agent's queue at join, in `strict` and `preferred` mode; absent in `pool` mode. The
-   * `queue` station frame carries every later change.
+   * This agent's queue at join, in `strict` and `preferred` mode. Absent in `pool` mode: the
+   * bootstrap is read before the station socket declares what it can show, so a `pool` campaign's
+   * shared queue (agent station BE-5) comes on `ready.queue` and the `queue` frame, to a station
+   * that declared `caps=queue_pool` only (AS18). The `queue` station frame carries every later change.
    */
   queue?: AgencyQueueState;
   /** Whether calls on this campaign are recorded — the console must disclose it. */
@@ -364,6 +413,20 @@ export interface AgencySessionBootstrap {
    * about the campaign the agent is joined to.
    */
   retry_context?: AgencyRetryContext;
+
+  /**
+   * Agent station (BE-8, `./agent-script.ts`): the campaign's script, campaign-constant like
+   * `retry_context`. **Absent when the campaign has none** (no opening and no steps), and from a
+   * server older than the field: the station then shows the last calls and a note (`04c`). A
+   * supervisor's edit reaches an agent on their next join. Never carries an empty script.
+   */
+  script?: AgencyAgentScript;
+  /**
+   * Agent station (AS9): how the station shows the customer's number on this campaign. Absent (an
+   * older server) or a value the client does not know reads as `full`
+   * ({@link AGENCY_PHONE_DISPLAY_DEFAULT}). The number itself is still sent in full.
+   */
+  phone_display?: AgencyPhoneDisplay;
 }
 
 /**

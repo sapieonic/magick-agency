@@ -99,6 +99,17 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'help_answer_hows': HelpAnswerHow.values,
   'help_cleared_reasons': HelpClearedReason.values,
   'floor_assist_error_codes': FloorAssistErrorCode.values,
+  // The agent station redesign (`agency/tile-icons.ts`, `agency/session.ts`, `agency/station.ts`,
+  // `agency/customer-facts.ts`, `agency/agent-script.ts`, `api/agency/my-day.ts`).
+  'tile_icons': TileIcon.values,
+  'phone_displays': PhoneDisplay.values,
+  'attempt_callback_sources': AttemptCallbackSource.values,
+  'context_roles': ContextRole.values,
+  'context_field_types': ContextFieldType.values,
+  'fact_tile_roles': FactTileRole.values,
+  'script_placeholders': ScriptPlaceholder.values,
+  'my_day_target_metrics': MyDayTargetMetric.values,
+  'my_call_later_left_goes_to': CallLaterLeftGoesTo.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -152,7 +163,7 @@ final Map<String, List<WireEnum>> appSends = {
   ],
   // The station upgrade's `caps=`, and the Missed list's `status=` and
   // `reason=` filters.
-  'station_capabilities': [StationCapability.inbound, StationCapability.floorAssist],
+  'station_capabilities': [StationCapability.inbound, StationCapability.floorAssist, StationCapability.queuePool],
   'inbound_follow_up_statuses': [
     for (final v in InboundFollowUpStatus.values)
       if (!v.isUnknown) v,

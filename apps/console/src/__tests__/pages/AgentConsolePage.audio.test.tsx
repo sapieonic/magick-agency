@@ -434,6 +434,16 @@ beforeEach(() => {
     configurable: true,
     value: {
       getUserMedia: vi.fn(async (constraints: MediaStreamConstraints) => {
+        /*
+          Start of day's microphone check (spec 01) asks for `{ audio: true }` and lets go at
+          once; it is not the call's capture, so it is answered here and kept out of the counts
+          below (whose subject is the capture armed on `reserved`). A refused microphone still
+          refuses it, so 01b shows as it would.
+        */
+        if (constraints.audio === true) {
+          if (gumResult !== 'ok') throw gumResult;
+          return { getTracks: () => [{ stop: () => {} }] } as unknown as MediaStream;
+        }
         gumCalls.push(constraints);
         if (gumMode === 'hold') {
           // The OS prompt is on screen. Nothing resolves until `answerPrompt()`.
@@ -716,12 +726,13 @@ describe('mute', () => {
      * audio that is not flowing yet.
      */
     const view = await mounted();
-    expect(screen.getByTestId('mute-toggle').hasAttribute('disabled')).toBe(true);
+    // AS1: hidden, not disabled, where it does not belong — and the uplink decides, not `live`.
+    expect(screen.queryByTestId('mute-toggle')).toBeNull();
 
     await act(async () => {
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
     });
-    expect(screen.getByTestId('mute-toggle').hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByTestId('mute-toggle')).toBeNull();
 
     await act(async () => {
       latest().emit({
@@ -772,15 +783,31 @@ describe('mute', () => {
     expect(tracks[0]!.enabled).toBe(false);
   });
 
-  it('shows the state in the header, not only on the control', async () => {
+  it('shows the state in a banner under the band, not only on the control (04b)', async () => {
     // An agent who has to look at a toggle to find out whether they are audible
     // will not look.
     await onCall();
-    expect(screen.queryByTestId('muted-pill')).toBeNull();
+    expect(screen.queryByTestId('on-mute')).toBeNull();
     act(() => {
       fireEvent.click(screen.getByTestId('mute-toggle'));
     });
-    expect(screen.getByTestId('muted-pill')).toBeTruthy();
+    expect(screen.getByTestId('on-mute').textContent).toBe('You are on mute. The customer cannot hear you.');
+    expect(screen.getByTestId('mute-toggle').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('mute-toggle').textContent).toContain('Unmute');
+  });
+
+  it('M mutes and unmutes from the keyboard (spec §2)', async () => {
+    await onCall();
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'm' });
+    });
+    expect(tracks[0]!.enabled).toBe(false);
+    expect(screen.getByTestId('on-mute')).toBeTruthy();
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'm' });
+    });
+    expect(tracks[0]!.enabled).toBe(true);
+    expect(screen.queryByTestId('on-mute')).toBeNull();
   });
 
   it('does not carry a mute into the next customer’s call', async () => {
@@ -794,7 +821,7 @@ describe('mute', () => {
     act(() => {
       fireEvent.click(screen.getByTestId('mute-toggle'));
     });
-    expect(screen.getByTestId('muted-pill')).toBeTruthy();
+    expect(screen.getByTestId('on-mute')).toBeTruthy();
 
     await act(async () => {
       latest().emit({
@@ -806,7 +833,7 @@ describe('mute', () => {
       });
     });
 
-    expect(screen.queryByTestId('muted-pill')).toBeNull();
+    expect(screen.queryByTestId('on-mute')).toBeNull();
   });
 });
 
@@ -822,7 +849,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     expect(banner.textContent).toContain('blocked');
     // The remedy is the half that makes it actionable — "audio capture failed"
     // tells the agent nothing they can do.
-    expect(banner.textContent).toContain('Allow microphone access');
+    expect(banner.textContent).toContain('Allow the microphone for this site');
     // And it says what the customer is experiencing, which is the fact the
     // agent needs in order to decide whether to keep talking.
     expect(banner.textContent).toContain('cannot hear you');
@@ -855,7 +882,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     await reserved();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('No microphone was found');
+    expect(banner.textContent).toContain('No microphone found');
     expect(banner.textContent).toContain('Plug in your headset');
   });
 
@@ -870,14 +897,18 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     gumResult = denied;
 
     await mounted();
+
+    // The redesigned station checks the microphone when Start of day opens (spec 01b): the band
+    // says it is blocked before the agent has pressed anything, and Start work (or `A`) is not
+    // on that screen, so nothing goes available over a microphone that cannot work.
+    await waitFor(() => expect(screen.getByTestId('band-title').textContent).toBe('Microphone is blocked'));
     act(() => {
       fireEvent.keyDown(document, { key: 'a' });
     });
-
-    const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('blocked');
+    await act(async () => {});
+    expect(mocks.setAgentAvailable).not.toHaveBeenCalled();
     // And no attempt was ever reserved — the point is that this happened early.
-    expect(screen.queryByText('+919876543210')).toBeNull();
+    expect(screen.queryByText('+91 98765 43210')).toBeNull();
   });
 
   it('holds no microphone open after a successful pre-flight', async () => {
@@ -916,7 +947,7 @@ describe('a microphone that will not open is stated, not left as silence', () =>
 
     await onCall();
 
-    expect(screen.getByTestId('mute-toggle').hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByTestId('mute-toggle')).toBeNull();
     expect(screen.getByTestId('mic-failure')).toBeTruthy();
   });
 
@@ -940,8 +971,8 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     });
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('disconnected');
-    expect(banner.textContent).toContain('Reconnect your headset');
+    expect(banner.textContent).toContain('Your headset came off');
+    expect(banner.textContent).toContain('Plug your headset in again');
   });
 
   it('does not report a device failure when WE stopped the track', async () => {
@@ -970,7 +1001,8 @@ describe('a microphone that will not open is stated, not left as silence', () =>
     gumResult = denied;
 
     await onCall();
-    expect(screen.getByTestId('mute-toggle').hasAttribute('disabled')).toBe(true);
+    // Hidden (AS1): there is nothing to mute.
+    expect(screen.queryByTestId('mute-toggle')).toBeNull();
   });
 });
 
@@ -1284,7 +1316,7 @@ describe('a station that is never coming back releases the microphone', () => {
     // while `live` survived, which suppressed the only component that renders this
     // — so the notice the API had already consumed on read was destroyed, not delayed.
     expect(screen.getByTestId('missed-release').textContent).toContain(
-      'While you were disconnected',
+      'While your internet was down',
     );
 
     view.unmount();
@@ -1327,9 +1359,9 @@ describe('a browser that suspends the audio graph says so', () => {
     const view = await reloadedMidCall();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('paused by your browser');
+    expect(banner.textContent).toContain('Sound is off');
     // Both directions, because a suspended context breaks both.
-    expect(banner.textContent).toContain('hear or be heard');
+    expect(banner.textContent).toContain('they cannot hear you');
 
     view.unmount();
   });
@@ -1352,7 +1384,7 @@ describe('a browser that suspends the audio graph says so', () => {
     expect(banner.textContent).not.toMatch(/then reload/i);
     expect(banner.textContent).not.toMatch(/reload the console/i);
     // The positive form, so this cannot pass on an empty banner.
-    expect(banner.textContent).toContain('Turn audio back on');
+    expect(banner.textContent).toContain('Turn sound on');
 
     view.unmount();
   });
@@ -1479,9 +1511,9 @@ describe('a blocked pre-flight leaves a banner the agent can actually clear', ()
     const view = await blockedPreflight();
 
     const banner = await screen.findByTestId('mic-failure');
-    expect(banner.textContent).toContain('paused by your browser');
+    expect(banner.textContent).toContain('Sound is off');
     // No customer is involved yet, which is the entire value of probing here.
-    expect(screen.queryByText('+919876543210')).toBeNull();
+    expect(screen.queryByText('+91 98765 43210')).toBeNull();
 
     view.unmount();
   });

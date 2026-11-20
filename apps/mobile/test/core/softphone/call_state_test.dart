@@ -139,7 +139,7 @@ void main() {
         'ended_at': '2026-10-30T10:04:00Z',
       });
       final r = rail(call: ended);
-      expect(r.label, 'Outcome needed');
+      expect(r.label, 'What happened?');
       expect(r.detail, contains('The customer hung up.'));
       expect(r.timerFrom, DateTime.utc(2026, 10, 30, 10, 4));
     });

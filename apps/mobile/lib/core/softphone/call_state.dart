@@ -182,9 +182,9 @@ SoftphoneRail describeSoftphoneRail({
     case SoftphonePhase.outcome:
       return SoftphoneRail(
         tone: SoftphoneRailTone.warning,
-        label: 'Outcome needed',
+        label: 'What happened?',
         detail:
-            '${call == null ? 'The call ended.' : callEndSummary(call)} Pick an outcome and save it — the next call unlocks when you do.',
+            '${call == null ? 'The call ended.' : callEndSummary(call)} Choose what happened and press Save. Then you can dial again.',
         timerFrom: device(call?.endedAt),
       );
     case SoftphonePhase.ready:

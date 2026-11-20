@@ -7,6 +7,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'agent_station.dart';
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
@@ -93,6 +94,7 @@ final class Disposition {
     this.overrideGrant,
     this.requiresPromise,
     this.promiseFollowUpDays,
+    this.icon,
   });
 
   factory Disposition.fromJson(Map<String, Object?> j) {
@@ -110,6 +112,7 @@ final class Disposition {
       overrideGrant: override == null ? null : DispositionOverride.fromJson(override),
       requiresPromise: j.boolOrNull('requires_promise'),
       promiseFollowUpDays: j.integerOrNull('promise_follow_up_days'),
+      icon: TileIcon.tryFromWire(j['icon']),
     );
   }
 
@@ -145,6 +148,10 @@ final class Disposition {
   /// books none.
   final int? promiseFollowUpDays;
 
+  /// The tile's picture a supervisor chose (BE-13); null when none, or one
+  /// this build does not know: work it out from the flags then.
+  final TileIcon? icon;
+
   bool get noteRequired => requiresNote ?? false;
   bool get datetimeRequired => requiresDatetime ?? false;
   bool get promiseRequired => requiresPromise ?? false;
@@ -162,12 +169,13 @@ final class Disposition {
       other.retry == retry &&
       other.overrideGrant == overrideGrant &&
       other.requiresPromise == requiresPromise &&
-      other.promiseFollowUpDays == promiseFollowUpDays;
+      other.promiseFollowUpDays == promiseFollowUpDays &&
+      other.icon == icon;
 
   @override
   int get hashCode => Object.hash(
     code, label, isSuccess, requiresNote, requiresDatetime, terminal, suppress, retry, overrideGrant,
-    requiresPromise, promiseFollowUpDays,
+    requiresPromise, promiseFollowUpDays, icon,
   );
 }
 
@@ -241,13 +249,24 @@ final class DispositionRetry {
 /// rules the contract states, so the app and the console agree.
 @immutable
 final class ContextDisplay {
-  ContextDisplay({List<String>? hero, List<String>? order, List<String>? hidden})
-    : hero = hero == null ? null : List.unmodifiable(hero),
-      order = order == null ? null : List.unmodifiable(order),
-      hidden = hidden == null ? null : List.unmodifiable(hidden);
+  ContextDisplay({
+    List<String>? hero,
+    List<String>? order,
+    List<String>? hidden,
+    this.roles,
+    Map<String, ContextFieldType>? types,
+  }) : hero = hero == null ? null : List.unmodifiable(hero),
+       order = order == null ? null : List.unmodifiable(order),
+       hidden = hidden == null ? null : List.unmodifiable(hidden),
+       types = types == null ? null : Map.unmodifiable(types);
 
-  factory ContextDisplay.fromJson(Map<String, Object?> j) =>
-      ContextDisplay(hero: j.stringsOrNull('hero'), order: j.stringsOrNull('order'), hidden: j.stringsOrNull('hidden'));
+  factory ContextDisplay.fromJson(Map<String, Object?> j) => ContextDisplay(
+    hero: j.stringsOrNull('hero'),
+    order: j.stringsOrNull('order'),
+    hidden: j.stringsOrNull('hidden'),
+    roles: ContextRoles.tryFromJson(j['roles']),
+    types: contextFieldTypesFromJson(j['types']),
+  );
 
   /// Pinned first, in order: what the agent reads while the phone rings.
   final List<String>? hero;
@@ -257,6 +276,14 @@ final class ContextDisplay {
 
   /// Never rendered, at any stage.
   final List<String>? hidden;
+
+  /// Which column plays each role (BE-6); null from a campaign or server
+  /// without them. The server already parsed the facts by these
+  /// (`ReservedAttempt.facts`): the app reads them, not this.
+  final ContextRoles? roles;
+
+  /// How each named column is read (BE-6); a column not named is text.
+  final Map<String, ContextFieldType>? types;
 
   /// Orders [context] (a reserved attempt's columns, in CSV order):
   /// 1. `hero` columns in array order; 2. then `order` columns; 3. then every
@@ -286,10 +313,27 @@ final class ContextDisplay {
       other is ContextDisplay &&
       listEquals(other.hero, hero) &&
       listEquals(other.order, order) &&
-      listEquals(other.hidden, hidden);
+      listEquals(other.hidden, hidden) &&
+      other.roles == roles &&
+      _sameTypes(other.types, types);
+
+  static bool _sameTypes(Map<String, ContextFieldType>? a, Map<String, ContextFieldType>? b) {
+    if (a == null || b == null) return a == b;
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
+  }
 
   @override
-  int get hashCode => Object.hash(listHash(hero), listHash(order), listHash(hidden));
+  int get hashCode => Object.hash(
+    listHash(hero),
+    listHash(order),
+    listHash(hidden),
+    roles,
+    types == null ? null : Object.hashAllUnordered(types!.entries.map((e) => Object.hash(e.key, e.value))),
+  );
 }
 
 /// The output of [ContextDisplay.resolve].
@@ -326,13 +370,14 @@ final class ResolvedContext {
 /// Contract: `AgencyBreakReason`.
 @immutable
 final class BreakReason {
-  const BreakReason({required this.code, required this.label, this.isPaid, this.limitMinutes});
+  const BreakReason({required this.code, required this.label, this.isPaid, this.limitMinutes, this.icon});
 
   factory BreakReason.fromJson(Map<String, Object?> j) => BreakReason(
     code: j.str('code'),
     label: j.str('label'),
     isPaid: j.boolOrNull('is_paid'),
     limitMinutes: _limit(j.tryInteger('limit_minutes')),
+    icon: TileIcon.tryFromWire(j['icon']),
   );
 
   /// The limit as the contract allows it (a whole number, 1 to 240), else none:
@@ -354,16 +399,21 @@ final class BreakReason {
   /// reason never has one.
   final int? limitMinutes;
 
+  /// The break tile's picture (BE-13); null when none, or one this build does
+  /// not know: guess from the code and label then.
+  final TileIcon? icon;
+
   @override
   bool operator ==(Object other) =>
       other is BreakReason &&
       other.code == code &&
       other.label == label &&
       other.isPaid == isPaid &&
-      other.limitMinutes == limitMinutes;
+      other.limitMinutes == limitMinutes &&
+      other.icon == icon;
 
   @override
-  int get hashCode => Object.hash(code, label, isPaid, limitMinutes);
+  int get hashCode => Object.hash(code, label, isPaid, limitMinutes, icon);
 }
 
 /// The retry banner: *Retry 1 of "Q3 Winback" — these contacts were …*.
@@ -429,9 +479,13 @@ final class SessionBootstrap {
     required this.contextDisplay,
     required this.intervals,
     this.retryContext,
+    this.script,
+    this.phoneDisplay = PhoneDisplay.full,
+    String? phoneDisplayRaw,
   }) : stateRaw = stateRaw ?? state.wire,
        campaignStatusRaw = campaignStatusRaw ?? campaignStatus.wire,
        assignmentModeRaw = assignmentModeRaw ?? assignmentMode.wire,
+       phoneDisplayRaw = phoneDisplayRaw ?? phoneDisplay.wire,
        dispositionCatalog = List.unmodifiable(dispositionCatalog),
        breakReasons = List.unmodifiable(breakReasons);
 
@@ -441,6 +495,7 @@ final class SessionBootstrap {
     final retry = j.objOrNull('retry_context');
     final mode = j.strOrNull('assignment_mode');
     final queue = j.objOrNull('queue');
+    final phoneDisplay = j['phone_display'] is String ? j['phone_display']! as String : null;
     return SessionBootstrap(
       sessionId: j.str('session_id'),
       campaignId: j.str('campaign_id'),
@@ -466,7 +521,17 @@ final class SessionBootstrap {
       contextDisplay: ContextDisplay.fromJson(j.obj('context_display')),
       intervals: StationIntervals.fromJson(j.obj('intervals')),
       retryContext: retry == null ? null : RetryContext.fromJson(retry),
+      script: AgentScript.tryFromJson(j['script']),
+      phoneDisplay: _phoneDisplay(phoneDisplay),
+      phoneDisplayRaw: phoneDisplay ?? PhoneDisplay.full.wire,
     );
+  }
+
+  /// Absent (an older server) or a value this build does not know reads as
+  /// [PhoneDisplay.full] (`AGENCY_PHONE_DISPLAY_DEFAULT`).
+  static PhoneDisplay _phoneDisplay(String? raw) {
+    final d = PhoneDisplay.fromWire(raw);
+    return d.isUnknown ? PhoneDisplay.full : d;
   }
 
   final String sessionId;
@@ -528,6 +593,18 @@ final class SessionBootstrap {
   /// Present only on a retry campaign.
   final RetryContext? retryContext;
 
+  /// The campaign's script (BE-8); null when it has none (or from an older
+  /// server): show the last calls and a note on the call screen then.
+  final AgentScript? script;
+
+  /// How the station shows the customer's number (AS9): [PhoneDisplay.full]
+  /// when absent or unknown; the wire string is in [phoneDisplayRaw].
+  final PhoneDisplay phoneDisplay;
+  final String phoneDisplayRaw;
+
+  /// Whether the station masks the number (`98••• ••321`).
+  bool get masksPhone => phoneDisplay == PhoneDisplay.masked;
+
   /// The catalog entry for [code], or null for a code this catalog lacks
   /// (a parent campaign's code on a prior attempt).
   Disposition? dispositionFor(String code) {
@@ -560,7 +637,9 @@ final class SessionBootstrap {
       listEquals(other.breakReasons, breakReasons) &&
       other.contextDisplay == contextDisplay &&
       other.intervals == intervals &&
-      other.retryContext == retryContext;
+      other.retryContext == retryContext &&
+      other.script == script &&
+      other.phoneDisplayRaw == phoneDisplayRaw;
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -585,6 +664,8 @@ final class SessionBootstrap {
     contextDisplay,
     intervals,
     retryContext,
+    script,
+    phoneDisplayRaw,
   ]);
 }
 

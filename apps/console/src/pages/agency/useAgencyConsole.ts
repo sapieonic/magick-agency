@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { presenceRefusedLine } from '../../utils/agency/stationCopy';
 import { setAgentAvailable } from '../../api/agency';
 import { useAgencyStation, type UseAgencyStationResult } from '../../hooks/useAgencyStation';
 import { DiagnosticsLog } from '../../utils/agencyDiagnostics';
@@ -13,7 +14,7 @@ import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { breakLimitFor } from '../../utils/agency/breakLimits';
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
-import { useBreakQueue } from '../../hooks/useBreakQueue';
+import { useBreakQueue, type BreakRefusal } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
 import { useWrapupRedial, type RedialPadBlock, type WrapupRedialState } from '../../hooks/useWrapupRedial';
 import { useRedialCarry } from '../../hooks/useRedialCarry';
@@ -132,8 +133,10 @@ export interface AgencyConsoleState {
   /** `method` is analytics-only — which input triggered the change. */
   goAvailable: (method?: 'shortcut' | 'click') => void;
   endBreak: (method?: 'shortcut' | 'click') => void;
-  requestBreak: (code: string) => void;
-  breakRejection: string | null;
+  /** Resolves true once the server took the break, false when it refused (`breakRejection` says why). */
+  requestBreak: (code: string) => Promise<boolean>;
+  breakRejection: BreakRefusal | null;
+  clearBreakRejection: () => void;
   breakBusy: boolean;
   pendingBreakLabel: string | null;
   cancelBreak: () => void;
@@ -454,9 +457,8 @@ export function useAgencyConsole(
        * available." — and `no_station` likewise.
        */
       const body = errorBody(err);
-      setPresenceRefusal(
-        body?.message ?? 'That didn’t go through. Try again in a moment.',
-      );
+      // The station's own words keyed on the code, never the server's sentence (AS15).
+      setPresenceRefusal(presenceRefusedLine(body?.code ?? null));
       trackAgencyPresenceRefused({ campaign_id: bootstrap.campaign_id, action, code: body?.code ?? null });
     } finally {
       setPresenceBusy(false);
@@ -514,6 +516,7 @@ export function useAgencyConsole(
     endBreak: (method?: 'shortcut' | 'click') => void goAvailable(method, 'end_break'),
     requestBreak: breaks.requestBreak,
     breakRejection: breaks.breakRejection,
+    clearBreakRejection: breaks.clearBreakRejection,
     breakBusy: breaks.breakBusy,
     pendingBreakLabel: labelFor(breaks.pendingBreakCode),
     cancelBreak: breaks.cancelBreak,

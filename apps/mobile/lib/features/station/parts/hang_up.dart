@@ -3,33 +3,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/station/station_view.dart';
 import '../station_copy.dart';
-import '../widgets/hold_to_confirm.dart';
+import '../widgets/slide_to_confirm.dart';
 import 'banners.dart';
 import 'sheets.dart';
 
-/// Hold-to-hang-up, wired to the station. Live from `reserved` on: an agent
-/// who sees the wrong contact pop must be able to stop the dial.
+/// Slide to end call (AS3), wired to the station: today's protection against a slip of the thumb,
+/// made visible. On call only: Call coming has no button (AS11), and a customer's own hang-up moves
+/// the screen on by itself.
 class HangUpBar extends ConsumerWidget {
-  const HangUpBar({super.key, required this.ringing});
-
-  final bool ringing;
+  const HangUpBar({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.hangingUp));
     final hasCall = ref.watch(stationViewProvider.select((v) => v?.call != null));
     return LinkGate(
-      child: HoldToConfirmBar(
+      child: SlideToConfirm(
         key: const Key('hang-up'),
-        label: StationCopy.holdToHangUp,
-        holdingLabel: StationCopy.keepHolding,
-        busyLabel: StationCopy.endingCall,
-        semanticLabel: StationCopy.hangUp,
-        semanticHint: StationCopy.hangUpHint,
+        label: StationCopy.slideToEnd,
+        busyLabel: StationCopy.ending,
+        semanticLabel: StationCopy.endCall,
+        semanticHint: StationCopy.endCallHint,
         enabled: hasCall,
         busy: busy,
         onConfirmed: () => ref.read(stationActionsProvider).hangUp(),
-        confirmAccessibly: (context) => confirmHangUp(context, ringing: ringing),
+        confirmAccessibly: (context) => confirmHangUp(context),
       ),
     );
   }

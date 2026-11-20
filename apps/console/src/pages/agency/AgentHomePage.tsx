@@ -1,18 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, CalendarClock, CircleCheck, Clock, Ear, OctagonX, Pause, Phone, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useOptionalAuth } from '../../contexts/AuthContext';
 import { getMyAssignments } from '../../api/agency';
+import { getMyDay } from '../../api/agencyStats';
 import { AccountUnavailable } from '../../components/common/AccountUnavailable';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { AgentNav } from '../../components/agency/AgentNav';
+import { StationFrame } from '../../components/agency/station/StationFrame';
+import stationStyles from '../../components/agency/station/Station.module.css';
 import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from '../../utils/agencyPersona';
 import { assignmentEntry } from '../../utils/agencyAssignmentEntry';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
+import {
+  AGENT_HOME_COPY,
+  callLaterLine,
+  homeBand,
+  workTile,
+  type HomeScreen,
+  type WorkStatus,
+  type WorkTile,
+} from '../../utils/agency/agentHome';
+import { STATION_COPY } from '../../utils/agency/stationCopy';
 import type { AgencyAssignment } from '../../types/agency-campaign';
+import type { AgencyMyCallLater } from '@magick-agency/contracts/api/agency/my-day';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
-import { LISTEN_AGENT_NOTICE } from '../../utils/listen/listenCopy';
+import { brand } from '../../brand';
 import styles from './AgentHomePage.module.css';
 
 /**
@@ -49,18 +64,29 @@ import styles from './AgentHomePage.module.css';
  * staffing — they are usually staffed on nothing, so this page would tell them
  * "nobody has assigned you a campaign", which is true and useless. They get the
  * campaigns workspace, which is what they came for.
+ *
+ * ── The station's look (spec §3 01, AS1, AS15) ─────────────────────────────
+ * It is the step before Start of day, so it wears the station's frame: the top bar with the
+ * agent's name, a full-width band that says what this screen is ("Namaste, Sunita", "Work
+ * finished for now", "Your work did not open"), and one big tile per list in the station's
+ * colours, each with its one way in. A list that can never send a call keeps its tile and loses
+ * the way in (hidden, not greyed: AS1), its line saying why. The words are the station's own
+ * (`utils/agency/agentHome.ts`): "work" and "list", never "campaign" or "station".
  */
 
 type HomeState =
   | { status: 'loading' }
   | { status: 'ready'; assignments: AgencyAssignment[] }
-  | { status: 'error'; message: string };
+  | { status: 'error' };
 
 export function AgentHomePage() {
   const { role, tenantId, accountId, accountResolution, accountError, reloadAccounts } =
     useTenant();
   const [params] = useSearchParams();
   const persona = agencyPersona(role);
+  const user = useOptionalAuth()?.user ?? null;
+  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
+  const firstName = (user?.display_name ?? '').trim().split(/\s+/)[0] || null;
   /**
    * Whether to offer a way back to the rest of the product.
    *
@@ -82,6 +108,10 @@ export function AgentHomePage() {
   const listenNotice = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
 
   const [state, setState] = useState<HomeState>({ status: 'loading' });
+  /** Try again after a failed read: bumping it runs the read again. */
+  const [attempt, setAttempt] = useState(0);
+  /** Each list's call-laters today, by list, from the agent's own day (`GET /my-day`). */
+  const [callLaters, setCallLaters] = useState<Record<string, AgencyMyCallLater>>({});
 
   useEffect(() => {
     if (persona !== 'agent') return undefined;
@@ -100,39 +130,47 @@ export function AgentHomePage() {
         if (cancelled) return;
         setState({ status: 'ready', assignments });
       })
-      .catch((err: unknown) => {
+      .catch(() => {
+        // The station's own words (AS15), never the server's sentence: the screen says what to do.
         if (cancelled) return;
-        setState({
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Could not check your campaigns.',
-        });
+        setState({ status: 'error' });
       });
     return () => {
       cancelled = true;
     };
-  }, [persona, tenantId, accountId]);
+  }, [persona, tenantId, accountId, attempt]);
+
+  const assignments = state.status === 'ready' ? state.assignments : null;
+  const redirectTo = assignments ? redirectTarget(assignments, arrival) : null;
+  /**
+   * The call-laters on each tile that can be opened, once the tiles are on screen (never on the
+   * way to a redirect). Best effort: a read that fails, or a server without `/my-day`, leaves the
+   * line off its tile, which is the right reading of "we do not know".
+   */
+  const openIds = assignments && redirectTo === null
+    ? assignments.filter((a) => assignmentEntry(a.campaign_status).canEnter).map((a) => a.campaign_id).join(',')
+    : '';
+  useEffect(() => {
+    if (!openIds || !tenantId || !accountId) return undefined;
+    let cancelled = false;
+    for (const id of openIds.split(',')) {
+      getMyDay(id, tenantId, accountId)
+        .then((day) => {
+          if (cancelled || !day?.call_later) return;
+          setCallLaters((was) => ({ ...was, [id]: day.call_later }));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [openIds, tenantId, accountId]);
 
   /**
    * A supervisor came for the dialer, not for their own staffing. Sent to the
    * workspace they actually wanted — see the header.
    */
   if (persona === 'supervisor') return <Navigate to="/agency/campaigns" replace />;
-
-  /**
-   * Nobody the Agency Dialer has a place for. Reachable only if a role below the
-   * station floor is ever added, or before `TenantContext` resolves a membership —
-   * so it renders the spinner rather than a refusal, and the effect above will
-   * fire once the role arrives.
-   */
-  if (persona === null) {
-    return (
-      <div className={styles.shell}>
-        <div className={`${styles.card} ${styles.cardCentred}`}>
-          <LoadingSpinner />
-        </div>
-      </div>
-    );
-  }
 
   /**
    * An account that could not be resolved is not a slow account.
@@ -146,152 +184,205 @@ export function AgentHomePage() {
    * clause is not decoration: resolution can settle without producing an account (a
    * tenant with genuinely zero accounts, or a `'degraded'` fallback whose narrowed
    * list came back empty), and nothing will fire again to set one.
+   *
+   * Checked only once the persona is known: before that (`persona === null`, a role still
+   * resolving, or one below the station floor) the page waits, and the effect fires once the
+   * role arrives.
    */
-  if (accountResolution === 'error' || (accountResolution !== 'loading' && accountId === null)) {
+  if (persona !== null && (accountResolution === 'error' || (accountResolution !== 'loading' && accountId === null))) {
     return <AccountUnavailable detail={accountError} onRetry={reloadAccounts} />;
   }
 
-  if (state.status === 'loading') {
+  const frame = { agentName, brandMark: brand.shortName };
+  const exit = canLeaveDialer ? <ExitToPlatform /> : null;
+  const listenLine = listenNotice ? (
+    <>
+      <Ear size={18} aria-hidden="true" />
+      <span data-testid="listen-agent-notice">{STATION_COPY.listenNotice}</span>
+    </>
+  ) : null;
+
+  if (persona === null || state.status === 'loading') {
     return (
-      <div className={styles.shell}>
-        <div className={`${styles.card} ${styles.cardCentred}`}>
-          <LoadingSpinner />
-        </div>
-      </div>
+      <HomeFrame {...frame} screen={{ kind: 'loading' }} firstName={firstName}>
+        <div className={styles.waiting}><LoadingSpinner /></div>
+      </HomeFrame>
     );
   }
 
   if (state.status === 'error') {
     return (
-      <Centred
-        title="We couldn’t check your campaigns"
-        // The server's own sentence, because these failures are mostly
-        // permission- or connectivity-shaped and ours would be a guess.
-        body={state.message}
-        showExit={canLeaveDialer}
-      />
+      <HomeFrame
+        {...frame}
+        screen={{ kind: 'error' }}
+        firstName={firstName}
+        footLeft={exit}
+        footRight={
+          <button
+            type="button"
+            className={`${stationStyles.btn} ${stationStyles.btnBig} ${stationStyles.btnGo}`}
+            onClick={() => setAttempt((n) => n + 1)}
+            data-testid="home-try-again"
+          >
+            <RefreshCw size={24} aria-hidden="true" />
+            {AGENT_HOME_COPY.tryAgain}
+          </button>
+        }
+      >
+        {/* No history links here: nothing is known about this account yet, so pointing at
+            another read of the same backend is an invitation to a second failure. */}
+        <p className={styles.lone} role="alert">{AGENT_HOME_COPY.errorBody}</p>
+      </HomeFrame>
     );
   }
 
-  const { assignments } = state;
+  const list = state.assignments;
 
-  if (assignments.length === 0) {
+  if (list.length === 0) {
     return (
-      <Centred
-        title="You’re not assigned to a campaign yet"
-        /* Names who fixes it. An agent holds no permission that could staff
-           them, so a "try again" here would be an instruction to repeat
-           something that cannot work. */
-        body="Ask your supervisor to add you to one."
-        showExit={canLeaveDialer}
-        /* Offered even here, and deliberately. An agent taken off every campaign
-           still has a shift behind them, and this is otherwise the one screen
-           they can reach — so without the link their own history becomes
-           unreachable at exactly the moment they most want to look at it. */
-        showPerformance
-      />
+      <HomeFrame {...frame} screen={{ kind: 'none' }} firstName={firstName} footLeft={exit}>
+        <p className={styles.lone}>{AGENT_HOME_COPY.noneBody}</p>
+        {/* Offered even here, and deliberately. An agent taken off every list still has a
+            shift behind them, and this is otherwise the one screen they can reach. */}
+        <SurfaceNav />
+      </HomeFrame>
     );
   }
 
   /**
-   * One campaign and nothing to say about it ⇒ go. The `arrival` guard is what
-   * stops the redirect firing again on the way OUT of a station: Leave navigates
-   * here with `?left=station`, the assignment is unchanged, and without the check
-   * the agent could never get out. `canEnter` is checked too, so an agent whose one
-   * campaign is paused lands on the list and reads why, instead of being bounced
-   * into the console's refusal.
+   * One list and nothing to say about it ⇒ go. The `arrival` guard is what stops the
+   * redirect firing again on the way OUT of a station: Finish work navigates here with
+   * `?left=station`, the assignment is unchanged, and without the check the agent could
+   * never get out. `canEnter` is checked too, so an agent whose one list is stopped lands
+   * on the tiles and reads why, instead of being bounced into the station's refusal.
    */
+  if (redirectTo) return <Navigate to={redirectTo} replace />;
+
+  return (
+    <HomeFrame
+      {...frame}
+      screen={{ kind: 'list', arrival, count: list.length }}
+      firstName={firstName}
+      footLeft={exit}
+      footHint={listenLine}
+    >
+      <ul className={styles.tiles} data-testid="work-tiles">
+        {list.map((assignment) => (
+          <WorkTileCard
+            key={assignment.campaign_id}
+            tile={workTile(assignment)}
+            callLater={callLaterLine(callLaters[assignment.campaign_id])}
+          />
+        ))}
+      </ul>
+      {list.length > 1 ? <p className={styles.oneAtATime}>{AGENT_HOME_COPY.oneAtATime}</p> : null}
+      <SurfaceNav />
+    </HomeFrame>
+  );
+}
+
+/** Where a visit goes straight to: the one list there is, when it can be opened and nothing else was said. */
+function redirectTarget(assignments: AgencyAssignment[], arrival: ReturnType<typeof agentLandingArrival>): string | null {
   const only = assignments.length === 1 ? assignments[0]! : null;
-  if (only && arrival === null && assignmentEntry(only.campaign_status).canEnter) {
-    return <Navigate to={stationPath(only.campaign_id)} replace />;
-  }
-
-  return (
-    <div className={styles.shell}>
-      <div className={styles.card}>
-        <h1 className={styles.title}>{headingFor(arrival, assignments.length)}</h1>
-        <p className={styles.body}>{bodyFor(arrival, assignments.length)}</p>
-        {listenNotice ? (
-          <p className={styles.notice} data-testid="listen-agent-notice">
-            {LISTEN_AGENT_NOTICE}
-          </p>
-        ) : null}
-
-        <ul className={styles.list}>
-          {assignments.map((assignment) => (
-            <AssignmentRow key={assignment.campaign_id} assignment={assignment} />
-          ))}
-        </ul>
-
-        {assignments.length > 1 && (
-          <p className={styles.footer}>
-            You can only be on one campaign at a time. Leave the one you’re on before
-            starting another.
-          </p>
-        )}
-
-        <SurfaceNav />
-
-        {canLeaveDialer && <ExitToPlatform />}
-      </div>
-    </div>
-  );
+  if (only && arrival === null && assignmentEntry(only.campaign_status).canEnter) return stationPath(only.campaign_id);
+  return null;
 }
 
-/** One campaign, its state, and the way in — or the reason there isn't one. */
-function AssignmentRow({ assignment }: { assignment: AgencyAssignment }) {
-  const { canEnter, note } = assignmentEntry(assignment.campaign_status);
-
-  return (
-    <li className={styles.row}>
-      <div className={styles.rowMain}>
-        <span className={styles.name}>{campaignName(assignment)}</span>
-        <span className={styles.meta}>
-          {/* The badge renders an unrecognised status as-is rather than
-              mapping it to a default, which is what lets the server forward the dialer runtime's
-              value without this client mirroring the API's lifecycle. */}
-          {assignment.campaign_status ? (
-            <AgencyCampaignStatusBadge status={assignment.campaign_status} />
-          ) : null}
-          {note ? ` ${note}` : ''}
-        </span>
-      </div>
-      {canEnter ? (
-        <Link className={styles.action} to={stationPath(assignment.campaign_id)}>
-          Enter station
-        </Link>
-      ) : (
-        /* Terminal only — a stopped or completed campaign will never send a call,
-           so there is nothing to enter. The reason sits beside it in `.meta`: a
-           greyed control with no explanation reads as an outage or a lost
-           permission, the house rule the console's disabled affordances follow. */
-        <span className={styles.actionMuted}>Closed</span>
-      )}
-    </li>
-  );
-}
-
-/** The single-message layout the three terminal states share. */
-function Centred({
-  title,
-  body,
-  showExit = false,
-  showPerformance = false,
+/** The station's frame around every screen of this page: top bar, band, body, footer. */
+function HomeFrame({
+  agentName,
+  brandMark,
+  screen,
+  firstName,
+  children,
+  footLeft,
+  footRight,
+  footHint,
 }: {
-  title: string;
-  body: string;
-  showExit?: boolean;
-  showPerformance?: boolean;
+  agentName: string;
+  brandMark: string;
+  screen: HomeScreen;
+  firstName: string | null;
+  children: ReactNode;
+  footLeft?: ReactNode;
+  footRight?: ReactNode;
+  footHint?: ReactNode;
 }) {
   return (
-    <div className={styles.shell}>
-      <div className={`${styles.card} ${styles.cardCentred}`}>
-        <h1 className={styles.title}>{title}</h1>
-        <p className={styles.body}>{body}</p>
-        {showPerformance && <SurfaceNav />}
-        {showExit && <ExitToPlatform />}
-      </div>
-    </div>
+    <StationFrame
+      view={homeBand(screen, firstName)}
+      agentName={agentName}
+      workName={null}
+      brandMark={brandMark}
+      bodyClassName={styles.body}
+      footLeft={footLeft}
+      footRight={footRight}
+      footHint={footHint}
+      testId="agent-home"
+    >
+      {children}
+    </StationFrame>
+  );
+}
+
+const STATUS_ICONS: Record<WorkStatus['icon'], typeof Phone> = {
+  phone: Phone,
+  pause: Pause,
+  clock: Clock,
+  stop: OctagonX,
+  check: CircleCheck,
+};
+
+/**
+ * One list, as a big tile: its name, what it is doing, the agent's call-laters today, and its
+ * one way in. The whole tile is the link (a big target, spec §6.7), named "Open <list>" with the
+ * status read as its description. A list that can never send a call (stopped, completed) keeps
+ * its tile with no way in (AS1: hidden, not greyed), its line saying why.
+ */
+function WorkTileCard({ tile, callLater }: { tile: WorkTile; callLater: string | null }) {
+  const id = useId();
+  const StatusIcon = tile.status ? STATUS_ICONS[tile.status.icon] : null;
+  const described = [tile.status ? `${id}-status` : null, callLater ? `${id}-later` : null].filter(Boolean).join(' ');
+  const inner = (
+    <>
+      <span className={styles.tileName} data-testid="work-tile-name">{tile.name}</span>
+      {tile.status && StatusIcon ? (
+        <span className={styles.tileStatus} data-tone={tile.status.tone} id={`${id}-status`} data-testid="work-tile-status">
+          <StatusIcon size={20} aria-hidden="true" />
+          {tile.status.line}
+        </span>
+      ) : null}
+      {callLater ? (
+        <span className={styles.tileLater} id={`${id}-later`} data-testid="work-tile-call-later">
+          <CalendarClock size={18} aria-hidden="true" />
+          {callLater}
+        </span>
+      ) : null}
+    </>
+  );
+  if (!tile.canOpen) {
+    return (
+      <li className={styles.tile} data-closed="true" data-testid="work-tile">
+        {inner}
+      </li>
+    );
+  }
+  return (
+    <li className={styles.tileItem} data-testid="work-tile">
+      <Link
+        className={styles.tile}
+        to={stationPath(tile.campaignId)}
+        aria-label={AGENT_HOME_COPY.openLabel(tile.name)}
+        aria-describedby={described || undefined}
+        data-testid="work-tile-open"
+      >
+        {inner}
+        <span className={styles.tileGo} aria-hidden="true">
+          {AGENT_HOME_COPY.open}
+          <ArrowRight size={22} />
+        </span>
+      </Link>
+    </li>
   );
 }
 
@@ -334,11 +425,11 @@ function Centred({
  * what an agent could reach depended on where they were standing.
  *
  * The nav is that set, rendered identically on all three surfaces with the
- * current one marked. On this page the current entry is "My campaigns", which
+ * current one marked. On this page the current entry is "My work", which
  * is the part that could not be expressed before: the old links pointed AWAY
  * and nothing said what this screen was. It stays one quiet row beneath the
- * campaign rows, at the weight the links already had — the rows own the only
- * primary action, and the chooser is no busier than it was.
+ * tiles, at the weight the links already had — the tiles own the only primary
+ * action, and the chooser is no busier than it was.
  *
  * Reaching `/dialer/attempts` only through `/dialer/performance` was rejected
  * before and is not reachable now anyway: "which calls did I take" is the more
@@ -360,8 +451,8 @@ function SurfaceNav() {
  */
 function ExitToPlatform() {
   return (
-    <Link className={styles.exit} to={CAMPAIGNS_LANDING_PATH}>
-      Open the console
+    <Link className={`${stationStyles.btn} ${stationStyles.btnQuiet}`} to={CAMPAIGNS_LANDING_PATH}>
+      {AGENT_HOME_COPY.openConsole}
     </Link>
   );
 }
@@ -376,44 +467,6 @@ function ExitToPlatform() {
  */
 function stationPath(campaignId: string): string {
   return `/station?campaign=${encodeURIComponent(campaignId)}`;
-}
-
-/**
- * The campaign's name, or a stand-in.
- *
- * `campaign_name` is nullable on the server's wire — a best-effort API lookup,
- * documented null for an API outage or a deleted campaign. Rendered unguarded, a
- * brief outage produced rows with empty names and a link reading "Enter station"
- * beside nothing, which reads as a broken app rather than a transient upstream.
- */
-function campaignName(assignment: AgencyAssignment): string {
-  return assignment.campaign_name ?? 'Unnamed campaign';
-}
-
-/**
- * The heading.
- *
- * The two arrivals are different news and must not share a sentence: one agent
- * chose to stop taking calls, the other was refused entry by a campaign that is
- * paused or stopped. Telling the second they "left" is a false account of what
- * just happened to them.
- */
-function headingFor(arrival: 'station' | 'refused' | null, count: number): string {
-  if (arrival === 'refused') return 'That station didn’t open';
-  if (arrival === 'station') return 'You’ve left the station';
-  return count > 1 ? 'Pick a campaign' : 'Your campaign';
-}
-
-function bodyFor(arrival: 'station' | 'refused' | null, count: number): string {
-  if (arrival === 'refused') {
-    return 'You’re not taking calls right now. Here’s where you’re assigned — ask your supervisor if a campaign stays closed.';
-  }
-  if (arrival === 'station') {
-    return 'You’re not taking calls right now. Your campaigns are still yours whenever you’re ready.';
-  }
-  return count > 1
-    ? 'You’re assigned to more than one. Choose the one you’re working now.'
-    : 'Start taking calls when you’re ready.';
 }
 
 export default AgentHomePage;

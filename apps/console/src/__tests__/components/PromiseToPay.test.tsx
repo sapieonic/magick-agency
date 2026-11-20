@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import {
-  DispositionPad,
-  PROMISE_NO_CALL_COPY,
-  promiseFollowUpCopy,
-} from '../../components/agency/DispositionPad';
+import { WhatHappened } from '../../components/agency/station/WhatHappened';
 import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
 import { ContactPromiseLine } from '../../components/agency/PromiseNote';
 import {
@@ -24,7 +20,7 @@ import { refusalCopy } from '../../utils/softphone/refusalCopy';
 import type { AgencyDisposition } from '../../types/agency';
 
 /**
- * Promise to pay (decisions PT1–PT14) in the console: the pad's promise row and its checks
+ * Promise to pay (decisions PT1–PT14) in the console: What happened?'s pay date row and its checks
  * (the client half of the server's rule), the submitted payload, the catalogue editor's rules
  * (the server's words), the Contacts filter in the URL, and how a promise is printed.
  */
@@ -70,37 +66,63 @@ describe('the pad\'s checks (PT4, PT5): the client half of the server\'s rule', 
   });
 });
 
-describe('the pad\'s promise row', () => {
-  function pad(selectedCode: string, patch: Partial<DispositionFormState> = {}) {
+describe('What happened?\'s pay date row (the redesigned station, spec 05)', () => {
+  function tiles(selectedCode: string, patch: Partial<DispositionFormState> = {}, amountDue: string | null = null) {
     const onChange = vi.fn();
     render(
-      <DispositionPad catalog={CATALOG} form={form({ selectedCode, ...patch })} onChange={onChange} enabled now={() => T0} />,
+      <WhatHappened
+        catalog={CATALOG}
+        form={form({ selectedCode, ...patch })}
+        onChange={onChange}
+        enabled
+        now={() => T0}
+        amountDue={amountDue}
+        comesToMe={null}
+        rejection={null}
+        keysRemapped={false}
+        onNeedsNote={() => {}}
+        readAloud={{ available: false, say: () => {} }}
+        onAskDontCallAgain={() => {}}
+        dontCallAgainOffered={false}
+        shake={0}
+      />,
     );
     return onChange;
   }
 
   it('appears only for a promise outcome; chips and the picker set the date, the field the amount', () => {
-    pad('sale');
+    tiles('sale');
     expect(screen.queryByTestId('promise-row')).toBeNull();
     cleanup();
-    const onChange = pad('ptp');
-    expect(screen.getByText('When will the customer pay?')).toBeTruthy();
+    const onChange = tiles('ptp');
+    expect(screen.getByText('Pay date')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Tomorrow' }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedCode: 'ptp', promiseDate: '2026-08-12' }));
-    fireEvent.change(screen.getByLabelText('Promised payment date'), { target: { value: '2026-09-01' } });
+    fireEvent.change(screen.getByLabelText('Other date'), { target: { value: '2026-09-01' } });
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseDate: '2026-09-01' }));
-    fireEvent.change(screen.getByLabelText('Promised amount'), { target: { value: '700' } });
+    fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '700' } });
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseAmount: '700' }));
   });
 
-  it('says whether saving books a call (PT3), and echoes what will be saved', () => {
-    pad('ptp', { promiseDate: '2026-08-18', promiseAmount: '12500' });
-    expect(screen.getByTestId('promise-ground-truth').textContent).toBe(PROMISE_NO_CALL_COPY);
-    expect(screen.getByTestId('promise-resolved').textContent).toBe('Promised 18 Aug 2026 · 12,500');
+  it('echoes what will be saved (no ₹ on a promised amount, PT5), and says when a follow-up is booked', () => {
+    tiles('ptp', { promiseDate: '2026-08-18', promiseAmount: '12500' });
+    expect(screen.getByTestId('promise-resolved').textContent).toBe('Will pay on 18 Aug · 12,500');
+    // Saving this outcome books no call: nothing says it will.
+    expect(screen.queryByTestId('promise-follow-up')).toBeNull();
     cleanup();
-    pad('ptp_follow');
-    expect(screen.getByTestId('promise-ground-truth').textContent).toBe(promiseFollowUpCopy(3));
-    expect(promiseFollowUpCopy(1)).toBe('We’ll call again 1 day after this date, in calling hours.');
+    tiles('ptp_follow', { promiseDate: '2026-08-18' });
+    expect(screen.getByTestId('promise-resolved').textContent).toBe('Will pay on 18 Aug');
+    expect(screen.getByTestId('promise-follow-up').textContent).toBe('We will call again on 21 Aug.');
+  });
+
+  it('offers Full and Half of the amount due as plain numbers, and fills the amount with either', () => {
+    const onChange = tiles('ptp', {}, '12500');
+    const full = screen.getByRole('button', { name: 'Full · 12,500' });
+    fireEvent.click(full);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseAmount: '12500' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Half · 6,250' }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ promiseAmount: '6250' }));
+    expect(screen.getByTestId('promise-row').textContent).not.toMatch(/₹/);
   });
 });
 
@@ -171,10 +193,10 @@ describe('the Contacts filter (PT7)', () => {
 describe('a soft-phone refusal names the promise rule', () => {
   it('in the pad\'s own words', () => {
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x', reason: 'promise_required' }))
-      .toBe(DISPOSITION_BLOCK_COPY.promise_required);
+      .toBe('Choose the pay date.');
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x', reason: 'promise_needs_contact' }))
-      .toMatch(/isn’t an open contact on the campaign’s list/);
+      .toMatch(/this number is not on the work’s list/);
     expect(refusalCopy({ code: 'disposition_invalid', status: 400, message: 'x' }))
-      .toBe('That outcome can’t be saved. Check the outcome, its note and its callback time.');
+      .toBe('That did not save. Check what you chose, the note and the time.');
   });
 });

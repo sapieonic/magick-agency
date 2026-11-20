@@ -128,9 +128,14 @@ describe('/dialer/phone', () => {
     await mount();
     expect(mocks.openSoftphoneSession).toHaveBeenCalledWith('t-1', 'a-1', { takeOver: true });
     expect(latestSocket().url).toContain('/proxy/agency/station/sess-sp?token=t1');
-    expect(screen.getByTestId('rail-label').textContent).toBe('Connecting your phone…');
+    // The station's frame and band (the soft phone in the station's look); Call says why it waits.
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.getByTestId('dial-reason').textContent).toBe('Connecting your phone…');
     await act(async () => latestSocket().open());
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
+    expect(screen.getByTestId('band-title').textContent).toBe('Dial a number');
+    expect(screen.queryByTestId('dial-reason')).toBeNull();
+    // The way out is bottom right while nothing is dialled.
+    expect(screen.getByTestId('softphone-close').textContent).toBe('Close soft phone');
     // The agent's screens, with the soft phone as the current one.
     expect(screen.getByTestId('agent-nav-phone').getAttribute('aria-current')).toBe('page');
   });
@@ -147,8 +152,10 @@ describe('/dialer/phone', () => {
     await mount();
     await act(async () => latestSocket().open());
     await act(async () => latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) }));
-    expect(screen.getByTestId('rail-label').textContent).toBe('Ringing +91 98204 61733');
-    expect((screen.getByTestId('softphone-close') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('band-title').textContent).toBe('Calling +91 98204 61733');
+    // Hidden while a call holds the page (AS1), with the reason where it was.
+    expect(screen.queryByTestId('softphone-close')).toBeNull();
+    expect(screen.getByTestId('softphone-close-reason').textContent).toBe('Finish your call and save what happened first.');
     expect(screen.getByTestId('agent-nav-attempts').getAttribute('data-locked')).toBe('true');
     expect(screen.getByTestId('agent-nav-attempts').closest('a')).toBeNull();
     // Shown as an icon alone at laptop width, so the tooltip names the screen before why it is locked.
@@ -159,7 +166,7 @@ describe('/dialer/phone', () => {
     await act(async () =>
       latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) }),
     );
-    expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+    expect(screen.getByTestId('band-title').textContent).toBe('On call');
   });
 
   describe('a reload mid-call keeps the call details the agent typed', () => {
@@ -172,7 +179,7 @@ describe('/dialer/phone', () => {
 
     async function typeNote(text: string) {
       mocks.updateManualCall.mockClear();
-      fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: text } });
+      fireEvent.change(screen.getByRole('textbox', { name: /note/i }), { target: { value: text } });
       await waitFor(() => expect(mocks.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
       return mocks.updateManualCall.mock.calls[0]![1] as Record<string, unknown>;
     }
@@ -187,7 +194,7 @@ describe('/dialer/phone', () => {
       await mount();
       await act(async () => latestSocket().open());
       await act(async () => latestSocket().emit({ event: 'manual_call', call: live }));
-      expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+      expect(screen.getByTestId('band-title').textContent).toBe('On call');
       expect(screen.getByTestId('call-fields-loading')).toBeTruthy();
 
       // No field set yet: `fields` would replace the stored values, so it is not sent.
@@ -219,7 +226,7 @@ describe('/dialer/phone', () => {
     const link = screen.getByTestId('agent-nav-attempts');
     expect(link.closest('a')).not.toBeNull();
     const hint = document.getElementById(link.getAttribute('aria-describedby')!)!;
-    expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you’re done.');
+    expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you are done.');
     // The header shows the entry as an icon alone at laptop width, so its tooltip names it first.
     expect(link.getAttribute('title')).toBe(`My calls — ${hint.textContent}`);
   });
@@ -250,8 +257,8 @@ describe('/dialer/phone', () => {
       await mount();
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
       await act(async () => latestSocket().open());
-      expect(screen.getByTestId('rail-label').textContent).toBe('Outcome needed');
-      expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/Finish this call; you can’t start new ones\./);
+      expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
+      expect(screen.getByTestId('softphone-finish-notice').textContent).toBe('The soft phone is turned off. Finish this call and save it. You cannot dial new calls.');
       expect(screen.queryByTestId('dial-number')).toBeNull();
     });
 
@@ -272,10 +279,12 @@ describe('/dialer/phone', () => {
       // This account cannot rehydrate it, so it is not asked to.
       expect(mocks.openSoftphoneSession).not.toHaveBeenCalled();
       const stranded = screen.getByTestId('softphone-stranded');
-      expect(stranded.textContent).toMatch(/open in another account of this organisation/);
+      expect(stranded.textContent).toMatch(/still open in another account of this organisation/);
+      // In the station's frame and words.
+      expect(screen.getByTestId('band-title').textContent).toBe('Your soft phone is open in another account');
       // The call is read where the session lives.
       expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
-      expect(stranded.textContent).toMatch(/A supervisor can save it for you from Soft-phone calls\./);
+      expect(screen.getByTestId('softphone-stranded-owed').textContent).toBe('Your last call there is not saved yet. A supervisor can save what happened for you.');
       await act(async () => {
         fireEvent.click(screen.getByTestId('softphone-stranded-close'));
       });
@@ -293,8 +302,8 @@ describe('/dialer/phone', () => {
       cleanup();
       sessionInSibling(false);
       await mount();
-      const stranded = screen.getByTestId('softphone-stranded');
-      expect(stranded.textContent).not.toMatch(/needs its outcome/);
+      expect(screen.getByTestId('softphone-stranded')).toBeTruthy();
+      expect(screen.queryByTestId('softphone-stranded-owed')).toBeNull();
     });
   });
 
@@ -305,7 +314,7 @@ describe('/dialer/phone', () => {
     fireEvent.click(screen.getByTestId('softphone-close'));
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toMatch(/Close the soft phone\?/);
-    expect(dialog.textContent).toMatch(/takes you to My campaigns\. To call again, choose Soft phone at the top of the page\./);
+    expect(dialog.textContent).toMatch(/You will go back to My work\. To dial again, choose Soft phone at the top of the page\./);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Close soft phone' }));
     });
@@ -331,8 +340,9 @@ describe('/dialer/phone', () => {
     mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-camp', state: 'on_call', pending_state: 'break', break_reason: 'soft_phone' } });
     await mount();
     const screenEl = screen.getByTestId('softphone-on-campaign');
-    expect(screenEl.textContent).toMatch(/You’re still at the Home Loan Renewals station/);
-    expect(screenEl.textContent).toMatch(/switches after this call and its wrap-up/);
+    expect(screen.getByTestId('band-title').textContent).toBe('You are still on your calls');
+    expect(screenEl.textContent).toMatch(/You are on Home Loan Renewals, on a call\./);
+    expect(screenEl.textContent).toMatch(/The soft phone opens after this call, once you save what happened\./);
     expect(screen.getByTestId('softphone-go-to-station').getAttribute('href')).toBe('/station?campaign=camp-1');
     expect(FakeSocket.instances).toHaveLength(0);
     await act(async () => {
@@ -363,7 +373,7 @@ describe('/dialer/phone', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
     });
-    expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/Couldn’t change your status/);
+    expect(screen.getByTestId('softphone-switch-failure').textContent).toBe('Your status did not change. Try again.');
     expect(screen.queryByTestId('where')).toBeNull();
   });
 
@@ -378,10 +388,10 @@ describe('/dialer/phone', () => {
       mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-camp', state: 'break', break_reason: 'soft_phone' } });
       await mount();
       const screenEl = screen.getByTestId('softphone-on-campaign');
-      expect(screenEl.textContent).toMatch(/You’re live on Gold Loans in North Region/);
+      expect(screenEl.textContent).toMatch(/You are on Gold Loans in North Region, ready for calls\./);
       expect(screenEl.textContent).toMatch(/This takes you to North Region\./);
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Switch to soft phone in North Region' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Use the soft phone in North Region' }));
       });
       // This account's id would be the 404 of a session that does not exist here.
       expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-camp', 't-1', 'a-2');
@@ -407,7 +417,7 @@ describe('/dialer/phone', () => {
     it('Go to station moves to that account, landing on its station', async () => {
       mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
       await mount();
-      fireEvent.click(screen.getByRole('button', { name: 'Go to station in North Region' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open Gold Loans in North Region' }));
       expect(mocks.setActiveAccountId).toHaveBeenCalledTimes(1);
       expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2', { path: '/station?campaign=camp-9' });
       expect(screen.queryByTestId('where')).toBeNull();
@@ -421,7 +431,7 @@ describe('/dialer/phone', () => {
       mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { ...ELSEWHERE, account_name: null } });
       await mount();
       expect(screen.getByTestId('softphone-on-campaign-elsewhere').textContent).toBe(
-        'You’re live on Gold Loans in another account — switch to that account to use the soft phone there.',
+        'You are working on Gold Loans in another account. Go to that account to use the soft phone there.',
       );
       expect(screen.queryByTestId('softphone-switch-from-campaign')).toBeNull();
       expect(screen.queryByTestId('softphone-go-to-station')).toBeNull();
@@ -451,7 +461,7 @@ describe('/dialer/phone', () => {
       mocks.leaveAgencySession.mockResolvedValue(undefined);
       await mount();
       const screenEl = screen.getByTestId('softphone-elsewhere');
-      expect(screenEl.textContent).toMatch(/Your soft phone is open in another account/);
+      expect(screen.getByTestId('band-title').textContent).toBe('Your soft phone is open in another account');
       expect(screenEl.textContent).toMatch(/open in North Region\./);
       expect(FakeSocket.instances).toHaveLength(0);
       await act(async () => {
@@ -476,7 +486,7 @@ describe('/dialer/phone', () => {
       expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId('softphone-elsewhere-call-pending').textContent).toBe(
-        'Your soft phone in North Region has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.',
+        'Your soft phone in North Region has a call that is not finished, so it is still open. Hang up and save what happened there first.',
       );
       expect(screen.queryByTestId('softphone-elsewhere-close')).toBeNull();
       const goThere = screen.getByRole('button', { name: 'Use the soft phone in North Region' });
@@ -509,8 +519,9 @@ describe('/dialer/phone', () => {
       await act(async () => {
         fireEvent.click(screen.getByTestId('softphone-elsewhere-close'));
       });
-      expect(screen.getByTestId('softphone-elsewhere-failure').textContent).toBe('Your soft phone is still open — Service Unavailable');
-      expect((screen.getByTestId('softphone-elsewhere-close') as HTMLButtonElement).disabled).toBe(false);
+      // The station's words, never the error's (AS15).
+      expect(screen.getByTestId('softphone-elsewhere-failure').textContent).toBe('Your soft phone is still open. Try again.');
+      expect(screen.getByTestId('softphone-elsewhere-close').getAttribute('aria-disabled')).toBeNull();
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
     });
 
@@ -530,11 +541,97 @@ describe('/dialer/phone', () => {
     // (`softphone_disabled` is not one: that is the turned-off path above.)
     mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'unknown', raw_code: null, status: 503, message: 'Service Unavailable' } });
     await mount();
-    expect(screen.getByRole('alert').textContent).toMatch(/Can’t open the soft phone/);
+    expect(screen.getByTestId('band-title').textContent).toBe('Your soft phone did not open');
+    // The station's line for the refusal's code, never the server's sentence.
+    expect(screen.getByTestId('softphone-failed').textContent).toBe('That did not go through. Try again in a moment.');
     mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: true, value: SESSION });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     });
     expect(latestSocket().url).toContain('sess-sp');
+  });
+
+  describe('every screen before the soft phone opens is the station’s frame, in its words (AS15)', () => {
+    const JARGON = [/session/i, /station/i, /campaign/i, /disposition/i, /wrap-?up/i, /\boutcome\b/i, /\binbound\b/i, /\bavailable\b/i, /—/];
+    const SERVER = 'Server sentence that must never show';
+    function inFrameAndWords() {
+      const station = screen.getByTestId('station');
+      expect(screen.getByTestId('station-band')).toBeTruthy();
+      const text = station.textContent ?? '';
+      expect(JARGON.filter((re) => re.test(text)).map(String)).toEqual([]);
+      expect(text).not.toContain(SERVER);
+    }
+
+    it('opening', async () => {
+      mocks.openSoftphoneSession.mockReturnValue(new Promise(() => {}));
+      await mount();
+      expect(screen.getByTestId('band-title').textContent).toBe('Opening your soft phone');
+      inFrameAndWords();
+    });
+
+    it('did not open: a refusal, and no answer at all', async () => {
+      mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'concurrency_limit', status: 429, message: SERVER } });
+      await mount();
+      expect(screen.getByTestId('softphone-failed').textContent).toBe('All lines are busy. Try again in a moment.');
+      inFrameAndWords();
+      cleanup();
+      mocks.openSoftphoneSession.mockRejectedValueOnce(new Error(SERVER));
+      await mount();
+      expect(screen.getByTestId('softphone-failed').textContent).toBe('We could not reach the server. Check your internet, then try again.');
+      inFrameAndWords();
+    });
+
+    it('live in another organisation (OS1): the station’s words, naming it (OS2)', async () => {
+      mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'unknown', raw_code: 'session_in_other_tenant', status: 409, message: SERVER, tenant_name: 'Acme Collections' } });
+      await mount();
+      expect(screen.getByTestId('softphone-failed').textContent).toBe('You are working in Acme Collections. Finish work there first, then come back here.');
+      inFrameAndWords();
+    });
+
+    it('open in another account, turned off here, with a close that fails', async () => {
+      mocks.flags = new Set();
+      const session = { session_id: 'sess-sp', account_id: 'a-2', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session, call: null });
+      mocks.leaveAgencySession.mockRejectedValue(Object.assign(new Error(SERVER), { statusCode: 500, details: { code: 'internal', message: SERVER } }));
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-stranded-close'));
+      });
+      expect(screen.getByTestId('softphone-stranded-failure').textContent).toBe('Your soft phone is still open. Try again.');
+      inFrameAndWords();
+    });
+
+    it('open in another account, turned on here, with a close that fails', async () => {
+      mocks.openSoftphoneSession.mockResolvedValue({
+        ok: false,
+        refusal: { code: 'session_on_softphone', status: 409, message: SERVER, session_id: 'sess-b', account_id: 'a-2', account_name: 'North Region' },
+      });
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, session: null, call: null });
+      mocks.leaveAgencySession.mockRejectedValue(Object.assign(new Error(SERVER), { statusCode: 503, details: { code: 'x', message: SERVER } }));
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-elsewhere-close'));
+      });
+      expect(screen.getByTestId('softphone-elsewhere-failure').textContent).toBe('Your soft phone is still open. Try again.');
+      inFrameAndWords();
+    });
+
+    it('still on the calls, with a switch that is refused', async () => {
+      mocks.openSoftphoneSession.mockResolvedValue({
+        ok: false,
+        refusal: {
+          code: 'session_on_campaign', status: 409, message: SERVER, session_id: 's', campaign_id: 'c', campaign_name: 'EMI collections',
+          state: 'wrapup', account_id: 'a-1', account_name: 'Head Office',
+        },
+      });
+      mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'unknown', raw_code: null, status: 500, message: SERVER } });
+      await mount();
+      expect(screen.getByTestId('softphone-on-campaign').textContent).toContain('You are on EMI collections, choosing what happened.');
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
+      });
+      expect(screen.getByTestId('softphone-switch-failure').textContent).toBe('That did not go through. Try again in a moment.');
+      inFrameAndWords();
+    });
   });
 });

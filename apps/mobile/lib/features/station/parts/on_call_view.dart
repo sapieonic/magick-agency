@@ -4,19 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
-import '../logic/format.dart';
 import '../station_copy.dart';
-import '../station_providers.dart';
-import '../widgets/ticking.dart';
+import '../widgets/action_buttons.dart';
 import 'banners.dart';
-import 'contact_details.dart' show PromiseLine;
+import 'call_band.dart';
 import 'hang_up.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
-import 'ringing_view.dart';
+import 'ringing_view.dart' show CustomerCard, LastCallsCard;
+import 'script_cards.dart' show ScriptStepsCard;
 import 'sheets.dart';
 
-/// On a call: notes, the four controls, the queued break and hang-up.
+/// On call (04, AS2: no AI anywhere): the customer card, then the script when the campaign has one,
+/// else (04c) Last calls; the note,
+/// and the controls in thumb reach: Mute and Speaker side by side, Slide to end call under them.
+/// No break button (AS10: Save & take break on the next screen). A customer's hang-up moves the screen on by itself.
 class OnCallView extends ConsumerWidget {
   const OnCallView({super.key, required this.notes});
 
@@ -25,60 +27,147 @@ class OnCallView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final interrupted = ref.watch(stationViewProvider.select((v) => v?.audio.interruption ?? AudioInterruption.none));
-    return CallLayout(
+    final call = ref.watch(stationViewProvider.select((v) => v?.call));
+    final muted = ref.watch(stationViewProvider.select((v) => v?.audio.muted ?? false));
+    final lineDown = ref.watch(stationViewProvider.select((v) => v != null && v.link != StationLink.open));
+    final hasScript = ref.watch(stationViewProvider.select((v) => (v?.script?.steps ?? const <String>[]).isNotEmpty));
+    final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
+    return CallPage(
       body: [
-        if (interrupted != AudioInterruption.none) _InterruptionCard(kind: interrupted) else const _CallSummary(),
-        const SizedBox(height: Space.lg),
-        StationNotesField(controller: notes),
-        const SizedBox(height: Space.lg),
-        const LinkGate(child: ControlRow()),
+        if (lineDown) const CallProblemSteps(),
+        if (interrupted != AudioInterruption.none) ...[_InterruptionCard(kind: interrupted), const SizedBox(height: Space.md)],
+        if (muted && interrupted == AudioInterruption.none) const _MutedBanner(),
+        if (call != null) CustomerCard(call: call),
         const SizedBox(height: Space.md),
-        const LinkGate(child: QueuedBreakChip()),
+        // AS2: the script (BE-8) when the campaign has one; else 04c's Last calls and the note. No
+        // read aloud here: the customer is on the line, and the phone's speaker can reach them
+        // through the microphone (AS13).
+        if (call != null && hasScript) ScriptStepsCard(callId: call.attemptId),
+        if (call != null && !hasScript && call.priorAttempts.isNotEmpty) LastCallsCard(attempts: call.priorAttempts),
+        const SizedBox(height: Space.md),
+        StationNotesField(controller: notes),
+        const SizedBox(height: Space.md),
+        const QueuedBreakChip(offer: false),
+        const DontCallAgainRow(),
+        // At large text Mute and Speaker scroll with the content, so End call keeps its place.
+        if (tight) ...[const SizedBox(height: Space.md), const LinkGate(child: ControlRow())],
       ],
-      bottom: const HangUpBar(ringing: false),
+      actions: tight
+          ? const HangUpBar()
+          : const Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinkGate(child: ControlRow()),
+                SizedBox(height: Space.sm),
+                HangUpBar(),
+              ],
+            ),
     );
   }
 }
 
-/// Recording, and the two hero facts the agent most needs mid-sentence.
-class _CallSummary extends ConsumerWidget {
-  const _CallSummary();
+/// Don't call again (design-spec §6.2): when this campaign's outcomes have no "don't call again"
+/// tile, a red row offers it on the call and on What happened? (the server marks an attempt after
+/// it ended too), with the same confirm; once done, the line that says so. With such a tile, the
+/// tile is the way. Not once the outcome is saved.
+class DontCallAgainRow extends ConsumerWidget {
+  const DontCallAgainRow({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recording = ref.watch(stationViewProvider.select((v) => v?.call?.recording ?? false));
-    final redial = ref.watch(stationViewProvider.select((v) => (n: v?.call?.redialNumber, of: v?.call?.redialLimit)));
-    // Selected as one string so a new-but-equal list from the core is not a rebuild.
-    final summary = ref.watch(
-      stationViewProvider.select(
-        (v) => (v?.call?.heroFields ?? const <ContactField>[])
-            .where((f) => f.value.trim().isNotEmpty)
-            .take(2)
-            .map((f) => '${f.label} ${f.value}')
-            .join('\n'),
+    final hasTile = ref.watch(stationViewProvider.select((v) => (v?.dispositions ?? const <DispositionOption>[]).any((d) => d.suppresses)));
+    final marking = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.markingDnc));
+    final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
+    final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved != null));
+    if (hasTile || saved) return const SizedBox.shrink();
+    final red = context.stateTokens.problem.deep;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (dnc != null)
+            Text(dnc, key: const Key('dnc-outcome'), style: Theme.of(context).textTheme.bodySmall)
+          else
+            LinkGate(
+              child: TextButton.icon(
+                key: const Key('control-dnc'),
+                style: TextButton.styleFrom(foregroundColor: red, minimumSize: const Size.fromHeight(48)),
+                onPressed: marking ? null : () => markDnc(context),
+                icon: const Icon(Icons.block),
+                label: Text(marking ? StationCopy.markingDnc : StationCopy.dontCallAgain),
+              ),
+            ),
+        ],
       ),
     );
-    // PT9: the contact's promise to pay, so the agent can raise it while they talk.
-    final promise = ref.watch(stationViewProvider.select((v) => v?.call?.promise));
-    final t = context.tokens;
-    final facts = summary.isEmpty ? const <String>[] : summary.split('\n');
-    final redialNumber = redial.n;
-    if (!recording && facts.isEmpty && redialNumber == null && promise == null) return const SizedBox.shrink();
-    return Wrap(
-      spacing: Space.sm,
-      runSpacing: Space.sm,
-      children: [
-        if (promise != null) PromiseLine(promise: promise),
-        if (redialNumber != null) RedialTag(number: redialNumber, limit: redial.of),
-        if (recording)
-          StatusPill(
-            StationCopy.recording,
-            key: const Key('recording'),
-            tone: Tone.danger,
-            leading: Icon(Icons.fiber_manual_record, size: 12, color: t.danger),
+  }
+}
+
+/// "You are on mute. The customer cannot hear you." (04b), amber.
+class _MutedBanner extends StatelessWidget {
+  const _MutedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.stateTokens.onBreak;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Semantics(
+        liveRegion: true,
+        container: true,
+        child: DecoratedBox(
+          key: const Key('muted-banner'),
+          decoration: BoxDecoration(color: c.band, borderRadius: BorderRadius.circular(Radii.md)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+            child: Row(
+              children: [
+                Icon(Icons.mic_off, color: c.ink),
+                const SizedBox(width: Space.sm),
+                Expanded(child: Text(StationCopy.onMute, style: Theme.of(context).textTheme.titleSmall!.copyWith(color: c.ink))),
+              ],
+            ),
           ),
-        for (final f in facts) StatusPill(f),
-      ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Call problem (10): the customer card stays; under the band, what to do while the call is kept.
+/// "Try again now" once the retries gave up.
+class CallProblemSteps extends ConsumerWidget {
+  const CallProblemSteps({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final link = ref.watch(stationViewProvider.select((v) => v?.link));
+    final busy = ref.watch(stationViewProvider.select((v) => v?.busy != StationBusy.none));
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const StepsCard(
+            key: Key('call-problem-steps'),
+            title: StationCopy.whatToDo,
+            tone: StationTone.problem,
+            steps: [StationCopy.stepDoNotClose, StationCopy.stepSaySorry, StationCopy.stepCallAgain],
+          ),
+          if (link == StationLink.disconnected) ...[
+            const SizedBox(height: Space.sm),
+            MainActionButton(
+              key: const Key('reconnect'),
+              label: StationCopy.tryAgainNow,
+              icon: Icons.refresh,
+              kind: ActionKind.stop,
+              onPressed: busy ? null : () => ref.read(stationActionsProvider).reconnect(),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -92,45 +181,31 @@ class _InterruptionCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final call = ref.watch(stationViewProvider.select((v) => v?.call));
-    final now = ref.watch(stationClockProvider);
+    final name = ref.watch(stationViewProvider.select((v) => v?.call?.displayName));
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
-    final bridged = call?.bridgedAt;
     return Column(
       key: const Key('interruption'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (call != null)
-          CallHeadline(
-            call: call,
-            subtitle: bridged == null
-                ? null
-                : TickingBuilder(
-                    now: now,
-                    anchor: bridged,
-                    builder: (context, at) => Text(StationCopy.onCallMuted(formatClock(at.difference(bridged))), style: text.bodySmall),
-                  ),
-          ),
-        const SizedBox(height: Space.md),
         AppCard(
           color: t.warningSubtle,
           borderColor: t.warning.withValues(alpha: 0.35),
           child: Text(kind == AudioInterruption.phoneCall ? StationCopy.phoneCallBody : StationCopy.otherAppBody, style: text.bodyMedium),
         ),
         const SizedBox(height: Space.md),
-        FilledButton(
+        MainActionButton(
           key: const Key('unmute'),
+          label: StationCopy.backTo(name),
+          icon: Icons.mic,
           onPressed: () => ref.read(stationActionsProvider).setMuted(false),
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-          child: Text(StationCopy.backTo(call?.displayName), textAlign: TextAlign.center),
         ),
       ],
     );
   }
 }
 
-/// Mute · Audio · Details · Mark DNC.
+/// Mute and Speaker, side by side, 52 dp. Mute turns amber and reads Unmute while on.
 class ControlRow extends ConsumerWidget {
   const ControlRow({super.key});
 
@@ -138,58 +213,23 @@ class ControlRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final muted = ref.watch(stationViewProvider.select((v) => v?.audio.muted ?? false));
     final route = ref.watch(stationViewProvider.select((v) => v?.audio.route));
-    final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
-    final t = context.tokens;
-    final marking = busy == StationBusy.markingDnc;
-
-    final tiles = [
-      ControlTile(
+    final away = route != null && route.kind != AudioRouteKind.earpiece;
+    return ButtonPair(
+      first: SecondaryActionButton(
         key: const Key('control-mute'),
+        label: muted ? StationCopy.unmute : StationCopy.mute,
         icon: muted ? Icons.mic_off : Icons.mic_none,
-        label: muted ? StationCopy.muted : StationCopy.mute,
-        semanticLabel: StationCopy.mute,
-        toggled: muted,
         active: muted,
+        toggled: muted,
         onPressed: () => ref.read(stationActionsProvider).setMuted(!muted),
       ),
-      ControlTile(
+      second: SecondaryActionButton(
         key: const Key('control-audio'),
-        icon: routeIcon(route?.kind),
-        label: route?.name ?? StationCopy.audio,
-        semanticLabel: '${StationCopy.audio}: ${route?.name ?? ''}',
-        active: route?.kind == AudioRouteKind.bluetooth || route?.kind == AudioRouteKind.wired || route?.kind == AudioRouteKind.speaker,
+        label: away ? route.name : StationCopy.speaker,
+        icon: routeIcon(route?.kind == AudioRouteKind.earpiece ? AudioRouteKind.speaker : route?.kind ?? AudioRouteKind.speaker),
+        semanticsLabel: '${StationCopy.speaker}: ${route?.name ?? ''}',
         onPressed: () => showAudioRouteSheet(context),
       ),
-      ControlTile(
-        key: const Key('control-details'),
-        icon: Icons.contact_page_outlined,
-        label: StationCopy.details,
-        onPressed: () {
-          final call = ref.read(stationViewProvider)?.call;
-          if (call != null) showDetailsSheet(context, call);
-        },
-      ),
-      ControlTile(
-        key: const Key('control-dnc'),
-        icon: Icons.block,
-        label: marking ? StationCopy.markingDnc : StationCopy.markDnc,
-        color: t.danger,
-        onPressed: busy == StationBusy.none ? () => markDnc(context) : null,
-      ),
-    ];
-
-    return LayoutBuilder(
-      builder: (context, c) {
-        // Four across; two across once large text would crush the labels.
-        final scale = MediaQuery.textScalerOf(context).scale(13) / 13;
-        final perRow = scale > 1.4 ? 2 : 4;
-        final w = ((c.maxWidth - Space.sm * (perRow - 1)) / perRow).floorToDouble();
-        return Wrap(
-          spacing: Space.sm,
-          runSpacing: Space.md,
-          children: [for (final tile in tiles) SizedBox(width: w, child: tile)],
-        );
-      },
     );
   }
 }
@@ -309,7 +349,7 @@ class QueuedBreakChip extends ConsumerWidget {
               const SizedBox(width: Space.sm),
               Flexible(
                 child: Text(
-                  toSoftphone ? StationCopy.switchQueued : StationCopy.breakQueued(queued.label),
+                  toSoftphone ? StationCopy.switchQueued : StationCopy.breakAfterThisCall(queued.label),
                   style: text.labelMedium!.copyWith(color: t.warning),
                 ),
               ),

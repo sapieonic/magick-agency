@@ -4,6 +4,7 @@ import 'package:meta/meta.dart';
 import '../../../ui/primitives.dart';
 import '../../performance/logic/en_in_format.dart';
 import '../../performance/logic/readouts.dart';
+import '../../station/logic/format.dart' show stationPhone;
 
 /// The call list's words, from `packages/contracts/src/api/agency/agency-spine.ts`
 /// (`ATTEMPT_OUTCOME_LABELS`, `ATTEMPT_STATE_LABELS`) and the console's
@@ -56,7 +57,9 @@ Tone outcomeTone(AttemptOutcome? outcome) => switch (outcome) {
 @immutable
 class AttemptRowView {
   AttemptRowView._(AttemptRow row)
-      : phone = EnIn.phone(row.phoneE164),
+      // AS9: as the row's campaign shows it (the server's `phone_display`); an older server sends
+      // none, and the number shows in full. The station's one rule (`stationPhone`).
+      : phone = stationPhone(row.phoneE164, masked: row.phoneDisplay == PhoneDisplay.masked),
         outcome = attemptOutcomeLabel(row),
         tone = outcomeTone(row.outcomeRaw == null ? null : row.outcome),
         when = EnIn.clockTime(row.createdAt.toLocal()),

@@ -10,6 +10,7 @@ import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, Agency
 import type { AgencyStationCustomerWaitingFrame, AgencyStationInboundCallFrame } from './inbound';
 import type { AgencyStationManualCallFrame } from './softphone';
 import type { AgencyContactPromise } from './promise';
+import type { AgencyCustomerFacts } from './customer-facts';
 import type {
   AgencySessionHelp,
   AgencyStationHelpAnsweredFrame,
@@ -62,14 +63,31 @@ void _allClientKindsListed;
  *    message to it is refused `409 agent_not_live` rather than shown to nobody. The same value as
  *    `AGENCY_STATION_FLOOR_ASSIST_CAPABILITY` (`./floor-assist.ts`).
  *
+ *  - `queue_pool` (agent station BE-5, AS18): the station shows a `pool` campaign's queue state
+ *    ({@link AgencyQueueState}: "Nothing due now" and why) in the redesign's words, which say "we"
+ *    and never "your contacts". Only a station that declares it, **whatever its client kind, a
+ *    console too**, is sent queue state on a `pool` campaign: the `queue` frame and `ready.queue`.
+ *    The session bootstrap (an HTTP answer read before any socket) carries none on `pool`. A
+ *    station that does not declare it, an app or a console tab built before the redesign whose
+ *    owner-mode copy ("Nothing of yours is due") would be wrong there, is sent none on `pool`,
+ *    exactly as before BE-5. `strict` / `preferred` queue state is sent to every station as
+ *    always. {@link AGENCY_STATION_QUEUE_POOL_CAPABILITY}.
+ *
  * Like {@link AgencyClientKind}, declared by the client and never verified: it decides which frames
  * the socket is sent and whether it is offered a caller, never anything security-relevant. It
  * belongs to the socket, not the session: a reattach (from another device, or an older build)
  * states its own.
  */
-export type AgencyStationCapability = 'inbound' | 'floor_assist';
+export type AgencyStationCapability = 'inbound' | 'floor_assist' | 'queue_pool';
 
-export const AGENCY_STATION_CAPABILITIES = ['inbound', 'floor_assist'] as const satisfies readonly AgencyStationCapability[];
+export const AGENCY_STATION_CAPABILITIES = ['inbound', 'floor_assist', 'queue_pool'] as const satisfies readonly AgencyStationCapability[];
+
+/**
+ * The capability a station declares (`caps=queue_pool`) to be sent a `pool` campaign's queue state
+ * (agent station BE-5, AS18). Unlike `inbound` and `floor_assist`, a console must declare it too.
+ * See {@link AgencyStationCapability}.
+ */
+export const AGENCY_STATION_QUEUE_POOL_CAPABILITY = 'queue_pool' satisfies AgencyStationCapability;
 
 const _allStationCapabilitiesListed: AllListed<AgencyStationCapability, typeof AGENCY_STATION_CAPABILITIES> = true;
 void _allStationCapabilitiesListed;
@@ -291,7 +309,12 @@ export interface AgencyStationReadyFrame {
   break_reason?: string;
   /** Set when the socket reconnected onto an attempt that is still live. */
   active_attempt?: AgencyActiveAttempt;
-  /** This agent's queue now, on a `strict` or `preferred` campaign; absent otherwise. */
+  /**
+   * This agent's queue now. On a `strict` or `preferred` campaign, their own queue; on a `pool`
+   * campaign (agent station BE-5) the campaign's shared one, only to a station that declared
+   * `caps=queue_pool` (AS18). Absent from a server that does not compute it for this campaign
+   * (before BE-5, every `pool` campaign) and, on `pool`, from a station that did not declare it.
+   */
   queue?: AgencyQueueState;
   /**
    * The hidden dials for this agent now ({@link AgencyDialActivity}): present when one is ringing
@@ -447,6 +470,52 @@ export interface AgencyReservedAttempt {
    * the pacing engine placed.
    */
   redial?: AgencyRedialInfo;
+  /**
+   * Agent station (BE-4): set when this dial is a booked call-later coming due, so the station
+   * can tag it "Call later · You said you will call at 3:00 PM". Absent on every other dial, on a
+   * wrap-up redial, and from a server older than the field. Built at dial time with the rest of
+   * the panel (late binding delivers it at the answer); a resumed call carries it through
+   * `ready.active_attempt`.
+   */
+  callback?: AgencyAttemptCallback;
+  /**
+   * Agent station (BE-6, `./customer-facts.ts`): the customer's name, place and fact tiles, parsed
+   * by the server from `context` by the campaign's `context_display.roles` / `.types`. Absent from
+   * an older server: read `context` through `context_display` as before. `context` is still sent
+   * whole beside it.
+   */
+  facts?: AgencyCustomerFacts;
+}
+
+/**
+ * Where a booked call-later came from (`AgencyAttemptCallback.source`):
+ *  - `outcome`: an agent's outcome booked it (a `requires_datetime` outcome, `callback`);
+ *  - `promise`: a promise to pay's follow-up (PT2, `promise_follow_up_days`);
+ *  - `inbound`: the customer rang in and reached nobody (docs/inbound.md §7, `callback_source`).
+ */
+export type AgencyAttemptCallbackSource = 'outcome' | 'promise' | 'inbound';
+
+export const AGENCY_ATTEMPT_CALLBACK_SOURCES = [
+  'outcome',
+  'promise',
+  'inbound',
+] as const satisfies readonly AgencyAttemptCallbackSource[];
+
+const _allCallbackSourcesListed: AllListed<AgencyAttemptCallbackSource, typeof AGENCY_ATTEMPT_CALLBACK_SOURCES> = true;
+void _allCallbackSourcesListed;
+
+/** A dial that is a booked call-later ({@link AgencyReservedAttempt.callback}, BE-4). */
+export interface AgencyAttemptCallback {
+  /** ISO-8601. The time that was booked (the contact's due time when the dial was claimed). */
+  due_at: string;
+  /**
+   * Whether this agent booked it (`agency_contacts.callback_booked_by_user_id`, 0057, is the
+   * session's agent): the station says "You said you will call at …" only when true. False for a
+   * call-later another agent booked, one booked before the booker was recorded, and every
+   * `inbound` one.
+   */
+  booked_by_me: boolean;
+  source: AgencyAttemptCallbackSource;
 }
 
 /**
@@ -632,10 +701,12 @@ export interface AgencyStationCampaignStateFrame {
 }
 
 /**
- * Why an agent on a `strict` or `preferred` campaign has nothing to dial right now, so the
- * station can say "Nothing due now" and why instead of a silent wait:
+ * Why an agent has nothing to dial right now, so the station can say "Nothing due now" and why
+ * instead of a silent wait. On `strict` and `preferred` campaigns it reads the agent's own queue;
+ * on `pool` campaigns (agent station BE-5) the campaign's shared one, computed once per campaign:
  *
- *  - `queue_empty`: nothing open is assigned to them (and, in `preferred` mode, nothing in the pool);
+ *  - `queue_empty`: nothing open is assigned to them (and, in `preferred` mode, nothing in the
+ *    pool); on `pool`, nothing open in the campaign;
  *  - `waiting_for_retry`: their open contacts are all scheduled later by the retry policy;
  *  - `callbacks_later`: their open contacts are all callbacks booked for later;
  *  - `outside_calling_hours`: the campaign's calling window is closed now.
@@ -646,7 +717,7 @@ export type AgencyQueueIdleReason =
   | 'callbacks_later'
   | 'outside_calling_hours';
 
-/** An agent's own queue on a `strict` or `preferred` campaign. */
+/** An agent's own queue on a `strict` or `preferred` campaign; the campaign's queue on `pool` (BE-5). */
 export interface AgencyQueueState {
   /** Whether a contact is due for this agent now. When `true`, `reason` is null. */
   due: boolean;
@@ -656,10 +727,13 @@ export interface AgencyQueueState {
 }
 
 /**
- * This agent's queue changed between due and nothing due (or the reason changed). Sent only
- * on `strict` and `preferred` campaigns, only on a change, by the pacing leader, which is the
- * only thing that knows. The bootstrap's `queue` and the `ready` frame's `queue` carry the
- * state at join and at reconnect.
+ * This agent's queue changed between due and nothing due (or the reason changed). Sent only on a
+ * change, by the pacing leader, which is the only thing that knows: on `strict` and `preferred`
+ * campaigns to every station, and (agent station BE-5) on `pool` campaigns, where it is computed
+ * once per campaign per tick, only to the stations that declared `caps=queue_pool` (AS18: every
+ * build decodes the frame, but a build before the redesign words it for an owner's queue). The
+ * bootstrap's `queue` (owner modes only) and the `ready` frame's `queue` carry the state at join
+ * and at reconnect.
  */
 export interface AgencyStationQueueFrame extends AgencyQueueState {
   event: 'queue';

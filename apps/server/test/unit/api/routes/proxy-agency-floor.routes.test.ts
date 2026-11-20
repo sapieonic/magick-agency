@@ -45,6 +45,7 @@ function onCall(over: Partial<CoreFloorAgent> = {}): CoreFloorAgent {
       aht_seconds: 182.5, recording: true, listener_user_ids: [],
     },
     break_limit_minutes: null,
+    disconnected_since: null,
     ...over,
   };
 }
@@ -54,7 +55,7 @@ function away(): CoreFloorAgent {
     agent_user_id: AWAY, session_id: null, campaign_id: null, campaign_name: null, state: 'offline', state_since: null,
     connected: null, client_kind: null, break_reason: null, break_label: null, on_inbound_call: false, inbound_outcome_owed: false,
     wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z', help: null,
-    break_limit_minutes: null,
+    break_limit_minutes: null, disconnected_since: null,
   };
 }
 
@@ -182,6 +183,7 @@ describe('GET /floor', () => {
           calls_today: 12, left_at: null,
           help: { raised_at: '2026-11-18T09:59:00.000Z', call_id: CALL },
           break_limit_minutes: null,
+          disconnected_since: null,
         },
         {
           agent_user_id: AWAY, agent_name: null, session_id: null, campaign_id: null, campaign_name: null, state: 'offline',
@@ -189,6 +191,7 @@ describe('GET /floor', () => {
           inbound_outcome_owed: false, wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z',
           help: null,
           break_limit_minutes: null,
+          disconnected_since: null,
         },
       ],
       totals: { on_shift: 1, assigned: 2 },
@@ -196,6 +199,11 @@ describe('GET /floor', () => {
     });
     // The wire never carries the listeners or the recording flag the rule read.
     expect(JSON.stringify(body)).not.toMatch(/listener|recording|phone/);
+  });
+
+  it('BE-11: serves when a gone station went, as the internal handler answers it', async () => {
+    floor.agents = [onCall({ connected: false, disconnected_since: '2026-11-18T09:59:30.000Z' })];
+    expect((await getFloor()).json().agents[0]).toMatchObject({ connected: false, disconnected_since: '2026-11-18T09:59:30.000Z' });
   });
 
   it('LF6, LF20: serves the break\'s limit as the internal handler answers it', async () => {
@@ -264,6 +272,72 @@ describe('GET /floor', () => {
     const res = await getFloor();
     expect([res.statusCode, res.json().error]).toEqual([502, 'Bad Gateway']);
     expect(deps.names).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /floor/alerts (AS16)', () => {
+  const HELP = {
+    id: `help:${SESSION}:2026-11-18T09:59:00.000Z`, kind: 'help', session_id: SESSION, agent_user_id: AGENT,
+    campaign_id: 'c-1', campaign_name: 'Renewals', since: '2026-11-18T09:59:00.000Z',
+    help: { raised_at: '2026-11-18T09:59:00.000Z', call_id: null, state_at_raise: 'available' },
+  };
+  const BREAK = {
+    id: 'break_over:s-2:2026-11-18T09:30:00.000Z', kind: 'break_over', session_id: 's-2', agent_user_id: AWAY,
+    campaign_id: 'c-1', campaign_name: 'Renewals', since: '2026-11-18T09:45:00.000Z',
+    break_reason: 'tea', break_label: 'Tea', limit_minutes: 15, break_started_at: '2026-11-18T09:30:00.000Z',
+  };
+  const getAlerts = () => app.inject({ method: 'GET', url: '/proxy/agency/floor/alerts' });
+
+  beforeEach(() => {
+    deps.coreAnswer = json(200, { alerts: [BREAK, HELP], as_of: NOW.toISOString() });
+  });
+
+  it('the guards in order: RBAC (agents, operators, viewers), the account, the dialer flag; never cached', async () => {
+    for (const role of ['agent', 'viewer', 'operator'] as MembershipRole[]) {
+      caller = { role };
+      const res = await getAlerts();
+      expect([res.statusCode, res.headers['cache-control']], role).toEqual([403, 'no-store']);
+    }
+    expect(deps.dialerEnabled).not.toHaveBeenCalled();
+    caller = { role: 'account_admin', accountId: null };
+    expect((await getAlerts()).json().code).toBe('account_scope_required');
+    expect(deps.dialerEnabled).not.toHaveBeenCalled();
+    caller = { role: 'account_admin' };
+    (deps.dialerEnabled as ReturnType<typeof vi.fn>).mockImplementation(async (_req: FastifyRequest, reply: FastifyReply) => {
+      await reply.code(403).send({ error: 'Feature Not Enabled', code: 'feature_disabled', message: 'off' });
+      return false;
+    });
+    const off = await getAlerts();
+    expect([off.statusCode, off.json().code, off.headers['cache-control']]).toEqual([403, 'feature_disabled', 'no-store']);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('asks the internal handler for the account and serves its alerts in its order, each named', async () => {
+    const res = await getAlerts();
+    expect([res.statusCode, res.headers['cache-control']]).toEqual([200, 'no-store']);
+    expect(deps.calls).toEqual([{ method: 'GET', path: '/agency/floor/alerts', tenantId: TENANT, accountId: ACCOUNT }]);
+    expect(res.json()).toEqual({
+      alerts: [{ ...BREAK, agent_name: null }, { ...HELP, agent_name: 'Agent Smith' }],
+      as_of: NOW.toISOString(),
+    });
+  });
+
+  it('help alerts only while floor assist is on: off or unreadable, they are dropped and the rest served', async () => {
+    flagValues['agency_floor_assist_enabled'] = false;
+    expect((await getAlerts()).json().alerts.map((a: { kind: string }) => a.kind)).toEqual(['break_over']);
+    (deps.flags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
+    const res = await getAlerts();
+    expect([res.statusCode, res.json().alerts.map((a: { kind: string }) => a.kind)]).toEqual([200, ['break_over']]);
+  });
+
+  it('nothing to say: no names read; the internal handler\'s refusal passed through; an unrecognised body is a 502', async () => {
+    deps.coreAnswer = json(200, { alerts: [], as_of: NOW.toISOString() });
+    expect((await getAlerts()).json()).toEqual({ alerts: [], as_of: NOW.toISOString() });
+    expect(deps.names).not.toHaveBeenCalled();
+    deps.coreAnswer = json(400, { error: 'Bad Request', message: 'x' });
+    expect((await getAlerts()).statusCode).toBe(400);
+    deps.coreAnswer = json(200, { nope: true });
+    expect((await getAlerts()).statusCode).toBe(502);
   });
 });
 

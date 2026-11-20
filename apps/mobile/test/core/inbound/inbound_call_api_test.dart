@@ -8,8 +8,10 @@ import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/api/client_identity.dart';
 import 'package:magick_agency_agent/core/inbound/inbound_call_api.dart';
+import 'package:magick_agency_agent/core/inbound/inbound_call_rules.dart' show InboundLeftReason;
 import 'package:magick_agency_agent/core/inbound/inbound_copy.dart';
 
+import '../../support/station_jargon.dart';
 import '../station/controller_harness.dart' show FakeTokens, testEnv;
 import 'inbound_fixtures.dart';
 
@@ -78,24 +80,22 @@ void main() {
       expect(r.rule, InboundDispositionRule.unknownCode);
       expect(r.allowedCodes, ['interested', 'callback', 'query_resolved', 'complaint', 'do_not_call']);
       expect(r.status, 400);
-      expect(inboundDispositionRefusalCopy(r), 'The outcome list for this call changed. Pick one of these.');
+      expect(inboundDispositionRefusalCopy(r), 'This list changed. Choose one of these.');
     });
 
     test('note_required, said as the rule', () async {
       final r = await refused(400, inboundSample('refusal_disposition_note_required'));
       expect(r.rule, InboundDispositionRule.noteRequired);
       expect(r.allowedCodes, isNull);
-      expect(inboundDispositionRefusalCopy(r), 'This outcome needs a note.');
+      expect(inboundDispositionRefusalCopy(r), 'Write a note for this one.');
     });
 
-    test('each promise rule (PT8) in the console\'s words, not the generic line', () async {
+    test('each promise rule (PT8) in the station\'s words, not the generic line', () async {
       final words = {
-        'promise_required': 'This outcome needs the date the customer promised to pay.',
-        'invalid_promise_date':
-            'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
-        'invalid_promise_amount': 'Enter the amount as a number, with up to two decimal places and no commas.',
-        'promise_not_expected':
-            'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
+        'promise_required': 'Choose the pay date.',
+        'invalid_promise_date': 'Choose a pay date from today up to 30 days ahead.',
+        'invalid_promise_amount': 'Write the amount in numbers only, like 12500.',
+        'promise_not_expected': 'This choice does not take a pay date. Clear the pay date, or choose the one that does.',
       };
       for (final MapEntry(key: reason, value: copy) in words.entries) {
         final r = await refused(400, {
@@ -117,7 +117,7 @@ void main() {
       expect(r.code, InboundErrorCode.inboundOutcomeAlreadySaved);
       expect(r.callGone, isTrue);
       expect(r.transient, isFalse);
-      expect(inboundDispositionRefusalCopy(r), 'This call’s outcome is already saved.');
+      expect(inboundDispositionRefusalCopy(r), 'This call is saved already.');
       expect(inboundDispositionRefusalCopy(r, windowEnded: true), inboundOutcomeWindowEndedCopy);
     });
 
@@ -140,10 +140,31 @@ void main() {
       expect((garbled as InboundRefused).refusal.error, isA<ApiDecodeError>());
     });
 
-    test('an unknown code keeps the server\'s sentence', () async {
+    test('an unknown code gets a safe line, never the server\'s sentence (AS15)', () async {
       final r = await refused(409, {'error': 'Conflict', 'message': 'Something new.', 'code': 'inbound_brand_new'});
       expect(r.code, InboundErrorCode.unknown);
-      expect(inboundRefusalSentence(r), 'Something new.');
+      expect(inboundRefusalSentence(r), inboundSomethingWentWrongCopy);
+      expect(inboundDispositionRefusalCopy(r), inboundSomethingWentWrongCopy);
+      expect(inboundHangupFailedCopy(r), isNot(contains('Something new')));
+      expect(inboundDncFailedCopy(r), isNot(contains('Something new')));
+    });
+
+    test('every inbound line the station shows says none of the jargon (spec §6.6)', () {
+      final lines = [
+        ...inboundRefusalCopy.values,
+        ...inboundDispositionRuleCopy.values,
+        for (final r in InboundLeftReason.values) inboundLeftCopy(r),
+        inboundSomethingWentWrongCopy,
+        inboundDncOutcomeCopy,
+        inboundSaveCallLiveCopy,
+        inboundDncWithheldCopy,
+        inboundOfferedNotificationText,
+        inboundOnCallNotificationText,
+        inboundOutcomeNotificationText,
+      ];
+      for (final line in lines) {
+        expect(jargonIn(line), isEmpty, reason: line);
+      }
     });
   });
 

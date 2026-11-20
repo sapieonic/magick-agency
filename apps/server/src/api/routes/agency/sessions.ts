@@ -37,9 +37,11 @@ import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './s
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
 import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
-import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
+import { ownerModeOf, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { publishCacheInvalidation } from '../../../cache/cache-invalidation.js';
 import { CAMPAIGN_STATS_CACHE } from '../../../agency/campaign-stats-reads.js';
+import { agentScriptForBootstrap } from '../../../agency/agent-script.js';
+import { dispositionsWithKnownIcons, phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 /**
  * `/available`, force-available and `/leave` while a wrap-up redial is in flight
@@ -297,17 +299,23 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // Resolved here rather than in the object literal below so its `await` is
     // plainly outside the frame path.
     // Contact assignment (CA3): this agent's own queue at join, on a `strict` / `preferred`
-    // campaign (undefined for `pool`). Best effort, as the retry context is: a failed read
-    // omits the field rather than refusing the join, and pacing's `queue` frame follows.
+    // campaign. None on a `pool` one (agent station AS18): the bootstrap is read before the station
+    // declares what it can show, and a build before the redesign words queue state for an owner's
+    // own contacts, so a `pool` campaign's shared queue (BE-5) comes on `ready.queue` and the
+    // `queue` frame, to a station that declared `queue_pool`. Best effort, as the retry context is:
+    // a failed read omits the field rather than refusing the join, and pacing's `queue` frame follows.
     // The two reads are independent and run together, each with its own error handling.
     const [retryContext, queue] = await Promise.all([
       resolveRetryContext(campaign),
-      Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
-        log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
-        return undefined;
-      }),
+      ownerModeOf(campaign) === null
+        ? undefined
+        : Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
+          log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
+          return undefined;
+        }),
     ]);
 
+    const script = agentScriptForBootstrap(campaign.agent_script);
     const bootstrap: AgencySessionBootstrap = {
       session_id: session.id,
       campaign_id: campaign.id,
@@ -321,14 +329,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       campaign_status: campaign.status,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
       station_token_expires_at: minted.expiresAt.toISOString(),
-      disposition_catalog: campaign.disposition_catalog ?? [],
+      // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
+      disposition_catalog: dispositionsWithKnownIcons(campaign.disposition_catalog),
       wrapup_seconds: campaign.wrapup_seconds,
       wrapup_auto_return: campaign.wrapup_auto_return,
       // Wrap-up redial (0008): the campaign's setting at join. `=== true` so the
       // payload always carries a boolean, never `undefined` or `null`.
       allow_wrapup_redial: campaign.allow_wrapup_redial === true,
       // Contact assignment (0009): the campaign's mode and agent-retry setting at join, and
-      // this agent's queue in `strict` / `preferred` mode (absent in `pool` mode).
+      // this agent's queue in `strict` / `preferred` mode (absent in `pool` mode: AS18, above).
       assignment_mode: campaign.assignment_mode ?? 'pool',
       allow_agent_retry: campaign.allow_agent_retry === true,
       ...(queue ? { queue } : {}),
@@ -342,6 +351,11 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // contract and absent for every non-retry campaign, so an older console
       // that has never seen it gets a byte-identical payload.
       ...(retryContext ? { retry_context: retryContext } : {}),
+      // Agent station (BE-8): the campaign's script, absent when it has none, so the station
+      // shows its no-script call screen and an older client gets the payload it knew.
+      ...(script ? { script } : {}),
+      // Agent station (AS9): how the station shows the customer's number; the number is still sent.
+      phone_display: phoneDisplayOf(campaign.phone_display),
     };
     return reply.code(201).send(bootstrap);
   });

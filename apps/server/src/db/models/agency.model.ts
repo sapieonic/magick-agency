@@ -16,6 +16,8 @@ import type {
   AgencyContactState,
   AgencyBreakReason,
   AgencyContextDisplay,
+  AgencyAgentScript,
+  AgencyPhoneDisplay,
   AgencyDisposition,
   AgencyManualCallDispositionSource,
   AgencyManualCallEndReason,
@@ -120,6 +122,11 @@ export interface AgencyCampaignRecord {
   agent_retry_cooldown_minutes: number;
   /** Inbound calls (0024, docs/inbound.md §4.1): this campaign's customers who ring in are put through to their own agent. */
   inbound_sticky_enabled: boolean;
+  /**
+   * Agent station (0056, BE-2, AS6): each agent's daily target in connected calls, 1 to
+   * `AGENCY_DAILY_TARGET_CALLS_MAX`; null: no target. Served on the campaign and in My day.
+   */
+  daily_target_calls: number | null;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
@@ -130,6 +137,17 @@ export interface AgencyCampaignRecord {
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
   break_reasons: AgencyBreakReason[];
   context_display: AgencyContextDisplay;
+  /**
+   * Agent station (BE-8, 0056): the campaign's script, `{}` when it has none (the column default).
+   * Written by the PATCH (`src/agency/agent-script.ts`); served on the bootstrap as `script`.
+   */
+  agent_script: AgencyAgentScript;
+  /**
+   * Agent station (AS9, 0056): how the station shows the customer's number, `full` (the column
+   * default) or `masked`. A display choice; the number is still sent. Written by the create and the
+   * PATCH (`src/agency/station-tiles.ts` checks it); served on the bootstrap as `phone_display`.
+   */
+  phone_display: AgencyPhoneDisplay;
   record_calls: boolean;
   analysis_profile_id: string | null;
   status: AgencyCampaignStatus;
@@ -426,6 +444,19 @@ export interface AgencyContactRecord {
   promise_due_until: Date | null;
   promise_call_at: Date | null;
   promise_followed_up_at: Date | null;
+  /**
+   * Inbound calls (0024, docs/inbound.md §7): `'inbound'` while the customer's call-back after
+   * an inbound call that reached nobody is booked; NULL otherwise. Cleared by the next settled call.
+   */
+  callback_source: string | null;
+  /**
+   * Agent station (0057, BE-3): the agent whose own outcome (or promise follow-up) booked the
+   * pending call-later, and when; both NULL when none is recorded. Stamped by the disposition's
+   * contact write (`releaseFromDisposition`), never on a supervisor's on-behalf save; cleared by
+   * the contact's next settled call.
+   */
+  callback_booked_by_user_id: string | null;
+  callback_booked_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -475,6 +506,12 @@ export interface AgencyAgentSessionRecord {
   /** Need help: who answered it. */
   help_answered_by: string | null;
   /**
+   * Need help (0059, agent station BE-9): the agent's state when the open request was raised
+   * (`AgencySessionHelp.state_at_raise`); NULL when none is raised, or raised before 0059. Cleared in
+   * every statement that clears `help_raised_at` (`ck_agency_agent_sessions_help_state`).
+   */
+  help_state: AgencyAgentState | null;
+  /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;
    * narrow with `isCampaignSession` rather than asserting non-null.
@@ -484,6 +521,13 @@ export interface AgencyAgentSessionRecord {
   state: AgencyAgentState;
   break_reason: string | null;
   state_since: Date;
+  /**
+   * Agent station (0062, BE-12): the start of the break the session was on when its station went
+   * (the reason-keeping `offline` from `break`), to the millisecond; NULL otherwise. The rehydrate
+   * that restores the same named break carries it as `state_since`, so a break split by a drop is
+   * judged once (`agent-session.repository.ts`, `sessionTransitionSql`).
+   */
+  suspended_break_since: Date | null;
   owner_replica: string | null;
   last_heartbeat: Date;
   joined_at: Date;

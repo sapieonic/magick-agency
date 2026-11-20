@@ -538,7 +538,24 @@ locals {
         severity      = "warning"
         no_data_state = "OK"
         summary       = "An agent's Need help went 15 minutes without a supervisor answering"
-        description   = "agency_help_requests_cleared_total{reason=\"expired\"} advanced in the last 30m on {{ $labels.service_name }}: an agent asked for help on a call or in wrap-up and no supervisor listened in or sent them a message within 15 minutes, so the request expired. The calls are not affected. Find who: the audit log's 'Agent's request for help expired unanswered' rows (action agency_session.help_expired, filed under the session, with its campaign) and the 'Agent asked for help' row before each. Then ask why nobody answered: no supervisor had the Live floor open (Need help reaches supervisors only through it, polled every 5 s), the help alert was muted, or the account's supervisors were all busy. Compare agency_help_requests_raised_total, the other reasons of agency_help_requests_cleared_total and agency_help_answer_seconds in Explore for the floor's usual response (there is no dashboard panel yet). If supervisors say they never saw the request, check the floor read is answering (GET /proxy/agency/floor) and that agency_floor_assist_enabled is on for the account. Runbook: docs/operations.md, 'Alert runbooks', the Live floor."
+        description   = "agency_help_requests_cleared_total{reason=\"expired\"} advanced in the last 30m on {{ $labels.service_name }}: an agent asked for help (from any state of their station: on a call, in wrap-up, Ready or on a break; agency_help_requests_raised_total's state label says which) and no supervisor listened in or sent them a message within 15 minutes, so the request expired. The calls are not affected. Find who: the audit log's 'Agent's request for help expired unanswered' rows (action agency_session.help_expired, filed under the session, with its campaign) and the 'Agent asked for help' row before each. Then ask why nobody answered: no supervisor of the account had a console page open (Need help reaches supervisors on every console page through the alerts read, GET /proxy/agency/floor/alerts, polled every 5 s, with a banner and a chime, and on Live floor's cards), the chime was muted in that browser, or the account's supervisors were all busy. Compare agency_help_requests_raised_total, the other reasons of agency_help_requests_cleared_total and agency_help_answer_seconds in Explore for the floor's usual response (there is no dashboard panel yet). If supervisors say they never saw the request, check the alerts read is answering (GET /proxy/agency/floor/alerts: 200 with the request among its help alerts) and that agency_floor_assist_enabled is on for the account (while it is off the read drops help alerts). Runbook: docs/operations.md, 'Alert runbooks', the Live floor."
+      },
+      {
+        uid  = "agy-station-drops-burst"
+        name = "Many agents of one tenant lost their station at once"
+        # Agent station BE-11: agency_station_disconnects_total counts a station that closed while its
+        # agent was working (never a break, a take-over or a Leave), by tenant (the dialer's label
+        # convention: no account label; the floor's disconnected alerts name the account). Five or
+        # more in 5m for one tenant is a network, proxy or deployment problem, not agents walking
+        # away one by one. Sparse counter: the new-series guard, by tenant.
+        expr          = "sum by (service_name, tenant_id) (((agency_station_disconnects_total{${local.agency}} unless agency_station_disconnects_total{${local.agency}} offset 5m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 5m)) or increase(agency_station_disconnects_total{${local.agency}}[5m]))"
+        op            = "gt"
+        threshold     = 4.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Five or more working agents of one tenant lost their station within 5 minutes"
+        description   = "agency_station_disconnects_total advanced by 5 or more in 5m for tenant_id={{ $labels.tenant_id }} on {{ $labels.service_name }}: that many agents' stations (console tabs or phones) closed while they were available, reserved, on a call or in wrap-up. One agent's drop is their wifi; many at once is shared: the office network or its proxy, our ingress or load balancer, a deploy that restarted the server, or the app crashing on a release. Supervisors already see each agent gone 20 s or more as a disconnected alert on every console page (GET /proxy/agency/floor/alerts). Check the client_kind and state labels in Explore (web or mobile; on_call means live customers were affected: the deferred hang-up holds a dropped call for its grace, then ends it), agency_station_reconnect_seconds for whether they came back, the server's restarts and the ingress logs at that time. Runbook: docs/operations.md, 'Alert runbooks', the Live floor."
       },
     ]
 

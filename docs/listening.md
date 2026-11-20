@@ -850,7 +850,7 @@ LS2.
   the field, or with none, shows no section. The console has no inbound call page.
 - *The agent (LS2).* `components/agency/StationListenNotice.tsx`: an info button named
   "Monitoring and recording" in the station header (every station view: campaign, soft phone,
-  inbound) and in the standalone soft phone's (`/dialer/phone`, `SoftphoneHeader`), opening the
+  inbound) and in the standalone soft phone's (`/dialer/phone`, its top bar), opening the
   standing line; the line on the campaign screen an agent joins from (`AgentHomePage`, `/dialer`);
   and, because an agent with one campaign is taken straight to the station and may never open the
   button, `StationListenFirstNotice` (LS22 u): a strip under the station's or the soft phone's header the

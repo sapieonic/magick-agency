@@ -196,10 +196,10 @@ void main() {
     });
   });
 
-  test('themeModeFor: the agent\'s choice, else the phone\'s', () {
+  test('themeModeFor: the agent\'s choice, else light (AS14), never the phone\'s', () {
     expect(themeModeFor(true), ThemeMode.dark);
     expect(themeModeFor(false), ThemeMode.light);
-    expect(themeModeFor(null), ThemeMode.system);
+    expect(themeModeFor(null), ThemeMode.light);
   });
   group('tab labels never wrap', () {
     // The test font draws every glyph one em wide, so a label is its length ×

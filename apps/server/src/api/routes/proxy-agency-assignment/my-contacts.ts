@@ -17,6 +17,7 @@ import {
   type AgencyMyContactBucket,
   type AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
+import type { AgencyQueueState } from '@magick-agency/contracts/agency';
 import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
@@ -24,13 +25,14 @@ import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '.
 import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { dialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
-import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
+import { ownerModeOf, poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { settledValue } from '../helpers/settled.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { agentRetryOpen, staffedCampaign } from './shared.js';
+import { phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'proxy-agency-my-contacts' });
 
@@ -81,6 +83,31 @@ export function summaryCallerId(
 }
 
 /**
+ * The summary's `queue`: the reading pacing and the station use (`readAgentQueueState`). On a
+ * `pool` campaign a failed read (the campaign probe timed out, the pool was exhausted) is not the
+ * summary's failure: it answers from the tally already in hand (`poolModeQueueState`, the
+ * campaign's earliest open contact), with a warning, as the summary answered on pool before the
+ * probe (BE-5). On `strict` / `preferred` a failed read is rethrown, as it always was: the tally
+ * has no stand-in for the agent's own queue.
+ */
+export function summaryQueue(
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'assignment_mode' | 'calling_window_start' | 'calling_window_end' | 'calling_days' | 'default_timezone'>,
+  userId: string,
+  read: PromiseSettledResult<AgencyQueueState | undefined>,
+  poolNextOpenAt: Date | null,
+  now: Date,
+): AgencyQueueState {
+  if (read.status === 'fulfilled') return read.value ?? poolModeQueueState(campaign, poolNextOpenAt, now);
+  if (ownerModeOf(campaign) !== null) throw read.reason;
+  const err = read.reason;
+  log.warn(
+    { tenantId: campaign.tenant_id, campaignId: campaign.id, userId, err: err instanceof Error ? err.message : String(err) },
+    'My contacts summary: the pool queue read failed; answering from the campaign\'s earliest open contact',
+  );
+  return poolModeQueueState(campaign, poolNextOpenAt, now);
+}
+
+/**
  * The agent's stored dedicated number, kept only while the campaign can still dial it: on a
  * campaign pinned to a tenant's carrier account, a number no longer active on it is not used
  * (PL13), so the summary does not name it. The service's own account: no extra read.
@@ -114,8 +141,7 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
         .then((stored) => dialableStoredCallerId(campaign, stored)),
     ]);
     const tally = settledValue(tallyRead);
-    // The queue pacing and the station read (strict / preferred); pool mode has none of its own.
-    const queue = settledValue(queueRead) ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
+    const queue = summaryQueue(campaign, userId, queueRead, tally.pool.next_open_at, now);
     const callerId = summaryCallerId(campaign, userId, callerIdRead);
     const body: AgencyMyContactsSummary = {
       campaign_id: campaign.id,
@@ -166,6 +192,9 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
       ...(cursor ? { after: cursor } : {}),
       limit: clampLimit(query.data.limit),
     });
-    return reply.code(200).send(page);
+    // Agent station AS9: how the campaign shows a customer's number, on every row, so My customers
+    // masks from the row wherever it is opened (the bootstrap's reading, `phoneDisplayOf`).
+    const phoneDisplay = phoneDisplayOf(campaign.phone_display);
+    return reply.code(200).send({ ...page, rows: page.rows.map((row) => ({ ...row, phone_display: phoneDisplay })) });
   });
 }

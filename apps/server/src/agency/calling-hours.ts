@@ -286,16 +286,71 @@ export function scheduleCallbackInWindow(window: CallingWindow, requestedAt: Dat
   return nextWindowOpen(window, requestedAt) ?? requestedAt;
 }
 
+/** A local calendar date as one comparable number (`20261120`). */
+function dateKey(year: number, month: number, day: number): number {
+  return year * 10_000 + month * 100 + day;
+}
+
+/** The longest a zone's clock jumps forward at once, with room to spare (real jumps are 1 h, at most 2 h). */
+const MAX_CLOCK_JUMP_MS = 6 * 3_600_000;
+
 /**
- * The instant the local calendar day holding `now` ends in `timezone` (the next local midnight),
- * or null when the zone is unusable. "Today" on the insights page (callbacks due today) is
- * `[now, localDayEnd)`, so a day in Asia/Kolkata ends at 18:30 UTC.
+ * The first instant of local calendar day `year-month-day` in `timezone` (`day` may overflow the
+ * month, as `Date.UTC` takes it), or null when the zone is unusable. Usually its local midnight;
+ * but where the clocks jump forward AT midnight (America/Santiago on 6 Sep 2026: 23:59:59 on the
+ * 5th is followed by 01:00 on the 6th) there is no midnight, and the day begins at the jump.
+ * `instantForLocalTime` alone would answer an hour early there: an instant that is still the day
+ * before, so a day "ending" at it would end before the last hour of itself.
+ */
+function firstInstantOfLocalDay(timezone: string, year: number, month: number, day: number): Date | null {
+  const wanted = new Date(Date.UTC(year, month - 1, day));
+  const target = dateKey(wanted.getUTCFullYear(), wanted.getUTCMonth() + 1, wanted.getUTCDate());
+  const reached = (ms: number): boolean | null => {
+    const p = localParts(timezone, new Date(ms));
+    return p ? dateKey(p.year, p.month, p.day) >= target : null;
+  };
+  const midnight = instantForLocalTime(timezone, wanted.getUTCFullYear(), wanted.getUTCMonth() + 1, wanted.getUTCDate(), 0);
+  if (!midnight) return null;
+  const atMidnight = reached(midnight.getTime());
+  if (atMidnight === null) return null;
+  if (atMidnight) return midnight;
+  // The midnight the zone skipped: the day begins at the jump, the first instant on that date,
+  // found by halving the interval to the millisecond.
+  let lo = midnight.getTime();
+  let hi = lo + MAX_CLOCK_JUMP_MS;
+  if (reached(hi) !== true) return null;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (reached(mid)) hi = mid;
+    else lo = mid;
+  }
+  return new Date(hi);
+}
+
+/**
+ * The instant the local calendar day holding `now` ends in `timezone` (the first instant of the
+ * next local day: its midnight, or the jump where the clocks skip midnight), or null when the
+ * zone is unusable. "Today" on the insights page (callbacks due today) is `[now, localDayEnd)`, so
+ * a day in Asia/Kolkata ends at 18:30 UTC. Always after `now`.
  */
 export function localDayEnd(timezone: string, now: Date): Date | null {
   if (!isUsableTimezone(timezone)) return null;
   const p = localParts(timezone, now);
   if (!p) return null;
-  return instantForLocalTime(timezone, p.year, p.month, p.day + 1, 0);
+  return firstInstantOfLocalDay(timezone, p.year, p.month, p.day + 1);
+}
+
+/**
+ * The instant the local calendar day holding `now` began in `timezone` (its local midnight, or the
+ * jump on a day whose midnight the clocks skipped), or null when the zone is unusable. With
+ * {@link localDayEnd}, the agent's day on My day (`[localDayStart, localDayEnd)`, agent station
+ * BE-1, holding `now`): in Asia/Kolkata it starts at 18:30 UTC the evening before.
+ */
+export function localDayStart(timezone: string, now: Date): Date | null {
+  if (!isUsableTimezone(timezone)) return null;
+  const p = localParts(timezone, now);
+  if (!p) return null;
+  return firstInstantOfLocalDay(timezone, p.year, p.month, p.day);
 }
 
 /**

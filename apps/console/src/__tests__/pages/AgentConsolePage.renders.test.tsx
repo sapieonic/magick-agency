@@ -24,25 +24,26 @@ vi.mock('../../contexts/AuthContext', () => ({
 /**
  * A render counter on a child the page root renders with props that never tick.
  *
- * `StationIdentity` is not memoised, so it re-renders exactly when the page root
- * does — which makes its count the root's render count without instrumenting the
- * page itself. A `<Profiler>` would not do: it reports every commit in its
+ * `StationFrame` (the station's top bar, band and footer) is not memoised, so it re-renders
+ * exactly when the page root does — which makes its count the root's render count without
+ * instrumenting the page itself. A `<Profiler>` would not do: it reports every commit in its
  * subtree, so it counts the timer leaves' own repaints, which are the point.
  */
 const renders = vi.hoisted(() => ({ identity: 0 }));
-vi.mock('../../components/agency/StationIdentity', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../components/agency/StationIdentity')>();
+vi.mock('../../components/agency/station/StationFrame', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../components/agency/station/StationFrame')>();
   return {
     ...actual,
-    StationIdentity: (props: Parameters<typeof actual.StationIdentity>[0]) => {
+    StationFrame: (props: Parameters<typeof actual.StationFrame>[0]) => {
       renders.identity += 1;
-      return actual.StationIdentity(props);
+      return actual.StationFrame(props);
     },
   };
 });
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
+import { STATION_BLOCK_COPY } from '../../utils/agency/stationCopy';
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -130,7 +131,9 @@ const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 /** 12s after `bridged_at` below. */
 const NOW = Date.parse('2026-08-11T10:00:16.000Z');
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   FakeSocket.instances = [];
@@ -144,6 +147,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -262,6 +266,39 @@ describe('the console root does not repaint on a clock', () => {
     expect(renders.identity).toBe(before);
   });
 
+  it('on a limited break: 07 turns into 08 at the limit with one root render, not a clock', async () => {
+    mocks.createAgencySession.mockResolvedValue({ ...BOOTSTRAP, break_reasons: [{ code: 'lunch', label: 'Lunch', limit_minutes: 1 }] });
+    await mounted();
+    act(() => {
+      latest().emit({ event: 'agent_state', state: 'break', since: '2026-08-11T10:00:06.000Z', break_reason: 'lunch' });
+    });
+    expect(screen.getByTestId('band-title').textContent).toBe('On break · Lunch');
+    const pings = () => latest().sent.filter((f) => JSON.parse(f).event === 'ping').length;
+    const pingsBefore = pings();
+    const before = renders.identity;
+
+    // 10s used; the limit falls 50s from now. Each ping is answered, as the server does.
+    let answered = pings();
+    for (let i = 0; i < 4 * 52; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+      while (answered < pings()) {
+        answered += 1;
+        act(() => {
+          latest().emit({ event: 'pong' });
+        });
+      }
+    }
+
+    expect(screen.getByTestId('band-title').textContent).toBe('Break time is over');
+    expect(screen.getByTestId('break-over-late').textContent).toMatch(/^You are 0:0\d late\. Start calls now\.$/);
+    // One render at the crossing; the rest are the heartbeat's own (socket events, not a clock):
+    // a ping and its pong each move the root once.
+    expect(renders.identity - before).toBeLessThanOrEqual(1 + 2 * (pings() - pingsBefore));
+    expect(renders.identity - before).toBeGreaterThanOrEqual(1);
+  });
+
   it('a callback code selected: Save disables when the picked time passes, the root stays still', async () => {
     await mounted();
     act(() => {
@@ -290,7 +327,7 @@ describe('the console root does not repaint on a clock', () => {
     settle();
 
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: /Call back later/ }));
+      fireEvent.click(screen.getByTestId('outcome-callback'));
     });
     // The next whole minute in the agent's own zone, the shape `datetime-local`
     // takes: 10:01:00, i.e. 43s after the present once `settle` has run.
@@ -298,14 +335,15 @@ describe('the console root does not repaint on a clock', () => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const local = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
     act(() => {
-      fireEvent.change(screen.getByLabelText('Callback date and time'), { target: { value: local } });
+      fireEvent.change(screen.getByLabelText('Other time'), { target: { value: local } });
     });
-    const save = () => screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
-    expect(save().disabled).toBe(false);
+    const save = () => screen.getByRole('button', { name: /save & next call/i });
+    const faded = () => save().getAttribute('aria-disabled') === 'true';
+    expect(faded()).toBe(false);
     const before = renders.identity;
 
     twoSeconds();
-    expect(save().disabled).toBe(false);
+    expect(faded()).toBe(false);
     expect(renders.identity).toBe(before);
 
     // Past the picked minute: Save disables and says why, with no root render owed
@@ -318,10 +356,16 @@ describe('the console root does not repaint on a clock', () => {
         vi.advanceTimersByTime(250);
       });
     }
-    expect(save().disabled).toBe(true);
-    expect(screen.getByText(DISPOSITION_BLOCK_COPY.callback_in_past)).toBeTruthy();
+    expect(faded()).toBe(true);
+    expect(save().getAttribute('data-block')).toBe('callback_in_past');
     expect(pings() - pingsBefore).toBeGreaterThan(0);
     expect(renders.identity - before).toBe(pings() - pingsBefore);
+
+    // Pressed now, it says why in the station's words (spec §6.1) and sends nothing.
+    act(() => {
+      fireEvent.click(save());
+    });
+    expect(screen.getByTestId('save-block').textContent).toBe(STATION_BLOCK_COPY.callback_in_past);
 
     // And the shortcut, which reaches `submit` without the button, refuses too.
     act(() => {

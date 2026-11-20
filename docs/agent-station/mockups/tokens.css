@@ -1,0 +1,522 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Magick Agency · agent station redesign · shared mock-up CSS
+   Every selector is scoped under .ma-mock, so this file can be dropped into any
+   page without leaking. Fonts (Plus Jakarta Sans, Inter) are loaded by the host
+   page; the stacks below fall back to system fonts.
+
+   Neutral, accent, ember and semantic values are COPIED from
+   packages/web-ui/src/global.css ([data-theme='light'] is the primary look).
+   Where global.css's light semantic colour is too light to carry white text on
+   a full-width band, the deeper light value from apps/mobile/lib/app/theme/
+   tokens.dart is used (success #077461, danger #BE3440). New tokens are the
+   --ma-st-* state colours at the end of the block.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.ma-mock {
+  /* ── copied: global.css [data-theme='light'] ── */
+  --ma-bg-primary: #f5f6f8;
+  --ma-bg-secondary: #ffffff;
+  --ma-bg-tertiary: #ebecf0;
+  --ma-bg-elevated: #fafafc;
+  --ma-text-primary: #17172b;
+  --ma-text-secondary: #4a5165;
+  --ma-text-muted: #697084;
+  --ma-accent: #6a4de4;
+  --ma-accent-hover: #5a40ce;
+  --ma-accent-subtle: rgba(106, 77, 228, 0.1);
+  --ma-ember: #bd4f05;
+  --ma-ember-subtle: rgba(189, 79, 5, 0.1);
+  --ma-success: #0f9b80;
+  --ma-warning: #b8801c;
+  --ma-danger: #d03f4b;
+  --ma-info: #0b8fd4;
+  --ma-border: rgba(84, 94, 126, 0.16);
+  --ma-border-strong: rgba(84, 94, 126, 0.24);
+  --ma-radius: 8px;
+  --ma-radius-lg: 12px;
+  --ma-radius-xl: 16px;
+  --ma-radius-2xl: 20px;
+  --ma-shadow-sm: 0 1px 2px rgba(28, 35, 60, 0.06), 0 2px 8px rgba(28, 35, 60, 0.04);
+  --ma-shadow-md: 0 2px 6px rgba(28, 35, 60, 0.06), 0 12px 28px -8px rgba(28, 35, 60, 0.1);
+  --ma-shadow-lg: 0 4px 10px rgba(28, 35, 60, 0.06), 0 24px 56px -16px rgba(28, 35, 60, 0.14);
+  --ma-font-display: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  --ma-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ── NEW: state colours. One state = one colour, on console and phone. ──
+     band  = the full-width band fill          ink  = text and icons on the band
+     soft  = a pale tint for tiles and chips   deep = text in that colour on white (AA) */
+  --ma-st-start: #2d3047;      --ma-st-start-ink: #ffffff;   --ma-st-start-soft: #eceef4;  --ma-st-start-deep: #2d3047;
+  --ma-st-ready: #077461;      --ma-st-ready-ink: #ffffff;   --ma-st-ready-soft: #e1f4ef;  --ma-st-ready-deep: #06614f;
+  --ma-st-coming: #0a6fae;     --ma-st-coming-ink: #ffffff;  --ma-st-coming-soft: #e2f1fb; --ma-st-coming-deep: #085c91;
+  --ma-st-oncall: #1d4fb8;     --ma-st-oncall-ink: #ffffff;  --ma-st-oncall-soft: #e6edfb; --ma-st-oncall-deep: #1a45a0;
+  --ma-st-happened: #6a4de4;   --ma-st-happened-ink: #ffffff; --ma-st-happened-soft: #efebfd; --ma-st-happened-deep: #5a40ce;
+  --ma-st-break: #f0b548;      --ma-st-break-ink: #2e1d00;   --ma-st-break-soft: #fdf3dc;  --ma-st-break-deep: #7a4f06;
+  --ma-st-over: #c2410c;       --ma-st-over-ink: #ffffff;    --ma-st-over-soft: #fde9df;   --ma-st-over-deep: #a33608;
+  --ma-st-problem: #be3440;    --ma-st-problem-ink: #ffffff; --ma-st-problem-soft: #fbe6e8; --ma-st-problem-deep: #a82a36;
+  --ma-st-quiet: #4a5165;      --ma-st-quiet-ink: #ffffff;   --ma-st-quiet-soft: #eceef2;  --ma-st-quiet-deep: #3d4356;
+  /* Actions. Green always means "go forward", red always means "stop". */
+  --ma-go: #077461;            --ma-go-shadow: #05574a;
+  --ma-stop: #be3440;          --ma-stop-shadow: #942631;
+  --ma-ai: #6a4de4;            --ma-ai-soft: #f3f0fe;
+
+  font-family: var(--ma-font-body);
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--ma-text-primary);
+  background: var(--ma-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+  position: relative;
+  text-align: left;
+}
+
+/* Dark theme (optional, same tokens; bands keep their fills). */
+.ma-mock.ma-dark {
+  --ma-bg-primary: #0c0c11;
+  --ma-bg-secondary: #131318;
+  --ma-bg-tertiary: #1a1a21;
+  --ma-bg-elevated: #212128;
+  --ma-text-primary: #f1f1f5;
+  --ma-text-secondary: #b4b4c2;
+  --ma-text-muted: #8a8a9c;
+  --ma-accent: #9b82ff;
+  --ma-accent-subtle: rgba(124, 92, 252, 0.16);
+  --ma-ember: #fa8231;
+  --ma-border: rgba(255, 255, 255, 0.1);
+  --ma-border-strong: rgba(255, 255, 255, 0.18);
+  --ma-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ma-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -6px rgba(0, 0, 0, 0.45);
+  --ma-st-start-soft: #23253a;   --ma-st-start-deep: #c9cbe0;
+  --ma-st-ready-soft: #0e2b26;   --ma-st-ready-deep: #3fcf9e;
+  --ma-st-coming-soft: #0d2636;  --ma-st-coming-deep: #56b8f0;
+  --ma-st-oncall-soft: #131f3d;  --ma-st-oncall-deep: #8fb0ff;
+  --ma-st-happened-soft: #1f1a3a; --ma-st-happened-deep: #b9a8ff;
+  --ma-st-break-soft: #32270f;   --ma-st-break-deep: #e8a63f;
+  --ma-st-over-soft: #36190c;    --ma-st-over-deep: #ff9a6b;
+  --ma-st-problem-soft: #371418; --ma-st-problem-deep: #ef6b6b;
+  --ma-st-quiet-soft: #1f2128;   --ma-st-quiet-deep: #b4b4c2;
+  --ma-ai-soft: #1c1833;
+}
+
+.ma-mock *, .ma-mock *::before, .ma-mock *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.ma-mock svg { flex: none; display: block; }
+.ma-mock button { font: inherit; color: inherit; cursor: pointer; }
+.ma-mock .ma-num { font-family: var(--ma-font-display); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -0.01em; }
+.ma-mock .ma-grow { flex: 1 1 auto; min-width: 0; }
+.ma-mock .ma-muted { color: var(--ma-text-muted); }
+.ma-mock .ma-row { display: flex; align-items: center; gap: 12px; }
+.ma-mock .ma-stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── State hook: any element with data-state gets --st, --st-ink, --st-soft, --st-deep ── */
+.ma-mock[data-state='start'], .ma-mock [data-state='start']    { --st: var(--ma-st-start);    --st-ink: var(--ma-st-start-ink);    --st-soft: var(--ma-st-start-soft);    --st-deep: var(--ma-st-start-deep); }
+.ma-mock[data-state='ready'], .ma-mock [data-state='ready']    { --st: var(--ma-st-ready);    --st-ink: var(--ma-st-ready-ink);    --st-soft: var(--ma-st-ready-soft);    --st-deep: var(--ma-st-ready-deep); }
+.ma-mock[data-state='coming'], .ma-mock [data-state='coming']   { --st: var(--ma-st-coming);   --st-ink: var(--ma-st-coming-ink);   --st-soft: var(--ma-st-coming-soft);   --st-deep: var(--ma-st-coming-deep); }
+.ma-mock[data-state='oncall'], .ma-mock [data-state='oncall']   { --st: var(--ma-st-oncall);   --st-ink: var(--ma-st-oncall-ink);   --st-soft: var(--ma-st-oncall-soft);   --st-deep: var(--ma-st-oncall-deep); }
+.ma-mock[data-state='happened'], .ma-mock [data-state='happened'] { --st: var(--ma-st-happened); --st-ink: var(--ma-st-happened-ink); --st-soft: var(--ma-st-happened-soft); --st-deep: var(--ma-st-happened-deep); }
+.ma-mock[data-state='break'], .ma-mock [data-state='break']    { --st: var(--ma-st-break);    --st-ink: var(--ma-st-break-ink);    --st-soft: var(--ma-st-break-soft);    --st-deep: var(--ma-st-break-deep); }
+.ma-mock[data-state='over'], .ma-mock [data-state='over']     { --st: var(--ma-st-over);     --st-ink: var(--ma-st-over-ink);     --st-soft: var(--ma-st-over-soft);     --st-deep: var(--ma-st-over-deep); }
+.ma-mock[data-state='problem'], .ma-mock [data-state='problem']  { --st: var(--ma-st-problem);  --st-ink: var(--ma-st-problem-ink);  --st-soft: var(--ma-st-problem-soft);  --st-deep: var(--ma-st-problem-deep); }
+.ma-mock[data-state='quiet'], .ma-mock [data-state='quiet']    { --st: var(--ma-st-quiet);    --st-ink: var(--ma-st-quiet-ink);    --st-soft: var(--ma-st-quiet-soft);    --st-deep: var(--ma-st-quiet-deep); }
+
+/* ── Frames ── */
+.ma-mock.ma-console {
+  width: 100%; max-width: 1280px; min-height: 800px;
+  display: flex; flex-direction: column;
+  border-radius: var(--ma-radius-xl); overflow: hidden;
+  border: 1px solid var(--ma-border); box-shadow: var(--ma-shadow-md);
+}
+.ma-mock.ma-phone {
+  width: 390px; height: 844px; flex: none;
+  display: flex; flex-direction: column;
+  border-radius: 40px; overflow: hidden;
+  border: 8px solid #17172b; box-shadow: var(--ma-shadow-lg);
+  font-size: 15px;
+}
+
+/* ── Top bar: who I am, Need help, More ── */
+.ma-mock .ma-top {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 32px; min-height: 72px;
+  background: var(--ma-bg-secondary); border-bottom: 1px solid var(--ma-border);
+}
+.ma-mock .ma-brand {
+  width: 44px; height: 44px; border-radius: 12px; flex: none;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, #7255ea, #9a7cff); color: #fff;
+  font-family: var(--ma-font-display); font-weight: 800; font-size: 15px;
+}
+.ma-mock .ma-who b { display: block; font-family: var(--ma-font-display); font-size: 18px; font-weight: 700; line-height: 1.2; }
+.ma-mock .ma-who span { display: block; font-size: 14px; color: var(--ma-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ma-mock .ma-help {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 48px; padding: 0 18px; border-radius: 12px;
+  border: 2px solid var(--ma-stop); background: var(--ma-bg-secondary); color: var(--ma-st-problem-deep);
+  font-family: var(--ma-font-display); font-weight: 700; font-size: 16px; white-space: nowrap;
+}
+.ma-mock .ma-help.is-asked { background: var(--ma-stop); color: #fff; }
+.ma-mock .ma-help.is-asked small { font-weight: 600; font-size: 13px; opacity: 0.9; }
+.ma-mock .ma-more {
+  width: 48px; height: 48px; border-radius: 12px; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--ma-border-strong); background: var(--ma-bg-secondary); color: var(--ma-text-secondary);
+}
+
+/* ── The state band ── */
+.ma-mock .ma-band {
+  display: flex; align-items: center; gap: 20px;
+  padding: 18px 32px; min-height: 116px;
+  background: var(--st); color: var(--st-ink);
+}
+.ma-mock .ma-band__icon {
+  width: 68px; height: 68px; border-radius: 18px; flex: none;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.2);
+}
+.ma-mock [data-state='break'] > .ma-band__icon { background: rgba(255, 255, 255, 0.45); }
+.ma-mock .ma-band h1 { font-family: var(--ma-font-display); font-size: 36px; font-weight: 800; line-height: 1.15; letter-spacing: -0.015em; }
+.ma-mock .ma-band p { font-size: 19px; font-weight: 500; opacity: 0.95; margin-top: 2px; }
+.ma-mock .ma-band__side { text-align: right; flex: none; }
+.ma-mock .ma-band__side small { display: block; font-size: 14px; font-weight: 600; opacity: 0.9; }
+.ma-mock .ma-band__side .ma-num { font-size: 46px; line-height: 1; }
+.ma-mock .ma-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-size: 14px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.2); white-space: nowrap;
+}
+.ma-mock .ma-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
+.ma-mock .ma-dot--rec { background: #ff8f8f; box-shadow: 0 0 0 3px rgba(255, 143, 143, 0.35); }
+.ma-mock .ma-dots { display: inline-flex; gap: 6px; margin-left: 8px; }
+.ma-mock .ma-dots i { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+.ma-mock .ma-dots i:nth-child(1) { opacity: 0.35; } .ma-mock .ma-dots i:nth-child(2) { opacity: 0.65; }
+.ma-mock .ma-ring {
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 10px 18px 10px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); text-align: left;
+}
+.ma-mock .ma-ring .ma-num { font-size: 30px; line-height: 1; }
+.ma-mock .ma-ring small { display: block; font-size: 13px; font-weight: 600; opacity: 0.9; }
+.ma-mock .ma-ring.is-over { background: #fff; color: var(--ma-st-problem-deep); }
+
+/* ── Body, cards, footer ── */
+.ma-mock .ma-body { flex: 1 1 auto; padding: 28px 32px; display: grid; gap: 24px; align-content: start; position: relative; }
+.ma-mock .ma-body--2 { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+.ma-mock .ma-body--even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ma-mock .ma-body--wide-left { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+.ma-mock .ma-body--center { justify-items: center; align-content: center; }
+.ma-mock .ma-card {
+  background: var(--ma-bg-secondary); border: 1px solid var(--ma-border);
+  border-radius: var(--ma-radius-2xl); padding: 24px; box-shadow: var(--ma-shadow-sm);
+  min-width: 0;
+}
+.ma-mock .ma-card--narrow { width: 100%; max-width: 760px; }
+.ma-mock .ma-card h2 {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--ma-font-display); font-size: 17px; font-weight: 700; color: var(--ma-text-secondary); margin-bottom: 16px;
+}
+.ma-mock .ma-foot {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 16px 32px; min-height: 100px;
+  background: var(--ma-bg-secondary); border-top: 1px solid var(--ma-border);
+}
+.ma-mock .ma-foot__hint { display: flex; align-items: center; gap: 10px; color: var(--ma-text-muted); font-size: 16px; }
+
+/* ── Buttons ── */
+.ma-mock .ma-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+  min-height: 56px; padding: 0 22px; border-radius: 14px;
+  border: 2px solid var(--ma-border-strong); background: var(--ma-bg-secondary); color: var(--ma-text-primary);
+  font-family: var(--ma-font-display); font-weight: 700; font-size: 18px; white-space: nowrap;
+}
+.ma-mock .ma-btn--big { min-height: 68px; padding: 0 30px; font-size: 22px; font-weight: 800; border-radius: 16px; border: 0; }
+.ma-mock .ma-btn--go { background: var(--ma-go); color: #fff; box-shadow: 0 4px 0 var(--ma-go-shadow); }
+.ma-mock .ma-btn--stop { background: var(--ma-stop); color: #fff; box-shadow: 0 4px 0 var(--ma-stop-shadow); }
+.ma-mock .ma-btn--break { background: var(--ma-st-break); color: var(--ma-st-break-ink); box-shadow: 0 4px 0 #c98f22; }
+.ma-mock .ma-btn--brand { background: var(--ma-accent); color: #fff; box-shadow: 0 4px 0 var(--ma-accent-hover); }
+.ma-mock .ma-btn--quiet { border-color: transparent; background: transparent; color: var(--ma-text-secondary); font-weight: 600; }
+.ma-mock .ma-btn--on { background: var(--ma-st-break-soft); border-color: var(--ma-st-break); color: var(--ma-st-break-deep); }
+.ma-mock .ma-btn--full { width: 100%; }
+.ma-mock .ma-key {
+  display: inline-grid; place-items: center; min-width: 28px; height: 26px; padding: 0 7px; border-radius: 7px;
+  font-family: var(--ma-font-body); font-size: 12px; font-weight: 700;
+  background: rgba(255, 255, 255, 0.24); color: inherit;
+}
+.ma-mock .ma-btn:not(.ma-btn--big) .ma-key, .ma-mock .ma-pick .ma-key, .ma-mock .ma-chip .ma-key { background: var(--ma-bg-tertiary); color: var(--ma-text-secondary); }
+.ma-mock .ma-btn--break .ma-key { background: rgba(255, 255, 255, 0.5); color: var(--ma-st-break-ink); }
+
+/* ── Customer card ── */
+.ma-mock .ma-cust { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+.ma-mock .ma-avatar {
+  width: 76px; height: 76px; border-radius: 20px; flex: none; display: grid; place-items: center;
+  background: var(--st-soft, var(--ma-st-oncall-soft)); color: var(--st-deep, var(--ma-st-oncall-deep));
+  font-family: var(--ma-font-display); font-weight: 800; font-size: 26px;
+}
+.ma-mock .ma-avatar--sm { width: 52px; height: 52px; border-radius: 14px; font-size: 18px; }
+.ma-mock .ma-cust h3 { font-family: var(--ma-font-display); font-size: 32px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
+.ma-mock .ma-cust__meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 4px; font-size: 17px; color: var(--ma-text-secondary); }
+.ma-mock .ma-cust__meta span { display: inline-flex; align-items: center; gap: 6px; }
+.ma-mock .ma-tag {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px;
+  background: var(--st-soft, var(--ma-bg-tertiary)); color: var(--st-deep, var(--ma-text-secondary));
+  font-weight: 700; font-size: 15px;
+}
+.ma-mock .ma-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ma-mock .ma-fact { background: var(--ma-bg-primary); border-radius: var(--ma-radius-xl); padding: 14px 16px; min-width: 0; }
+.ma-mock .ma-fact small { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--ma-text-muted); }
+.ma-mock .ma-fact .ma-num { display: block; font-size: 28px; line-height: 1.2; margin-top: 4px; white-space: nowrap; }
+.ma-mock .ma-fact--wide { grid-column: 1 / -1; }
+.ma-mock .ma-fact--wide p { font-family: var(--ma-font-display); font-size: 20px; font-weight: 700; margin-top: 4px; }
+
+/* ── Device checks ── */
+.ma-mock .ma-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.ma-mock .ma-check {
+  display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: var(--ma-radius-xl);
+  background: var(--ma-st-ready-soft); border: 2px solid rgba(7, 116, 97, 0.25); min-width: 0;
+}
+.ma-mock .ma-check__icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: #fff; color: var(--ma-st-ready-deep); flex: none; }
+.ma-mock.ma-dark .ma-check__icon { background: rgba(255, 255, 255, 0.08); }
+.ma-mock .ma-check b { display: block; font-family: var(--ma-font-display); font-size: 19px; font-weight: 700; }
+.ma-mock .ma-check em { display: inline-flex; align-items: center; gap: 4px; font-style: normal; font-weight: 700; font-size: 15px; color: var(--ma-st-ready-deep); }
+.ma-mock .ma-check.is-bad { background: var(--ma-st-problem-soft); border-color: var(--ma-stop); }
+.ma-mock .ma-check.is-bad .ma-check__icon, .ma-mock .ma-check.is-bad em { color: var(--ma-st-problem-deep); }
+.ma-mock .ma-check.is-warn { background: var(--ma-st-break-soft); border-color: var(--ma-st-break); }
+.ma-mock .ma-check.is-warn .ma-check__icon, .ma-mock .ma-check.is-warn em { color: var(--ma-st-break-deep); }
+
+/* ── Picture tiles (outcomes, breaks, ways of working) ── */
+.ma-mock .ma-picks { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ma-mock .ma-picks--5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.ma-mock .ma-picks--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ma-mock .ma-pick {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  min-height: 150px; padding: 18px 10px 16px; border-radius: var(--ma-radius-2xl);
+  background: var(--ma-bg-secondary); border: 2px solid var(--ma-border-strong); text-align: center;
+}
+.ma-mock .ma-pick__icon { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: var(--st-soft, var(--ma-bg-tertiary)); color: var(--st-deep, var(--ma-text-secondary)); }
+.ma-mock .ma-pick b { font-family: var(--ma-font-display); font-size: 21px; font-weight: 800; line-height: 1.15; }
+.ma-mock .ma-pick small { font-size: 15px; font-weight: 600; color: var(--ma-text-muted); }
+.ma-mock .ma-pick .ma-key { position: absolute; top: 10px; left: 10px; }
+.ma-mock .ma-pick__say { position: absolute; top: 4px; right: 4px; width: 44px; height: 44px; display: grid; place-items: center; color: var(--ma-text-muted); border-radius: 12px; }
+.ma-mock .ma-pick.is-on { border: 3px solid var(--ma-go); background: var(--ma-st-ready-soft); }
+.ma-mock .ma-pick.is-on .ma-pick__icon { background: var(--ma-bg-secondary); }
+.ma-mock .ma-pick.is-on.is-stop { border-color: var(--ma-stop); background: var(--ma-st-problem-soft); }
+.ma-mock .ma-pick__tick { position: absolute; top: -12px; right: -12px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--ma-go); color: #fff; border: 3px solid var(--ma-bg-secondary); }
+.ma-mock .ma-pick.is-stop .ma-pick__tick { background: var(--ma-stop); }
+.ma-mock .ma-pick__ai { position: absolute; bottom: -13px; left: 50%; transform: translateX(-50%); }
+.ma-mock .ma-aitag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: var(--ma-ai); color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.ma-mock .ma-aitag--soft { background: var(--ma-ai-soft); color: var(--ma-ai); }
+.ma-mock .ma-pick.is-dim { opacity: 0.55; }
+
+/* ── Chips (follow-up answers) ── */
+.ma-mock .ma-ask { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ma-mock .ma-ask > b { display: inline-flex; align-items: center; gap: 8px; font-family: var(--ma-font-display); font-size: 19px; font-weight: 700; margin-right: 2px; min-width: 112px; }
+.ma-mock .ma-chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 15px; border-radius: 14px;
+  border: 2px solid var(--ma-border-strong); background: var(--ma-bg-secondary);
+  font-family: var(--ma-font-display); font-size: 18px; font-weight: 700; white-space: nowrap;
+}
+.ma-mock .ma-chip.is-on { border-color: var(--ma-st-oncall); background: var(--ma-st-oncall-soft); color: var(--ma-st-oncall-deep); }
+.ma-mock .ma-money { display: inline-flex; align-items: center; gap: 6px; min-height: 52px; padding: 0 16px; border-radius: 14px; border: 2px solid var(--ma-border-strong); background: var(--ma-bg-secondary); }
+.ma-mock .ma-money .ma-num { font-size: 24px; }
+
+/* ── Script steps / what-to-do steps ── */
+.ma-mock .ma-steps { list-style: none; display: grid; gap: 8px; }
+.ma-mock .ma-steps li { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border-radius: var(--ma-radius-xl); font-family: var(--ma-font-display); font-size: 21px; font-weight: 600; border: 2px solid transparent; }
+.ma-mock .ma-steps i { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--ma-bg-tertiary); color: var(--ma-text-secondary); font-style: normal; font-weight: 800; font-size: 17px; }
+.ma-mock .ma-steps li.is-done { color: var(--ma-text-muted); text-decoration: line-through; }
+.ma-mock .ma-steps li.is-done i { background: var(--ma-st-ready-soft); color: var(--ma-st-ready-deep); }
+.ma-mock .ma-steps li.is-now { background: var(--ma-st-oncall-soft); border-color: var(--ma-st-oncall); font-weight: 800; }
+.ma-mock .ma-steps li.is-now i { background: var(--ma-st-oncall); color: #fff; }
+.ma-mock .ma-steps--plain li { border-bottom: 1px dashed var(--ma-border); border-radius: 0; padding: 16px 4px; font-weight: 700; }
+.ma-mock .ma-steps--plain li:last-child { border-bottom: 0; }
+.ma-mock .ma-say { background: var(--st-soft); border: 2px solid var(--st); border-radius: var(--ma-radius-2xl); padding: 22px 24px; }
+.ma-mock .ma-say small { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--st-deep); }
+.ma-mock .ma-say p { font-family: var(--ma-font-display); font-size: 30px; font-weight: 800; line-height: 1.25; margin-top: 8px; }
+
+/* ── AI line and note ── */
+.ma-mock .ma-ai { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--ma-radius-xl); background: var(--ma-ai-soft); border: 1px solid rgba(106, 77, 228, 0.25); }
+.ma-mock .ma-ai__icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--ma-ai); color: #fff; flex: none; }
+.ma-mock .ma-ai small { display: block; font-size: 13px; font-weight: 700; color: var(--ma-ai); }
+.ma-mock .ma-ai p { font-family: var(--ma-font-display); font-size: 19px; font-weight: 700; }
+.ma-mock .ma-note { background: var(--ma-bg-primary); border-radius: var(--ma-radius-lg); padding: 14px 16px; font-size: 18px; font-weight: 600; min-height: 60px; border: 2px solid transparent; }
+.ma-mock .ma-note.is-empty { color: var(--ma-text-muted); font-weight: 500; border-color: var(--ma-border); background: var(--ma-bg-secondary); }
+.ma-mock .ma-speak { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 56px; margin-top: 12px; border-radius: var(--ma-radius-lg); border: 2px dashed rgba(106, 77, 228, 0.5); background: var(--ma-ai-soft); color: var(--ma-ai); font-family: var(--ma-font-display); font-weight: 700; font-size: 18px; width: 100%; }
+
+/* ── My day, lists ── */
+.ma-mock .ma-stat { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px dashed var(--ma-border); }
+.ma-mock .ma-stat:last-child { border-bottom: 0; padding-bottom: 0; }
+.ma-mock .ma-stat__icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--st-soft); color: var(--st-deep); flex: none; }
+.ma-mock .ma-stat b { font-size: 18px; font-weight: 600; }
+.ma-mock .ma-stat .ma-num { font-size: 28px; white-space: nowrap; }
+.ma-mock .ma-stat .ma-num small { font-size: 17px; font-weight: 600; color: var(--ma-text-muted); }
+.ma-mock .ma-meter { height: 12px; border-radius: 999px; background: var(--ma-bg-tertiary); overflow: hidden; margin-top: 6px; }
+.ma-mock .ma-meter i { display: block; height: 100%; border-radius: 999px; background: var(--st, var(--ma-go)); }
+.ma-mock .ma-later { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px dashed var(--ma-border); font-family: var(--ma-font-display); font-size: 19px; font-weight: 700; }
+.ma-mock .ma-later:last-of-type { border-bottom: 0; }
+.ma-mock .ma-later time { min-width: 96px; text-align: center; padding: 6px 10px; border-radius: 10px; background: var(--ma-st-coming-soft); color: var(--ma-st-coming-deep); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ma-mock .ma-later.is-soon time { background: var(--ma-st-coming); color: #fff; }
+.ma-mock .ma-later small { margin-left: auto; font-family: var(--ma-font-body); font-size: 14px; font-weight: 700; color: var(--ma-st-coming-deep); white-space: nowrap; }
+.ma-mock .ma-fine { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ma-text-muted); margin-top: 12px; }
+
+/* ── Waiting pulse and big timers ── */
+.ma-mock .ma-wait { display: grid; justify-items: center; align-content: center; gap: 10px; text-align: center; min-height: 380px; }
+.ma-mock .ma-pulse { width: 200px; height: 200px; border-radius: 50%; display: grid; place-items: center; background: var(--st-soft); color: var(--st-deep); box-shadow: 0 0 0 6px var(--ma-bg-secondary), 0 0 0 9px var(--st), 0 0 0 28px var(--st-soft); margin: 30px 0 34px; }
+.ma-mock .ma-pulse--sm { width: 120px; height: 120px; box-shadow: none; margin: 0 0 8px; }
+.ma-mock .ma-wait h3 { font-family: var(--ma-font-display); font-size: 34px; font-weight: 800; letter-spacing: -0.01em; }
+.ma-mock .ma-wait p { font-size: 19px; color: var(--ma-text-secondary); }
+.ma-mock .ma-clock { display: flex; align-items: baseline; justify-content: center; gap: 12px; }
+.ma-mock .ma-clock .ma-num { font-size: 104px; line-height: 1; color: var(--ma-text-primary); }
+.ma-mock .ma-clock span { font-family: var(--ma-font-display); font-size: 30px; font-weight: 700; color: var(--ma-text-muted); }
+.ma-mock .ma-clock.is-over .ma-num { color: var(--ma-st-over-deep); }
+.ma-mock .ma-meter--big { height: 18px; width: 100%; margin-top: 18px; }
+
+/* ── Banners (small, one at a time, under the band) ── */
+.ma-mock .ma-banner {
+  display: flex; align-items: center; gap: 14px; padding: 12px 32px; min-height: 60px;
+  background: var(--st-soft); color: var(--ma-text-primary); border-bottom: 2px solid var(--st);
+  font-size: 17px; font-weight: 600;
+}
+.ma-mock .ma-banner__icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--st); color: var(--st-ink); flex: none; }
+.ma-mock .ma-banner b { font-family: var(--ma-font-display); font-weight: 800; }
+.ma-mock .ma-banner small { display: block; font-size: 14px; font-weight: 600; color: var(--ma-text-secondary); }
+.ma-mock .ma-banner .ma-btn { min-height: 48px; font-size: 16px; }
+.ma-mock .ma-banner--msg { background: var(--ma-accent-subtle); border-bottom-color: var(--ma-accent); }
+.ma-mock .ma-banner--msg .ma-banner__icon { background: var(--ma-accent); color: #fff; }
+
+/* ── Dialogs and menus ── */
+.ma-mock .ma-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(23, 23, 43, 0.55); display: grid; place-items: center; padding: 24px; }
+.ma-mock .ma-dialog { width: 100%; max-width: 880px; background: var(--ma-bg-secondary); border-radius: 28px; padding: 32px; box-shadow: var(--ma-shadow-lg); }
+.ma-mock .ma-dialog--sm { max-width: 600px; }
+.ma-mock .ma-dialog h2 { display: flex; align-items: center; gap: 14px; font-family: var(--ma-font-display); font-size: 32px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.01em; }
+.ma-mock .ma-dialog > p { font-size: 19px; color: var(--ma-text-secondary); margin-bottom: 22px; }
+.ma-mock .ma-dialog__foot { display: flex; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
+.ma-mock .ma-menu { position: absolute; z-index: 6; top: 8px; right: 32px; width: 320px; background: var(--ma-bg-secondary); border: 1px solid var(--ma-border-strong); border-radius: var(--ma-radius-xl); box-shadow: var(--ma-shadow-lg); padding: 8px; }
+.ma-mock .ma-menu a { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 14px; border-radius: 12px; font-family: var(--ma-font-display); font-size: 17px; font-weight: 700; color: var(--ma-text-primary); text-decoration: none; }
+.ma-mock .ma-menu a svg { color: var(--ma-text-muted); }
+.ma-mock .ma-menu hr { border: 0; border-top: 1px solid var(--ma-border); margin: 6px 0; }
+.ma-mock .ma-menu a.is-stop, .ma-mock .ma-menu a.is-stop svg { color: var(--ma-st-problem-deep); }
+
+/* ── Console scales down ── */
+@media (max-width: 1060px) {
+  .ma-mock.ma-console .ma-top, .ma-mock.ma-console .ma-band, .ma-mock.ma-console .ma-foot, .ma-mock.ma-console .ma-body, .ma-mock.ma-console .ma-banner { padding-left: 20px; padding-right: 20px; }
+  .ma-mock.ma-console .ma-body--2, .ma-mock.ma-console .ma-body--even, .ma-mock.ma-console .ma-body--wide-left { grid-template-columns: minmax(0, 1fr); }
+  .ma-mock.ma-console .ma-band h1 { font-size: 30px; }
+  .ma-mock.ma-console .ma-band p { font-size: 17px; }
+  .ma-mock.ma-console .ma-picks--5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ma-mock.ma-console .ma-wait { min-height: 0; }
+}
+@media (max-width: 720px) {
+  .ma-mock.ma-console .ma-band__side .ma-num { font-size: 34px; }
+  .ma-mock.ma-console .ma-band__icon { width: 52px; height: 52px; border-radius: 14px; }
+  .ma-mock.ma-console .ma-checks, .ma-mock.ma-console .ma-facts { grid-template-columns: minmax(0, 1fr); }
+  .ma-mock.ma-console .ma-picks, .ma-mock.ma-console .ma-picks--5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ma-mock.ma-console .ma-foot .ma-btn--big { flex: 1 1 100%; }
+  .ma-mock.ma-console .ma-who span { display: none; }
+}
+
+/* ── Phone frame overrides (390 × 844) ── */
+.ma-mock.ma-phone .ma-sys { display: flex; justify-content: space-between; align-items: center; padding: 8px 22px 4px; font-size: 13px; font-weight: 700; background: var(--ma-bg-secondary); }
+.ma-mock.ma-phone .ma-sys span { display: inline-flex; gap: 6px; align-items: center; }
+.ma-mock.ma-phone .ma-top { padding: 6px 14px 8px; min-height: 56px; gap: 10px; }
+.ma-mock.ma-phone .ma-brand { width: 36px; height: 36px; border-radius: 10px; font-size: 13px; }
+.ma-mock.ma-phone .ma-who b { font-size: 15px; }
+.ma-mock.ma-phone .ma-who span { font-size: 12px; }
+.ma-mock.ma-phone .ma-help { min-height: 48px; padding: 0 12px; font-size: 14px; gap: 6px; }
+.ma-mock.ma-phone .ma-more { width: 48px; height: 48px; }
+.ma-mock.ma-phone .ma-band { padding: 12px 16px; min-height: 92px; gap: 12px; }
+.ma-mock.ma-phone .ma-band__icon { width: 52px; height: 52px; border-radius: 14px; }
+.ma-mock.ma-phone .ma-band h1 { font-size: 21px; white-space: nowrap; }
+.ma-mock.ma-phone .ma-band p { font-size: 14px; line-height: 1.3; }
+.ma-mock.ma-phone .ma-band__side .ma-num { font-size: 30px; }
+.ma-mock.ma-phone .ma-band__side small { font-size: 12px; }
+.ma-mock.ma-phone .ma-ring { padding: 5px 10px 5px 6px; gap: 6px; }
+.ma-mock.ma-phone .ma-ring svg { width: 30px; height: 30px; }
+.ma-mock.ma-phone .ma-ring small { display: none; }
+.ma-mock.ma-phone .ma-ring .ma-num { font-size: 20px; }
+.ma-mock.ma-phone .ma-ring small { font-size: 11px; }
+.ma-mock.ma-phone .ma-pill { font-size: 12px; padding: 4px 10px; }
+.ma-mock.ma-phone .ma-body { min-height: 0; padding: 12px 14px; gap: 10px; overflow: hidden; grid-template-columns: minmax(0, 1fr); }
+.ma-mock.ma-phone .ma-card { padding: 12px; border-radius: 18px; }
+.ma-mock.ma-phone .ma-card h2 { font-size: 15px; margin-bottom: 8px; }
+.ma-mock.ma-phone .ma-foot { padding: 12px 14px 20px; min-height: 0; gap: 10px; }
+.ma-mock.ma-phone .ma-foot__hint { font-size: 14px; }
+.ma-mock.ma-phone .ma-btn { min-height: 52px; font-size: 16px; padding: 0 16px; gap: 8px; }
+.ma-mock.ma-phone .ma-btn--big { min-height: 64px; font-size: 20px; width: 100%; }
+.ma-mock.ma-phone .ma-cust { gap: 12px; margin-bottom: 10px; }
+.ma-mock.ma-phone .ma-avatar { width: 56px; height: 56px; border-radius: 16px; font-size: 20px; }
+.ma-mock.ma-phone .ma-avatar--sm { width: 44px; height: 44px; font-size: 16px; }
+.ma-mock.ma-phone .ma-cust h3 { font-size: 24px; }
+.ma-mock.ma-phone .ma-cust__meta { font-size: 14px; gap: 2px 12px; }
+.ma-mock.ma-phone .ma-facts { gap: 8px; }
+.ma-mock.ma-phone .ma-fact { padding: 10px; border-radius: 14px; }
+.ma-mock.ma-phone .ma-fact small { font-size: 12px; white-space: nowrap; }
+.ma-mock.ma-phone .ma-fact small svg { display: none; }
+.ma-mock.ma-phone .ma-fact .ma-num { font-size: 20px; }
+.ma-mock.ma-phone .ma-fact--wide p { font-size: 16px; }
+.ma-mock.ma-phone .ma-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-mock.ma-phone .ma-check { padding: 8px 10px; gap: 10px; border-radius: 14px; }
+.ma-mock.ma-phone .ma-check__icon { width: 38px; height: 38px; border-radius: 11px; }
+.ma-mock.ma-phone .ma-check b { font-size: 14px; white-space: nowrap; }
+.ma-mock.ma-phone .ma-check em { font-size: 13px; }
+.ma-mock.ma-phone .ma-picks { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ma-mock.ma-phone .ma-pick { min-height: 96px; padding: 10px 6px; gap: 6px; border-radius: 16px; }
+.ma-mock.ma-phone .ma-pick__icon { width: 44px; height: 44px; }
+.ma-mock.ma-phone .ma-pick b { font-size: 16px; }
+.ma-mock.ma-phone .ma-pick small { font-size: 13px; }
+.ma-mock.ma-phone .ma-pick__tick { width: 28px; height: 28px; top: -9px; right: -7px; }
+.ma-mock.ma-phone .ma-ask > b { font-size: 16px; min-width: 100%; margin: 0; }
+.ma-mock.ma-phone .ma-ask { gap: 8px; }
+.ma-mock.ma-phone .ma-chip { min-height: 48px; padding: 0 12px; font-size: 15px; border-radius: 12px; }
+.ma-mock.ma-phone .ma-money { min-height: 48px; }
+.ma-mock.ma-phone .ma-money .ma-num { font-size: 20px; }
+.ma-mock.ma-phone .ma-steps li { font-size: 15px; padding: 6px 10px; gap: 10px; }
+.ma-mock.ma-phone .ma-steps { gap: 4px; }
+.ma-mock.ma-phone .ma-steps i { width: 30px; height: 30px; font-size: 14px; }
+.ma-mock.ma-phone .ma-steps--plain li { padding: 12px 2px; font-size: 17px; }
+.ma-mock.ma-phone .ma-say { padding: 14px 16px; border-radius: 18px; }
+.ma-mock.ma-phone .ma-say small { font-size: 14px; }
+.ma-mock.ma-phone .ma-say p { font-size: 22px; }
+.ma-mock.ma-phone .ma-ai { padding: 8px 12px; gap: 10px; }
+.ma-mock.ma-phone .ma-ai__icon { width: 36px; height: 36px; }
+.ma-mock.ma-phone .ma-ai p { font-size: 15px; }
+.ma-mock.ma-phone .ma-note { font-size: 15px; padding: 10px 12px; min-height: 48px; }
+.ma-mock.ma-phone .ma-speak { min-height: 48px; font-size: 15px; margin-top: 8px; }
+.ma-mock.ma-phone .ma-stat { padding: 6px 0; gap: 10px; }
+.ma-mock.ma-phone .ma-stat__icon { width: 38px; height: 38px; border-radius: 11px; }
+.ma-mock.ma-phone .ma-stat b { font-size: 15px; }
+.ma-mock.ma-phone .ma-stat .ma-num { font-size: 21px; }
+.ma-mock.ma-phone .ma-stat .ma-num small { font-size: 14px; }
+.ma-mock.ma-phone .ma-later { font-size: 16px; padding: 7px 0; gap: 10px; }
+.ma-mock.ma-phone .ma-later time { min-width: 84px; font-size: 15px; }
+.ma-mock.ma-phone .ma-fine { font-size: 13px; margin-top: 8px; }
+.ma-mock.ma-phone .ma-wait { min-height: 0; gap: 4px; padding: 6px 0; }
+.ma-mock.ma-phone .ma-pulse { width: 108px; height: 108px; margin: 22px 0 24px; box-shadow: 0 0 0 4px var(--ma-bg-secondary), 0 0 0 6px var(--st), 0 0 0 18px var(--st-soft); }
+.ma-mock.ma-phone .ma-pulse--sm { width: 84px; height: 84px; margin: 0 0 4px; box-shadow: none; }
+.ma-mock.ma-phone .ma-wait h3 { font-size: 23px; }
+.ma-mock.ma-phone .ma-wait p { font-size: 15px; }
+.ma-mock.ma-phone .ma-clock .ma-num { font-size: 68px; }
+.ma-mock.ma-phone .ma-clock span { font-size: 20px; }
+.ma-mock.ma-phone .ma-banner { padding: 8px 14px; min-height: 52px; font-size: 14px; gap: 10px; }
+.ma-mock.ma-phone .ma-banner small { font-size: 12px; }
+.ma-mock.ma-phone .ma-banner__icon { width: 34px; height: 34px; border-radius: 10px; }
+.ma-mock.ma-phone .ma-banner .ma-btn { min-height: 48px; padding: 0 12px; font-size: 14px; }
+.ma-mock.ma-phone .ma-scrim { padding: 0; place-items: end stretch; }
+.ma-mock.ma-phone .ma-dialog { border-radius: 26px 26px 0 0; padding: 20px 16px 24px; }
+.ma-mock.ma-phone .ma-dialog h2 { font-size: 23px; gap: 10px; }
+.ma-mock.ma-phone .ma-dialog > p { font-size: 15px; margin-bottom: 14px; }
+.ma-mock.ma-phone .ma-dialog__foot { margin-top: 16px; flex-direction: column-reverse; gap: 10px; }
+.ma-mock.ma-phone .ma-dialog__foot .ma-btn { width: 100%; }
+.ma-mock.ma-phone .ma-menu { top: 6px; right: 12px; width: 280px; }
+.ma-mock.ma-phone .ma-menu a { font-size: 16px; }
+.ma-mock.ma-phone .ma-tag { font-size: 13px; padding: 5px 10px; }
+.ma-mock.ma-phone .ma-callbar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.ma-mock.ma-phone .ma-picks--tight .ma-pick { min-height: 78px; padding: 8px 6px; gap: 4px; }
+.ma-mock.ma-phone .ma-picks--tight .ma-pick__icon { width: 38px; height: 38px; }
+.ma-mock.ma-phone .ma-pick__say { width: 40px; height: 36px; top: 2px; right: 0; }
+.ma-mock.ma-phone .ma-waitrow { display: flex; align-items: center; gap: 14px; }
+.ma-mock.ma-phone .ma-waitrow .ma-pulse { width: 64px; height: 64px; margin: 6px; flex: none; box-shadow: 0 0 0 3px var(--ma-bg-secondary), 0 0 0 5px var(--st), 0 0 0 11px var(--st-soft); }
+.ma-mock.ma-phone .ma-waitrow h3 { font-family: var(--ma-font-display); font-size: 20px; font-weight: 800; }
+.ma-mock.ma-phone .ma-waitrow p { font-size: 14px; color: var(--ma-text-secondary); }
+.ma-mock.ma-phone .ma-pick__ai { bottom: auto; top: -10px; left: 8px; transform: none; }
+.ma-mock.ma-phone .ma-picks--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ma-mock.ma-phone .ma-dialog__foot--row { flex-direction: row; }
+.ma-mock.ma-phone .ma-dialog__foot--row .ma-btn { width: auto; flex: 1; }
+.ma-mock.ma-phone .ma-dialog__foot--row .ma-btn--big { flex: 2; }
+.ma-mock.has-dialog > .ma-band, .ma-mock.has-dialog > .ma-foot, .ma-mock.has-dialog > .ma-banner { filter: brightness(0.55) saturate(0.8); }

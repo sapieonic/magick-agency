@@ -95,6 +95,19 @@ describe('inboundCallToWire', () => {
       sticky: { reason: 'owner', is_you: true }, outcome_due_at: null, talk_seconds: null,
     });
   });
+  it('BE-13: an outcome\'s icon the contract does not list is dropped from the catalog the agent is sent; a known one is kept', () => {
+    const catalog = [
+      { code: 'paid', label: 'Paid', icon: 'rupee' },
+      { code: 'odd', label: 'Odd', icon: 'unicorn' },
+      { code: 'plain', label: 'Plain' },
+    ] as unknown as AgencyDisposition[];
+    const wire = inboundCallToWire(base, { ...ctx, catalog }, 'u-owner');
+    expect(wire.disposition_catalog).toEqual([
+      { code: 'paid', label: 'Paid', icon: 'rupee' },
+      { code: 'odd', label: 'Odd' },
+      { code: 'plain', label: 'Plain' },
+    ]);
+  });
   it('Mode B (IQ66): every offer this build makes is a station offer with no ring; none before an offer', () => {
     expect(inboundCallToWire(base, ctx, 'u-owner')).toMatchObject({ offer_channel: 'station', ring_expires_at: null, accepted_at: null });
     const queued = { ...base, state: 'queued', session_id: null, offered_at: null } as unknown as AgencyInboundCallRecord;

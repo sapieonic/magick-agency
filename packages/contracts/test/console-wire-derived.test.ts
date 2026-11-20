@@ -48,6 +48,9 @@ interface OldAgencySessionBootstrap {
   context_display: Api.AgencyContextDisplay;
   intervals: Api.AgencyStationIntervals;
   retry_context?: Api.AgencyRetryContext;
+  // Added deliberately (agent station, BE-8 and AS9): the campaign's script and number display.
+  script?: Api.AgencyAgentScript;
+  phone_display?: Api.AgencyPhoneDisplay;
 }
 
 interface OldAgencySessionStateResponse {
@@ -217,6 +220,8 @@ interface OldAgencyDispositionEntry {
   // Added deliberately (promise to pay, PT1/PT2): the promise ask and its follow-up.
   requires_promise?: boolean;
   promise_follow_up_days?: number;
+  // Added deliberately (agent station, BE-13): the tile's picture from AGENCY_TILE_ICONS.
+  icon?: Api.AgencyTileIcon;
 }
 
 interface OldAgencyRetryRule {
@@ -233,6 +238,8 @@ interface OldAgencyAttempt {
   caller_id: string;
   agent_user_id: string | null;
   agent_name?: string | null;
+  // Added deliberately (agent station AS9): the campaign's number display, on the agent's own read.
+  phone_display?: Api.AgencyPhoneDisplay;
   reserved_agent_id: string | null;
   state: Api.AgencyAttemptState;
   outcome: Api.AgencyAttemptOutcome | null;

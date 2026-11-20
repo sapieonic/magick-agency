@@ -13,6 +13,8 @@ import type {
 import type { DialCommand } from '../dial-dispatcher.js';
 import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 import { contactPromise } from '../../db/repositories/agency/projections.js';
+import { attemptCallbackOf } from '../call-later.js';
+import { customerFacts } from '../customer-facts.js';
 
 /** An attempt this replica is currently driving, and what a reconnect needs to know. */
 export interface LiveAttempt {
@@ -203,6 +205,15 @@ export function isUnannounced(live: LiveAttempt): boolean {
  */
 export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): AgencyReservedAttempt {
   const promise = contactPromise(cmd.contact);
+  // Agent station (BE-4): a call-later coming due says so ("You said you will call at 3:00 PM"),
+  // read from the contact as claimed. Absent on every other dial and on a wrap-up redial. An
+  // optional field on the existing frames, so no capability: old builds read named keys only.
+  const callback = attemptCallbackOf({
+    contact: cmd.contact,
+    catalog: cmd.campaign.disposition_catalog,
+    agentUserId: cmd.agentUserId,
+    redial: cmd.redial !== undefined,
+  });
   return {
     attempt_id: cmd.attemptId,
     campaign_id: cmd.campaignId,
@@ -212,6 +223,8 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
     caller_id: cmd.callerId,
     attempt_number: cmd.attemptNumber,
     context: cmd.contact.context,
+    // BE-6: the customer's name, place and fact tiles, parsed once here for both clients.
+    facts: customerFacts(cmd.contact.context, cmd.campaign.context_display),
     prior_attempts: priors,
     // PT9: the contact's latest promise, so the agent sees it as they reach the customer. Only
     // when there is one: a panel without a promise is what it was before.
@@ -225,5 +238,6 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
           },
         }
       : {}),
+    ...(callback ? { callback } : {}),
   };
 }

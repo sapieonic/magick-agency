@@ -20,6 +20,7 @@ import {
   isSendableAlawMessage,
   readAgencyMediaPayload,
   uplinkFrameFormat,
+  withStationCapsQuery,
   withStationMediaQuery,
   type AgencyUplinkFrame,
 } from '../utils/agencyMedia';
@@ -207,6 +208,8 @@ export function useAgencyStation(
     releasedAt,
     lastError,
     dialing,
+    campaignReason,
+    nextRetryAt,
     missedPings,
     manualCall,
     queue,
@@ -670,7 +673,7 @@ export function useAgencyStation(
              * **`release` does NOT unconditionally go with them**, and that is the
              * correction: it used to, and the rule was written when the wrap-up rail
              * was its only consumer. It has a second one now with a longer lifetime
-             * — `IdlePanel` renders `releaseAccount(release)` for a
+             * — the station's "The last call ended." banner (`unexplained-release`) for a
              * `requires_disposition` release that no wrap-up ever explained (the agent dispositioned mid-call, so `agent_state{wrapup}` and
              * `wrapup` are never sent and the state goes `on_call → available`). On
              * that path this console **witnessed** the release while connected, so
@@ -944,7 +947,7 @@ export function useAgencyStation(
         case 'campaign_state': {
           // `dialing` and not `status`: deriving the predicate from `status`
           // forces every client to re-derive it, and they will disagree.
-          dispatch({ type: 'campaign_state', dialing: frame.dialing });
+          dispatch({ type: 'campaign_state', dialing: frame.dialing, reason: frame.reason });
           logDiagnostic('campaign_state', `${frame.status} (${frame.reason})`);
           return;
         }
@@ -1264,7 +1267,8 @@ export function useAgencyStation(
     socketFormatRef.current = format;
     setSocketFormat(format);
 
-    const socket = new WebSocket(toAbsoluteWsUrl(withStationMediaQuery(url, format)));
+    // The format, and what this station can show (`caps=queue_pool`, AS18).
+    const socket = new WebSocket(toAbsoluteWsUrl(withStationMediaQuery(withStationCapsQuery(url), format)));
     // `alaw8` audio arrives as binary messages: as `ArrayBuffer`, never the default
     // `Blob`, whose bytes can only be read through a promise per 20 ms frame.
     socket.binaryType = 'arraybuffer';
@@ -1541,6 +1545,8 @@ export function useAgencyStation(
 
       const delay = backoffFor(retryCountRef.current);
       retryCountRef.current += 1;
+      // Screen 09 counts down to it (spec 5.6: the delay was local to this function).
+      dispatch({ type: 'retry_scheduled', at: Date.now() + delay });
       retryRef.current = setTimeout(() => {
         void connect();
       }, delay);
@@ -1725,6 +1731,10 @@ export function useAgencyStation(
     missedRelease,
     lastError,
     dialing,
+    /** Why the campaign last changed state (`campaign_state.reason`); null until one says. */
+    campaignReason,
+    /** When the reconnect ladder tries next (local epoch ms), while `reconnecting`; else null. */
+    nextRetryAt,
     missedPings,
     diagnostics: diagnostics.entries,
     manualCall,

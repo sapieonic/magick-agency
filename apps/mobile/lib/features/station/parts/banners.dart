@@ -12,47 +12,30 @@ import '../station_providers.dart';
 /// only its own slice of the station, so a notes keystroke or a timer never
 /// rebuilds them.
 
-/// Campaign name, Running/Paused and the weak-connection pill.
-class StationHeader extends ConsumerWidget {
-  const StationHeader({super.key});
+/// "Slow internet": pings are arriving late (two or more missed) while the line is still open. One
+/// line under the band; a line that is down is a screen of its own (Internet problem, Call problem).
+class WeakConnectionLine extends ConsumerWidget {
+  const WeakConnectionLine({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
-    final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
     final weak = ref.watch(stationViewProvider.select((v) => v != null && v.weakConnection && v.link == StationLink.open));
-    final listenNotice = ref.watch(stationListenNoticeProvider);
-    final text = Theme.of(context).textTheme;
+    if (!weak) return const SizedBox.shrink();
+    final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.sm),
-      child: Row(
-        children: [
-          Expanded(
-            child: Semantics(
-              header: true,
-              child: Text(name, style: text.titleLarge, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-          ),
-          const SizedBox(width: Space.sm),
-          Flexible(
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              spacing: Space.xs,
-              runSpacing: Space.xs,
-              children: [
-                if (weak)
-                  StatusPill(
-                    StationCopy.weakConnection,
-                    key: const Key('weak-connection'),
-                    tone: Tone.warn,
-                    leading: Icon(Icons.network_check, size: 14, color: context.tokens.warning),
-                  ),
-                StatusPill(dialing ? StationCopy.running : StationCopy.paused, tone: dialing ? Tone.ok : Tone.warn),
-              ],
-            ),
-          ),
-          if (listenNotice) const ListenInfoButton(key: Key('station-info')),
-        ],
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: AppCard(
+        key: const Key('weak-connection'),
+        color: t.warningSubtle,
+        borderColor: t.warning.withValues(alpha: 0.4),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+        child: Row(
+          children: [
+            Icon(Icons.network_check, size: 20, color: t.warning),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(StationCopy.internetSlow, style: Theme.of(context).textTheme.titleSmall!.copyWith(color: t.warning))),
+          ],
+        ),
       ),
     );
   }
@@ -160,47 +143,6 @@ Future<void> showStationInfoSheet(BuildContext context) {
   );
 }
 
-/// Reconnecting / disconnected while no call is on screen: a slim banner
-/// above the idle content (the call screens put this in their band instead).
-class IdleLinkBanner extends ConsumerWidget {
-  const IdleLinkBanner({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final link = ref.watch(stationViewProvider.select((v) => v?.link));
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    switch (link) {
-      case StationLink.reconnecting:
-        return _Banner(
-          key: const Key('idle-reconnecting'),
-          color: t.ember,
-          background: t.emberSubtle,
-          leading: const LiveDot(),
-          title: StationCopy.reconnecting,
-          body: StationCopy.reconnectingIdle,
-        );
-      case StationLink.disconnected:
-        final busy = ref.watch(stationViewProvider.select((v) => v?.busy != StationBusy.none));
-        return _Banner(
-          key: const Key('idle-disconnected'),
-          color: t.danger,
-          background: t.dangerSubtle,
-          leading: Icon(Icons.wifi_off, color: t.danger),
-          title: StationCopy.disconnected,
-          body: StationCopy.disconnectedDetail,
-          action: FilledButton(
-            onPressed: busy ? null : () => ref.read(stationActionsProvider).reconnect(),
-            style: FilledButton.styleFrom(backgroundColor: t.dangerDeep, foregroundColor: t.onAccent),
-            child: Text(StationCopy.reconnect, style: text.labelLarge!.copyWith(color: t.onAccent)),
-          ),
-        );
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-}
-
 class _Banner extends StatelessWidget {
   const _Banner({super.key, required this.color, required this.background, required this.title, this.body, this.leading, this.action});
 
@@ -305,9 +247,11 @@ class MissedReleaseCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(StationCopy.whileAway(missed.headline), style: text.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(missed.detail, style: text.bodySmall),
+                    Text(missed.headline, key: const Key('missed-release-line'), style: text.titleSmall),
+                    if (missed.detail.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(missed.detail, style: text.bodySmall),
+                    ],
                   ],
                 ),
               ),
@@ -425,6 +369,7 @@ class StationTopNotices extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final waiting = ref.watch(stationViewProvider.select((v) => v?.customerWaiting));
     final notice = ref.watch(stationViewProvider.select((v) => v?.inboundNotice));
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
     if (waiting == null && notice == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.md),
@@ -432,7 +377,7 @@ class StationTopNotices extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (waiting != null) CustomerWaitingBanner(waiting: waiting),
+          if (waiting != null) CustomerWaitingBanner(waiting: waiting, masked: masked),
           if (waiting != null && notice != null) const SizedBox(height: Space.sm),
           if (notice != null) InboundNoticeLine(text: notice),
         ],
@@ -444,16 +389,19 @@ class StationTopNotices extends ConsumerWidget {
 /// "Your customer is waiting: Rahul Deshpande": a caller who usually speaks to this agent rang
 /// in while they were busy, and is put through to them when this call's work is done.
 class CustomerWaitingBanner extends StatelessWidget {
-  const CustomerWaitingBanner({super.key, required this.waiting});
+  const CustomerWaitingBanner({super.key, required this.waiting, this.masked = false});
 
   final CustomerWaitingView waiting;
+
+  /// The campaign masks numbers (AS9): a caller with no name is `98••• ••321`.
+  final bool masked;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     final from = waiting.fromE164;
-    final who = waiting.name ?? (from == null ? null : formatPhone(from));
+    final who = waiting.name ?? (from == null ? null : stationPhone(from, masked: masked));
     final line = InboundCopy.customerWaiting(who);
     // A live region: said (politely) when it appears and when the caller waiting changes (the
     // label names them), never again on a rebuild with the same words.

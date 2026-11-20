@@ -8,12 +8,16 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show agentWorkspaceProvider;
 import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/speech/read_aloud.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/performance/performance_controller.dart' show statsClockProvider;
 import 'package:magick_agency_agent/features/station/station_providers.dart';
+import 'package:magick_agency_agent/features/station/station_reads.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
 import '../softphone/softphone_harness.dart' show FakeSoftphoneActions, ShellScaffold, setPhoneInsets;
@@ -153,6 +157,23 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
   Future<void> dismiss() async => calls.add('dismiss');
 }
 
+/// Records what would be read aloud.
+class FakeReadAloud implements ReadAloud {
+  FakeReadAloud({this.available = true});
+
+  /// What [canSpeak] answers: a phone with an engine and a language.
+  final bool available;
+  final said = <String>[];
+  int stops = 0;
+
+  @override
+  Future<bool> canSpeak() async => available;
+  @override
+  Future<void> speak(String text) async => said.add(text);
+  @override
+  Future<void> stop() async => stops++;
+}
+
 class SoftphoneHolder extends Notifier<SoftphoneView> {
   SoftphoneHolder(this.initial);
   final SoftphoneView initial;
@@ -201,6 +222,9 @@ class StationHarness {
   /// The soft phone's seams: the host's actions, the panel's actions, its view
   /// and its availability.
   final host = FakeSoftphoneHost();
+
+  /// What the station read aloud (AS13).
+  late final FakeReadAloud readAloud;
   final softphoneActions = FakeSoftphoneActions();
   late final NotifierProvider<SoftphoneHolder, SoftphoneView> softphone;
   late final NotifierProvider<AvailabilityHolder, SoftphoneAvailability> availability;
@@ -270,6 +294,33 @@ Future<void> settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+/// ⋮ More, opened.
+Future<void> openMore(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('station-more')));
+  await settle(tester);
+}
+
+/// ⋮ More, then the item with [key].
+Future<void> tapMore(WidgetTester tester, String key) async {
+  await openMore(tester);
+  await tester.tap(find.byKey(Key(key)));
+  await settle(tester);
+}
+
+/// Slides End call [fraction] of the way along its track (1: all the way, which ends the call).
+Future<void> slideToEnd(WidgetTester tester, {double fraction = 1}) async {
+  final r = tester.getRect(find.byKey(const Key('hang-up')));
+  await tester.dragFrom(Offset(r.left + 32, r.center.dy), Offset(r.width * fraction, 0));
+  await tester.pump();
+}
+
+/// Finish work for today: ⋮ More, then Yes on the sheet.
+Future<void> finishWork(WidgetTester tester) async {
+  await tapMore(tester, 'leave');
+  await tester.tap(find.byKey(const Key('finish-yes')));
+  await settle(tester);
+}
+
 /// [statusBar], [keyboard] and [shell] put the phone's own chrome around the
 /// station: see `setPhoneInsets` and `ShellScaffold` in the soft-phone harness.
 Future<StationHarness> pumpStation(
@@ -284,7 +335,7 @@ Future<StationHarness> pumpStation(
   bool disableAnimations = false,
   bool supportsAnnounce = false,
   String campaignId = 'c1',
-  Brightness brightness = Brightness.dark,
+  Brightness brightness = Brightness.light,
   SoftphoneAvailability availability = SoftphoneAvailability.hidden,
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
@@ -292,6 +343,14 @@ Future<StationHarness> pumpStation(
   bool needHelp = false,
   String? listenScope,
   KeyValueStore? store,
+  String? agentName = 'Sunita Yadav',
+  MyDayView? myDay,
+  List<CallLaterItem> callLater = const [],
+  bool? callLaterComesToMe,
+  bool? callLaterGoesToPool,
+  void Function()? onMyDayRead,
+  bool readAloudAvailable = true,
+  Map<String, bool> matchedAssigns = const {},
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -312,6 +371,7 @@ Future<StationHarness> pumpStation(
   });
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
+  final readAloudFake = FakeReadAloud(available: readAloudAvailable);
   final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
   final softphoneHolder = NotifierProvider<SoftphoneHolder, SoftphoneView>(() => SoftphoneHolder(softphone));
   final availabilityHolder = NotifierProvider<AvailabilityHolder, SoftphoneAvailability>(() => AvailabilityHolder(availability));
@@ -323,6 +383,8 @@ Future<StationHarness> pumpStation(
       stationViewProvider.overrideWith((ref) => ref.watch(holder)),
       stationActionsProvider.overrideWithValue(actions),
       stationClockProvider.overrideWithValue(clock.call),
+      // The reads' clock (the end of the day they count) is the test's too.
+      statsClockProvider.overrideWithValue(clock.call),
       stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
       softphoneHostActionsProvider.overrideWith((ref) => h.host),
       softphoneActionsProvider.overrideWith((ref) => h.softphoneActions),
@@ -334,11 +396,26 @@ Future<StationHarness> pumpStation(
       // Nobody to remember the one-time listening notice for unless a test names one.
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
+      stationAgentNameProvider.overrideWithValue(agentName),
+      readAloudProvider.overrideWithValue(readAloudFake),
+      // Answered at once (the device asks the platform once per run).
+      readAloudAvailableProvider.overrideWith((ref) => readAloudAvailable),
+      stationMyDayProvider.overrideWith((ref, id) async {
+        onMyDayRead?.call();
+        return myDay;
+      }),
+      // An inbound caller matched to another campaign: that campaign's routing (AS8), by its id.
+      matchedAssignsContactsProvider.overrideWith((ref, id) async => matchedAssigns[id] ?? false),
+      agentWorkspaceProvider.overrideWithValue('u1:t1:a1'),
+      stationCallLaterProvider.overrideWith(
+        (ref, key) async => CallLaterList(items: callLater, comesToMe: callLaterComesToMe, leftGoesToPool: callLaterGoesToPool),
+      ),
       ...extra,
     ],
   );
   addTearDown(container.dispose);
   h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements)
+    ..readAloud = readAloudFake
     ..softphone = softphoneHolder
     ..availability = availabilityHolder;
   actions.afterLeave = () async {
@@ -388,6 +465,8 @@ Future<StationHarness> pumpStation(
     ),
   );
   await tester.pump();
+  // The station's reads (My day, the call-later list) answer on the next microtask.
+  await tester.pump();
   return h;
 }
 
@@ -416,6 +495,8 @@ CallView call({
   int? redialLimit,
   PromiseView? promise,
   List<PriorAttempt>? priorAttempts,
+  CallLaterTag? callback,
+  FactsView? facts,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -444,6 +525,8 @@ CallView call({
   redialNumber: redialNumber,
   redialLimit: redialLimit,
   promise: promise,
+  callback: callback,
+  facts: facts,
 );
 
 StationView station({
@@ -451,6 +534,7 @@ StationView station({
   AgentPhase phase = AgentPhase.available,
   DateTime? phaseSince,
   bool dialing = true,
+  CallsStopped? stopped = CallsStopped.bySupervisor,
   BreakInfo? onBreak,
   BreakInfo? queuedBreak,
   CallView? call,
@@ -471,8 +555,13 @@ StationView station({
   QueueView? queue,
   DialActivityView? dialActivity,
   bool myContactsOffered = false,
+  bool assignsContacts = false,
   List<DispositionOption>? dispositionOptions,
+  List<BreakOption> breakOptions = breaks,
   HelpView help = const HelpView(),
+  ScriptView? script,
+  bool maskPhone = false,
+  int readyCount = 1,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -481,9 +570,10 @@ StationView station({
   phase: phase,
   phaseSince: phaseSince,
   campaignDialing: dialing,
+  callsStopped: dialing ? null : stopped,
   onBreak: onBreak,
   queuedBreak: queuedBreak,
-  breakOptions: breaks,
+  breakOptions: breakOptions,
   call: call,
   release: release,
   wrapup: wrapup,
@@ -502,7 +592,11 @@ StationView station({
   queue: queue,
   dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
+  assignsContacts: assignsContacts,
   help: help,
+  script: script,
+  maskPhone: maskPhone,
+  readyCount: readyCount,
 );
 
 const hungUpRelease = ReleaseView(

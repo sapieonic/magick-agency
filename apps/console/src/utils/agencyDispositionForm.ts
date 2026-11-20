@@ -227,3 +227,16 @@ export function dispositionForNumberKey(
   if (!/^[1-9]$/.test(key)) return null;
   return catalog[Number(key) - 1] ?? null;
 }
+
+/** Number keys 1–9 pick the first nine outcomes, by index in the server's order. */
+export const NUMBER_KEY_COUNT = 9;
+
+/**
+ * What the keyboard drives on the outcome tiles (`WhatHappened`, an inbound call's and the soft
+ * phone's): `C` selects the call-later outcome and focuses its first time chip, both halves in one
+ * call, so the key and a pointer share one state machine. Keyed on the `requires_datetime` flag,
+ * never on a code: a campaign may rename or replace the built-in codes.
+ */
+export interface DispositionPadHandle {
+  selectCallback: () => boolean;
+}

@@ -153,13 +153,6 @@ export function dialBlockReason(value: string): DialBlockReason | null {
   return null;
 }
 
-export const DIAL_BLOCK_COPY: Record<DialBlockReason, string> = {
-  empty: 'Type or paste a number to call.',
-  too_short: 'That number is too short to call.',
-  too_long: 'That number is too long — a phone number has at most 15 digits.',
-  not_a_number: '* and # are tones, not part of a number. Remove them to call.',
-};
-
 /**
  * A number laid out for reading: `+91 98204 61733` for an Indian mobile, the
  * country code split off for other `+` numbers we can recognise, and the value

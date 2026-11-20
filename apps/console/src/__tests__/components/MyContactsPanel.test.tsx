@@ -96,12 +96,34 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+describe('the number, as the station shows it (AS9)', () => {
+  it('in full by default, formatted as the station formats it', async () => {
+    renderPanel();
+    await screen.findByTestId('my-row-c-due');
+    expect(screen.getByTestId('my-phone-c-due').textContent).toBe('+91 98000 00001');
+  });
+
+  it('masked from the rows when their campaign masks it (the server\'s phone_display): the rows, the retry ticks and the calling-hours note', async () => {
+    // FALSIFIED: with the panel ignoring the row's `phone_display`, the numbers show in full and this reds.
+    mocks.listMyContacts.mockResolvedValue({
+      rows: [DUE, MISSED, LATE_HOURS].map((r) => ({ ...r, phone_display: 'masked' as const })), next_cursor: 'cur-2', limit: 25,
+    });
+    renderPanel({ queue: { due: false, reason: 'outside_calling_hours', next_due_at: null } });
+    await screen.findByTestId('my-row-c-due');
+    expect(screen.getByTestId('my-phone-c-due').textContent).toBe('98••• ••001');
+    expect(screen.getByLabelText('Include 98••• ••002 in the retry')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('my-call-c-hours'));
+    expect(screen.getByTestId('my-note-prompt').textContent).toContain('Why call 98••• ••003 now?');
+    expect(screen.getByTestId('my-contacts').textContent).not.toMatch(/9800000/);
+  });
+});
+
 describe('the list and the counts', () => {
   it('shows the summary counts, the next callback time, and each contact with its hero fields', async () => {
     renderPanel();
     await screen.findByTestId('my-row-c-due');
     expect(within(screen.getByTestId('my-count-not_reached')).getByText('8')).toBeTruthy();
-    expect(within(screen.getByTestId('my-count-suppressed')).getByText('DNC')).toBeTruthy();
+    expect(within(screen.getByTestId('my-count-suppressed')).getByText('Don’t call again')).toBeTruthy();
     expect(screen.getByTestId('my-count-callback').textContent).toContain('next ');
     expect(screen.getByTestId('my-row-c-due').textContent).toContain('Ravi Kumar · LN-42');
     expect(screen.getByTestId('my-override-c-hours').textContent).toBe('Override: may call outside hours');
@@ -131,7 +153,7 @@ describe('the list and the counts', () => {
     mocks.getMyContactsSummary.mockResolvedValue({ ...SUMMARY, caller_id: '+912200000001' });
     renderPanel();
     expect((await screen.findByTestId('my-caller-id')).textContent)
-      .toBe('Calls to your contacts on this campaign go from +91 22000 00001.');
+      .toBe('Calls to your customers on this work go from +91 22000 00001.');
   });
 
   it('says nothing about a caller ID on the shared rotation', async () => {
@@ -164,7 +186,7 @@ describe('the list and the counts', () => {
   it('says a refusal of the read in words', async () => {
     mocks.getMyContactsSummary.mockRejectedValue(new ApiError(403, { code: 'not_staffed', message: 'x' }));
     renderPanel();
-    expect(await screen.findByText('You’re no longer on this campaign. Ask your supervisor to add you back.')).toBeTruthy();
+    expect(await screen.findByText('You are no longer on this work. Ask your supervisor to add you back.')).toBeTruthy();
   });
 });
 
@@ -188,8 +210,8 @@ describe('Retry not reached', () => {
   it('retries only the ticked rows when some are ticked (eligible rows only)', async () => {
     renderPanel();
     await screen.findByTestId('my-row-c-missed');
-    expect((screen.getByLabelText('Include +919800000001 in the retry') as HTMLInputElement).disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText('Include +919800000002 in the retry'));
+    expect((screen.getByLabelText('Include +91 98000 00001 in the retry') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Include +91 98000 00002 in the retry'));
     expect(screen.getByTestId('my-retry').textContent).toContain('Retry selected (1)');
     fireEvent.click(screen.getByTestId('my-retry'));
     fireEvent.click(screen.getByTestId('my-retry-confirm-yes'));
@@ -203,7 +225,7 @@ describe('Retry not reached', () => {
     renderPanel();
     await screen.findByTestId('my-row-c-due');
     expect(screen.queryByTestId('my-retry')).toBeNull();
-    expect(screen.queryByLabelText('Include +919800000002 in the retry')).toBeNull();
+    expect(screen.queryByLabelText('Include +91 98000 00002 in the retry')).toBeNull();
   });
 
   it('words a refusal', async () => {
@@ -211,7 +233,7 @@ describe('Retry not reached', () => {
     renderPanel();
     fireEvent.click(await screen.findByTestId('my-retry'));
     fireEvent.click(screen.getByTestId('my-retry-confirm-yes'));
-    expect((await screen.findByText('This campaign doesn’t let agents retry their own contacts.'))).toBeTruthy();
+    expect((await screen.findByText('This work does not let you call your customers again yourself.'))).toBeTruthy();
   });
 });
 
@@ -230,7 +252,7 @@ describe('Call', () => {
     const call = await screen.findByTestId('my-call-c-due') as HTMLButtonElement;
     expect(call.disabled).toBe(true);
     const reason = document.getElementById(call.getAttribute('aria-describedby')!);
-    expect(reason?.textContent).toBe('Go available to call a contact.');
+    expect(reason?.textContent).toBe('Start calls first, then call a customer.');
   });
 
   it('asks for a 10–500 character note when the window is closed and the contact may be called outside it', async () => {
@@ -260,8 +282,8 @@ describe('Call', () => {
     renderPanel({ queue: null });
     fireEvent.click(await screen.findByTestId('my-call-c-hours'));
     const prompt = await screen.findByTestId('my-note-prompt');
-    expect(prompt.textContent).toContain('The campaign is outside its calling hours. You may still call this contact');
-    expect(prompt.textContent).toContain('Why call +919800000003 now?');
+    expect(prompt.textContent).toContain('It is outside calling hours for this work. You may still call this customer');
+    expect(prompt.textContent).toContain('Why call +91 98000 00003 now?');
     expect(screen.getByTestId('my-notice').textContent).toBe('');
     fireEvent.change(within(prompt).getByTestId('my-note'), { target: { value: 'Customer asked for an evening call' } });
     fireEvent.click(within(prompt).getByTestId('my-note-call'));
@@ -290,7 +312,7 @@ describe('Call', () => {
     renderPanel({ queue: null });
     fireEvent.click(await screen.findByTestId('my-call-c-due'));
     expect((await screen.findByTestId('my-notice')).textContent)
-      .toContain('The campaign is outside its calling hours. It opens again');
+      .toContain('It is outside calling hours for this work. It opens again');
     expect(screen.queryByTestId('my-note-prompt')).toBeNull();
   });
 
@@ -304,7 +326,7 @@ describe('Call', () => {
     expect(document.getElementById(other.getAttribute('aria-describedby')!)?.textContent)
       .toBe('Finish or cancel the note above first.');
     // The prompt still names the first contact, and its call dials that one.
-    expect(screen.getByTestId('my-note-prompt').textContent).toContain('+919800000003');
+    expect(screen.getByTestId('my-note-prompt').textContent).toContain('+91 98000 00003');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect((screen.getByTestId('my-call-c-due') as HTMLButtonElement).disabled).toBe(false);
   });
@@ -314,7 +336,7 @@ describe('Call', () => {
     renderPanel();
     fireEvent.click(await screen.findByTestId('my-call-c-due'));
     expect((await screen.findByTestId('my-notice')).textContent)
-      .toBe('This number is on the Do Not Call list. It can’t be called.');
+      .toBe('We must not call this number.');
     expect(onCalled).not.toHaveBeenCalled();
   });
 });
@@ -340,8 +362,8 @@ describe('the header lock', () => {
   it('is refused, with the reason, while a call is reserved, live or in wrap-up', () => {
     expect(myContactsLockReason('reserved', true)).toBe('Finish this call first.');
     expect(myContactsLockReason('on_call', true)).toBe('Finish this call first.');
-    expect(myContactsLockReason('wrapup', true)).toBe('Save the outcome first.');
-    expect(myContactsLockReason('available', false)).toBe('Your station isn’t connected.');
+    expect(myContactsLockReason('wrapup', true)).toBe('Save what happened first.');
+    expect(myContactsLockReason('available', false)).toBe('Your screen is not connected.');
     expect(myContactsLockReason('available', true)).toBeNull();
     expect(myContactsLockReason('break', true)).toBeNull();
   });
