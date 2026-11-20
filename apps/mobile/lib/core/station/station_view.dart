@@ -40,14 +40,18 @@ enum ReleaseTone { neutral, warning, danger }
 
 @immutable
 class BreakOption {
-  const BreakOption({required this.code, required this.label});
+  const BreakOption({required this.code, required this.label, this.limitMinutes});
   final String code;
   final String label;
 
+  /// The reason's limit in minutes ("Tea 15 min" on Which break?); null for a reason with none.
+  final int? limitMinutes;
+
   @override
-  bool operator ==(Object other) => other is BreakOption && other.code == code && other.label == label;
+  bool operator ==(Object other) =>
+      other is BreakOption && other.code == code && other.label == label && other.limitMinutes == limitMinutes;
   @override
-  int get hashCode => Object.hash(code, label);
+  int get hashCode => Object.hash(code, label, limitMinutes);
 }
 
 /// The break the agent is on, or has queued for after this call.

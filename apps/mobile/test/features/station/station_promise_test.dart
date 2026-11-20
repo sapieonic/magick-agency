@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
+import 'package:magick_agency_agent/features/station/widgets/action_buttons.dart';
 
 import 'station_harness.dart';
 
@@ -25,11 +27,13 @@ void main() {
   testWidgets('a promise outcome asks for the date, then sends it with the amount', (tester) async {
     final h = await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
     expect(find.byKey(const Key('promise-picker')), findsNothing);
+    // Picking it opens the follow-up sheet (design-spec §4): the date is needed, the amount is not.
     await tester.tap(find.byKey(const Key('outcome-ptp')));
-    await tester.pump();
+    await settle(tester);
+    expect(find.byKey(const Key('follow-up-sheet')), findsOneWidget);
     expect(find.byKey(const Key('promise-picker')), findsOneWidget);
-    expect(find.text('This outcome needs the date the customer promised to pay.'), findsOneWidget);
     expect(find.text('Saving a promise doesn’t book a call.'), findsOneWidget);
+    expect(tester.widget<MainActionButton>(find.byKey(const Key('follow-up-ok'))).onPressed, isNull);
 
     await tester.ensureVisible(find.byKey(const Key('promise-Tomorrow')));
     await tester.tap(find.byKey(const Key('promise-Tomorrow')));
@@ -37,8 +41,12 @@ void main() {
     await tester.enterText(find.byKey(const Key('promise-amount')), '12500');
     await tester.pump();
     expect(find.text('Promised 1 Nov 2026 · 12,500'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('follow-up-ok')));
+    await tester.tap(find.byKey(const Key('follow-up-ok')));
+    await settle(tester);
+    // One summary row: "Will pay on Sun 1 Nov · 12,500 · Change".
+    expect(find.text('Will pay on Sun 1 Nov · 12,500'), findsOneWidget);
 
-    await tester.ensureVisible(find.byKey(const Key('save-outcome')));
     await tester.tap(find.byKey(const Key('save-outcome')));
     await tester.pump();
     expect(h.actions.args['submitDisposition'], ['ptp', null, null, '2026-11-01', '12500.00']);
@@ -47,14 +55,17 @@ void main() {
   testWidgets('a bad amount blocks the save, with the reason beside it', (tester) async {
     final h = await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
     await tester.tap(find.byKey(const Key('outcome-ptp')));
-    await tester.pump();
+    await settle(tester);
     await tester.ensureVisible(find.byKey(const Key('promise-Today')));
     await tester.tap(find.byKey(const Key('promise-Today')));
     await tester.pump();
     await tester.enterText(find.byKey(const Key('promise-amount')), '1.005');
     await tester.pump();
-    expect(find.text('Enter the amount as a number, with up to two decimal places and no commas.'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('save-outcome')));
+    expect(find.text(StationCopy.amountNotRight), findsOneWidget);
+    expect(tester.widget<MainActionButton>(find.byKey(const Key('follow-up-ok'))).onPressed, isNull);
+    await tester.ensureVisible(find.byKey(const Key('follow-up-back')));
+    await tester.tap(find.byKey(const Key('follow-up-back')));
+    await settle(tester);
     await tester.tap(find.byKey(const Key('save-outcome')));
     await tester.pump();
     expect(h.actions.args['submitDisposition'], isNull);
@@ -63,7 +74,7 @@ void main() {
   testWidgets('the date picker reaches 31 days ahead, as the rule does (a customer a day ahead)', (tester) async {
     await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
     await tester.tap(find.byKey(const Key('outcome-ptp')));
-    await tester.pump();
+    await settle(tester);
     await tester.ensureVisible(find.byKey(const Key('promise-pick')));
     await tester.tap(find.byKey(const Key('promise-pick')));
     await tester.pumpAndSettle();
@@ -75,7 +86,7 @@ void main() {
   testWidgets('a follow-up outcome says when we call again', (tester) async {
     await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
     await tester.tap(find.byKey(const Key('outcome-ptp_f')));
-    await tester.pump();
+    await settle(tester);
     expect(find.text('We’ll call again 3 days after this date, in calling hours.'), findsOneWidget);
   });
 

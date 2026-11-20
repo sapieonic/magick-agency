@@ -16,6 +16,7 @@ import type {
   AgencyContactState,
   AgencyBreakReason,
   AgencyContextDisplay,
+  AgencyAgentScript,
   AgencyDisposition,
   AgencyManualCallDispositionSource,
   AgencyManualCallEndReason,
@@ -29,7 +30,6 @@ import type {
   AgencyOutcomeDispositions,
   AgencyOverrideKind,
   CarrierAccountPauseReason,
-  AgencyAgentScript,
   AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
 
@@ -129,8 +129,6 @@ export interface AgencyCampaignRecord {
   daily_target_calls: number | null;
   /** Agent station (0056, AS9): how the station shows the customer's number. Copied by a retry. */
   phone_display: AgencyPhoneDisplay;
-  /** Agent station (0056, BE-8): the agents' script; `{}` is none. Copied by a retry. */
-  agent_script: AgencyAgentScript | Record<string, never>;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
@@ -141,6 +139,11 @@ export interface AgencyCampaignRecord {
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
   break_reasons: AgencyBreakReason[];
   context_display: AgencyContextDisplay;
+  /**
+   * Agent station (BE-8, 0056): the campaign's script, `{}` when it has none (the column default).
+   * Written by the PATCH (`src/agency/agent-script.ts`); served on the bootstrap as `script`.
+   */
+  agent_script: AgencyAgentScript;
   record_calls: boolean;
   analysis_profile_id: string | null;
   status: AgencyCampaignStatus;

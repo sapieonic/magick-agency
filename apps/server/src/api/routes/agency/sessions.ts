@@ -40,6 +40,7 @@ import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { publishCacheInvalidation } from '../../../cache/cache-invalidation.js';
 import { CAMPAIGN_STATS_CACHE } from '../../../agency/campaign-stats-reads.js';
+import { agentScriptForBootstrap } from '../../../agency/agent-script.js';
 
 /**
  * `/available`, force-available and `/leave` while a wrap-up redial is in flight
@@ -309,6 +310,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       }),
     ]);
 
+    const script = agentScriptForBootstrap(campaign.agent_script);
     const bootstrap: AgencySessionBootstrap = {
       session_id: session.id,
       campaign_id: campaign.id,
@@ -343,6 +345,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // contract and absent for every non-retry campaign, so an older console
       // that has never seen it gets a byte-identical payload.
       ...(retryContext ? { retry_context: retryContext } : {}),
+      // Agent station (BE-8): the campaign's script, absent when it has none, so the station
+      // shows its no-script call screen and an older client gets the payload it knew.
+      ...(script ? { script } : {}),
     };
     return reply.code(201).send(bootstrap);
   });

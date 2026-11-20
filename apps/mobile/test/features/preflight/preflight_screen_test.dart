@@ -7,10 +7,12 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_copy.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_screen.dart';
+import 'package:magick_agency_agent/features/station/station_providers.dart';
 
 /// Each check is a completer the test resolves when it wants.
 class FakeChecks implements PreflightChecks {
@@ -129,7 +131,7 @@ Future<void> pumpPreflight(
   addTearDown(router.dispose);
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [preflightChecksProvider.overrideWithValue(checks), stationLauncherProvider.overrideWithValue(launcher)],
+      overrides: [preflightChecksProvider.overrideWithValue(checks), stationLauncherProvider.overrideWithValue(launcher), ...startOfDayOverrides],
       child: MaterialApp.router(
         theme: buildTheme(AppTokens.dark, Brightness.dark),
         routerConfig: router,
@@ -142,6 +144,13 @@ Future<void> pumpPreflight(
   );
   await tester.pump();
 }
+
+/// The station-side reads Start of day shows, with nobody signed in and no soft phone.
+final startOfDayOverrides = [
+  stationAgentNameProvider.overrideWithValue('Sunita Yadav'),
+  softphoneAvailabilityProvider.overrideWithValue(SoftphoneAvailability.hidden),
+  stationListenNoticeProvider.overrideWithValue(false),
+];
 
 EmberButtonFinder get goOnDuty => find.byKey(const Key('go-on-duty'));
 typedef EmberButtonFinder = Finder;
@@ -205,10 +214,13 @@ void main() {
     testWidgets('rows settle independently; Go on duty waits for the blocking checks only', (tester) async {
       final checks = FakeChecks();
       await pumpPreflight(tester, checks, FakeLauncher([]));
-      expect(find.text('Ready to take calls?'), findsOneWidget);
-      expect(find.text('Q4 Card Renewals'), findsOneWidget);
-      // Five rows checking; the sound check asks the agent to speak while it listens.
-      expect(find.text('Checking…'), findsNWidgets(5));
+      // Start of day (01): the agent by name, today's work, the checks as tiles.
+      expect(find.text('Namaste, Sunita'), findsOneWidget);
+      expect(find.text('Q4 Card Renewals'), findsWidgets);
+      expect(find.text(PreflightCopy.blockedChecking), findsOneWidget, reason: 'Start work says it is still checking');
+      // Four tiles checking (the battery saver shows only when it is in the way); the sound check
+      // asks the agent to speak while it listens.
+      expect(find.text('Checking…'), findsNWidgets(4));
       expect(find.text('Say hello — we’re listening to your mic…'), findsOneWidget);
       expect(dutyEnabled(tester), isFalse);
 
@@ -216,14 +228,18 @@ void main() {
       await settle(tester);
       expect(find.text('Battery 34%'), findsOneWidget);
       expect(find.text('Plug in for a long shift'), findsOneWidget);
-      expect(find.text('Checking…'), findsNWidgets(4));
+      expect(find.text('Checking…'), findsNWidgets(3));
 
       checks.mic.complete(MicPermission.granted);
       checks.net.complete(const NetworkSample(online: true, transport: '4G', latencyMs: 46, uploadKbps: 1800));
       await settle(tester);
       // Warnings and checks still running elsewhere do not hold the button.
       expect(dutyEnabled(tester), isTrue);
+      expect(find.text('Start work'), findsOneWidget);
       expect(find.text('4G · 46 ms · 1.8 Mbps up'), findsOneWidget);
+      // How will you work? Only "Calls come to me" while the soft phone cannot start calls.
+      expect(find.byKey(const Key('mode-calls-come')), findsOneWidget);
+      expect(find.byKey(const Key('mode-i-dial')), findsNothing);
     });
 
     testWidgets('a denied microphone blocks, says why, and Allow re-checks', (tester) async {
@@ -232,8 +248,23 @@ void main() {
       checks.mic.complete(MicPermission.denied);
       checks.net.complete(const NetworkSample(online: true, latencyMs: 40, uploadKbps: 900));
       await settle(tester);
-      expect(dutyEnabled(tester), isFalse);
-      expect(find.text('Allow the microphone to take calls.'), findsOneWidget);
+      // 01b: the band turns red and says what; Start work is not on the screen until it passes,
+      // and the fix is where it was.
+      expect(goOnDuty, findsNothing);
+      expect(find.byKey(const Key('band-check-failed')), findsOneWidget);
+      expect(find.text(PreflightCopy.micBlockedTitle), findsOneWidget);
+      expect(find.byKey(const Key('fix-steps')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('fix-check')));
+      await settle(tester);
+      expect(checks.runs, 2);
+    });
+
+    testWidgets('the tile\'s own Allow re-checks too', (tester) async {
+      final checks = FakeChecks();
+      await pumpPreflight(tester, checks, FakeLauncher([]));
+      checks.mic.complete(MicPermission.denied);
+      checks.net.complete(const NetworkSample(online: true, latencyMs: 40, uploadKbps: 900));
+      await settle(tester);
       await tester.tap(find.text('Allow'));
       await settle(tester);
       expect(checks.runs, 2);
@@ -246,8 +277,9 @@ void main() {
       checks.net.complete(const NetworkSample(online: true, latencyMs: 40, uploadKbps: 40));
       checks.bat.complete(const BatterySample(level: 9, charging: false));
       await settle(tester);
-      expect(dutyEnabled(tester), isFalse);
-      expect(find.text('You need a working connection to take calls.'), findsOneWidget);
+      expect(goOnDuty, findsNothing);
+      expect(find.text(PreflightCopy.noInternetTitle), findsOneWidget);
+      expect(find.byKey(const Key('check-again')), findsOneWidget);
     });
 
     testWidgets('a check that hangs times out instead of holding the screen', (tester) async {
@@ -257,7 +289,7 @@ void main() {
       await tester.pump(PreflightScreen.checkTimeout + const Duration(seconds: 1));
       await settle(tester);
       expect(find.text('We couldn’t reach Magick Agency.'), findsOneWidget);
-      expect(dutyEnabled(tester), isFalse);
+      expect(goOnDuty, findsNothing);
       expect(find.byKey(const Key('check-again')), findsOneWidget);
     });
 
@@ -271,6 +303,20 @@ void main() {
       expect(launcher.calls, ['start:c1']);
       expect(launcher.lastName, 'Q4 Card Renewals');
       expect(find.text('station-c1'), findsOneWidget);
+      // Start work is one press: the station goes on once it is open (startWorkIntentProvider).
+      final c = ProviderScope.containerOf(tester.element(find.text('station-c1')));
+      expect(c.read(startWorkIntentProvider), (campaignId: 'c1', mode: WorkMode.callsComeToMe));
+    });
+
+    testWidgets('a refused join leaves no Start work behind', (tester) async {
+      final checks = FakeChecks()..allGood();
+      final launcher = FakeLauncher([const StationRefused('You aren’t staffed on this campaign. Ask your supervisor.')]);
+      await pumpPreflight(tester, checks, launcher);
+      await settle(tester);
+      await tester.tap(goOnDuty);
+      await settle(tester);
+      final c = ProviderScope.containerOf(tester.element(find.byKey(const Key('start-outcome'))));
+      expect(c.read(startWorkIntentProvider), isNull);
     });
 
     testWidgets('Go on duty while the sound check is still listening waits for it, then hands the engine over', (tester) async {
@@ -435,7 +481,7 @@ void main() {
       addTearDown(router.dispose);
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [preflightChecksProvider.overrideWithValue(checks), stationLauncherProvider.overrideWithValue(launcher)],
+          overrides: [preflightChecksProvider.overrideWithValue(checks), stationLauncherProvider.overrideWithValue(launcher), ...startOfDayOverrides],
           child: MaterialApp.router(theme: buildTheme(AppTokens.dark, Brightness.dark), routerConfig: router),
         ),
       );
@@ -445,12 +491,12 @@ void main() {
 
       await tester.tap(goOnDuty);
       await settle(tester);
-      expect(find.text('Joining…'), findsOneWidget);
+      expect(find.text(PreflightCopy.joining), findsOneWidget);
       // No back arrow while joining, and the system back is held.
       expect(find.byType(BackButton), findsNothing);
       await tester.binding.handlePopRoute();
       await settle(tester);
-      expect(find.text('Joining…'), findsOneWidget);
+      expect(find.text(PreflightCopy.joining), findsOneWidget);
       expect(find.text('campaigns-home'), findsNothing);
 
       launcher.result.complete(const StationStarted());

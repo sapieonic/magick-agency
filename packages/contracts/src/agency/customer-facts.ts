@@ -96,8 +96,11 @@ export interface AgencyCustomerFacts {
   place?: string;
   /**
    * The tiles, in hero order (`context_display.hero`, else the server's guess when no hero is
-   * set), at most `MAX_HERO_FIELDS` (4), hidden columns never. With no `roles` or `types` set,
-   * every tile is `text` with a null `value`, so a campaign set up before BE-6 shows as today.
+   * set), at most `MAX_HERO_FIELDS` (4), hidden columns never. The columns sent as `name` and
+   * `place` are not tiles; the `amount_due` and `due_date` role columns are, appended when the
+   * heroes leave them out and kept when the cap bites (the server's rule,
+   * `apps/server/src/agency/customer-facts.ts`). With no `roles` or `types` set, every tile is
+   * `text` with a null `value`, so a campaign set up before BE-6 shows as today.
    */
   tiles: AgencyFactTile[];
 }

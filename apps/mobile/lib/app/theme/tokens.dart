@@ -191,6 +191,157 @@ class AppTokens extends ThemeExtension<AppTokens> {
   }
 }
 
+/// The agent station's states (the redesign's AS1, `docs/agent-station/design-spec.md` §1): one
+/// state, one screen, one colour. The same colour means the same thing on the console and here.
+enum StationTone {
+  /// Start of day, Finish work: ink.
+  start,
+
+  /// Ready: green.
+  ready,
+
+  /// Call coming: blue.
+  coming,
+
+  /// On call: deep blue.
+  onCall,
+
+  /// What happened?: brand purple.
+  happened,
+
+  /// On break, and the app's own pause: amber, dark text.
+  onBreak,
+
+  /// Break over time, time over: red-orange.
+  over,
+
+  /// Internet problem, call problem, microphone blocked: red.
+  problem,
+
+  /// No calls right now, open on another device: slate.
+  quiet,
+}
+
+/// One state's four colours (`--ma-st-<name>` in `docs/agent-station/mockups/tokens.css`).
+@immutable
+class StateColors {
+  const StateColors({required this.band, required this.ink, required this.soft, required this.deep});
+
+  /// The full-width band's fill.
+  final Color band;
+
+  /// Text and icons on [band].
+  final Color ink;
+
+  /// A pale tint for tiles and chips.
+  final Color soft;
+
+  /// The state's colour as text on the page (AA on [AppTokens.bgSecondary] and on [soft]).
+  final Color deep;
+
+  @override
+  bool operator ==(Object other) =>
+      other is StateColors && other.band == band && other.ink == ink && other.soft == soft && other.deep == deep;
+  @override
+  int get hashCode => Object.hash(band, ink, soft, deep);
+}
+
+/// The station's state colours, mirrored by hand from `docs/agent-station/mockups/tokens.css`
+/// (light, and its `.ma-dark` block). The bands keep their fills in dark; only the tints and the
+/// text-on-page colours change. [go] is "go forward" (Start work, Save & next call), [stop] is
+/// "stop" (End call, Finish work), each with the darker edge the mock-ups draw under the button.
+///
+/// Read with `context.stateTokens`.
+@immutable
+class StateTokens extends ThemeExtension<StateTokens> {
+  const StateTokens({
+    required this.start,
+    required this.ready,
+    required this.coming,
+    required this.onCall,
+    required this.happened,
+    required this.onBreak,
+    required this.over,
+    required this.problem,
+    required this.quiet,
+    required this.go,
+    required this.goEdge,
+    required this.stop,
+    required this.stopEdge,
+    required this.onAction,
+  });
+
+  final StateColors start;
+  final StateColors ready;
+  final StateColors coming;
+  final StateColors onCall;
+  final StateColors happened;
+  final StateColors onBreak;
+  final StateColors over;
+  final StateColors problem;
+  final StateColors quiet;
+  final Color go;
+  final Color goEdge;
+  final Color stop;
+  final Color stopEdge;
+
+  /// Text on [go] and [stop].
+  final Color onAction;
+
+  StateColors of(StationTone tone) => switch (tone) {
+        StationTone.start => start,
+        StationTone.ready => ready,
+        StationTone.coming => coming,
+        StationTone.onCall => onCall,
+        StationTone.happened => happened,
+        StationTone.onBreak => onBreak,
+        StationTone.over => over,
+        StationTone.problem => problem,
+        StationTone.quiet => quiet,
+      };
+
+  static const light = StateTokens(
+    start: StateColors(band: Color(0xFF2D3047), ink: Color(0xFFFFFFFF), soft: Color(0xFFECEEF4), deep: Color(0xFF2D3047)),
+    ready: StateColors(band: Color(0xFF077461), ink: Color(0xFFFFFFFF), soft: Color(0xFFE1F4EF), deep: Color(0xFF06614F)),
+    coming: StateColors(band: Color(0xFF0A6FAE), ink: Color(0xFFFFFFFF), soft: Color(0xFFE2F1FB), deep: Color(0xFF085C91)),
+    onCall: StateColors(band: Color(0xFF1D4FB8), ink: Color(0xFFFFFFFF), soft: Color(0xFFE6EDFB), deep: Color(0xFF1A45A0)),
+    happened: StateColors(band: Color(0xFF6A4DE4), ink: Color(0xFFFFFFFF), soft: Color(0xFFEFEBFD), deep: Color(0xFF5A40CE)),
+    onBreak: StateColors(band: Color(0xFFF0B548), ink: Color(0xFF2E1D00), soft: Color(0xFFFDF3DC), deep: Color(0xFF7A4F06)),
+    over: StateColors(band: Color(0xFFC2410C), ink: Color(0xFFFFFFFF), soft: Color(0xFFFDE9DF), deep: Color(0xFFA33608)),
+    problem: StateColors(band: Color(0xFFBE3440), ink: Color(0xFFFFFFFF), soft: Color(0xFFFBE6E8), deep: Color(0xFFA82A36)),
+    quiet: StateColors(band: Color(0xFF4A5165), ink: Color(0xFFFFFFFF), soft: Color(0xFFECEEF2), deep: Color(0xFF3D4356)),
+    go: Color(0xFF077461),
+    goEdge: Color(0xFF05574A),
+    stop: Color(0xFFBE3440),
+    stopEdge: Color(0xFF942631),
+    onAction: Color(0xFFFFFFFF),
+  );
+
+  static const dark = StateTokens(
+    start: StateColors(band: Color(0xFF2D3047), ink: Color(0xFFFFFFFF), soft: Color(0xFF23253A), deep: Color(0xFFC9CBE0)),
+    ready: StateColors(band: Color(0xFF077461), ink: Color(0xFFFFFFFF), soft: Color(0xFF0E2B26), deep: Color(0xFF3FCF9E)),
+    coming: StateColors(band: Color(0xFF0A6FAE), ink: Color(0xFFFFFFFF), soft: Color(0xFF0D2636), deep: Color(0xFF56B8F0)),
+    onCall: StateColors(band: Color(0xFF1D4FB8), ink: Color(0xFFFFFFFF), soft: Color(0xFF131F3D), deep: Color(0xFF8FB0FF)),
+    happened: StateColors(band: Color(0xFF6A4DE4), ink: Color(0xFFFFFFFF), soft: Color(0xFF1F1A3A), deep: Color(0xFFB9A8FF)),
+    onBreak: StateColors(band: Color(0xFFF0B548), ink: Color(0xFF2E1D00), soft: Color(0xFF32270F), deep: Color(0xFFE8A63F)),
+    over: StateColors(band: Color(0xFFC2410C), ink: Color(0xFFFFFFFF), soft: Color(0xFF36190C), deep: Color(0xFFFF9A6B)),
+    problem: StateColors(band: Color(0xFFBE3440), ink: Color(0xFFFFFFFF), soft: Color(0xFF371418), deep: Color(0xFFEF6B6B)),
+    quiet: StateColors(band: Color(0xFF4A5165), ink: Color(0xFFFFFFFF), soft: Color(0xFF1F2128), deep: Color(0xFFB4B4C2)),
+    go: Color(0xFF077461),
+    goEdge: Color(0xFF05574A),
+    stop: Color(0xFFBE3440),
+    stopEdge: Color(0xFF942631),
+    onAction: Color(0xFFFFFFFF),
+  );
+
+  @override
+  StateTokens copyWith() => this;
+
+  /// Theme changes snap: a band is one state's colour or the other's, never a blend.
+  @override
+  StateTokens lerp(covariant StateTokens? other, double t) => other == null || t < 0.5 ? this : other;
+}
+
 /// Spacing and radii (global.css `--radius*`), in logical pixels.
 abstract final class Space {
   static const double xs = 4;
@@ -222,4 +373,7 @@ abstract final class Fonts {
 extension AppTokensContext on BuildContext {
   /// The current theme's tokens. Always present: both [ThemeData]s carry them.
   AppTokens get tokens => Theme.of(this).extension<AppTokens>()!;
+
+  /// The station's state colours ([StateTokens]). Always present: both [ThemeData]s carry them.
+  StateTokens get stateTokens => Theme.of(this).extension<StateTokens>()!;
 }

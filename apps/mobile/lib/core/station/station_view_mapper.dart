@@ -357,7 +357,7 @@ class StationViewMapper {
   List<BreakOption> _breakOptionsFor(List<wire.BreakReason> reasons) {
     if (identical(reasons, _breakSource)) return _breakOptions;
     _breakSource = reasons;
-    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label)));
+    return _breakOptions = List.unmodifiable(reasons.map((r) => BreakOption(code: r.code, label: r.label, limitMinutes: r.limitMinutes)));
   }
 
   List<DispositionOption> _dispositionsFor(List<wire.Disposition> catalog) {

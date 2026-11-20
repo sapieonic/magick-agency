@@ -11,60 +11,60 @@ void main() {
   group('nothing due now', () {
     testWidgets('a pool campaign (no queue) keeps the waiting words', (tester) async {
       await pumpStation(tester, station());
-      expect(find.text('Waiting for a call'), findsOneWidget);
-      expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsNothing);
       expect(find.byKey(const Key('waiting-card')), findsOneWidget);
     });
 
     testWidgets('due now: the waiting words, a call is on its way', (tester) async {
       await pumpStation(tester, station(queue: const QueueView(due: true)));
-      expect(find.text('Waiting for a call'), findsOneWidget);
-      expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsNothing);
     });
 
     testWidgets('each reason, with the next time today as a clock and another day with its date', (tester) async {
-      // t0 is 11:20 on Sat 31 Oct, local time.
+      // t0 is 11:20 on Sat 31 Oct, local time. The subtitle says why, in the station's words
+      // (design-spec §3, 02c).
       final cases = <(QueueView, String)>[
-        (const QueueView(due: false, reason: QueueIdle.queueEmpty), 'No contacts are waiting for you'),
+        (const QueueView(due: false, reason: QueueIdle.queueEmpty), StationCopy.noCustomersWaiting),
         (
           QueueView(due: false, reason: QueueIdle.waitingForRetry, nextDueAt: DateTime(2026, 10, 31, 15).toUtc()),
-          'The next one is due at 15:00.',
+          'Your next call is at 3:00 PM.',
         ),
         (
-          QueueView(due: false, reason: QueueIdle.callbacksLater, nextDueAt: DateTime(2026, 11, 4, 10, 30).toUtc()),
-          'The next one is at 4 Nov · 10:30.',
+          QueueView(due: false, reason: QueueIdle.callbacksLater, nextDueAt: DateTime(2026, 10, 31, 16, 30).toUtc()),
+          'Your next call is at 4:30 PM.',
         ),
         (
           QueueView(due: false, reason: QueueIdle.outsideCallingHours, nextDueAt: DateTime(2026, 11, 2, 9).toUtc()),
-          'Calls resume at 2 Nov · 09:00.',
+          'Calls start at 9:00 AM.',
         ),
-        (const QueueView(due: false, reason: QueueIdle.other), 'No calls are due for you right now.'),
+        (const QueueView(due: false, reason: QueueIdle.other), StationCopy.callsStartLater),
       ];
       for (final (queue, words) in cases) {
         await pumpStation(tester, station(queue: queue));
         expect(find.byKey(const Key('nothing-due-card')), findsOneWidget, reason: '${queue.reason}');
-        expect(find.text(StationCopy.nothingDueHeadline), findsOneWidget);
-        expect(find.textContaining(words), findsOneWidget, reason: '${queue.reason}');
-        expect(find.textContaining(StationCopy.nothingDueKeepOpen), findsOneWidget);
-        // Still available: the pill does not change, and nothing else moved.
-        expect(find.text('Available'), findsOneWidget);
+        expect(find.text(StationCopy.noCallsNow), findsOneWidget);
+        expect(find.text(words), findsOneWidget, reason: '${queue.reason}');
+        expect(find.text(StationCopy.callsWillStart), findsOneWidget);
+        // The one main action is the same.
         expect(find.byKey(const Key('take-break')), findsOneWidget);
-        expect(find.text('Waiting for a call'), findsNothing);
+        expect(find.text(StationCopy.nextCallComing), findsNothing);
       }
     });
 
     testWidgets('a paused campaign says so first', (tester) async {
       await pumpStation(tester, station(dialing: false, queue: const QueueView(due: false, reason: QueueIdle.queueEmpty)));
-      expect(find.text('Campaign paused — no campaign calls for now'), findsOneWidget);
-      expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
+      expect(find.text(StationCopy.callsStoppedBySupervisor), findsOneWidget);
+      expect(find.text(StationCopy.noCustomersWaiting), findsNothing);
     });
 
     testWidgets('the queue changing under the screen swaps the words', (tester) async {
       final h = await pumpStation(tester, station(queue: const QueueView(due: false, reason: QueueIdle.queueEmpty)));
-      expect(find.text(StationCopy.nothingDueHeadline), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsOneWidget);
       await h.setView(station(queue: const QueueView(due: true)));
-      expect(find.text('Waiting for a call'), findsOneWidget);
-      expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsNothing);
     });
 
     testWidgets('fits a 360×640 phone at 200% text', (tester) async {
@@ -76,25 +76,34 @@ void main() {
         contactAssignment: true,
       );
       expect(tester.takeException(), isNull);
-      expect(find.text(StationCopy.nothingDueHeadline), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsOneWidget);
     });
   });
 
-  group('My contacts from the waiting screen', () {
+  group('My customers from ⋮ More', () {
     testWidgets('hidden while the flag is off', (tester) async {
-      await pumpStation(tester, station());
+      await pumpStation(tester, station(myContactsOffered: true));
+      await openMore(tester);
       expect(find.byKey(const Key('my-contacts')), findsNothing);
     });
 
     testWidgets('hidden with the flag on when the campaign has no My contacts (pool, no agent retry)', (tester) async {
       await pumpStation(tester, station(), contactAssignment: true);
+      await openMore(tester);
+      expect(find.byKey(const Key('my-contacts')), findsNothing);
+    });
+
+    testWidgets('not in ⋮ More on a call', (tester) async {
+      await pumpStation(tester, station(myContactsOffered: true, phase: AgentPhase.onCall, call: call(bridgedAt: t0)), contactAssignment: true);
+      await openMore(tester);
       expect(find.byKey(const Key('my-contacts')), findsNothing);
     });
 
     testWidgets('shown with the flag on, and opens this campaign’s contacts', (tester) async {
       await pumpStation(tester, station(myContactsOffered: true), contactAssignment: true);
+      await openMore(tester);
       expect(find.byKey(const Key('my-contacts')), findsOneWidget);
-      await tester.ensureVisible(find.byKey(const Key('my-contacts')));
+      expect(find.text(StationCopy.myCustomers), findsOneWidget);
       await tester.tap(find.byKey(const Key('my-contacts')));
       await settle(tester);
       expect(find.text('my-contacts c1'), findsOneWidget);

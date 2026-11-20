@@ -28,6 +28,8 @@ import {
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { autoDispositionRefusal, isAutoDispositionOutcome } from '@magick-agency/domain/auto-disposition';
+import { contextDisplayIssues } from './customer-facts.js';
+import { agentScriptIssues } from './agent-script.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
@@ -792,6 +794,11 @@ export function validateAgencyCampaignConfig(
   // Agent station (BE-2): the daily target, or null to clear it.
   issues.push(...validateDailyTargetCalls(record));
   issues.push(...validateCallingWindow(record, base));
+  // Agent station (BE-6): `context_display.roles` / `.types`, their shape. The roster's columns
+  // are checked by the PATCH route, which reads them (`contextColumnsRejected`).
+  issues.push(...contextDisplayIssues(record));
+  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
+  issues.push(...agentScriptIssues(record));
   return issues;
 }
 

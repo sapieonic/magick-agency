@@ -78,6 +78,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // Agent station (0056, BE-2): each agent's daily target, patchable at any status. `null`
   // clears it (no target), so it must survive the `v === undefined` filter, which it does.
   'daily_target_calls',
+  // Agent station (BE-8, 0056): the script, an operator setting patchable at any status; a
+  // session reads it at join (the bootstrap). JSONB, so it is in the list below too.
+  'agent_script',
 ]);
 
 /**
@@ -93,6 +96,7 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
  */
 const CAMPAIGN_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons', 'outcome_dispositions',
+  'agent_script',
 ]);
 
 /** The UPDATE for a patch (its patchable columns only), or null when it names none. */
