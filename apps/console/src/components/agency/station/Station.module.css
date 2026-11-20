@@ -465,11 +465,11 @@
 .pick[data-stop='true'] .tick { background: var(--st-stop); }
 .pick[aria-disabled='true'] { opacity: 0.55; cursor: default; }
 .pick[data-icon='rupee'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
-.pick[data-icon='clock'] { --st-soft-c: var(--st-coming-soft); --st-deep-c: var(--st-coming-deep); }
+.pick[data-icon='clock'], .pick[data-icon='calendar'] { --st-soft-c: var(--st-coming-soft); --st-deep-c: var(--st-coming-deep); }
 .pick[data-icon='stop'] { --st-soft-c: var(--st-problem-soft); --st-deep-c: var(--st-problem-deep); }
-.pick[data-icon='thumbs_up'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
-.pick[data-icon='refused'] { --st-soft-c: var(--st-over-soft); --st-deep-c: var(--st-over-deep); }
-.pick[data-icon='no_voice'], .pick[data-icon='wrong_number'], .pick[data-icon='dot'] { --st-soft-c: var(--bg-tertiary); --st-deep-c: var(--text-secondary); }
+.pick[data-icon='thumbs_up'], .pick[data-icon='check'] { --st-soft-c: var(--st-ready-soft); --st-deep-c: var(--st-ready-deep); }
+.pick[data-icon='thumbs_down'], .pick[data-icon='cross'] { --st-soft-c: var(--st-over-soft); --st-deep-c: var(--st-over-deep); }
+.pick[data-icon='no_voice'], .pick[data-icon='wrong_number'], .pick[data-icon='phone_missed'], .pick[data-icon='phone_busy'], .pick[data-icon='voicemail'], .pick[data-icon='dot'] { --st-soft-c: var(--bg-tertiary); --st-deep-c: var(--text-secondary); }
 .pickBreak { background: var(--st-break-soft); border-color: color-mix(in srgb, var(--st-break) 70%, transparent); }
 .pickBreak .pickIcon { background: color-mix(in srgb, var(--st-break) 45%, transparent); color: var(--st-break-deep); }
 .dncRow { margin-top: 14px; width: 100%; justify-content: center; border-color: var(--st-stop); color: var(--st-problem-deep); }

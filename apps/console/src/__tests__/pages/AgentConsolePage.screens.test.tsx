@@ -40,6 +40,7 @@ import { STATION_COPY } from '../../utils/agency/stationCopy';
 import { FakeSocket, latestSocket as latest } from '../helpers/fakeSocket';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { agentReadsFixture } from '../helpers/agentReads';
+import { TileIcon } from '@magick-agency/web-ui/components/TileIcon';
 import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
@@ -559,5 +560,44 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
     const row = screen.getByTestId('promise-row');
     expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
     expect(within(row).getByRole('button', { name: 'Half · ₹6,250' })).toBeTruthy();
+  });
+});
+
+describe('the pictures a supervisor picked (BE-13), drawn as campaign Settings draws them', () => {
+  const svgOf = (icon: string) => {
+    const { container, unmount } = render(<TileIcon icon={icon} size={32} />);
+    const html = container.querySelector('svg')?.getAttribute('class');
+    unmount();
+    return html;
+  };
+
+  it('an outcome’s and a break’s icon are the shared picture, not the station’s guess', async () => {
+    mocks.createAgencySession.mockResolvedValue({
+      ...BOOTSTRAP,
+      disposition_catalog: [
+        // The flags would guess ₹ and the label a thumbs down: the pick wins.
+        { code: 'ptp', label: 'Will pay', requires_promise: true, icon: 'calendar' },
+        { code: 'refused', label: 'Refused', icon: 'voicemail' },
+        { code: 'odd', label: 'Odd', icon: 'not-a-picture' as never },
+      ],
+      break_reasons: [
+        { code: 'tea', label: 'Tea', icon: 'washroom' },
+        { code: 'class', label: 'Training' },
+      ],
+    });
+    await whatHappened();
+    const picture = (testId: string) => screen.getByTestId(testId).querySelector('[data-tile-icon]');
+    expect(picture('outcome-ptp')?.getAttribute('data-tile-icon')).toBe('calendar');
+    expect(picture('outcome-ptp')?.getAttribute('class')).toBe(svgOf('calendar'));
+    expect(picture('outcome-refused')?.getAttribute('data-tile-icon')).toBe('voicemail');
+    // A stray stored value: the guess (a dot).
+    expect(picture('outcome-odd')?.getAttribute('data-tile-icon')).toBe('dot');
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'b' });
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Which break?' });
+    const pictures = [...dialog.querySelectorAll('[data-tile-icon]')].map((n) => n.getAttribute('data-tile-icon'));
+    expect(pictures).toEqual(['washroom', 'training']);
+    expect(dialog.querySelector('[data-tile-icon="training"]')?.getAttribute('class')).toBe(svgOf('training'));
   });
 });

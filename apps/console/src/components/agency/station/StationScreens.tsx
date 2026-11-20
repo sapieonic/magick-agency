@@ -33,7 +33,7 @@ import { clockTime, hoursMinutes, runningClock } from '../../../utils/agency/sta
 import { breakIcon } from '../../../utils/agency/stationTiles';
 import type { DeviceChecks } from '../../../utils/agency/stationView';
 import type { MyCallLaters, MyDay } from '../../../pages/agency/station/useMyDay';
-import { BREAK_ICON_COMPONENTS } from './stationIcons';
+import { StationTileIcon } from './stationIcons';
 import styles from './Station.module.css';
 
 /* ───────────────────────────── 01 / 01b Start of day ───────────────────────────── */
@@ -333,8 +333,11 @@ export function BreakCard({
   clock,
   limitMinutes,
   over,
+  reason,
 }: {
   label: string | null;
+  /** The break's reason as the campaign lists it, for its picture (the supervisor's pick, BE-13). */
+  reason?: Pick<AgencyBreakReason, 'code' | 'label' | 'icon'> | null;
   since: string | null;
   clock: ServerClock;
   limitMinutes: number | null;
@@ -342,8 +345,7 @@ export function BreakCard({
 }) {
   useRepaintTick(since !== null);
   const elapsedMs = since ? clock.since(since) : null;
-  const icon = breakIcon({ code: label ?? '', label: label ?? '' });
-  const Icon = BREAK_ICON_COMPONENTS[icon];
+  const icon = breakIcon(reason ?? { code: label ?? '', label: label ?? '' });
   const used = elapsedMs ?? 0;
   const pct = limitMinutes ? Math.min(100, (used / (limitMinutes * 60_000)) * 100) : null;
   const leftMs = limitMinutes ? limitMinutes * 60_000 - used : null;
@@ -351,7 +353,7 @@ export function BreakCard({
   return (
     <section className={`${styles.card} ${styles.cardNarrow}`} data-tone={over ? 'over' : 'break'} data-testid="break-card">
       <div className={styles.wait} style={{ minHeight: 0 }}>
-        <span className={`${styles.pulse} ${styles.pulseSm}`} aria-hidden="true">{over ? <TriangleAlert size={56} /> : <Icon size={56} />}</span>
+        <span className={`${styles.pulse} ${styles.pulseSm}`} aria-hidden="true">{over ? <TriangleAlert size={56} /> : <StationTileIcon icon={icon} size={56} />}</span>
         {label ? <h2>{label}</h2> : null}
         <div className={styles.clock} data-over={over ? 'true' : undefined}>
           <span className={styles.num} data-testid="break-elapsed">{elapsedMs === null ? '—' : runningClock(used)}</span>
@@ -452,7 +454,7 @@ export function WhichBreakDialog({
       {reasons.length === 0 ? <p>{STATION_COPY.noBreakReasons}</p> : null}
       <div className={`${styles.picks} ${styles.picks5}`} role="group" aria-label={STATION_COPY.whichBreak}>
         {reasons.map((reason, index) => {
-          const Icon = BREAK_ICON_COMPONENTS[breakIcon(reason)];
+          const icon = breakIcon(reason);
           return (
             <button
               key={reason.code}
@@ -464,7 +466,7 @@ export function WhichBreakDialog({
               data-testid={`break-${reason.code}`}
             >
               {index < 9 ? <span className={styles.key} aria-hidden="true">{index + 1}</span> : null}
-              <span className={styles.pickIcon} aria-hidden="true"><Icon size={30} /></span>
+              <span className={styles.pickIcon} aria-hidden="true" data-icon={icon}><StationTileIcon icon={icon} size={30} /></span>
               <b>{reason.label}</b>
               {reason.limit_minutes ? <small>{STATION_COPY.minutes(reason.limit_minutes)}</small> : null}
             </button>

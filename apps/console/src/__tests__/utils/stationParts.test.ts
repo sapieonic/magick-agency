@@ -69,25 +69,30 @@ describe('outcome tiles (spec §6.2)', () => {
     expect(outcomeTileLayout([entry('a'), entry('dnc', { suppress: true })]).dontCallAgainRow).toBe(false);
   });
 
-  it('works the picture out from the flags until the server sends one (BE-13)', () => {
+  it('draws the supervisor’s pick (BE-13); with none, works the picture out from the flags', () => {
     expect(outcomeIcon(entry('a', { requires_promise: true }))).toBe('rupee');
     expect(outcomeIcon(entry('a', { requires_datetime: true }))).toBe('clock');
     expect(outcomeIcon(entry('a', { suppress: true, requires_datetime: true }))).toBe('stop');
     expect(outcomeIcon(entry('a', { is_success: true }))).toBe('thumbs_up');
     expect(outcomeIcon({ ...entry('a'), label: 'Wrong number' })).toBe('wrong_number');
-    expect(outcomeIcon({ ...entry('a'), label: 'Refused' })).toBe('refused');
+    expect(outcomeIcon({ ...entry('a'), label: 'Refused' })).toBe('thumbs_down');
     expect(outcomeIcon({ ...entry('a'), label: 'No one spoke' })).toBe('no_voice');
     expect(outcomeIcon(entry('a'))).toBe('dot');
     expect(outcomeIcon({ ...entry('a', { requires_promise: true }), icon: 'clock' })).toBe('clock');
+    // Any shared picture, the ones the guesses never make included.
+    expect(outcomeIcon({ ...entry('a', { suppress: true }), icon: 'voicemail' })).toBe('voicemail');
+    // A stray stored value draws as no pick.
     expect(outcomeIcon({ ...entry('a'), icon: 'not-a-picture' as never })).toBe('dot');
   });
 
-  it('guesses a break’s picture from its code and label, a cup by default', () => {
-    expect(breakIcon({ code: 'lunch', label: 'Lunch' })).toBe('meal');
+  it('draws a break’s picked picture, else guesses from its code and label, tea by default', () => {
+    expect(breakIcon({ code: 'x', label: 'Lunch', icon: 'training' })).toBe('training');
+    expect(breakIcon({ code: 'lunch', label: 'Lunch' })).toBe('lunch');
     expect(breakIcon({ code: 'bio', label: 'Washroom' })).toBe('washroom');
     expect(breakIcon({ code: 'x', label: 'Team meeting' })).toBe('meeting');
     expect(breakIcon({ code: 'x', label: 'Training' })).toBe('training');
-    expect(breakIcon({ code: 'x', label: 'Other' })).toBe('cup');
+    expect(breakIcon({ code: 'x', label: 'Namaz' })).toBe('prayer');
+    expect(breakIcon({ code: 'x', label: 'Other' })).toBe('tea');
   });
 });
 

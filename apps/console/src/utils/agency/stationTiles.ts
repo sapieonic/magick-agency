@@ -1,3 +1,4 @@
+import { isTileIconKey, type TileIconKey } from '@magick-agency/web-ui/components/TileIcon';
 import type { AgencyBreakReason, AgencyDisposition } from '../../types/agency';
 
 /**
@@ -8,30 +9,32 @@ import type { AgencyBreakReason, AgencyDisposition } from '../../types/agency';
  * keys the moment someone renames an outcome).
  */
 
-/** What each tile shows as its picture. A field on each outcome (BE-13) will replace the guess. */
-export type OutcomeIcon = 'rupee' | 'clock' | 'stop' | 'thumbs_up' | 'no_voice' | 'refused' | 'wrong_number' | 'dot';
+/**
+ * What each tile shows as its picture: one of the shared tile pictures (`TileIcon` in
+ * `packages/web-ui`, the keys of the contract's `AGENCY_TILE_ICONS`), so an agent sees exactly
+ * what the supervisor picked in campaign Settings; or, for a guess with no shared picture, the
+ * station's own `no_voice`.
+ */
+export type OutcomeIcon = TileIconKey | 'no_voice';
 
 /**
- * The picture for an outcome. An `icon` sent by the server wins once it exists (BE-13, an optional
- * field the contract does not have yet); until then the flags decide, as the spec suggests
- * (`requires_promise` → ₹, `requires_datetime` → clock, `suppress` → stop, `is_success` → thumbs
- * up), then a few everyday labels, then a neutral dot.
+ * The picture for an outcome. The `icon` the supervisor picked wins (BE-13); a stray stored value
+ * draws as no pick. With none, the flags decide, as the spec suggests (`suppress` → stop,
+ * `requires_promise` → ₹, `requires_datetime` → clock, `is_success` → thumbs up), then a few
+ * everyday labels, then a neutral dot.
  */
-export function outcomeIcon(entry: AgencyDisposition & { icon?: string | null }): OutcomeIcon {
-  const sent = entry.icon ?? null;
-  if (sent && (OUTCOME_ICONS as readonly string[]).includes(sent)) return sent as OutcomeIcon;
+export function outcomeIcon(entry: Pick<AgencyDisposition, 'label' | 'suppress' | 'requires_promise' | 'requires_datetime' | 'is_success'> & { icon?: string | null }): OutcomeIcon {
+  if (isTileIconKey(entry.icon)) return entry.icon;
   if (entry.suppress) return 'stop';
   if (entry.requires_promise) return 'rupee';
   if (entry.requires_datetime) return 'clock';
   if (entry.is_success) return 'thumbs_up';
   const label = entry.label.toLowerCase();
   if (/wrong|invalid|not .*(number|person)/.test(label)) return 'wrong_number';
-  if (/refus|declin|not interested|denied/.test(label)) return 'refused';
+  if (/refus|declin|not interested|denied/.test(label)) return 'thumbs_down';
   if (/no one|nobody|no answer|silent|voicemail|machine|did not speak|no response/.test(label)) return 'no_voice';
   return 'dot';
 }
-
-export const OUTCOME_ICONS: readonly OutcomeIcon[] = ['rupee', 'clock', 'stop', 'thumbs_up', 'no_voice', 'refused', 'wrong_number', 'dot'];
 
 /** Tile size by how many outcomes the campaign has (§6.2): 1–6 big, 7 or more small. */
 export type TileSize = 'big' | 'small';
@@ -64,20 +67,18 @@ export function outcomeTileLayout(catalog: readonly AgencyDisposition[]): Outcom
   };
 }
 
-/** The picture for a break reason: an `icon` once sent (BE-13), else a guess from the code and label, a cup by default. */
-export type BreakIcon = 'cup' | 'meal' | 'washroom' | 'meeting' | 'training' | 'phone' | 'pause';
+/** The picture for a break reason: a shared tile picture, or the station's own `phone` (the soft phone). */
+export type BreakIcon = TileIconKey | 'phone';
 
+/** The supervisor's pick (BE-13) when sent; else a guess from the code and label, a cup of tea by default. */
 export function breakIcon(reason: Pick<AgencyBreakReason, 'code' | 'label'> & { icon?: string | null }): BreakIcon {
-  const sent = reason.icon ?? null;
-  if (sent && (BREAK_ICONS as readonly string[]).includes(sent)) return sent as BreakIcon;
+  if (isTileIconKey(reason.icon)) return reason.icon;
   const text = `${reason.code} ${reason.label}`.toLowerCase();
-  if (/lunch|dinner|meal|food|breakfast/.test(text)) return 'meal';
+  if (/lunch|dinner|meal|food|breakfast/.test(text)) return 'lunch';
   if (/wash|toilet|rest ?room|bio|bathroom|loo/.test(text)) return 'washroom';
   if (/meet|huddle|brief/.test(text)) return 'meeting';
   if (/train|coach|learn|class/.test(text)) return 'training';
+  if (/pray|namaz|puja/.test(text)) return 'prayer';
   if (/phone|soft/.test(text)) return 'phone';
-  if (/tea|coffee|chai|snack|short/.test(text)) return 'cup';
-  return 'cup';
+  return 'tea';
 }
-
-export const BREAK_ICONS: readonly BreakIcon[] = ['cup', 'meal', 'washroom', 'meeting', 'training', 'phone', 'pause'];

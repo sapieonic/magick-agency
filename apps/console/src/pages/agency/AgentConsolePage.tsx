@@ -1110,6 +1110,7 @@ function StationScreen({
       body = (
         <BreakCard
           label={reservedBreak ? null : cons.breakReasonLabel}
+          reason={reservedBreak ? null : cons.breakReasons.find((r) => r.code === station.breakReasonCode) ?? null}
           since={station.agentStateSince}
           clock={clock}
           limitMinutes={cons.breakLimitMinutes}
