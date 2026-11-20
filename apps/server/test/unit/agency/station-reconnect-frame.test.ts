@@ -361,6 +361,7 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     expect(repos.contact.probeCampaignQueue).not.toHaveBeenCalled();
     // An owner-mode campaign's queue still reaches every station.
     h.sent.length = 0;
+    repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'strict' });
     repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
     repos.contact.probeAgentQueues.mockResolvedValue({ agents: [{ agentUserId: 'u-agent', ownDue: true, ownNextAt: null, ownHasNonCallback: null }], pool: null });
     expect((await ready(h)).queue).toMatchObject({ due: true });
@@ -400,6 +401,41 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
       repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'preferred' });
       repos.campaign.findById.mockRejectedValue(new Error('db down'));
       await ready(h);
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+    });
+
+    // A whole floor reconnecting after a deploy: an older build on a pool campaign is sent no
+    // queue state (AS18), so its reconnect costs no campaign read and no pacing wake-up here (the
+    // attach's own `agent_available` wakes pacing for it), as before BE-5. The session read's mode
+    // decides, before any read.
+    // FALSIFIED: with the attach's gate back to `campaignId` alone, the pool station without
+    // queue_pool reads the campaign and publishes station_ready, and the first case reds.
+    it('the three stations: pool without queue_pool neither reads nor publishes; pool with it and owner-mode do both', async () => {
+      repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', disposition_catalog: [], ...ALL_DAY });
+      repos.contact.probeCampaignQueue.mockResolvedValue({ dueCount: 1, nextAt: new Date(), hasNonCallback: null });
+      for (const query of ['', '&client=mobile&caps=inbound,floor_assist']) {
+        h.sent.length = 0;
+        expect('queue' in (await ready(h, query)), query).toBe(false);
+      }
+      expect(repos.campaign.findById).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+
+      h.sent.length = 0;
+      expect((await ready(h, '&client=mobile&caps=inbound,queue_pool')).queue).toMatchObject({ due: true });
+      expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+
+      events.length = 0;
+      h.sent.length = 0;
+      repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'strict' });
+      repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
+      repos.contact.probeAgentQueues.mockResolvedValue({ agents: [{ agentUserId: 'u-agent', ownDue: true, ownNextAt: null, ownHasNonCallback: null }], pool: null });
+      expect((await ready(h, '&client=mobile&caps=inbound')).queue).toMatchObject({ due: true });
+      expect(repos.campaign.findById).toHaveBeenCalledTimes(2);
       expect(events).toEqual([
         { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
       ]);

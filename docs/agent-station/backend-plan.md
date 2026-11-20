@@ -1209,6 +1209,10 @@ what was built.
   fix). Who is dialled is unchanged. `readAgentQueueState`
   answers it for `pool`, so the bootstrap, `ready` (the campaign read now happens for every campaign
   session) and the My contacts summary carry it; `station_ready` is published for pool sessions too.
+  (Review fix: the `ready` read and `station_ready` are gated on the session row's mode or
+  `queue_pool`, so a pool station that did not declare it does neither, as before BE-5; its
+  reconnect wakes pacing through the attach's `agent_available`. On a pool campaign a failed probe
+  is not the My contacts summary's failure: it answers from the tally's earliest open contact.)
   ~~No capability: every build already decodes `queue`.~~ **Gated behind `queue_pool` (AS18, fix
   stream):** a build before the redesign words queue state for an owner's own contacts, so on a
   `pool` campaign the queue state goes only to a station that declared `caps=queue_pool`
@@ -1221,7 +1225,8 @@ what was built.
   gets no queue state on `pool`, exactly as before BE-5.
 - **Known costs, accepted as is** (server review, 2026-11-20): 0058's index build holds SHARE on
   `agency_contacts` across two scans (the build and the CHECK's validation); a `pool` station's
-  reconnect does two reads (the campaign and its queue probe).
+  reconnect does two reads (the campaign and its queue probe), only for a station that declared
+  `queue_pool`.
 
 
 

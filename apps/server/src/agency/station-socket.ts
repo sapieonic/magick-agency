@@ -633,9 +633,13 @@ export async function handleStationSocket(
   // change, so a reconnecting station cannot wait for one). Read here, before the fence below, so
   // no await sits between the fence and the side effects. Best effort: a failed read omits the
   // field and the station keeps the reconnect. A soft-phone session (no campaign) reads nothing.
+  // `wantsQueue` gates the read on the mode the session read already holds, so a pool station
+  // that did not declare `queue_pool` costs no campaign read, as before BE-5; the read's own
+  // check is on the campaign row it reads.
   const campaignId = session.campaign_id;
   const poolQueue = caps.has(AGENCY_STATION_QUEUE_POOL_CAPABILITY);
-  const queueRead = campaignId
+  const wantsQueue = poolQueue || ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' }) !== null;
+  const queueRead = campaignId && wantsQueue
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
       .then((campaign) => (campaign && (poolQueue || ownerModeOf(campaign) !== null)
@@ -750,8 +754,10 @@ export async function handleStationSocket(
   // frame's (or none, when the read failed), whatever `queue` frame pacing sent it before,
   // including one sent while this run was reading. Told to the pacing leader, which forgets what
   // it last sent this session and sends the agent's queue again on its next tick. After the
-  // send, never before it.
-  if (readySent && campaignId) {
+  // send, never before it. Only for a station pacing sends `queue` frames to (`wantsQueue`): a
+  // pool station without `queue_pool` is sent none, so there is nothing to forget, and its
+  // reconnect wakes pacing through the attach's own `agent_available`, not this.
+  if (readySent && campaignId && wantsQueue) {
     publishPacingInvalidation({ type: 'station_ready', sessionId, campaignId });
   }
 

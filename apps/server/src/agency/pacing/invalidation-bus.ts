@@ -19,7 +19,7 @@
  * | `account_capacity_freed` | a live call on the account ended            | the attempt and manual-call end writes |
  * | `agent_available`        | an agent entered `available`, or attached a station | `AgentStateMachine` (via the runtime), the station attach |
  * | `contacts_changed`       | contacts arrived on the campaign            | the CSV ingest's roster chunks |
- * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
+ * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, or on a `pool` one by a station that declared `queue_pool`, so what it last heard of its queue is that frame's | the station attach |
 | `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
  * | `inbound_waiting`        | how many inbound callers wait for the account's agents, and whom they want (docs/inbound.md §5.2) | the inbound connector (P2; no consumer yet) |
  *
