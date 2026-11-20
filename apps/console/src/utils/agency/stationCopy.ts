@@ -125,6 +125,7 @@ export const STATION_COPY = {
   softphoneCallingTitle: 'Calling',
   softphoneCallingSubtitle: 'Wait for the customer to pick up.',
   backToCalls: 'Back to my calls',
+  finishCallFirst: 'Finish your call and save what happened first.',
   backingToCalls: 'Going back…',
   inboundTitle: 'Customer is calling',
   connecting: 'Connecting',
@@ -533,6 +534,41 @@ export const SOFTPHONE_CLOSE_COPY = {
   /** The soft phone closed, but this work did not open. */
   closedNotOpened: 'The soft phone is closed, but your work did not open. Go back and open it again.',
 } as const;
+
+/** Dial a number myself refused: `POST /sessions/:id/softphone`. Nothing changed. */
+export function softphoneSwitchRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'softphone_disabled':
+      return 'Dialling a number yourself is turned off. Ask your supervisor.';
+    case 'manual_call_live':
+    case 'outcome_pending':
+    case 'attempt_not_dispositionable':
+      return STATION_COPY.finishCallFirst;
+    case 'session_not_found':
+    case 'session_ended':
+    case 'wrong_session_kind':
+      return 'Your work was closed. Open today’s work again.';
+    default:
+      return 'You cannot dial a number yourself just now. Nothing changed. Try again in a moment.';
+  }
+}
+
+/** Back to my calls refused: `POST /sessions/:id/softphone/return`. The soft phone stays. */
+export function backToCallsRefusedLine(code: string | null): string {
+  switch (code) {
+    case 'manual_call_live':
+    case 'outcome_pending':
+      return STATION_COPY.finishCallFirst;
+    case 'session_not_found':
+    case 'session_ended':
+    case 'wrong_session_kind':
+      return 'Your work was closed. Open today’s work again.';
+    case 'not_on_softphone':
+      return 'One moment. Try again.';
+    default:
+      return 'You could not go back to your calls just now. Try again in a moment.';
+  }
+}
 
 /** End call refused or failed: `POST /attempts/:id/hangup`. The call is still on. */
 export function hangupFailedLine(code: string | null): string {

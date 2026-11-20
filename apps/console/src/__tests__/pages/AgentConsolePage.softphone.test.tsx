@@ -237,7 +237,7 @@ describe('Switch to soft phone', () => {
     await mounted();
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
     await dialMyself();
-    expect(screen.getByTestId('switch-to-softphone-refused').textContent).toMatch(/turned off for this account/);
+    expect(screen.getByTestId('switch-to-softphone-refused').textContent).toBe('Dialling a number yourself is turned off. Ask your supervisor.');
   });
 
   it('a switch Redis did not take says the status did not change, not that a call was not placed', async () => {
@@ -245,7 +245,7 @@ describe('Switch to soft phone', () => {
     await mounted();
     await frame({ event: 'agent_state', state: 'available', since: SINCE });
     await dialMyself();
-    expect(screen.getByTestId('switch-to-softphone-refused').textContent).toBe('Couldn’t change your status just now; nothing changed. Try again.');
+    expect(screen.getByTestId('switch-to-softphone-refused').textContent).toBe('You cannot dial a number yourself just now. Nothing changed. Try again in a moment.');
   });
 });
 
@@ -286,7 +286,7 @@ describe('on the soft phone, in the station', () => {
     await onSoftphone();
     await frame({ event: 'manual_call', call: step(manualCall({ session_id: 'sess-1' }), 3, { state: 'ringing' }) });
     expect(screen.queryByTestId('return-to-campaign')).toBeNull();
-    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish this call and save its outcome first.');
+    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish your call and save what happened first.');
     await frame({
       event: 'manual_call',
       call: step(manualCall({ session_id: 'sess-1' }), 60, { state: 'ended', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' }),
@@ -304,7 +304,7 @@ describe('on the soft phone, in the station', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('return-to-campaign'));
     });
-    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish this call and save its outcome first.');
+    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish your call and save what happened first.');
     // It re-reads the bootstrap to show the call it did not know about.
     expect(mocks.getSoftphoneBootstrap.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
@@ -315,7 +315,7 @@ describe('on the soft phone, in the station', () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId('return-to-campaign'));
     });
-    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Couldn’t change your status just now; nothing changed. Try again.');
+    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('You could not go back to your calls just now. Try again in a moment.');
   });
 
   it('with the flag turned off it is still the soft phone, in finish mode: the call, Return to campaign, no dial pad', async () => {

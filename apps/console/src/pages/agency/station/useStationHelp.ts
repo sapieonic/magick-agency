@@ -3,12 +3,9 @@ import { cancelHelp, raiseHelp } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
 import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
-import {
-  STATION_HELP_COPY,
-  helpNoticeText,
-  helpRaisable,
-  helpRefusalText,
-} from '../../../utils/agency/stationHelp';
+import { STATION_HELP_COPY, helpRaisable } from '../../../utils/agency/stationHelp';
+import { STATION_COPY, helpAnsweredLine, helpRefusedLine } from '../../../utils/agency/stationCopy';
+import type { StationHelpNotice } from '../../../utils/agencyStationReducer';
 
 /**
  * Need help on the agent's station (LF4, LF13, LF15, LF24): the raise and the cancel, and what
@@ -122,9 +119,11 @@ export function useStationHelp({
       })
       .catch((err: unknown) => {
         if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
-        const text = helpRefusalText(err, cancelling ? 'cancel' : 'raise');
+        // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
+        const kind = { action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) } as const;
+        const text = helpRefusedLine(kind);
         setRefusal(text);
-        setRefusalKind({ action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) });
+        setRefusalKind(kind);
         say(text);
       })
       .finally(() => {
@@ -140,8 +139,8 @@ export function useStationHelp({
   */
   const answeredNow = helpNotice !== null && help !== null && helpNotice.raised_at === help.raised_at;
   const status = help !== null
-    ? (answeredNow ? helpNoticeText(helpNotice) : STATION_HELP_COPY.open)
-    : (helpNotice ? helpNoticeText(helpNotice) : null);
+    ? (answeredNow ? noticeLine(helpNotice) : STATION_HELP_COPY.open)
+    : (helpNotice ? noticeLine(helpNotice) : null);
 
   // Said out loud when it changes: the open request (the direct result of the press), the answer,
   // the lapse. A request that ends silently (cancelled, the session ended) says nothing here.
@@ -171,4 +170,9 @@ export function useStationHelp({
     press,
     dismiss: dismissHelpNotice,
   };
+}
+
+/** What became of a request, in the words its banner shows (AS15): who answered and how, or that it lapsed. */
+function noticeLine(notice: StationHelpNotice): string {
+  return notice.kind === 'expired' ? STATION_COPY.helpExpired : helpAnsweredLine(notice.by_name, notice.how);
 }

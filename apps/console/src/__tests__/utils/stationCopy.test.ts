@@ -18,10 +18,15 @@ import {
   joinRefusedLine,
   switchFailedLine,
   helpRefusedLine,
+  backToCallsRefusedLine,
+  softphoneSwitchRefusedLine,
   missedReleaseLine,
   noCallsSubtitle,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
+import { STATION_HELP_COPY } from '../../utils/agency/stationHelp';
+import { BREAK_REJECTED_COPY } from '../../hooks/useBreakQueue';
+import { AGENCY_SOFTPHONE_ERROR_CODES } from '../../types/softphone';
 
 /**
  * AS15 and spec §6.6: the station's own words never use the jargon on the spec's list. Every
@@ -100,6 +105,9 @@ const ALL = [
   ...(['resume', 'leave', 'rejoin'] as const).flatMap((stage) =>
     ['station_on_other_device', 'session_ended', null].map((code) => switchFailedLine(stage, 'Renewals', code))),
   ...everyString(SOFTPHONE_CLOSE_COPY),
+  ...everyString(STATION_HELP_COPY),
+  BREAK_REJECTED_COPY,
+  ...[...AGENCY_SOFTPHONE_ERROR_CODES, 'unknown', null].flatMap((code) => [softphoneSwitchRefusedLine(code), backToCallsRefusedLine(code)]),
   ...['permission_denied', 'no_device', 'device_busy', 'device_lost', 'audio_blocked', 'unsupported', 'x'].flatMap((k) => Object.values(micProblemLine(k)).filter((v): v is string => typeof v === 'string')),
   savedLine({ label: 'Call later', nextAttemptAt: '2026-11-20T09:30:00.000Z', callbackRequestedAt: '2026-11-20T03:30:00.000Z', dncRecorded: false }),
   ...['completed', 'no_answer', 'busy', 'agent_disconnected', 'remote_hangup', 'x'].map((r) => releaseBanner(r) ?? ''),
