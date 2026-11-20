@@ -155,6 +155,8 @@ async function makeWorld(): Promise<World> {
   const stations = {
     isLocallyOwned: () => true,
     ownerOf: async () => REPLICA,
+    // No station declares `queue_pool` here, so a pool campaign's tick sends no queue frame.
+    get: () => undefined,
     broadcast: () => 0,
     send: () => false,
     sessionIdsForCampaign: () => [] as string[],
