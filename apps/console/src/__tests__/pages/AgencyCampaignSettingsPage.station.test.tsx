@@ -183,7 +183,7 @@ describe('Settings › What agents see: the customer’s number (AS9)', () => {
     renderPage();
     await screen.findByTestId('phone-display-full');
     expect(screen.getByTestId('phone-display-preview-masked').textContent).toBe('98••• ••321');
-    expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('98765 43321');
+    expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('+91 98765 43321');
     expect((screen.getByTestId('phone-display-full') as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByTestId('phone-display-masked'));
     save();

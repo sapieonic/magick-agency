@@ -1,7 +1,8 @@
 import { useId } from 'react';
 import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '../../../types/agency-campaign';
-import { PHONE_DISPLAY_SAMPLE, phoneAsShown } from '../../../utils/agency/stationSettings';
+import { PHONE_DISPLAY_SAMPLE } from '../../../utils/agency/stationSettings';
+import { phoneForDisplay } from '../../../utils/agency/stationFormat';
 import { formatCount } from '../../../utils/format/number';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './StationSettings.module.css';
@@ -74,7 +75,7 @@ export function AgentScreenFields({
               <span className={styles.choiceText}>
                 <span className={styles.choiceTitle}>{option.title}</span>
                 <span className={styles.preview} data-testid={`phone-display-preview-${option.value}`}>
-                  {phoneAsShown(PHONE_DISPLAY_SAMPLE, option.value)}
+                  {phoneForDisplay(PHONE_DISPLAY_SAMPLE, option.value)}
                 </span>
                 <span className={styles.choiceBlurb}>{option.blurb}</span>
               </span>

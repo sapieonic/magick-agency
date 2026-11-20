@@ -9,7 +9,7 @@ import type {
 import { resolveContextFields } from '../agencyContext';
 import { priorDispositionLabel } from '../agencyPriorAttempts';
 import { ATTEMPT_OUTCOME_WORDS } from './stationCopy';
-import { calendarDay, clockTime, dayMonth, initials, promisedAmount, rupees } from './stationFormat';
+import { calendarDay, clockTime, dayMonth, initials, phoneForDisplay, promisedAmount, rupees } from './stationFormat';
 
 /**
  * The customer card on Call coming, On call and What happened? (spec §3 03/04, §5.3), from the
@@ -61,15 +61,6 @@ const NAME = /^(full[\s_-]?)?name$|customer[\s_-]?name|^customer$|contact[\s_-]?
 const PLACE = /city|town|district|village|branch|region|zone|state|place|location|area/i;
 const MONEY_LABEL = /amount|balance|due(?!.*date)|outstanding|premium|emi|total|overdue|arrear/i;
 const DATE_LABEL = /date|due.?on|due.?by|day/i;
-
-/** The phone as shown: the full number today (AS9's default); `masked` once the campaign says so. */
-export function phoneForDisplay(phoneE164: string, display: 'full' | 'masked' = 'full'): string {
-  if (display === 'full') return phoneE164;
-  const digits = phoneE164.replace(/\D/g, '');
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  if (local.length < 6) return phoneE164;
-  return `${local.slice(0, 2)}••• ••${local.slice(-3)}`;
-}
 
 function factFrom(label: string, value: string, index: number): CustomerFact {
   if (MONEY_LABEL.test(label)) {

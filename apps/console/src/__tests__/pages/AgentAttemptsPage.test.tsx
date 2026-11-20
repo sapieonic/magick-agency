@@ -53,6 +53,7 @@ vi.mock('../../api/agencyStats', () => ({
 }));
 
 import { AgentAttemptsPage } from '../../pages/agency/AgentAttemptsPage';
+import { myCallsPath } from '../../utils/agency/myCallsPath';
 
 /** Connected, written up, real talk time. */
 const CONNECTED: AgencyAttempt = {
@@ -116,9 +117,9 @@ function tenant(over: Record<string, unknown> = {}) {
   };
 }
 
-function renderPage() {
+function renderPage(path = '/dialer/attempts') {
   return render(
-    <MemoryRouter initialEntries={['/dialer/attempts']}>
+    <MemoryRouter initialEntries={[path]}>
       <AgentAttemptsPage />
     </MemoryRouter>,
   );
@@ -230,6 +231,19 @@ describe('AgentAttemptsPage — the rows a call list cannot show', () => {
     renderPage();
     await waitFor(() => expect(mocks.getMyAttempts).toHaveBeenCalled());
     expect(mocks.getAgentAttempts).not.toHaveBeenCalled();
+  });
+
+  it('masks the numbers of the list the station said masks them (AS9), and formats the rest', async () => {
+    renderPage(myCallsPath('camp-1', 'masked'));
+    await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
+    expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('98••• ••001');
+    // camp-2 does not mask: its number in full, in the station's one format.
+    expect(screen.getByTestId(`my-attempt-phone-${NEVER_BRIDGED.id}`).textContent).toBe('+91 98765 00002');
+    cleanup();
+    renderPage();
+    await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
+    expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('+91 98765 00001');
+    expect(myCallsPath('camp-1', 'full')).toBe('/dialer/attempts');
   });
 
   it('shows a call that never bridged beside one that connected', async () => {

@@ -25,6 +25,8 @@ import {
 } from '../../analytics/events';
 import { AGENCY_OVERRIDE_NOTE_MAX, AGENCY_OVERRIDE_NOTE_MIN } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyQueueState } from '../../types/agency';
+import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import type {
   AgencyAgentRetryErrorCode,
   AgencyAssignmentMode,
@@ -93,6 +95,8 @@ export interface MyContactsPanelProps {
   onCalled: (contact: AgencyMyContact) => void;
   /** Injectable clock for the due-now test. */
   now?: () => number;
+  /** How the campaign shows a customer's number (AS9, the bootstrap's `phone_display`); full when absent. */
+  phoneDisplay?: AgencyPhoneDisplay;
 }
 
 /** Why the note prompt opened: the window is closed and this contact may be called outside it. */
@@ -120,6 +124,7 @@ export function MyContactsPanel({
   onClose,
   onCalled,
   now = Date.now,
+  phoneDisplay = 'full',
 }: MyContactsPanelProps) {
   const { tenantId, accountId } = useTenant();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -464,7 +469,7 @@ export function MyContactsPanel({
             <p className={styles.noteReason}>{notePrompt.reason}</p>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>
-                {`Why call ${notePrompt.contact.phone_e164} now? (${AGENCY_OVERRIDE_NOTE_MIN}–${AGENCY_OVERRIDE_NOTE_MAX} characters)`}
+                {`Why call ${phoneForDisplay(notePrompt.contact.phone_e164, phoneDisplay)} now? (${AGENCY_OVERRIDE_NOTE_MIN}–${AGENCY_OVERRIDE_NOTE_MAX} characters)`}
               </span>
               <textarea
                 value={note}
@@ -523,7 +528,7 @@ export function MyContactsPanel({
                       <input
                         type="checkbox"
                         className={styles.pick}
-                        aria-label={`Include ${contact.phone_e164} in the retry`}
+                        aria-label={`Include ${phoneForDisplay(contact.phone_e164, phoneDisplay)} in the retry`}
                         checked={picked.has(contact.id)}
                         disabled={!contact.retry.eligible}
                         onChange={(event) => {
@@ -538,7 +543,7 @@ export function MyContactsPanel({
                       />
                     ) : <span className={styles.pick} aria-hidden="true" />}
                     <div className={styles.who}>
-                      <span className={styles.phone}>{contact.phone_e164}</span>
+                      <span className={styles.phone} data-testid={`my-phone-${contact.id}`}>{phoneForDisplay(contact.phone_e164, phoneDisplay)}</span>
                       {contact.hero.length > 0 ? (
                         <span className={styles.hero}>
                           {contact.hero.map((field) => field.value).filter(Boolean).join(' · ')}

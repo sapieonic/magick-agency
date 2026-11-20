@@ -72,6 +72,7 @@ import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { messageSender } from '../../utils/agency/stationHelp';
 import { brand } from '../../brand';
+import { myCallsPath } from '../../utils/agency/myCallsPath';
 import {
   STATION_BLOCK_COPY,
   STATION_COPY,
@@ -164,8 +165,6 @@ const END_CALL_COPY: HoldToConfirmCopy = {
 /** 02b's "The last call did not connect": how long it stays (or until the next call). */
 export const LAST_CALL_BANNER_MS = 6_000;
 
-/** The My calls page, opened in a new tab from ⋮ More. */
-const MY_CALLS_PATH = '/dialer/attempts';
 
 function StationScreen({
   campaignId,
@@ -1148,6 +1147,8 @@ function StationScreen({
       break;
   }
 
+  // The My calls page, opened in a new tab from ⋮ More, masking this list's numbers when it does (AS9).
+  const myCalls = myCallsPath(bootstrap?.campaign_id ?? null, bootstrap?.phone_display ?? 'full');
   const needHelp = (
     <>
       {/* LS2: the standing "a supervisor may listen" line, behind its info button (only while the flag is on). */}
@@ -1160,7 +1161,7 @@ function StationScreen({
       items={themeContext ? shownView.menu : shownView.menu.filter((item) => item !== 'theme')}
       theme={theme}
       onSelect={onMenu}
-      myCallsTo={MY_CALLS_PATH}
+      myCallsTo={myCalls}
     />
   );
 
@@ -1174,7 +1175,7 @@ function StationScreen({
     </>
   );
   const sideMenu = (items: MoreItem[]): ReactNode => (
-    <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={MY_CALLS_PATH} />
+    <MoreMenu items={themeContext ? items : items.filter((item) => item !== 'theme')} theme={theme} onSelect={onMenu} myCallsTo={myCalls} />
   );
   const cueFlashNode = cons.cueFlash ? <CueFlashBand key={`${cons.cueFlash.cue}:${cons.cueFlash.attemptId}`} flash={cons.cueFlash} /> : null;
   // The way back when the socket is gone or moved: the band says what, this says how.
@@ -1312,6 +1313,7 @@ function StationScreen({
           queue={queue}
           onClose={() => setMyContactsOpen(false)}
           onCalled={() => setMyContactsOpen(false)}
+          phoneDisplay={bootstrap.phone_display ?? 'full'}
         />
       ) : null}
     </>

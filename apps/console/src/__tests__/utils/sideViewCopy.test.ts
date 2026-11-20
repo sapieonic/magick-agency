@@ -175,7 +175,7 @@ describe('the customer card on a side view', () => {
     const card = inboundCustomerCard(inboundCall());
     expect(card.name).toBe('Asha Rao');
     expect(card.place).toBe('Pune');
-    expect(card.phone).toBe('+919820461733');
+    expect(card.phone).toBe('+91 98204 61733');
     expect(card.facts.map((f) => f.value)).toEqual(['P-778', '8 Nov']);
     expect(card.lastSaid).toBe('Asked to ring after six');
     expect(inboundCustomerCard(inboundCall(), 'masked').phone).toBe('98••• ••733');
@@ -183,7 +183,7 @@ describe('the customer card on a side view', () => {
 
   it('an unmatched caller is their number; a withheld one is "Number hidden", never an empty title', () => {
     expect(inboundCustomerCard(inboundCall({ match: null })).name).toBeNull();
-    expect(inboundCustomerCard(inboundCall({ match: null })).phone).toBe('+919820461733');
+    expect(inboundCustomerCard(inboundCall({ match: null })).phone).toBe('+91 98204 61733');
     const hidden = inboundCustomerCard(connected({ match: null, from_e164: null }), 'masked');
     expect(hidden.phone).toBe('Number hidden');
     expect(hidden.facts).toEqual([]);
@@ -200,7 +200,7 @@ describe('the customer card on a side view', () => {
   it('a soft-phone call: the number dialled, whole, and the roster contact when the number is on the list', () => {
     const bare = softphoneCustomerCard(manualCall(), undefined);
     expect(bare.name).toBeNull();
-    expect(bare.phone).toBe('+919820461733');
+    expect(bare.phone).toBe('+91 98204 61733');
     const contact = {
       contact_id: 'ct-1',
       state: 'in_flight' as const,

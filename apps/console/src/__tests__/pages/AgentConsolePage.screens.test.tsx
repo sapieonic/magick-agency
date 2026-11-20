@@ -548,7 +548,7 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
     expect(screen.getByTestId('last-calls')).toBeTruthy();
     expect(screen.getByTestId('note-card')).toBeTruthy();
     // Full number by default (AS9).
-    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+919876543321');
+    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+91 98765 43321');
   });
 
   it('Will pay offers Full and Half of the typed amount due', async () => {
