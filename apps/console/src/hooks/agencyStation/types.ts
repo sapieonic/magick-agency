@@ -9,6 +9,7 @@ import type {
   AgencyStationReleasedFrame,
 } from '../../types/agency';
 import type {
+  AgencyCampaignChangeReason,
   AgencySessionHelp,
   AgencyStationMediaFormat,
   AgencyStationSupervisorMessageFrame,
@@ -211,6 +212,13 @@ export interface UseAgencyStationResult {
   lastError: AgencyStationErrorFrame | null;
   /** Whether the engine will produce further calls (from `campaign_state`). */
   dialing: boolean;
+  /** Why the campaign last changed state (`campaign_state.reason`); null until a frame says. */
+  campaignReason: AgencyCampaignChangeReason | null;
+  /**
+   * When the reconnect ladder will try next (local epoch ms) while one is scheduled, else null:
+   * what screen 09's "Trying again in 0:08" counts down to.
+   */
+  nextRetryAt: number | null;
   /** Consecutive missed heartbeats, for the connection health pill. */
   missedPings: number;
   /**

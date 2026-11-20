@@ -26,6 +26,7 @@ import {
   type AgencyReservedBreakReason,
 } from '@magick-agency/contracts/agency';
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
+import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { autoDispositionRefusal, isAutoDispositionOutcome } from '@magick-agency/domain/auto-disposition';
 import { contextDisplayIssues } from './customer-facts.js';
 import { agentScriptIssues } from './agent-script.js';
@@ -351,6 +352,26 @@ export function validateAssignmentSettings(record: Record<string, unknown>): Cam
   integer('agent_retry_rounds', AGENCY_AGENT_RETRY_ROUNDS_MIN, AGENCY_AGENT_RETRY_ROUNDS_MAX);
   integer('agent_retry_cooldown_minutes', 0, AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX);
   return issues;
+}
+
+/**
+ * Agent station (BE-2, AS6): `daily_target_calls` (0056, `INTEGER NULL`, CHECK 1 to 2000), each
+ * agent's daily target in connected calls. A whole number from `AGENCY_DAILY_TARGET_CALLS_MIN` to
+ * `AGENCY_DAILY_TARGET_CALLS_MAX`, or `null`, which clears it (no target: no bar on My day, not a
+ * target of zero). Anything else is refused here rather than at the CHECK (a 500).
+ *
+ * Exported because the public API layer's validator (`agency-campaign-config.ts`) applies the same
+ * rule with the same message.
+ */
+export function validateDailyTargetCalls(record: Record<string, unknown>): CampaignConfigIssue[] {
+  const value = record['daily_target_calls'];
+  if (value === undefined || value === null) return [];
+  if (typeof value === 'number' && Number.isInteger(value)
+    && value >= AGENCY_DAILY_TARGET_CALLS_MIN && value <= AGENCY_DAILY_TARGET_CALLS_MAX) return [];
+  return [{
+    field: 'daily_target_calls',
+    message: `daily_target_calls must be a whole number from ${AGENCY_DAILY_TARGET_CALLS_MIN} to ${AGENCY_DAILY_TARGET_CALLS_MAX}, or null for no target.`,
+  }];
 }
 
 /** The keys an outcome's `override` may carry (`AgencyDispositionOverride`). */
@@ -771,6 +792,8 @@ export function validateAgencyCampaignConfig(
   // Inbound sticky routing (0024, `BOOLEAN NOT NULL DEFAULT true`): the same rule.
   issues.push(...validateBooleanSetting(record, 'inbound_sticky_enabled'));
   issues.push(...validateAssignmentSettings(record));
+  // Agent station (BE-2): the daily target, or null to clear it.
+  issues.push(...validateDailyTargetCalls(record));
   issues.push(...validateCallingWindow(record, base));
   // Agent station (BE-6): `context_display.roles` / `.types`, their shape. The roster's columns
   // are checked by the PATCH route, which reads them (`contextColumnsRejected`).

@@ -319,6 +319,8 @@ export async function startMyContactCall(
       campaign,
       contact: claim.contact,
       clearance: gate.clearance,
+      // The agent dialling their own contact: the panel's call-later tag compares its booker (BE-4).
+      agentUserId: actorUserId,
     });
   } catch (err) {
     // As the tick's dispatch failure: the attempt ends `failed`, then the agent and the

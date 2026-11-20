@@ -177,6 +177,11 @@ export interface HoldToConfirmButtonProps {
    * hang-up button, byte for byte.
    */
   copy?: HoldToConfirmCopy;
+  /**
+   * An extra class on the button, for a surface that sizes it its own way (the agent station's
+   * 68 px End call). Look only: the mechanism, the fill and the phases are this file's.
+   */
+  buttonClassName?: string;
 }
 
 export function HoldToConfirmButton({
@@ -186,6 +191,7 @@ export function HoldToConfirmButton({
   reserveReasonLine = false,
   onConfirm,
   copy = HANGUP_COPY,
+  buttonClassName,
 }: HoldToConfirmButtonProps) {
   const hintId = `${copy.idPrefix}-hint`;
   const [phase, setPhase] = useState<Phase>('idle');
@@ -397,7 +403,7 @@ export function HoldToConfirmButton({
       <button
         ref={buttonRef}
         type="button"
-        className={styles.button}
+        className={buttonClassName ? `${styles.button} ${buttonClassName}` : styles.button}
         data-phase={phase}
         // NEVER `disabled` — see the re-decision note at the top of this file.
         aria-disabled={inert || undefined}

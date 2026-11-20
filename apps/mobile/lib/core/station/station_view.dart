@@ -38,20 +38,53 @@ enum AgentPhase { offline, available, reserved, onCall, wrapup, onBreak }
 
 enum ReleaseTone { neutral, warning, danger }
 
+/// The picture a supervisor chose for an outcome or break tile (BE-13; the contract's
+/// `AGENCY_TILE_ICONS`, same names). Null on a tile means none was chosen, or a newer one this build
+/// does not know: the station then works one out from the outcome's flags or the break's name.
+enum TilePicture {
+  rupee,
+  clock,
+  calendar,
+  stop,
+  thumbsUp,
+  thumbsDown,
+  check,
+  cross,
+  phoneMissed,
+  phoneBusy,
+  voicemail,
+  wrongNumber,
+  language,
+  question,
+  tea,
+  lunch,
+  washroom,
+  meeting,
+  training,
+  prayer,
+  headset,
+  walk,
+  person,
+  dot,
+}
+
 @immutable
 class BreakOption {
-  const BreakOption({required this.code, required this.label, this.limitMinutes});
+  const BreakOption({required this.code, required this.label, this.limitMinutes, this.icon});
   final String code;
   final String label;
 
   /// The reason's limit in minutes ("Tea 15 min" on Which break?); null for a reason with none.
   final int? limitMinutes;
 
+  /// The supervisor's picture for it (BE-13), or null.
+  final TilePicture? icon;
+
   @override
   bool operator ==(Object other) =>
-      other is BreakOption && other.code == code && other.label == label && other.limitMinutes == limitMinutes;
+      other is BreakOption && other.code == code && other.label == label && other.limitMinutes == limitMinutes && other.icon == icon;
   @override
-  int get hashCode => Object.hash(code, label, limitMinutes);
+  int get hashCode => Object.hash(code, label, limitMinutes, icon);
 }
 
 /// The break the agent is on, or has queued for after this call.
@@ -187,6 +220,8 @@ class CallView {
     this.redialNumber,
     this.redialLimit,
     this.promise,
+    this.callback,
+    this.facts,
   });
 
   final String attemptId;
@@ -224,6 +259,14 @@ class CallView {
   /// The contact's latest promise to pay (PT9); null without one.
   final PromiseView? promise;
 
+  /// This call is a booked call-later coming due (BE-4, `attempt.callback`); null otherwise, or
+  /// from a server that does not send it.
+  final CallLaterTag? callback;
+
+  /// The customer's facts as the server read them (BE-6, `attempt.facts`); null from a server that
+  /// does not send them: the card then reads the hero fields.
+  final FactsView? facts;
+
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
@@ -247,11 +290,97 @@ class CallView {
       other.recording == recording &&
       other.redialNumber == redialNumber &&
       other.redialLimit == redialLimit &&
-      other.promise == promise;
+      other.promise == promise &&
+      other.callback == callback &&
+      other.facts == facts;
 
   @override
   int get hashCode =>
-      Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length, redialNumber);
+      Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length, redialNumber, callback, facts);
+}
+
+/// "Call later · You said you will call at 3:00 PM": the booked time (this device's clock) and
+/// whether this agent booked it (only then "You said…").
+@immutable
+class CallLaterTag {
+  const CallLaterTag({required this.dueAt, required this.bookedByMe});
+
+  final DateTime dueAt;
+  final bool bookedByMe;
+
+  @override
+  bool operator ==(Object other) => other is CallLaterTag && other.dueAt == dueAt && other.bookedByMe == bookedByMe;
+  @override
+  int get hashCode => Object.hash(dueAt, bookedByMe);
+}
+
+/// How a fact's value reads (the campaign's column type, BE-6).
+enum FactKind { text, money, date }
+
+/// One fact tile: the column's name as the label, the value as uploaded, and, for a typed column
+/// the server could read, the parsed value (money a decimal string, a date `YYYY-MM-DD`).
+@immutable
+class FactTileView {
+  const FactTileView({required this.label, required this.raw, required this.kind, this.parsed, this.amountDue = false, this.dueDate = false});
+
+  final String label;
+  final String raw;
+  final FactKind kind;
+  final String? parsed;
+
+  /// The tile plays the amount-due role (the script's `{amount_due}`).
+  final bool amountDue;
+
+  /// The tile plays the due-date role (`{due_date}`).
+  final bool dueDate;
+
+  @override
+  bool operator ==(Object other) =>
+      other is FactTileView &&
+      other.label == label &&
+      other.raw == raw &&
+      other.kind == kind &&
+      other.parsed == parsed &&
+      other.amountDue == amountDue &&
+      other.dueDate == dueDate;
+  @override
+  int get hashCode => Object.hash(label, raw, kind, parsed, amountDue, dueDate);
+}
+
+/// The customer's name, place and fact tiles, as the server read them (BE-6).
+@immutable
+class FactsView {
+  const FactsView({this.name, this.place, this.tiles = const []});
+
+  final String? name;
+  final String? place;
+
+  /// In hero order, at most four.
+  final List<FactTileView> tiles;
+
+  static const _eq = ListEquality<FactTileView>();
+
+  @override
+  bool operator ==(Object other) => other is FactsView && other.name == name && other.place == place && _eq.equals(other.tiles, tiles);
+  @override
+  int get hashCode => Object.hash(name, place, tiles.length);
+}
+
+/// The campaign's script (BE-8): the opening line ("First, say this") and the numbered steps
+/// ("What to say"), placeholders still in braces; the screen fills them for the call on screen.
+@immutable
+class ScriptView {
+  const ScriptView({this.opening, this.steps = const []});
+
+  final String? opening;
+  final List<String> steps;
+
+  static const _eq = ListEquality<String>();
+
+  @override
+  bool operator ==(Object other) => other is ScriptView && other.opening == opening && _eq.equals(other.steps, steps);
+  @override
+  int get hashCode => Object.hash(opening, steps.length);
 }
 
 /// Why the last call ended, in the console's words (`agencyReleaseCopy.ts`).
@@ -322,10 +451,14 @@ class DispositionOption {
     this.suppresses = false,
     this.requiresPromise = false,
     this.promiseFollowUpDays,
+    this.icon,
   });
 
   final String code;
   final String label;
+
+  /// The supervisor's picture for it (BE-13), or null.
+  final TilePicture? icon;
   final bool requiresNote;
   final bool requiresCallbackTime;
   final bool isSuccess;
@@ -349,10 +482,11 @@ class DispositionOption {
       other.isSuccess == isSuccess &&
       other.suppresses == suppresses &&
       other.requiresPromise == requiresPromise &&
-      other.promiseFollowUpDays == promiseFollowUpDays;
+      other.promiseFollowUpDays == promiseFollowUpDays &&
+      other.icon == icon;
   @override
   int get hashCode => Object.hash(
-    code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses, requiresPromise, promiseFollowUpDays,
+    code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses, requiresPromise, promiseFollowUpDays, icon,
   );
 }
 
@@ -680,7 +814,7 @@ enum HelpNoticeTone { success, warning }
 /// request, and the notice of how the last one ended, show wherever the station is.
 @immutable
 class HelpView {
-  const HelpView({this.stage = HelpStage.none, this.raisedAt, this.notice, this.noticeTone, this.error});
+  const HelpView({this.stage = HelpStage.none, this.raisedAt, this.notice, this.noticeTone, this.error, this.onlyOnCall = false});
 
   final HelpStage stage;
 
@@ -695,6 +829,11 @@ class HelpView {
   /// Why the last raise or cancel did not go through; null for none.
   final String? error;
 
+  /// This server takes a raise only on a call or while finishing one (it refused one elsewhere
+  /// `help_not_on_call`: a server older than BE-9): the button is offered there only, for the rest
+  /// of the session.
+  final bool onlyOnCall;
+
   /// A request is open (or being cancelled): the screen says so and offers Cancel.
   bool get isOpen => stage == HelpStage.open || stage == HelpStage.cancelling;
 
@@ -708,9 +847,10 @@ class HelpView {
       other.raisedAt == raisedAt &&
       other.notice == notice &&
       other.noticeTone == noticeTone &&
-      other.error == error;
+      other.error == error &&
+      other.onlyOnCall == onlyOnCall;
   @override
-  int get hashCode => Object.hash(stage, raisedAt, notice, noticeTone, error);
+  int get hashCode => Object.hash(stage, raisedAt, notice, noticeTone, error, onlyOnCall);
 }
 
 /// A supervisor's message to the agent (floor assist, LF5): plain text, who sent it ("Your
@@ -785,6 +925,8 @@ class StationView {
     this.customerWaiting,
     this.inboundNotice,
     this.help = const HelpView(),
+    this.script,
+    this.maskPhone = false,
   });
 
   final String campaignId;
@@ -867,6 +1009,13 @@ class StationView {
   /// holds up hanging up or saving the outcome.
   final HelpView help;
 
+  /// The campaign's script (BE-8); null when it has none, or from a server that does not send it.
+  final ScriptView? script;
+
+  /// The campaign shows the customer's number masked (AS9, `phone_display: 'masked'`): `98••• ••321`
+  /// on every station screen. The number is still in [CallView.phoneE164] for the call itself.
+  final bool maskPhone;
+
   /// The call on screen, campaign or inbound: what notes, dialogs and sheets are keyed by.
   String? get callId => call?.attemptId ?? inbound?.callId;
 
@@ -911,7 +1060,9 @@ class StationView {
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&
       other.inboundNotice == inboundNotice &&
-      other.help == help;
+      other.help == help &&
+      other.script == script &&
+      other.maskPhone == maskPhone;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);

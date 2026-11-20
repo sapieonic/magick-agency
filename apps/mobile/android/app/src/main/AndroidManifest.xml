@@ -114,5 +114,10 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!-- Read aloud on the station (AS13): Android 11+ hides the text-to-speech engines from an
+             app that does not declare it looks for them (flutter_tts). -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 </manifest>

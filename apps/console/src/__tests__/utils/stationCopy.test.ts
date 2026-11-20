@@ -1,0 +1,84 @@
+import { describe, it, expect } from 'vitest';
+import {
+  STATION_BLOCK_COPY,
+  STATION_COPY,
+  helpAnsweredLine,
+  helpRefusedLine,
+  missedReleaseLine,
+  noCallsSubtitle,
+  releaseBanner,
+} from '../../utils/agency/stationCopy';
+
+/**
+ * AS15 and spec §6.6: the station's own words never use the jargon on the spec's list. Every
+ * string the station's copy can produce is collected here (functions are called with sample
+ * arguments) and checked, so a new line that says "disposition" or "campaign" goes red.
+ */
+const BANNED = [
+  /disposition/i,
+  /wrap-?up/i,
+  /pacing/i,
+  /session/i,
+  /station/i,
+  /\bSIP\b/,
+  /webrtc/i,
+  /\bDNC\b/,
+  /call-?back/i,
+  /campaign/i,
+  /reserved/i,
+  /\bavailable\b/i,
+  /\boffline\b/i,
+  /reconnecting/i,
+];
+
+function everyString(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) value.forEach((v) => everyString(v, out));
+  else if (typeof value === 'function') {
+    const fn = value as (...args: unknown[]) => unknown;
+    for (const args of [[3], ['Sunita'], [null], ['3:00 PM', '₹12,500'], ['Tea'], [15, 15]]) {
+      try {
+        everyString(fn(...args), out);
+      } catch {
+        /* a sample that does not fit this function */
+      }
+    }
+  } else if (value && typeof value === 'object') Object.values(value).forEach((v) => everyString(v, out));
+  return out;
+}
+
+const ALL = [
+  ...everyString(STATION_COPY),
+  ...everyString(STATION_BLOCK_COPY),
+  ...['completed', 'no_answer', 'busy', 'agent_disconnected', 'remote_hangup', 'x'].map((r) => releaseBanner(r) ?? ''),
+  ...['remote_hangup', 'agent_disconnected', 'no_answer', 'x'].map(missedReleaseLine),
+  helpAnsweredLine('Priya', 'listen'),
+  helpAnsweredLine(null, 'message'),
+  helpAnsweredLine(null, null),
+  ...['floor_assist_disabled', 'help_not_on_call', 'session_ended', 'account_scope_required', null].flatMap((code) => [
+    helpRefusedLine({ action: 'raise', code, status: 409 }),
+    helpRefusedLine({ action: 'cancel', code, status: 404 }),
+    helpRefusedLine({ action: 'raise', code, status: 403 }),
+    helpRefusedLine({ action: 'raise', code, status: 500 }),
+  ]),
+  ...(['list_exhausted', 'paused_by_supervisor', null] as const).flatMap((campaignReason) =>
+    (['queue_empty', 'waiting_for_retry', 'callbacks_later', 'outside_calling_hours', null] as const).flatMap((queueReason) => [
+      noCallsSubtitle({ campaignReason, dialing: false, queueReason, nextDueAt: null }),
+      noCallsSubtitle({ campaignReason, dialing: true, queueReason, nextDueAt: '2026-11-20T09:30:00Z' }),
+    ]),
+  ),
+].filter(Boolean);
+
+describe('the station’s own words (AS15, spec §6.6)', () => {
+  it('collects a real body of copy, so the checks below cannot pass on nothing', () => {
+    expect(ALL.length).toBeGreaterThan(150);
+  });
+
+  it.each(BANNED.map((re) => [re.source, re] as const))('never says %s', (_name, re) => {
+    expect(ALL.filter((line) => re.test(line))).toEqual([]);
+  });
+
+  it('spells the British way', () => {
+    expect(ALL.filter((line) => /\b(canceled|color|dialed|redialed|organization|center)\b/i.test(line))).toEqual([]);
+  });
+});

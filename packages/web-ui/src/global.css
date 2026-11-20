@@ -147,6 +147,23 @@
   /* Accent-only. The teal second stop made this wash a second brand hue
      competing with the accent — and it did not follow whitelabel accents. */
   --gradient-surface: linear-gradient(135deg, rgba(124, 92, 252, 0.06), transparent 70%);
+  /* Agent station state colours (AS1, docs/agent-station/design-spec.md §1). One state, one
+     colour, on console and phone. --st-<state> fills the full-width band, -ink is text on it,
+     -soft a pale tint for tiles and chips, -deep that colour as text on the page. The band and
+     its ink are the same in both themes (a band is read from across the floor); the tint and the
+     text colour follow the theme. --st-go / --st-stop: go-forward and stop buttons. */
+  --st-start: #2d3047; --st-start-ink: #ffffff; --st-start-soft: #23253a; --st-start-deep: #c9cbe0;
+  --st-ready: #077461; --st-ready-ink: #ffffff; --st-ready-soft: #0e2b26; --st-ready-deep: #3fcf9e;
+  --st-coming: #0a6fae; --st-coming-ink: #ffffff; --st-coming-soft: #0d2636; --st-coming-deep: #56b8f0;
+  --st-oncall: #1d4fb8; --st-oncall-ink: #ffffff; --st-oncall-soft: #131f3d; --st-oncall-deep: #8fb0ff;
+  --st-happened: #6a4de4; --st-happened-ink: #ffffff; --st-happened-soft: #1f1a3a; --st-happened-deep: #b9a8ff;
+  --st-break: #f0b548; --st-break-ink: #2e1d00; --st-break-soft: #32270f; --st-break-deep: #e8a63f;
+  --st-over: #c2410c; --st-over-ink: #ffffff; --st-over-soft: #36190c; --st-over-deep: #ff9a6b;
+  --st-problem: #be3440; --st-problem-ink: #ffffff; --st-problem-soft: #371418; --st-problem-deep: #ef6b6b;
+  --st-quiet: #4a5165; --st-quiet-ink: #ffffff; --st-quiet-soft: #1f2128; --st-quiet-deep: #b4b4c2;
+  --st-go: #077461; --st-go-shadow: #05574a;
+  --st-stop: #be3440; --st-stop-shadow: #942631;
+  --st-break-shadow: #c98f22;
 }
 
 [data-theme='light'] {
@@ -218,6 +235,23 @@
   --gradient-warm: linear-gradient(135deg, #ef7c35, #ef6684);
   --gradient-blue: linear-gradient(135deg, #3a6df0, #8666ef);
   --gradient-surface: linear-gradient(135deg, rgba(106, 77, 228, 0.05), transparent 70%);
+  /* Agent station state colours (AS1, docs/agent-station/design-spec.md §1). One state, one
+     colour, on console and phone. --st-<state> fills the full-width band, -ink is text on it,
+     -soft a pale tint for tiles and chips, -deep that colour as text on the page. The band and
+     its ink are the same in both themes (a band is read from across the floor); the tint and the
+     text colour follow the theme. --st-go / --st-stop: go-forward and stop buttons. */
+  --st-start: #2d3047; --st-start-ink: #ffffff; --st-start-soft: #eceef4; --st-start-deep: #2d3047;
+  --st-ready: #077461; --st-ready-ink: #ffffff; --st-ready-soft: #e1f4ef; --st-ready-deep: #06614f;
+  --st-coming: #0a6fae; --st-coming-ink: #ffffff; --st-coming-soft: #e2f1fb; --st-coming-deep: #085c91;
+  --st-oncall: #1d4fb8; --st-oncall-ink: #ffffff; --st-oncall-soft: #e6edfb; --st-oncall-deep: #1a45a0;
+  --st-happened: #6a4de4; --st-happened-ink: #ffffff; --st-happened-soft: #efebfd; --st-happened-deep: #5a40ce;
+  --st-break: #f0b548; --st-break-ink: #2e1d00; --st-break-soft: #fdf3dc; --st-break-deep: #7a4f06;
+  --st-over: #c2410c; --st-over-ink: #ffffff; --st-over-soft: #fde9df; --st-over-deep: #a33608;
+  --st-problem: #be3440; --st-problem-ink: #ffffff; --st-problem-soft: #fbe6e8; --st-problem-deep: #a82a36;
+  --st-quiet: #4a5165; --st-quiet-ink: #ffffff; --st-quiet-soft: #eceef2; --st-quiet-deep: #3d4356;
+  --st-go: #077461; --st-go-shadow: #05574a;
+  --st-stop: #be3440; --st-stop-shadow: #942631;
+  --st-break-shadow: #c98f22;
 }
 
 *,

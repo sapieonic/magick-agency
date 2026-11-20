@@ -12,7 +12,9 @@ import '../logic/wrapup_math.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
 import '../widgets/action_buttons.dart';
+import '../widgets/read_aloud_button.dart';
 import '../widgets/ticking.dart';
+import '../widgets/tile_pictures.dart';
 import 'banners.dart';
 import 'call_band.dart';
 import 'callback_picker.dart';
@@ -172,8 +174,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
       // About this call's wrap-up: it closes when the wrap-up ends or another
       // call arrives, and a "yes" that lands after that saves nothing.
       final scope = sameCall(call?.attemptId, const {AgentPhase.wrapup});
-      final name = call?.displayName?.trim();
-      final phone = call == null ? '' : formatPhone(call.phoneE164);
+      final name = (call?.facts?.name ?? call?.displayName)?.trim();
+      final phone = call == null ? '' : stationPhone(call.phoneE164, masked: view.maskPhone);
       final ok = await confirmSheet(
         context,
         title: StationCopy.stopCallingTitle,
@@ -643,8 +645,10 @@ class OutcomeTiles extends StatelessWidget {
   }
 }
 
-/// An outcome's picture (design-spec §5.4), by what it does.
+/// An outcome's picture: the supervisor's (BE-13), else one by what it does (design-spec §5.4).
 IconData outcomeIcon(DispositionOption o) {
+  final chosen = o.icon;
+  if (chosen != null) return tilePictureIcon(chosen);
   if (o.suppresses) return Icons.block;
   if (o.requiresPromise) return Icons.currency_rupee;
   if (o.requiresCallbackTime) return Icons.schedule;
@@ -719,6 +723,14 @@ class _OutcomeTile extends StatelessWidget {
                 ),
                 if (selected)
                   Positioned(top: 4, right: 4, child: Icon(Icons.check_circle, size: 22, color: s.ready.deep)),
+                // Read the label aloud (AS13); a screen reader reads the tile itself.
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: ExcludeSemantics(
+                    child: ReadAloudButton(key: Key('read-aloud-${option.code}'), text: option.label),
+                  ),
+                ),
               ],
             ),
           ),

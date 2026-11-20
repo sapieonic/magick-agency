@@ -30,6 +30,12 @@ export interface DialCommand {
    * back in wrap-up instead of the pool when the redial fails before connecting.
    */
   redial?: { ofAttemptId: string; number: number };
+  /**
+   * Agent station (BE-4): the user id of the agent the dial is for, when the caller knows it
+   * (pacing's reservation, the agent's own dial). The panel's `callback.booked_by_me` compares
+   * it with the contact's recorded booker; absent, it is false. Nothing else reads it.
+   */
+  agentUserId?: string;
 }
 
 /**

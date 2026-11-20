@@ -42,10 +42,16 @@ export interface NotesFieldProps {
   disabledReason?: string | null;
   /** `Ctrl`/`Cmd`+`Enter` — one of the two keys not suppressed inside a text input. */
   onSubmit?: () => void;
+  /** The field's label; "Notes" when omitted. */
+  label?: string;
+  /** Shown in the empty field (the agent station's "Type a note here (not required)"). */
+  placeholder?: string;
+  /** The picked outcome needs a note and there is none: `aria-invalid`, for the station's red border. */
+  invalid?: boolean;
 }
 
 export const NotesField = forwardRef<HTMLTextAreaElement, NotesFieldProps>(function NotesField(
-  { value, onAgentEdit, status, foreignWrite = false, enabled, disabledReason = null, onSubmit },
+  { value, onAgentEdit, status, foreignWrite = false, enabled, disabledReason = null, onSubmit, label = 'Notes', placeholder, invalid = false },
   ref,
 ) {
   const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -68,7 +74,7 @@ export const NotesField = forwardRef<HTMLTextAreaElement, NotesFieldProps>(funct
   return (
     <div className={styles.group}>
       <label className={styles.label} htmlFor="agency-notes">
-        Notes
+        {label}
         <span className={styles.shortcut} aria-hidden="true">
           N
         </span>
@@ -90,6 +96,8 @@ export const NotesField = forwardRef<HTMLTextAreaElement, NotesFieldProps>(funct
          * this.
          */
         disabled={!enabled}
+        placeholder={placeholder}
+        aria-invalid={invalid || undefined}
         aria-describedby="agency-notes-status"
         onKeyDown={onKeyDown}
         onChange={(event) => onAgentEdit(event.target.value)}

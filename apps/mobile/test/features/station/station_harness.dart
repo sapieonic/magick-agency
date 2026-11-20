@@ -12,6 +12,7 @@ import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/speech/read_aloud.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_reads.dart';
@@ -154,6 +155,16 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
   Future<void> dismiss() async => calls.add('dismiss');
 }
 
+/// Records what would be read aloud.
+class FakeReadAloud implements ReadAloud {
+  final said = <String>[];
+
+  @override
+  Future<void> speak(String text) async => said.add(text);
+  @override
+  Future<void> stop() async {}
+}
+
 class SoftphoneHolder extends Notifier<SoftphoneView> {
   SoftphoneHolder(this.initial);
   final SoftphoneView initial;
@@ -202,6 +213,9 @@ class StationHarness {
   /// The soft phone's seams: the host's actions, the panel's actions, its view
   /// and its availability.
   final host = FakeSoftphoneHost();
+
+  /// What the station read aloud (AS13).
+  late final FakeReadAloud readAloud;
   final softphoneActions = FakeSoftphoneActions();
   late final NotifierProvider<SoftphoneHolder, SoftphoneView> softphone;
   late final NotifierProvider<AvailabilityHolder, SoftphoneAvailability> availability;
@@ -323,6 +337,8 @@ Future<StationHarness> pumpStation(
   String? agentName = 'Sunita Yadav',
   MyDayView? myDay,
   List<CallLaterItem> callLater = const [],
+  bool? callLaterComesToMe,
+  bool? callLaterGoesToPool,
   void Function()? onMyDayRead,
   List<Override> extra = const [],
 }) async {
@@ -344,6 +360,7 @@ Future<StationHarness> pumpStation(
   });
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
+  final readAloudFake = FakeReadAloud();
   final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
   final softphoneHolder = NotifierProvider<SoftphoneHolder, SoftphoneView>(() => SoftphoneHolder(softphone));
   final availabilityHolder = NotifierProvider<AvailabilityHolder, SoftphoneAvailability>(() => AvailabilityHolder(availability));
@@ -367,16 +384,20 @@ Future<StationHarness> pumpStation(
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
       stationAgentNameProvider.overrideWithValue(agentName),
+      readAloudProvider.overrideWithValue(readAloudFake),
       stationMyDayProvider.overrideWith((ref, id) async {
         onMyDayRead?.call();
         return myDay;
       }),
-      stationCallLaterProvider.overrideWith((ref, key) async => callLater),
+      stationCallLaterProvider.overrideWith(
+        (ref, key) async => CallLaterList(items: callLater, comesToMe: callLaterComesToMe, leftGoesToPool: callLaterGoesToPool),
+      ),
       ...extra,
     ],
   );
   addTearDown(container.dispose);
   h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements)
+    ..readAloud = readAloudFake
     ..softphone = softphoneHolder
     ..availability = availabilityHolder;
   actions.afterLeave = () async {
@@ -456,6 +477,8 @@ CallView call({
   int? redialLimit,
   PromiseView? promise,
   List<PriorAttempt>? priorAttempts,
+  CallLaterTag? callback,
+  FactsView? facts,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -484,6 +507,8 @@ CallView call({
   redialNumber: redialNumber,
   redialLimit: redialLimit,
   promise: promise,
+  callback: callback,
+  facts: facts,
 );
 
 StationView station({
@@ -514,6 +539,8 @@ StationView station({
   List<DispositionOption>? dispositionOptions,
   List<BreakOption> breakOptions = breaks,
   HelpView help = const HelpView(),
+  ScriptView? script,
+  bool maskPhone = false,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -544,6 +571,8 @@ StationView station({
   dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
   help: help,
+  script: script,
+  maskPhone: maskPhone,
 );
 
 const hungUpRelease = ReleaseView(

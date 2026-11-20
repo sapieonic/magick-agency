@@ -43,6 +43,7 @@ vi.mock('../../contexts/AuthContext', () => ({
   }),
 }));
 
+import { stubStationMicrophone } from '../helpers/stationDevices';
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
@@ -118,7 +119,9 @@ function Where() {
   return <div data-testid="where">{`${location.pathname}${location.search}`}</div>;
 }
 
+let microphone: ReturnType<typeof stubStationMicrophone>;
 beforeEach(() => {
+  microphone = stubStationMicrophone();
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
@@ -130,6 +133,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  microphone.restore();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -165,67 +169,84 @@ async function inState(state: string) {
 }
 
 function openMenu() {
-  fireEvent.click(screen.getByRole('button', { name: 'Station options' }));
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
 }
 
-describe('AgentConsolePage — the station menu', () => {
-  it('lives in the header beside cue settings, never in the action bar', async () => {
-    await mounted();
+/** ⋮ More → Finish work for today → screen 11 → Yes, finish work. */
+function finishWork() {
+  openMenu();
+  fireEvent.click(screen.getByTestId('station-menu-finish'));
+  expect(screen.getByTestId('band-title').textContent).toBe('Finish work for today?');
+  fireEvent.click(screen.getByRole('button', { name: 'Yes, finish work' }));
+}
 
-    // The action bar's sequence is a tab-order guarantee: an item
-    // inserted there moves controls an agent reaches by muscle memory, and the
-    // neighbour is the one that hangs up on a person.
-    const trigger = screen.getByRole('button', { name: 'Station options' });
-    const header = trigger.closest('header');
-    expect(header).not.toBeNull();
-    expect(header!.contains(screen.getByRole('button', { name: /sound & flash/i }))).toBe(true);
-    // The action bar's own order is untouched.
-    const bar = screen.getByRole('button', { name: /save disposition/i }).parentElement!;
-    expect(bar.contains(trigger)).toBe(false);
-    // The gear itself is in the trigger — a 28×28 well with global button
-    // padding used to clip it to an empty square.
-    expect(trigger.querySelector('svg')).not.toBeNull();
+describe('AgentConsolePage — Finish work for today (one control for Leave and Exit, spec §8)', () => {
+  it('lives in the top bar’s ⋮ More, last and red, never in the footer beside the call’s controls', async () => {
+    await mounted();
+    await inState('available');
+    openMenu();
+    const items = Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"]'));
+    const finish = items[items.length - 1]!;
+    expect(finish.textContent).toBe('Finish work for today');
+    expect(finish.getAttribute('data-stop')).toBe('true');
+    expect(finish.closest('header')).not.toBeNull();
+    expect(screen.getByTestId('station').querySelector('footer')!.contains(finish)).toBe(false);
   });
 
-  it('offers Leave while available, and it ends the session and lands the agent on their landing screen', async () => {
+  it('asks first (11), then ends the session and lands the agent on their landing screen', async () => {
     await mounted();
     await inState('available');
 
     openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-
-    // Behind a confirmation: rejoining means a fresh session and a fresh place
-    // in the pool, and the item one row away does something quite different.
-    await screen.findByText('You’ll stop receiving calls and your station will close.');
-    fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    // Behind a question: rejoining means a fresh session and a fresh place in the pool.
+    expect(screen.getByTestId('band-subtitle').textContent).toBe('No more calls will come to you.');
+    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, finish work' }));
 
     await waitFor(() =>
       expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-1', 'tenant-1', 'account-1'),
     );
     // `?left=station` — without it their unchanged assignment would resolve and
     // send them straight back into the station they just left.
-    // `/dialer`, not `/app`. The agent home moved there; routing the exit through
-    // `/app` only worked because `AgentLanding` forwards the param, which is one
-    // more hop and one more place for the arrival to be lost.
     await waitFor(() =>
       expect(screen.getByTestId('where').textContent).toBe('/dialer?left=station'),
     );
   });
 
-  it('forgets the live station on Leave, so the next campaign is allowed to POST', async () => {
+  it('No, keep working (the big, safe choice) and Esc both go back without a request', async () => {
+    await mounted();
+    await inState('available');
+    openMenu();
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    fireEvent.click(screen.getByRole('button', { name: /No, keep working/ }));
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
+    openMenu();
+    fireEvent.click(screen.getByTestId('station-menu-finish'));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByTestId('band-title').textContent).toBe('Ready');
+    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
+  });
+
+  it('is on the break screens too, as a quiet link', async () => {
+    await mounted();
+    await inState('break');
+    fireEvent.click(screen.getByTestId('break-finish-work'));
+    expect(screen.getByTestId('band-title').textContent).toBe('Finish work for today?');
+  });
+
+  it('forgets the live station on finishing, so the next campaign is allowed to POST', async () => {
     await mounted();
     await inState('available');
     expect(readLiveSession('tenant-1')?.campaignId).toBe('camp-1');
 
-    openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Leave station' }));
+    finishWork();
 
     await waitFor(() => expect(readLiveSession('tenant-1')).toBeNull());
   });
 
   it.each(['reserved', 'on_call', 'wrapup'])(
-    'refuses both exits in %s, with the reason on screen and no request sent',
+    'is not offered in %s (hidden, not refused: AS1), so no request can be sent',
     async (state) => {
       mocks.useTenant.mockReturnValue({
         tenantId: 'tenant-1',
@@ -236,97 +257,22 @@ describe('AgentConsolePage — the station menu', () => {
       await inState(state);
 
       openMenu();
-      const leave = screen.getByTestId('leave-station');
-      const exit = screen.getByTestId('exit-station');
-      expect(leave.getAttribute('aria-disabled')).toBe('true');
-      expect(exit.getAttribute('aria-disabled')).toBe('true');
-
-      // Refused, not `disabled`: this block BEGINS while the item may hold
-      // focus, and a disabled element blurs under a keyboard agent's fingers.
-      expect(leave.hasAttribute('disabled')).toBe(false);
-
-      // A visible stated reason, and the two do not share it — they are
-      // different acts and the refusals are about different things.
-      const leaveReason = screen.getByText(/leaving now would cut the customer off/i);
-      const exitReason = screen.getByText(/this call is still on your screen/i);
-      expect(leaveReason.textContent).not.toBe(exitReason.textContent);
-
-      fireEvent.click(leave);
-      fireEvent.click(exit);
+      expect(screen.queryByTestId('station-menu-finish')).toBeNull();
+      // During a call and on What happened? the menu holds only Sound and the screen colour.
+      const items = Array.from(screen.getByRole('menu').querySelectorAll('[role="menuitem"]')).map((n) => n.textContent);
+      expect(items).toEqual(['Sound']);
       expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
-      // Nothing navigated: the console is still on screen.
       expect(screen.queryByTestId('where')).toBeNull();
     },
   );
 
-  it('hides Exit station from an agent — it would navigate them into a workspace they cannot see', async () => {
+  it('has no separate Exit station, for any role', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin' });
     await mounted();
-    await inState('available');
-
-    openMenu();
-    expect(screen.getByTestId('leave-station')).toBeTruthy();
-    expect(screen.queryByTestId('exit-station')).toBeNull();
-  });
-
-  /**
-   * The asymmetry, at the surface an agent actually touches.
-   *
-   * Exit closes the socket and leaves the session live, and the API's 45s
-   * `available` lease is renewed by that socket's heartbeat alone while the
-   * pacing engine reserves off Redis. So Exit in `available` leaves a dialable
-   * agent with no console attached for up to 45 seconds — an answered call with
-   * nobody on it. Leave is what ends the session, so it stays offered: it is the
-   * correct action AND the remedy Exit's refusal names.
-   */
-  it('refuses Exit while available, keeps Leave, and names the remedy', async () => {
-    mocks.useTenant.mockReturnValue({
-      tenantId: 'tenant-1',
-      accountId: 'account-1',
-      role: 'account_admin',
-    });
-    await mounted();
-    await inState('available');
-
-    openMenu();
-    const exit = screen.getByTestId('exit-station');
-    expect(exit.getAttribute('aria-disabled')).toBe('true');
-    // Still focusable: going `available` is exactly a transition that can land
-    // while the item holds focus.
-    expect(exit.hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText(/still in the dialling pool/i)).toBeTruthy();
-    // Not the mid-call sentence — there is no call.
-    expect(screen.queryByText(/this call is still on your screen/i)).toBeNull();
-
-    fireEvent.click(exit);
-    expect(screen.queryByTestId('where')).toBeNull();
-
-    // The way out is right above it, and it is not refused.
-    const leave = screen.getByTestId('leave-station');
-    expect(leave.getAttribute('aria-disabled')).toBeNull();
-  });
-
-  it('offers Exit station above agent, and it navigates WITHOUT ending the session', async () => {
-    mocks.useTenant.mockReturnValue({
-      tenantId: 'tenant-1',
-      accountId: 'account-1',
-      role: 'account_admin',
-    });
-    await mounted();
-    // `break` — a supervisor who is out of the dialable pool. Exit is safe here
-    // for the same reason it is not in `available`: nothing can be reserved onto
-    // the console they are closing.
     await inState('break');
-
     openMenu();
-    fireEvent.click(screen.getByTestId('exit-station'));
-
-    await waitFor(() =>
-      expect(screen.getByTestId('where').textContent).toBe('/agency/campaigns/camp-1'),
-    );
-    // The whole difference between the two controls: a supervisor covering a
-    // shift gets their screen back without telling the dialer they went home.
-    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
-    expect(readLiveSession('tenant-1')?.campaignId).toBe('camp-1');
+    expect(screen.queryByText(/exit station/i)).toBeNull();
+    expect(screen.queryByText(/leave station/i)).toBeNull();
   });
 
   it('forgets this campaign when the session is gone, so a second join is allowed to POST', async () => {
@@ -361,7 +307,7 @@ describe('AgentConsolePage — the station menu', () => {
     );
   });
 
-  it('sends a supervisor who LEAVES back to the campaign, not to the agent landing', async () => {
+  it('sends a supervisor who finishes back to the campaign, not to the agent landing', async () => {
     mocks.useTenant.mockReturnValue({
       tenantId: 'tenant-1',
       accountId: 'account-1',
@@ -370,9 +316,7 @@ describe('AgentConsolePage — the station menu', () => {
     await mounted();
     await inState('available');
 
-    openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
+    finishWork();
 
     await waitFor(() => expect(mocks.leaveAgencySession).toHaveBeenCalled());
     await waitFor(() =>
@@ -380,202 +324,89 @@ describe('AgentConsolePage — the station menu', () => {
     );
   });
 
-  /**
-   * Keyboard activation, not `fireEvent.click`.
-   *
-   * Every other case here clicks. A menu item is a real `<button>`, so Enter on
-   * a focused one dispatches a click — which means the guard in `onClick` is the
-   * guard the keyboard hits too, and that is worth proving rather than assuming:
-   * a refusal implemented in a pointer handler would pass every click test in
-   * this file and let a keyboard agent leave a station mid-call.
-   */
-  it('refuses a keyboard-activated Leave mid-call, having arrived by arrow keys', async () => {
-    mocks.useTenant.mockReturnValue({
-      tenantId: 'tenant-1',
-      accountId: 'account-1',
-      role: 'account_admin',
-    });
+  it('moves through ⋮ More with the arrow keys, wrapping, and Esc returns focus to ⋮', async () => {
     await mounted();
-    await inState('on_call');
-
-    // Open from the keyboard, exactly as a keyboard agent would.
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Station options' }), { key: 'Enter' });
-    const leave = await screen.findByTestId('leave-station');
-    expect(document.activeElement).toBe(leave);
-
-    fireEvent.keyDown(leave, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(screen.getByTestId('exit-station'));
-    fireEvent.keyDown(screen.getByTestId('exit-station'), { key: 'ArrowUp' });
-    expect(document.activeElement).toBe(leave);
-
-    // What Enter on a focused button actually produces.
-    fireEvent.click(document.activeElement!);
-
-    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
-    expect(screen.queryByText('You’ll stop receiving calls and your station will close.')).toBeNull();
+    await inState('available');
+    openMenu();
+    const items = () => Array.from(screen.getByRole('menu').querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    await waitFor(() => expect(document.activeElement).toBe(items()[0]));
+    const all = items();
+    for (let i = 1; i < all.length; i += 1) {
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(all[i]);
+    }
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(all[0]);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'More' }));
   });
 
   /**
    * ── Reaching your own numbers without giving up your place in the queue ────
    *
-   * `AgentHomePage` redirects an agent with one enterable assignment straight
-   * into the station — its own comment calls that "the overwhelmingly common
-   * shift" — and it used to be the only screen carrying links to
-   * `/dialer/performance` and `/dialer/attempts`. So checking your own figures
-   * required pressing Leave, which ends the session and drops you out of the
-   * dialable pool.
-   *
    * What is asserted is the mechanism, not the presence of a link: `target` and
-   * `rel` are the whole reason this is allowed to exist beside a live call.
+   * `rel` are the whole reason this is allowed to exist beside a live session.
    */
-  describe('the agent’s own numbers, from inside the station', () => {
-    it('offers both destinations, in a new tab and with the opener severed', async () => {
+  describe('My calls today, from inside the station', () => {
+    it('opens in a new tab with the opener severed', async () => {
       await mounted();
       await inState('available');
       openMenu();
 
-      const performance = screen.getByTestId('station-history-0');
-      const calls = screen.getByTestId('station-history-1');
-
-      expect(performance.getAttribute('href')).toBe('/dialer/performance');
+      const calls = screen.getByTestId('station-menu-my_calls');
       expect(calls.getAttribute('href')).toBe('/dialer/attempts');
-
-      for (const link of [performance, calls]) {
-        /*
-          `_blank` is not decoration. A same-tab link closes the station socket,
-          and for up to 45 seconds the API still has the agent in the dialable pool
-          with no console attached — the "answered call with no agent" that Exit's
-          `available` refusal exists to prevent. A new tab leaves this document,
-          its socket and its heartbeat exactly as they are.
-        */
-        expect(link.getAttribute('target')).toBe('_blank');
-        /*
-          And without `noopener` the opened tab holds a live `window.opener` on
-          the document running a call, and can navigate it.
-        */
-        const rel = link.getAttribute('rel') ?? '';
-        expect(rel).toContain('noopener');
-        expect(rel).toContain('noreferrer');
-      }
-    });
-
-    it('says the station stays open, because that is the reader’s actual question', async () => {
-      await mounted();
-      await inState('available');
-      openMenu();
-
-      expect(screen.getByTestId('station-history-0').textContent).toContain('new tab');
-      expect(screen.getByTestId('station-history-0').textContent).toContain('station stays open');
-    });
-
-    it.each(['reserved', 'on_call', 'wrapup', 'available'])(
-      'is never refused while %s, because opening a tab does nothing to the call',
-      async (state) => {
-        /**
-         * The two exit items are refused in these states and say why. These are
-         * not exits: nothing about the call on screen changes, so there is
-         * nothing to block — and a greyed item with no reason to give is the
-         * house's own definition of a control that reads as a bug.
-         */
-        await mounted();
-        await inState(state);
-        openMenu();
-
-        for (const testId of ['station-history-0', 'station-history-1']) {
-          expect(screen.getByTestId(testId).getAttribute('aria-disabled')).toBeNull();
-        }
-      },
-    );
-
-    it('is reachable by the same arrow keys as the items above it', async () => {
-      /**
-       * The menu's roving focus filtered to `HTMLButtonElement`, so an anchor
-       * item would have been Tab-reachable and arrow-unreachable — two items in
-       * one popover behaving differently from the rest for a keyboard agent, on
-       * the screen where that matters most.
-       */
-      mocks.useTenant.mockReturnValue({
-        tenantId: 'tenant-1',
-        accountId: 'account-1',
-        role: 'account_admin',
-      });
-      await mounted();
-      await inState('available');
-
-      fireEvent.keyDown(screen.getByRole('button', { name: 'Station options' }), { key: 'Enter' });
-      const leave = await screen.findByTestId('leave-station');
-      expect(document.activeElement).toBe(leave);
-
-      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-      expect(document.activeElement).toBe(screen.getByTestId('exit-station'));
-      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-      expect(document.activeElement).toBe(screen.getByTestId('station-history-0'));
-      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-      expect(document.activeElement).toBe(screen.getByTestId('station-history-1'));
-      // And wraps back round to the top, as it did before.
-      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-      expect(document.activeElement).toBe(leave);
-    });
-
-    it('does not navigate the console away when one is activated', async () => {
-      /**
-       * The observable that matters: the station is still on screen afterwards.
-       * A regression to a same-tab `<Link>` would resolve the route and unmount
-       * the console with the socket still believed live.
-       */
-      await mounted();
-      await inState('available');
-      openMenu();
-
       /*
-        The default action is suppressed only so happy-dom does not try to fetch
-        `/dialer/performance` off a dev server that is not running. It is added
-        AFTER the menu's own handlers, so everything under test still runs; what
-        it removes is the environment's attempt to be a browser.
+        `_blank` is not decoration. A same-tab link closes the station socket,
+        and for up to 45 seconds the API still has the agent in the dialable pool
+        with no console attached. A new tab leaves this document, its socket and
+        its heartbeat exactly as they are.
       */
+      expect(calls.getAttribute('target')).toBe('_blank');
+      // And without `noopener` the opened tab holds a live `window.opener` on the document running a call.
+      const rel = calls.getAttribute('rel') ?? '';
+      expect(rel).toContain('noopener');
+      expect(rel).toContain('noreferrer');
+    });
+
+    it('does not navigate the station away when activated, and the menu gets out of the way', async () => {
+      await mounted();
+      await inState('available');
+      openMenu();
+
       const swallow = (event: Event) => event.preventDefault();
       document.addEventListener('click', swallow);
       try {
-        fireEvent.click(screen.getByTestId('station-history-0'));
+        fireEvent.click(screen.getByTestId('station-menu-my_calls'));
       } finally {
         document.removeEventListener('click', swallow);
       }
 
-      // Still the console. A same-tab `<Link>` would have resolved the route and
-      // unmounted it with the socket still believed live.
       expect(screen.queryByTestId('where')).toBeNull();
-      expect(screen.getByRole('button', { name: 'Station options' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'More' })).toBeTruthy();
       expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
-      // And the menu got out of the way, because the reader's attention has gone
-      // to the new tab.
-      expect(screen.queryByTestId('station-history-0')).toBeNull();
+      expect(screen.queryByTestId('station-menu-my_calls')).toBeNull();
     });
   });
 
-  it('keeps the agent on the station when the leave fails, and says the station is still open', async () => {
+  it('keeps the agent on the station when finishing fails, and says the work is still open', async () => {
     mocks.leaveAgencySession.mockRejectedValue(new Error('Request Failed'));
     await mounted();
     await inState('available');
 
-    openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
+    finishWork();
 
     // Navigating away on a leave that did not land would have the agent believe
     // they had stopped receiving calls while the API still had them in the pool.
-    await screen.findByText(/your station is still open/i);
+    expect((await screen.findByTestId('finish-failure')).textContent).toBe('Your work is still open. Try again.');
     expect(screen.queryByTestId('where')).toBeNull();
   });
 
   /**
    * ── Escape during a leave request ──────────────────────────────────────────
-   *
-   * `ConfirmDialog`'s `disabled` guards the confirm button only: Escape and a
-   * click on the overlay call `onCancel` unconditionally. Cancelling mid-flight
-   * therefore used to unmount the dialog, and the rejection then set the failure
-   * on a surface nobody could see — the agent believed they had left while the API
-   * still had them in the pool, which is the exact outcome the navigation path
-   * refuses to produce.
+   * Cancelling mid-flight used to unmount the question, and the rejection then set the failure
+   * on a surface nobody could see — the agent believed they had left while the API still had
+   * them in the pool.
    */
   it('ignores Escape while the leave is in flight, and still reports the failure', async () => {
     let reject: (err: Error) => void = () => {};
@@ -588,47 +419,19 @@ describe('AgentConsolePage — the station menu', () => {
     await mounted();
     await inState('available');
 
-    openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
+    finishWork();
 
-    // Mid-flight: the agent hits Escape.
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.getByRole('dialog')).toBeTruthy();
+    // Mid-flight: the agent hits Escape, then No.
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: /No, keep working/ }));
+    expect(screen.getByTestId('band-title').textContent).toBe('Finish work for today?');
 
     await act(async () => {
       reject(new Error('Request Failed'));
     });
 
-    // The failure lands on a dialog that is still on screen.
-    await screen.findByText(/your station is still open/i);
-    expect(screen.queryByTestId('where')).toBeNull();
-  });
-
-  it('refuses Exit while a leave is in flight', async () => {
-    // Two exits racing: the supervisor would land on the campaign page believing
-    // they were out of the pool, with a `POST /leave` that may still fail behind
-    // them.
-    mocks.useTenant.mockReturnValue({
-      tenantId: 'tenant-1',
-      accountId: 'account-1',
-      role: 'account_admin',
-    });
-    mocks.leaveAgencySession.mockImplementation(() => new Promise(() => {}));
-    await mounted();
-    await inState('break');
-
-    openMenu();
-    fireEvent.click(screen.getByTestId('leave-station'));
-    fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
-    await act(async () => {});
-
-    // Reopen the menu behind the dialog and try the other door.
-    openMenu();
-    const exit = screen.getByTestId('exit-station');
-    expect(exit.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByText(/wait for your leave request to finish/i)).toBeTruthy();
-    fireEvent.click(exit);
+    // The failure lands on a screen that is still there.
+    expect((await screen.findByTestId('finish-failure')).textContent).toBe('Your work is still open. Try again.');
     expect(screen.queryByTestId('where')).toBeNull();
   });
 });
@@ -863,11 +666,11 @@ describe('AgentConsolePage — a discarded tab does not take the station', () =>
 
     await mounted();
 
-    const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain('Your station is open on another device or window.');
+    // Screen 12, the join's own: nothing moves until the agent says so.
+    expect((await screen.findByTestId('band-title')).textContent).toBe('Your work is open on another device');
     expect(mocks.createAgencySession.mock.calls[0]![3]).toEqual({ takeOver: false });
 
-    fireEvent.click(screen.getByTestId('station-fatal-action'));
+    fireEvent.click(screen.getByRole('button', { name: /use this computer/i }));
     await waitFor(() => expect(mocks.createAgencySession).toHaveBeenCalledTimes(2));
     expect(mocks.createAgencySession.mock.calls[1]![3]).toEqual({ takeOver: true });
   });
