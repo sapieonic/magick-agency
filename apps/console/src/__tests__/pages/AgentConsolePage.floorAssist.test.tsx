@@ -281,6 +281,8 @@ describe('Need help: raise and cancel', () => {
     );
     await pressHelp();
     expect(screen.getByTestId('need-help-refusal-body').textContent).toBe(words);
+    // Said aloud in the same words, never the server's sentence (AS15).
+    expect(announcer()).toBe(words);
     expect(status()).toBeNull();
     expect(helpButton().textContent).toBe('Need help');
   });
@@ -318,7 +320,7 @@ describe('Need help: what the station hears', () => {
     await pressHelp();
     await frame({ event: 'help_answered', raised_at: R1, by_name: 'Priya', how: 'listen' });
     expect(status()).toBe('Help is here. Priya is listening to this call.');
-    expect(announcer()).toBe('Priya is listening in.');
+    expect(announcer()).toBe('Help is here. Priya is listening to this call.');
     await frame({ event: 'help_cleared', raised_at: R1, reason: 'answered' });
     expect(status()).toBe('Help is here. Priya is listening to this call.');
     expect(helpButton().textContent).toBe('Need help');
@@ -440,7 +442,7 @@ describe('what the polite region says (LF25)', () => {
     expect(said()).toEqual([
       'Help requested. Your supervisors can see it.',
       'Message from Priya N: Offer the 3-month plan',
-      'Priya N sent you a message.',
+      'Help is here. Priya N sent you a message.',
     ]);
   });
 
@@ -454,8 +456,8 @@ describe('what the polite region says (LF25)', () => {
     await pressHelp();
     await pressHelp();
     expect(said().slice(-2)).toEqual([
-      'Your request for help did not go through. Try again.',
-      'Your request for help did not go through. Try again.',
+      'Your request did not go through. Try again.',
+      'Your request did not go through. Try again.',
     ]);
   });
 
@@ -469,7 +471,7 @@ describe('what the polite region says (LF25)', () => {
     const before = said();
     expect(before).toEqual([
       'Help requested. Your supervisors can see it.',
-      'Priya N is listening in.',
+      'Help is here. Priya N is listening to this call.',
       'Message from Priya N: I am listening',
     ]);
     await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
@@ -496,7 +498,7 @@ describe('what the polite region says (LF25)', () => {
     expect(said()).not.toContain('Help request cancelled.');
     await frame({ event: 'help_cleared', raised_at: R1, reason: 'answered' });
     expect(status()).toBe('Help is here. Priya N is listening to this call.');
-    expect(said()).toEqual(['Help requested. Your supervisors can see it.', 'Priya N is listening in.']);
+    expect(said()).toEqual(['Help requested. Your supervisors can see it.', 'Help is here. Priya N is listening to this call.']);
   });
 });
 

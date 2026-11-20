@@ -8,7 +8,7 @@ import 'station_harness.dart';
 
 /// Late binding's hidden dials on the waiting screen ([StationView.dialActivity]): "Dialling a
 /// customer…" while one rings, the unanswered count under the headline, and today's screen
-/// when there is nothing to say. The console's words (`agencyStationIdle.ts`).
+/// when there is nothing to say. The station's words, as the console's station copy.
 void main() {
   group('hidden dials on the waiting screen', () {
     testWidgets('ringing: dialling, with the console’s hint, and no contact at all', (tester) async {

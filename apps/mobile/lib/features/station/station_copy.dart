@@ -7,9 +7,8 @@ import 'logic/format.dart';
 /// Every sentence the station screen says, in one place so it can be
 /// localised later.
 ///
-/// The wording follows the web console's (`StateRail`, `agencyReleaseCopy`,
-/// `agencyDncCopy`, `agencyAudioCopy`, `agencyNotes`, `agencyStationExit`,
-/// `agencyDispositionForm`), so an agent who uses both reads the same
+/// The wording follows the agent station's design spec (`docs/agent-station/design-spec.md`)
+/// and the console's station copy (`stationCopy.ts` and its neighbours), so an agent who uses both reads the same
 /// sentences; only what is genuinely different on a phone (Settings instead
 /// of a browser permission, "the app" instead of "this tab") is changed.
 abstract final class StationCopy {
@@ -282,7 +281,7 @@ abstract final class StationCopy {
   static const pausedHint = 'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
   static String availableFor(String clock) => 'Available for $clock';
 
-  // ── Hidden dials (late binding): the console's `agencyStationIdle.ts` ──
+  // ── Hidden dials (late binding): the console's station copy ──
   // A dial ringing for this agent that they are shown only if it is answered. Never the
   // number, the name or anything else about the contact.
   static const diallingHeadline = 'Dialling a customer…';
@@ -556,7 +555,7 @@ abstract final class StationCopy {
   static const callbackDateHelp = 'Call back on';
   static const callbackTimeHelp = 'Call back at';
 
-  // ── Link states (StateRail) ──
+  // ── Link states (the station band) ──
   static const reconnecting = 'Reconnecting…';
   static const reconnectingMidCall = 'Stay on the line. The customer is still there.';
   static const reconnectingIdle = 'Stay on this screen — we’re reconnecting you.';

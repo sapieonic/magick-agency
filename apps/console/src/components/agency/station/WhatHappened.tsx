@@ -266,7 +266,6 @@ function PayDateRow({
             value={date ?? ''}
             min={formatPromiseDay(addDays(today, -1))}
             max={formatPromiseDay(addDays(today, AGENCY_PROMISE_MAX_DAYS_AHEAD + 1))}
-            aria-label="Promised payment date"
             disabled={!enabled}
             onChange={(event) => set({ promiseDate: event.target.value || null })}
           />
@@ -281,7 +280,7 @@ function PayDateRow({
             inputMode="decimal"
             value={amount}
             placeholder={due ? due.replace('₹', '') : '0'}
-            aria-label="Promised amount"
+            aria-label={STATION_COPY.amount}
             autoComplete="off"
             disabled={!enabled}
             onChange={(event) => set({ promiseAmount: event.target.value })}
@@ -379,7 +378,6 @@ function CallWhenRow({
             type="datetime-local"
             className={styles.chipInput}
             value={value ?? ''}
-            aria-label="Callback date and time"
             disabled={!enabled}
             onChange={(event) => onChange({ ...form, callbackAt: event.target.value })}
           />

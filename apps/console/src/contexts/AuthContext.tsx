@@ -536,3 +536,11 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
+/**
+ * The auth context, or null outside an `AuthProvider`: for a screen that only shows the signed-in
+ * name (the agent's work picker) and must still render where no provider is mounted.
+ */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
+}

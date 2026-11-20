@@ -97,5 +97,5 @@ export function callerIdDedicatedMessage(numbers: readonly string[]): string {
  * never use it.
  */
 export function myCallerIdLine(callerId: string): string {
-  return `Calls to your contacts on this campaign go from ${formatPhone(callerId)}.`;
+  return `Calls to your customers on this work go from ${formatPhone(callerId)}.`;
 }

@@ -530,12 +530,10 @@ describe('AgentConsolePage — the join conflict', () => {
     );
   });
 
-  it('falls back to the API’s sentence when the conflict body does not fully read', async () => {
+  it('says the agent is working on another list when the conflict body does not fully read', async () => {
     // The parser stays strict — no campaign id, no conflict screen, because one
-    // that names no campaign reads as broken. But the API sends a `message` on this
-    // 409, and its sentence is a better thing to show than "Could not join the
-    // campaign." (Both the fallback and `ApiError`'s own message extraction land
-    // on the same string today; what is asserted is what the agent reads.)
+    // that names no campaign reads as broken. The station says its own words for
+    // the code (AS15), never the API's `message`.
     mocks.createAgencySession.mockRejectedValue(
       new ApiError(409, {
         error: 'Conflict',
@@ -548,8 +546,9 @@ describe('AgentConsolePage — the join conflict', () => {
 
     await screen.findByText('Your work did not open');
     expect(
-      screen.getByText('You are already joined to another campaign in this workspace.'),
+      screen.getByText('You are working on another list. Finish work there first, then come back here.'),
     ).toBeTruthy();
+    expect(document.body.textContent).not.toContain('You are already joined to another campaign');
     expect(screen.queryByTestId('join-conflict')).toBeNull();
   });
 });
@@ -564,38 +563,40 @@ describe('AgentConsolePage — the join conflict', () => {
  */
 /**
  * 403 `not_staffed`: the API refuses a join on a campaign the agent is not staffed on (a
- * supervisor's role is exempt, server-side). The screen is `StationFatal` with the API's
- * own sentence, never the conflict screen (there is no station to leave) and never a bare
+ * supervisor's role is exempt, server-side). The screen is `StationFatal` in the station's
+ * own words (AS15), never the API's sentence, never the conflict screen (there is no station to leave) and never a bare
  * "Forbidden", and its escape is the landing screen that will not bounce them back.
  */
 describe('AgentConsolePage — not staffed on the campaign', () => {
   const SENTENCE = "You're not assigned to this campaign. Ask your supervisor to add you.";
+  const NOT_ON_THIS_WORK = 'You are not on this work. Ask your supervisor to add you.';
   const notStaffed = (body: Record<string, unknown> = { message: SENTENCE }) =>
     new ApiError(403, { error: 'Forbidden', code: 'not_staffed', ...body });
 
   // A live session another case remembered would refuse the join locally, before any POST.
   beforeEach(() => clearAllLiveSessions());
 
-  it('says so in the API’s words, with the way home', async () => {
+  it('says so in the station’s words, with the way home', async () => {
     mocks.createAgencySession.mockRejectedValue(notStaffed());
 
     await mounted();
 
     const fatal = await screen.findByRole('alert');
     expect(screen.getByTestId('band-title').textContent).toBe('Your work did not open');
-    expect(fatal.textContent).toContain(SENTENCE);
+    expect(fatal.textContent).toContain(NOT_ON_THIS_WORK);
+    expect(fatal.textContent).not.toContain(SENTENCE);
     expect(screen.queryByTestId('join-conflict')).toBeNull();
     expect(screen.getByTestId('station-escape').getAttribute('href')).toBe('/dialer?left=refused');
     expect(mocks.trackAgencyStationJoinFailed).toHaveBeenCalledWith({ reason: 'not_staffed', conflict_state: null });
   });
 
-  it('falls back to its own sentence when the refusal carries none', async () => {
+  it('says the same when the refusal carries no sentence', async () => {
     mocks.createAgencySession.mockRejectedValue(notStaffed({ message: '   ' }));
 
     await mounted();
 
     const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain('You’re not assigned to this campaign. Ask your supervisor to add you.');
+    expect(fatal.textContent).toContain(NOT_ON_THIS_WORK);
   });
 
   it('does not remember a live session, so the next campaign still POSTs', async () => {
@@ -610,13 +611,13 @@ describe('AgentConsolePage — not staffed on the campaign', () => {
 
 /**
  * 409 `session_in_other_tenant` (OS1): the agent is live in another organisation. Nothing here can
- * end that session, so the screen is `StationFatal` with the API's sentence naming the workspace,
+ * end that session, so the screen is `StationFatal` in the station's words naming the other account,
  * never the conflict screen, and nothing is remembered as a live session in THIS tenant.
  */
 describe('AgentConsolePage — live in another organisation', () => {
   beforeEach(() => clearAllLiveSessions());
 
-  it('says so in the API’s words, naming the workspace, with the way home', async () => {
+  it('says so in the station’s words, naming the other account, with the way home', async () => {
     const sentence = 'You are live in Acme Collections. Leave your station there first: an agent can hold only one live station at a time.';
     mocks.createAgencySession.mockRejectedValue(new ApiError(409, {
       error: 'Conflict', code: 'session_in_other_tenant', message: sentence, tenant_id: 'tenant-2', tenant_name: 'Acme Collections',
@@ -625,12 +626,13 @@ describe('AgentConsolePage — live in another organisation', () => {
     await mounted();
 
     const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain(sentence);
+    expect(fatal.textContent).toContain('You are working in Acme Collections. Finish work there first, then come back here.');
+    expect(fatal.textContent).not.toContain(sentence);
     expect(screen.queryByTestId('join-conflict')).toBeNull();
     expect(readLiveSession('tenant-1')).toBeNull();
   });
 
-  it('falls back to its own sentence when the refusal carries none', async () => {
+  it('says "another account" when the refusal names none', async () => {
     mocks.createAgencySession.mockRejectedValue(new ApiError(409, {
       error: 'Conflict', code: 'session_in_other_tenant', message: '', tenant_id: 'tenant-2', tenant_name: null,
     }));
@@ -638,7 +640,7 @@ describe('AgentConsolePage — live in another organisation', () => {
     await mounted();
 
     const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain('You are live in another organisation.');
+    expect(fatal.textContent).toContain('You are working in another account. Finish work there first, then come back here.');
   });
 });
 
@@ -764,7 +766,8 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     fireEvent.click(screen.getByTestId('switch-station'));
     fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
-    await screen.findByText('Collections is open on another device. Leave it there, then join here.');
+    await screen.findByText('Collections is open on another device. Finish work there, then come back here.');
+    expect(document.body.textContent).not.toContain('open on your phone');
     expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
   });
 
@@ -783,7 +786,9 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     fireEvent.click(screen.getByTestId('switch-station'));
     fireEvent.click(screen.getByRole('button', { name: 'Leave and work here' }));
 
-    await screen.findByText('Collections is still open — Network error');
+    await screen.findByText('Collections is still open. Nothing changed. Try again.');
+    // The station's words (AS15): never the error's own message.
+    expect(document.body.textContent).not.toContain('Network error');
     // Not a dead end: the same button is the retry, not replaced by anything.
     expect(screen.getByRole('button', { name: 'Leave and work here' })).toBeTruthy();
     expect(screen.getByTestId('join-conflict')).toBeTruthy();
@@ -907,8 +912,9 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     // rejoining the campaign that was just left.
     await screen.findByText('Your work did not open');
     expect(
-      screen.getByText('Left Collections, but couldn’t join this campaign — Campaign is not running'),
+      screen.getByText('You left Collections, but this work did not open. Go back and open it again.'),
     ).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Campaign is not running');
     expect(screen.queryByTestId('join-conflict')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Leave and work here' })).toBeNull();
   });

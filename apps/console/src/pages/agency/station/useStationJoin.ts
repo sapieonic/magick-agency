@@ -2,14 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createAgencySession, leaveAgencySession } from '../../../api/agency';
 import { closeSoftphoneSession } from '../softphone/closeSoftphoneSession';
 import { useMountedRef } from '../../../hooks/useMountedRef';
-import { errorBody, errorCode, retryOnStationTokenUnavailable } from '../../../utils/agencyErrors';
-import {
-  conflictIsMidCall,
-  joinConflictFallbackSentence,
-  parseJoinConflict,
-  switchFailureCopy,
-  type SwitchStage,
-} from '../../../utils/agencyJoinConflict';
+import { errorBody, errorCode, errorStatus, retryOnStationTokenUnavailable } from '../../../utils/agencyErrors';
+import { conflictIsMidCall, parseJoinConflict, type SwitchStage } from '../../../utils/agencyJoinConflict';
+import { SOFTPHONE_CLOSE_COPY, joinRefusedLine, switchFailedLine } from '../../../utils/agency/stationCopy';
 import {
   clearLiveSession,
   coalesceJoin,
@@ -44,6 +39,7 @@ import type {
  */
 export interface StationJoin {
   bootstrap: AgencySessionBootstrap | null;
+  /** Why work did not open, in the station's own words keyed on the code (AS15); never the server's sentence. */
   joinError: string | null;
   /**
    * OS3: the join did not take the station over (the browser reloaded this page by itself, a
@@ -155,7 +151,7 @@ export function useStationJoin({
 
   useEffect(() => {
     if (!campaignId) {
-      setJoinError('No campaign selected.');
+      setJoinError(joinRefusedLine({ code: 'no_campaign', status: null }));
       trackAgencyStationJoinFailed({ reason: 'no_campaign', conflict_state: null });
       return;
     }
@@ -241,21 +237,21 @@ export function useStationJoin({
         /**
          * 409 `session_in_other_tenant` (OS1): the agent is live in another organisation they belong
          * to. Nothing here can end that session (every session route is scoped to its own
-         * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
+         * tenant), so it is `StationFatal`, in the station's words naming the other account
+         * (the refusal's `tenant_name`, when it has one).
          */
         if (errorCode(err) === 'session_in_other_tenant') {
-          setJoinError(apiSentence(err, OTHER_TENANT_COPY));
+          setJoinError(joinRefusedLine({ code: 'session_in_other_tenant', status: errorStatus(err), placeName: tenantNameOf(err) }));
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
         /**
          * 403 `not_staffed`: nobody has assigned them to this campaign. No remedy on this
-         * screen (a supervisor staffs them), so it is `StationFatal` with the API's own
-         * sentence, which names who to ask, and its escape to a landing screen that will
-         * not send them straight back.
+         * screen (a supervisor staffs them), so it is `StationFatal` saying who to ask, with
+         * its escape to a landing screen that will not send them straight back.
          */
         if (errorCode(err) === 'not_staffed') {
-          setJoinError(apiSentence(err, NOT_STAFFED_COPY));
+          setJoinError(joinRefusedLine({ code: 'not_staffed', status: errorStatus(err) }));
           trackAgencyStationJoinFailed({ reason: 'not_staffed', conflict_state: null });
           return;
         }
@@ -270,19 +266,15 @@ export function useStationJoin({
           return;
         }
         /**
-         * A conflict body the parser REFUSED — a structured field missing or
-         * unreadable — still carries the API's own sentence, and that is a better
-         * thing to put in front of an agent than the generic fallback. The
-         * parser stays strict on purpose (a conflict screen that names no
-         * campaign reads as broken), so the degraded reading is chosen here
-         * rather than by loosening it.
+         * Everything else, and a conflict body the parser REFUSED (a structured field
+         * missing or unreadable: the parser stays strict, because a conflict screen that
+         * names no list reads as broken): the station's own line for the code, then the
+         * status (AS15). Never the server's sentence, and never `err.message`.
          */
-        setJoinError(
-          joinConflictFallbackSentence(err)
-            ?? (err instanceof Error ? err.message : 'Could not join the campaign.'),
-        );
+        const code = errorCode(err);
+        setJoinError(joinRefusedLine({ code, status: errorStatus(err) }));
         trackAgencyStationJoinFailed({
-          reason: joinConflictFallbackSentence(err)
+          reason: code === 'session_on_other_campaign'
             ? 'conflict_unreadable'
             : (campaignId ? 'api_error' : 'no_campaign'),
           conflict_state: null,
@@ -486,14 +478,14 @@ export function useStationJoin({
           setSwitching(false);
           setSwitchConfirm(false);
           setJoinConflict(null);
-          setJoinError(switchFailureCopy(stage, conflict.campaign_name, err));
+          setJoinError(switchFailedLine(stage, conflict.campaign_name, errorCode(err)));
         }
         reportSwitch('failed', stage);
         return;
       }
       if (mountedRef.current) {
         setSwitching(false);
-        setSwitchFailure(switchFailureCopy(stage, conflict.campaign_name, err));
+        setSwitchFailure(switchFailedLine(stage, conflict.campaign_name, errorCode(err)));
       }
       reportSwitch('failed', stage);
     }
@@ -536,11 +528,12 @@ export function useStationJoin({
       return;
     }
     if (closed.kind === 'no_session') {
-      done(SOFTPHONE_CLOSE_NO_SESSION_COPY);
+      done(SOFTPHONE_CLOSE_COPY.notFound);
       return;
     }
     if (closed.kind === 'failed') {
-      done(closed.message);
+      // The station's words, not the close's sentence (which quotes the server's).
+      done(SOFTPHONE_CLOSE_COPY.stillOpen);
       return;
     }
     softphoneSessionRef.current = NO_SOFTPHONE_SESSION;
@@ -556,7 +549,7 @@ export function useStationJoin({
       if (errorCode(err) === 'session_on_softphone') {
         // Opened again meanwhile (another window): this screen still describes it.
         softphoneSessionRef.current = softphoneSessionOf(err);
-        done(SOFTPHONE_REOPENED_COPY);
+        done(SOFTPHONE_CLOSE_COPY.reopened);
         return;
       }
       const conflict = parseJoinConflict(err);
@@ -570,12 +563,7 @@ export function useStationJoin({
       }
       // The soft phone IS closed: the ordinary join screen is the honest state,
       // as for `confirmSwitch`'s failed rejoin.
-      const detail = err instanceof Error ? err.message : null;
-      setJoinError(
-        detail
-          ? `Closed the soft phone, but couldn’t join this campaign — ${detail}`
-          : 'Closed the soft phone, but couldn’t join this campaign. Try again.',
-      );
+      setJoinError(SOFTPHONE_CLOSE_COPY.closedNotOpened);
     }
   }, [closingSoftphone, tenantId, accountId, campaignId, mountedRef]);
 
@@ -618,29 +606,10 @@ export function useStationJoin({
   };
 }
 
-/** `session_on_softphone` named no session and the soft phone's bootstrap had none either. */
-export const SOFTPHONE_CLOSE_NO_SESSION_COPY =
-  'We couldn’t find your soft-phone session to close. Open the soft phone and close it there.';
-
-/** The soft phone was opened again (another window) between the close and the join. */
-export const SOFTPHONE_REOPENED_COPY =
-  'The soft phone was opened again, maybe in another window. Close it there, or try again.';
-
-/** `not_staffed`'s copy when the refusal carries no usable sentence of its own. */
-export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask your supervisor to add you.';
-
-/** The fallback when a `session_in_other_tenant` refusal carries no sentence of its own. */
-export const OTHER_TENANT_COPY =
-  'You are live in another organisation. Leave your station there first: you can be on only one station at a time.';
-
-/** OS3: a join this window did not take over found the station on another device. */
-export const STATION_ON_OTHER_DEVICE_COPY =
-  'Your station is open on another device or window. Use it there, or use this window instead.';
-
-/** The API's own sentence on a refusal (`not_staffed`, `session_in_other_tenant`), else `fallback`. */
-function apiSentence(err: unknown, fallback: string): string {
-  const message = errorBody(err)?.message;
-  return typeof message === 'string' && message.trim().length > 0 ? message : fallback;
+/** The other account a `session_in_other_tenant` refusal names (`tenant_name`), or null. */
+function tenantNameOf(err: unknown): string | null {
+  const name = (errorBody(err) as { tenant_name?: unknown } | null)?.tenant_name;
+  return typeof name === 'string' && name.trim().length > 0 ? name : null;
 }
 
 /** The soft-phone session a `session_on_softphone` refusal named, and its account. */

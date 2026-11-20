@@ -383,7 +383,7 @@ class ScriptView {
   int get hashCode => Object.hash(opening, steps.length);
 }
 
-/// Why the last call ended, in the console's words (`agencyReleaseCopy.ts`).
+/// Why the last call ended, in the station's words (as the console's `stationCopy.ts`).
 @immutable
 class ReleaseView {
   const ReleaseView({required this.headline, required this.detail, required this.tone, required this.requiresDisposition});

@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { INITIAL_STATION_STATE, stationReducer } from '../../utils/agencyStationReducer';
-import {
-  QUEUE_IDLE_COPY,
-  effectiveQueue,
-  nothingDueCopy,
-} from '../../utils/agencyStationIdle';
-import type { AgencyQueueIdleReason, AgencyQueueState } from '../../types/agency';
+import { effectiveQueue, nothingDueReason } from '../../utils/agencyStationIdle';
+import type { AgencyQueueState } from '../../types/agency';
 
 /**
  * Contact assignment's "Nothing due now": the `queue` the station holds (from
- * `ready` and `queue` frames, falling back to the bootstrap's) and the sentence
- * the idle guide says for it.
+ * `ready` and `queue` frames, falling back to the bootstrap's) and the reason
+ * nothing is due, which the page reports (the words are `noCallsSubtitle`'s).
  */
 
 const NOTHING: AgencyQueueState = { due: false, reason: 'waiting_for_retry', next_due_at: '2026-11-03T12:00:00.000Z' };
@@ -53,41 +49,19 @@ describe('effectiveQueue', () => {
   });
 });
 
-describe('nothingDueCopy', () => {
-  const at = (iso: string) => `at ${iso.slice(11, 16)}`;
-
+describe('nothingDueReason', () => {
   it('is null when something is due or no queue is stated', () => {
-    expect(nothingDueCopy(null, at)).toBeNull();
-    expect(nothingDueCopy({ due: true, reason: null, next_due_at: null }, at)).toBeNull();
+    expect(nothingDueReason(null)).toBeNull();
+    expect(nothingDueReason(undefined)).toBeNull();
+    expect(nothingDueReason({ due: true, reason: null, next_due_at: null })).toBeNull();
   });
 
-  it('says why nothing is due, with the next time when there is one', () => {
-    expect(nothingDueCopy(NOTHING, at)).toBe(
-      'Your contacts are scheduled for another try later. The next one is due at 12:00.',
-    );
-    expect(nothingDueCopy({ due: false, reason: 'callbacks_later', next_due_at: null }, at)).toBe(
-      'Your open contacts are all callbacks booked for later.',
-    );
+  it('is the queue’s reason when nothing is due', () => {
+    expect(nothingDueReason(NOTHING)).toBe('waiting_for_retry');
+    expect(nothingDueReason({ due: false, reason: 'outside_calling_hours', next_due_at: null })).toBe('outside_calling_hours');
   });
 
-  it('says nothing is due, neutrally, for a reason it has no words for — never "a call will reach you"', () => {
-    const unknown = { due: false, reason: 'agent_paused_by_policy', next_due_at: null } as unknown as AgencyQueueState;
-    expect(nothingDueCopy(unknown, at)).toBe('Nothing is due for you right now.');
-    expect(nothingDueCopy({ ...unknown, next_due_at: '2026-11-03T12:00:00.000Z' }, at))
-      .toBe('Nothing is due for you right now. Your next contact is due at 12:00.');
-    expect(nothingDueCopy({ due: false, reason: null, next_due_at: null }, at)).toBe('Nothing is due for you right now.');
-  });
-
-  it('has a sentence for every reason, never a wire token', () => {
-    const reasons: AgencyQueueIdleReason[] = ['queue_empty', 'waiting_for_retry', 'callbacks_later', 'outside_calling_hours'];
-    expect(Object.keys(QUEUE_IDLE_COPY).sort()).toEqual([...reasons].sort());
-    for (const reason of reasons) {
-      const withTime = nothingDueCopy({ due: false, reason, next_due_at: '2026-11-03T09:00:00.000Z' }, at)!;
-      const without = nothingDueCopy({ due: false, reason, next_due_at: null }, at)!;
-      for (const copy of [withTime, without]) {
-        expect(copy).not.toMatch(/_|\{next\}/);
-        expect(copy.length).toBeGreaterThan(10);
-      }
-    }
+  it('is null for a nothing-due queue that states no reason: nothing to report', () => {
+    expect(nothingDueReason({ due: false, reason: null, next_due_at: null })).toBeNull();
   });
 });

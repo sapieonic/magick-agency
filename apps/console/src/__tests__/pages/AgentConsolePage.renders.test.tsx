@@ -335,7 +335,7 @@ describe('the console root does not repaint on a clock', () => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const local = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
     act(() => {
-      fireEvent.change(screen.getByLabelText('Callback date and time'), { target: { value: local } });
+      fireEvent.change(screen.getByLabelText('Other time'), { target: { value: local } });
     });
     const save = () => screen.getByRole('button', { name: /save & next call/i });
     const faded = () => save().getAttribute('aria-disabled') === 'true';

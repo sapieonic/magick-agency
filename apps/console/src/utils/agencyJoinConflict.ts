@@ -1,6 +1,4 @@
-import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentState, AgencySessionConflict } from '../types/agency';
-import { errorCode } from './agencyErrors';
 
 /**
  * The `409 session_on_other_campaign` refusal from `POST /proxy/agency/sessions`
@@ -14,9 +12,9 @@ import { errorCode } from './agencyErrors';
  * the page's generic catch that reads `err.message`, it would say "Conflict" —
  * a wire token, with no campaign named and no remedy.
  *
- * The remedy is specific and the console knows it: go back to *that* station and
- * use Leave station. So the copy names the campaign, says whether they are
- * mid-call there, and the page renders a link to it.
+ * The remedy is specific and the console knows it: leave *that* list, or finish
+ * the call there first. So the join screen (`StationJoinScreens`) names the list,
+ * says what they are doing there, and offers the switch or a link to it.
  *
  * The server forwards the dialer runtime's body unchanged (status **and** body), so the shape below
  * is the dialer runtime's `AgencySessionCampaignConflict`, not a server invention.
@@ -89,141 +87,28 @@ export function parseJoinConflict(err: unknown): AgencySessionConflict | null {
 }
 
 /**
- * The server's own sentence, out of a conflict body the parser **refused**.
- *
- * The pair is deliberate. `parseJoinConflict` stays strict — a screen shaped
- * like one that names a campaign, which then names none, looks broken — so a
- * body missing a structured field still falls through to the ordinary error
- * path. This is what that path is allowed to say once it gets there: The server now
- * sends a `message` on the 409, and its sentence beats the generic "Could not
- * join the campaign." by a distance.
- *
- * Deliberately NOT a general error reader: it is scoped to this `code`, so it
- * cannot drift into pulling sentences out of unrelated 409s (the console has
- * others — `break_already_applied` for one). `null` whenever there is nothing
- * better than the caller's own fallback, so the call site reads as a preference
- * rather than a branch.
- *
- * ── Honest about its own weight ────────────────────────────────────────────
- * Today this changes nothing on screen: `ApiError.extractMessage` already
- * prefers a body `message`, so the call site would render the same sentence
- * without it — which also means its tests cannot catch a revert of the line they
- * protect. It is kept because that precedence is `client.ts`'s business and not
- * a contract this feature can rely on: `extractMessage` reorders its branches
- * whenever a new error shape is added, and the sentence an agent reads on the
- * one refusal the 1:1 rule makes reachable should not depend on where `message`
- * happens to sit in that list. Read it as a pin on the requirement, not as
- * behaviour.
- */
-export function joinConflictFallbackSentence(err: unknown): string | null {
-  if (err === null || typeof err !== 'object') return null;
-  const shaped = err as ErrorShape;
-  if (shaped.statusCode !== 409) return null;
-
-  const body = shaped.details;
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
-  const record = body as Record<string, unknown>;
-
-  if (record['code'] !== 'session_on_other_campaign') return null;
-  const message = record['message'];
-  return typeof message === 'string' && message.trim().length > 0 ? message : null;
-}
-
-export interface JoinConflictCopy {
-  headline: string;
-  /** What is true right now, naming the campaign and their state on it. */
-  detail: string;
-  /** What to do about it. Separate from `detail` so the remedy is never skimmed past. */
-  remedy: string;
-  /** Label for the link back to the station they are still joined to. */
-  linkLabel: string;
-}
-
-/**
  * Whether the agent is mid-call on the OTHER campaign right now.
  *
  * The one fact that decides whether this screen may offer to leave that
  * station on the agent's behalf: `reserved`/`on_call`/`wrapup` mean a live
  * customer (or one they still owe a disposition), and nothing on this screen
  * should be able to drop that without the agent physically going there. A
- * shared predicate rather than two copies, because `joinConflictCopy`'s remedy
- * sentence and `AgentConsolePage`'s "Leave & join here" button gate on exactly
- * the same condition and must never drift apart.
+ * shared predicate rather than two copies, because the join screen's remedy
+ * sentence and its "Leave and work here" button (`StationJoinScreens`) gate on
+ * exactly the same condition and must never drift apart.
  */
 export function conflictIsMidCall(state: AgencyAgentState): boolean {
   return state === 'reserved' || state === 'on_call' || state === 'wrapup';
 }
 
 /**
- * The copy.
- *
- * `state` is not decoration: an agent who is `on_call` on the other campaign must
- * not be told to go and leave it right now — that is a live customer. So the
- * remedy is conditional on the state, which is exactly why the server sends it.
- */
-export function joinConflictCopy(conflict: AgencySessionConflict): JoinConflictCopy {
-  const stateLabel = AGENCY_FLOOR_STATE_LABELS[conflict.state];
-  const midCall = conflictIsMidCall(conflict.state);
-
-  return {
-    headline: 'You’re still at another station',
-    detail: `You’re joined to ${conflict.campaign_name} — ${stateLabel.toLowerCase()}. You can only be at one station at a time.`,
-    remedy: midCall
-      ? `Finish what you’re doing on ${conflict.campaign_name}, leave that station, then come back here.`
-      : `Leave ${conflict.campaign_name} first, then come back here.`,
-    linkLabel: `Open ${conflict.campaign_name}`,
-  };
-}
-
-/** Label for the one-click remedy button, shown only when `!conflictIsMidCall`. */
-export function switchActionLabel(conflict: AgencySessionConflict): string {
-  return `Leave ${conflict.campaign_name} and join here`;
-}
-
-export const SWITCH_CONFIRM_TITLE = 'Leave that station?';
-
-/** The confirm dialog's body, before anything has been tried yet. */
-export function switchConfirmMessage(conflict: AgencySessionConflict): string {
-  return `This closes your session on ${conflict.campaign_name} and joins this campaign right after.`;
-}
-
-export const SWITCH_CONFIRM_ACTION = 'Leave & join here';
-
-/**
- * Which of the three chained requests `AgentConsolePage.confirmSwitch` failed
+ * Which of the three chained requests `useStationJoin`'s `confirmSwitch` failed
  * at — resuming the other campaign's session (to learn its `session_id`,
  * which the conflict body never carries), leaving it, or rejoining this one.
  * Each needs a different sentence: a failure at `resume` left nothing changed,
  * one at `leave` means the agent is still on the other station exactly as
  * before, and one at `rejoin` means they have already left it and are
- * currently at NEITHER station.
+ * currently at NEITHER station. The sentences are `switchFailedLine`
+ * (`utils/agency/stationCopy.ts`, AS15).
  */
 export type SwitchStage = 'resume' | 'leave' | 'rejoin';
-
-/**
- * The failure sentence for whichever stage `confirmSwitch` was on, so the
- * confirm dialog can say something more useful than "Something went wrong" —
- * in particular, `rejoin` has to say the other station is already closed,
- * because that is the one outcome an agent must not be left to guess at.
- */
-export function switchFailureCopy(stage: SwitchStage, campaignName: string, err: unknown): string {
-  const detail = err instanceof Error ? err.message : null;
-  switch (stage) {
-    case 'resume':
-      // OS3: that campaign's station is open on another device, which this window must not take.
-      if (errorCode(err) === 'station_on_other_device') {
-        return `${campaignName} is open on another device. Leave it there, then join here.`;
-      }
-      return detail
-        ? `Couldn’t reach ${campaignName} to leave it — ${detail}`
-        : `Couldn’t reach ${campaignName} to leave it. Try again.`;
-    case 'leave':
-      return detail
-        ? `${campaignName} is still open — ${detail}`
-        : `${campaignName} is still open. Try again.`;
-    case 'rejoin':
-      return detail
-        ? `Left ${campaignName}, but couldn’t join this campaign — ${detail}`
-        : `Left ${campaignName}, but couldn’t join this campaign. Try again.`;
-  }
-}

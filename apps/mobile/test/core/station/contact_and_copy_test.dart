@@ -165,7 +165,7 @@ void main() {
     });
   });
 
-  group('release copy (port of agencyReleaseCopy.test.ts)', () {
+  group('release copy', () {
     test('every reason the contract knows has words, and none is a raw code', () {
       for (final reason in wire.ReleaseReason.values.where((r) => r != wire.ReleaseReason.unknown)) {
         final copy = releaseCopy(reason, 'srv');

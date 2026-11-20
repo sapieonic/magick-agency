@@ -59,7 +59,7 @@ const FLASH_OPTIONS: ReadonlyArray<{
   {
     value: 'always',
     label: 'Always show the flash',
-    hint: 'Every ring, connect and hang-up flashes on the rail.',
+    hint: 'Every ring, connect and hang-up flashes the screen.',
   },
   {
     value: 'auto',

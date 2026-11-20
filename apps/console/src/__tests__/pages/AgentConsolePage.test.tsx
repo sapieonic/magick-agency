@@ -774,7 +774,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       // Computed from the real present rather than hard-coded: `blockReason` refuses
       // a callback in the past, and a fixed date would start failing the day it
       // passed — for a reason that has nothing to do with the keyboard.
-      const picker = screen.getByLabelText('Callback date and time') as HTMLInputElement;
+      const picker = screen.getByLabelText('Other time') as HTMLInputElement;
       fireEvent.change(picker, { target: { value: tomorrowLocal() } });
       expect(screen.getByTestId('callback-resolved')).toBeTruthy();
 

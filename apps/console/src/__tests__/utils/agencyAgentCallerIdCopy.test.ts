@@ -60,6 +60,6 @@ describe('the campaign PATCH’s caller_id_dedicated', () => {
 
 describe('My contacts', () => {
   it('says which number the agent’s calls go from', () => {
-    expect(myCallerIdLine('+912200000001')).toBe('Calls to your contacts on this campaign go from +91 22000 00001.');
+    expect(myCallerIdLine('+912200000001')).toBe('Calls to your customers on this work go from +91 22000 00001.');
   });
 });

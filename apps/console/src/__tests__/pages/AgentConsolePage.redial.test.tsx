@@ -35,12 +35,8 @@ vi.mock('../../analytics/events', async (importOriginal) => {
 
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import {
-  PAD_REDIALING_COPY,
-  REDIAL_DISABLED_COPY,
-  REDIAL_IN_FLIGHT_COPY,
-} from '../../utils/agencyRedialCopy';
-import { redialRefusedLine } from '../../utils/agency/stationCopy';
+import { PAD_REDIALING_COPY } from '../../utils/agencyRedialCopy';
+import { STATION_COPY, redialRefusedLine } from '../../utils/agency/stationCopy';
 import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
@@ -398,18 +394,18 @@ describe('pressing Redial', () => {
 
 describe('a refused redial leaves the agent in wrap-up with the pad usable', () => {
   const CAMPAIGN_STOPPED = 'The campaign is not running, so the customer cannot be redialled. Save the outcome.';
-  // [code, the server's message, what the agent reads, what the button then says (null: enabled)].
+  // [code, the server's message, what the agent reads, 'retired' when the button then goes (null: enabled)].
   // The station says its own words keyed on the code, never the server's sentence (AS15).
   it.each([
-    ['redial_not_allowed', CAMPAIGN_STOPPED, redialRefusedLine('redial_not_allowed', 409), REDIAL_DISABLED_COPY.blocked],
-    ['redial_limit_reached', 'x', redialRefusedLine('redial_limit_reached', 409), 'No redials left'],
+    ['redial_not_allowed', CAMPAIGN_STOPPED, redialRefusedLine('redial_not_allowed', 409), 'retired'],
+    ['redial_limit_reached', 'x', redialRefusedLine('redial_limit_reached', 409), 'retired'],
     [
       'disposition_already_submitted',
       'x',
       redialRefusedLine('disposition_already_submitted', 409),
-      REDIAL_DISABLED_COPY.blocked,
+      'retired',
     ],
-    ['redial_blocked_dnc', 'x', redialRefusedLine('redial_blocked_dnc', 409), REDIAL_DISABLED_COPY.blocked],
+    ['redial_blocked_dnc', 'x', redialRefusedLine('redial_blocked_dnc', 409), 'retired'],
     ['redial_blocked_calling_hours', 'x', redialRefusedLine('redial_blocked_calling_hours', 409), null],
     ['redial_blocked', 'The number is not valid.', redialRefusedLine('redial_blocked', 409), null],
   ])('%s', async (code, message, copy, disabledLine) => {
@@ -642,12 +638,12 @@ describe('the press itself', () => {
     expect(analyticsMocks.trackAgencyRedialRequested).toHaveBeenCalledTimes(1);
   });
 
-  it('announces "Redialling…" in the page’s assertive region', async () => {
+  it('announces "Calling again…" in the page’s assertive region', async () => {
     await inWrapup({ redial_remaining: 2 });
     deferredRedial();
     await pressRedial();
     const region = document.querySelector('[aria-live="assertive"]')!;
-    expect(region.textContent).toBe(REDIAL_IN_FLIGHT_COPY);
+    expect(region.textContent).toBe(STATION_COPY.callingAgain);
   });
 });
 
