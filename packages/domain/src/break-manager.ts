@@ -7,6 +7,7 @@ import {
   PHONE_CALL_BREAK_REASON_LABEL,
   RESERVED_BREAK_REASONS,
   isAgencyBreakLimitMinutes,
+  isAgencyTileIcon,
   type AgencyBreakReason,
 } from '@magick-agency/contracts/agency';
 
@@ -86,7 +87,7 @@ export function resolveBreakReasons(
       && typeof (r as AgencyBreakReason).code === 'string'
       && (r as AgencyBreakReason).code.length > 0
       && !isReservedBreakReason((r as AgencyBreakReason).code),
-  ).map(withUsableLimit);
+  ).map(withUsableLimit).map(withKnownIcon);
   return valid.length > 0 ? valid : [...DEFAULT_BREAK_REASONS];
 }
 
@@ -94,6 +95,16 @@ export function resolveBreakReasons(
 function withUsableLimit(reason: AgencyBreakReason): AgencyBreakReason {
   if (!('limit_minutes' in reason) || isAgencyBreakLimitMinutes(reason.limit_minutes)) return reason;
   const { limit_minutes: _dropped, ...rest } = reason;
+  return rest;
+}
+
+/**
+ * Agent station (BE-13): `reason` without an `icon` the contract does not list (`isAgencyTileIcon`;
+ * a stray or retired value is no icon, so the station guesses its own picture); otherwise itself.
+ */
+function withKnownIcon(reason: AgencyBreakReason): AgencyBreakReason {
+  if (!('icon' in reason) || isAgencyTileIcon(reason.icon)) return reason;
+  const { icon: _dropped, ...rest } = reason;
   return rest;
 }
 

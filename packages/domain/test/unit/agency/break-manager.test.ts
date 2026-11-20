@@ -326,3 +326,18 @@ describe('breakOverrun (agent station BE-12, AS12)', () => {
     }
   });
 });
+
+describe('break reason icons (agent station BE-13)', () => {
+  it('the menu keeps an icon the contract lists and drops one it does not (no icon at all)', () => {
+    // FALSIFIED: with `withKnownIcon` out of `resolveBreakReasons`, the unknown icon is served.
+    expect(resolveBreakReasons([
+      { code: 'tea', label: 'Tea', icon: 'tea' },
+      { code: 'namaz', label: 'Prayer', icon: 'mosque' as never },
+      { code: 'walk', label: 'Walk' },
+    ])).toEqual([
+      { code: 'tea', label: 'Tea', icon: 'tea' },
+      { code: 'namaz', label: 'Prayer' },
+      { code: 'walk', label: 'Walk' },
+    ]);
+  });
+});

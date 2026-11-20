@@ -17,6 +17,7 @@ import type {
   AgencyBreakReason,
   AgencyContextDisplay,
   AgencyAgentScript,
+  AgencyPhoneDisplay,
   AgencyDisposition,
   AgencyManualCallDispositionSource,
   AgencyManualCallEndReason,
@@ -136,6 +137,12 @@ export interface AgencyCampaignRecord {
    * Written by the PATCH (`src/agency/agent-script.ts`); served on the bootstrap as `script`.
    */
   agent_script: AgencyAgentScript;
+  /**
+   * Agent station (AS9, 0056): how the station shows the customer's number, `full` (the column
+   * default) or `masked`. A display choice; the number is still sent. Written by the create and the
+   * PATCH (`src/agency/station-tiles.ts` checks it); served on the bootstrap as `phone_display`.
+   */
+  phone_display: AgencyPhoneDisplay;
   record_calls: boolean;
   analysis_profile_id: string | null;
   status: AgencyCampaignStatus;

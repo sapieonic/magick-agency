@@ -123,7 +123,7 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
       'analysis_profile_id', 'assignment_mode', 'callback_fallback', 'callback_owner_grace_minutes',
       'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',
       'created_by', 'default_timezone', 'disposition_catalog', 'inbound_sticky_enabled', 'name', 'on_unstaff',
-      'outcome_dispositions',
+      'outcome_dispositions', 'phone_display',
       'record_calls', 'retry_policy',
       'telephony_credential_id', 'telephony_provider', 'tenant_id', 'wrapup_auto_return', 'wrapup_seconds',
     ]);
