@@ -18,6 +18,9 @@ import type { MoreItem, StationView } from '../../../utils/agency/stationView';
 import { BAND_ICONS } from './stationIcons';
 import styles from './Station.module.css';
 
+/** What the frame reads off a view: the screen's name, its colour, icon and words. */
+export type FrameView = Pick<StationView, 'tone' | 'icon' | 'title' | 'subtitle'> & { screen: string };
+
 /**
  * The station's frame (AS1, spec §3 "Every screen"): the top bar (who, today's work, Need help, ⋮
  * More), the full-width band in the state's colour, banners under it, the screen's body, and the
@@ -42,12 +45,13 @@ export function StationFrame({
   connectFlash,
   testId,
 }: {
-  view: StationView;
+  /** The band: one of the twelve screens, or a screen the station shows around them (a join refusal, the soft phone). */
+  view: FrameView;
   agentName: string;
   workName: string | null;
   brandMark: string;
-  needHelp: ReactNode;
-  menu: ReactNode;
+  needHelp?: ReactNode;
+  menu?: ReactNode;
   bandSide?: ReactNode;
   /** Replaces the view's subtitle (On call names the customer; 08's lateness counts). */
   bandSubtitle?: ReactNode | null;

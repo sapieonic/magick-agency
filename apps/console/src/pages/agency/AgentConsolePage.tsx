@@ -35,9 +35,7 @@ import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader
 import { CueFlashBand } from '../../components/agency/StateRail';
 import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
-import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
-import { StationFatal } from '../../components/agency/StationFatal';
+import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
 import { StationHeader } from '../../components/agency/StationHeader';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';
 import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWaitingPill';
@@ -533,10 +531,13 @@ function StationScreen({
     { breakMenuRef, notesRef, padRef: keyPadRef, dncRef },
   );
 
-  // ── Screens the join decides (unchanged) ────────────────────────────────────
+  // ── Screens the join decides, in the station's frame ────────────────────────
+  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
+  const who = { agentName, brandMark: brand.shortName };
   if (join.joinConflict) {
     return (
       <JoinConflictScreen
+        who={who}
         conflict={join.joinConflict}
         toCampaign={exit.canExitToCampaign}
         campaignId={exit.stationCampaignId}
@@ -552,6 +553,7 @@ function StationScreen({
   if (join.onSoftphoneElsewhere) {
     return (
       <SoftphoneJoinScreen
+        who={who}
         closing={join.closingSoftphone}
         failure={join.closeSoftphoneFailure}
         callPending={join.softphoneCallPending}
@@ -560,7 +562,7 @@ function StationScreen({
     );
   }
   if (join.joinError) {
-    return <StationFatal message={join.joinError} toCampaign={exit.canExitToCampaign} campaignId={exit.stationCampaignId} />;
+    return <StationFatal who={who} message={join.joinError} toCampaign={exit.canExitToCampaign} campaignId={exit.stationCampaignId} />;
   }
 
   const legacyMicBanner = micNotice ? (
@@ -682,7 +684,6 @@ function StationScreen({
   }
 
   // ── The redesigned station ──────────────────────────────────────────────────
-  const agentName = user?.display_name?.trim() || user?.email || 'Agent';
   const workName = bootstrap?.campaign_name ?? null;
   const internet: 'ok' | 'checking' | 'offline' =
     connection === 'open' ? 'ok' : connection === 'reconnecting' || connection === 'disconnected' ? 'offline' : 'checking';

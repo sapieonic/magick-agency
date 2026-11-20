@@ -26,7 +26,7 @@ import { readCuePrefs } from '../../utils/agencyCuePrefs';
 import { agentLandingPath } from '../../utils/agencyStationExit';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
-import { StationEscape } from '../../components/agency/StationFatal';
+import { StationEscape } from '../../components/agency/StationEscape';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';

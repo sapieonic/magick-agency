@@ -674,3 +674,7 @@
 .scriptStep[data-state='done'] .scriptNumber { background: var(--st-go); color: #fff; }
 .scriptText { padding-top: 3px; min-width: 0; overflow-wrap: anywhere; }
 .scriptStep .scriptSay { margin-top: 6px; }
+
+/* ── Before work opens: the join screens ── */
+.fatalLine { margin: 0 0 12px; font-size: 19px; line-height: 1.5; color: var(--text-primary); }
+.fatalLine:last-child { margin-bottom: 0; }

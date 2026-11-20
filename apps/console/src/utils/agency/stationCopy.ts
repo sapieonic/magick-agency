@@ -3,7 +3,7 @@ import type {
   AgencyQueueIdleReason,
   AgencyReleaseReason,
 } from '@magick-agency/contracts/agency';
-import type { AgencyAttemptOutcome } from '../../types/agency';
+import type { AgencyAgentState, AgencyAttemptOutcome } from '../../types/agency';
 import { clockTime, runningClock } from './stationFormat';
 
 /**
@@ -247,6 +247,31 @@ export const STATION_COPY = {
   tryAgainNow: 'Try again now',
   internetOnHappened: 'Internet problem. We are trying again. Your answer is kept.',
 
+  // Before work opens: it did not open, it is open elsewhere, or the soft phone holds it
+  joinFailedTitle: 'Your work did not open',
+  joinFailedSubtitle: 'See why below.',
+  goBack: 'Go back',
+  backHome: 'Back to your home screen',
+  otherWorkTitle: 'You are working somewhere else',
+  otherWorkSubtitle: 'You can work on only one list at a time.',
+  otherWorkDoing: (name: string, doing: string) => `You are on ${name}, ${doing}.`,
+  otherWorkMidCall: (name: string) => `Finish the call on ${name} first, then come back here.`,
+  otherWorkLeaveFirst: (name: string) => `Leave ${name} first, then come back here.`,
+  otherWorkSwitch: (name: string) => `Leave ${name} and work here`,
+  otherWorkOpen: (name: string) => `Open ${name}`,
+  otherWorkSwitchTitle: (name: string) => `Leave ${name}?`,
+  otherWorkSwitchBody: (name: string) => `We will close your work on ${name} and start it here.`,
+  otherWorkSwitchYes: 'Leave and work here',
+  otherWorkSwitching: 'Leaving…',
+  otherWorkSwitchNo: 'No, stay',
+  softphoneJoinTitle: 'You are on the soft phone',
+  softphoneJoinSubtitle: 'You can use one at a time. Close the soft phone to start work here.',
+  softphoneJoinBody: 'Your soft phone is still open.',
+  softphoneCloseAndStart: 'Close the soft phone and start here',
+  softphoneClosing: 'Closing the soft phone…',
+  softphoneCallOpen: 'Your soft phone has a call that is not finished. Hang up and save it there, then come back.',
+  openSoftphone: 'Open the soft phone',
+
   // 11 Finish work
   finishTitle: 'Finish work for today?',
   finishSubtitle: 'No more calls will come to you.',
@@ -277,6 +302,16 @@ export const STATION_COPY = {
 } as const;
 
 /** 02c's subtitle, by why calls stopped (spec §3 02c; all four reasons exist today). */
+/** What the agent is doing on another list, in the station's words (the join screens). */
+export const DOING_WORDS: Record<AgencyAgentState, string> = {
+  offline: 'not started yet',
+  available: 'ready for calls',
+  reserved: 'with a call coming',
+  on_call: 'on a call',
+  wrapup: 'choosing what happened',
+  break: 'on a break',
+};
+
 export function noCallsSubtitle(input: {
   campaignReason: AgencyCampaignChangeReason | null;
   dialing: boolean;

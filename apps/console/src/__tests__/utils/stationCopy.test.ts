@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  DOING_WORDS,
   STATION_BLOCK_COPY,
   STATION_COPY,
   helpAnsweredLine,
@@ -50,6 +51,7 @@ function everyString(value: unknown, out: string[] = []): string[] {
 const ALL = [
   ...everyString(STATION_COPY),
   ...everyString(STATION_BLOCK_COPY),
+  ...everyString(DOING_WORDS),
   ...['completed', 'no_answer', 'busy', 'agent_disconnected', 'remote_hangup', 'x'].map((r) => releaseBanner(r) ?? ''),
   ...['remote_hangup', 'agent_disconnected', 'no_answer', 'x'].map(missedReleaseLine),
   helpAnsweredLine('Priya', 'listen'),
