@@ -696,6 +696,27 @@ export class PacingEngine {
   }
 
   /**
+   * Pool queue reads started but not yet settled ({@link startPoolQueueFrames}). The tick does not
+   * wait for them: the `queue` frame is told, never decided on, so the claim never waits on its
+   * probe. `halt()` does, beside the ticks and the owner sweeps, bounded by
+   * {@link tickDrainTimeoutMs}: a read is one statement, and one that outlives the bound is
+   * abandoned (logged; it sends nothing once the engine is stopped).
+   */
+  private readonly inFlightPoolQueueReads = new InFlight();
+
+  /** Campaigns with a pool queue read in flight: never two at once for one campaign. */
+  private readonly poolQueueReading = new Set<string>();
+
+  /** Settle the pool queue reads started so far, bounded by {@link tickDrainTimeoutMs} (tests too). */
+  async drainPoolQueueReads(): Promise<void> {
+    if (await this.inFlightPoolQueueReads.settle(this.tickDrainTimeoutMs)) return;
+    log.error(
+      { pending: this.inFlightPoolQueueReads.size, timeoutMs: this.tickDrainTimeoutMs },
+      'Pool queue reads did not settle before shutdown — continuing without them; they send nothing',
+    );
+  }
+
+  /**
    * May a tick for this campaign still place a call? False once leadership was
    * given up (`revoked`) or the engine is stopping. Asked at every await boundary
    * a dial could follow, and handed to the dispatcher so the dialer can ask it
@@ -768,9 +789,10 @@ export class PacingEngine {
       this.superviseTimer = null;
       for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
       this.disarmRounds();
-      // Wait (bounded) for any tick and owner sweep already in flight — see `inFlightTicks`
-      // and `inFlightSweeps`. Together: neither waits on the other.
-      await Promise.all([this.drainTicks(), this.drainSweeps()]);
+      // Wait (bounded) for any tick, owner sweep and pool queue read already in flight — see
+      // `inFlightTicks`, `inFlightSweeps` and `inFlightPoolQueueReads`. Together: none waits on
+      // another.
+      await Promise.all([this.drainTicks(), this.drainSweeps(), this.drainPoolQueueReads()]);
       // Last, so what the final ticks counted is in it. Bounded and never rejects.
       await this.history.close();
     })();
@@ -1682,8 +1704,9 @@ export class PacingEngine {
     } else {
       // `pool` (agent station BE-5): the campaign's shared queue, one reading for every available
       // agent, each sent its `queue` frame on a change. Told, never decided on: who is dialled is
-      // the claim's, exactly as before.
-      await this.sendPoolQueueFrames(campaign, candidates, round.fresh);
+      // the claim's, exactly as before, so the tick goes on to the account reads and the claim
+      // without waiting for the probe (a cold cache or a forced tick reads in the background).
+      this.startPoolQueueFrames(campaign, candidates, round.fresh);
     }
 
     // Both account reads are per ROUND, not per tick (`pacing/round.ts`): the limit
@@ -1920,32 +1943,56 @@ export class PacingEngine {
    * A `pool` campaign's `queue` frames (agent station BE-5): the campaign's shared state
    * (`readPoolQueueState`, through {@link poolQueueCache}: one probe per campaign per TTL, never
    * one per agent), sent to each available agent whose station declared `queue_pool` (AS18) when it
-   * differs from the last they were sent. Best effort: a failed read sends nothing, warns, and
-   * costs the tick nothing.
+   * differs from the last they were sent. Synchronous: a cached state is sent at once; otherwise
+   * the probe runs in the BACKGROUND ({@link readAndSendPoolQueue}, tracked in
+   * {@link inFlightPoolQueueReads}), at most one per campaign at a time, and the tick goes on to
+   * its claim without it. A tick that finds a read already out sends nothing: that read tells the
+   * agents it was started for and fills the cache the next tick sends from. Never throws.
    */
-  private async sendPoolQueueFrames(
+  private startPoolQueueFrames(
     campaign: AgencyCampaignRecord,
     agents: readonly AgentCandidate[],
     fresh: boolean,
-  ): Promise<void> {
+  ): void {
     // AS18: only the stations that declared `queue_pool`; a build before the redesign words queue
     // state for an owner's own contacts, so it is sent none on a `pool` campaign, as before BE-5.
     // With none of them, nothing is read either.
     const declared = agents.filter((a) => this.stations.get(a.sessionId)?.caps.has(AGENCY_STATION_QUEUE_POOL_CAPABILITY) === true);
     if (declared.length === 0) return;
-    let state = fresh ? undefined : this.poolQueueCache.get(campaign.id);
-    if (!state) {
-      const generation = this.poolQueueCache.generation(campaign.id);
-      try {
-        state = await readPoolQueueState(campaign, new Date(this.now()));
-      } catch (err) {
-        log.warn({ err, campaignId: campaign.id }, 'Could not read a pool campaign\'s queue — sending no queue frame this tick');
-        return;
-      }
-      this.poolQueueCache.setIf(campaign.id, generation, state);
+    const cached = fresh ? undefined : this.poolQueueCache.get(campaign.id);
+    if (cached) {
+      this.sendPoolQueueState(campaign.id, declared, cached);
+      return;
     }
+    if (!this.mayDial(campaign.id) || this.poolQueueReading.has(campaign.id)) return;
+    this.poolQueueReading.add(campaign.id);
+    void this.inFlightPoolQueueReads.track(this.readAndSendPoolQueue(campaign, declared));
+  }
+
+  /**
+   * One background pool queue read ({@link startPoolQueueFrames}): cached (generation permitting),
+   * then sent to `declared`. Best effort: a failed read sends nothing and warns; a campaign given
+   * up, or an engine stopping, while the read was out tells no one. Never rejects.
+   */
+  private async readAndSendPoolQueue(campaign: AgencyCampaignRecord, declared: readonly AgentCandidate[]): Promise<void> {
+    const generation = this.poolQueueCache.generation(campaign.id);
+    let state: AgencyQueueState;
+    try {
+      state = await readPoolQueueState(campaign, new Date(this.now()));
+    } catch (err) {
+      log.warn({ err, campaignId: campaign.id }, 'Could not read a pool campaign\'s queue — sending no queue frame this tick');
+      return;
+    } finally {
+      this.poolQueueReading.delete(campaign.id);
+    }
+    this.poolQueueCache.setIf(campaign.id, generation, state);
+    if (!this.mayDial(campaign.id)) return;
+    this.sendPoolQueueState(campaign.id, declared, state);
+  }
+
+  private sendPoolQueueState(campaignId: string, declared: readonly AgentCandidate[], state: AgencyQueueState): void {
     const reading: AgentQueueReading = { ownDue: false, state };
-    this.sendQueueFrames(campaign.id, declared, new Map(declared.map((a) => [a.agentUserId, reading])));
+    this.sendQueueFrames(campaignId, declared, new Map(declared.map((a) => [a.agentUserId, reading])));
   }
 
   /** Send each agent's `queue` frame when it differs from the last one they were sent. */

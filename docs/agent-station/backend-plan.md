@@ -1202,9 +1202,11 @@ what was built.
   earliest open contact, and whether any open one is not a call-later; owners ignored), through
   `queueStateFrom`, so the four reasons mean what they do on `strict` / `preferred`. The pacing
   engine sends it to every available agent of a pool campaign on a change
-  (`sendPoolQueueFrames`), read once per campaign through a TTL cache (`PACING_CACHE_TTL_MS`,
+  (`startPoolQueueFrames`), read once per campaign through a TTL cache (`PACING_CACHE_TTL_MS`,
   invalidated by `campaign_changed` and `contacts_changed`; a forced tick reads through); a failed
-  probe sends nothing and never changes the tick. Who is dialled is unchanged. `readAgentQueueState`
+  probe sends nothing and never changes the tick. The probe runs in the background, one per
+  campaign at a time and drained by `halt()`, so the tick claims without waiting for it (review
+  fix). Who is dialled is unchanged. `readAgentQueueState`
   answers it for `pool`, so the bootstrap, `ready` (the campaign read now happens for every campaign
   session) and the My contacts summary carry it; `station_ready` is published for pool sessions too.
   ~~No capability: every build already decodes `queue`.~~ **Gated behind `queue_pool` (AS18, fix
