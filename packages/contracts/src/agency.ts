@@ -65,6 +65,14 @@
  * `./agency/floor-assist.ts`), and `AgencyStationCapability` gains `floor_assist`: a phone is sent
  * those frames only when its upgrade declares it. The union was already declared non-exhaustive,
  * so a client that ignores an unknown `event` is unaffected.
+ *
+ * **Agent station amendment (2026-11-20, `docs/agent-station.md`, AS18).** Optional fields only, no
+ * new frame, nothing renamed or removed: `AgencyReservedAttempt.callback` (BE-4) and `.facts` (BE-6,
+ * `./agency/customer-facts.ts`); `AgencyContextDisplay.roles` / `.types` (BE-6);
+ * `AgencySessionBootstrap.script` (BE-8, `./agency/agent-script.ts`) and `.phone_display` (AS9);
+ * `AgencyDisposition.icon` and `AgencyBreakReason.icon` from `AGENCY_TILE_ICONS` (BE-13,
+ * `./agency/tile-icons.ts`; an unknown value reads as none); `AgencySessionHelp.state_at_raise`
+ * (BE-9). The `queue` frame is also sent on `pool` campaigns (BE-5): an existing frame.
  */
 
 export * from './agency/enums';
@@ -86,6 +94,9 @@ export * from './agency/push-devices';
 export * from './agency/promise';
 export * from './agency/listen';
 export * from './agency/floor-assist';
+export * from './agency/tile-icons';
+export * from './agency/customer-facts';
+export * from './agency/agent-script';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';
 export type { AgencyFloorAssistErrorCode, AgencyFloorAssistErrorResponse } from './errors';
 export { AGENCY_FLOOR_ASSIST_ERROR_CODES } from './errors';

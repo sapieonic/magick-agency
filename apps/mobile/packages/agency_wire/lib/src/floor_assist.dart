@@ -95,10 +95,19 @@ enum FloorAssistErrorCode implements WireEnum {
 /// Contract: `AgencySessionHelp`.
 @immutable
 final class SessionHelp {
-  const SessionHelp({required this.raisedAt, this.callId});
+  SessionHelp({required this.raisedAt, this.callId, this.stateAtRaise, String? stateAtRaiseRaw})
+    : stateAtRaiseRaw = stateAtRaiseRaw ?? stateAtRaise?.wire;
 
-  factory SessionHelp.fromJson(Map<String, Object?> j) =>
-      SessionHelp(raisedAt: j.time('raised_at'), callId: j.strOrNull('call_id'));
+  factory SessionHelp.fromJson(Map<String, Object?> j) {
+    // Optional and read leniently (BE-9): a value that is not a string is no state.
+    final state = j['state_at_raise'] is String ? j['state_at_raise']! as String : null;
+    return SessionHelp(
+      raisedAt: j.time('raised_at'),
+      callId: j.strOrNull('call_id'),
+      stateAtRaise: state == null ? null : AgentState.fromWire(state),
+      stateAtRaiseRaw: state,
+    );
+  }
 
   /// [value] as a request, or null when absent or unreadable. For the optional
   /// `ready.help`: a field this build cannot read must never cost the agent the
@@ -115,17 +124,27 @@ final class SessionHelp {
   /// When the agent raised it (server clock).
   final DateTime raisedAt;
 
-  /// The call the agent was on when they raised it; null in wrap-up.
+  /// The call the agent was on when they raised it; null in wrap-up, or when
+  /// raised with no call.
   final String? callId;
 
-  @override
-  bool operator ==(Object other) => other is SessionHelp && other.raisedAt == raisedAt && other.callId == callId;
+  /// The agent's state when they raised it (BE-9: Need help in every state);
+  /// null from a server older than the field.
+  final AgentState? stateAtRaise;
+  final String? stateAtRaiseRaw;
 
   @override
-  int get hashCode => Object.hash(raisedAt, callId);
+  bool operator ==(Object other) =>
+      other is SessionHelp &&
+      other.raisedAt == raisedAt &&
+      other.callId == callId &&
+      other.stateAtRaiseRaw == stateAtRaiseRaw;
 
   @override
-  String toString() => 'SessionHelp($raisedAt, call: $callId)';
+  int get hashCode => Object.hash(raisedAt, callId, stateAtRaiseRaw);
+
+  @override
+  String toString() => 'SessionHelp($raisedAt, call: $callId, state: $stateAtRaiseRaw)';
 }
 
 /// `POST` and `DELETE /proxy/agency/sessions/:id/help`: the open request after

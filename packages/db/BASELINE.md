@@ -1722,6 +1722,66 @@ refused rows and the completed jobs (correct, slower). **Tests**:
 plan on a seeded queue probing each index backward with no table scan, the invalid-index refusal,
 down then up) and the down → up inventory suite.
 
+### 0056 — `migrations/0056_campaign_station_settings.sql`
+
+The agent station redesign's campaign settings (docs/agent-station.md). **`daily_target_calls`**
+`INTEGER NULL`, `ck_agency_campaign_daily_target_calls` 1–2000 (BE-2, AS6: each agent's daily
+target in conversations; NULL is no target, served on the campaign and in My day, not on the
+bootstrap); **`agent_script`** `JSONB NOT NULL DEFAULT '{}'`, `ck_agency_campaign_agent_script` an
+object (BE-8: `{ opening?, steps?: [{ text }] }`, `'{}'` is no script; the write holds the steps,
+lengths and placeholders); **`phone_display`** `VARCHAR(10) NOT NULL DEFAULT 'full'`,
+`ck_agency_campaign_phone_display` `full` / `masked` (AS9). Catalog-only adds on a small table, the
+three CHECKs validated, after `SET LOCAL lock_timeout = '10s'`. **Down** drops the three columns.
+**Tests**: `test/integration/db/agent-station-migrations.test.ts` and the down → up inventory suite.
+
+### 0057 — `migrations/0057_contact_callback_booker.sql`
+
+Who booked a contact's call-later (BE-3, AS8). **`agency_contacts.callback_booked_by_user_id`**
+`UUID NULL` (no foreign key, as `assigned_user_id`) and **`callback_booked_at`** `TIMESTAMPTZ NULL`:
+stamped by the disposition write that books the call-later (the agent who took the call, never a
+supervisor on their behalf; a promise follow-up too), cleared by the contact's next settled call.
+`ck_agency_contact_callback_booked` (both set or both NULL) added NOT VALID. Nullable with no
+default: catalog-only on a large table, after `SET LOCAL lock_timeout = '10s'`. No backfill. The
+index is 0058's (0041 / 0045's split). **Down** drops the CHECK and the columns. **Tests**:
+`test/integration/db/agent-station-migrations.test.ts` and the down → up inventory suite.
+
+### 0058 — `migrations/0058_contact_callback_booker_index.sql`
+
+**`idx_agency_contacts_my_callbacks`** `(campaign_id, callback_booked_by_user_id, next_attempt_at)
+WHERE state = 'pending' AND callback_booked_by_user_id IS NOT NULL`: My day's call-later list, one
+agent's pending booked call-laters on a campaign by due time (the read repeats the predicate byte
+for byte). Then `VALIDATE CONSTRAINT ck_agency_contact_callback_booked` (cannot fail: every older
+row is NULL). Plain `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`: SHARE on
+`agency_contacts` for one read of the roster that writes an empty index on the release that adds
+0057; it cannot be built beforehand on a database without 0057, a database already on 0057 may
+build it `CONCURRENTLY` first, and an invalid index left under the name fails the migration.
+**Down** drops the index (0057's Down drops the CHECK). **Tests**:
+`test/integration/db/agent-station-migrations.test.ts` (the definition, the read shape's plan on a
+seeded roster, the invalid-index refusal, one built beforehand, down then up) and the down → up
+inventory suite.
+
+### 0059 — `migrations/0059_session_help_state.sql`
+
+Need help in every state (BE-9, AS5). **`agency_agent_sessions.help_state`** `VARCHAR(20) NULL`: the
+agent's state when the open request was raised, served as `AgencySessionHelp.state_at_raise`;
+written with `help_raised_at` and cleared with it. `ck_agency_agent_sessions_help_state` (NOT VALID,
+0052's reasoning): a state only on a raised request, one of the six agent states, so clearing
+`help_raised_at` without it is refused. Catalog-only on a small table after
+`SET LOCAL lock_timeout = '10s'`. **Down** drops the CHECK and the column. **Tests**:
+`test/integration/db/agent-station-migrations.test.ts` and the down → up inventory suite.
+
+### 0060 — `migrations/0060_session_event_break_overrun.sql`
+
+A break over its limit (BE-12, AS12), on the session event that ended it.
+**`agency_agent_session_events.break_limit_minutes`** `SMALLINT NULL` (the reason's limit when the
+break began) and **`break_overrun_seconds`** `INTEGER NULL` (how far past it, > 0): both set on the
+transition out of `break` that ended a break that ran over, both NULL on every other event.
+`ck_agency_session_event_break_overrun` (NOT VALID: the event log is large and the columns new):
+set together, only with `from_state = 'break'`, the limit 1–240, the overrun positive. No index (the
+report reads the events by agent and by campaign already). Catalog-only after
+`SET LOCAL lock_timeout = '10s'`. **Down** drops the CHECK and the columns. **Tests**:
+`test/integration/db/agent-station-migrations.test.ts` and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
