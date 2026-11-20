@@ -569,7 +569,8 @@ describe('joining a campaign while on the soft phone', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
-    expect(screen.getByTestId('join-close-softphone-failure').textContent).toBe('Your soft phone is still open — Service Unavailable');
+    // The station's words (AS15), never the error's own message.
+    expect(screen.getByTestId('join-close-softphone-failure').textContent).toBe('Your soft phone is still open. Try again.');
     expect((screen.getByRole('button', { name: 'Close the soft phone and start here' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -583,7 +584,8 @@ describe('joining a campaign while on the soft phone', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and start here' }));
     });
     expect(screen.queryByTestId('join-on-softphone')).toBeNull();
-    expect(document.body.textContent).toMatch(/Closed the soft phone, but couldn’t join this campaign — Campaign is stopped/);
+    expect(document.body.textContent).toContain('The soft phone is closed, but your work did not open. Go back and open it again.');
+    expect(document.body.textContent).not.toContain('Campaign is stopped');
   });
 
   it('says so and links to the soft phone (session_on_softphone)', async () => {

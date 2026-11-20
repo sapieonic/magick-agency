@@ -2408,7 +2408,7 @@ Agent station redesign, supervisor side: `agency/stationSettings.ts` (campaign S
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
-| `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
+| `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` (the conflict's parse and the mid-call rule; the words are `stationCopy.ts`'s) | 12 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyNotes.test.ts` | 43 |
@@ -2429,7 +2429,7 @@ Agent station redesign, supervisor side: `agency/stationSettings.ts` (campaign S
 | `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` (with `dialActivity`) | 32 |
 | `apps/console/src/__tests__/utils/stationView.test.ts` (one screen per input, the bands, one main action per screen, Need help on every working screen (BE-9), ⋮ More's items by screen, the band over an inbound call and the soft phone) | 54 |
 | `apps/console/src/__tests__/utils/stationParts.test.ts` (₹ and dates, the tile layout and pictures (the supervisor's pick first), the customer card from typed facts and from guesses, the call-later tag, the masked number, Last calls, my-day's shapes and the fallback list, the script's placeholders, the device checks, the release and help words, the `en-IN` voice) | 27 |
-| `apps/console/src/__tests__/utils/stationCopy.test.ts` (the station's words never use spec §6.6's jargon, and spell the British way; every refusal line for every server code, the microphone, inbound and save lines included) | 16 |
+| `apps/console/src/__tests__/utils/stationCopy.test.ts` (the station's words never use spec §6.6's jargon, and spell the British way; every refusal line for every server code, the microphone, inbound and save lines included; why work did not open, by code then status, and the switch's three failures) | 21 |
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 41 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 35 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 23 |
