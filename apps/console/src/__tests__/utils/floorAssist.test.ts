@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import { ApiError } from '../../api/client';
 import {
+  heardFrom,
   helpAgo,
-  helpKey,
+  helpChimeKey,
   helpKeys,
   messageFits,
   messageLength,
   messageRefusal,
-  newHelpKeys,
   readHelpChimeOn,
   resetHelpChimeChoiceForTests,
   reminderText,
@@ -75,18 +75,30 @@ describe('a message (LF5, LF17)', () => {
 describe('telling Need help requests apart (LF31)', () => {
   const at = '2026-11-19T09:00:00.000Z';
 
-  it('keys a request by its agent and when it was raised', () => {
-    expect(helpKey({ agent_user_id: 'r', help: { raised_at: at, call_id: null } })).toBe(`r@${at}`);
-    expect(helpKey({ agent_user_id: 'r', help: null })).toBeNull();
-    expect(helpKeys([{ agent_user_id: 'a', help: null }, { agent_user_id: 'r', help: { raised_at: at, call_id: 'c' } }])).toEqual([`r@${at}`]);
+  it('keys a request by its session and when it was raised, however the instant is spelled', () => {
+    const ms = Date.parse(at);
+    expect(helpChimeKey('s-1', at)).toBe(`help:s-1@${ms}`);
+    // The floor read and the alerts read agree on one request whatever their spelling of the time.
+    expect(helpChimeKey('s-1', '2026-11-19T09:00:00Z')).toBe(helpChimeKey('s-1', '2026-11-19T14:30:00.000+05:30'));
+    expect(helpChimeKey('s-1', 'not a time')).toBe('help:s-1@not a time');
+    expect(helpKeys([
+      { session_id: 's-a', help: null },
+      { session_id: 's-r', help: { raised_at: at, call_id: 'c' } },
+      { session_id: null, help: { raised_at: at, call_id: null } },
+    ])).toEqual([{ kind: 'help', key: `help:s-r@${ms}` }]);
   });
 
-  it('is new only after the first read, and only when not seen before', () => {
-    expect(newHelpKeys(null, ['r@1'])).toEqual([]);
-    expect(newHelpKeys(new Set(['r@1']), ['r@1'])).toEqual([]);
-    expect(newHelpKeys(new Set(['r@1']), ['r@1', 'p@2'])).toEqual(['p@2']);
-    // Raised again after an answer: a new request.
-    expect(newHelpKeys(new Set(['r@1']), ['r@3'])).toEqual(['r@3']);
+  it('notes what is open at the page’s first read of a kind, then is fresh only for what no read heard', () => {
+    const k = (kind: 'help' | 'disconnected', key: string) => ({ kind, key });
+    // The first read covering help: noted, not chimed.
+    expect(heardFrom(new Set(), new Set(), ['help'], [k('help', 'r1')]))
+      .toEqual({ fresh: [], noted: ['r1'], baselines: ['help'] });
+    // Help seen before on the page (by any read): new keys are fresh, heard ones are not.
+    expect(heardFrom(new Set(['r1']), new Set(['help']), ['help'], [k('help', 'r1'), k('help', 'p2'), k('help', 'p2')]))
+      .toEqual({ fresh: ['p2'], noted: [], baselines: [] });
+    // A read covering a kind no read has seen yet notes that kind, and still hears the others.
+    expect(heardFrom(new Set(['r1']), new Set(['help']), ['help', 'disconnected'], [k('help', 'r3'), k('disconnected', 'd1')]))
+      .toEqual({ fresh: ['r3'], noted: ['d1'], baselines: ['disconnected'] });
   });
 
   it('says how long ago on the floor’s clock', () => {

@@ -1,6 +1,7 @@
 import type { AgencyFloorAlert, AgencyFloorAlertKind } from '@magick-agency/contracts/api/agency/floor';
 import { agentDisplayName } from '../agencyAgentFloor';
 import { formatCount } from '../format/number';
+import { helpChimeKey } from './floorAssist';
 
 /**
  * Supervisor alerts on every console page (agent station AS16): the account's open alerts from
@@ -19,10 +20,16 @@ const KNOWN_KINDS: ReadonlySet<AgencyFloorAlertKind> = new Set<AgencyFloorAlertK
 
 /** One banner row. */
 export interface FloorAlertItem {
-  /** The alert's `id`: the chime's key, stable for the alert's life. */
+  /** The alert's `id`, stable for the alert's life: the row's key and the screen reader's. */
   id: string;
   kind: AgencyFloorAlertKind;
   text: string;
+  /**
+   * The chime's key (`useHelpChime`): Need help's is built from its session and when it was raised
+   * (`helpChimeKey`), as Live floor's floor read builds it, so the two reads hear one request once;
+   * the other kinds' is the alert's `id`.
+   */
+  chimeKey: string;
 }
 
 /** Minutes from `since` to `asOf`, whole and never negative; null when either cannot be read. */
@@ -54,17 +61,13 @@ export function floorAlertText(alert: AgencyFloorAlert, asOf: string): string {
 export function floorAlertItems(alerts: readonly AgencyFloorAlert[], asOf: string): FloorAlertItem[] {
   return alerts
     .filter((alert) => KNOWN_KINDS.has(alert.kind))
-    .map((alert) => ({ id: alert.id, kind: alert.kind, text: floorAlertText(alert, asOf) }));
+    .map((alert) => ({
+      id: alert.id,
+      kind: alert.kind,
+      text: floorAlertText(alert, asOf),
+      chimeKey: alert.kind === 'help' ? helpChimeKey(alert.session_id, alert.help?.raised_at ?? alert.since) : alert.id,
+    }));
 }
 
 /** The most rows the banner lists; the rest are counted ("and 3 more"). */
 export const FLOOR_ALERTS_SHOWN_MAX = 3;
-
-/**
- * The ids the chime notes but never plays for. On Live floor, Need help has its own chime (LF4,
- * on the floor's own read), so the shell stays quiet for it there and nothing is heard twice; it
- * still notes them, so leaving Live floor does not chime for a request already heard.
- */
-export function quietAlertIds(items: readonly FloorAlertItem[], onLiveFloor: boolean): string[] {
-  return onLiveFloor ? items.filter((item) => item.kind === 'help').map((item) => item.id) : [];
-}

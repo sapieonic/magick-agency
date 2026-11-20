@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgencyFloorAlert } from '@magick-agency/contracts/api/agency/floor';
-import { floorAlertItems, floorAlertText, quietAlertIds } from '../../utils/agency/floorAlerts';
+import { floorAlertItems, floorAlertText } from '../../utils/agency/floorAlerts';
+import { helpChimeKey } from '../../utils/agency/floorAssist';
 
 /** Supervisor alerts in plain words (AS16, AS15), counted on the server's clock. */
 
@@ -48,16 +49,16 @@ describe('floorAlertItems', () => {
   it('keeps the server’s order and leaves out a kind it does not know', () => {
     const odd = { ...helpAlert(), id: 'odd:1', kind: 'something_new' } as unknown as AgencyFloorAlert;
     expect(floorAlertItems([dropAlert, odd, helpAlert()], AS_OF)).toEqual([
-      { id: 'disconnected:s-1:t', kind: 'disconnected', text: 'Ravi is disconnected' },
-      { id: 'help:s-1:t', kind: 'help', text: 'Ravi needs help' },
+      expect.objectContaining({ id: 'disconnected:s-1:t', kind: 'disconnected', text: 'Ravi is disconnected' }),
+      expect.objectContaining({ id: 'help:s-1:t', kind: 'help', text: 'Ravi needs help' }),
     ]);
   });
 });
 
-describe('quietAlertIds', () => {
-  it('quiets Need help on Live floor only, where its own chime plays for it', () => {
-    const items = floorAlertItems([helpAlert(), dropAlert], AS_OF);
-    expect(quietAlertIds(items, true)).toEqual(['help:s-1:t']);
-    expect(quietAlertIds(items, false)).toEqual([]);
+describe('the chime’s key', () => {
+  it('is Need help’s session and raise time, as Live floor keys it, and the id for the rest', () => {
+    const [helpItem, dropItem] = floorAlertItems([helpAlert(), dropAlert], AS_OF);
+    expect(helpItem!.chimeKey).toBe(helpChimeKey('s-1', '2026-11-20T10:29:00.000Z'));
+    expect(dropItem!.chimeKey).toBe(dropItem!.id);
   });
 });

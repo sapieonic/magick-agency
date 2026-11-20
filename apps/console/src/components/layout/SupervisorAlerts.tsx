@@ -10,7 +10,6 @@ import { HOME_GATE, HOME_PATH, passesGate, pathWithin } from '../../utils/consol
 import {
   FLOOR_ALERTS_SHOWN_MAX,
   floorAlertItems,
-  quietAlertIds,
   type FloorAlertItem,
 } from '../../utils/agency/floorAlerts';
 import { formatCount } from '../../utils/format/number';
@@ -57,8 +56,12 @@ export function SupervisorAlerts() {
   const stableItems = useMemo(() => items ?? [], [signature]);
   const ready = items !== null;
   const ids = useMemo(() => (ready ? stableItems.map((item) => item.id) : null), [ready, stableItems]);
-  const quiet = useMemo(() => quietAlertIds(stableItems, onLiveFloor), [stableItems, onLiveFloor]);
-  const chime = useHelpChime(ids, quiet);
+  // Heard once on the page, whichever read sees an alert first: Live floor's own chime shares the set.
+  const chimeKeys = useMemo(
+    () => (ready ? stableItems.map((item) => ({ kind: item.kind, key: item.chimeKey })) : null),
+    [ready, stableItems],
+  );
+  const chime = useHelpChime(chimeKeys);
 
   // Said once to a screen reader when a new alert comes in (not on the first read, not every poll).
   const announced = useRef<Set<string> | null>(null);

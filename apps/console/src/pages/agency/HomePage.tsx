@@ -73,6 +73,9 @@ import styles from './live-floor/LiveFloor.module.css';
  * (each such campaign's mode read once, `useAssignmentModes`). No new timer: everything rides the
  * 5 s risk clock and the reads the page already makes.
  */
+/** What Live floor's chime hears: Need help, from its floor read (the shell's hears every kind). */
+const HELP_ONLY = ['help'] as const;
+
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`'s permission; its capability and flag are `/agency`'s route gates, passed here.
@@ -124,8 +127,9 @@ export default function HomePage() {
     () => (breaks.length === 0 && helps.length === 0 ? attention : sortByRank([...attention, ...breaks, ...helps])),
     [attention, breaks, helps],
   );
-  // The chime hears every open request on the floor (not only the picked campaign's), once each.
-  const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null);
+  // The chime hears every open request on the floor (not only the picked campaign's), once each on
+  // the page: the shell's alerts chime shares what it has heard, so neither plays for one twice.
+  const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null, HELP_ONLY);
   const { on: chimeOn, toggle: toggleChime } = chime;
   // Moves on every floor read: held in a ref and read at Listen's click, so the memo below (and the
   // memoised Needs you now) outlives a poll that changed nothing else.

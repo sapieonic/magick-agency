@@ -1,5 +1,5 @@
 import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
-import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
+import type { AgencyFloorAgent, AgencyFloorAlertKind } from '@magick-agency/contracts/api/agency/floor';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../agencyErrors';
 import { breakLimitMinutesOf } from '../agencyAgentFloor';
@@ -66,29 +66,56 @@ export function messageRefusal(err: unknown, name: string): string {
 }
 
 /**
- * One open Need help request, as the chime tells requests apart (LF31): the agent and the moment
- * they raised it, so a request raised again after an answer is a new one.
+ * One alert as the chime tells alerts apart (LF31, AS16): what it is about and a key that is the
+ * same whichever read saw it. Live floor's floor read and the shell's alerts read both carry an
+ * open Need help request, so its key is built from what both carry ({@link helpChimeKey}); the
+ * other kinds come only from the alerts read and are keyed by the alert's `id`.
  */
-export function helpKey(row: Pick<AgencyFloorAgent, 'agent_user_id' | 'help'>): string | null {
-  return row.help ? `${row.agent_user_id}@${row.help.raised_at}` : null;
-}
-
-/** Every open request on the floor, in the floor's order. */
-export function helpKeys(rows: readonly Pick<AgencyFloorAgent, 'agent_user_id' | 'help'>[]): string[] {
-  return rows.flatMap((row) => {
-    const key = helpKey(row);
-    return key === null ? [] : [key];
-  });
+export interface ChimeKey {
+  kind: AgencyFloorAlertKind;
+  key: string;
 }
 
 /**
- * The requests to chime for (LF31): the ones not seen before on this page. Null `seen` is the page's first
- * read of the floor: what is already open then is shown (the red row and card) and not chimed for,
- * so a reload or a return to the page never plays the sound for requests the reader has seen.
+ * A Need help request's chime key: the session and the instant it was raised (as a number, so two
+ * reads that spell the same instant differently agree), so a request raised again after an answer
+ * is a new one.
  */
-export function newHelpKeys(seen: ReadonlySet<string> | null, keys: readonly string[]): string[] {
-  if (seen === null) return [];
-  return keys.filter((key) => !seen.has(key));
+export function helpChimeKey(sessionId: string, raisedAt: string): string {
+  const at = Date.parse(raisedAt);
+  return `help:${sessionId}@${Number.isFinite(at) ? at : raisedAt}`;
+}
+
+/** Every open request on the floor, in the floor's order. A row with no open session has none. */
+export function helpKeys(rows: readonly Pick<AgencyFloorAgent, 'session_id' | 'help'>[]): ChimeKey[] {
+  return rows.flatMap((row) => (row.help && row.session_id
+    ? [{ kind: 'help' as const, key: helpChimeKey(row.session_id, row.help.raised_at) }]
+    : []));
+}
+
+/**
+ * What one read changes in the page's heard alerts (LF31, AS16), pure. `covers` are the kinds the
+ * read can see (Live floor's floor read: Need help; the shell's alerts read: every kind). The first
+ * read of the page that covers a kind only notes what is open of it (`noted`: shown, never chimed
+ * for), so a reload never plays the sound for what the reader can already see. After that, a key
+ * not heard before on this page, by any read, is `fresh` (chimed once), and never again, whichever
+ * read sees it next.
+ */
+export function heardFrom(
+  heard: ReadonlySet<string>,
+  baselined: ReadonlySet<AgencyFloorAlertKind>,
+  covers: readonly AgencyFloorAlertKind[],
+  keys: readonly ChimeKey[],
+): { fresh: string[]; noted: string[]; baselines: AgencyFloorAlertKind[] } {
+  const baselines = covers.filter((kind) => !baselined.has(kind));
+  const fresh: string[] = [];
+  const noted: string[] = [];
+  for (const { kind, key } of keys) {
+    if (heard.has(key) || fresh.includes(key) || noted.includes(key)) continue;
+    if (baselines.includes(kind)) noted.push(key);
+    else fresh.push(key);
+  }
+  return { fresh, noted, baselines };
 }
 
 /** "under a minute ago", "3 min ago": how long ago a request was raised, on the floor's 5 s clock. */
