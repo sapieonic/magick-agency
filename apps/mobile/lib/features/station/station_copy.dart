@@ -78,6 +78,15 @@ abstract final class StationCopy {
   static const callsWillStart = 'Calls will start again';
   static const nothingToDo = 'You do not need to do anything.';
   static const callsStoppedBySupervisor = 'Your supervisor has stopped calls. Stay on this screen.';
+
+  /// 02c's subtitle while calls are stopped, by why (the console's `NO_CALLS_STOPPED_WORDS`, word for
+  /// word).
+  static String callsStopped(CallsStopped? why) => switch (why) {
+    CallsStopped.bySupervisor => callsStoppedBySupervisor,
+    CallsStopped.autoPaused => 'Calls are paused for a short while. Stay on this screen.',
+    CallsStopped.listFinished => 'Every customer on this list has been called.',
+    CallsStopped.notStarted || null => 'Calls have not started yet. Stay on this screen.',
+  };
   static const noCustomersWaiting = 'No customers are waiting. Stay on this screen.';
   static String nextCallAt(String at) => 'Your next call is at $at.';
   static String callsStartAt(String at) => 'Calls start at $at.';

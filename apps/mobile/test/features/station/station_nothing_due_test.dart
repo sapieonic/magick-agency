@@ -59,6 +59,20 @@ void main() {
       expect(find.text(StationCopy.noCustomersWaiting), findsNothing);
     });
 
+    testWidgets('02c says why calls stopped, and blames the supervisor only when they did it (on pool too, BE-5)', (tester) async {
+      for (final (stopped, line) in [
+        (CallsStopped.bySupervisor, 'Your supervisor has stopped calls. Stay on this screen.'),
+        (CallsStopped.autoPaused, 'Calls are paused for a short while. Stay on this screen.'),
+        (CallsStopped.listFinished, 'Every customer on this list has been called.'),
+        (CallsStopped.notStarted, 'Calls have not started yet. Stay on this screen.'),
+      ]) {
+        await pumpStation(tester, station(dialing: false, stopped: stopped));
+        expect(find.byKey(const Key('band-no-calls')), findsOneWidget);
+        expect(find.text(line), findsOneWidget, reason: '$stopped');
+        if (stopped != CallsStopped.bySupervisor) expect(find.textContaining('supervisor'), findsNothing, reason: '$stopped');
+      }
+    });
+
     testWidgets('the queue changing under the screen swaps the words', (tester) async {
       final h = await pumpStation(tester, station(queue: const QueueView(due: false, reason: QueueIdle.queueEmpty)));
       expect(find.text(StationCopy.noCallsNow), findsOneWidget);

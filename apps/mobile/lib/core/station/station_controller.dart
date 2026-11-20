@@ -867,8 +867,8 @@ class StationController extends Notifier<StationView?>
         if (!isKnownReleaseReason(frame.reason)) _log.warn('unknown release reason', {'reason': frame.reasonRaw});
         _calls.campaignReleased(frame);
         _dispatch(ReleasedAction(frame, at: _now(), retain: _station.live?.attempt));
-      case CampaignStateFrame(:final dialing, :final message):
-        _dispatch(CampaignStateAction(dialing: dialing, message: message));
+      case CampaignStateFrame(:final dialing, :final message, :final reason):
+        _dispatch(CampaignStateAction(dialing: dialing, message: message, reason: reason));
       case StationErrorFrame():
         _log.warn('station error frame', {'code': frame.codeRaw});
         _dispatch(ErrorAction(frame));

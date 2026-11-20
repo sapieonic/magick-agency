@@ -358,7 +358,28 @@ void main() {
         app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'paused', 'reason': 'paused_by_supervisor', 'dialing': false, 'message': 'Paused.'});
         expect(app.view!.campaignDialing, isFalse);
         expect(app.view!.campaignMessage, 'Paused.');
+        expect(app.view!.callsStopped, CallsStopped.bySupervisor);
         expect(identical(app.view!.call, call), isTrue);
+        app.dispose();
+      });
+    });
+
+    test('02c\'s reason follows campaign_state.reason: supervisor, the system\'s own pause, a finished list', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        for (final (reason, stopped) in [
+          ('paused_by_supervisor', CallsStopped.bySupervisor),
+          ('stopped_by_supervisor', CallsStopped.bySupervisor),
+          ('auto_paused', CallsStopped.autoPaused),
+          ('list_exhausted', CallsStopped.listFinished),
+          ('something_new', CallsStopped.notStarted),
+        ]) {
+          app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'paused', 'reason': reason, 'dialing': false, 'message': 'x'});
+          expect(app.view!.callsStopped, stopped, reason: reason);
+        }
+        app.frame({'event': 'campaign_state', 'campaign_id': 'camp-1', 'status': 'running', 'reason': 'resumed', 'dialing': true, 'message': 'x'});
+        expect(app.view!.callsStopped, isNull, reason: 'dialling again');
         app.dispose();
       });
     });

@@ -579,6 +579,11 @@ class MissedReleaseView {
   int get hashCode => Object.hash(headline, detail);
 }
 
+/// Why the campaign is not dialling, as No calls right now (02c) says it (`campaign_state.reason`):
+/// only a supervisor's pause or stop blames the supervisor; the system's own pause (`auto_paused`)
+/// blames nobody; a finished list says so; no reason yet is a neutral line.
+enum CallsStopped { bySupervisor, autoPaused, listFinished, notStarted }
+
 /// Why nothing is due for the agent on a `strict` or `preferred` campaign
 /// (contact assignment). [other]: a reason this build does not know.
 enum QueueIdle { queueEmpty, waitingForRetry, callbacksLater, outsideCallingHours, other }
@@ -905,6 +910,7 @@ class StationView {
     this.phaseSince,
     this.campaignDialing = true,
     this.campaignMessage,
+    this.callsStopped,
     this.onBreak,
     this.queuedBreak,
     this.breakOptions = const [],
@@ -949,6 +955,9 @@ class StationView {
   /// who ring in can still reach the agent: the inbound router does not read campaign status).
   final bool campaignDialing;
   final String? campaignMessage;
+
+  /// Why calls stopped, while [campaignDialing] is false; null while dialling.
+  final CallsStopped? callsStopped;
 
   final BreakInfo? onBreak;
   final BreakInfo? queuedBreak;
@@ -1053,6 +1062,7 @@ class StationView {
       other.phaseSince == phaseSince &&
       other.campaignDialing == campaignDialing &&
       other.campaignMessage == campaignMessage &&
+      other.callsStopped == callsStopped &&
       other.onBreak == onBreak &&
       other.queuedBreak == queuedBreak &&
       _eqB.equals(other.breakOptions, breakOptions) &&

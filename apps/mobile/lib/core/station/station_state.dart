@@ -193,6 +193,7 @@ final class StationState {
     this.lastError,
     this.dialing = true,
     this.campaignMessage,
+    this.campaignReason,
     this.missedPings = 0,
     this.manualCall,
     this.queue,
@@ -233,6 +234,10 @@ final class StationState {
   final StationErrorFrame? lastError;
   final bool dialing;
   final String? campaignMessage;
+
+  /// Why the campaign is not dialling (`campaign_state.reason`); null while it dials, or before a
+  /// `campaign_state` said why (a list not started at the join).
+  final CampaignChangeReason? campaignReason;
   final int missedPings;
 
   /// The session's soft-phone call: the newest copy seen, from a
@@ -342,6 +347,7 @@ final class StationState {
     Object? lastError = _keep,
     bool? dialing,
     Object? campaignMessage = _keep,
+    Object? campaignReason = _keep,
     int? missedPings,
     Object? manualCall = _keep,
     Object? queue = _keep,
@@ -368,6 +374,7 @@ final class StationState {
         lastError: identical(lastError, _keep) ? this.lastError : lastError as StationErrorFrame?,
         dialing: dialing ?? this.dialing,
         campaignMessage: identical(campaignMessage, _keep) ? this.campaignMessage : campaignMessage as String?,
+        campaignReason: identical(campaignReason, _keep) ? this.campaignReason : campaignReason as CampaignChangeReason?,
         missedPings: missedPings ?? this.missedPings,
         manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCall?,
         queue: identical(queue, _keep) ? this.queue : queue as QueueState?,
@@ -456,9 +463,10 @@ final class ReleasedAction extends StationAction {
 }
 
 final class CampaignStateAction extends StationAction {
-  const CampaignStateAction({required this.dialing, this.message});
+  const CampaignStateAction({required this.dialing, this.message, this.reason});
   final bool dialing;
   final String? message;
+  final CampaignChangeReason? reason;
 }
 
 /// [offsetMs]: the estimator's new offset, or null when the pong carried no sample.
@@ -732,11 +740,12 @@ StationState _reduce(StationState state, StationAction action) {
       }
       return next;
 
-    case CampaignStateAction(:final dialing, :final message):
+    case CampaignStateAction(:final dialing, :final message, :final reason):
       final shown = dialing ? null : message;
-      return dialing == state.dialing && shown == state.campaignMessage
+      final why = dialing ? null : reason;
+      return dialing == state.dialing && shown == state.campaignMessage && why == state.campaignReason
           ? state
-          : state._with(dialing: dialing, campaignMessage: shown);
+          : state._with(dialing: dialing, campaignMessage: shown, campaignReason: why);
 
     case PongAction(:final offsetMs):
       final offset = offsetMs ?? state.clockOffsetMs;

@@ -151,6 +151,7 @@ class StationViewMapper {
       phaseSince: phaseSince,
       campaignDialing: s.dialing,
       campaignMessage: s.campaignMessage,
+      callsStopped: s.dialing ? null : callsStoppedOf(s.campaignReason),
       onBreak: onBreak,
       queuedBreak: queued,
       breakOptions: _breakOptionsFor(breakReasons),
@@ -323,6 +324,14 @@ class StationViewMapper {
   static bool myContactsOfferedBy(wire.SessionBootstrap? bootstrap) =>
       bootstrap != null &&
       (bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire || bootstrap.allowAgentRetry);
+
+  /// 02c's reason for a campaign that is not dialling (`campaign_state.reason`).
+  static CallsStopped callsStoppedOf(wire.CampaignChangeReason? reason) => switch (reason) {
+        wire.CampaignChangeReason.pausedBySupervisor || wire.CampaignChangeReason.stoppedBySupervisor => CallsStopped.bySupervisor,
+        wire.CampaignChangeReason.autoPaused => CallsStopped.autoPaused,
+        wire.CampaignChangeReason.listExhausted => CallsStopped.listFinished,
+        _ => CallsStopped.notStarted,
+      };
 
   /// AS8: the campaign assigns contacts (`strict`, `preferred`, or a mode this build does not
   /// know), so a call-later comes back to the agent who booked it; `pool` (or no mode) does not.
