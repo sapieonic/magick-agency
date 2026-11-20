@@ -1,6 +1,6 @@
 import { leaveAgencySession } from '../../../api/agency';
 import { getSoftphoneBootstrap } from '../../../api/softphone';
-import { errorBody, errorCode, errorStatus } from '../../../utils/agencyErrors';
+import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 
 /** What closing the agent's soft-phone session came to. */
 export type SoftphoneCloseOutcome =
@@ -10,8 +10,8 @@ export type SoftphoneCloseOutcome =
   | { kind: 'call_pending' }
   /** No session was named and the bootstrap had none either. */
   | { kind: 'no_session' }
-  /** `leave` refused for another reason; the soft phone is still open. */
-  | { kind: 'failed'; message: string };
+  /** `leave` refused for another reason (its code, null with no answer); the soft phone is still open. */
+  | { kind: 'failed'; code: string | null };
 
 /**
  * Close the agent's soft-phone session so something else can open: the campaign
@@ -76,13 +76,7 @@ export async function closeSoftphoneSession({
   } catch (err: unknown) {
     const code = errorCode(err);
     if (code === 'agent_on_live_call' || code === 'manual_call_live') return { kind: 'call_pending' };
-    if (code !== 'session_ended' && errorStatus(err) !== 404) {
-      const detail = errorBody(err)?.message ?? (err instanceof Error ? err.message : null);
-      return {
-        kind: 'failed',
-        message: detail ? `Your soft phone is still open — ${detail}` : 'Your soft phone is still open. Try again.',
-      };
-    }
+    if (code !== 'session_ended' && errorStatus(err) !== 404) return { kind: 'failed', code };
   }
   return { kind: 'closed' };
 }

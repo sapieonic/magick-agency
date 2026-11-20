@@ -295,13 +295,17 @@ describe('05 What happened?', () => {
     });
     const row = screen.getByTestId('promise-row');
     fireEvent.click(within(row).getByRole('button', { name: 'Tomorrow' }));
-    fireEvent.click(within(row).getByRole('button', { name: 'Half · ₹6,250' }));
-    // A promised amount carries no currency (PT5): no ₹ in the box or the line; the amount due's
-    // own chips (a typed money fact) keep theirs.
+    fireEvent.click(within(row).getByRole('button', { name: 'Half · 6,250' }));
+    // A promised amount carries no currency (PT5): no ₹ in the box, the line or the chips that
+    // propose one (Manas, 2026-11-20: ₹ only on a fact typed money).
     expect(screen.getByTestId('promise-resolved').textContent).toMatch(/^Will pay on \d+ \w{3} · 6,250$/);
     expect(screen.getByTestId('promise-amount').textContent).not.toMatch(/₹/);
     expect((within(row).getByLabelText('Amount') as HTMLInputElement).placeholder).toBe('12,500');
-    expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Full · 12,500' })).toBeTruthy();
+    expect(row.textContent).not.toMatch(/₹/);
+    // The Amount row's picture is a neutral one, not the rupee sign.
+    expect(row.querySelector('[data-icon="amount"]')).not.toBeNull();
+    expect(row.querySelector('.lucide-indian-rupee')).toBeNull();
     expect(screen.getByTestId('promise-follow-up').textContent).toMatch(/^We will call again on \d+ \w{3}\.$/);
     act(() => {
       fireEvent.keyDown(document.body, { key: 'Enter' });
@@ -414,7 +418,8 @@ describe('04 On call', () => {
     const card = screen.getByTestId('customer-card');
     expect(within(card).getByTestId('customer-name').textContent).toBe('Ramesh Goud');
     expect(within(card).getAllByTestId('customer-fact').map((f) => f.textContent)).toEqual([
-      'Amount due₹12,500',
+      // An older server's untyped amount, as written: no ₹ on a guess.
+      'Amount due12500',
       'Due date20 Nov',
       'Last call12 Nov',
     ]);
@@ -516,7 +521,7 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
     expect(screen.getByTestId('script-progress').textContent).toBe('0 of 3 done');
   });
 
-  it('each line has a speaker that reads it aloud', async () => {
+  it('the opening line has a speaker until the call connects; the steps on the call have none (the customer could hear it)', async () => {
     const speak = vi.fn();
     class Utterance {
       voice: unknown = null;
@@ -531,10 +536,9 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
     await coming();
     fireEvent.click(screen.getByTestId('script-opening-say'));
     await frames({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' });
-    fireEvent.click(screen.getByRole('button', { name: 'Read step 2 aloud' }));
+    expect(screen.queryByRole('button', { name: /aloud/ })).toBeNull();
     expect(speak.mock.calls.map((c) => (c[0] as Utterance).text)).toEqual([
       'Namaste Sunita Patil, I am Sunita calling from EMI collections.',
-      'Ask when they can pay.',
     ]);
   });
 
@@ -548,7 +552,7 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
     expect(screen.getByTestId('last-calls')).toBeTruthy();
     expect(screen.getByTestId('note-card')).toBeTruthy();
     // Full number by default (AS9).
-    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+919876543321');
+    expect(within(screen.getByTestId('customer-card')).getByTestId('customer-phone').textContent).toBe('+91 98765 43321');
   });
 
   it('Will pay offers Full and Half of the typed amount due', async () => {
@@ -563,8 +567,8 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
       fireEvent.keyDown(document.body, { key: '1' });
     });
     const row = screen.getByTestId('promise-row');
-    expect(within(row).getByRole('button', { name: 'Full · ₹12,500' })).toBeTruthy();
-    expect(within(row).getByRole('button', { name: 'Half · ₹6,250' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Full · 12,500' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Half · 6,250' })).toBeTruthy();
   });
 });
 

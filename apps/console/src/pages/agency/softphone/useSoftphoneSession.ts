@@ -6,9 +6,9 @@ import {
   openSoftphoneSession,
   type SoftphoneSessionOnCampaignRefusal,
   type SoftphoneSessionOnSoftphoneRefusal,
+  type SoftphoneRefusal,
 } from '../../../api/softphone';
 import { coalesceJoin } from '../../../utils/agencyLiveSession';
-import { refusalCopy } from '../../../utils/softphone/refusalCopy';
 import type { StationSocketBootstrap } from '../../../hooks/agencyStation/types';
 import type { AgencySessionBootstrap } from '../../../types/agency';
 import type { AgencyManualCall, AgencySoftphoneBootstrap, AgencySoftphoneSessionResponse } from '../../../types/softphone';
@@ -47,7 +47,11 @@ export type SoftphoneSessionState =
    * its account). The page closes it there, with that account, and opens one here.
    */
   | { status: 'softphone_elsewhere'; refusal: SoftphoneSessionOnSoftphoneRefusal }
-  | { status: 'error'; message: string };
+  /**
+   * The open failed for another reason: the refusal (its code is what the page words, AS15), or
+   * null when no answer came at all. Never a sentence from the server or an exception.
+   */
+  | { status: 'error'; refusal: SoftphoneRefusal | null };
 
 /** Whether an upgrade URL already carries its single-use token. */
 export function urlCarriesToken(url: string): boolean {
@@ -165,7 +169,7 @@ export function useSoftphoneSession({
             if (cancelled) return;
             settleOff(here);
           } else {
-            setState({ status: 'error', message: refusalCopy(result.refusal) });
+            setState({ status: 'error', refusal: result.refusal });
           }
           return;
         }
@@ -194,7 +198,8 @@ export function useSoftphoneSession({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setState({ status: 'error', message: err instanceof Error ? err.message : 'We couldn’t open the soft phone.' });
+        void err;
+        setState({ status: 'error', refusal: null });
       });
     return () => {
       cancelled = true;

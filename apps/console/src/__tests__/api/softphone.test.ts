@@ -136,6 +136,16 @@ describe('the routes, methods and bodies of §6', () => {
 describe('refusals become typed results', () => {
   const place = () => placeManualCall({ session_id: 's', to: '9820461733' }, 't', 'a');
 
+  it('session_in_other_tenant keeps the other organisation’s name (OS2), as a name and nothing else', async () => {
+    mocks.fetch.mockResolvedValue(
+      respond(409, { error: 'Conflict', code: 'session_in_other_tenant', message: 'You are live in Acme.', tenant_id: 'tn-2', tenant_name: 'Acme Collections' }),
+    );
+    const result = await openSoftphoneSession('t', 'a');
+    if (result.ok || result.refusal.code !== 'unknown') throw new Error('expected an unknown refusal');
+    expect(result.refusal.raw_code).toBe('session_in_other_tenant');
+    expect(result.refusal.tenant_name).toBe('Acme Collections');
+  });
+
   it('dnc_listed carries its entry', async () => {
     mocks.fetch.mockResolvedValue(
       respond(409, {

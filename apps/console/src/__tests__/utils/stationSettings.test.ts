@@ -6,7 +6,6 @@ import {
   dailyTargetPayload,
   factsErrors,
   insertAt,
-  phoneAsShown,
   scriptErrors,
   scriptPayload,
   stationChanges,
@@ -77,15 +76,6 @@ describe('the daily target (AS6)', () => {
   it('sends the number, and null to clear it', () => {
     expect(dailyTargetPayload(' 60 ')).toBe(60);
     expect(dailyTargetPayload('')).toBeNull();
-  });
-});
-
-describe('the number display (AS9)', () => {
-  it('masks to the first two and last three of the ten digits', () => {
-    expect(phoneAsShown('+919876543321', 'masked')).toBe('98••• ••321');
-    expect(phoneAsShown('9876543321', 'masked')).toBe('98••• ••321');
-    expect(phoneAsShown('+919876543321', 'full')).toBe('98765 43321');
-    expect(phoneAsShown('+1234', 'masked')).toBe('+1234');
   });
 });
 

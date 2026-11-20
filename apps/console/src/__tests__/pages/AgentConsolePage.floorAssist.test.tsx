@@ -184,9 +184,9 @@ describe('Need help: offered', () => {
     expect(helpButton().hasAttribute('disabled')).toBe(false);
   });
 
-  it('is on every working screen (BE-9): Ready and a break, never Start of day', async () => {
+  it('is on every screen but 11 and 12 (BE-9, spec §3): Start of day, Ready and a break', async () => {
     await mounted();
-    expect(screen.queryByTestId('need-help-button')).toBeNull();
+    expect(helpButton()).toBeTruthy();
     await frame({ event: 'agent_state', state: 'break', since: '2026-11-19T09:00:00.000Z', break_reason: 'tea' });
     expect(helpButton()).toBeTruthy();
     await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:00:00.000Z' });
@@ -567,7 +567,7 @@ describe('the break’s time against its limit (07, 08)', () => {
     const since = new Date(Date.now() - 18 * 60_000).toISOString();
     await frame({ event: 'agent_state', state: 'break', since, break_reason: 'tea' });
     expect(screen.getByTestId('band-title').textContent).toBe('Break time is over');
-    expect(screen.getByTestId('band-subtitle').textContent).toMatch(/^You are 3:0\d late\. Start calls now\.$/);
+    expect(screen.getByTestId('break-over-late').textContent).toMatch(/^You are 3:0\d late\. Start calls now\.$/);
     expect(screen.getByTestId('break-elapsed').textContent).toMatch(/^18:0\d$/);
     expect(screen.getByTestId('break-line').textContent).toBe('Your break was 15 minutes. Your supervisor can see this.');
     expect(screen.getByTestId('station-band').getAttribute('data-tone')).toBe('over');

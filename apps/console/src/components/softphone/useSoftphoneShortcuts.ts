@@ -3,7 +3,7 @@ import { useLatestRef } from '../../hooks/useLatestRef';
 import { isTextEntryTarget } from '../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../utils/agencyDispositionForm';
 import { isDialChar } from '../../utils/softphone/phoneInput';
-import type { DispositionPadHandle } from '../agency/DispositionPad';
+import type { DispositionPadHandle } from '../../utils/agencyDispositionForm';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
 import type { ServerClock } from '../../hooks/useServerClock';
 

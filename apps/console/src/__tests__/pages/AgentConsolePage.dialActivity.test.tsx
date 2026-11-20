@@ -22,6 +22,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import { STATION_COPY } from '../../utils/agency/stationCopy';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { DIAL_GAP_HOLD_MS } from '../../hooks/useDialActivityDisplay';
@@ -230,7 +231,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
 
     await emit({ event: 'reserved', attempt: ATTEMPT });
 
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
     expect(within(panel()).queryByTestId('dial-activity')).toBeNull();
     expect(screen.queryByText(DIALLING)).toBeNull();
     expect(railLabel()).toBe('Call coming');
@@ -238,7 +239,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
     // Answered: the dialer sends `bridged` and no `agent_state` for reserved or on_call.
     await emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:02:04.000Z' });
     expect(railLabel()).toBe('On call');
-    expect(screen.getByTestId('customer-phone').textContent).toBe(ATTEMPT.phone_e164);
+    expect(screen.getByTestId('customer-phone').textContent).toBe(phoneForDisplay(ATTEMPT.phone_e164));
     expect(screen.queryByText(DIALLING)).toBeNull();
 
     // The call ends with no outcome owed, straight back to the pool.
@@ -293,7 +294,7 @@ describe('the waiting screen says when a customer is being dialled', () => {
       state: 'reserved',
       active_attempt: { ...ATTEMPT, bridged_at: null, state: 'ringing' },
     });
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
     expect(screen.queryByText(DIALLING)).toBeNull();
     expect(screen.queryByTestId('dial-activity')).toBeNull();
   });
@@ -500,7 +501,7 @@ describe('early binding is unchanged', () => {
 
     await emit({ event: 'reserved', attempt: ATTEMPT });
     expect(railLabel()).toBe('Call coming');
-    expect(within(panel()).getByText(ATTEMPT.phone_e164)).toBeTruthy();
+    expect(within(panel()).getByText(phoneForDisplay(ATTEMPT.phone_e164))).toBeTruthy();
     // `bridged` alone moves it on: the dialer sends no `agent_state` for an outbound call's
     // reserved or on_call.
     await emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });

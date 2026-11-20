@@ -438,7 +438,7 @@ describe('Don’t call again, with an outcome that stops calls', () => {
     await onCall();
     press('d');
     expect(question()).toBeTruthy();
-    expect(question()!.textContent).toContain('+919820041772');
+    expect(question()!.textContent).toContain('+91 98200 41772');
     fireEvent.click(yes());
     expect(question()).toBeNull();
     expect(mocks.markContactDnc).not.toHaveBeenCalled();
@@ -478,7 +478,7 @@ describe('Don’t call again, with no outcome that stops calls (today’s mark)'
     await onCallNoSuppress();
     press('d');
     const text = question()!.textContent ?? '';
-    expect(text).toContain('Asha · +919820041772');
+    expect(text).toContain('Asha · +91 98200 41772');
     expect(text).toContain(STATION_COPY.stopCallingBody);
     // Never the wider, organisation-wide claim: that escalation is not on the station.
     expect(text).not.toContain('any campaign in this organisation');
@@ -713,7 +713,7 @@ describe('the mark’s result survives the hangup it was made before', () => {
     });
 
     expect(screen.queryByTestId('dnc-outcome')).toBeNull();
-    expect(view.container.textContent ?? '').not.toContain('+919820041772');
-    expect(view.container.textContent ?? '').toContain('+919000000000');
+    expect(view.container.textContent ?? '').not.toContain('+91 98200 41772');
+    expect(view.container.textContent ?? '').toContain('+91 90000 00000');
   });
 });

@@ -111,20 +111,11 @@ export function dailyTargetPayload(text: string): number | null {
 
 // ─── Number display (AS9) ───────────────────────────────────────────────────
 
-/** The number the setting's preview shows, as the station would show a ten-digit Indian mobile. */
-export const PHONE_DISPLAY_SAMPLE = '+919876543321';
-
 /**
- * A number as the station shows it under `display`: in full, or masked to the first two and the
- * last three of its ten digits (`98••• ••321`, AS9). A number too short to mask is shown as it is.
+ * The number the setting's preview shows, a ten-digit Indian mobile, drawn by the station's own
+ * `phoneForDisplay` (`stationFormat.ts`) so the preview is what agents see.
  */
-export function phoneAsShown(phoneE164: string, display: AgencyPhoneDisplay): string {
-  const digits = phoneE164.replace(/\D/g, '');
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  if (display === 'full') return local.length === 10 ? `${local.slice(0, 5)} ${local.slice(5)}` : phoneE164;
-  if (local.length < 6) return phoneE164;
-  return `${local.slice(0, 2)}••• ••${local.slice(-3)}`;
-}
+export const PHONE_DISPLAY_SAMPLE = '+919876543321';
 
 // ─── Script (BE-8) ──────────────────────────────────────────────────────────
 

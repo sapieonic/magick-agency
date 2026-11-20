@@ -31,15 +31,24 @@ import type { AgencyAgentState, AgencyBreakReason, AgencySessionBootstrap } from
  * wins the instant after a click, then the frames confirm or correct it"), with
  * nothing to keep in step.
  */
-/** For `unknown_break_reason`: the list was re-read from the server's `allowed_codes`. */
-export const BREAK_REJECTED_COPY = 'You cannot take that break now. Choose another.';
+/**
+ * A break the server refused (or that never reached it): its code, for the station's own words
+ * (`breakRefusedLine`, AS15), never the server's sentence. `code` is null when no answer came.
+ * `unknown_break_reason` has already re-read the list from the server's `allowed_codes`.
+ */
+export interface BreakRefusal {
+  code: string | null;
+}
 
 export interface BreakQueueState {
   breakReasons: AgencyBreakReason[];
   /** The queued break's code, or null. */
   pendingBreakCode: string | null;
-  requestBreak: (code: string) => void;
-  breakRejection: string | null;
+  /** Resolves true once the server took the break (applied or queued), false when it refused. */
+  requestBreak: (code: string) => Promise<boolean>;
+  breakRejection: BreakRefusal | null;
+  /** Which break? closed: its refusal goes with it. */
+  clearBreakRejection: () => void;
   breakBusy: boolean;
   cancelBreak: () => void;
   cancelling: boolean;
@@ -89,7 +98,7 @@ export function useBreakQueue(options: {
 
   const [breakReasons, setBreakReasons] = useState<AgencyBreakReason[]>([]);
   const [breakBusy, setBreakBusy] = useState(false);
-  const [breakRejection, setBreakRejection] = useState<string | null>(null);
+  const [breakRejection, setBreakRejection] = useState<BreakRefusal | null>(null);
   /** The click's own answer, valid only while no newer frame has stated the queue. */
   const [override, setOverride] = useState<{ code: string | null; atStatement: number } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -148,8 +157,8 @@ export function useBreakQueue(options: {
   }, [agentState, writeQueue]);
 
   const requestBreak = useCallback(
-    async (code: string) => {
-      if (!bootstrap) return;
+    async (code: string): Promise<boolean> => {
+      if (!bootstrap) return false;
       setBreakBusy(true);
       setBreakRejection(null);
       setBreakAlreadyStarted(false);
@@ -180,6 +189,7 @@ export function useBreakQueue(options: {
           // the `B` shortcut only opens the menu, it does not select a reason.
           method: 'click',
         });
+        return true;
       } catch (err) {
         const body = errorBody(err);
         if (body?.code === 'unknown_break_reason' && body.allowed_codes) {
@@ -188,17 +198,18 @@ export function useBreakQueue(options: {
           // warn about a remap.
           onKeysRemapped(numberKeysRemapped(breakReasons, next, 0));
           setBreakReasons(next);
-          setBreakRejection(BREAK_REJECTED_COPY);
+          setBreakRejection({ code: 'unknown_break_reason' });
           trackAgencyBreakRejected({
             campaign_id: bootstrap.campaign_id,
             code: 'unknown_break_reason',
             catalog_resynced: true,
           });
         } else {
-          // The station's words, never the server's sentence (AS15).
-          setBreakRejection(BREAK_REJECTED_COPY);
+          // The code, for the station's own words; never the server's sentence (AS15).
+          setBreakRejection({ code: body?.code ?? null });
           trackAgencyBreakRejected({ campaign_id: bootstrap.campaign_id, code: 'other', catalog_resynced: false });
         }
+        return false;
       } finally {
         setBreakBusy(false);
       }
@@ -278,13 +289,15 @@ export function useBreakQueue(options: {
   }, [bootstrap, breakBusy, tenantId, accountId, writeQueue, announce]);
 
   const clearBreakAlreadyStarted = useCallback(() => setBreakAlreadyStarted(false), []);
+  const clearBreakRejection = useCallback(() => setBreakRejection(null), []);
   const clearQueuedBreak = useCallback(() => writeQueue(null), [writeQueue]);
 
   return {
     breakReasons,
     pendingBreakCode,
-    requestBreak: (code: string) => void requestBreak(code),
+    requestBreak,
     breakRejection,
+    clearBreakRejection,
     breakBusy,
     cancelBreak: () => void cancelBreak(),
     cancelling,

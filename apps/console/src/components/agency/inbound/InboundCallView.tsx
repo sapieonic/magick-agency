@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Ban, Info, MicOff, PhoneIncoming, TriangleAlert, UserRound } from 'lucide-react';
-import type { DispositionPadHandle } from '../DispositionPad';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import { StationBanner, StationFrame } from '../station/StationFrame';
 import { CustomerCardView, LastCallsCard, NoteCard } from '../station/StationCustomer';
 import { WhatHappened } from '../station/WhatHappened';

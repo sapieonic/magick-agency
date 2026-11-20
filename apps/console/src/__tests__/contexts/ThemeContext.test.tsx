@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { useEffect } from 'react';
 import { render, screen, cleanup, act } from '@testing-library/react';
-import { ThemeProvider, THEME_CHOICE_KEY, useTheme } from '../../contexts/ThemeContext';
+import { ThemeProvider, THEME_CHOICE_KEY, applyTheme, initialTheme, useTheme } from '../../contexts/ThemeContext';
+import mainSource from '../../main.tsx?raw';
 
 /** AS14: light unless the user chose dark; only a choice is stored. */
 
@@ -45,5 +47,30 @@ describe('ThemeProvider (AS14)', () => {
     act(() => screen.getByTestId('theme').click());
     expect(localStorage.getItem(THEME_CHOICE_KEY)).toBe('dark');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+  });
+});
+
+describe('no dark flash on load (AS14)', () => {
+  it('the provider puts the theme on the document before anything paints, not after', () => {
+    // web-ui's `:root` is dark; a page left there until a passive effect ran showed a dark frame.
+    document.documentElement.setAttribute('data-theme', 'dark');
+    let seenByFirstEffect: string | null = null;
+    function FirstEffect() {
+      useEffect(() => {
+        seenByFirstEffect ??= document.documentElement.getAttribute('data-theme');
+      }, []);
+      return null;
+    }
+    render(<ThemeProvider><FirstEffect /></ThemeProvider>);
+    // A child's passive effect runs before its parent's: only a layout effect is in time.
+    expect(seenByFirstEffect).toBe('light');
+  });
+
+  it('main.tsx applies the theme before the first render', () => {
+    const applied = mainSource.indexOf('applyTheme(initialTheme())');
+    expect(applied).toBeGreaterThan(-1);
+    expect(applied).toBeLessThan(mainSource.indexOf('createRoot('));
+    applyTheme(initialTheme());
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
 });

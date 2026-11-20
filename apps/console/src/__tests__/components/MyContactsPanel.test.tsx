@@ -96,6 +96,24 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+describe('the number, as the station shows it (AS9)', () => {
+  it('in full by default, formatted as the station formats it', async () => {
+    renderPanel();
+    await screen.findByTestId('my-row-c-due');
+    expect(screen.getByTestId('my-phone-c-due').textContent).toBe('+91 98000 00001');
+  });
+
+  it('masked on a campaign that masks it: the rows, the retry ticks and the calling-hours note', async () => {
+    renderPanel({ phoneDisplay: 'masked', queue: { due: false, reason: 'outside_calling_hours', next_due_at: null } });
+    await screen.findByTestId('my-row-c-due');
+    expect(screen.getByTestId('my-phone-c-due').textContent).toBe('98••• ••001');
+    expect(screen.getByLabelText('Include 98••• ••002 in the retry')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('my-call-c-hours'));
+    expect(screen.getByTestId('my-note-prompt').textContent).toContain('Why call 98••• ••003 now?');
+    expect(screen.getByTestId('my-contacts').textContent).not.toMatch(/9800000/);
+  });
+});
+
 describe('the list and the counts', () => {
   it('shows the summary counts, the next callback time, and each contact with its hero fields', async () => {
     renderPanel();
@@ -188,8 +206,8 @@ describe('Retry not reached', () => {
   it('retries only the ticked rows when some are ticked (eligible rows only)', async () => {
     renderPanel();
     await screen.findByTestId('my-row-c-missed');
-    expect((screen.getByLabelText('Include +919800000001 in the retry') as HTMLInputElement).disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText('Include +919800000002 in the retry'));
+    expect((screen.getByLabelText('Include +91 98000 00001 in the retry') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Include +91 98000 00002 in the retry'));
     expect(screen.getByTestId('my-retry').textContent).toContain('Retry selected (1)');
     fireEvent.click(screen.getByTestId('my-retry'));
     fireEvent.click(screen.getByTestId('my-retry-confirm-yes'));
@@ -203,7 +221,7 @@ describe('Retry not reached', () => {
     renderPanel();
     await screen.findByTestId('my-row-c-due');
     expect(screen.queryByTestId('my-retry')).toBeNull();
-    expect(screen.queryByLabelText('Include +919800000002 in the retry')).toBeNull();
+    expect(screen.queryByLabelText('Include +91 98000 00002 in the retry')).toBeNull();
   });
 
   it('words a refusal', async () => {
@@ -261,7 +279,7 @@ describe('Call', () => {
     fireEvent.click(await screen.findByTestId('my-call-c-hours'));
     const prompt = await screen.findByTestId('my-note-prompt');
     expect(prompt.textContent).toContain('It is outside calling hours for this work. You may still call this customer');
-    expect(prompt.textContent).toContain('Why call +919800000003 now?');
+    expect(prompt.textContent).toContain('Why call +91 98000 00003 now?');
     expect(screen.getByTestId('my-notice').textContent).toBe('');
     fireEvent.change(within(prompt).getByTestId('my-note'), { target: { value: 'Customer asked for an evening call' } });
     fireEvent.click(within(prompt).getByTestId('my-note-call'));
@@ -304,7 +322,7 @@ describe('Call', () => {
     expect(document.getElementById(other.getAttribute('aria-describedby')!)?.textContent)
       .toBe('Finish or cancel the note above first.');
     // The prompt still names the first contact, and its call dials that one.
-    expect(screen.getByTestId('my-note-prompt').textContent).toContain('+919800000003');
+    expect(screen.getByTestId('my-note-prompt').textContent).toContain('+91 98000 00003');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect((screen.getByTestId('my-call-c-due') as HTMLButtonElement).disabled).toBe(false);
   });

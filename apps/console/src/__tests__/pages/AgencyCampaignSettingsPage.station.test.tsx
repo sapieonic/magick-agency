@@ -189,7 +189,7 @@ describe('Settings › What agents see: the customer’s number (AS9)', () => {
     expect(screen.getByRole('radio', { name: /^Hidden number/ })).toBe(screen.getByTestId('phone-display-masked'));
     expect(screen.getByTestId('phone-display-masked').closest('fieldset')!.textContent).not.toMatch(/mask/i);
     expect(screen.getByTestId('phone-display-preview-masked').textContent).toBe('98••• ••321');
-    expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('98765 43321');
+    expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('+91 98765 43321');
     expect((screen.getByTestId('phone-display-full') as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByTestId('phone-display-masked'));
     save();

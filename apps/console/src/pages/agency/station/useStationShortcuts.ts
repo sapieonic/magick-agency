@@ -4,7 +4,7 @@ import { isTextEntryTarget } from '../../../utils/keyboardTarget';
 import { dispositionForNumberKey } from '../../../utils/agencyDispositionForm';
 import { trackAgencyShortcutUsed, trackAgencyDispositionBlocked } from '../../../analytics/events';
 import type { AgencyConsoleState } from '../useAgencyConsole';
-import type { DispositionPadHandle } from '../../../components/agency/DispositionPad';
+import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 
 /** `B`: open Which break? (the station's break choice). */
 export interface BreakMenuHandle {
@@ -37,6 +37,8 @@ export interface StationScreenKeys {
   r: (() => void) | null;
   m: (() => void) | null;
   escape: (() => void) | null;
+  /** `A` on Start of day: the screen's own Start work (its way of working included); null elsewhere. */
+  startWork?: (() => void) | null;
 }
 
 /** Elements whose own Enter press is theirs: a button, a link, a field. Enter there is never the main action. */
@@ -149,9 +151,14 @@ export function useStationShortcuts(
         // One key for two verbs, because the rail says which one is on offer and
         // the agent is never asked to remember.
         if (agentState === 'offline') {
-          event.preventDefault();
-          cons.goAvailable('shortcut');
-          shortcutUsed('a', true);
+          // The redesigned station: Start work as its button does it, and nothing on a screen
+          // without it (01b, a check failed). Without screen keys, the older bare go-available.
+          const start = screenKeys ? screenKeys.startWork ?? null : () => cons.goAvailable('shortcut');
+          if (start) {
+            event.preventDefault();
+            start();
+          }
+          shortcutUsed('a', start !== null);
         } else if (agentState === 'break') {
           event.preventDefault();
           cons.endBreak('shortcut');

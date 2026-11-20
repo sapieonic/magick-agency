@@ -61,7 +61,7 @@ export function workStatus(status: string | null | undefined): WorkStatus | null
     case 'draft':
       return { tone: 'quiet', icon: 'clock', line: 'Not started yet' };
     case 'stopping':
-      return { tone: 'quiet', icon: 'pause', line: 'No calls right now' };
+      return { tone: 'quiet', icon: 'pause', line: 'Ending now. No new calls.' };
     case 'stopped':
       return { tone: 'quiet', icon: 'stop', line: 'Ended by your supervisor. No more calls.' };
     case 'completed':

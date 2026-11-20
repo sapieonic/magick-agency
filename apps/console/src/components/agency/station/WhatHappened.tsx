@@ -1,12 +1,11 @@
 import { useImperativeHandle, useRef, useState, type RefObject } from 'react';
-import { Ban, Calendar, Check, Clock, IndianRupee, MoreHorizontal, Volume2 } from 'lucide-react';
+import { Ban, Banknote, Calendar, Check, Clock, MoreHorizontal, Volume2 } from 'lucide-react';
 import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
 import { addDays, formatPromiseDay } from '@magick-agency/domain/promise-to-pay';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
-import { findDisposition, localDay, type DispositionFormState } from '../../../utils/agencyDispositionForm';
+import { NUMBER_KEY_COUNT, findDisposition, localDay, type DispositionFormState, type DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
-import { calendarDay, clockTime, halfAmount, promisedAmount, rupees, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
-import { NUMBER_KEY_COUNT, type DispositionPadHandle } from '../DispositionPad';
+import { calendarDay, clockTime, halfAmount, promisedAmount, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
 import { outcomeIcon, outcomeTileLayout } from '../../../utils/agency/stationTiles';
 import type { AgencyDisposition } from '../../../types/agency';
 import { StationTileIcon } from './stationIcons';
@@ -231,7 +230,8 @@ function PayDateRow({
   ];
   const date = form.promiseDate ?? null;
   const amount = form.promiseAmount ?? '';
-  const due = amountDue ? rupees(amountDue) : null;
+  // Full and Half propose what the customer promises: a promised amount carries no ₹ (PT5).
+  const due = amountDue ? promisedAmount(amountDue) : null;
   const plainDue = amountDue?.trim().replace(/^₹\s*/, '').replace(/,/g, '') ?? null;
   const half = amountDue ? halfAmount(amountDue) : null;
   const followUp = date && followUpDays ? (() => {
@@ -272,14 +272,14 @@ function PayDateRow({
         </label>
       </div>
       <div className={styles.ask}>
-        <span className={styles.askLabel}><IndianRupee size={20} aria-hidden="true" />{STATION_COPY.amount}</span>
+        <span className={styles.askLabel}><Banknote size={20} aria-hidden="true" data-icon="amount" />{STATION_COPY.amount}</span>
         {/* A promised amount carries no currency (PT5): no ₹ here, as in the app. */}
         <label className={styles.money} data-testid="promise-amount">
           <input
             type="text"
             inputMode="decimal"
             value={amount}
-            placeholder={due ? due.replace('₹', '') : '0'}
+            placeholder={due ?? '0'}
             aria-label={STATION_COPY.amount}
             autoComplete="off"
             disabled={!enabled}
@@ -293,7 +293,7 @@ function PayDateRow({
         ) : null}
         {half ? (
           <button type="button" className={styles.chip} aria-pressed={amount.trim() === half} onClick={() => set({ promiseAmount: half })}>
-            {STATION_COPY.half} · {rupees(half)}
+            {STATION_COPY.half} · {promisedAmount(half)}
           </button>
         ) : null}
       </div>
