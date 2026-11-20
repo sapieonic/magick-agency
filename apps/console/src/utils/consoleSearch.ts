@@ -120,7 +120,7 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   // "Reports" until the tab became Exports; the section is still Reports.
   'reports:reports': ['report', 'reports', 'export', 'exports', 'pdf', 'workbook', 'excel', 'download', 'subscription'],
   'dnc:dnc': ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'dialling', 'dialing'],
-  'dialer:dialer': ['dialler', 'dialer', 'station', 'my calls', 'take calls', 'join campaign', 'agent workspace'],
+  'dialer:dialer': ['dialler', 'dialer', 'station', 'my calls', 'take calls', 'join campaign', 'agent workspace', 'my work', 'my campaigns'],
 };
 
 /** A title the tab's own label would leave ambiguous out of its tab bar. */

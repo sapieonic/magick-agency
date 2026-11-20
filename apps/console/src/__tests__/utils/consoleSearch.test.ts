@@ -133,6 +133,12 @@ describe('the pages', () => {
     expect(titles(pageResults(searchTokens('soft-phone'), ALL_ON('account_admin')))).toContain('Soft-phone calls');
   });
 
+  it('finds the agent’s work by its name, My work, and by its old name, My campaigns', () => {
+    for (const q of ['my work', 'my campaigns']) {
+      expect(titles(pageResults(searchTokens(q), ALL_ON('agent'))), q).toContain('Take calls');
+    }
+  });
+
   it('still finds a renamed page by its old name: Exports was Reports', () => {
     for (const q of ['reports', 'report', 'export']) {
       expect(titles(pageResults(searchTokens(q), ALL_ON('viewer'))), q).toContain('Exports');

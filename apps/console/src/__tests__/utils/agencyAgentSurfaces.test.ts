@@ -41,6 +41,10 @@ describe('AGENT_SURFACES', () => {
     expect(AGENT_SURFACES.some((surface) => surface.to.startsWith('/station'))).toBe(false);
   });
 
+  it('calls the work picker My work, as its page says ("Choose your work for today")', () => {
+    expect(AGENT_SURFACES.find((surface) => surface.id === 'campaigns')?.label).toBe('My work');
+  });
+
   it('speaks in the first person, because these are the agent’s own screens', () => {
     // Deliberately unlike the supervisor's vocabulary elsewhere ("Everyone who
     // dialled"). Whose calls these are is the whole distinction between the two
@@ -71,7 +75,7 @@ describe('agentSurfaceAt', () => {
 
   it('does not prefix-match, which is what a NavLink would have done', () => {
     // `/dialer` is a prefix of both its siblings, so a prefix match would report
-    // "My campaigns" as current on all three — the reason `AgentNav` uses plain
+    // "My work" as current on all three — the reason `AgentNav` uses plain
     // `Link`s and an explicit `current` rather than `NavLink`.
     expect(agentSurfaceAt('/dialer/performance')?.id).toBe('performance');
   });

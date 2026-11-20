@@ -32,7 +32,7 @@ import styles from './AgentNav.module.css';
  * ── The current entry is rendered, not linked ──────────────────────────────
  * A link to the page you are on is a control that does nothing, and here it
  * would do something slightly worse than nothing: `/dialer` redirects an agent
- * with one enterable assignment into their station, so a "My campaigns" link
+ * with one enterable assignment into their station, so a "My work" link
  * pressed while already on `/dialer` is a link that sometimes navigates into a
  * call. It renders as a labelled `aria-current="page"` span instead.
  */

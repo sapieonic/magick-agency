@@ -425,7 +425,7 @@ function WorkTileCard({ tile, callLater }: { tile: WorkTile; callLater: string |
  * what an agent could reach depended on where they were standing.
  *
  * The nav is that set, rendered identically on all three surfaces with the
- * current one marked. On this page the current entry is "My campaigns", which
+ * current one marked. On this page the current entry is "My work", which
  * is the part that could not be expressed before: the old links pointed AWAY
  * and nothing said what this screen was. It stays one quiet row beneath the
  * tiles, at the weight the links already had — the tiles own the only primary
