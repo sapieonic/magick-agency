@@ -71,7 +71,8 @@ export interface AgentReviewPresence {
   /**
    * Agent station (BE-12, AS12): the breaks that ran past their reason's `limit_minutes`, from the
    * session event that ended each (`agency_agent_session_events.break_overrun_seconds`, 0060), for
-   * breaks that ended in the window. A reserved break never counts; a break that ended with the
+   * breaks that ended in the window. The limit is the campaign's catalog as it stood when the break
+   * ENDED (0061): a limit a supervisor changed during the break is the one the break is judged by. A reserved break never counts; a break that ended with the
    * session is measured to the session's end. Absent from a dataset built before the field.
    */
   break_overruns?: AgentReviewBreakOverruns;

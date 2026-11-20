@@ -100,6 +100,7 @@ const ALL_MIGRATIONS = [
   '0058_contact_callback_booker_index',
   '0059_session_help_state',
   '0060_session_event_break_overrun',
+  '0061_session_event_break_limit_comment',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

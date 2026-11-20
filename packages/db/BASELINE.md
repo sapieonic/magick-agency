@@ -1773,14 +1773,25 @@ written with `help_raised_at` and cleared with it. `ck_agency_agent_sessions_hel
 ### 0060 — `migrations/0060_session_event_break_overrun.sql`
 
 A break over its limit (BE-12, AS12), on the session event that ended it.
-**`agency_agent_session_events.break_limit_minutes`** `SMALLINT NULL` (the reason's limit when the
-break began) and **`break_overrun_seconds`** `INTEGER NULL` (how far past it, > 0): both set on the
+**`agency_agent_session_events.break_limit_minutes`** `SMALLINT NULL` (the reason's limit as the
+campaign's break catalog stood when the break ended; 0060's own comment said "when the break began",
+corrected by 0061) and **`break_overrun_seconds`** `INTEGER NULL` (how far past it, > 0): both set on the
 transition out of `break` that ended a break that ran over, both NULL on every other event.
 `ck_agency_session_event_break_overrun` (NOT VALID: the event log is large and the columns new):
 set together, only with `from_state = 'break'`, the limit 1–240, the overrun positive. No index (the
 report reads the events by agent and by campaign already). Catalog-only after
 `SET LOCAL lock_timeout = '10s'`. **Down** drops the CHECK and the columns. **Tests**:
 `test/integration/db/agent-station-migrations.test.ts` and the down → up inventory suite.
+
+### 0061 — `migrations/0061_session_event_break_limit_comment.sql`
+
+No schema change: one `COMMENT ON COLUMN`. 0060 described **`break_limit_minutes`** as the
+reason's limit "when the break began"; the server writes the limit as the campaign's break catalog
+stands when the break ends (the transition out of `break` reads the catalog in the same statement),
+so a limit changed during a break is the one judged. The comment now says so. Catalog only (it
+writes `pg_description`) after `SET LOCAL lock_timeout = '10s'`. **Down** puts 0060's comment back
+word for word. **Tests**: `test/integration/db/agent-station-migrations.test.ts` (the comment, an
+Up of comments only, down then up) and the down → up inventory suite.
 
 ## Tests
 
