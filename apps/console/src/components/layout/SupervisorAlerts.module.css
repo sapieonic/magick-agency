@@ -1,0 +1,75 @@
+/* AS16: the supervisor alerts banner, between the top bar and the page, on every page of the shell. */
+.banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--danger-border);
+  background: var(--danger-subtle);
+  color: var(--text-primary);
+}
+
+.bell {
+  flex: none;
+  margin-top: 3px;
+  color: var(--danger);
+}
+
+.rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  min-width: 0;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--danger-border);
+  text-underline-offset: 3px;
+}
+
+.link:hover {
+  text-decoration-color: currentColor;
+}
+
+.sound {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sound:hover {
+  color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+  .banner {
+    padding: 8px 16px;
+  }
+}

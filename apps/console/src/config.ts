@@ -195,6 +195,12 @@ export const ENDPOINTS = {
        */
       floor: `${API_BASE}/proxy/agency/floor`,
       promisesSummary: `${API_BASE}/proxy/agency/promises/summary`,
+      /**
+       * The account's open supervisor alerts (agent station AS16: Need help, a break over its
+       * limit, a working agent disconnected), `agency.supervise`; the console's shell polls it
+       * every 5 s on every page (`useFloorAlerts`).
+       */
+      floorAlerts: `${API_BASE}/proxy/agency/floor/alerts`,
     },
   },
   /**
