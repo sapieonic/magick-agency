@@ -67,6 +67,43 @@ describe('myDayWindow: the campaign\'s own day, by the server\'s clock', () => {
     expect(w).toEqual({ timezone: 'UTC', start: new Date('2026-11-20T00:00:00Z'), end: new Date('2026-11-21T00:00:00Z') });
   });
 
+  it('America/Santiago, whose clocks skip midnight (6 Sep 2026, 00:00 → 01:00): the day holding now ends at the jump', () => {
+    // 03:59Z is 23:59 on the 5th (UTC-4); 04:00Z is 01:00 on the 6th (UTC-3). There is no
+    // midnight on the 6th, so the 5th ends, and the 6th begins, at 04:00Z.
+    const before = new Date('2026-09-06T03:59:00Z');
+    const w = myDayWindow('America/Santiago', before);
+    expect(w).toEqual({
+      timezone: 'America/Santiago',
+      start: new Date('2026-09-05T04:00:00Z'),
+      end: new Date('2026-09-06T04:00:00Z'),
+    });
+    expect(w.start.getTime()).toBeLessThanOrEqual(before.getTime());
+    expect(w.end.getTime()).toBeGreaterThan(before.getTime());
+
+    const after = new Date('2026-09-06T04:30:00Z');
+    const next = myDayWindow('America/Santiago', after);
+    expect(next.start).toEqual(new Date('2026-09-06T04:00:00Z'));
+    expect(next.end).toEqual(new Date('2026-09-07T03:00:00Z'));
+    // A 23-hour day.
+    expect(next.end.getTime() - next.start.getTime()).toBe(23 * 3_600_000);
+  });
+
+  it('start ≤ now < end, every 15 minutes across both of Santiago\'s and New York\'s 2026 clock changes', () => {
+    const spans: Array<[string, string, string]> = [
+      ['America/Santiago', '2026-09-04T00:00:00Z', '2026-09-08T00:00:00Z'],
+      ['America/Santiago', '2026-04-03T00:00:00Z', '2026-04-07T00:00:00Z'],
+      ['America/New_York', '2026-03-07T00:00:00Z', '2026-03-10T00:00:00Z'],
+      ['America/New_York', '2026-10-31T00:00:00Z', '2026-11-03T00:00:00Z'],
+    ];
+    for (const [zone, from, to] of spans) {
+      for (let t = Date.parse(from); t < Date.parse(to); t += 15 * 60_000) {
+        const w = myDayWindow(zone, new Date(t));
+        expect(w.timezone, `${zone} ${new Date(t).toISOString()}`).toBe(zone);
+        expect(w.start.getTime() <= t && t < w.end.getTime(), `${zone} ${new Date(t).toISOString()}`).toBe(true);
+      }
+    }
+  });
+
   it('localDayStart is null for an unusable zone', () => {
     expect(localDayStart('Not/AZone', new Date())).toBeNull();
   });
