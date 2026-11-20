@@ -13,7 +13,9 @@
  *    limit as the floor does), and the ones whose station the caller knows went (`$3`, the station
  *    detach times held in memory: `agency/station-detach-times.ts`), each with the state it left for
  *    `offline` when its row says `offline` (the station's close writes `offline` for an agent who
- *    was not on a call: the transition log's last `→ offline` event says what they were doing). On
+ *    was not on a call: the transition log's last `→ offline` event says what they were doing), and,
+ *    for one of those on the soft phone's break, whether a soft-phone call is live (on
+ *    `idx_agency_manual_calls_live`, 0005: the account's calls not ended, a handful). On
  *    `uq_agency_agent_live_tenant` (by tenant, the account filtered), as the floor's open sessions;
  *    the last event on `idx_agency_session_events_agent` (the agent's events, newest first), only
  *    for those rows.
@@ -60,6 +62,12 @@ export interface FloorAlertSessionRow {
    * transition left (what the agent was doing when the station went); otherwise null.
    */
   left_state: AgencyAgentState | null;
+  /**
+   * BE-11: on the soft phone's break (`break`/`soft_phone`) and one of `$3`, whether the session has
+   * a soft-phone call live (not `ended`): the agent is working, so a dropped station alerts. False
+   * otherwise.
+   */
+  soft_phone_call_live: boolean;
 }
 
 /** $1 tenant, $2 account, $3 the Need help expiry in ms. Exported for its plan test. */
@@ -77,7 +85,11 @@ export const FLOOR_ALERTS_SESSIONS_SQL = `
          s.state, s.state_since,
          CASE WHEN s.state = 'break' THEN s.break_reason END AS break_reason,
          s.client_kind,
-         went.from_state AS left_state
+         went.from_state AS left_state,
+         CASE WHEN s.state = 'break' AND s.break_reason = 'soft_phone' AND s.id = ANY($3::uuid[])
+              THEN EXISTS (SELECT 1 FROM agency_manual_calls m
+                            WHERE m.account_id = $2::uuid AND m.state <> 'ended' AND m.session_id = s.id)
+              ELSE false END AS soft_phone_call_live
     FROM agency_agent_sessions s
     LEFT JOIN agency_campaigns cam ON cam.id = s.campaign_id AND cam.tenant_id = $1::uuid
     LEFT JOIN LATERAL (

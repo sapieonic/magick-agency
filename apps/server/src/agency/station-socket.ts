@@ -22,6 +22,8 @@ import {
 import { readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
+import { trackStationDisconnect } from '@magick-agency/observability/metrics/agency';
+import { workingState } from './working-state.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -98,6 +100,24 @@ export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boole
   if (live.state === 'break') return AGENT_LEASE_MS.break;
   if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;
   return null;
+}
+
+/**
+ * Agent station (BE-11): count a station that went while its agent was working
+ * (`agency_station_disconnects_total`, by tenant, app and state; `workingState` decides, the
+ * supervisors' `disconnected` alert's rule). A break other than a live soft-phone call, an agent
+ * already `offline` (the leave clears the lease before it closes the station) and an unread state
+ * are not counted. Total.
+ */
+export function countStationDrop(
+  station: { tenantId: string; clientKind: 'web' | 'mobile' },
+  state: AgencyAgentState | null,
+  softPhoneCallLive: boolean,
+): boolean {
+  const working = workingState(state, softPhoneCallLive);
+  if (!working) return false;
+  trackStationDisconnect(station.tenantId, station.clientKind, working);
+  return true;
 }
 
 /**
@@ -430,6 +450,11 @@ export async function handleStationSocket(
       // forward. `releaseStationOnClose` calls it too; whichever arrives first
       // wins and the other returns.
       runtime.dialer.noteStationClosed(sessionId);
+      // Agent station (BE-11): the station as this socket held it (whose, which app), read before
+      // the detach forgets it; only when this socket is the session's entry (a superseded one's
+      // close is not a drop).
+      const held = runtime.stations.get(sessionId);
+      const dropped = held && held.ws === socket ? held : undefined;
       // Order matters: detach FIRST, so anything that asks "is this agent here?"
       // between here and the end of this handler gets the truthful answer.
       await runtime.stations.detach(sessionId, socket);
@@ -463,11 +488,20 @@ export async function handleStationSocket(
       // second refusal would read here.
       const replacement = runtime.stations.socketFor(sessionId);
       const superseded = replacement !== undefined && replacement !== socket;
+      // BE-11: what the agent was doing as the station went, for `agency_station_disconnects_total`.
+      // Not awaited: the read is ISSUED here, before the release below issues its offline write on
+      // the same Redis connection, which applies commands in issue order, so it reads the state the
+      // drop interrupted and adds no await between the supersede read and the release.
+      const stateAtDrop = dropped && !superseded ? runtime.agents.get(sessionId) : null;
+      const softPhoneCallLive = runtime.manualDialer.hasLiveCall(sessionId);
       // Presence is the heartbeat — but a drop mid-attempt is the deferred
       // hangup's to resolve, not ours. `false` means it kept the agent.
       const wentOffline = superseded
         ? false
         : await runtime.releaseStationOnClose(sessionId, socket);
+      if (stateAtDrop && dropped) {
+        void stateAtDrop.then((live) => countStationDrop(dropped, live?.state ?? null, softPhoneCallLive)).catch(() => undefined);
+      }
       log.info({ sessionId, superseded, wentOffline, mediaFormat, ignoredMediaFrames }, 'Station socket closed');
     })();
   });

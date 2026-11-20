@@ -1232,3 +1232,41 @@ export const agencyBreakOverrunsTotal = counter<'tenant_id'>(meter, 'agency_brea
 export function trackBreakOverrun(tenantId: string): void {
   agencyBreakOverrunsTotal.inc({ tenant_id: tenantId });
 }
+
+// ─── A working agent's station going away (agent station BE-11, AS16) ────────
+//
+// Counted by the process that held the station socket, when the socket closes, if the agent was
+// working then: available, reserved, on a call or in wrap-up, or on a soft-phone call (a soft-phone
+// agent sits on `break`/`soft_phone`, so `state` reads `break` for that one). A break, a
+// superseded socket (another device took the station) and the agent's own leave (the lease is
+// cleared first) never count. By tenant, as the dialer's per-tenant counters are; the account is in
+// the floor's alerts (`GET /proxy/agency/floor/alerts`), not a label. The reconnect histogram is
+// how long a station that went was away before one attached again to the same session, in that
+// same process (memory only, so a restart in between is not seen), by app.
+
+/** Which app's station went. */
+export type StationDropClientKind = 'web' | 'mobile';
+
+/** What the agent was doing when their station went (the working states, and `break` for a live soft-phone call). */
+export type StationDropState = 'available' | 'reserved' | 'on_call' | 'wrapup' | 'break';
+
+export const agencyStationDisconnectsTotal = counter<'tenant_id' | 'client_kind' | 'state'>(meter, 'agency_station_disconnects_total', {
+  description: 'Station sockets that closed while their agent was working (available, reserved, on_call, wrapup, or break on a live soft-phone call), by app and state; never a break, a supersede or a leave',
+});
+
+export const agencyStationReconnectSeconds = histogram<'client_kind'>(meter, 'agency_station_reconnect_seconds', {
+  description: 'How long a station that went was away before a station attached again to the same session in the same process, by app',
+  unit: 's',
+  buckets: [1, 2, 5, 10, 20, 30, 60, 120, 300, 900, 3600],
+});
+
+/** A working agent's station went. */
+export function trackStationDisconnect(tenantId: string, clientKind: StationDropClientKind, state: StationDropState): void {
+  agencyStationDisconnectsTotal.inc({ tenant_id: tenantId, client_kind: clientKind, state });
+}
+
+/** A station came back after `seconds` away. */
+export function trackStationReconnect(clientKind: StationDropClientKind, seconds: number): void {
+  agencyStationReconnectSeconds.observe({ client_kind: clientKind }, Math.max(0, seconds));
+}
+

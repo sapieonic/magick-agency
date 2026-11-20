@@ -496,7 +496,11 @@ interface IdleSessionRuntime {
   stations: {
     stationPresence(sessionId: string): Promise<'connected' | 'absent' | 'unknown'>;
     detach(sessionId: string): Promise<unknown> | unknown;
+    /** Agent station (BE-11): the session ended; forget when its station went. */
+    sessionEnded(sessionId: string): void;
   };
+  /** The floor's reader of the detach times, when it is not `stations` (the primary's directory). Optional for tests. */
+  stationDisconnects?: { forgetEnded(sessionIds: readonly string[]): void };
   agents: {
     get(sessionId: string): Promise<{ state: string; ring?: boolean } | null>;
     clear(sessionId: string): Promise<unknown>;
@@ -525,7 +529,7 @@ type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
  * device claimed the station), so neither says `taken_over`.
  */
 export async function leaveSession(
-  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing' | 'floorAssist'>,
+  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing' | 'floorAssist' | 'stationDisconnects'>,
   session: Omit<IdleSession, 'tenant_id'>,
   lease: { ring?: boolean } | null,
   leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
@@ -538,6 +542,11 @@ export async function leaveSession(
   // hears `help_cleared { session_ended }`.
   await runtime.floorAssist?.endWithSession(session.id);
   await runtime.stations.detach(session.id);
+  // Agent station (BE-11): a session that ended never attaches again, so when its station went is
+  // forgotten now (here, the primary's directory over IPC from a media worker, and the floor's
+  // reader when it is not this process's registry), not left for the supervisors' alerts read.
+  runtime.stations.sessionEnded(session.id);
+  runtime.stationDisconnects?.forgetEnded([session.id]);
   if (awayRinging && session.agent_user_id) {
     runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'left', awaySince);
   }

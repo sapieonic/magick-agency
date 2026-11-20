@@ -220,9 +220,14 @@ export function parseHealthBody(raw: unknown): HealthBody | null {
 
 // ─── Media worker bodies ────────────────────────────────────────────────────
 
-export interface StationAttachedBody { sessionId: string; campaignId: string | null; replicaId: string }
+export interface StationAttachedBody { sessionId: string; campaignId: string | null; tenantId: string; accountId: string; replicaId: string }
 export interface StationDetachedBody { sessionId: string }
-export interface StationSnapshotBody { replicaId: string; sessions: Array<{ sessionId: string; campaignId: string | null }> }
+/** A worker's session ended (left): the primary forgets its detach time (agent station BE-11). */
+export interface StationEndedBody { sessionId: string }
+export interface StationSnapshotBody {
+  replicaId: string;
+  sessions: Array<{ sessionId: string; campaignId: string | null; tenantId: string; accountId: string }>;
+}
 export interface StationBroadcastBody { campaignId: string; frame: AgencyStationServerFrame }
 export interface StationSendBody { sessionId: string; frame: AgencyStationServerFrame }
 export interface PacingRevokeBody { campaignId: string | null; upTo: number }
@@ -285,18 +290,25 @@ const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const nullableId = (v: unknown): v is string | null => v === null || isId(v);
 
 export function parseStationAttached(raw: unknown): StationAttachedBody | null {
-  if (!isRecord(raw) || !isId(raw['sessionId']) || !nullableId(raw['campaignId']) || !isId(raw['replicaId'])) return null;
-  return { sessionId: raw['sessionId'], campaignId: raw['campaignId'], replicaId: raw['replicaId'] };
+  if (!isRecord(raw) || !isId(raw['sessionId']) || !nullableId(raw['campaignId']) || !isId(raw['replicaId'])
+    || !isId(raw['tenantId']) || !isId(raw['accountId'])) return null;
+  return {
+    sessionId: raw['sessionId'], campaignId: raw['campaignId'], tenantId: raw['tenantId'], accountId: raw['accountId'],
+    replicaId: raw['replicaId'],
+  };
 }
 export function parseStationDetached(raw: unknown): StationDetachedBody | null {
+  return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
+}
+export function parseStationEnded(raw: unknown): StationEndedBody | null {
   return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
 }
 export function parseStationSnapshot(raw: unknown): StationSnapshotBody | null {
   if (!isRecord(raw) || !isId(raw['replicaId']) || !Array.isArray(raw['sessions'])) return null;
   const sessions: StationSnapshotBody['sessions'] = [];
   for (const s of raw['sessions']) {
-    if (!isRecord(s) || !isId(s['sessionId']) || !nullableId(s['campaignId'])) return null;
-    sessions.push({ sessionId: s['sessionId'], campaignId: s['campaignId'] });
+    if (!isRecord(s) || !isId(s['sessionId']) || !nullableId(s['campaignId']) || !isId(s['tenantId']) || !isId(s['accountId'])) return null;
+    sessions.push({ sessionId: s['sessionId'], campaignId: s['campaignId'], tenantId: s['tenantId'], accountId: s['accountId'] });
   }
   return { replicaId: raw['replicaId'], sessions };
 }
@@ -475,6 +487,8 @@ export interface IpcEventMap {
   'cache.invalidate': CacheInvalidation;
   'station.attached': StationAttachedBody;
   'station.detached': StationDetachedBody;
+  /** Media worker → primary: a session ended (agent station BE-11: its detach time is forgotten). */
+  'station.ended': StationEndedBody;
   'station.snapshot': StationSnapshotBody;
   'station.broadcast': StationBroadcastBody;
   'station.send': StationSendBody;
@@ -515,6 +529,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'cache.invalidate': parseCacheInvalidation,
   'station.attached': parseStationAttached,
   'station.detached': parseStationDetached,
+  'station.ended': parseStationEnded,
   'station.snapshot': parseStationSnapshot,
   'station.broadcast': parseStationBroadcast,
   'station.send': parseStationSend,

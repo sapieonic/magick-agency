@@ -13,7 +13,7 @@
  * `carrier.webhook`, `carrier.plivo_callback`, `agent.return_reserved`, `reaper.snapshot`,
  * `softphone.closed_by_sweep`, `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
  * `concurrency.invalidate`, `dialable.invalidate`, `reaper.forget_unrecorded` and `listen.revoke`, and tells the primary
- * `ready`, `station.attached` / `.detached` / `.snapshot`, `pacing.invalidate`,
+ * `ready`, `station.attached` / `.detached` / `.ended` / `.snapshot`, `pacing.invalidate`,
  * `cache.invalidate`, `voice.wake_self_heal`, `analysis.wake` and `listen.revoke` (a supersede).
  */
 import type net from 'node:net';
@@ -101,16 +101,22 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   });
 
   // ── Stations: tell the primary where they are ────────────────────────────
-  runtime.stations.onAttached(({ sessionId, campaignId }) => {
-    channel.emit('station.attached', { sessionId, campaignId, replicaId: runtime.replicaId });
+  runtime.stations.onAttached(({ sessionId, campaignId, tenantId, accountId }) => {
+    channel.emit('station.attached', { sessionId, campaignId, tenantId, accountId, replicaId: runtime.replicaId });
   });
   runtime.stations.onDetached((sessionId) => {
     channel.emit('station.detached', { sessionId });
   });
+  // Agent station (BE-11): a session that ended here; the primary forgets when its station went.
+  runtime.stations.onSessionEnded((sessionId) => {
+    channel.emit('station.ended', { sessionId });
+  });
   const snapshot = (): void => {
     channel.emit('station.snapshot', {
       replicaId: runtime.replicaId,
-      sessions: runtime.stations.all().map((e) => ({ sessionId: e.sessionId, campaignId: e.campaignId })),
+      sessions: runtime.stations.all().map((e) => ({
+        sessionId: e.sessionId, campaignId: e.campaignId, tenantId: e.tenantId, accountId: e.accountId,
+      })),
     });
   };
   channel.onEvent('station.broadcast', ({ campaignId, frame }) => {

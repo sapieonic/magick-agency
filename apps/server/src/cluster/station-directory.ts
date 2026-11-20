@@ -18,7 +18,7 @@
  */
 import type { AgencyStationCapability, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import type { PacingStations } from '../agency/pacing-engine.js';
-import { StationDetachTimes, type StationDisconnectsReader } from '../agency/station-detach-times.js';
+import { StationDetachTimes, type StationDetachScope, type StationDisconnectsReader } from '../agency/station-detach-times.js';
 
 const NO_CAPS: ReadonlySet<AgencyStationCapability> = new Set();
 
@@ -26,6 +26,16 @@ interface Entry {
   slot: number;
   campaignId: string | null;
   replicaId: string;
+  /** Whose station (BE-11: a detach is recorded with it, so the alerts read filters in memory). */
+  scope: StationDetachScope;
+}
+
+/** One station as a worker reports it (`station.attached`, `station.snapshot`). */
+export interface DirectoryStation {
+  sessionId: string;
+  campaignId: string | null;
+  tenantId: string;
+  accountId: string;
 }
 
 export interface StationDirectoryDeps {
@@ -41,9 +51,10 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
   private readonly entries = new Map<string, Entry>();
   /**
    * Agent station (BE-11): when each worker's station went, as the primary hears it (a
-   * `station.detached`, or the worker's exit for every station it held); forgotten when one attaches
-   * again. The primary's floor and alerts reads take it in place of its own registry's, which holds
-   * no stations.
+   * `station.detached`, a snapshot that no longer lists it, or the worker's exit for every station
+   * it held), with whose station it was; forgotten when one attaches again or the session ends
+   * (`station.ended`). The primary's floor and alerts reads take it in place of its own registry's,
+   * which holds no stations.
    */
   private readonly detachTimes = new StationDetachTimes();
   /** replicaId → slot, for the workers alive now. */
@@ -63,7 +74,7 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
     for (const [sessionId, e] of this.entries) {
       if (e.slot !== slot) continue;
       this.entries.delete(sessionId);
-      this.detachTimes.detached(sessionId);
+      this.detachTimes.detached(sessionId, e.scope);
     }
   }
 
@@ -80,24 +91,43 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
     return this.liveReplicas.get(replicaId) ?? null;
   }
 
-  attached(slot: number, sessionId: string, campaignId: string | null, replicaId: string): void {
+  attached(slot: number, station: DirectoryStation, replicaId: string): void {
     if (this.liveReplicas.get(replicaId) !== slot) return; // a late event from a dead incarnation
-    this.entries.set(sessionId, { slot, campaignId, replicaId });
-    this.detachTimes.attached(sessionId);
+    this.entries.set(station.sessionId, {
+      slot, campaignId: station.campaignId, replicaId, scope: { tenantId: station.tenantId, accountId: station.accountId },
+    });
+    this.detachTimes.attached(station.sessionId);
   }
 
   detached(slot: number, sessionId: string): void {
-    if (this.entries.get(sessionId)?.slot !== slot) return;
+    const e = this.entries.get(sessionId);
+    if (e?.slot !== slot) return;
     this.entries.delete(sessionId);
-    this.detachTimes.detached(sessionId);
+    this.detachTimes.detached(sessionId, e.scope);
   }
 
-  /** Replace everything a worker holds with its own list (on ready, and on reconcile). */
-  snapshot(slot: number, replicaId: string, sessions: ReadonlyArray<{ sessionId: string; campaignId: string | null }>): void {
+  /** A worker's session ended (left): its detach time is forgotten (it never attaches again). */
+  ended(sessionId: string): void {
+    this.detachTimes.ended(sessionId);
+  }
+
+  /**
+   * Replace everything a worker holds with its own list (on ready, and on reconcile). A station the
+   * directory held for that worker and the list leaves out went (an event the primary missed): it is
+   * recorded as gone now, as a `station.detached` would have.
+   */
+  snapshot(slot: number, replicaId: string, sessions: readonly DirectoryStation[]): void {
     if (this.liveReplicas.get(replicaId) !== slot) return;
-    for (const [sessionId, e] of this.entries) if (e.slot === slot) this.entries.delete(sessionId);
+    const listed = new Set(sessions.map((s) => s.sessionId));
+    for (const [sessionId, e] of this.entries) {
+      if (e.slot !== slot) continue;
+      this.entries.delete(sessionId);
+      if (!listed.has(sessionId)) this.detachTimes.detached(sessionId, e.scope);
+    }
     for (const s of sessions) {
-      this.entries.set(s.sessionId, { slot, campaignId: s.campaignId, replicaId });
+      this.entries.set(s.sessionId, {
+        slot, campaignId: s.campaignId, replicaId, scope: { tenantId: s.tenantId, accountId: s.accountId },
+      });
       this.detachTimes.attached(s.sessionId);
     }
   }
@@ -152,8 +182,12 @@ export class StationDirectory implements PacingStations, StationDisconnectsReade
     return this.detachTimes.disconnectedSince(sessionIds);
   }
 
-  /** Every session whose worker station went and has not come back. */
-  goneSessionIds(): string[] {
-    return this.detachTimes.goneSessionIds();
+  /** Every session whose worker station went and has not come back, `scope`'s when given. */
+  goneSessionIds(scope?: StationDetachScope): string[] {
+    return this.detachTimes.goneSessionIds(scope);
+  }
+
+  forgetEnded(sessionIds: readonly string[]): void {
+    this.detachTimes.forgetEnded(sessionIds);
   }
 }
