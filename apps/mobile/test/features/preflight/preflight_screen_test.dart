@@ -303,6 +303,20 @@ void main() {
       expect(launcher.calls, ['start:c1']);
       expect(launcher.lastName, 'Q4 Card Renewals');
       expect(find.text('station-c1'), findsOneWidget);
+      // Start work is one press: the station goes on once it is open (startWorkIntentProvider).
+      final c = ProviderScope.containerOf(tester.element(find.text('station-c1')));
+      expect(c.read(startWorkIntentProvider), (campaignId: 'c1', mode: WorkMode.callsComeToMe));
+    });
+
+    testWidgets('a refused join leaves no Start work behind', (tester) async {
+      final checks = FakeChecks()..allGood();
+      final launcher = FakeLauncher([const StationRefused('You aren’t staffed on this campaign. Ask your supervisor.')]);
+      await pumpPreflight(tester, checks, launcher);
+      await settle(tester);
+      await tester.tap(goOnDuty);
+      await settle(tester);
+      final c = ProviderScope.containerOf(tester.element(find.byKey(const Key('start-outcome'))));
+      expect(c.read(startWorkIntentProvider), isNull);
     });
 
     testWidgets('Go on duty while the sound check is still listening waits for it, then hands the engine over', (tester) async {

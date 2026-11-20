@@ -323,6 +323,7 @@ Future<StationHarness> pumpStation(
   String? agentName = 'Sunita Yadav',
   MyDayView? myDay,
   List<CallLaterItem> callLater = const [],
+  void Function()? onMyDayRead,
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -366,7 +367,10 @@ Future<StationHarness> pumpStation(
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
       stationAgentNameProvider.overrideWithValue(agentName),
-      stationMyDayProvider.overrideWith((ref, id) async => myDay),
+      stationMyDayProvider.overrideWith((ref, id) async {
+        onMyDayRead?.call();
+        return myDay;
+      }),
       stationCallLaterProvider.overrideWith((ref, key) async => callLater),
       ...extra,
     ],
