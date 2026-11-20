@@ -281,6 +281,8 @@ describe('Need help: raise and cancel', () => {
     );
     await pressHelp();
     expect(screen.getByTestId('need-help-refusal-body').textContent).toBe(words);
+    // Said aloud in the same words, never the server's sentence (AS15).
+    expect(announcer()).toBe(words);
     expect(status()).toBeNull();
     expect(helpButton().textContent).toBe('Need help');
   });
