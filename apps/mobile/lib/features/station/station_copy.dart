@@ -500,9 +500,11 @@ abstract final class StationCopy {
   static const promisePick = 'Pick a date';
   static const promiseDateHelp = 'Promised payment date';
   static const promiseAmountLabel = 'Amount (optional)';
-  static const promiseDateNote = 'The date is the customer’s, as they said it.';
-  static const promiseNoCall = 'Saving a promise doesn’t book a call.';
-  static String promiseFollowUp(int days) => 'We’ll call again $days day${days == 1 ? '' : 's'} after this date, in calling hours.';
+  // The Full / Half chips (spec §3 05): the customer's amount due and half of it, with no ₹ (PT5:
+  // a promised amount carries no currency yet).
+  static const fullAmount = 'Full';
+  static const halfAmount = 'Half';
+  static String amountChip(String label, String amount) => '$label · $amount';
   static const promiseHeading = 'Promise to pay';
   static String promiseStanding(PromiseStanding s) => switch (s) {
     PromiseStanding.upcoming => 'Upcoming',

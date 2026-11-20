@@ -286,6 +286,15 @@ class _Line extends StatelessWidget {
   }
 }
 
+/// The customer's amount due for the Full and Half chips: the server's typed money fact in the
+/// amount-due role (BE-6), its parsed value; null without one (an untyped column is never guessed).
+String? amountDueOf(CallView? call) {
+  for (final t in call?.facts?.tiles ?? const <FactTileView>[]) {
+    if (t.amountDue && t.kind == FactKind.money && t.parsed != null) return t.parsed;
+  }
+  return null;
+}
+
 /// The follow-up's one summary row: "Will pay on Fri 20 Nov · 12,500 · Change", "Call later · Fri 20
 /// Nov at 10:00 AM · Change", or, before it is given, what is still needed and Choose.
 class _FollowUpRow extends StatelessWidget {
@@ -419,6 +428,7 @@ class _FollowUpSheetState extends ConsumerState<_FollowUpSheet> {
               form: _form,
               option: widget.option,
               attemptId: widget.attemptId,
+              amountDue: ref.watch(stationViewProvider.select((v) => amountDueOf(v?.call))),
               onDate: (day) => setState(() => _form = _form.withPromiseDate(day)),
               onAmount: (amount) => setState(() => _form = _form.withPromiseAmount(amount)),
             )
