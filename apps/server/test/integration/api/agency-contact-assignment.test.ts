@@ -228,7 +228,20 @@ describe('the agent\'s own contacts', () => {
     expect(row).toMatchObject({
       bucket: 'pending', hero: [{ name: 'Name', value: rows[0]!.name }],
       retry: { eligible: false, blocked: 'retry_disabled', rounds_used: 0, available_at: null }, override: null,
+      // Agent station AS9: the campaign's number display, on every row (the column's default here).
+      phone_display: 'full',
     });
+    // A masked campaign masks My customers from the row, wherever it is opened.
+    // FALSIFIED: without the route's mapping the rows carry no `phone_display` and this reds.
+    await getTestPool().query(`UPDATE agency_campaigns SET phone_display = 'masked' WHERE id = $1`, [A()]);
+    try {
+      const masked = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${A()}&limit=3`, agent(0), floor);
+      expect(masked.statusCode, masked.body).toBe(200);
+      expect(masked.json().rows.length).toBeGreaterThan(0);
+      for (const r of masked.json().rows) expect(r).toMatchObject({ phone_display: 'masked', phone_e164: expect.stringMatching(/^\+/) });
+    } finally {
+      await getTestPool().query(`UPDATE agency_campaigns SET phone_display = 'full' WHERE id = $1`, [A()]);
+    }
     const byBucket = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${A()}&bucket=reached`, agent(0), floor);
     expect(byBucket.json().rows).toEqual([]);
     const badBucket = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${A()}&bucket=nope`, agent(0), floor);

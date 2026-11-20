@@ -58,6 +58,14 @@ export interface AgencyAttempt extends Core.AgencyAttemptRow {
    * older than this build does not send it.
    */
   agent_name?: string | null;
+  /**
+   * Agent station AS9: how the attempt's campaign shows a customer's number on the agent's screens,
+   * the campaign's `phone_display` read as the session bootstrap reads it (anything unexpected is
+   * `full`). On the agent's own `GET /proxy/agency/my-attempts` only (My calls masks from it however
+   * the page was opened); absent from the supervisor's reads and from an older server (show in full).
+   * A display choice: `phone_e164` is still sent in full.
+   */
+  phone_display?: Core.AgencyPhoneDisplay;
 }
 
 /**

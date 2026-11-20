@@ -9,6 +9,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'agent_station.dart' show PhoneDisplay;
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
@@ -574,6 +575,7 @@ final class AttemptRow {
     this.redialNumber,
     required this.createdAt,
     this.agentName,
+    this.phoneDisplay,
   }) : stateRaw = stateRaw ?? state.wire,
        outcomeRaw = outcomeRaw ?? outcome?.wire;
 
@@ -610,6 +612,7 @@ final class AttemptRow {
       redialNumber: j.integerOrNull('redial_number'),
       createdAt: j.time('created_at'),
       agentName: j.strOrNull('agent_name'),
+      phoneDisplay: phoneDisplayOrNull(j['phone_display']),
     );
   }
 
@@ -655,6 +658,12 @@ final class AttemptRow {
   /// Not sent on `/my-attempts` (every row is the caller's own).
   final String? agentName;
 
+  /// Agent station AS9: how this attempt's campaign shows a customer's
+  /// number, on the agent's own `my-attempts` rows; null when absent (an
+  /// older server, or a supervisor's read): show it in full. A value this
+  /// build does not know reads as [PhoneDisplay.full].
+  final PhoneDisplay? phoneDisplay;
+
   @override
   bool operator ==(Object other) =>
       other is AttemptRow &&
@@ -684,7 +693,8 @@ final class AttemptRow {
       other.redialOfAttemptId == redialOfAttemptId &&
       other.redialNumber == redialNumber &&
       other.createdAt == createdAt &&
-      other.agentName == agentName;
+      other.agentName == agentName &&
+      other.phoneDisplay == phoneDisplay;
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -715,6 +725,7 @@ final class AttemptRow {
     redialNumber,
     createdAt,
     agentName,
+    phoneDisplay,
   ]);
 }
 
@@ -802,4 +813,12 @@ final class AttemptsQuery {
 
   @override
   int get hashCode => Object.hash(cursor, limit, from, to, campaignId, listHash(outcomes), phone);
+}
+
+/// A row's `phone_display` (agent station AS9): null when absent or not a
+/// string; a value this build does not know reads as [PhoneDisplay.full].
+PhoneDisplay? phoneDisplayOrNull(Object? raw) {
+  if (raw is! String) return null;
+  final d = PhoneDisplay.fromWire(raw);
+  return d.isUnknown ? PhoneDisplay.full : d;
 }

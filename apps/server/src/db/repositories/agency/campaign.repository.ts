@@ -118,6 +118,21 @@ function campaignUpdateStatement(id: string, patch: Record<string, unknown>): { 
 }
 
 export class AgencyCampaignRepository {
+  /**
+   * Agent station AS9: the stored `phone_display` of each of `ids` in the tenant and account (the
+   * agent's own My calls marks each row with its campaign's). One read on the primary key; an id
+   * not in the scope is absent.
+   */
+  async phoneDisplays(tenantId: string, accountId: string, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; phone_display: string }>(
+      `SELECT id, phone_display FROM agency_campaigns
+        WHERE id = ANY($3::uuid[]) AND tenant_id = $1::uuid AND account_id = $2::uuid`,
+      [tenantId, accountId, [...ids]],
+    );
+    return new Map(rows.map((r) => [r.id, r.phone_display]));
+  }
+
   async findById(id: string): Promise<AgencyCampaignRecord | null> {
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       'SELECT * FROM agency_campaigns WHERE id = $1',

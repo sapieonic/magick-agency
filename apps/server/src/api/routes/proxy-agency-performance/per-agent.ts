@@ -13,6 +13,8 @@ import { forwardAllowedQuery, unknownQueryParamsError, enrichAttemptAgentNames }
 import { enrichAgentStatsIdentity, resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing.routes.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { phoneDisplayOf } from '../../../agency/station-tiles.js';
 import { warnNameLookup } from './shared.js';
 
 /**
@@ -131,6 +133,36 @@ async function assertAgentInTenant(
  * Registered by `proxyAgencyPerformanceRoutes` on its own instance, after its session and
  * tenant-context hooks.
  */
+/**
+ * Agent station AS9: `phone_display` on each row of an attempts page, its campaign's stored setting
+ * read as the session bootstrap reads it (`phoneDisplayOf`: anything unexpected is `full`), one read
+ * for the page's campaigns. A body that is not a page passes through; a failed read serves the rows
+ * without the field (the console then shows the number in full, as it did before), never a 500.
+ */
+export async function withPhoneDisplays(
+  body: unknown,
+  tenantId: string,
+  accountId: string,
+  onError: (err: unknown) => void,
+  read: (tenantId: string, accountId: string, ids: readonly string[]) => Promise<Map<string, string>> =
+    (t, a, ids) => agencyCampaignRepository.phoneDisplays(t, a, ids),
+): Promise<unknown> {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { rows?: unknown }).rows)) return body;
+  const rows = (body as { rows: Array<Record<string, unknown>> }).rows;
+  const ids = [...new Set(rows.map((r) => r['campaign_id']).filter((id): id is string => typeof id === 'string'))];
+  let stored: Map<string, string>;
+  try {
+    stored = await read(tenantId, accountId, ids);
+  } catch (err) {
+    onError(err);
+    return body;
+  }
+  return {
+    ...(body as Record<string, unknown>),
+    rows: rows.map((r) => ({ ...r, phone_display: phoneDisplayOf(stored.get(r['campaign_id'] as string)) })),
+  };
+}
+
 export async function registerPerAgentPerformanceRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /proxy/agency/my-stats — the agent's own scorecard.
@@ -195,11 +227,20 @@ export async function registerPerAgentPerformanceRoutes(app: FastifyInstance): P
     const forwarded = forwardAllowedQuery(request.query, AGENT_ATTEMPT_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
-    return forwardCore(request, reply, {
+    const result = await callCore({
       method: 'GET',
       path: `/agency-agents/${userId}/attempts`,
       query: forwarded.query,
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
     });
+    // Agent station AS9: each row says how its campaign shows a customer's number, so My calls
+    // masks from the row however the page was opened. Non-2xx bodies pass through untouched.
+    const body = result.status >= 200 && result.status < 300 && request.accountId
+      ? await withPhoneDisplays(result.body, request.tenantId!, request.accountId, (err) =>
+        request.log.warn({ err }, 'my-attempts: the campaigns\' number display could not be read; rows served without it'))
+      : result.body;
+    return reply.code(result.status).send(body);
   });
 
   /**

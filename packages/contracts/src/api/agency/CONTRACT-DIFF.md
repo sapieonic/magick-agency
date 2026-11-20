@@ -224,6 +224,13 @@ dialer's `AgencyStationServerFrame` and this one, as the dialer's types unchange
 outside both until the app could decode them (LF16), and `AgencyStationCapability` gained
 `floor_assist` with them (the app's station declares `caps=floor_assist`).
 
+Agent station, the number display on the agent's own lists (AS9). `AgencyAttempt.phone_display?` and
+`AgencyMyContact.phone_display?` (optional, AS18): the row's campaign's `phone_display`, read as the
+session bootstrap reads it (anything unexpected is `full`). `AgencyAttempt`'s is added by the public
+API layer on `GET /proxy/agency/my-attempts` only (the agent's own My calls); the dialer's
+`AgencyAttemptRow`, the internal handler and the supervisor's twin carry none. `AgencyMyContact`'s is
+on every `GET /proxy/agency/my-contacts` row. The number itself is still sent in full.
+
 Agent station, pool queue state (BE-5, AS18). `AgencyStationCapability` gained `queue_pool`
 (`AGENCY_STATION_QUEUE_POOL_CAPABILITY`, in `AGENCY_STATION_CAPABILITIES` and the app's
 `station_capabilities` vocabulary): a station that declares it is sent a `pool` campaign's queue state
