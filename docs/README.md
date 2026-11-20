@@ -36,7 +36,7 @@ assign contacts, agents work their own queue, agent retry and outcome overrides,
 CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; console 5136; app 1392. Customer history
 (2026-11-06: one number searched across the tenant's campaigns, CH1–CH13, reviewed and fixed the
 same day; a search measured at 15 ms median on a 1M-contact tenant) is built on the server, the
-console and the app; its test counts are in `status.md`, and the app's Dart side has not run yet.
+console and the app, and the app's Dart side has not run yet.
 A dedicated caller ID per agent (2026-11-06, behind the contact-assignment flag: a supervisor gives
 a staffed agent one of the campaign's caller IDs and every dial to a contact they own goes out from
 it, decisions DN1–DN10) leaves server 8207 unit / 2037 integration + 9 expected fail; db 428 / 573;
@@ -47,7 +47,7 @@ and tested end to end against a mock Plivo carrier: server 8582 unit / 2075 inte
 expected fail; step 5, a real Plivo call, needs a Plivo account. Merged with `main` the same day:
 the dedicated caller ID decides over the campaign's dialable numbers (PL13's addendum), and this
 branch's migrations are 0019–0021 after `main`'s 0018; server 8837 unit / 2150 + 15 integration
-+ 9 expected fail, db 428 / 612, console 5685 (`status.md`, "Test counts").
++ 9 expected fail, db 428 / 612, console 5685.
 Automatic outcomes for unanswered calls (2026-11-07: a campaign maps no answer, busy, failed,
 invalid number and abandoned to one of its outcomes, filed on the call as a label only, OD1–OD8)
 is merged over Plivo the same day (its migration is 0022): db unit 428, console 5742.
@@ -56,23 +56,22 @@ Reports (2026-11-08: agent performance reviews, campaign and account reports as 
 ad hoc or on a schedule, behind a flag, RP1–RP16) are built through the server, a renderer app that
 runs as a Lambda or in process, the console and the infrastructure, reviewed independently twice
 and re-run: server 9123 unit / 2278 + 15 integration + 9 expected fail, db 428 / 632, console 5876,
-renderer 86 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS or
+renderer 86 ([`reports.md`](reports.md)). They have not run on AWS or
 in CI.
 
 Inbound calls on Plivo numbers (2026-11-09: IB1–IB8 decided by Manas, the build's rulings IQ1–IQ24,
-the fix pass's decisions IQ25–IQ45; 2026-11-10: IQ46–IQ47, decided) are built through P1 (every
-call answered on a linked number, what the caller hears, the Missed list and the inbound callback)
-and P2 (callers put through to agents on console stations, one process: the queue, sticky routing,
-the in-flight clash, voicemail), behind a flag. An independent engineering, product and QA review
-was fixed in two rounds (our standard recordings, recording upload, the kill switch, monitoring,
-Missed-row follow-up, the inbound summary; [`inbound.md`](inbound.md) §12; test counts in
-`status.md`). P3's mobile app frames are built too (2026-11-10, reviewed twice): a phone whose
-station declares `caps=inbound` is offered callers as a console is, and the agent app takes them on
-its station and lists the agent's Missed calls with Call back into the soft phone (not yet run on a
-phone or a carrier). Not done: P0, the live Plivo checks (needs a Plivo account; until then the
-carrier's shapes are the mock's); the rest of P3 (pickups from break and the soft phone, the
-media-worker handover, inbound in Insights, reports and customer history, "press 1 for a
-callback"); P4 (VoiceLink inbound).
+the fix pass's decisions IQ25–IQ45; 2026-11-10: IQ46–IQ47, decided) are built through P1 (every call
+answered on a linked number, what the caller hears, the Missed list and the inbound callback) and P2
+(callers put through to agents on console stations, one process: the queue, sticky routing, the
+in-flight clash, voicemail), behind a flag. An independent engineering, product and QA review was
+fixed in two rounds (our standard recordings, recording upload, the kill switch, monitoring,
+Missed-row follow-up, the inbound summary; [`inbound.md`](inbound.md) §12). P3's mobile app frames
+are built too (2026-11-10, reviewed twice): a phone whose station declares `caps=inbound` is offered
+callers as a console is, and the agent app takes them on its station and lists the agent's Missed
+calls with Call back into the soft phone (not yet run on a phone or a carrier). Not done: P0, the
+live Plivo checks (needs a Plivo account; until then the carrier's shapes are the mock's); the rest
+of P3 (pickups from break and the soft phone, the media-worker handover, inbound in Insights,
+reports and customer history, "press 1 for a callback"); P4 (VoiceLink inbound).
 
 Mode B (2026-11-12, IQ58–IQ74 and N1–N5, defaults pending Manas): an agent who opts in on the app
 has their phone rung for an inbound caller while they are away from the app, by an FCM push to a
@@ -94,7 +93,7 @@ in [`operations.md`](operations.md)): the tap, the listener socket, revocation, 
 calls and listening bar, "Listened to by", the account's Listening history and its CSV, the
 consent gate's guard rails, the agent's standing line on the console and the app, and the inbound
 notice's monitoring words; load-checked at 6 and 20 listeners on 100 calls, and its reviews fixed
-([`listening.md`](listening.md) §10; test counts in `status.md`). Not yet run in a real browser,
+([`listening.md`](listening.md) §10). Not yet run in a real browser,
 against a real carrier, on a phone or with its alerts applied.
 
 Live floor (2026-11-18, LF1–LF10 and B28b, defaults pending Manas): the supervisor's Home is
@@ -126,7 +125,7 @@ Details and next steps: [`status.md`](status.md).
 
 | Doc | What it holds |
 |---|---|
-| [`status.md`](status.md) | Where it is: phase table with evidence, test counts, what is not built, open decisions and owners, deployment invariants, pre-deploy checklist, next steps |
+| [`status.md`](status.md) | Where it is: phase table with evidence, what is not built, open decisions and owners, deployment invariants, pre-deploy checklist, next steps |
 | [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
 | [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
