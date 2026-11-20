@@ -22,19 +22,20 @@
  *    the planner finds smaller, and the inbound ones on `idx_agency_inbound_calls_promise_written`.
  *  - {@link myCallLaterStatement}: the agent's own pending call-laters on the campaign, due before
  *    the day's end (the overdue included), oldest due first, at most `limit`, with the counts.
- *    Two halves: the ones this agent booked (0057's booker), read on
- *    `idx_agency_contacts_my_callbacks` (0058), whose predicate {@link MY_CALLBACKS_INDEX_PREDICATE_SQL}
- *    repeats byte for byte; and, on `strict` / `preferred` campaigns, the callbacks assigned to the
- *    agent (a supervisor's hand-off, LF7, and those booked before the booker was recorded), read on
- *    `idx_agency_contacts_assignee` (0010). On those campaigns the list holds only what will really
- *    come to the agent (the lead's ruling on AS8): a call-later they booked that a supervisor has
- *    since given to someone else (LF21) or that the callback fallback returned to the pool (CA5)
- *    is not theirs any more, so the booked half also requires `assigned_user_id` to be the agent,
- *    a separate AND after 0058's predicate (the new owner sees it through their assigned half;
- *    the planner may then read the booked half on the assignee index, the agent's own contacts,
- *    which the assigned half reads anyway). On
- *    `pool` the booked half is the whole list. A contact in both halves is one row. A callback is
- *    `isCallbackSql`'s, the one definition.
+ *    Which contacts are the agent's depends on the campaign's assignment mode, and the statement
+ *    reads exactly one set of them:
+ *     - on `strict` / `preferred`, the callbacks assigned to the agent, read on
+ *       `idx_agency_contacts_assignee` (0010): a supervisor's hand-off (LF7), those booked before the
+ *       booker was recorded, and the ones the agent booked that are still theirs. The list holds only
+ *       what will really come to the agent (the lead's ruling on AS8): a call-later they booked that a
+ *       supervisor has since given to someone else (LF21) or that the callback fallback returned to
+ *       the pool (CA5) is not theirs any more (the new owner sees it as assigned to them). One they
+ *       booked and still hold is assigned to them, so it is in this set already: who booked it adds
+ *       no row, and is not read;
+ *     - on `pool`, the ones this agent booked (0057's booker), read on
+ *       `idx_agency_contacts_my_callbacks` (0058), whose predicate
+ *       {@link MY_CALLBACKS_INDEX_PREDICATE_SQL} repeats byte for byte.
+ *    A callback is `isCallbackSql`'s, the one definition.
  *
  * `test/integration/api/agent-station-my-day.test.ts` pins the counts, the halves and the plans.
  */
@@ -44,7 +45,7 @@ import { isCallbackSql } from './assignment-sql.js';
 
 /**
  * 0058's `idx_agency_contacts_my_callbacks` predicate, byte for byte as the migration writes it,
- * unqualified. The booker half reads `agency_contacts` unaliased so this text is the same in both
+ * unqualified. The pool read reads `agency_contacts` unaliased so this text is the same in both
  * places and the planner proves the partial index applies.
  */
 export const MY_CALLBACKS_INDEX_PREDICATE_SQL = `state = 'pending' AND callback_booked_by_user_id IS NOT NULL`;
@@ -111,8 +112,8 @@ export interface MyCallLatersInput {
   campaignId: string;
   agentUserId: string;
   /**
-   * `strict` / `preferred`: the callbacks assigned to the agent are theirs too, and a call-later
-   * they booked is theirs only while it is still assigned to them. `pool`: the booked ones.
+   * `strict` / `preferred`: the callbacks assigned to the agent (a call-later they booked is theirs
+   * only while it is still assigned to them, and then it is one of these). `pool`: the booked ones.
    */
   ownerMode: boolean;
   /** `callbackCodes(campaign.disposition_catalog)`. */
@@ -123,32 +124,33 @@ export interface MyCallLatersInput {
   limit: number;
 }
 
-/** The call-later read's statement. Exported for its plan test. */
+/**
+ * The call-later read's statement. Exported for its plan test. One scan of the agent's contacts:
+ * the assigned ones on `strict` / `preferred`, the booked ones on `pool` (see the module header).
+ */
 export function myCallLaterStatement(input: MyCallLatersInput): { text: string; values: unknown[] } {
-  const owned = input.ownerMode
+  const mine = input.ownerMode
     ? `
-       UNION
-       SELECT o.id, o.next_attempt_at
-         FROM agency_contacts o
-        WHERE o.campaign_id = $1::uuid
-          AND o.assigned_user_id = $2::uuid
-          AND o.state = 'pending'
-          AND o.next_attempt_at < $3::timestamptz
-          AND o.suppressed_reason IS DISTINCT FROM 'dnc'
-          AND ${isCallbackSql('o', '$4')}`
-    : '';
-  return {
-    text: `
-      WITH mine AS (
+        SELECT id, next_attempt_at
+          FROM agency_contacts
+         WHERE campaign_id = $1::uuid
+           AND assigned_user_id = $2::uuid
+           AND state = 'pending'
+           AND next_attempt_at < $3::timestamptz
+           AND suppressed_reason IS DISTINCT FROM 'dnc'
+           AND ${isCallbackSql('agency_contacts', '$4')}`
+    : `
         SELECT id, next_attempt_at
           FROM agency_contacts
          WHERE campaign_id = $1::uuid
            AND callback_booked_by_user_id = $2::uuid
-           AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}${input.ownerMode ? `
-           AND assigned_user_id = $2::uuid` : ''}
+           AND ${MY_CALLBACKS_INDEX_PREDICATE_SQL}
            AND next_attempt_at < $3::timestamptz
            AND suppressed_reason IS DISTINCT FROM 'dnc'
-           AND ${isCallbackSql('agency_contacts', '$4')}${owned}
+           AND ${isCallbackSql('agency_contacts', '$4')}`;
+  return {
+    text: `
+      WITH mine AS (${mine}
       ), page AS (
         SELECT m.id, m.next_attempt_at,
                COUNT(*) FILTER (WHERE m.next_attempt_at < $5::timestamptz) OVER () AS overdue,

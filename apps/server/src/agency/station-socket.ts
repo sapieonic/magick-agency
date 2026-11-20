@@ -613,7 +613,7 @@ export async function handleStationSocket(
   // The row as the rehydrate and `ready` read it: re-read after a let-go that ended a ring, which
   // rewrote the break (Mode B: the absence ended as `device_away`; the ring's `reserved` had nulled
   // the reason the attach read), so `ready` names the break the agent is on.
-  let attachedRow: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason' | 'away_ring_since'> = session;
+  let attachedRow: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason' | 'away_ring_since' | 'suspended_break_since'> = session;
   if (inbound && !canTakeInbound) {
     const heldRing = inbound.holdsPushOffer(sessionId);
     await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
@@ -622,7 +622,12 @@ export async function handleStationSocket(
         log.warn({ err, sessionId }, 'Could not re-read the session after a ring was let go');
         return null;
       });
-      if (fresh) attachedRow = { kind: fresh.kind, break_reason: fresh.break_reason, away_ring_since: fresh.away_ring_since };
+      if (fresh) {
+        attachedRow = {
+          kind: fresh.kind, break_reason: fresh.break_reason, away_ring_since: fresh.away_ring_since,
+          suspended_break_since: fresh.suspended_break_since,
+        };
+      }
     }
   }
 

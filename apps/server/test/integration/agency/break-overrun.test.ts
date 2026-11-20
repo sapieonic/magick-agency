@@ -21,8 +21,9 @@ const { agencyAgentSessionRepository: sessions, agencyReportDatasetRepository: r
 /**
  * A break over its limit, recorded on the event that ends it (agent station BE-12, AS12;
  * `0060_session_event_break_overrun.sql`) on a real Postgres: every writer that ends a break through
- * the session-transition statement (`setState` to another state or another break, the station's
- * presence `offline`, `leave`) judges it against the campaign's catalog with `breakOverrun`; the
+ * the session-transition statement (`setState` to another state or another break, `leave`; the
+ * station's presence `offline` suspends it, 0062, and it is judged once the session moves on)
+ * judges it against the campaign's catalog with `breakOverrun`; the
  * startup reaper (`markAllOffline`) never does; a reserved break, a reason with no limit and a break
  * inside its limit write nothing; each overrun is counted once (`agency_break_overruns_total`); the
  * agent report sums them (`agentBreakOverruns`).
@@ -75,10 +76,15 @@ describe('the event that ends a break', () => {
     const left = await onBreak('lunch', 40);
     await sessions.leave(left.id);
     expect(await lastEvent(left.id)).toMatchObject({ to_state: 'offline', break_limit_minutes: 30 });
-    // The station's close (presence offline, the reason kept) ends it as well.
+    // The station's close (presence offline, the reason kept) suspends it (0062, below): judged
+    // nothing until the session moves on without resuming it, then as ended at the drop, on the
+    // drop's event.
     const closed = await onBreak('tea', 20);
     await sessions.setState(closed.id, 'offline');
-    expect(await lastEvent(closed.id)).toMatchObject({ to_state: 'offline', break_limit_minutes: 15 });
+    expect(await lastEvent(closed.id)).toMatchObject({ to_state: 'offline', break_limit_minutes: null });
+    expect(metric.overrun).toHaveBeenCalledTimes(2);
+    await sessions.leave(closed.id);
+    expect(await lastEvent(closed.id)).toMatchObject({ from_state: 'break', to_state: 'offline', break_limit_minutes: 15 });
     expect(metric.overrun).toHaveBeenCalledTimes(3);
   });
 
@@ -102,6 +108,130 @@ describe('the event that ends a break', () => {
     const s = await onBreak('tea', 60);
     expect(await sessions.markAllOffline()).toBe(1);
     expect(await lastEvent(s.id)).toMatchObject({ from_state: 'break', to_state: 'offline', break_limit_minutes: null, break_overrun_seconds: null });
+    expect(metric.overrun).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 0062: a station drop SUSPENDS a break (the keep-reason `offline` keeps its start, judges nothing);
+ * the rehydrate that restores the same named break resumes it with that start (`stateSince`, here
+ * as `AgencyRuntime.rehydrateAgent` passes it), so it is judged once at its real end; any other move
+ * ends it at the drop, judged on the drop's own event. Time is controlled as above: `state_since`
+ * set in the past, and "the agent stays 25 more minutes" is the row's `state_since` moved 25
+ * minutes back. The station-level half is `break-overrun-station-drop.test.ts`.
+ */
+describe('a break split by a station drop (0062)', () => {
+  const lunch = async (minutesAgo: number) => onBreak('lunch', minutesAgo);
+  async function sessionRow(id: string) {
+    const { rows } = await pool().query(
+      'SELECT state, break_reason, state_since, suspended_break_since FROM agency_agent_sessions WHERE id = $1', [id]);
+    return rows[0] as { state: string; break_reason: string | null; state_since: Date; suspended_break_since: Date | null };
+  }
+  async function overruns(sessionId: string) {
+    const { rows } = await pool().query(
+      `SELECT from_state, to_state, break_limit_minutes, break_overrun_seconds FROM agency_agent_session_events
+        WHERE session_id = $1 AND break_overrun_seconds IS NOT NULL`, [sessionId]);
+    return rows as Array<{ from_state: string; to_state: string; break_limit_minutes: number; break_overrun_seconds: number }>;
+  }
+  const passes = (id: string, minutes: number) => pool().query(
+    `UPDATE agency_agent_sessions SET state_since = state_since - make_interval(mins => $2) WHERE id = $1`, [id, minutes]);
+
+  it('25 + 25 minutes of Lunch (30-minute limit) around a drop: one break from its start, one overrun of about 20 minutes, counted once', async () => {
+    // FALSIFIED: with the keep-reason offline ending the break as it used to (no suspension), the
+    // drop judges 25 minutes, the reconnect starts a fresh lunch, its end judges 25: nothing recorded.
+    const s = await lunch(25);
+    const start = (await sessionRow(s.id)).state_since;
+    await sessions.setState(s.id, 'offline');
+    expect(await lastEvent(s.id)).toMatchObject({ from_state: 'break', to_state: 'offline', break_overrun_seconds: null });
+    const dropped = await sessionRow(s.id);
+    expect(dropped).toMatchObject({ state: 'offline', break_reason: 'lunch' });
+    expect(dropped.suspended_break_since?.getTime()).toBe(start.getTime());
+    // The reconnect restores Lunch with its start: the floor's break clock (`break_over`) runs on.
+    await sessions.setState(s.id, 'break', 'lunch', { stateSince: dropped.suspended_break_since });
+    expect(await sessionRow(s.id)).toMatchObject({ state: 'break', break_reason: 'lunch', state_since: start, suspended_break_since: null });
+    expect(await overruns(s.id)).toEqual([]);
+    await passes(s.id, 25);
+    await sessions.setState(s.id, 'available', null);
+    const recorded = await overruns(s.id);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ from_state: 'break', to_state: 'available', break_limit_minutes: 30 });
+    expect(recorded[0]!.break_overrun_seconds).toBeGreaterThanOrEqual(20 * 60 - 1);
+    expect(recorded[0]!.break_overrun_seconds).toBeLessThanOrEqual(20 * 60 + 5);
+    expect(metric.overrun).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second drop keeps the suspension; the start survives two drops and is judged once', async () => {
+    const s = await lunch(20);
+    const start = (await sessionRow(s.id)).state_since;
+    await sessions.setState(s.id, 'offline');
+    await sessions.setState(s.id, 'offline');
+    expect((await sessionRow(s.id)).suspended_break_since?.getTime()).toBe(start.getTime());
+    await sessions.setState(s.id, 'break', 'lunch', { stateSince: (await sessionRow(s.id)).suspended_break_since });
+    await sessions.setState(s.id, 'offline');
+    expect((await sessionRow(s.id)).suspended_break_since?.getTime()).toBe(start.getTime());
+    await sessions.setState(s.id, 'break', 'lunch', { stateSince: (await sessionRow(s.id)).suspended_break_since });
+    await passes(s.id, 20);
+    await sessions.leave(s.id);
+    expect(await overruns(s.id)).toMatchObject([{ to_state: 'offline', break_limit_minutes: 30 }]);
+    expect(metric.overrun).toHaveBeenCalledTimes(1);
+  });
+
+  it('the station never comes back: the break is judged as ended at the drop when the session ends, on the drop\'s event', async () => {
+    const over = await lunch(45);
+    await sessions.setState(over.id, 'offline');
+    expect(metric.overrun).not.toHaveBeenCalled();
+    // Ended an hour later: still measured to the drop, not to the leave.
+    await pool().query(`UPDATE agency_agent_sessions SET state_since = state_since - interval '1 hour' WHERE id = $1`, [over.id]);
+    await sessions.leave(over.id);
+    const recorded = await overruns(over.id);
+    expect(recorded).toMatchObject([{ from_state: 'break', to_state: 'offline', break_limit_minutes: 30 }]);
+    expect(recorded[0]!.break_overrun_seconds).toBeGreaterThanOrEqual(15 * 60 - 1);
+    expect(recorded[0]!.break_overrun_seconds).toBeLessThanOrEqual(15 * 60 + 5);
+    expect(metric.overrun).toHaveBeenCalledTimes(1);
+    expect(await sessionRow(over.id)).toMatchObject({ state: 'offline', suspended_break_since: null });
+
+    const inside = await lunch(10);
+    await sessions.setState(inside.id, 'offline');
+    await sessions.leave(inside.id);
+    expect(await overruns(inside.id)).toEqual([]);
+    expect(metric.overrun).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reconnect into Ready, another break or the same one afresh starts fresh: the suspended break ends at the drop', async () => {
+    const ready = await lunch(40);
+    await sessions.setState(ready.id, 'offline');
+    await sessions.setState(ready.id, 'available', null);
+    expect(await overruns(ready.id)).toMatchObject([{ from_state: 'break', to_state: 'offline', break_limit_minutes: 30 }]);
+    expect(await sessionRow(ready.id)).toMatchObject({ state: 'available', suspended_break_since: null });
+
+    const tea = await lunch(10);
+    await sessions.setState(tea.id, 'offline');
+    await sessions.setState(tea.id, 'break', 'tea');
+    const onTea = await sessionRow(tea.id);
+    expect(onTea).toMatchObject({ state: 'break', break_reason: 'tea', suspended_break_since: null });
+    expect(Date.now() - onTea.state_since.getTime()).toBeLessThan(60_000);
+    expect(await overruns(tea.id)).toEqual([]);
+
+    // The same reason without the start (a rehydrate that does not resume it): a new lunch.
+    const again = await lunch(35);
+    await sessions.setState(again.id, 'offline');
+    await sessions.setState(again.id, 'break', 'lunch');
+    expect(Date.now() - (await sessionRow(again.id)).state_since.getTime()).toBeLessThan(60_000);
+    expect(await overruns(again.id)).toMatchObject([{ to_state: 'offline', break_limit_minutes: 30 }]);
+    await sessions.setState(again.id, 'available', null);
+    expect(await overruns(again.id)).toHaveLength(1);
+    expect(metric.overrun).toHaveBeenCalledTimes(2);
+  });
+
+  it('the startup reaper clears a suspension it finds on a promoted break and judges nothing', async () => {
+    const s = await lunch(50);
+    await sessions.setState(s.id, 'offline');
+    // The join upsert promotes `offline` to `break` (its start untouched), and the process dies
+    // before the rehydrate's mirror.
+    await pool().query(`UPDATE agency_agent_sessions SET state = 'break' WHERE id = $1`, [s.id]);
+    expect(await sessions.markAllOffline()).toBe(1);
+    expect(await sessionRow(s.id)).toMatchObject({ state: 'offline', suspended_break_since: null });
+    expect(await overruns(s.id)).toEqual([]);
     expect(metric.overrun).not.toHaveBeenCalled();
   });
 });

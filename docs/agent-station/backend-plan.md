@@ -971,6 +971,7 @@ field on an existing shape is optional (AS18); nothing was renamed or removed. W
 | `0059_session_help_state.sql` | `agency_agent_sessions` | `help_state VARCHAR(20) NULL` (`ck_agency_agent_sessions_help_state`, NOT VALID: one of the six agent states, and only while `help_raised_at` is set, so **clear it in every statement that clears `help_raised_at`**) |
 | `0060_session_event_break_overrun.sql` | `agency_agent_session_events` | `break_limit_minutes SMALLINT NULL`, `break_overrun_seconds INTEGER NULL` on the transition out of `break` that ended a break past its limit (`ck_agency_session_event_break_overrun`, NOT VALID: set together, `from_state = 'break'`, limit 1–240, overrun > 0) |
 | `0061_session_event_break_limit_comment.sql` | `agency_agent_session_events` | No schema change (fix stream): `break_limit_minutes`'s comment says the limit as the campaign's catalog stood when the break ENDED, which is what the server writes (0060's said "when the break began") |
+| `0062_session_suspended_break.sql` | `agency_agent_sessions` | `suspended_break_since TIMESTAMPTZ NULL`: the start of the break a station drop suspended (PR review fix, BE-12); no CHECK, no index |
 
 No column was added to the server's row models (`apps/server/src/db/models/agency.model.ts`): the
 stream that first reads or writes a column adds it there. `context_display.roles` / `.types` and the
@@ -1153,17 +1154,18 @@ what was built.
     soft-phone promises on `idx_agency_manual_calls_agent` or the 0050 index, the inbound ones on
     `idx_agency_inbound_calls_promise_written`, never a whole table.
   - `target`: `daily_target_calls`, null without one.
-  - `call_later`: the booked half (`callback_booked_by_user_id` = the caller, on
-    `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
-    `MY_CALLBACKS_INDEX_PREDICATE_SQL`) union, on `strict` / `preferred`, the assigned half
+  - `call_later`: on `pool`, the ones the caller booked (`callback_booked_by_user_id` = the caller,
+    on `idx_agency_contacts_my_callbacks`, its predicate repeated byte for byte as
+    `MY_CALLBACKS_INDEX_PREDICATE_SQL`); on `strict` / `preferred`, the ones assigned to the caller
     (`assigned_user_id` = the caller, on `idx_agency_contacts_assignee`); each pending, not DNC, a
     call-later by `isCallbackSql`, due before the day's end; oldest first, at most 20 rows; `today`
     and `overdue` uncapped. **On `strict` / `preferred` only what will come to the agent** (the
-    lead's ruling, fix stream): the booked half also needs `assigned_user_id` = the caller, a separate
-    AND after 0058's predicate (kept byte for byte), so a call-later the agent booked that a
-    supervisor gave to another agent (LF21) or that the CA5 fallback returned to the pool leaves their
-    list, and the new owner sees it through their assigned half; the planner may then read the
-    booked half on the assignee index. On `pool` the booked half is the list. `customer_name`: the
+    lead's ruling, fix stream): a call-later the agent booked that a supervisor gave to another agent
+    (LF21) or that the CA5 fallback returned to the pool leaves their list, and the new owner sees it
+    as assigned to them. The fix stream read this as a booked half (needing the assignment too)
+    union an assigned half; the booked half's rows were then all in the assigned half, so the
+    PR review left one scan, the assigned one (a call-later the agent booked and still holds is
+    assigned to them). `customer_name`: the
     campaign's `name` role column, else `matchName`, never a column in `context_display.hidden`
     (matched ignoring case; fix stream).
   - The day (`myDayWindow`, `localDayStart` / `localDayEnd`): the first instant of the local day to
@@ -1292,6 +1294,19 @@ built.
   to say so (fix stream). The agent report's `presence.break_overruns` sums them; the PDF prints
   "Breaks over their limit: …" under the break reasons, the workbook two Summary rows with their
   definition (`break_overruns`, fix stream). The dashboard has a panel for the counter (fix stream).
+  **A break split by a station drop is one break** (PR review, 0062): the station's close writes
+  `offline` keeping the reason, and that write now suspends the break (its start kept in
+  `agency_agent_sessions.suspended_break_since`, nothing judged) rather than ending it. The
+  rehydrate that restores the same named break, while the break is under 4 hours old
+  (`BREAK_RESUME_MAX_MS`), carries its start as `state_since` and as Redis's `since`, as `device_away`
+  carries an absence's start, so the floor's `break_over` clock runs on and the break is judged once,
+  from that start, at its real end. Any other move out of the suspension (Ready, another break, a
+  rehydrate too late to resume it, the session's end) judges the break as ended at the drop and
+  writes the overrun on the drop's own event (`break → offline`). A station that never comes back
+  and a session never moved again leave the break unjudged until the session next moves; the
+  startup reaper clears a suspension and judges nothing, as it never judges a break it cuts. A
+  reserved break is never carried. Before this, one 50-minute lunch dropped at 25 minutes was two
+  25-minute breaks under a 30-minute limit and recorded nothing.
 - **BE-13 tile icons** (`agency/station-tiles.ts`): `disposition_catalog[i].icon` and
   `break_reasons[i].icon` are optional, one of `AGENCY_TILE_ICONS`, refused otherwise by both
   campaign-config validators; every read that reaches an agent drops an icon it does not know: the
