@@ -26,6 +26,7 @@ import { homeAttention, sortByRank, HOME_CAMPAIGN_CAP } from '../../utils/agency
 import {
   breakOverrunItems,
   cardsFor,
+  disconnectedItems,
   floorAgentsWorking,
   floorRowsFor,
   helpItems,
@@ -123,9 +124,17 @@ export default function HomePage() {
     () => (ranked ? helpItems(ranked, board.reads.map((r) => r.campaign), floorNowMs, agentFloor.stale) : []),
     [ranked, board.reads, floorNowMs, agentFloor.stale],
   );
+  // BE-11: agents whose screen dropped past the alert's 20 s, as the shell's banner lists them (the
+  // banner is not shown on Live floor, so this list says what it would).
+  const dropped = useMemo(
+    () => (ranked ? disconnectedItems(ranked, board.reads.map((r) => r.campaign), floorNowMs, agentFloor.stale) : []),
+    [ranked, board.reads, floorNowMs, agentFloor.stale],
+  );
   const items = useMemo(
-    () => (breaks.length === 0 && helps.length === 0 ? attention : sortByRank([...attention, ...breaks, ...helps])),
-    [attention, breaks, helps],
+    () => (breaks.length === 0 && helps.length === 0 && dropped.length === 0
+      ? attention
+      : sortByRank([...attention, ...breaks, ...helps, ...dropped])),
+    [attention, breaks, helps, dropped],
   );
   // The chime hears every open request on the floor (not only the picked campaign's), once each on
   // the page: the shell's alerts chime shares what it has heard, so neither plays for one twice.

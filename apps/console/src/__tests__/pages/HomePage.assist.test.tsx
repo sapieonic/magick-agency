@@ -195,6 +195,81 @@ describe('Need help (LF4, LF28)', () => {
   });
 });
 
+describe('Need help raised with no call (BE-9)', () => {
+  // Arjun asked while waiting for a call: no call to listen to.
+  const ARJUN_ASKING = () => ({ ...ARJUN(), help: { raised_at: minutesAgo(1), call_id: null, state_at_raise: 'available' as const } });
+
+  it('says on the row and the card what the agent was doing when they asked', async () => {
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([
+      ARJUN_ASKING(),
+      { ...PRIYA(), help: { raised_at: minutesAgo(2), call_id: null, state_at_raise: 'break' as const } },
+    ]));
+    renderHome();
+    const row = await screen.findByTestId('home-attention-help:arjun');
+    expect(row.textContent).toContain('while waiting for a call');
+    expect(within(row).queryByRole('button', { name: /Listen/ })).toBeNull();
+    expect(screen.getByTestId('home-attention-help:priya').textContent).toContain('on a break');
+    expect(screen.getByTestId('home-agent-help-detail-arjun').textContent).toBe('Asked for help while waiting for a call');
+    expect(screen.getByTestId('home-agent-help-detail-priya').textContent).toBe('Asked for help on a break');
+    // No request, no line.
+    expect(screen.queryByTestId('home-agent-help-detail-ravi')).toBeNull();
+  });
+
+  it('answers with “I am coming to your desk” in one press, from the row or the card', async () => {
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([ARJUN_ASKING(), DIVYA()]));
+    mocks.sendSupervisorMessage.mockResolvedValue({ id: 'm1', session_id: 's-arjun', sent_at: new Date().toISOString(), delivered: true });
+    renderHome();
+    const row = await screen.findByTestId('home-attention-help:arjun');
+    fireEvent.click(within(row).getByRole('button', { name: 'Tell Arjun T you are coming to their desk' }));
+    await waitFor(() => expect(mocks.sendSupervisorMessage).toHaveBeenCalledWith('s-arjun', 'I am coming to your desk.', 't-1', 'a-1'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Told Arjun T you are coming to their desk.', 'success'));
+
+    const card = screen.getByTestId('home-agent-arjun');
+    fireEvent.click(within(card).getByRole('button', { name: 'Tell Arjun T you are coming to their desk' }));
+    await waitFor(() => expect(mocks.sendSupervisorMessage).toHaveBeenCalledTimes(2));
+    // Not offered to an agent who is not asking.
+    expect(within(screen.getByTestId('home-agent-divya')).queryByRole('button', { name: /coming to their desk/ })).toBeNull();
+  });
+
+  it('says a refusal in the console’s words', async () => {
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([ARJUN_ASKING()]));
+    mocks.sendSupervisorMessage.mockRejectedValue(new ApiError(409, { error: 'Conflict', code: 'agent_not_live', message: 'x' }));
+    renderHome();
+    const row = await screen.findByTestId('home-attention-help:arjun');
+    fireEvent.click(within(row).getByRole('button', { name: 'Tell Arjun T you are coming to their desk' }));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Arjun T isn’t on a station that can receive messages right now.', 'error'));
+  });
+
+  it('is not offered while floor assist is off', async () => {
+    mocks.flags = new Set();
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([ARJUN_ASKING()]));
+    renderHome();
+    await screen.findByTestId('home-agent-grid');
+    expect(screen.queryByRole('button', { name: /coming to their desk/ })).toBeNull();
+  });
+});
+
+describe('a dropped screen (BE-11)', () => {
+  it('is a Needs you now row past 20 s, and the card says for how long', async () => {
+    const since = new Date(Date.now() - 130_000).toISOString();
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([
+      { ...ARJUN(), connected: false, disconnected_since: since },
+      { ...DIVYA(), connected: false, disconnected_since: new Date(Date.now() - 5_000).toISOString() },
+    ]));
+    renderHome();
+    const row = await screen.findByTestId('home-attention-disconnected:arjun');
+    expect(row.getAttribute('data-tone')).toBe('danger');
+    expect(row.textContent).toContain('Arjun T is disconnected for 2 min');
+    expect(row.textContent).toContain('Lost the connection while waiting for a call.');
+    // A blip under 20 s is not a row yet; its card still says so.
+    expect(screen.queryByTestId('home-attention-disconnected:divya')).toBeNull();
+    expect(screen.getByTestId('home-agent-risk-arjun').textContent).toBe('Disconnected for 2 min');
+    expect(screen.getByTestId('home-agent-risk-divya').textContent).toBe('Disconnected for under a minute');
+    expect(screen.queryByText(/no heartbeat/)).toBeNull();
+  });
+});
+
 describe('the chime (LF31)', () => {
   async function poll() {
     await act(async () => {

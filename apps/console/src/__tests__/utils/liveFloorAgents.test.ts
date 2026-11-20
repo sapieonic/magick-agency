@@ -17,6 +17,10 @@ import {
   floorRowsFor,
   floorStateCounts,
   floorTimerAnchor,
+  disconnectedFor,
+  disconnectedItems,
+  disconnectedWords,
+  helpDetail,
   helpItems,
   liveCallOf,
   offersMakeAvailable,
@@ -295,6 +299,27 @@ describe('Need help, in Needs you now (LF4, LF28)', () => {
     expect(homeBadgeCount([ravi!])).toBe(0);
   });
 
+  it('says what the agent was doing when they asked, from the request’s own state (BE-9)', () => {
+    const asked = (state: AgencyFloorAgent['state'], over: Partial<AgencyFloorAgent> = {}) => {
+      const [card] = rankFloorCards([floorRow('r', { help: { ...HELP(ago(1), null), state_at_raise: state }, ...over })], NOW);
+      return { row: helpItems([card!], campaigns, NOW)[0]!.detail, card: helpDetail(card!) };
+    };
+    expect(asked('available')).toEqual({ row: 'while waiting for a call', card: 'while waiting for a call' });
+    expect(asked('break', { state: 'break', break_reason: 'tea', break_label: 'Tea' }).row).toBe('on a break');
+    expect(asked('break', { state: 'break', break_reason: 'soft_phone' }).row).toBe('on the soft phone');
+    expect(asked('wrapup', { state: 'wrapup' }).row).toBe('after the call');
+    expect(asked('reserved').row).toBe('as a call was connecting');
+    expect(asked('offline', { state: 'offline' }).row).toBe('before starting calls');
+    expect(asked('on_call', { state: 'on_call', call: CALL() }).row).toBe('on a call with Ramesh Goud');
+    // Raised on a call that has ended since: still a call, its customer gone from the row.
+    expect(asked('on_call', { state: 'wrapup' }).row).toBe('on a call');
+    // Raised while Ready, and a call connected since: what they were doing when they asked.
+    expect(asked('available', { state: 'on_call', call: CALL() }).row).toBe('while waiting for a call');
+    // An older server sends no state: what the row shows now, as before.
+    const [old] = rankFloorCards([floorRow('r', { state: 'available', help: HELP(ago(1), null) })], NOW);
+    expect(helpDetail(old!)).toBe('on the floor');
+  });
+
   it('is none while the flag is off (the server sends help: null), nor for a row with no session', () => {
     const cards = rankFloorCards([floorRow('r', { state: 'on_call', call: CALL(), help: null }), floorRow('o', { session_id: null, help: HELP() })], NOW);
     expect(helpItems(cards, campaigns, NOW)).toEqual([]);
@@ -311,6 +336,55 @@ describe('Need help, in Needs you now (LF4, LF28)', () => {
     const [card] = rankFloorCards([floorRow('w', { state: 'wrapup', state_since: ago(10), wrapup_window_seconds: 30, help: HELP() })], NOW);
     expect(card!.risk).toBe('wrapup_overrun');
     expect(stripeTone(card!)).toBe('help');
+  });
+});
+
+describe('a dropped screen (BE-11)', () => {
+  const campaigns = [campaign('c1', 'running', 'Q4 collections')];
+  const down = (seconds: number) => new Date(NOW - seconds * 1000).toISOString();
+
+  it('says for how long, in words, from disconnected_since', () => {
+    expect(disconnectedWords(down(150), NOW)).toBe('Disconnected for 2 min');
+    expect(disconnectedWords(down(25), NOW)).toBe('Disconnected for under a minute');
+    // Since when is not known (an older server, or after a restart): no time rather than a wrong one.
+    expect(disconnectedWords(null, NOW)).toBe('Disconnected');
+    expect(disconnectedWords(undefined, NOW)).toBe('Disconnected');
+    expect(disconnectedFor('not a time', NOW)).toBeNull();
+  });
+
+  it('is a Needs you now row for a working agent down past the alert’s 20 s, as the banner would list it', () => {
+    const cards = rankFloorCards([
+      floorRow('r', { agent_name: 'Ravi Kumar', state: 'on_call', call: CALL(), connected: false, disconnected_since: down(130) }),
+      floorRow('a', { agent_name: 'Asha', connected: false, disconnected_since: down(25) }),
+      // A blip the reconnect ladder may still win: not yet.
+      floorRow('b', { connected: false, disconnected_since: down(19) }),
+      // Not working, or since when unknown, or the read could not tell: never.
+      floorRow('c', { state: 'break', break_reason: 'tea', connected: false, disconnected_since: down(300) }),
+      floorRow('d', { state: 'offline', connected: false, disconnected_since: down(300) }),
+      floorRow('e', { connected: false, disconnected_since: null }),
+      floorRow('f', { connected: null }),
+      floorRow('g', { connected: false, disconnected_since: down(300), session_id: null }),
+    ], NOW);
+    const items = disconnectedItems(cards, campaigns, NOW);
+    expect(items.map((i) => i.id)).toEqual(['disconnected:r', 'disconnected:a']);
+    const [ravi, asha] = items;
+    expect(ravi).toMatchObject({
+      tone: 'danger',
+      title: 'Ravi Kumar is disconnected for 2 min',
+      detail: 'Lost the connection on a call with Ramesh Goud.',
+      campaign: { id: 'c1', name: 'Q4 collections' },
+      kind: `disconnected@${down(130)}`,
+      ackable: false,
+    });
+    expect(ravi!.agent).toBeUndefined();
+    expect(asha).toMatchObject({ title: 'Asha is disconnected for under a minute', detail: 'Lost the connection while waiting for a call.' });
+    // Ranked below what stopped a campaign, above a break; never on the sidebar badge.
+    expect(homeRank(ravi!)).toBe('disconnected');
+    const stop = { ...ravi!, id: 'stop', kind: 'stall:dnc_unavailable' };
+    const brk = { ...ravi!, id: 'brk', tone: 'warning' as const, kind: 'break-overrun@x' };
+    expect(sortByRank([brk, ravi!, stop]).map((i) => i.id)).toEqual(['stop', 'disconnected:r', 'brk']);
+    expect(homeBadgeCount([ravi!])).toBe(0);
+    expect(disconnectedItems(cards, campaigns, NOW, true)[0]!.stale).toBe(true);
   });
 });
 

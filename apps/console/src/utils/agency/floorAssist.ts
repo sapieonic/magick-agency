@@ -34,6 +34,12 @@ export interface MessageTarget {
 }
 
 /**
+ * The one-press answer to Need help when the supervisor walks over (BE-9): a supervisor's message,
+ * the existing answer (LF14), so it answers the request whatever the agent was doing.
+ */
+export const COMING_TO_DESK_TEXT = 'I am coming to your desk.';
+
+/**
  * Send reminder's words (LF5's "the same route with prefilled text"): friendly, naming the break
  * and its length, the reason's limit (LF6) or the floor's 30 minutes for a reason with none.
  */

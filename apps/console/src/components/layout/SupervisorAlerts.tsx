@@ -25,15 +25,17 @@ const KIND_ICONS: Readonly<Record<AgencyFloorAlertKind, LucideIcon>> = {
  * Supervisor alerts on every page of the console's shell (agent station AS16): one light read of
  * the account's open alerts (`useFloorAlerts`, every 5 s while the tab is visible), a banner that
  * lists them in plain words ("Ravi needs help", "Ravi’s break is over by 6 min", "Ravi is
- * disconnected"), each a link to Live floor, and the help chime once per new alert, which the
- * reader mutes for this browser from the banner (the same setting as Live floor's).
+ * disconnected for 2 min"), each a link to Live floor, and the help chime once per new alert, which
+ * the reader mutes for this browser from the banner (the same setting as Live floor's).
  *
  * Only for a reader Live floor is for (`HOME_GATE`: `agency.supervise`, the `agency` capability and
  * the dialer flag); anyone else never asks, and a 403 or a failing read shows nothing.
  *
- * On Live floor itself the banner is not shown (its cards and Needs you now show the same, each
- * with its action) and Need help is not chimed (the page's own chime plays for it); the alerts are
- * still read there, so leaving the page chimes only for what is new.
+ * On Live floor itself the banner is not shown: Needs you now has a row for each kind, each with
+ * its action (Need help, an agent disconnected past 20 s, a break over its limit), and the cards
+ * say the same. The alerts are still read there, and chimed, into the one set of heard alerts the
+ * page's own chime shares (`useHelpChime`): whichever read hears an alert first chimes it, once,
+ * so leaving or opening Live floor never chimes one again.
  *
  * Light: it is its own component, so a poll re-renders it alone, never the shell or the page; the
  * rows re-render only when their words change (`AlertRows` is memoised on a signature).

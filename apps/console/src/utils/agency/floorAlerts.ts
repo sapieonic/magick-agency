@@ -8,9 +8,10 @@ import { helpChimeKey } from './floorAssist';
  * `GET /proxy/agency/floor/alerts` in plain words, for the shell's banner. Pure, so each rule is
  * tested where it is made.
  *
- *  - **Words** (AS15): "Ravi needs help", "Ravi’s break is over by 6 min", "Ravi is disconnected".
+ *  - **Words** (AS15): "Ravi needs help", "Ravi’s break is over by 6 min", "Ravi is disconnected
+ *    for 2 min".
  *    An agent the server could not name is the floor's fallback (`agentDisplayName`).
- *  - **Clock**: minutes over are counted from the alert's `since` to the read's `as_of`, the
+ *  - **Clock**: minutes over (and disconnected) are counted from the alert's `since` to the read's `as_of`, the
  *    server's own clock, so a viewer's wrong clock never says a break is over by an hour.
  *  - **Kinds**: a kind this console does not know is left out (the contract says a client ignores
  *    one), so a newer server never shows a blank row.
@@ -52,8 +53,12 @@ export function floorAlertText(alert: AgencyFloorAlert, asOf: string): string {
         ? `${name}’s break is over by ${formatCount(over)} min`
         : `${name}’s break is over time`;
     }
-    case 'disconnected':
-      return `${name} is disconnected`;
+    case 'disconnected': {
+      // How long, from the station's `disconnected_since` (the alert's `since`) to the read's `as_of`.
+      const down = minutesBetween(alert.since, asOf);
+      if (down === null) return `${name} is disconnected`;
+      return down < 1 ? `${name} is disconnected for under a minute` : `${name} is disconnected for ${formatCount(down)} min`;
+    }
   }
 }
 

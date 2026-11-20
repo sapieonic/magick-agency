@@ -167,7 +167,7 @@ describe('the banner', () => {
     const banner = screen.getByTestId('supervisor-alerts');
     const links = banner.querySelectorAll('a');
     expect([...links].map((a) => a.textContent)).toEqual([
-      'Ravi needs help', 'Asha’s break is over by 6 min', 'Meena is disconnected',
+      'Ravi needs help', 'Asha’s break is over by 6 min', 'Meena is disconnected for under a minute',
     ]);
     for (const a of links) expect(a.getAttribute('href')).toBe('/agency/home');
   });
@@ -213,7 +213,7 @@ describe('the chime', () => {
     mocks.getAgencyFloorAlerts.mockResolvedValue(answer(help('Ravi'), dropped('Meena')));
     await flush(FLOOR_ALERTS_POLL_MS);
     expect(mocks.playHelpChime).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('supervisor-alerts-announcement').textContent).toBe('Meena is disconnected');
+    expect(screen.getByTestId('supervisor-alerts-announcement').textContent).toBe('Meena is disconnected for under a minute');
     // The same alerts again, and a minute's change of words: no second chime.
     mocks.getAgencyFloorAlerts.mockResolvedValue({ ...answer(help('Ravi'), dropped('Meena')), as_of: '2026-11-20T10:31:00.000Z' });
     await flush(FLOOR_ALERTS_POLL_MS * 2);

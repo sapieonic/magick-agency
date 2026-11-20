@@ -29,7 +29,15 @@ const dropAlert: AgencyFloorAlert = {
 describe('floorAlertText', () => {
   it('says each kind in plain words', () => {
     expect(floorAlertText(helpAlert(), AS_OF)).toBe('Ravi needs help');
-    expect(floorAlertText(dropAlert, AS_OF)).toBe('Ravi is disconnected');
+    expect(floorAlertText(dropAlert, AS_OF)).toBe('Ravi is disconnected for under a minute');
+  });
+
+  it('says how long a screen has been disconnected, from the alert’s since to the read’s as_of (BE-11)', () => {
+    const drop = (since: string) => ({ ...dropAlert, since });
+    expect(floorAlertText(drop('2026-11-20T10:27:10.000Z'), AS_OF)).toBe('Ravi is disconnected for 2 min');
+    expect(floorAlertText(drop('2026-11-20T09:15:00.000Z'), AS_OF)).toBe('Ravi is disconnected for 75 min');
+    // A since the console cannot read says no time rather than a wrong one.
+    expect(floorAlertText(drop('not a time'), AS_OF)).toBe('Ravi is disconnected');
   });
 
   it('counts a break’s minutes over from when it passed its limit to the read’s as_of', () => {
@@ -49,7 +57,7 @@ describe('floorAlertItems', () => {
   it('keeps the server’s order and leaves out a kind it does not know', () => {
     const odd = { ...helpAlert(), id: 'odd:1', kind: 'something_new' } as unknown as AgencyFloorAlert;
     expect(floorAlertItems([dropAlert, odd, helpAlert()], AS_OF)).toEqual([
-      expect.objectContaining({ id: 'disconnected:s-1:t', kind: 'disconnected', text: 'Ravi is disconnected' }),
+      expect.objectContaining({ id: 'disconnected:s-1:t', kind: 'disconnected', text: 'Ravi is disconnected for under a minute' }),
       expect.objectContaining({ id: 'help:s-1:t', kind: 'help', text: 'Ravi needs help' }),
     ]);
   });
