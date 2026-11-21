@@ -711,7 +711,7 @@ describe('a thin row is served in full, flagged, and excluded from the cohort', 
 
     // Drop BOTH rows that sit on the bound — bala and esi — and the pool collapses
     // to one row, whose own number becomes all three quantiles (interpolating
-    // between one value and itself). `rosterPercentiles` does that in TypeScript
+    // between one value and itself). `cohortPercentiles` does that in TypeScript
     // over rows already served; it follows `percentile_cont`'s convention but no
     // such SQL runs on this read. Both rows have to move: they are the two at
     // exactly 20 connects, which is the whole reason this gate is pinned twice.
@@ -1138,7 +1138,7 @@ describe('benchmark.aht: percentiles for a metric the object had only as a poole
     //
     // FALSIFICATION: change `>=` to `>` in `hasRateDenominator` and the first
     // expectation fails, because the pool collapses to anita alone and all three
-    // quantiles become her own 220 — no SQL is involved: `rosterPercentiles` is a
+    // quantiles become her own 220 — no SQL is involved: `cohortPercentiles` is a
     // TypeScript fold over rows this file already served, and interpolating between
     // one value and itself is that value. (It follows `percentile_cont`'s
     // CONVENTION, which is what its own docstring names; the statement behind this

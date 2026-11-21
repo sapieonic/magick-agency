@@ -99,6 +99,7 @@ const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
 );
 const ReportsPage = lazy(() => import('./pages/agency/ReportsPage'));
+const CompareAgentsPage = lazy(() => import('./pages/agency/CompareAgentsPage'));
 const ReportRunPage = lazy(() => import('./pages/agency/ReportRunPage'));
 const AgentReportsPage = lazy(() =>
   import('./pages/agency/ReportsPage').then((m) => ({ default: m.AgentReportsPage })),
@@ -691,6 +692,15 @@ export default function App() {
                   <Route
                     path="reports/:runId"
                     element={<RequireFlag flag="agency_reports_enabled"><ReportRunPage /></RequireFlag>}
+                  />
+                  {/*
+                    Compare agents (`docs/compare-agents.md`): Reports' tab for supervisors, behind
+                    `agency_compare_enabled` on top of the subtree's gates. The page checks
+                    `agency.supervise` (CP3), the floor of every compare route.
+                  */}
+                  <Route
+                    path="compare"
+                    element={<RequireFlag flag="agency_compare_enabled"><CompareAgentsPage /></RequireFlag>}
                   />
                   {/*
                     The soft phone's supervisor surfaces (`docs/softphone.md` §7):

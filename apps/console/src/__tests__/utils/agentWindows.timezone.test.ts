@@ -72,8 +72,8 @@ describe('windowRange — the completed windows tile with the to-date ones', () 
 describe('windowRangeReadout — the dates and the zone they were cut in', () => {
   it('prints the reader’s calendar dates and names the reader’s zone', () => {
     const NOW = new Date('2026-08-19T20:00:00.000Z');
-    // Tokyo rather than Kolkata: ICU names the reader's zone by its canonical
-    // ID, which for Kolkata is still the legacy `Asia/Calcutta`.
+    // Tokyo rather than Kolkata: ICU names Kolkata by its legacy canonical ID
+    // `Asia/Calcutta`, which `readerZone` maps back (readerZone.timezone.test.ts).
     const text = inZone('Asia/Tokyo', () => {
       const range = windowRange('last_week', NOW);
       return windowRangeReadout(range.from, range.to);

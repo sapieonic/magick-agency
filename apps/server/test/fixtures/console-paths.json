@@ -2927,6 +2927,48 @@
       "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): \"Run again\": a new run with the same parameters (202)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/compare/query",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): the comparison of up to 3 agents against the campaign's other agents"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/compare/options",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): the cohort, the outcome codes, the starting lens and the default view"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/compare/views",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): the caller's saved views and the account's shared ones"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/compare/views",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): save a view"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/compare/views/:id",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): edit an own view"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/compare/views/:id",
+      "source": "apps/console/src/api/compare.ts",
+      "status": "served",
+      "reason": "compare route, served by the public API layer at the console path (contracts api/agency/compare.ts, docs/compare-agents.md §8): delete an own view"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/report-subscriptions",
       "source": "apps/console/src/api/reports.ts",

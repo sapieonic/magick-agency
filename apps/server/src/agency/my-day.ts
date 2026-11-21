@@ -5,7 +5,6 @@
  * the route `api/routes/proxy-agency-my-day.routes.ts`.
  */
 import {
-  AGENCY_DEFAULT_DISPOSITION_CATALOG,
   type AgencyContextDisplay,
   type AgencyDisposition,
 } from '@magick-agency/contracts/agency';
@@ -23,6 +22,7 @@ import type {
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { isUuid } from '../utils/uuid.js';
 import { localDayEnd, localDayStart } from './calling-hours.js';
+import { effectiveCatalog } from './disposition-policy.js';
 import { matchName, INBOUND_MATCH_NAME_MAX } from './inbound/match-name.js';
 import { ownerModeOf } from './pacing/agent-queue.js';
 
@@ -60,11 +60,6 @@ export function myDayWindow(timezone: string, now: Date): MyDayWindow {
   const end = localDayEnd(timezone, now);
   if (start && end) return { timezone, start, end };
   return { timezone: 'UTC', start: localDayStart('UTC', now)!, end: localDayEnd('UTC', now)! };
-}
-
-/** The catalog a campaign's outcomes are drawn from: its own, or the default when it stores none. */
-function effectiveCatalog(catalog: readonly AgencyDisposition[] | null | undefined): readonly AgencyDisposition[] {
-  return Array.isArray(catalog) && catalog.length > 0 ? catalog : AGENCY_DEFAULT_DISPOSITION_CATALOG;
 }
 
 /**

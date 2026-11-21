@@ -1020,3 +1020,14 @@ rest are defaults decided while building it:
 | AR5 | Who archived it is the session's user, resolved to a display name by the public route as the lifecycle controls are, and shown "Archived on 20 Nov 2026 by Ravi Kumar"; never a caller-supplied id, and an id that is not a UUID is stored as unattributed. Each archive and restore writes a platform audit row (`agency_campaign.archived`, `agency_campaign.restored`) on success only, shown on the campaign's History; the console sends the PostHog event `agency_campaign_archive_action`. "Restore" in the console and the audit is `unarchive` in the routes and the wire | **Default, pending Manas** |
 | AR6 | Permission: `agency.campaigns.write` for both, the PATCH's (archiving tidies the account's list and dials or stops nothing, so not `agency.supervise`); the screen reads with `agency.campaigns.read`. Gated on the dialer flag like the PATCH | **Default, pending Manas** |
 | AR7 | What an archived campaign may still do. The server refuses only Start (AR2): its settings can be edited, contacts uploaded, agents staffed and a retry campaign created from it (the retry is a new campaign on the Campaigns page). The console offers none of the new work on it (no Add contacts, Retry contacts or Start) until it is restored, but keeps its settings and New campaign (on an ended one). Agents staffed on an archived draft still see it in the app and console as not started; it cannot start until restored. Home's "has any campaign" counts archived ones (an account whose campaigns are all archived is not new) | **Default, pending Manas** |
+
+## Compare agents (CP)
+
+The rulings CP1–CP18 (three agents at most, will-pay as promises made on every call type, no agent
+view yet, coaching now and appraisal later, logged-in time with breaks, no worker process to start
+with, no list filter, one campaign per comparison, one definition per number, neutral metrics never
+flagged, findings only past chance, no language model, analysis metrics with coverage, no free-form
+formulas, exports through the report pipeline, no Inbound lens yet, outcome metrics chosen by the
+supervisor as sets of outcome codes, direction from the supervisor) are in
+[`compare-agents.md`](compare-agents.md) §1. CP1–CP7, CP17 and CP18 decided by Manas on
+2026-11-21; CP8–CP16 stand as recommended.

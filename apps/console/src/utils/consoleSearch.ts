@@ -117,6 +117,7 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
   'inbound:summary': ['inbound summary', 'queue', 'incoming'],
   'reports:analytics': ['analytics', 'stats', 'performance', 'agents'],
+  'reports:compare': ['compare', 'compare agents', 'side by side', 'coaching', 'agent comparison', 'benchmark', 'what stands out', 'outcome set'],
   // "Reports" until the tab became Exports; the section is still Reports.
   'reports:reports': ['report', 'reports', 'export', 'exports', 'pdf', 'workbook', 'excel', 'download', 'subscription'],
   'dnc:dnc': ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'dialling', 'dialing'],

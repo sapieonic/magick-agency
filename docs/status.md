@@ -2488,6 +2488,28 @@ Not built: archiving a completed campaign (AR2: only what was asked for); the mo
 archived state (it lists no campaigns, and an agent's staffed archived draft reads as not started).
 Not verified: the screens have not been looked at in a browser.
 
+### Compare agents 2026-11-21 (CP1–CP18, [`compare-agents.md`](compare-agents.md))
+
+A tab of Reports (`/agency/compare`) where a supervisor puts up to three agents of one campaign side
+by side against the rest of the campaign's agents, on metrics chosen from a lens (Collections, Sales,
+Verification) and any set of the campaign's outcome codes, and is told what stands out. Phase 1 is
+built on the contracts, the domain, the database, the server and the console, behind the flag
+`agency_compare_enabled` (off by default; global, tenant, account), run end to end on a seeded
+database, reviewed by fresh-context reviewers and fixed; the test counts are in the PR.
+
+| Part | What |
+|---|---|
+| Wire | `api/agency/compare.ts` (the metric catalog, lenses, metric ids, the query, options, response and saved views), the compare codes in `errors.ts`, the flag |
+| Rules | `packages/domain/src/agent-compare/`: Wilson intervals, the roster's percentiles, metric resolution and values, lenses, findings |
+| Database | `0064_compare_views.sql` (saved views), `0065_session_events_offline_index.sql` (a session's offline boundaries, for the trend's days), `0066_session_events_break_overrun_index.sql` (the events that ended a break over its limit, for breaks over their limit) |
+| Server | `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options`, the saved views' routes; the read in the primary in one read-only snapshot under a 3 s budget, two reads per tenant and a sixth of the pool per process, a 30 s cache; metrics `agency_compare_read_seconds`, `agency_compare_reads_refused_total` |
+| Console | The tab: lenses, the metric picker, agent chips, Side by side, What stands out, the trend, Where their day went, The numbers, saved views, the state in the URL |
+
+Not built: phase 2 (the New joiner lens) and phase 4 (analysis questions as metrics, the
+`agent_compare` report kind and a weekly subscription to a saved view); phase 5 only if asked
+(`compare-agents.md` §9). Turning it on and what to watch: [`operations.md`](operations.md),
+"Compare agents".
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon

@@ -39,6 +39,7 @@ const FLAGS = [
   'agency_call_analysis',
   'agency_contact_assignment_enabled',
   'agency_live_listen_enabled',
+  'agency_compare_enabled',
 ] as const;
 const CAPABILITIES = ['agency', 'agency.analytics'] as const;
 const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
@@ -102,6 +103,8 @@ const ROUTES: RouteRule[] = [
   [/^\/agency\/inbound\/missed$/, (r) => dialer(r) && r.missed && can(r, 'agency.campaigns.read')],
   [/^\/agency\/inbound\/summary$/, (r) => dialer(r) && r.missed && can(r, 'agency.supervise')],
   [/^\/agency\/analytics$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
+  // `CompareAgentsPage` checks `agency.supervise` (CP3) under `RequireFlag agency_compare_enabled`.
+  [/^\/agency\/compare$/, (r) => dialer(r) && r.flags.has('agency_compare_enabled') && can(r, 'agency.supervise')],
   // `ReportsPage` sends a dedicated agent to `/dialer/reports`.
   [/^\/agency\/reports$/, (r) => dialer(r) && r.flags.has('agency_reports_enabled') && can(r, 'agency.campaigns.read') && !isDedicatedAgent(r.role)],
   [/^\/agency\/dnc$/, (r) => dialer(r) && can(r, 'agency.dnc.read')],
@@ -204,7 +207,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/softphone', '/agency/inbound/missed',
-      '/agency/inbound/summary', '/agency/analytics', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/manual-calls',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',

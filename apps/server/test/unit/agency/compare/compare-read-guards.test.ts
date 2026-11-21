@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+import type { AgencyCompareMetricInfo, CompareBuiltinMetricKey } from '@magick-agency/contracts/api/agency/compare';
+import { compareSnapshotKey, TenantReadLimiter, type CompareQueryRead } from '../../../../src/agency/compare/read.js';
+
+/**
+ * Compare agents' guards that need no database (docs/compare-agents.md §7): the per-tenant limit and
+ * the snapshot's cache key. The limit refusing, the timeout and the cache serving are held on real Postgres in
+ * `test/integration/api/compare-agents.test.ts`.
+ */
+
+describe('TenantReadLimiter', () => {
+  it('admits up to the limit per tenant, refuses past it, and never across tenants', () => {
+    const limiter = new TenantReadLimiter(2);
+    const r1 = limiter.tryAcquire('t1');
+    const r2 = limiter.tryAcquire('t1');
+    expect(r1).not.toBeNull();
+    expect(r2).not.toBeNull();
+    expect(limiter.tryAcquire('t1')).toBeNull();
+    expect(limiter.tryAcquire('t2')).not.toBeNull();
+    r1!();
+    expect(limiter.inFlight('t1')).toBe(1);
+    expect(limiter.tryAcquire('t1')).not.toBeNull();
+  });
+
+  it('a release is idempotent: a second call cannot free a slot someone else holds', () => {
+    const limiter = new TenantReadLimiter(1);
+    const release = limiter.tryAcquire('t')!;
+    release();
+    const other = limiter.tryAcquire('t');
+    expect(other).not.toBeNull();
+    release();
+    expect(limiter.inFlight('t')).toBe(1);
+    expect(limiter.tryAcquire('t')).toBeNull();
+  });
+
+  it('refuses a limit that is not a positive integer', () => {
+    expect(() => new TenantReadLimiter(0)).toThrow(RangeError);
+  });
+});
+
+describe('compareSnapshotKey', () => {
+  const builtin = (key: CompareBuiltinMetricKey) => ({ id: key, ref: { kind: 'builtin', key } }) as AgencyCompareMetricInfo;
+  const set = (codes: string[], label?: string) =>
+    ({ id: `outcomes:higher:${codes.join(',')}`, ref: { kind: 'outcomes', codes, better: 'higher' }, label: label ?? null }) as AgencyCompareMetricInfo;
+  const base: CompareQueryRead = {
+    tenantId: 't', accountId: 'acc', campaignId: 'c', from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata', databaseTimezone: 'Asia/Kolkata',
+    start: new Date(0), end: new Date(1), agentIds: ['a', 'b'], metrics: [builtin('success_rate'), set(['x'])], trend: null,
+  };
+  const key = (o: Partial<CompareQueryRead>) => compareSnapshotKey({ ...base, ...o });
+
+  it('keys by tenant, account (the caller\'s scope), campaign, window, zone, the sources read and the trend', () => {
+    const k = key({});
+    for (const o of [
+      { tenantId: 't2' }, { accountId: 'acc2' }, { campaignId: 'c2' }, { from: '2026-10-31' }, { to: '2026-11-03' },
+      { timezone: 'UTC' }, { metrics: [builtin('success_rate'), set(['x']), builtin('promises_rate')] },
+      { metrics: [builtin('success_rate')] }, { trend: set(['x']) },
+    ] satisfies Array<Partial<CompareQueryRead>>) {
+      expect(key(o), JSON.stringify(o)).not.toBe(k);
+    }
+  });
+
+  it('a pick\'s order, the metrics\' order, a label, or another metric of the same sources is the same snapshot', () => {
+    const k = key({});
+    for (const o of [
+      { agentIds: ['b', 'a'] }, { metrics: [set(['x']), builtin('success_rate')] }, { metrics: [builtin('success_rate'), set(['x'], 'Pays')] },
+      { metrics: [builtin('connect_rate'), set(['y', 'z'])] },
+    ] satisfies Array<Partial<CompareQueryRead>>) {
+      expect(key(o), JSON.stringify(o)).toBe(k);
+    }
+  });
+
+  it('the picks are in the key only when their occupancy is read for them alone (no calls per hour on screen)', () => {
+    expect(key({ agentIds: ['a', 'c'] })).not.toBe(key({}));
+    const perHour = [builtin('calls_per_hour'), builtin('success_rate')];
+    expect(key({ metrics: perHour, agentIds: ['a', 'c'] })).toBe(key({ metrics: perHour }));
+  });
+});
