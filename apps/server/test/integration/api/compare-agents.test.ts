@@ -248,6 +248,13 @@ function seedOtherCallTypes(): void {
   truth[0]!.promises += 2;
   truth[0]!.amount += 1200;
   truth[0]!.otherConversations += 2;
+  // Agent 1's day off on this campaign is a day on the other one: still a day off here.
+  const offDay = DAYS[2]!;
+  const elsewhere = randomUUID();
+  sessions.push({ id: elsewhere, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c1, agent_user_id: agent(1).id, kind: 'campaign', state: 'offline', joined_at: L(offDay, '09:00'), left_at: L(offDay, '17:00') });
+  for (const [from, to, at] of [[null, 'available', L(offDay, '09:00')], ['available', 'offline', L(offDay, '17:00')]] as const) {
+    events.push({ id: randomUUID(), session_id: elsewhere, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c1, agent_user_id: agent(1).id, from_state: from, to_state: to, at, break_reason: null, break_limit_minutes: null, break_overrun_seconds: null });
+  }
 }
 
 // ── Requests ─────────────────────────────────────────────────────────────────

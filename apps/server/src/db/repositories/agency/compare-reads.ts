@@ -29,15 +29,14 @@
  *    `agentCallbackTiming` scoped to the campaign);
  *  - breaks over their limit: 0060's `break_overrun_seconds` on the events of the campaign's
  *    sessions in the window (the agent review's `agentBreakOverruns` scoped to the campaign);
- *  - the trend's days: each agent's local days with logged-in time on the campaign, from the
- *    occupancy intervals (`occupancyIntervalsCtes`, the roster variant with the campaign filter, the
- *    same clips as the roster's `shift_seconds`).
+ *  - the trend's days: each agent's local days with logged-in time on the campaign, from their
+ *    campaign sessions' lives clipped as the roster's occupancy intervals clip the shift
+ *    (`COMPARE_LOGGED_IN_DAYS_SQL` says why the sessions suffice).
  */
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import type { InsightsCallbackClass } from './insights-range-reads.js';
 import { CALLBACK_BOOKING_COLUMNS_SQL, callbackClassSql } from './insights-range-reads.js';
 import { SOFTPHONE_CONNECTED_SQL } from './softphone-campaign-sql.js';
-import { occupancyIntervalsCtes } from './sql-fragments.js';
 import type { RosterQueryable } from './agent-roster-stats.js';
 
 /** One campaign's cohort over `[from, to)`. */
@@ -242,20 +241,35 @@ export const COMPARE_BREAK_OVERRUNS_SQL = `
    GROUP BY e.agent_user_id`;
 
 /**
- * Each cohort agent's local days (in `$7`) with logged-in time on the campaign: the roster's
- * occupancy intervals (the same five binds, `$6` the campaign filter), every non-offline interval
- * spread over the local dates it touches. An interval `[started, ended)` touches the dates from
- * its start's to the date of the instant just before its end.
+ * Each cohort agent's local days (in `$7`) with logged-in time on the campaign: the days their
+ * campaign sessions' lives touch, each life `[joined_at, left_at)` clipped to the window and to
+ * now (a live session runs to now), as the occupancy intervals clip the shift. A session's life IS
+ * its logged-in time: an agent is offline only once the session has ended (`leave` writes the
+ * closing `offline` event at `left_at`), so the event log is needed to split the time by state,
+ * never to say which days had any. A life `[from, to)` touches the dates from its start's to the
+ * date of the instant just before its end. On the campaign's sessions by agent
+ * (`idx_agency_agent_sessions_agent`); the roster's occupancy statement walks every state event of
+ * the window instead, about 1,000 times the rows on a busy month (docs/compare-agents.md §7).
  */
-export const COMPARE_LOGGED_IN_DAYS_SQL = `${occupancyIntervalsCtes('roster', `
-            AND s.campaign_id = $6::uuid`)}       SELECT DISTINCT i.agent_user_id, to_char(d, 'YYYY-MM-DD') AS date
-         FROM intervals i
-         CROSS JOIN LATERAL generate_series(
-                date_trunc('day', i.started AT TIME ZONE $7::text),
-                date_trunc('day', (i.ended - interval '1 microsecond') AT TIME ZONE $7::text),
-                interval '1 day') d
-        WHERE i.ended > i.started
-          AND i.state <> 'offline'`;
+export const COMPARE_LOGGED_IN_DAYS_SQL = `
+  WITH lives AS (
+    SELECT s.agent_user_id,
+           GREATEST(s.joined_at, $4::timestamptz) AS started,
+           LEAST(COALESCE(s.left_at, 'infinity'::timestamptz), $5::timestamptz, now()) AS ended
+      FROM agency_agent_sessions s
+     WHERE s.agent_user_id = ANY($6::uuid[])
+       AND s.campaign_id = $1::uuid
+       AND s.tenant_id = $2::uuid AND s.account_id = $3::uuid
+       AND s.joined_at < $5::timestamptz
+       AND (s.left_at IS NULL OR s.left_at > $4::timestamptz)
+  )
+  SELECT DISTINCT l.agent_user_id, to_char(d, 'YYYY-MM-DD') AS date
+    FROM lives l
+    CROSS JOIN LATERAL generate_series(
+           date_trunc('day', l.started AT TIME ZONE $7::text),
+           date_trunc('day', (l.ended - interval '1 microsecond') AT TIME ZONE $7::text),
+           interval '1 day') d
+   WHERE l.ended > l.started`;
 
 const scopeValues = (q: CompareCohortScope): unknown[] =>
   [q.campaignId, q.tenantId, q.accountId, q.from, q.to, [...q.agentIds]];
@@ -333,11 +347,9 @@ export class AgencyCompareReadRepository {
   async loggedInDays(db: RosterQueryable, q: CompareCohortScope & { timezone: string }): Promise<Map<string, Set<string>>> {
     const out = new Map<string, Set<string>>();
     if (q.agentIds.length === 0) return out;
-    // The occupancy CTEs' five binds in their order ($1 the agents, $2/$3 the window, $4/$5 tenant
-    // and account), then the campaign filter and the zone.
     const { rows } = await db.query<{ agent_user_id: string; date: string }>(
       COMPARE_LOGGED_IN_DAYS_SQL,
-      [[...q.agentIds], q.from, q.to, q.tenantId, q.accountId, q.campaignId, q.timezone],
+      [...scopeValues(q), q.timezone],
     );
     for (const r of rows) {
       const days = out.get(r.agent_user_id) ?? new Set<string>();
