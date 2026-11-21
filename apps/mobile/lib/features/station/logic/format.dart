@@ -5,6 +5,9 @@
 /// text in a test, on a fresh install and after a locale change).
 library;
 
+// AS19's one phone rule, the domain's own (`fact-phone.ts`, R6, S3), as `agency_wire` ports it.
+export 'package:agency_wire/agency_wire.dart' show formatFactPhone, maskFactPhone;
+
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -110,36 +113,52 @@ String maskPhone(String e164) {
 /// `+91 98400 12345`.
 String stationPhone(String e164, {required bool masked}) => masked ? maskPhone(e164) : formatPhone(e164);
 
+/// [whole] (digits only) with Indian grouping: `1,25,000`.
+String _groupIndian(String whole) {
+  if (whole.length <= 3) return whole;
+  final last3 = whole.substring(whole.length - 3);
+  var rest = whole.substring(0, whole.length - 3);
+  final parts = <String>[];
+  while (rest.length > 2) {
+    parts.insert(0, rest.substring(rest.length - 2));
+    rest = rest.substring(0, rest.length - 2);
+  }
+  if (rest.isNotEmpty) parts.insert(0, rest);
+  return '${parts.join(',')},$last3';
+}
+
+final _leadingZeros = RegExp(r'^0+(?=\d)');
+
 /// `₹12,500`, `₹1,25,000.50`: a money fact's parsed value (a decimal string) with the rupee sign
 /// and Indian grouping, no decimals unless they are not zero (design-spec §6.6); [decimal] as it
 /// is when it is not a plain number.
 String formatRupees(String decimal) {
   final m = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(decimal.trim());
   if (m == null) return decimal;
-  final whole = m.group(1)!.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+  final grouped = _groupIndian(m.group(1)!.replaceFirst(_leadingZeros, ''));
   final frac = (m.group(2) ?? '').padRight(2, '0');
-  String grouped;
-  if (whole.length <= 3) {
-    grouped = whole;
-  } else {
-    final last3 = whole.substring(whole.length - 3);
-    var rest = whole.substring(0, whole.length - 3);
-    final parts = <String>[];
-    while (rest.length > 2) {
-      parts.insert(0, rest.substring(rest.length - 2));
-      rest = rest.substring(0, rest.length - 2);
-    }
-    if (rest.isNotEmpty) parts.insert(0, rest);
-    grouped = '${parts.join(',')},$last3';
-  }
   return frac == '00' ? '₹$grouped' : '₹$grouped.$frac';
 }
 
-/// `20 Nov` from a date fact's parsed `YYYY-MM-DD`; [ymd] as it is otherwise.
-String formatFactDate(String ymd) {
+/// `1,25,000`, `12.5`: a number fact's parsed value (a decimal string, AS19) with Indian grouping,
+/// its decimals as written unless they are all zero; [decimal] as it is when it is not a plain
+/// number.
+String formatIndianNumber(String decimal) {
+  final m = RegExp(r'^(\d+)(?:\.(\d+))?$').firstMatch(decimal.trim());
+  if (m == null) return decimal;
+  final grouped = _groupIndian(m.group(1)!.replaceFirst(_leadingZeros, ''));
+  final frac = m.group(2);
+  return frac == null || RegExp(r'^0+$').hasMatch(frac) ? grouped : '$grouped.$frac';
+}
+
+/// `20 Nov` from a date fact's parsed `YYYY-MM-DD`, and `20 Nov 2027` when [now] is given and the
+/// date is not in [now]'s year (AS19); [ymd] as it is otherwise.
+String formatFactDate(String ymd, {DateTime? now}) {
   final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(ymd);
   if (m == null) return ymd;
   final month = int.parse(m.group(2)!);
   if (month < 1 || month > 12) return ymd;
-  return '${int.parse(m.group(3)!)} ${_months[month - 1]}';
+  final year = int.parse(m.group(1)!);
+  final day = '${int.parse(m.group(3)!)} ${_months[month - 1]}';
+  return now == null || now.toLocal().year == year ? day : '$day $year';
 }

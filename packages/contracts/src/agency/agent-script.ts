@@ -7,12 +7,24 @@
  * state; the server never hears of it.
  *
  * ── Placeholders ────────────────────────────────────────────────────────────
- * The text may name {@link AGENCY_SCRIPT_PLACEHOLDERS} in braces (`{name}`, `{amount_due}`, …). The
- * client fills them from the panel's typed facts (`AgencyReservedAttempt.facts`, BE-6) and the
- * session (`{agent_name}`: the agent's own name; `{campaign_name}`: the bootstrap's) with its own
- * formatting (`₹12,500`, `20 Nov`). A placeholder with no value for this customer is replaced by
- * nothing and the step still shows. The campaign-config write refuses an unknown placeholder (any
- * `{word}` not in the list), a step or opening out of bounds, and more than
+ * The text may name the campaign's placeholders in braces (`{name}`, `{amount_due}`, …). Which ones
+ * depends on the campaign's `context_display` (AS19, `./customer-facts.ts`):
+ *  - **with `facts`**: {@link AGENCY_SCRIPT_FIXED_PLACEHOLDERS} plus every fact's `key`. The client
+ *    fills a fact key from the panel's tile carrying that `key` (`AgencyFactTile.key`). A `{name}`,
+ *    `{place}` or fact key whose value is empty for this customer is shown as "<label> not given"
+ *    in the muted style, not removed, and never read aloud (the label is the fact's name; "Name"
+ *    for `{name}`, "Place" for `{place}`);
+ *  - **without** (a campaign not saved since AS19): {@link AGENCY_SCRIPT_PLACEHOLDERS}, the legacy
+ *    six. The client fills them from the panel's typed facts (`AgencyReservedAttempt.facts`, BE-6:
+ *    the `amount_due` and `due_date` tiles by role). A placeholder with no value for this customer
+ *    is replaced by nothing and the step still shows, as before AS19.
+ * The fixed ones come from the panel and the session on both paths (`{agent_name}`: the agent's own
+ * name; `{campaign_name}`: the bootstrap's), each written with the client's own formatting
+ * (`₹12,500`, `20 Nov`). `{agent_name}` or `{campaign_name}` with no value is always replaced by
+ * nothing, never "not given" (`docs/agent-station.md`, AS19 R5). A client from before AS19 fills
+ * only the legacy six and shows any other `{key}` as written (AS19 S14). The campaign-config write refuses a `{word}` not in the campaign's set
+ * (checked against the campaign's resulting `context_display`, so a write that drops a fact the
+ * stored script uses is refused too), a step or opening out of bounds, and more than
  * {@link AGENCY_SCRIPT_STEPS_MAX} steps. Plain text in any language the supervisor types, never
  * markup.
  *
@@ -30,7 +42,10 @@ export const AGENCY_SCRIPT_STEP_MAX_CHARS = 200;
 /** The most characters (Unicode code points, after trimming) the opening line may hold; at least 1 when set. */
 export const AGENCY_SCRIPT_OPENING_MAX_CHARS = 300;
 
-/** The names a script's text may use in braces (`{name}`). */
+/**
+ * The names a script's text may use in braces (`{name}`) on a campaign without
+ * `context_display.facts` (the legacy set). With `facts`, see {@link AGENCY_SCRIPT_FIXED_PLACEHOLDERS}.
+ */
 export type AgencyScriptPlaceholder = 'name' | 'place' | 'amount_due' | 'due_date' | 'agent_name' | 'campaign_name';
 
 export const AGENCY_SCRIPT_PLACEHOLDERS = [
@@ -44,6 +59,22 @@ export const AGENCY_SCRIPT_PLACEHOLDERS = [
 
 const _allPlaceholdersListed: AllListed<AgencyScriptPlaceholder, typeof AGENCY_SCRIPT_PLACEHOLDERS> = true;
 void _allPlaceholdersListed;
+
+/**
+ * AS19: the placeholders every script may use whatever its facts, filled from the card's name and
+ * place and from the session. Reserved: no fact's `key` may be one of them.
+ */
+export type AgencyScriptFixedPlaceholder = 'name' | 'place' | 'agent_name' | 'campaign_name';
+
+export const AGENCY_SCRIPT_FIXED_PLACEHOLDERS = [
+  'name',
+  'place',
+  'agent_name',
+  'campaign_name',
+] as const satisfies readonly AgencyScriptFixedPlaceholder[];
+
+const _allFixedPlaceholdersListed: AllListed<AgencyScriptFixedPlaceholder, typeof AGENCY_SCRIPT_FIXED_PLACEHOLDERS> = true;
+void _allFixedPlaceholdersListed;
 
 /** One numbered step of {@link AgencyAgentScript}. */
 export interface AgencyAgentScriptStep {

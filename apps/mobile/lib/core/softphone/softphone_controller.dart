@@ -18,6 +18,7 @@ import '../station/server_clock.dart';
 import '../station/station_copy.dart' show agentStateLabel, catalogChangedCopy;
 import '../station/station_deps.dart' show notesStoreProvider, stationNowProvider;
 import '../station/station_view.dart';
+import '../station/station_view_mapper.dart' show StationViewMapper;
 import '../telemetry/call_telemetry.dart';
 import '../telemetry/log.dart';
 import '../telemetry/telemetry.dart';
@@ -2022,7 +2023,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final display = campaign?.contextDisplay;
     final context = contact.context ?? const <String, Object?>{};
     final resolved = resolveContextFields(context, display);
-    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: f.isEmpty ? '' : f.value);
+    // A phone-typed column follows the tagged campaign's own number setting (AS9, AS19 S3(b)),
+    // whatever campaign (if any) the session is on. The dialled number stays as typed.
+    final masked = campaign?.masksPhone ?? false;
+    ContactField field(ResolvedField f) => StationViewMapper.contactFieldOf(f, display, masked: masked);
     return SoftphoneContactView(
       displayName: contactName(call, display),
       heroFields: List.unmodifiable(resolved.hero.map(field)),
@@ -2036,6 +2040,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       ),
       claimed: contact.claimed,
       campaignName: call.tag?.campaignName,
+      facts: StationViewMapper.chosenFactsOf(context, display, now: _now()),
+      maskPhone: masked,
     );
   }
 

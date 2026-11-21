@@ -8,6 +8,7 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../../missed/missed_on_duty.dart';
 import '../logic/disposition_form.dart';
+import '../logic/facts.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
@@ -17,6 +18,7 @@ import '../widgets/slide_to_confirm.dart';
 import 'banners.dart';
 import 'call_band.dart';
 import 'contact_details.dart';
+import 'fact_grid.dart';
 import 'notes_field.dart';
 import 'on_call_view.dart' show ControlTile, QueuedBreakChip;
 import 'sheets.dart';
@@ -327,7 +329,10 @@ class _InboundDontCallAgain extends StatelessWidget {
 
 /// "Rahul Deshpande" over "+91 87654 32109 · Inbound call"; the number leads when no contact
 /// matched, and "Number withheld" when the caller hid it. Masked when the campaign masks numbers
-/// (AS9).
+/// (AS9). When the matched campaign chose its card's facts (AS19 R9, S4) a nameless caller is
+/// "Customer", and the line under it is the console's compact line: the number, then the first
+/// fact with a value ("Amount due: ₹12,500", [firstFactLine]), with no "Inbound call"; then the
+/// place (its role only) on one line, cut with "…".
 class InboundHeadline extends ConsumerWidget {
   const InboundHeadline({super.key, required this.call});
 
@@ -337,10 +342,21 @@ class InboundHeadline extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
+    final now = ref.watch(stationClockProvider)();
     final name = call.displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
+    final chosen = call.factsChosen;
+    final heading = hasName ? name : (chosen ? StationCopy.customer : null);
     final from = call.fromE164;
     final number = from == null ? InboundCopy.numberWithheld : stationPhone(from, masked: masked);
+    final place = chosen ? call.facts!.place?.trim() : null;
+    // S4: "Customer" says nothing on its own, so the line is the number, then the first fact.
+    final firstFact = chosen && !hasName ? firstFactLine(call.facts!, masked: masked, now: now) : null;
+    final line = switch ((heading, chosen && !hasName)) {
+      (null, _) => InboundCopy.inboundCall,
+      (_, true) => firstFact == null ? number : '$number · $firstFact',
+      _ => '$number · ${InboundCopy.inboundCall}',
+    };
     return MergeSemantics(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,19 +364,28 @@ class InboundHeadline extends ConsumerWidget {
           Semantics(
             header: true,
             child: Text(
-              hasName ? name : number,
+              heading ?? number,
               key: const Key('inbound-caller'),
-              style: hasName || from == null
+              style: heading != null || from == null
                   ? text.headlineLarge
                   : monoStyle(context, size: 26, weight: FontWeight.w500, color: context.tokens.textPrimary),
             ),
           ),
           const SizedBox(height: Space.xs),
           Text(
-            hasName ? '$number · ${InboundCopy.inboundCall}' : InboundCopy.inboundCall,
+            line,
             key: const Key('inbound-caller-line'),
             style: monoStyle(context, size: 14),
           ),
+          if (place != null && place.isNotEmpty)
+            Text(
+              place,
+              key: const Key('inbound-caller-place'),
+              style: text.bodyMedium!.copyWith(color: context.tokens.textSecondary),
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+            ),
         ],
       ),
     );
@@ -453,7 +478,10 @@ class InboundFacts extends StatelessWidget {
   }
 }
 
-/// The matched contact, read as the campaign pop reads its contact; or why there is none.
+/// The matched contact, read as the campaign pop reads its contact; or why there is none. When the
+/// matched campaign chose its card's facts (AS19 S3), the chosen card's grid ([FactGrid]: the
+/// supervisor's names, values by type, a phone fact hidden by the station's number setting), as the
+/// campaign call's card and the console's inbound card; else the hero fields.
 class InboundMatch extends StatelessWidget {
   const InboundMatch({super.key, required this.call, this.priorLimit});
 
@@ -473,7 +501,10 @@ class InboundMatch extends StatelessWidget {
       key: const Key('inbound-match'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
+        if (call.factsChosen)
+          FactGrid(tiles: cardFactTiles(call.facts!))
+        else
+          HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
         if (call.priorAttempts.isNotEmpty) ...[
           const SizedBox(height: Space.lg),
           PriorAttemptsCard(attempts: call.priorAttempts, limit: priorLimit),
@@ -487,16 +518,27 @@ class InboundMatch extends StatelessWidget {
   }
 }
 
-/// Inbound, "Your customer", the recording and DNC, mid-call.
-class InboundSummary extends StatelessWidget {
+/// Inbound, "Your customer", the recording and DNC, mid-call, and the first two facts: the chosen
+/// card's (AS19, by type, a phone fact hidden by the number setting), else the hero fields (a
+/// phone-typed one already hidden).
+class InboundSummary extends ConsumerWidget {
   const InboundSummary({super.key, required this.call});
 
   final InboundCallView call;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
-    final facts = call.heroFields.where((f) => f.value.trim().isNotEmpty).take(2);
+    final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
+    final now = ref.watch(stationClockProvider)();
+    final facts = call.factsChosen
+        ? [
+            for (final f in cardFactTiles(call.facts!).where((f) => !factIsEmpty(f)).take(2))
+              (label: f.label, value: factText(f, masked: masked, now: now)),
+          ]
+        : [
+            for (final f in call.heroFields.where((f) => f.value.trim().isNotEmpty).take(2)) (label: f.label, value: f.value),
+          ];
     return Wrap(
       key: const Key('inbound-summary'),
       spacing: Space.sm,
@@ -710,10 +752,11 @@ Future<void> markInboundDnc(BuildContext context) async {
 }
 
 /// Everything about the caller: the contact's every field and history, and the call's facts.
-/// About this call only: it closes when the call leaves the station.
+/// About this call only ([wholeCall]): it stays open as the caller connects and the call ends, and
+/// closes when the call leaves the station.
 Future<void> showInboundDetailsSheet(BuildContext context, InboundCallView call) {
   final view = ProviderScope.containerOf(context, listen: false).read(stationViewProvider);
-  final scope = sameCall(call.callId, {if (view != null) view.phase});
+  final scope = wholeCall(call.callId);
   return showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,

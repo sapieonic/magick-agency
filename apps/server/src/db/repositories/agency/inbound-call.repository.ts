@@ -51,6 +51,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import {
   AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+  type AgencyContextDisplay,
   type AgencyInboundDispositionSource,
 } from '@magick-agency/contracts/agency';
 import { AGENCY_INBOUND_MISSED_COUNT_CAP } from '@magick-agency/contracts/api/agency/inbound';
@@ -293,11 +294,12 @@ export interface AgencyInboundMissedRow extends AgencyInboundCallRecord {
   /** Why the answer treated the caller as closed (0030); NULL when the route was open for them. */
   closed_cause: AgencyInboundClosedCause | null;
   /**
-   * IQ54: the matched contact's name columns (`context`'s `name`, `full_name`, `customer_name`,
-   * `first_name`), for `match_name` (`agency/inbound/match-name.ts`); every value null when the call
-   * matched no contact or the contact is gone.
+   * IQ54: the matched contact's name columns (`contactNameContextSql`), for `match_name`
+   * (`agency/inbound/match-name.ts`); null when the call matched no contact or the contact is gone.
    */
   match_context: Record<string, unknown> | null;
+  /** The matched campaign's `context_display`, for the name's role (AS19 S1); null without one. */
+  match_display: AgencyContextDisplay | null;
 }
 
 /** Whose Missed rows a read covers: one person's, the unassigned ones (IQ49's Team view), or (absent) everyone's. */
@@ -334,14 +336,15 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
 
 /**
  * A row's Missed-list joins: the route's name, the matched campaign's, and (IQ54) the matched
- * contact's name columns, by primary key. All LEFT, no FK.
+ * contact's name columns, by primary key. All LEFT, no FK. The campaign's alias `cam` is read by
+ * `contactNameContextSql` too.
  */
 const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_inbound_routes r ON r.id = c.route_id
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id
         LEFT JOIN agency_contacts mc ON mc.id = c.matched_contact_id AND mc.tenant_id = c.tenant_id`;
 const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name,
-  ${contactNameContextSql('mc')} AS match_context`;
+  ${contactNameContextSql('mc', 'cam')} AS match_context, cam.context_display AS match_display`;
 
 export class AgencyInboundCallRepository {
   /**

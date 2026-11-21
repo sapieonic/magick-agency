@@ -447,8 +447,8 @@ const VOCABULARIES = {
   ],
   // The agent station redesign (docs/agent-station.md): the tile icons an outcome or break may carry
   // (BE-13; the app reads an unknown one as none), how the number is shown (AS9), where a booked
-  // call-later came from (BE-4), the typed facts' roles and types (BE-6), the script's placeholders
-  // the app fills (BE-8), and My day's target metric and where a call-later left today goes (BE-1, BE-3).
+  // call-later came from (BE-4), the typed facts' roles and types (BE-6, AS19), the script's placeholders
+  // the app fills (BE-8, AS19), and My day's target metric and where a call-later left today goes (BE-1, BE-3).
   tile_icons: ['agency/tile-icons.ts#AGENCY_TILE_ICONS', () => constList('agency/tile-icons.ts', 'AGENCY_TILE_ICONS')],
   phone_displays: ['agency/session.ts#AGENCY_PHONE_DISPLAYS', () => constList('agency/session.ts', 'AGENCY_PHONE_DISPLAYS')],
   attempt_callback_sources: [
@@ -464,6 +464,11 @@ const VOCABULARIES = {
   script_placeholders: [
     'agency/agent-script.ts#AGENCY_SCRIPT_PLACEHOLDERS',
     () => constList('agency/agent-script.ts', 'AGENCY_SCRIPT_PLACEHOLDERS'),
+  ],
+  // AS19: the placeholders every script may use whatever its facts (the rest are the facts' keys).
+  script_fixed_placeholders: [
+    'agency/agent-script.ts#AGENCY_SCRIPT_FIXED_PLACEHOLDERS',
+    () => constList('agency/agent-script.ts', 'AGENCY_SCRIPT_FIXED_PLACEHOLDERS'),
   ],
   my_day_target_metrics: [
     'api/agency/my-day.ts#AGENCY_MY_DAY_TARGET_METRICS',

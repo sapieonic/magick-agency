@@ -1,34 +1,79 @@
+import { scriptPieces, scriptPlaceholdersFor } from '@magick-agency/domain/fact-fields';
 import { AGENCY_SCRIPT_PLACEHOLDERS } from '../../types/agency';
-import type { AgencyAgentScript, AgencyReservedAttempt, AgencyScriptPlaceholder } from '../../types/agency';
-import { factText, factTilesInOrder } from './stationCustomer';
+import type { AgencyAgentScript, AgencyContextDisplay, AgencyReservedAttempt } from '../../types/agency';
+import { factDisplay, factsChosen, factText, factTilesInOrder, tileName } from './stationCustomer';
 
 /**
  * The campaign's script on the call screens (BE-8; AS2: no AI): "First, say this" on Call coming
  * (03) and "What to say" on On call (04), each line filled for the customer on screen.
  *
- * ── The fill rule (the contract's, as the app's `fillScriptPlaceholders`) ────
- * `{word}` with a lower-case name: a known placeholder is replaced by its value, or by nothing when
- * this customer has none (the line still shows); a `{word}` the contract does not list is left as
- * written. Values are written as the card writes them: the amount due as `₹12,500` and the due date
- * as `20 Nov` when the server read them, else exactly as uploaded; the agent's first name; the
- * work's name.
+ * ── The fill rule (the contract's, `agent-script.ts`) ────────────────────────
+ * A script is read by the domain's one reading of braces (`scriptPieces`, the server's own): a
+ * `{key}` the campaign allows is replaced by its value; any other `{word}` is left as written.
+ *  - **With chosen facts** (AS19, `context_display.facts`): the allowed keys are `{name}`,
+ *    `{place}`, `{agent_name}`, `{campaign_name}` and each fact's key (digits allowed: `{emi_2}`).
+ *    A fact key is filled from the panel's tile carrying that `key` (an `amount_due` / `due_date`
+ *    tile from an older server, by its role), written as the card writes it (`₹1,25,000`, `20 Nov`,
+ *    a masked phone stays masked). `{name}`, `{place}` or a fact key with no value for this
+ *    customer shows "<label> not given" in the muted style (`{ kind: 'missing' }`), and Read aloud
+ *    skips it; `{agent_name}` / `{campaign_name}` with no value are left out.
+ *  - **Without** (a campaign not saved since AS19): the legacy six, `{amount_due}` and
+ *    `{due_date}` from the role tiles; a key with no value is left out (the line still shows), as
+ *    before.
+ * The agent's first name; the work's name.
  */
 
-const PLACEHOLDER = /\{([a-z_]+)\}/g;
-const KNOWN = new Set<string>(AGENCY_SCRIPT_PLACEHOLDERS);
+/** A run of a filled line: text to say, or a key this customer has no value for. */
+export type FilledPiece = { kind: 'text'; text: string } | { kind: 'missing'; text: string };
 
-export type ScriptValues = Record<AgencyScriptPlaceholder, string | null>;
-
-/** `text` with its known placeholders filled from `valueOf` (nothing for a null), unknown ones kept. */
-export function fillScriptPlaceholders(text: string, valueOf: (placeholder: AgencyScriptPlaceholder) => string | null): string {
-  return text.replace(PLACEHOLDER, (whole, name: string) =>
-    KNOWN.has(name) ? (valueOf(name as AgencyScriptPlaceholder) ?? '') : whole,
-  );
+/** One filled line of the script. */
+export interface FilledLine {
+  pieces: FilledPiece[];
+  /** The line as it reads on screen, "not given" included. */
+  shown: string;
+  /** The line as Read aloud says it: the "not given" runs skipped. */
+  spoken: string;
 }
 
-/** A line filled with {@link ScriptValues}. */
-export function fillScript(text: string, values: ScriptValues): string {
-  return fillScriptPlaceholders(text, (p) => values[p]);
+/** What a script's keys say for the customer on screen. */
+export interface ScriptFill {
+  /** The keys the campaign's script may use. */
+  allowed: readonly string[];
+  /** A key's value, or null when this customer has none. */
+  valueOf: (key: string) => string | null;
+  /** A key's name for "<label> not given"; null on the legacy path (a missing value is left out). */
+  labelOf: (key: string) => string | null;
+}
+
+/** A line filled with a {@link ScriptFill}. */
+export function fillScriptLine(text: string, fill: ScriptFill): FilledLine {
+  const pieces: FilledPiece[] = [];
+  const push = (piece: FilledPiece) => {
+    const prev = pieces[pieces.length - 1];
+    if (piece.kind === 'text' && prev?.kind === 'text') prev.text += piece.text;
+    else if (piece.text !== '') pieces.push(piece);
+  };
+  for (const piece of scriptPieces(text, fill.allowed)) {
+    if (piece.kind === 'text') push({ kind: 'text', text: piece.text });
+    else if (piece.kind === 'unknown') push({ kind: 'text', text: piece.token });
+    else {
+      const value = fill.valueOf(piece.key);
+      if (value !== null && value.trim() !== '') push({ kind: 'text', text: value });
+      else {
+        const label = fill.labelOf(piece.key);
+        if (label !== null) push({ kind: 'missing', text: `${label} not given` });
+      }
+    }
+  }
+  const shown = pieces.map((p) => p.text).join('');
+  const spoken = pieces
+    .filter((p) => p.kind === 'text')
+    .map((p) => p.text)
+    .join('')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { pieces, shown, spoken };
 }
 
 /** The agent's first name, for `{agent_name}`. */
@@ -37,25 +82,71 @@ export function firstName(name: string | null | undefined): string | null {
   return first ? first : null;
 }
 
-/** What the placeholders say for the customer on screen. */
-export function scriptValuesFor(
-  attempt: AgencyReservedAttempt,
+/**
+ * How the customer's fixed keys are named in "<label> not given" (the contract's: "Name",
+ * "Place"). `{agent_name}` and `{campaign_name}` are not here: with no value they are left out,
+ * always, as on the legacy path and in the agent app.
+ */
+const FIXED_LABELS: Readonly<Record<string, string>> = {
+  name: 'Name',
+  place: 'Place',
+};
+
+/** The fixed keys that are never "not given": a missing value is left out. */
+const LEFT_OUT_WHEN_EMPTY: ReadonlySet<string> = new Set(['agent_name', 'campaign_name']);
+
+/** What the script's keys say for the customer on screen. */
+export function scriptFillFor(
+  attempt: Pick<AgencyReservedAttempt, 'facts'>,
   card: { name: string | null; place: string | null },
   session: { agentName: string | null | undefined; campaignName: string | null | undefined },
-): ScriptValues {
-  const tiles = attempt.facts ? factTilesInOrder(attempt.facts) : [];
-  const role = (r: 'amount_due' | 'due_date') => {
-    const tile = tiles.find((t) => t.role === r);
-    return tile ? factText(tile) : null;
-  };
-  const campaign = session.campaignName?.trim();
-  return {
+  display: AgencyContextDisplay | undefined,
+  options: { phoneDisplay?: 'full' | 'masked'; now?: Date | number } = {},
+): ScriptFill {
+  const campaign = session.campaignName?.trim() || null;
+  const fixed: Record<string, string | null> = {
     name: card.name,
     place: card.place,
-    amount_due: role('amount_due'),
-    due_date: role('due_date'),
     agent_name: firstName(session.agentName),
-    campaign_name: campaign ? campaign : null,
+    campaign_name: campaign,
+  };
+  const tiles = attempt.facts?.tiles ?? [];
+
+  if (!factsChosen(display)) {
+    const ordered = attempt.facts ? factTilesInOrder(attempt.facts) : [];
+    const role = (r: 'amount_due' | 'due_date') => {
+      const tile = ordered.find((t) => t.role === r);
+      return tile ? factText(tile) : null;
+    };
+    const values: Record<string, string | null> = { ...fixed, amount_due: role('amount_due'), due_date: role('due_date') };
+    return { allowed: AGENCY_SCRIPT_PLACEHOLDERS, valueOf: (key) => values[key] ?? null, labelOf: () => null };
+  }
+
+  const allowed = scriptPlaceholdersFor(display ?? { facts: [] });
+  // A key a panel tile carries that the session's list does not name (the campaign changed its
+  // facts after the agent started work, and the server built the panel from the new list) still
+  // fills from that tile.
+  for (const tile of tiles) if (tile.key && !allowed.includes(tile.key)) allowed.push(tile.key);
+  const tileFor = (key: string) =>
+    tiles.find((t) => t.key === key)
+    ?? (key === 'amount_due' || key === 'due_date' ? tiles.find((t) => t.key === undefined && t.role === key) : undefined);
+  return {
+    allowed,
+    valueOf: (key) => {
+      if (Object.hasOwn(fixed, key)) return fixed[key]!;
+      const tile = tileFor(key);
+      if (!tile) return null;
+      const shown = factDisplay(tile, options);
+      return shown.empty ? null : shown.text;
+    },
+    labelOf: (key) => {
+      if (LEFT_OUT_WHEN_EMPTY.has(key)) return null;
+      if (Object.hasOwn(FIXED_LABELS, key)) return FIXED_LABELS[key]!;
+      const fact = display?.facts?.find((f) => f?.key === key);
+      if (fact?.label?.trim()) return fact.label.trim();
+      const tile = tileFor(key);
+      return tile ? tileName(tile) : key;
+    },
   };
 }
 

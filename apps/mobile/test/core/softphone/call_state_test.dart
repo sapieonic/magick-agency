@@ -172,6 +172,20 @@ void main() {
       expect(contactName(call, ContextDisplay(hero: const ['Loan account', 'Name'])), 'Rahul Verma');
       expect(contactName(manualCall(), null), isNull);
     });
+
+    test('a legacy campaign\'s contact the rule cannot name: the legacy card\'s guess; a chosen campaign\'s: none', () {
+      final call = manualCall({
+        'contact': {
+          'contact_id': 'c-1',
+          'state': 'in_flight',
+          'claimed': true,
+          'context': {'Loan account': 'HL-20931', 'Borrower Name': 'Sunita Patil'},
+        },
+      });
+      expect(contactName(call, ContextDisplay(hero: const ['Loan account'])), 'Sunita Patil');
+      expect(contactName(call, null), 'Sunita Patil');
+      expect(contactName(call, ContextDisplay(facts: const [])), isNull);
+    });
   });
 
   group('callEndSummary', () {

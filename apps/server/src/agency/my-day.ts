@@ -22,8 +22,8 @@ import type {
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { isUuid } from '../utils/uuid.js';
 import { localDayEnd, localDayStart } from './calling-hours.js';
+import { customerNameFrom } from '@magick-agency/domain/customer-name';
 import { effectiveCatalog } from './disposition-policy.js';
-import { matchName, INBOUND_MATCH_NAME_MAX } from './inbound/match-name.js';
 import { ownerModeOf } from './pacing/agent-queue.js';
 
 /**
@@ -97,28 +97,18 @@ export function callLaterRouting(
 }
 
 /**
- * The customer's name on a call-later row: the column the campaign names as the `name` role
- * (`context_display.roles.name`, BE-6) when it holds text, else the floor's guess (`matchName`).
- * Never the number, and never a column the campaign hides from agents (`context_display.hidden`,
- * matched ignoring case as the station's facts match it): a hidden column is neither the role's
- * nor the guess's. Trimmed, at most {@link INBOUND_MATCH_NAME_MAX} characters.
+ * The customer's name on a call-later row: the domain's one reading, as the station's card names
+ * them (`customerNameFrom`, AS19 S1): the column the campaign names as the `name` role
+ * (`context_display.roles.name`, BE-6), matched ignoring case, its value or none when blank (no
+ * guess then, AS19 S16); else the guess from the column names, never a fact's column. Never the
+ * number, and never a column the campaign hides from agents (`context_display.hidden`, matched
+ * ignoring case). Trimmed, at most 100 characters.
  */
 export function callLaterCustomerName(
   context: Record<string, unknown> | null | undefined,
-  contextDisplay: Pick<AgencyContextDisplay, 'roles' | 'hidden'> | null | undefined,
+  contextDisplay: Pick<AgencyContextDisplay, 'roles' | 'hidden' | 'facts'> | null | undefined,
 ): string | null {
-  if (!context) return null;
-  const hiddenList = Array.isArray(contextDisplay?.hidden) ? contextDisplay.hidden : [];
-  const hidden = new Set(hiddenList.filter((h): h is string => typeof h === 'string').map((h) => h.trim().toLowerCase()));
-  const visible = hidden.size === 0
-    ? context
-    : Object.fromEntries(Object.entries(context).filter(([k]) => !hidden.has(k.trim().toLowerCase())));
-  const column = contextDisplay?.roles?.name;
-  if (typeof column === 'string' && !hidden.has(column.trim().toLowerCase())) {
-    const v = visible[column];
-    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, INBOUND_MATCH_NAME_MAX);
-  }
-  return matchName(visible) ?? null;
+  return customerNameFrom(context, contextDisplay) ?? null;
 }
 
 /** One call-later as the read gives it. */

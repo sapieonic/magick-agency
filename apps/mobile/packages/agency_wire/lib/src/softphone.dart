@@ -17,6 +17,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'agent_station.dart' show PhoneDisplay;
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
@@ -604,6 +605,7 @@ final class SoftphoneCampaign {
     required this.recordCalls,
     this.analysisProfile,
     required this.contextDisplay,
+    this.phoneDisplay,
   }) : statusRaw = statusRaw ?? status.wire,
        callerIds = List.unmodifiable(callerIds),
        dispositionCatalog = List.unmodifiable(dispositionCatalog);
@@ -622,6 +624,7 @@ final class SoftphoneCampaign {
       recordCalls: j.boolean('record_calls'),
       analysisProfile: _profile(j),
       contextDisplay: ContextDisplay.fromJson(j.obj('context_display')),
+      phoneDisplay: phoneDisplayOrNull(j['phone_display']),
     );
   }
 
@@ -648,6 +651,15 @@ final class SoftphoneCampaign {
   /// How to render a matched contact's context.
   final ContextDisplay contextDisplay;
 
+  /// Agent station AS9 (AS19 S3(b)): how this campaign shows a customer's
+  /// number, so a call tagged to it shows its contact's phone facts as the
+  /// campaign says (the dialled number stays as typed). Null from an older
+  /// server (show them in full); an unknown value reads as [PhoneDisplay.full].
+  final PhoneDisplay? phoneDisplay;
+
+  /// Whether a call tagged to this campaign masks its contact's phone facts.
+  bool get masksPhone => phoneDisplay == PhoneDisplay.masked;
+
   @override
   bool operator ==(Object other) =>
       other is SoftphoneCampaign &&
@@ -660,7 +672,8 @@ final class SoftphoneCampaign {
       other.callingWindowOpen == callingWindowOpen &&
       other.recordCalls == recordCalls &&
       other.analysisProfile == analysisProfile &&
-      other.contextDisplay == contextDisplay;
+      other.contextDisplay == contextDisplay &&
+      other.phoneDisplay == phoneDisplay;
 
   @override
   int get hashCode => Object.hash(
@@ -674,6 +687,7 @@ final class SoftphoneCampaign {
     recordCalls,
     analysisProfile,
     contextDisplay,
+    phoneDisplay,
   );
 }
 

@@ -88,7 +88,7 @@ export async function registerListenHistoryRoutes(sub: FastifyInstance): Promise
         inbound_route_name: r.inbound_route_name,
         listener_user_id: r.listener_user_id,
         agent_user_id: r.agent_user_id,
-        customer_name: matchName(r.contact_context) ?? null,
+        customer_name: matchName(r.contact_context, r.contact_name_display) ?? null,
         customer_phone: r.customer_phone,
         started_at: new Date(r.started_at).toISOString(),
         ended_at: r.ended_at ? new Date(r.ended_at).toISOString() : null,

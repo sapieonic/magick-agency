@@ -4,60 +4,102 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/script_fill.dart';
 import '../../../core/station/station_view.dart';
+import '../logic/facts.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
-import 'ringing_view.dart' show factText, factTilesInOrder;
 
 /// The campaign's script on the call screens (BE-8; AS2: no AI): "First, say this" on Call coming,
 /// "What to say" on On call. Shown only when the campaign has one; without it On call shows the last
-/// calls and the note (04c). Each line is filled for the customer on screen (`fillScript`, the
-/// contract's rule): their name and place, the amount due and due date as the card shows them, the
-/// agent's first name and the work's name; a placeholder with nothing to fill it is left out.
+/// calls and the note (04c). Each line is filled for the customer on screen ([fillScriptRuns], the
+/// contract's reading of braces): their name and place, each fact by its key (AS19) as the card
+/// shows it (a hidden number stays hidden), the agent's first name and the work's name. On a
+/// campaign with chosen facts a `{name}`, `{place}` or fact key the customer has no value for reads
+/// "`<name> not given`", muted, and is never read aloud; elsewhere a key with no value is left out.
 
-/// What the placeholders say for [call].
-ScriptValues scriptValuesFor(CallView call, {required String? agentName, required String campaignName}) {
+/// What the keys say for [call]. [masked]: the campaign hides numbers (AS9). [now]: for a chosen
+/// date fact's year (AS19).
+ScriptValues scriptValuesFor(
+  CallView call, {
+  required String? agentName,
+  required String campaignName,
+  bool masked = false,
+  DateTime? now,
+  Map<String, String> factLabels = const {},
+}) {
   final facts = call.facts;
-  final tiles = facts == null ? const <FactTileView>[] : factTilesInOrder(facts);
-  String? role(bool Function(FactTileView) f) {
-    for (final t in tiles) {
-      if (f(t)) return factText(t);
+  final chosen = call.factsChosen;
+  final byKey = <String, ScriptFact>{};
+  if (facts != null && chosen) {
+    for (final t in facts.tiles) {
+      final key = t.key;
+      if (key == null || byKey.containsKey(key)) continue;
+      byKey[key] = ScriptFact(label: t.label, value: factIsEmpty(t) ? null : factText(t, masked: masked, now: now));
     }
-    return null;
+  } else if (facts != null) {
+    // BE-6: the amount due and the due date come from the role tiles, as the card shows them.
+    for (final t in factTilesInOrder(facts)) {
+      final key = t.amountDue ? 'amount_due' : (t.dueDate ? 'due_date' : null);
+      if (key == null || byKey.containsKey(key)) continue;
+      byKey[key] = ScriptFact(label: t.label, value: factText(t, masked: masked));
+    }
   }
 
-  final name = (facts?.name ?? call.displayName)?.trim();
-  return (
-    name: name == null || name.isEmpty ? null : name,
+  return ScriptValues(
+    name: call.customerName,
     place: facts?.place,
-    amountDue: role((t) => t.amountDue),
-    dueDate: role((t) => t.dueDate),
     agentName: agentName == null ? null : StationCopy.firstName(agentName),
     campaignName: campaignName.trim().isEmpty ? null : campaignName,
+    facts: byKey,
+    factLabels: factLabels,
+    chosen: chosen,
   );
 }
 
-/// The placeholders' values for the call on screen, or null without one.
-ScriptValues? _values(WidgetRef ref) {
+/// A line filled for the call on screen.
+typedef FilledLine = ({List<ScriptRun> runs, String spoken});
+
+/// The line filler for the call on screen, or null without one.
+FilledLine Function(String line)? _filler(WidgetRef ref) {
   final call = ref.watch(stationViewProvider.select((v) => v?.call));
   if (call == null) return null;
   final agent = ref.watch(stationAgentNameProvider);
   final work = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
-  return scriptValuesFor(call, agentName: agent, campaignName: work);
+  final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
+  final placeholders = ref.watch(stationViewProvider.select((v) => v?.script?.placeholders ?? legacyScriptPlaceholders));
+  final labels = ref.watch(stationViewProvider.select((v) => v?.script?.factLabels ?? const <String, String>{}));
+  final now = ref.watch(stationClockProvider)();
+  final values = scriptValuesFor(call, agentName: agent, campaignName: work, masked: masked, now: now, factLabels: labels);
+  return (line) {
+    final runs = fillScriptRuns(line, placeholders, values);
+    return (runs: runs, spoken: spokenScript(runs));
+  };
+}
+
+/// [runs] as spans: "not given" in the muted style.
+List<InlineSpan> scriptSpans(BuildContext context, List<ScriptRun> runs) {
+  final muted = TextStyle(color: context.tokens.textMuted, fontStyle: FontStyle.italic);
+  return [
+    for (final r in runs)
+      switch (r) {
+        SaidRun() => TextSpan(text: r.text),
+        NotGivenRun() => TextSpan(text: r.text, style: muted),
+      },
+  ];
 }
 
 /// "First, say this" (03): the script's opening line, big, for the call coming through.
 class OpeningLineCard extends ConsumerWidget {
   const OpeningLineCard({super.key, this.trailing});
 
-  /// Beside the heading (Read aloud).
-  final Widget Function(String line)? trailing;
+  /// Beside the heading (Read aloud), given the line as read aloud.
+  final Widget Function(String spoken)? trailing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final opening = ref.watch(stationViewProvider.select((v) => v?.script?.opening));
-    final values = _values(ref);
-    if (opening == null || opening.isEmpty || values == null) return const SizedBox.shrink();
-    final line = fillScript(opening, values);
+    final fill = _filler(ref);
+    if (opening == null || opening.isEmpty || fill == null) return const SizedBox.shrink();
+    final line = fill(opening);
     final c = context.stateTokens.coming;
     final text = Theme.of(context).textTheme;
     return Padding(
@@ -81,11 +123,15 @@ class OpeningLineCard extends ConsumerWidget {
                   Expanded(
                     child: Semantics(header: true, child: Text(StationCopy.firstSayThis, style: text.titleSmall!.copyWith(color: c.deep))),
                   ),
-                  if (trailing != null) trailing!(line),
+                  if (trailing != null) trailing!(line.spoken),
                 ],
               ),
               const SizedBox(height: Space.sm),
-              Text('“$line”', key: const Key('script-opening-line'), style: text.headlineSmall),
+              Text.rich(
+                TextSpan(children: [const TextSpan(text: '“'), ...scriptSpans(context, line.runs), const TextSpan(text: '”')]),
+                key: const Key('script-opening-line'),
+                style: text.headlineSmall,
+              ),
             ],
           ),
         ),
@@ -103,8 +149,8 @@ class ScriptStepsCard extends ConsumerStatefulWidget {
 
   final String callId;
 
-  /// Beside the current step (Read aloud).
-  final Widget Function(String line)? trailing;
+  /// Beside the current step (Read aloud), given the step as read aloud.
+  final Widget Function(String spoken)? trailing;
 
   @override
   ConsumerState<ScriptStepsCard> createState() => _ScriptStepsCardState();
@@ -122,8 +168,8 @@ class _ScriptStepsCardState extends ConsumerState<ScriptStepsCard> {
   @override
   Widget build(BuildContext context) {
     final steps = ref.watch(stationViewProvider.select((v) => v?.script?.steps ?? const <String>[]));
-    final values = _values(ref);
-    if (steps.isEmpty || values == null) return const SizedBox.shrink();
+    final fill = _filler(ref);
+    if (steps.isEmpty || fill == null) return const SizedBox.shrink();
     final done = _done.clamp(0, steps.length);
     final s = context.stateTokens;
     final t = context.tokens;
@@ -171,7 +217,7 @@ class _ScriptStepsCardState extends ConsumerState<ScriptStepsCard> {
                   _Step(
                     key: Key('script-step-$i'),
                     number: i + 1,
-                    line: fillScript(steps[i], values),
+                    line: fill(steps[i]),
                     current: i == done,
                     onTap: () => setState(() => _done = i + 1),
                     trailing: i == done ? widget.trailing : null,
@@ -188,10 +234,10 @@ class _Step extends StatelessWidget {
   const _Step({super.key, required this.number, required this.line, required this.current, required this.onTap, this.trailing});
 
   final int number;
-  final String line;
+  final FilledLine line;
   final bool current;
   final VoidCallback onTap;
-  final Widget Function(String line)? trailing;
+  final Widget Function(String spoken)? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -224,13 +270,13 @@ class _Step extends StatelessWidget {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 3),
-                    child: Text(
-                      line,
+                    child: Text.rich(
+                      TextSpan(children: scriptSpans(context, line.runs)),
                       style: (current ? text.titleMedium : text.bodyLarge)!.copyWith(color: current ? t.textPrimary : t.textSecondary),
                     ),
                   ),
                 ),
-                if (trailing != null) trailing!(line),
+                if (trailing != null) trailing!(line.spoken),
               ],
             ),
           ),

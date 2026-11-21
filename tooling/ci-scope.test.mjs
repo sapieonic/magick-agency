@@ -133,6 +133,10 @@ test('the mobile workflow runs on the app and on what its wire types are checked
   for (const f of ['apps/mobile/lib/main.dart', 'packages/contracts/src/x.ts', 'tooling/contracts-literals.mjs', 'packages/domain/src/customer-search-number.ts']) {
     assert.equal(scope(f).mobile, true, f);
   }
+  // AS19 S7: every domain rule agency_wire ports by hand, held to fact-rules.json.
+  for (const f of ['context-columns', 'context-facts', 'context-hero', 'customer-name', 'fact-fields', 'fact-phone', 'fact-tiles']) {
+    assert.equal(scope(`packages/domain/src/${f}.ts`).mobile, true, f);
+  }
   assert.equal(scope('apps/server/src/app.ts').mobile, false);
   assert.equal(scope('packages/domain/src/pacing.ts').mobile, false);
   assert.equal(scope('apps/mobile/README.md', 'apps/mobile/CHANGELOG.md').mobile, false, 'prose analyzes nothing');

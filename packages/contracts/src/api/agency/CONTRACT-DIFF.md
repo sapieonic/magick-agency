@@ -97,7 +97,13 @@ package root.
   `AgencySessionBootstrap.phone_display`); the tile icons `AgencyTileIcon` / `AGENCY_TILE_ICONS`,
   `isAgencyTileIcon`, `agencyTileIconOrNone` (BE-13, `AgencyDisposition.icon`,
   `AgencyBreakReason.icon`). `AgencySessionHelp.state_at_raise` (BE-9) rides on the floor's `help`
-  unchanged. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
+  unchanged. For the card's chosen facts (AS19): `AgencyFactField` with its bounds
+  `AGENCY_FACT_FIELDS_MAX`, `AGENCY_FACT_LABEL_MAX_CHARS`, `AGENCY_FACT_KEY_MAX_CHARS`,
+  `AGENCY_FACT_KEY_PATTERN` / `AGENCY_FACT_KEY_PATTERN_SOURCE` (`AgencyContextDisplay.facts`), and
+  `AgencyScriptFixedPlaceholder` / `AGENCY_SCRIPT_FIXED_PLACEHOLDERS`; `AgencyFactTile.label` /
+  `.key` / `.highlight` and the three new `AgencyContextFieldType` members ride on the shapes
+  above unchanged. The campaign wire type's `context_display` is the same `AgencyContextDisplay`,
+  so it carries `facts` with no second edit. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
   the dialer type with no second edit, pinned by `console-wire-derived.test.ts`.
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
@@ -229,7 +235,21 @@ Agent station, the number display on the agent's own lists (AS9). `AgencyAttempt
 session bootstrap reads it (anything unexpected is `full`). `AgencyAttempt`'s is added by the public
 API layer on `GET /proxy/agency/my-attempts` only (the agent's own My calls); the dialer's
 `AgencyAttemptRow`, the internal handler and the supervisor's twin carry none. `AgencyMyContact`'s is
-on every `GET /proxy/agency/my-contacts` row. The number itself is still sent in full.
+on every `GET /proxy/agency/my-contacts` row. `AgencySoftphoneCampaign.phone_display?` (optional,
+AS18; AS19 S3(b)) is the campaign's own setting on every campaign the soft phone's bootstrap
+describes (`taggable_campaigns`, `call_campaign`), so a call tagged to any campaign shows its
+contact's phone facts as that campaign says; it is declared once, in the dialer contract, and
+re-exported unchanged (§3). The number itself is still sent in full.
+
+Agent station, the card's chosen facts beyond the panel (AS19, docs/agent-station.md). No shape
+changed on the console wire; three readings did. `AgencyMyContact.hero` and customer history's
+`CustomerHistoryContact.fields` follow the hero rule with `context_display.facts` (the customer's
+name then the facts' columns, at most the name and 4 facts, R1, R2); on a campaign that hides
+numbers, `AgencyMyContact.hero`'s phone-typed values arrive masked by the domain's phone rule (S3(d),
+the dialer has no twin of the list), while customer history sends them as stored. `match_name`
+(`AgencyInboundMissedCall`, `customer_waiting`) and the other names read beside a call (floor,
+live calls, listening history, callbacks list) read the campaign's `name` role first
+(`customerNameFrom`, S1), the same on both sides.
 
 Agent station, pool queue state (BE-5, AS18). `AgencyStationCapability` gained `queue_pool`
 (`AGENCY_STATION_QUEUE_POOL_CAPABILITY`, in `AGENCY_STATION_CAPABILITIES` and the app's

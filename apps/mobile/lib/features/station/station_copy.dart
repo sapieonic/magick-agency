@@ -100,6 +100,11 @@ abstract final class StationCopy {
   static const connectsByItself = 'The call connects by itself.';
   static const lastCall = 'Last call';
   static const whatTheySaid = 'What they said last time';
+
+  // The card's facts (AS19): press and hold a tile for its full value.
+  static const factHoldHint = 'Press and hold to see it in full.';
+  static const factHoldAction = 'See it in full';
+  static String fromColumn(String column) => 'From column: $column';
   static String youSaidYouWillCall(String at) => 'Call later · You said you will call at $at';
   static String bookedFor(String at) => 'Call later · Booked for $at';
   static const firstSayThis = 'First, say this';

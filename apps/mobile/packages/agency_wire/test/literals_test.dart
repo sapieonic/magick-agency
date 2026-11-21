@@ -108,6 +108,7 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'context_field_types': ContextFieldType.values,
   'fact_tile_roles': FactTileRole.values,
   'script_placeholders': ScriptPlaceholder.values,
+  'script_fixed_placeholders': scriptFixedPlaceholders,
   'my_day_target_metrics': MyDayTargetMetric.values,
   'my_call_later_left_goes_to': CallLaterLeftGoesTo.values,
 };

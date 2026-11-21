@@ -84,22 +84,12 @@ String callEndSummary(ManualCall call) {
   return call.outcomeRaw != null ? '${manualLineOutcomeLabel(call)}.' : 'The call ended.';
 }
 
-final _nameLike = RegExp(r'(^|[\s_-])(full[\s_-]?)?name$|^name$|customer|contact[\s_-]?name', caseSensitive: false);
-
-/// The matched contact's name, for "On call with Rahul Verma": read through
-/// the tag's `context_display` and the same hero resolution the station's
-/// contact panel uses, then the first non-empty hero (or field) whose header
-/// looks like a name. Never the first column of an arbitrary roster, which is
-/// as likely to be a loan number as a person.
-String? contactName(ManualCall? call, ContextDisplay? display) {
-  final context = call?.contact?.context;
-  if (context == null) return null;
-  final resolved = resolveContextFields(context, display);
-  for (final field in [...resolved.hero, ...resolved.fields]) {
-    if (!field.isEmpty && _nameLike.hasMatch(field.label)) return field.value;
-  }
-  return null;
-}
+/// The matched contact's name, for "On call with Rahul Verma" and CallKit: the domain's one rule
+/// (AS19 S1, [customerNameOf]) over the tag's `context_display`: the name role's column, else the
+/// name guess (never a fact's column, never the first column of an arbitrary roster, which is as
+/// likely to be a loan number as a person); on a legacy campaign, when that finds none, the legacy
+/// card's guess ([callerNameOf]).
+String? contactName(ManualCall? call, ContextDisplay? display) => callerNameOf(call?.contact?.context, display);
 
 /// The soft phone's rail, as a pure function of the connection and the call
 /// (the console's `describeSoftphoneRail`, with "plays in your browser" as

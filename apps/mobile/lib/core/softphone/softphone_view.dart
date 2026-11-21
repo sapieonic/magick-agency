@@ -254,9 +254,12 @@ class SoftphoneContactView {
     this.priorAttempts = const [],
     this.claimed = false,
     this.campaignName,
+    this.facts,
+    this.maskPhone = false,
   });
 
-  /// A name-like field's value for "On call with …"; null leads with the number.
+  /// The contact's name for "On call with …" (AS19 S1: the tagged campaign's name role, else the
+  /// name guess); null leads with the number.
   final String? displayName;
   final List<ContactField> heroFields;
 
@@ -271,6 +274,18 @@ class SoftphoneContactView {
   /// The campaign whose roster matched (the call's tag).
   final String? campaignName;
 
+  /// AS19: the tagged campaign chose its card's facts: the chosen card built from the contact's row
+  /// (`wire.chosenFactTiles`), for the compact card's line (S4). Null when it did not choose.
+  final FactsView? facts;
+
+  /// The tagged campaign hides customers' numbers (AS9, its `phone_display` on the soft phone's
+  /// bootstrap), so the contact's phone-typed facts are hidden too (AS19 S3(b); [heroFields] and
+  /// [otherFields] already are). False when it shows them, or from an older server that sends none.
+  final bool maskPhone;
+
+  /// The tagged campaign chose its card's facts (AS19).
+  bool get factsChosen => facts?.chosen ?? false;
+
   static const _eqF = ListEquality<ContactField>();
   static const _eqP = ListEquality<PriorAttempt>();
 
@@ -283,7 +298,9 @@ class SoftphoneContactView {
       _eqF.equals(other.otherFields, otherFields) &&
       _eqP.equals(other.priorAttempts, priorAttempts) &&
       other.claimed == claimed &&
-      other.campaignName == campaignName;
+      other.campaignName == campaignName &&
+      other.facts == facts &&
+      other.maskPhone == maskPhone;
   @override
   int get hashCode => Object.hash(displayName, heroFields.length, otherFields.length, priorAttempts.length, claimed);
 }

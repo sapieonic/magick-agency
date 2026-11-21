@@ -73,6 +73,7 @@ final Map<String, Map<String, Decoder>> decoders = {
       'help_cleared_expired',
       'reserved_call_later',
       'ready_help_open_ready',
+      'reserved_facts_chosen',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -85,6 +86,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'bootstrap_first_join': SessionBootstrap.fromJson,
     'bootstrap_retry_rehydrated': SessionBootstrap.fromJson,
     'bootstrap_agent_station': SessionBootstrap.fromJson,
+    'bootstrap_facts_chosen': SessionBootstrap.fromJson,
     'station_token': StationTokenResponse.fromJson,
     'break_request': (j) => SessionBreakRequest(j['reason']! as String),
     'session_state_available': SessionStateResponse.fromJson,
@@ -314,7 +316,7 @@ final Map<String, Map<String, Decoder>> decoders = {
 /// suite, `literals_test.dart`), the contract's label maps (the app's
 /// `attempt_copy_test.dart`) and the search box's number table (its own
 /// suite, `customer_search_number_test.dart`).
-const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json'};
+const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json', 'fact-rules.json'};
 
 /// A register body rebuilt through the Dart request type.
 PushDevicePutRequest decodePutRequest(Map<String, Object?> j) => PushDevicePutRequest(
@@ -466,8 +468,9 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final ErrorBody e when e.softphoneCode != SoftphoneErrorCode.unknown => [e.softphoneCode],
   final ErrorBody e => [e.code],
   final SoftphoneBootstrap b => [
-    ...b.taggableCampaigns.map((c) => c.status),
+    ...b.taggableCampaigns.expand((c) => [c.status, ?c.phoneDisplay]),
     ?b.callCampaign?.status,
+    ?b.callCampaign?.phoneDisplay,
     ...b.callFields.map((f) => f.type),
     ?b.session?.kind,
     ?b.session?.state,

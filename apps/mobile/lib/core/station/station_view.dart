@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show ScriptPlaceholder, WireEnumUnknown;
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -270,6 +271,17 @@ class CallView {
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
+  /// The campaign chose the card's facts (AS19, [FactsView.chosen]).
+  bool get factsChosen => facts?.chosen ?? false;
+
+  /// The customer's name as the station says it, trimmed; null when there is none. With chosen
+  /// facts (AS19) the server's `facts.name` only (it already guessed); else the facts' name, then
+  /// the guess from the hero fields ([displayName]), as before.
+  String? get customerName {
+    final name = (factsChosen ? facts!.name : facts?.name ?? displayName)?.trim();
+    return name == null || name.isEmpty ? null : name;
+  }
+
   static const _eq = ListEquality<Object>();
 
   @override
@@ -314,16 +326,36 @@ class CallLaterTag {
   int get hashCode => Object.hash(dueAt, bookedByMe);
 }
 
-/// How a fact's value reads (the campaign's column type, BE-6).
-enum FactKind { text, money, date }
+/// How a fact's value reads (the campaign's column type, BE-6; number, phone and yes / no are
+/// AS19's). A type this build does not know reads as [text].
+enum FactKind { text, money, date, number, phone, yesNo }
 
-/// One fact tile: the column's name as the label, the value as uploaded, and, for a typed column
-/// the server could read, the parsed value (money a decimal string, a date `YYYY-MM-DD`).
+/// One fact tile: its name, the value as uploaded, and, for a typed column the server could read,
+/// the parsed value (money and number a decimal string, a date `YYYY-MM-DD`, a phone its digits,
+/// yes / no `yes` or `no`).
+///
+/// With the campaign's chosen facts (AS19, [FactsView.chosen]) the name is the supervisor's
+/// ([label]), the tile carries its script [key], and one may be the [highlight]; without them
+/// (BE-6) [label] is the column's header and [column] the same.
 @immutable
 class FactTileView {
-  const FactTileView({required this.label, required this.raw, required this.kind, this.parsed, this.amountDue = false, this.dueDate = false});
+  const FactTileView({
+    required this.label,
+    required this.raw,
+    required this.kind,
+    this.parsed,
+    this.amountDue = false,
+    this.dueDate = false,
+    String? column,
+    this.key,
+    this.highlight = false,
+  }) : column = column ?? label;
 
+  /// The tile's name: the fact's label, else its column (the wire's `label ?? column`).
   final String label;
+
+  /// The roster column the value comes from, as in its header.
+  final String column;
   final String raw;
   final FactKind kind;
   final String? parsed;
@@ -334,53 +366,92 @@ class FactTileView {
   /// The tile plays the due-date role (`{due_date}`).
   final bool dueDate;
 
+  /// AS19: the fact's script key (`{key}`); null on the BE-6 path.
+  final String? key;
+
+  /// AS19: the campaign's highlighted fact: first, the full row, in the call colour.
+  final bool highlight;
+
   @override
   bool operator ==(Object other) =>
       other is FactTileView &&
       other.label == label &&
+      other.column == column &&
       other.raw == raw &&
       other.kind == kind &&
       other.parsed == parsed &&
       other.amountDue == amountDue &&
-      other.dueDate == dueDate;
+      other.dueDate == dueDate &&
+      other.key == key &&
+      other.highlight == highlight;
   @override
-  int get hashCode => Object.hash(label, raw, kind, parsed, amountDue, dueDate);
+  int get hashCode => Object.hash(label, column, raw, kind, parsed, amountDue, dueDate, key, highlight);
 }
 
 /// The customer's name, place and fact tiles, as the server read them (BE-6).
 @immutable
 class FactsView {
-  const FactsView({this.name, this.place, this.tiles = const []});
+  const FactsView({this.name, this.place, this.tiles = const [], this.chosen = false});
 
   final String? name;
   final String? place;
 
-  /// In hero order, at most four.
+  /// In hero order, at most four (with chosen facts, AS19: the list's order, the highlight first).
   final List<FactTileView> tiles;
+
+  /// AS19: the campaign chose the card's facts (the bootstrap's `context_display.facts` is a list,
+  /// even an empty one): the card draws exactly [tiles] in its 2 × 2 grid (none for an empty
+  /// list), its heading is [name] or "Customer", and the script says "`<name> not given`" for a
+  /// missing value. False: the BE-6 card and script, as before.
+  final bool chosen;
 
   static const _eq = ListEquality<FactTileView>();
 
   @override
-  bool operator ==(Object other) => other is FactsView && other.name == name && other.place == place && _eq.equals(other.tiles, tiles);
+  bool operator ==(Object other) =>
+      other is FactsView && other.name == name && other.place == place && other.chosen == chosen && _eq.equals(other.tiles, tiles);
   @override
-  int get hashCode => Object.hash(name, place, tiles.length);
+  int get hashCode => Object.hash(name, place, tiles.length, chosen);
 }
+
+/// The `{placeholders}` a campaign without chosen facts may use: every known
+/// `ScriptPlaceholder` (the contract's `AGENCY_SCRIPT_PLACEHOLDERS`), in its order.
+final List<String> legacyScriptPlaceholders = List.unmodifiable([
+  for (final p in ScriptPlaceholder.values)
+    if (!p.isUnknown) p.wire,
+]);
 
 /// The campaign's script (BE-8): the opening line ("First, say this") and the numbered steps
 /// ("What to say"), placeholders still in braces; the screen fills them for the call on screen.
 @immutable
 class ScriptView {
-  const ScriptView({this.opening, this.steps = const []});
+  const ScriptView({this.opening, this.steps = const [], this._placeholders, this.factLabels = const {}});
 
   final String? opening;
   final List<String> steps;
 
+  final List<String>? _placeholders;
+
+  /// The `{key}`s this campaign's script may use (AS19: the fixed four and the chosen facts' keys;
+  /// else [legacyScriptPlaceholders]). Any other `{word}` is shown as written.
+  List<String> get placeholders => _placeholders ?? legacyScriptPlaceholders;
+
+  /// AS19: each chosen fact's name by its key, for "`<name> not given`" when the customer has no
+  /// tile for it.
+  final Map<String, String> factLabels;
+
   static const _eq = ListEquality<String>();
+  static const _eqMap = MapEquality<String, String>();
 
   @override
-  bool operator ==(Object other) => other is ScriptView && other.opening == opening && _eq.equals(other.steps, steps);
+  bool operator ==(Object other) =>
+      other is ScriptView &&
+      other.opening == opening &&
+      _eq.equals(other.steps, steps) &&
+      _eq.equals(other.placeholders, placeholders) &&
+      _eqMap.equals(other.factLabels, factLabels);
   @override
-  int get hashCode => Object.hash(opening, steps.length);
+  int get hashCode => Object.hash(opening, steps.length, placeholders.length);
 }
 
 /// Why the last call ended, in the station's words (as the console's `stationCopy.ts`).
@@ -693,6 +764,7 @@ class InboundCallView {
     this.bridgedAt,
     this.outcomeDueAt,
     this.hangupFailure,
+    this.facts,
   });
 
   final String callId;
@@ -705,7 +777,8 @@ class InboundCallView {
   final String toE164;
   final String? routeName;
 
-  /// The matched contact's name, when the roster has one.
+  /// The matched contact's name, when the roster has one: the domain's one rule (AS19 S1, the
+  /// matched campaign's name role first, else the name guess).
   final String? displayName;
 
   /// Null: the caller has no agent of their own.
@@ -747,8 +820,17 @@ class InboundCallView {
   /// A hang-up that did not go through, in words; null otherwise.
   final String? hangupFailure;
 
+  /// AS19 S3: the matched campaign chose its card's facts (its `context_display.facts` is a list):
+  /// the chosen card, built from the contact's row by the domain's rule (`wire.chosenFactTiles`):
+  /// the name, the place (its role only) and the tiles, as the campaign call's card has them.
+  /// Null for a campaign that did not choose (the hero fields then), or no match.
+  final FactsView? facts;
+
   bool get withheld => fromE164 == null;
   bool get matched => campaignName != null;
+
+  /// The matched campaign chose its card's facts (AS19).
+  bool get factsChosen => facts?.chosen ?? false;
 
   static const _eqF = ListEquality<ContactField>();
   static const _eqP = ListEquality<PriorAttempt>();
@@ -778,10 +860,11 @@ class InboundCallView {
       other.connectsAt == connectsAt &&
       other.bridgedAt == bridgedAt &&
       other.outcomeDueAt == outcomeDueAt &&
-      other.hangupFailure == hangupFailure;
+      other.hangupFailure == hangupFailure &&
+      other.facts == facts;
 
   @override
-  int get hashCode => Object.hash(callId, stage, bridgedAt, outcomeDueAt, hangupFailure, heroFields.length);
+  int get hashCode => Object.hash(callId, stage, bridgedAt, outcomeDueAt, hangupFailure, heroFields.length, facts);
 }
 
 /// "Your customer is waiting": a caller who usually speaks to this agent rang in while they

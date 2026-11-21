@@ -587,6 +587,16 @@ describe('GET /softphone/bootstrap', () => {
     expect(sup.taggable_campaigns).toHaveLength(2);
   });
 
+  it('AS19 S3(b): each campaign carries its own number setting; an unknown or missing one reads as full', async () => {
+    repos.campaign.listSoftphoneTaggable.mockResolvedValue([
+      { ...campaign(CAMPAIGN, 'Masked'), phone_display: 'masked' },
+      { ...campaign(OTHER_CAMPAIGN, 'Odd'), phone_display: 'sideways' },
+      { ...campaign('c0ffee00-0000-4000-8000-000000000003', 'Older row') },
+    ]);
+    const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}&supervise=true`)).json();
+    expect(boot.taggable_campaigns.map((c: { phone_display: unknown }) => c.phone_display)).toEqual(['masked', 'full', 'full']);
+  });
+
   it('BE-13: an outcome\'s icon the contract does not list is dropped, tagged and untagged; a known one is kept', async () => {
     const catalog = [{ code: 'paid', label: 'Paid', icon: 'rupee' }, { code: 'odd', label: 'Odd', icon: 'unicorn' }];
     repos.campaign.listSoftphoneTaggable.mockResolvedValue([{ ...campaign(CAMPAIGN, 'Staffed'), disposition_catalog: catalog }]);

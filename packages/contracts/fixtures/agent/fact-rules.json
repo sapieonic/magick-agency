@@ -1,0 +1,2650 @@
+{
+  "_about": [
+    "AS19 S5: the card's rules as cases, read by the domain's TypeScript tests (packages/domain/test/unit/agency/fact-rules.test.ts)",
+    "and by the agent app's Dart port (apps/mobile/packages/agency_wire/test/fact_rules_test.dart). Every case is run by both,",
+    "except unique_fact_labels and legacy_fact_fields (the console's Settings editor only). Edit a case here, and both sides follow.",
+    "phone: formatFactPhone / maskFactPhone (R6, S3). parse: parseContextFact (now: parse.now). script_pieces: scriptPieces.",
+    "script_placeholders: scriptPlaceholdersFor. configured_heroes: configuredHeroNames. hero_columns: heroColumnsFor.",
+    "guess_columns: guessNameColumn / guessPlaceColumn over a list of columns or a row. customer: customerNameFrom /",
+    "customerNameColumn / customerPlaceFrom / customerPlaceColumn. chosen_fact_tiles: chosenFactTiles. null is none.",
+    "unique_fact_labels: uniqueFactLabels. legacy_fact_fields: legacyFactFields, the pre-fill of a card saved before AS19 (S9: amount due, due date, then the other heroes).",
+    "A guess never picks a column types declares phone (the column matched ignoring case): guess_columns' types, customer's display.types."
+  ],
+  "phone": [
+    {
+      "value": "9876543210",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "919876543210",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "+919876543210",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "09876543210",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "1234567890",
+      "full": "1234567890",
+      "masked": "12••• ••890"
+    },
+    {
+      "value": "+14155550123",
+      "full": "+14155550123",
+      "masked": "14••• ••123"
+    },
+    {
+      "value": "1234567",
+      "full": "1234567",
+      "masked": "12••• ••567"
+    },
+    {
+      "value": "123456",
+      "full": "123456",
+      "masked": "•••"
+    },
+    {
+      "value": "+123456",
+      "full": "+123456",
+      "masked": "•••"
+    },
+    {
+      "value": "12345",
+      "full": "12345",
+      "masked": "•••"
+    },
+    {
+      "value": "",
+      "full": "",
+      "masked": "•••"
+    },
+    {
+      "value": "02025678901",
+      "full": "02025678901",
+      "masked": "02••• ••901"
+    },
+    {
+      "value": "5876543210",
+      "full": "5876543210",
+      "masked": "58••• ••210"
+    },
+    {
+      "value": "9198765432101",
+      "full": "9198765432101",
+      "masked": "91••• ••101"
+    },
+    {
+      "value": "98765 43210 (home)",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "+91 98765 43210 (home)",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    },
+    {
+      "value": "call 1234567890",
+      "full": "call 1234567890",
+      "masked": "12••• ••890"
+    },
+    {
+      "value": "  98765-43210  ",
+      "full": "+91 98765 43210",
+      "masked": "98••• ••210"
+    }
+  ],
+  "parse": {
+    "now": "2026-11-20T06:00:00.000Z",
+    "cases": [
+      {
+        "raw": "₹1,25,000",
+        "type": "money",
+        "value": "125000"
+      },
+      {
+        "raw": "Rs. 12,500/-",
+        "type": "money",
+        "value": "12500"
+      },
+      {
+        "raw": "1 25 000",
+        "type": "money",
+        "value": "125000"
+      },
+      {
+        "raw": "1,25,000.50",
+        "type": "money",
+        "value": "125000.50"
+      },
+      {
+        "raw": "INR 5,000.00",
+        "type": "money",
+        "value": "5000.00"
+      },
+      {
+        "raw": "12,500/- only",
+        "type": "money",
+        "value": "12500"
+      },
+      {
+        "raw": "007500",
+        "type": "money",
+        "value": "7500"
+      },
+      {
+        "raw": "-500",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "12,50",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "5000 2500",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "12.505",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "1.25 lakh",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "N/A",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "",
+        "type": "money",
+        "value": null
+      },
+      {
+        "raw": "2026-11-25",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "2026-11-25T10:30",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "25/11/2026",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "03/04/2026",
+        "type": "date",
+        "value": "2026-04-03"
+      },
+      {
+        "raw": "25-Nov-26",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "25th November 2026",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "1st Sept 2026",
+        "type": "date",
+        "value": "2026-09-01"
+      },
+      {
+        "raw": "Nov 25, 2026",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "15/08/85",
+        "type": "date",
+        "value": "1985-08-15"
+      },
+      {
+        "raw": "01/01/70",
+        "type": "date",
+        "value": "2070-01-01"
+      },
+      {
+        "raw": "29/02/2028",
+        "type": "date",
+        "value": "2028-02-29"
+      },
+      {
+        "raw": "25/11/2026 10:30 AM",
+        "type": "date",
+        "value": "2026-11-25"
+      },
+      {
+        "raw": "11/25/2026",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "31/02/2026",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "2026-11-25T18:30:00Z",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "46351",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "25 Nov",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "25/11/1850",
+        "type": "date",
+        "value": null
+      },
+      {
+        "raw": "24",
+        "type": "number",
+        "value": "24"
+      },
+      {
+        "raw": "1,25,000",
+        "type": "number",
+        "value": "125000"
+      },
+      {
+        "raw": "10.375",
+        "type": "number",
+        "value": "10.375"
+      },
+      {
+        "raw": "0012",
+        "type": "number",
+        "value": "12"
+      },
+      {
+        "raw": "+5",
+        "type": "number",
+        "value": null
+      },
+      {
+        "raw": "12%",
+        "type": "number",
+        "value": null
+      },
+      {
+        "raw": "12.",
+        "type": "number",
+        "value": null
+      },
+      {
+        "raw": "1e5",
+        "type": "number",
+        "value": null
+      },
+      {
+        "raw": "+91 98765 43210",
+        "type": "phone",
+        "value": "+919876543210"
+      },
+      {
+        "raw": "098765 43210",
+        "type": "phone",
+        "value": "09876543210"
+      },
+      {
+        "raw": "(020) 2567-8901",
+        "type": "phone",
+        "value": "02025678901"
+      },
+      {
+        "raw": "123456",
+        "type": "phone",
+        "value": "123456"
+      },
+      {
+        "raw": "12345",
+        "type": "phone",
+        "value": null
+      },
+      {
+        "raw": "1234567890123456",
+        "type": "phone",
+        "value": null
+      },
+      {
+        "raw": "98765 ext 1",
+        "type": "phone",
+        "value": null
+      },
+      {
+        "raw": "98+765",
+        "type": "phone",
+        "value": null
+      },
+      {
+        "raw": "Haan",
+        "type": "yes_no",
+        "value": "yes"
+      },
+      {
+        "raw": " Y ",
+        "type": "yes_no",
+        "value": "yes"
+      },
+      {
+        "raw": "1",
+        "type": "yes_no",
+        "value": "yes"
+      },
+      {
+        "raw": "nahin",
+        "type": "yes_no",
+        "value": "no"
+      },
+      {
+        "raw": "FALSE",
+        "type": "yes_no",
+        "value": "no"
+      },
+      {
+        "raw": "maybe",
+        "type": "yes_no",
+        "value": null
+      },
+      {
+        "raw": "Asha Rao",
+        "type": "text",
+        "value": null
+      },
+      {
+        "raw": "5000",
+        "type": "text",
+        "value": null
+      },
+      {
+        "raw": "5000",
+        "type": "percent",
+        "value": null
+      }
+    ]
+  },
+  "script_pieces": [
+    {
+      "text": "Namaste {name}, {amount_due} due on {due_date}.",
+      "allowed": [
+        "name",
+        "amount_due"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "Namaste "
+        },
+        {
+          "kind": "key",
+          "key": "name"
+        },
+        {
+          "kind": "text",
+          "text": ", "
+        },
+        {
+          "kind": "key",
+          "key": "amount_due"
+        },
+        {
+          "kind": "text",
+          "text": " due on "
+        },
+        {
+          "kind": "unknown",
+          "token": "{due_date}"
+        },
+        {
+          "kind": "text",
+          "text": "."
+        }
+      ]
+    },
+    {
+      "text": "{ name } and {Name} and {NAME}",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "unknown",
+          "token": "{ name }"
+        },
+        {
+          "kind": "text",
+          "text": " and "
+        },
+        {
+          "kind": "unknown",
+          "token": "{Name}"
+        },
+        {
+          "kind": "text",
+          "text": " and "
+        },
+        {
+          "kind": "unknown",
+          "token": "{NAME}"
+        }
+      ]
+    },
+    {
+      "text": "EMI {emi_2} of {2nd_emi}",
+      "allowed": [
+        "emi_2"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "EMI "
+        },
+        {
+          "kind": "key",
+          "key": "emi_2"
+        },
+        {
+          "kind": "text",
+          "text": " of "
+        },
+        {
+          "kind": "unknown",
+          "token": "{2nd_emi}"
+        }
+      ]
+    },
+    {
+      "text": "{} {  } { } {name",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "{} {  } { } {name"
+        }
+      ]
+    },
+    {
+      "text": "{{name}} and {name}}",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "{"
+        },
+        {
+          "kind": "key",
+          "key": "name"
+        },
+        {
+          "kind": "text",
+          "text": "} and "
+        },
+        {
+          "kind": "key",
+          "key": "name"
+        },
+        {
+          "kind": "text",
+          "text": "}"
+        }
+      ]
+    },
+    {
+      "text": "{na me} {name-x} {नाम} {name.x}",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "{na me} {name-x} {नाम} {name.x}"
+        }
+      ]
+    },
+    {
+      "text": "{\tname\t}",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "unknown",
+          "token": "{\tname\t}"
+        }
+      ]
+    },
+    {
+      "text": "}{name}{",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "}"
+        },
+        {
+          "kind": "key",
+          "key": "name"
+        },
+        {
+          "kind": "text",
+          "text": "{"
+        }
+      ]
+    },
+    {
+      "text": "{name}{place}",
+      "allowed": [
+        "name",
+        "place"
+      ],
+      "pieces": [
+        {
+          "kind": "key",
+          "key": "name"
+        },
+        {
+          "kind": "key",
+          "key": "place"
+        }
+      ]
+    },
+    {
+      "text": "",
+      "allowed": [
+        "name"
+      ],
+      "pieces": []
+    },
+    {
+      "text": "No keys here.",
+      "allowed": [
+        "name"
+      ],
+      "pieces": [
+        {
+          "kind": "text",
+          "text": "No keys here."
+        }
+      ]
+    }
+  ],
+  "script_placeholders": [
+    {
+      "display": {},
+      "placeholders": [
+        "name",
+        "place",
+        "amount_due",
+        "due_date",
+        "agent_name",
+        "campaign_name"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Name"
+        ],
+        "roles": {
+          "name": "Name"
+        }
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "amount_due",
+        "due_date",
+        "agent_name",
+        "campaign_name"
+      ]
+    },
+    {
+      "display": {
+        "facts": []
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "agent_name",
+        "campaign_name"
+      ]
+    },
+    {
+      "display": {
+        "facts": [
+          {
+            "column": "Balance",
+            "label": "Amount due",
+            "key": "amount_due"
+          },
+          {
+            "column": "Branch",
+            "label": "Branch",
+            "key": "branch"
+          }
+        ]
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "agent_name",
+        "campaign_name",
+        "amount_due",
+        "branch"
+      ]
+    },
+    {
+      "display": {
+        "facts": [
+          {
+            "column": "A",
+            "label": "A",
+            "key": "emi_2"
+          },
+          {
+            "column": "B",
+            "label": "B",
+            "key": "emi_2"
+          },
+          {
+            "column": "C",
+            "label": "C",
+            "key": "name"
+          }
+        ]
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "agent_name",
+        "campaign_name",
+        "emi_2"
+      ]
+    },
+    {
+      "display": {
+        "facts": [
+          {
+            "column": "X",
+            "label": 3,
+            "key": "x"
+          },
+          {
+            "column": "Y",
+            "label": "Y"
+          },
+          {
+            "column": "Z",
+            "label": "Z",
+            "key": 5
+          },
+          {
+            "column": "W",
+            "label": "W",
+            "key": ""
+          },
+          "Branch",
+          null,
+          {
+            "key": "no_column"
+          }
+        ]
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "agent_name",
+        "campaign_name",
+        "x",
+        "no_column"
+      ]
+    },
+    {
+      "display": {
+        "facts": {}
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "amount_due",
+        "due_date",
+        "agent_name",
+        "campaign_name"
+      ]
+    },
+    {
+      "display": {
+        "facts": "Balance"
+      },
+      "placeholders": [
+        "name",
+        "place",
+        "amount_due",
+        "due_date",
+        "agent_name",
+        "campaign_name"
+      ]
+    }
+  ],
+  "configured_heroes": [
+    {
+      "display": {
+        "hero": [
+          "Name",
+          "Loan No",
+          "Name",
+          " ",
+          "City"
+        ]
+      },
+      "heroes": [
+        "Name",
+        "Loan No",
+        "City"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Name",
+          "Aadhaar",
+          "City"
+        ],
+        "hidden": [
+          " aadhaar ",
+          "CITY"
+        ]
+      },
+      "heroes": [
+        "Name"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No",
+          "City"
+        ],
+        "roles": {
+          "name": "Name",
+          "place": "City"
+        },
+        "facts": [
+          {
+            "column": "Balance",
+            "label": "Amount due",
+            "key": "amount_due"
+          },
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ]
+      },
+      "heroes": [
+        "Name",
+        "Balance",
+        "Loan No"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No"
+        ],
+        "roles": {
+          "name": "Name"
+        },
+        "facts": []
+      },
+      "heroes": [
+        "Name"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No"
+        ],
+        "facts": []
+      },
+      "heroes": []
+    },
+    {
+      "display": {
+        "hero": [
+          "Customer Name",
+          "Amount Due"
+        ],
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Customer Name",
+        "Amount Due"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Customer Name",
+          "Amount Due"
+        ],
+        "hidden": [
+          "customer name"
+        ],
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Amount Due"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Customer ID",
+          "Contact Number",
+          "Client",
+          "Amount Due"
+        ],
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Amount Due"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "first_name",
+          "Full-Name"
+        ],
+        "facts": [
+          {
+            "column": "Full-Name",
+            "label": "Full name",
+            "key": "full_name"
+          }
+        ]
+      },
+      "heroes": [
+        "first_name",
+        "Full-Name"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Customer Name"
+        ],
+        "roles": {
+          "name": "Full Name"
+        },
+        "facts": [
+          {
+            "column": "EMI",
+            "label": "EMI",
+            "key": "emi"
+          }
+        ]
+      },
+      "heroes": [
+        "Full Name",
+        "EMI"
+      ]
+    },
+    {
+      "display": {
+        "roles": {
+          "name": "Name"
+        },
+        "hidden": [
+          "NAME"
+        ],
+        "facts": [
+          {
+            "column": "Balance",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "balance",
+            "label": "B2",
+            "key": "b2"
+          }
+        ]
+      },
+      "heroes": [
+        "Balance",
+        "balance"
+      ]
+    },
+    {
+      "display": {
+        "facts": [
+          null,
+          "Loan No",
+          {
+            "column": 7
+          },
+          {
+            "column": " "
+          },
+          {
+            "column": "EMI",
+            "label": "EMI",
+            "key": "emi"
+          }
+        ],
+        "roles": {
+          "name": 3
+        }
+      },
+      "heroes": [
+        "EMI"
+      ]
+    },
+    {
+      "display": {
+        "roles": {
+          "name": "Name"
+        },
+        "facts": [
+          {
+            "column": "A",
+            "label": "A",
+            "key": "a"
+          },
+          {
+            "column": "B",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "C",
+            "label": "C",
+            "key": "c"
+          },
+          {
+            "column": "D",
+            "label": "D",
+            "key": "d"
+          }
+        ]
+      },
+      "heroes": [
+        "Name",
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No",
+          "City"
+        ],
+        "roles": {
+          "name": "Name"
+        },
+        "facts": {}
+      },
+      "heroes": [
+        "Loan No",
+        "City"
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Name",
+          "Customer Name",
+          "Loan No"
+        ],
+        "facts": [
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ],
+        "types": {
+          "Name": "phone"
+        }
+      },
+      "heroes": [
+        "Customer Name",
+        "Loan No"
+      ]
+    }
+  ],
+  "hero_columns": [
+    {
+      "context": {
+        "Id": "7",
+        "City": "Pune",
+        "Name": "Asha Rao",
+        "Aadhaar": "1234 5678 9012",
+        "Loan No": "LN-0042"
+      },
+      "display": {
+        "hero": [
+          "loan no",
+          "NAME"
+        ]
+      },
+      "heroes": [
+        "Loan No",
+        "Name"
+      ]
+    },
+    {
+      "context": {
+        "Id": "7",
+        "City": "Pune",
+        "Name": "Asha Rao",
+        "Aadhaar": "1234 5678 9012",
+        "Loan No": "LN-0042"
+      },
+      "display": {
+        "hero": [
+          "Id",
+          "City",
+          "Name",
+          "Aadhaar",
+          "Loan No"
+        ]
+      },
+      "heroes": [
+        "Id",
+        "City",
+        "Name",
+        "Aadhaar"
+      ]
+    },
+    {
+      "context": {
+        "Id": "7",
+        "City": "Pune",
+        "Name": "Asha Rao",
+        "Aadhaar": "1234 5678 9012",
+        "Loan No": "LN-0042"
+      },
+      "display": {
+        "hero": [
+          "Policy",
+          "Name"
+        ]
+      },
+      "heroes": [
+        "Name"
+      ]
+    },
+    {
+      "context": {
+        "Id": "7",
+        "City": "Pune",
+        "Name": "Asha Rao",
+        "Aadhaar": "1234 5678 9012",
+        "Loan No": "LN-0042"
+      },
+      "display": {
+        "hero": [
+          "Aadhaar",
+          "Name"
+        ],
+        "hidden": [
+          "aadhaar"
+        ]
+      },
+      "heroes": [
+        "Name"
+      ]
+    },
+    {
+      "context": {
+        "Id": "7",
+        "City": "Pune",
+        "Name": "Asha Rao",
+        "Aadhaar": "1234 5678 9012",
+        "Loan No": "LN-0042",
+        "Balance": "-"
+      },
+      "display": {},
+      "column_order": [
+        "Name",
+        "Loan No",
+        "Id",
+        "Aadhaar",
+        "City",
+        "Balance"
+      ],
+      "heroes": [
+        "Name",
+        "Loan No",
+        "City"
+      ]
+    },
+    {
+      "context": {
+        "a": "1",
+        "bb": "2",
+        "ccc": "",
+        "dddd": "4",
+        "eeeee": "5"
+      },
+      "display": null,
+      "column_order": [
+        "eeeee",
+        "dddd",
+        "ccc",
+        "bb",
+        "a"
+      ],
+      "heroes": [
+        "eeeee",
+        "dddd",
+        "bb",
+        "a"
+      ]
+    },
+    {
+      "context": {
+        "a": "1",
+        "bb": "2",
+        "ccc": "3"
+      },
+      "display": null,
+      "max": 2,
+      "heroes": [
+        "a",
+        "bb"
+      ]
+    },
+    {
+      "context": {
+        "a": "1",
+        "bb": "2"
+      },
+      "display": null,
+      "fallback_to_first_columns": false,
+      "heroes": []
+    },
+    {
+      "context": {
+        "a": "1",
+        "bb": "2",
+        "City": "Pune"
+      },
+      "display": {},
+      "fallback_to_first_columns": false,
+      "heroes": [
+        "City"
+      ]
+    },
+    {
+      "context": {
+        "Customer ID": "C-7",
+        "Contact Number": "9876543210",
+        "Client": "Acme",
+        "Amount Due": "5000"
+      },
+      "display": {},
+      "heroes": [
+        "Customer ID",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha Rao",
+        "City": "Pune",
+        "Balance": "5000",
+        "Loan No": "LN-1",
+        "Id": "7"
+      },
+      "display": {
+        "hero": [
+          "Loan No",
+          "City"
+        ],
+        "roles": {
+          "name": "Name",
+          "place": "City"
+        },
+        "facts": [
+          {
+            "column": "Balance",
+            "label": "Amount due",
+            "key": "amount_due",
+            "highlight": true
+          },
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ]
+      },
+      "heroes": [
+        "Name",
+        "Balance",
+        "Loan No"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "5000",
+        "City": "Pune",
+        "Loan No": "LN-1"
+      },
+      "display": {
+        "hero": [
+          "Customer Name",
+          "Amount Due"
+        ],
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Customer Name",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "5000",
+        "City": "Pune",
+        "Loan No": "LN-1"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Customer Name",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "-",
+        "Full Name": "Ravi",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Full Name",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ],
+        "hidden": [
+          "Customer Name"
+        ]
+      },
+      "heroes": [
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Customer Name",
+            "label": "Name",
+            "key": "cust"
+          }
+        ]
+      },
+      "heroes": [
+        "Customer Name"
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "5000",
+        "Loan No": "LN-1"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ],
+        "roles": {
+          "name": "Loan No"
+        }
+      },
+      "heroes": [
+        "Loan No",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Customer ID": "C-7",
+        "Contact Number": "9876543210",
+        "Client": "Acme",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "first_name": "Asha",
+        "CUSTOMER-NAME": "Asha Rao",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "heroes": [
+        "CUSTOMER-NAME",
+        "Amount Due"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Loan No": "LN-1",
+        "City": "Pune",
+        "Balance": "5000"
+      },
+      "display": {
+        "facts": []
+      },
+      "heroes": [
+        "Name"
+      ]
+    },
+    {
+      "context": {
+        "Loan No": "LN-1",
+        "City": "Pune"
+      },
+      "display": {
+        "facts": []
+      },
+      "heroes": []
+    },
+    {
+      "context": {
+        "Loan No": "LN-1"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Branch",
+            "label": "Branch",
+            "key": "branch"
+          }
+        ]
+      },
+      "heroes": []
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Full Name": "Asha Rao",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "name",
+            "label": "Name",
+            "key": "nm"
+          }
+        ]
+      },
+      "heroes": [
+        "Full Name",
+        "Name"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4",
+        "E": "5"
+      },
+      "display": {
+        "roles": {
+          "name": "Name"
+        },
+        "facts": [
+          {
+            "column": "A",
+            "label": "A",
+            "key": "a"
+          },
+          {
+            "column": "B",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "C",
+            "label": "C",
+            "key": "c"
+          },
+          {
+            "column": "D",
+            "label": "D",
+            "key": "d"
+          }
+        ]
+      },
+      "heroes": [
+        "Name",
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4",
+        "E": "5"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "A",
+            "label": "A",
+            "key": "a"
+          },
+          {
+            "column": "B",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "C",
+            "label": "C",
+            "key": "c"
+          },
+          {
+            "column": "D",
+            "label": "D",
+            "key": "d"
+          }
+        ]
+      },
+      "heroes": [
+        "Name",
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4",
+        "E": "5"
+      },
+      "display": {
+        "roles": {
+          "name": "Name"
+        },
+        "facts": [
+          {
+            "column": "A",
+            "label": "A",
+            "key": "a"
+          },
+          {
+            "column": "B",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "C",
+            "label": "C",
+            "key": "c"
+          },
+          {
+            "column": "D",
+            "label": "D",
+            "key": "d"
+          }
+        ]
+      },
+      "max": 2,
+      "heroes": [
+        "Name",
+        "A"
+      ]
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4",
+        "E": "5"
+      },
+      "display": {
+        "hero": [
+          "Name",
+          "A",
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "heroes": [
+        "Name",
+        "A",
+        "B",
+        "C"
+      ]
+    },
+    {
+      "context": {
+        "a": "x",
+        "Name": "Asha",
+        "b": "y"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "B",
+            "label": "B",
+            "key": "b"
+          },
+          {
+            "column": "A",
+            "label": "A",
+            "key": "a"
+          }
+        ]
+      },
+      "column_order": [
+        "b",
+        "Name",
+        "a"
+      ],
+      "heroes": [
+        "Name",
+        "b",
+        "a"
+      ]
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "Full Name": "Asha Rao",
+        "Loan No": "L-1"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ],
+        "types": {
+          "name": "phone"
+        }
+      },
+      "heroes": [
+        "Full Name",
+        "Loan No"
+      ]
+    }
+  ],
+  "guess_columns": [
+    {
+      "columns": [
+        "Customer ID",
+        "Contact Number",
+        "Client",
+        "Mobile",
+        "Branch"
+      ],
+      "name": null,
+      "place": null
+    },
+    {
+      "columns": [
+        "first_name",
+        "Customer Name",
+        "Full-Name",
+        "name"
+      ],
+      "name": "name",
+      "place": null
+    },
+    {
+      "columns": [
+        "Loan No",
+        "CUSTOMER.NAME",
+        "Town",
+        "City"
+      ],
+      "name": "CUSTOMER.NAME",
+      "place": "City"
+    },
+    {
+      "columns": [
+        "Name",
+        "Full Name",
+        "City",
+        "Location"
+      ],
+      "hidden": [
+        "name"
+      ],
+      "exclude": [
+        "full name",
+        "CITY"
+      ],
+      "name": null,
+      "place": "Location"
+    },
+    {
+      "columns": [
+        "customer name ",
+        " Village",
+        "District"
+      ],
+      "name": "customer name ",
+      "place": "District"
+    },
+    {
+      "row": {
+        "Name": "N/A",
+        "Full Name": "Asha Rao",
+        "City": "",
+        "Town": "Nashik"
+      },
+      "name": "Full Name",
+      "place": "Town"
+    },
+    {
+      "row": {
+        "Name": "-",
+        "first_name": "Asha",
+        "place": "Pune"
+      },
+      "exclude": [
+        "first_name"
+      ],
+      "name": null,
+      "place": "place"
+    },
+    {
+      "row": {
+        "Customer ID": "C-7",
+        "Contact Number": "98765",
+        "Location": "Pune"
+      },
+      "name": null,
+      "place": "Location"
+    },
+    {
+      "columns": [
+        "Name",
+        "Full Name",
+        "City",
+        "Town"
+      ],
+      "types": {
+        "name": "phone",
+        "CITY": "phone",
+        "Town": "text"
+      },
+      "name": "Full Name",
+      "place": "Town"
+    },
+    {
+      "row": {
+        "Customer Name": "9876543210",
+        "first_name": "Asha",
+        "Location": "9988776655"
+      },
+      "types": {
+        "Customer Name": "phone",
+        "location": "phone"
+      },
+      "name": "first_name",
+      "place": null
+    }
+  ],
+  "customer": [
+    {
+      "context": {
+        "Customer Name": "  Asha Rao  ",
+        "City": "Pune",
+        "Customer ID": "C-7"
+      },
+      "display": {},
+      "name": "Asha Rao",
+      "name_column": "Customer Name",
+      "place": "Pune",
+      "place_column": "City"
+    },
+    {
+      "context": {
+        "Customer ID": "C-7",
+        "Contact Number": "9876543210",
+        "Branch": "Pune"
+      },
+      "display": {},
+      "name": null,
+      "name_column": null,
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Borrower": "Asha Rao",
+        "City": "Pune",
+        "Area": "Kothrud"
+      },
+      "display": {
+        "roles": {
+          "name": "borrower",
+          "place": "Area"
+        }
+      },
+      "name": "Asha Rao",
+      "name_column": "Borrower",
+      "place": "Kothrud",
+      "place_column": "Area"
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Borrower": "N/A",
+        "City": "Pune"
+      },
+      "display": {
+        "roles": {
+          "name": "Borrower"
+        }
+      },
+      "name": null,
+      "name_column": "Borrower",
+      "place": "Pune",
+      "place_column": "City"
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "City": "Pune"
+      },
+      "display": {
+        "roles": {
+          "name": "Borrower",
+          "place": "Area"
+        }
+      },
+      "name": null,
+      "name_column": null,
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Borrower": "Asha Rao",
+        "City": "Pune"
+      },
+      "display": {
+        "roles": {
+          "name": "Borrower"
+        },
+        "hidden": [
+          "borrower"
+        ]
+      },
+      "name": null,
+      "name_column": null,
+      "place": "Pune",
+      "place_column": "City"
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Full Name": "Asha Rao",
+        "City": "Pune"
+      },
+      "display": {
+        "hidden": [
+          "NAME"
+        ]
+      },
+      "name": "Asha Rao",
+      "name_column": "Full Name",
+      "place": "Pune",
+      "place_column": "City"
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "Full Name": "Asha Rao",
+        "City": "Pune",
+        "Amount Due": "5000"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "name",
+            "label": "Name",
+            "key": "nm"
+          },
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          }
+        ]
+      },
+      "name": "Asha Rao",
+      "name_column": "Full Name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "City": "Pune"
+      },
+      "display": {
+        "facts": []
+      },
+      "name": "Asha",
+      "name_column": "Name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "City": "Pune",
+        "Area": "Kothrud"
+      },
+      "display": {
+        "roles": {
+          "place": "Area"
+        },
+        "facts": []
+      },
+      "name": "Asha",
+      "name_column": "Name",
+      "place": "Kothrud",
+      "place_column": "Area"
+    },
+    {
+      "context": {
+        "Name": "Asha",
+        "City": "Pune"
+      },
+      "display": {
+        "roles": {
+          "name": 3,
+          "place": ""
+        }
+      },
+      "name": "Asha",
+      "name_column": "Name",
+      "place": "Pune",
+      "place_column": "City"
+    },
+    {
+      "context": {
+        "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "city": 7
+      },
+      "display": null,
+      "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "name_column": "name",
+      "place": "7",
+      "place_column": "city"
+    },
+    {
+      "context": {
+        "Name": {
+          "first": "Asha"
+        }
+      },
+      "display": {},
+      "name": "{\"first\":\"Asha\"}",
+      "name_column": "Name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "Customer Name": "Asha Rao",
+        "City": "9988776655",
+        "Town": "Pune"
+      },
+      "display": {
+        "types": {
+          "name": "phone",
+          "City": "phone"
+        }
+      },
+      "name": "Asha Rao",
+      "name_column": "Customer Name",
+      "place": "Pune",
+      "place_column": "Town"
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "full_name": "Asha Rao",
+        "City": "Pune"
+      },
+      "display": {
+        "facts": [],
+        "types": {
+          "Name": "phone"
+        }
+      },
+      "name": "Asha Rao",
+      "name_column": "full_name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "City": "9988776655"
+      },
+      "display": {
+        "types": {
+          "Name": "phone",
+          "City": "phone"
+        }
+      },
+      "name": null,
+      "name_column": null,
+      "place": null,
+      "place_column": null
+    }
+  ],
+  "chosen_fact_tiles": [
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "due date": "25/11/2026",
+        "Tenure": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "haan",
+        "Branch": "  Kothrud  ",
+        "Notes": "",
+        "Aadhaar": "1234 5678 9012",
+        "Score": 7
+      },
+      "display": {
+        "hero": [
+          "Branch"
+        ],
+        "roles": {
+          "amount_due": "Amount Due"
+        }
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": []
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "due date": "25/11/2026",
+        "Tenure": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "haan",
+        "Branch": "  Kothrud  ",
+        "Notes": "",
+        "Aadhaar": "1234 5678 9012",
+        "Score": 7
+      },
+      "display": {
+        "facts": []
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": []
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "due date": "25/11/2026",
+        "Tenure": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "haan",
+        "Branch": "  Kothrud  ",
+        "Notes": "",
+        "Aadhaar": "1234 5678 9012",
+        "Score": 7
+      },
+      "display": {
+        "types": {
+          "Amount Due": "money",
+          "Due Date": "date",
+          "Tenure": "number",
+          "alt phone": "phone",
+          "Auto Debit": "yes_no"
+        },
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          },
+          {
+            "column": "Due Date",
+            "label": "Due on",
+            "key": "due_date"
+          },
+          {
+            "column": "Tenure",
+            "label": "Tenure (months)",
+            "key": "tenure"
+          },
+          {
+            "column": "Alt Phone",
+            "label": "Other number",
+            "key": "alt_phone",
+            "highlight": true
+          }
+        ]
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "Alt Phone",
+          "label": "Other number",
+          "key": "alt_phone",
+          "highlight": true,
+          "type": "phone",
+          "raw": "098765 43210",
+          "value": "09876543210"
+        },
+        {
+          "column": "Amount Due",
+          "label": "Amount due",
+          "key": "amount_due",
+          "role": "amount_due",
+          "type": "money",
+          "raw": "₹12,500.00",
+          "value": "12500.00"
+        },
+        {
+          "column": "due date",
+          "label": "Due on",
+          "key": "due_date",
+          "role": "due_date",
+          "type": "date",
+          "raw": "25/11/2026",
+          "value": "2026-11-25"
+        },
+        {
+          "column": "Tenure",
+          "label": "Tenure (months)",
+          "key": "tenure",
+          "type": "number",
+          "raw": "24",
+          "value": "24"
+        }
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "due date": "25/11/2026",
+        "Tenure": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "haan",
+        "Branch": "  Kothrud  ",
+        "Notes": "",
+        "Aadhaar": "1234 5678 9012",
+        "Score": 7
+      },
+      "display": {
+        "hidden": [
+          "aadhaar"
+        ],
+        "types": {
+          "Auto Debit": "yes_no",
+          "Branch": "percent",
+          "Notes": "text"
+        },
+        "facts": [
+          {
+            "column": "Aadhaar",
+            "label": "Aadhaar",
+            "key": "aadhaar"
+          },
+          {
+            "column": "Missing",
+            "label": "Missing",
+            "key": "missing"
+          },
+          {
+            "column": "branch",
+            "label": "  Branch  ",
+            "key": "branch",
+            "highlight": true
+          },
+          {
+            "column": "BRANCH",
+            "label": "Again",
+            "key": "again"
+          },
+          {
+            "column": "Notes",
+            "label": "Notes",
+            "key": "notes",
+            "highlight": true
+          },
+          {
+            "column": "Auto Debit",
+            "label": 7,
+            "key": ""
+          },
+          {
+            "column": "Score",
+            "label": " ",
+            "key": 9
+          },
+          "Tenure",
+          null
+        ]
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "Branch",
+          "label": "Branch",
+          "key": "branch",
+          "highlight": true,
+          "type": "text",
+          "raw": "  Kothrud  ",
+          "value": null
+        },
+        {
+          "column": "Notes",
+          "label": "Notes",
+          "key": "notes",
+          "type": "text",
+          "raw": "",
+          "value": null
+        },
+        {
+          "column": "Auto Debit",
+          "type": "yes_no",
+          "raw": "haan",
+          "value": "yes"
+        },
+        {
+          "column": "Score",
+          "type": "text",
+          "raw": "7",
+          "value": null
+        }
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "due date": "25/11/2026",
+        "Tenure": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "haan",
+        "Branch": "  Kothrud  ",
+        "Notes": "",
+        "Aadhaar": "1234 5678 9012",
+        "Score": 7
+      },
+      "display": {
+        "types": {
+          "Amount Due": "money",
+          "Tenure": "money"
+        },
+        "facts": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due"
+          },
+          {
+            "column": "Tenure",
+            "label": "Tenure",
+            "key": "amount_due"
+          },
+          {
+            "column": "Branch",
+            "label": "Branch",
+            "key": "branch"
+          },
+          {
+            "column": "Notes",
+            "label": "Notes",
+            "key": "notes"
+          },
+          {
+            "column": "Customer Name",
+            "label": "Name",
+            "key": "cust",
+            "highlight": true
+          }
+        ]
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "Customer Name",
+          "label": "Name",
+          "key": "cust",
+          "highlight": true,
+          "type": "text",
+          "raw": "Asha Rao",
+          "value": null
+        },
+        {
+          "column": "Amount Due",
+          "label": "Amount due",
+          "key": "amount_due",
+          "role": "amount_due",
+          "type": "money",
+          "raw": "₹12,500.00",
+          "value": "12500.00"
+        },
+        {
+          "column": "Tenure",
+          "label": "Tenure",
+          "key": "amount_due",
+          "type": "money",
+          "raw": "24",
+          "value": "24"
+        },
+        {
+          "column": "Branch",
+          "label": "Branch",
+          "key": "branch",
+          "type": "text",
+          "raw": "  Kothrud  ",
+          "value": null
+        }
+      ]
+    }
+  ],
+  "unique_fact_labels": [
+    {
+      "headers": [
+        "Amount Due",
+        "Due Date",
+        "Branch"
+      ],
+      "taken": [],
+      "labels": [
+        "Amount Due",
+        "Due Date",
+        "Branch"
+      ]
+    },
+    {
+      "headers": [
+        "Outstanding Balance A",
+        "Outstanding Balance B",
+        "outstanding balance C"
+      ],
+      "taken": [],
+      "labels": [
+        "Outstanding Bala",
+        "Outstanding Ba 2",
+        "outstanding ba 3"
+      ]
+    },
+    {
+      "headers": [
+        "Branch",
+        "branch",
+        "BRANCH "
+      ],
+      "taken": [
+        "Branch 2"
+      ],
+      "labels": [
+        "Branch",
+        "branch 3",
+        "BRANCH 4"
+      ]
+    },
+    {
+      "headers": [
+        "Amount Due"
+      ],
+      "taken": [
+        "amount due"
+      ],
+      "labels": [
+        "Amount Due 2"
+      ]
+    },
+    {
+      "headers": [
+        "",
+        "  ",
+        "EMI"
+      ],
+      "taken": [
+        "EMI"
+      ],
+      "labels": [
+        "",
+        "",
+        "EMI 2"
+      ]
+    },
+    {
+      "headers": [
+        "नाम और पता और फ़ोन नंबर",
+        "नाम और पता और फ़ोन नंबर"
+      ],
+      "taken": [],
+      "labels": [
+        "नाम और पता और फ़",
+        "नाम और पता और 2"
+      ]
+    },
+    {
+      "headers": [
+        "Loan Account Number",
+        "Loan Account Num"
+      ],
+      "taken": [],
+      "labels": [
+        "Loan Account Num",
+        "Loan Account N 2"
+      ]
+    }
+  ],
+  "legacy_fact_fields": [
+    {
+      "display": {
+        "hero": [
+          "Customer Name",
+          "Loan No",
+          "EMI"
+        ],
+        "roles": {
+          "name": "Customer Name",
+          "place": "City",
+          "amount_due": "Balance",
+          "due_date": "Due Date"
+        }
+      },
+      "columns": [
+        "Customer Name",
+        "City",
+        "Loan No",
+        "Balance",
+        "Due Date",
+        "EMI"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        },
+        {
+          "column": "EMI",
+          "label": "EMI",
+          "key": "emi"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Branch",
+          "Due Date",
+          "Balance"
+        ],
+        "roles": {
+          "amount_due": "balance",
+          "due_date": "due date"
+        }
+      },
+      "columns": [
+        "Branch",
+        "Due Date",
+        "Balance"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Branch",
+          "label": "Branch",
+          "key": "branch"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No",
+          "EMI",
+          "Branch",
+          "Internal ID"
+        ],
+        "roles": {
+          "due_date": "Due Date",
+          "amount_due": "Balance"
+        }
+      },
+      "columns": [
+        "Loan No",
+        "EMI",
+        "Branch",
+        "Internal ID",
+        "Balance",
+        "Due Date"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        },
+        {
+          "column": "EMI",
+          "label": "EMI",
+          "key": "emi"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No"
+        ],
+        "roles": {
+          "due_date": "Due"
+        }
+      },
+      "columns": null,
+      "facts": [
+        {
+          "column": "Due",
+          "label": "Due",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        }
+      ]
+    }
+  ]
+}

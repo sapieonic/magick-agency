@@ -310,6 +310,23 @@ describe('config is inherited from the parent, then patched', () => {
     expect(config.calling_window_start).toBe('09:00:00');
   });
 
+  it('AS19: refuses a context_display override that drops a key the parent\'s script uses (the child copies the script)', async () => {
+    campaigns.findById.mockResolvedValue({
+      ...PARENT,
+      context_display: { facts: [{ column: 'Branch', label: 'Branch', key: 'branch' }, { column: 'Amount Due', label: 'Amount', key: 'amount_due' }] },
+      agent_script: { opening: 'Namaste {name}, calling from {branch}.' },
+    });
+    const res = await postRetry({
+      selector: { state: ['pending'] },
+      config_overrides: { context_display: { facts: [{ column: 'Amount Due', label: 'Amount', key: 'amount_due' }] } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({
+      'context_display.facts': 'The script uses {branch}. Take it out of the script first, or keep the fact.',
+    });
+    expect(campaigns.retryFromCampaign).not.toHaveBeenCalled();
+  });
+
   it('refuses an unknown override key BY NAME rather than dropping it', async () => {
     // Silently ignoring one produces a campaign configured differently from what
     // the operator asked for, with a 201 saying it worked — and adjusting the

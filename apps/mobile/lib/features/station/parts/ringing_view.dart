@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
+import '../logic/facts.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/state_band.dart';
 import 'call_band.dart';
 import 'contact_details.dart';
+import 'fact_grid.dart';
 import 'layouts.dart';
 import 'script_cards.dart' show OpeningLineCard;
 import 'sheets.dart';
@@ -142,11 +144,16 @@ class RedialTag extends StatelessWidget {
 }
 
 /// The customer card (03, 04; it does not move between them): initials, the name (the number
-/// leads when there is none), the place and the number (masked where the campaign says so, AS9),
-/// the contact's promise to pay, and three number tiles. With the server's facts (BE-6): its name,
-/// place and fact tiles, amount due and due date first, money as ₹ with Indian grouping and dates
-/// as "20 Nov" where the campaign typed the column; without them, the campaign's first hero fields.
-/// The last call's date takes the third tile when there was a call before. A booked call-later
+/// leads when there is none), the place and the number (masked where the campaign says so, AS9;
+/// with chosen facts the number first and the place on one line, cut with "…", AS19 S12),
+/// the contact's promise to pay, and the tiles. With the campaign's chosen facts (AS19): the
+/// heading is the server's name, else "Customer", always with the number under it; its 2 × 2
+/// [FactGrid] (none for an empty choice), the highlight first and the full row, press and hold for
+/// a full value; no Last call tile. Else three number tiles in a row: with the server's
+/// facts (BE-6) its name, place and fact tiles, amount due and due date first, money as ₹ with
+/// Indian grouping and dates as "20 Nov" where the campaign typed the column; without them, the
+/// campaign's first hero fields; the last call's date takes the third tile when there was a call
+/// before. A booked call-later
 /// coming due (BE-4) is tagged above the name. On Call coming it adds "What they said last time".
 /// A tap opens every field (Details).
 class CustomerCard extends ConsumerWidget {
@@ -164,22 +171,28 @@ class CustomerCard extends ConsumerWidget {
     final c = context.stateTokens.coming;
     final text = Theme.of(context).textTheme;
     final facts = call.facts;
-    final name = (facts?.name ?? call.displayName)?.trim();
-    final hasName = name != null && name.isNotEmpty;
+    final chosen = facts != null && facts.chosen;
+    final name = call.customerName;
+    final hasName = name != null;
+    // AS19: a chosen campaign's card is headed "Customer" when the server has no name.
+    final heading = hasName ? name : (chosen ? StationCopy.customer : null);
     final place = facts?.place?.trim();
     final phone = stationPhone(call.phoneE164, masked: masked);
     final ordered = orderPriorAttempts(call.priorAttempts);
     final last = ordered.firstOrNull;
     final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
     final room = last == null ? 3 : 2;
-    final tiles = <Widget>[
-      if (facts != null)
-        for (final f in factTilesInOrder(facts).take(room)) NumberTile(label: f.label, value: factText(f))
-      else
-        for (final f in call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).take(room))
-          NumberTile(label: f.label, value: f.value),
-      if (last != null) NumberTile(key: const Key('last-call-tile'), label: StationCopy.lastCall, value: formatDay(last.at)),
-    ];
+    // BE-6 and older servers: three tiles in a row, as before AS19.
+    final tiles = chosen
+        ? const <Widget>[]
+        : <Widget>[
+            if (facts != null)
+              for (final f in factTilesInOrder(facts).take(room)) NumberTile(label: f.label, value: factText(f, masked: masked))
+            else
+              for (final f in call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).take(room))
+                NumberTile(label: f.label, value: f.value),
+            if (last != null) NumberTile(key: const Key('last-call-tile'), label: StationCopy.lastCall, value: formatDay(last.at)),
+          ];
     final tag = call.callback;
     return Semantics(
       container: true,
@@ -225,24 +238,43 @@ class CustomerCard extends ConsumerWidget {
                         children: [
                           Semantics(
                             header: true,
-                            child: Text(hasName ? name : phone, key: const Key('call-headline'), style: text.headlineMedium),
+                            child: Text(heading ?? phone, key: const Key('call-headline'), style: text.headlineMedium),
                           ),
-                          Wrap(
-                            spacing: Space.md,
-                            runSpacing: 2,
-                            children: [
-                              if (place != null && place.isNotEmpty)
-                                _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
-                              if (hasName) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
-                            ],
-                          ),
+                          if (chosen)
+                            // AS19 S12, as the console: the number first; then the place, on one
+                            // line, cut with "…" (beside the number when it fits, else under it).
+                            Wrap(
+                              spacing: Space.md,
+                              runSpacing: 2,
+                              children: [
+                                _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                                if (place != null && place.isNotEmpty)
+                                  _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place, oneLine: true),
+                              ],
+                            )
+                          else
+                            Wrap(
+                              spacing: Space.md,
+                              runSpacing: 2,
+                              children: [
+                                if (place != null && place.isNotEmpty)
+                                  _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
+                                if (heading != null) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                              ],
+                            ),
                         ],
                       ),
                     ),
                   ],
                 ),
                 if (call.promise != null) ...[const SizedBox(height: Space.sm), PromiseLine(promise: call.promise!)],
-                if (tiles.isNotEmpty) ...[const SizedBox(height: Space.md), TileRow(children: tiles)],
+                if (chosen) ...[
+                  if (facts.tiles.isNotEmpty) const SizedBox(height: Space.md),
+                  FactGrid(tiles: cardFactTiles(facts)),
+                ] else if (tiles.isNotEmpty) ...[
+                  const SizedBox(height: Space.md),
+                  TileRow(children: tiles),
+                ],
                 if (lastWords && said != null) ...[
                   const SizedBox(height: Space.sm),
                   DecoratedBox(
@@ -277,30 +309,6 @@ class CustomerCard extends ConsumerWidget {
     final second = parts.length > 1 ? parts[1].characters.first : '';
     return (first + second).toUpperCase();
   }
-}
-
-/// The facts' tiles in the order the card shows them: amount due and due date first, then the
-/// rest in hero order; never the name's or the place's own column.
-List<FactTileView> factTilesInOrder(FactsView facts) {
-  bool isNameOrPlace(FactTileView f) => f.raw.trim() == facts.name || f.raw.trim() == facts.place;
-  final shown = facts.tiles.where((f) => f.raw.trim().isNotEmpty && !isNameOrPlace(f)).toList();
-  return [
-    ...shown.where((f) => f.amountDue),
-    ...shown.where((f) => f.dueDate),
-    ...shown.where((f) => !f.amountDue && !f.dueDate),
-  ];
-}
-
-/// A fact as the station shows it: money the campaign typed as such as `₹12,500`, a typed date as
-/// `20 Nov`, anything else exactly as uploaded.
-String factText(FactTileView f) {
-  final parsed = f.parsed;
-  if (parsed == null) return f.raw;
-  return switch (f.kind) {
-    FactKind.money => formatRupees(parsed),
-    FactKind.date => formatFactDate(parsed),
-    FactKind.text => f.raw,
-  };
 }
 
 /// "Call later · You said you will call at 3:00 PM" (BE-4): this call is a booked call-later.
@@ -338,10 +346,13 @@ class CallLaterTagPill extends StatelessWidget {
 }
 
 class _IconText extends StatelessWidget {
-  const _IconText({super.key, required this.icon, required this.text});
+  const _IconText({super.key, required this.icon, required this.text, this.oneLine = false});
 
   final IconData icon;
   final String text;
+
+  /// One line, cut with "…" (the chosen card's place).
+  final bool oneLine;
 
   @override
   Widget build(BuildContext context) {
@@ -351,7 +362,15 @@ class _IconText extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: t.textSecondary),
         const SizedBox(width: Space.xs),
-        Flexible(child: Text(text, style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary))),
+        Flexible(
+          child: Text(
+            text,
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary),
+            maxLines: oneLine ? 1 : null,
+            softWrap: !oneLine,
+            overflow: oneLine ? TextOverflow.ellipsis : null,
+          ),
+        ),
       ],
     );
   }

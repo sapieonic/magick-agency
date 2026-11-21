@@ -9,9 +9,9 @@ import { helpAnsweredLine, releaseBanner, STATION_COPY } from '../../utils/agenc
 import { pickVoice } from '../../hooks/useSpeech';
 import { callLaterRowsFor, fromMyDay } from '../../pages/agency/station/useMyDay';
 import { agentReadsFixture } from '../helpers/agentReads';
-import { fillScript, fillScriptPlaceholders, firstName, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
+import { fillScriptLine, firstName, scriptFillFor, scriptOrNone } from '../../utils/agency/stationScript';
 import type { AgencyMyContact } from '@magick-agency/contracts/api/agency/assignment';
-import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
+import { AGENCY_SCRIPT_PLACEHOLDERS, type AgencyDisposition, type AgencyReservedAttempt } from '../../types/agency';
 
 describe('how the station writes numbers (AS15)', () => {
   it('₹ with Indian grouping, no decimals unless they are not zero', () => {
@@ -331,6 +331,8 @@ describe('the script’s placeholders (BE-8, the contract’s fill rule)', () =>
   it('fills a known placeholder, leaves out one with no value, and keeps an unknown {word} as written', () => {
     // The same case as the app's wire test (agency_wire agent_station_test.dart).
     const valueOf = (p: string) => (p === 'name' ? 'Sunita' : p === 'amount_due' ? '₹12,500' : null);
+    const fillScriptPlaceholders = (text: string, fill: typeof valueOf) =>
+      fillScriptLine(text, { allowed: AGENCY_SCRIPT_PLACEHOLDERS, valueOf: fill, labelOf: () => null }).shown;
     expect(fillScriptPlaceholders('Namaste {name}, {amount_due} due on {due_date}. {mood}', valueOf)).toBe(
       'Namaste Sunita, ₹12,500 due on . {mood}',
     );
@@ -351,9 +353,11 @@ describe('the script’s placeholders (BE-8, the contract’s fill rule)', () =>
         ],
       },
     };
-    const values = scriptValuesFor(attempt, { name: 'Sunita Patil', place: 'Pune' }, { agentName: '  Ravi Kumar ', campaignName: 'EMI' });
-    expect(values).toEqual({ name: 'Sunita Patil', place: 'Pune', amount_due: '₹12,500', due_date: '20 Nov', agent_name: 'Ravi', campaign_name: 'EMI' });
-    expect(fillScript('Namaste {name}, I am {agent_name} from {campaign_name}. {amount_due} by {due_date}.', values)).toBe(
+    const fill = scriptFillFor(attempt, { name: 'Sunita Patil', place: 'Pune' }, { agentName: '  Ravi Kumar ', campaignName: 'EMI' }, undefined);
+    expect(['name', 'place', 'amount_due', 'due_date', 'agent_name', 'campaign_name'].map(fill.valueOf)).toEqual([
+      'Sunita Patil', 'Pune', '₹12,500', '20 Nov', 'Ravi', 'EMI',
+    ]);
+    expect(fillScriptLine('Namaste {name}, I am {agent_name} from {campaign_name}. {amount_due} by {due_date}.', fill).shown).toBe(
       'Namaste Sunita Patil, I am Ravi from EMI. ₹12,500 by 20 Nov.',
     );
     expect(firstName('')).toBeNull();

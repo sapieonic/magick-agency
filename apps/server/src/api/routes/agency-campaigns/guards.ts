@@ -13,7 +13,7 @@ import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
-import { contextDisplayIssues, namesContextColumns } from '../../../agency/customer-facts.js';
+import { canonicalContextColumns, contextDisplayIssues, namesContextColumns } from '../../../agency/customer-facts.js';
 import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 
 /**
@@ -264,10 +264,15 @@ export async function analysisProfileRejected(
 }
 
 /**
- * Agent station (BE-6): refuse `context_display.roles` / `.types` naming a column the campaign's
- * customer list does not have, listing the columns it does. The columns are the imports' (the
- * campaign's own, and its lineage root's for a retry); with none yet, nothing is checked against a
- * roster (the shape rules ran in `configRejected`). Read only when the body sets roles or types.
+ * Agent station (BE-6, AS19): refuse `context_display.roles` / `.types` / `.facts` naming a column
+ * the campaign's customer list does not have, listing the columns it does. The columns are the
+ * imports' (the campaign's own, and its lineage root's for a retry); with none yet, nothing is
+ * checked against a roster (the shape rules ran in `configRejected`). Read only when the body sets
+ * roles, types or facts. Run on a PATCH's body and on a retry's `config_overrides` (with the
+ * parent as `campaign`: the child's contacts are the parent's).
+ * Accepted, the body's `context_display` is replaced by its roster spelling
+ * (`canonicalContextColumns`, AS19 S9): a role or a fact named `amount due` is stored as the
+ * roster's `Amount Due`, so the own-contacts list's exact-key match finds it.
  * Returns false only when it has already replied.
  */
 export async function contextColumnsRejected(
@@ -281,7 +286,10 @@ export async function contextColumnsRejected(
     : [campaign.id];
   const known = await agencyIngestJobRepository.knownContextColumns(lineage);
   const issues = contextDisplayIssues(body, known);
-  if (issues.length === 0) return false;
+  if (issues.length === 0) {
+    body['context_display'] = canonicalContextColumns(body['context_display'], known);
+    return false;
+  }
   replyValidationFailed(reply, issuesToDetails(issues));
   return true;
 }

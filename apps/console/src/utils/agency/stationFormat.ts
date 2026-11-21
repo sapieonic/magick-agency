@@ -5,6 +5,7 @@
  * the reader's own clock: the station has no customer time zone (spec 8, the timezone caveat).
  */
 
+import { formatFactPhone, maskFactPhone } from '@magick-agency/domain/fact-phone';
 import { formatPhone } from '@magick-agency/web-ui/format';
 
 const INDIAN_GROUPING = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
@@ -35,6 +36,45 @@ export function rupees(raw: string | number): string | null {
  */
 export function promisedAmount(raw: string | number): string | null {
   return rupees(raw)?.replace(/^₹/, '') ?? null;
+}
+
+/**
+ * A plain number fact (AS19, `number`): Indian grouping, `1,25,000`; its decimals as read, and
+ * none when they are all zero (`12.50` stays, `12.00` is `12`). Null when the text is not a plain
+ * decimal (the domain's parse answers one).
+ */
+export function groupedNumber(raw: string): string | null {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return null;
+  const whole = INDIAN_GROUPING.format(m[1]!.replace(/^0+(?=\d)/, '') as unknown as number);
+  const frac = m[2] ?? '';
+  return /^0*$/.test(frac) ? whole : `${whole}.${frac}`;
+}
+
+/**
+ * A read date fact (`YYYY-MM-DD`) as `20 Nov`, or `20 Nov 2027` when its year is not the
+ * reader's this year; the text as given when it is not a calendar day.
+ */
+export function factDay(day: string, now: Date | number = Date.now()): string {
+  const m = /^(\d{4})-\d{2}-\d{2}$/.exec(day.trim());
+  if (!m) return day;
+  const shown = calendarDay(day);
+  return Number(m[1]) === new Date(now).getFullYear() ? shown : `${shown} ${m[1]}`;
+}
+
+/**
+ * A phone fact by AS19's one phone rule (R6, S3), which the tile, the hover card, the script and the
+ * agent app all follow: the domain's `formatFactPhone` / `maskFactPhone`
+ * (`@magick-agency/domain/fact-phone`). An Indian mobile (`9876543210`, `919876543210`,
+ * `+919876543210`, `09876543210`) is `+91 98765 43210`, masked `98••• ••210`; any other number is
+ * the value as read, unspaced (`+14155550123`), masked on all its digits (`14••• ••123`). A value
+ * the server could not read is masked the same way on its digits, and one with fewer than seven
+ * shows none (`•••`).
+ *
+ * @param digits the parsed value (digits, `+` kept when written), or the raw text when unread
+ */
+export function factPhone(digits: string, display: 'full' | 'masked' = 'full'): string {
+  return display === 'full' ? formatFactPhone(digits) : maskFactPhone(digits);
 }
 
 /** Half of an amount as a plain decimal string, for the "Half" chip; null when not an amount. */

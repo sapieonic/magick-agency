@@ -1,8 +1,10 @@
 import { useRef } from 'react';
 import {
   MAPPING_BLOCK_COPY,
+  MAX_HERO_FIELDS,
   ROLE_LABELS,
   addDedupeKey,
+  cardRoleNote,
   canAddDedupeKey,
   combinationLine,
   countryCodeError,
@@ -81,6 +83,11 @@ export interface ColumnMapperProps {
   onChange: (next: MappingState) => void;
   fileName: string;
   disabled?: boolean;
+  /**
+   * Offer "On the card" (AS19): a new campaign's first card facts. Only where the picks are saved
+   * (New campaign); a list added to a campaign leaves the card to its Settings.
+   */
+  cardChoice?: boolean;
 }
 
 export function ColumnMapper({
@@ -89,11 +96,14 @@ export function ColumnMapper({
   onChange,
   fileName,
   disabled = false,
+  cardChoice = false,
 }: ColumnMapperProps) {
   const phone = phoneColumn(state);
   const block = mappingBlockReason(state);
   const validity = phoneValidityLine(analysis, phone);
   const heroFull = heroLimitReached(state);
+  // S9: a pick the card shows as the name or the line under it is said, not dropped in silence.
+  const shownElsewhere = cardChoice ? cardRoleNote(state) : null;
   const countryError = countryCodeError(state.defaultCountryCode);
   const keys = dedupeKeys(state.dedupe);
   const canAddKey = canAddDedupeKey(analysis, state);
@@ -175,7 +185,7 @@ export function ColumnMapper({
                       onChange(setRole(state, column.name, event.target.value as ColumnRole))
                     }
                   >
-                    {ROLES.map((option) => (
+                    {ROLES.filter((option) => option !== 'hero' || cardChoice || role === 'hero').map((option) => (
                       <option
                         key={option}
                         value={option}
@@ -195,6 +205,15 @@ export function ColumnMapper({
           })}
         </tbody>
       </table>
+
+      <p className={styles.timezoneNote} data-testid="card-choice-note">
+        {cardChoice
+          ? `Columns set to On the card are what agents see on the customer card, in the order you pick them (${MAX_HERO_FIELDS} at most). Change their names and order later in the campaign’s Settings.`
+          : 'What agents see on the customer card is chosen in the campaign’s Settings.'}
+      </p>
+      {cardChoice && shownElsewhere ? (
+        <p className={styles.timezoneNote} data-testid="card-role-note">{shownElsewhere}</p>
+      ) : null}
 
       {block ? (
         <p className={styles.block} data-testid="mapping-block">

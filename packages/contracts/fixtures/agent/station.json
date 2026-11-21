@@ -1259,5 +1259,79 @@
       "call_id": null,
       "state_at_raise": "available"
     }
+  },
+  "reserved_facts_chosen": {
+    "event": "reserved",
+    "attempt": {
+      "attempt_id": "4a5b6c7d-8e9f-4a0b-9c1d-2e3f4a5b6c7d",
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune",
+      "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+      "phone_e164": "+918765432109",
+      "caller_id": "+912071234567",
+      "attempt_number": 2,
+      "context": {
+        "Customer Name": "Sunita Patil",
+        "City": "Nashik",
+        "Amount Due": "₹12,500.00",
+        "Due Date": "20/11/2026",
+        "Tenure (months)": "24",
+        "Alt Phone": "098765 43210",
+        "Auto Debit": "Haan",
+        "Internal ID": "x-991"
+      },
+      "prior_attempts": [
+        {
+          "attempt_number": 1,
+          "outcome": "connected",
+          "disposition_code": "callback",
+          "notes": "Asked us to call after 6pm.",
+          "ended_at": "2026-10-31T09:40:11.000Z",
+          "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+          "campaign_name": "Q4 Renewals — Pune",
+          "dialed_at": "2026-10-31T09:37:58.300Z"
+        }
+      ],
+      "facts": {
+        "name": "Sunita Patil",
+        "place": "Nashik",
+        "tiles": [
+          {
+            "column": "Amount Due",
+            "label": "Amount due",
+            "key": "amount_due",
+            "highlight": true,
+            "role": "amount_due",
+            "type": "money",
+            "raw": "₹12,500.00",
+            "value": "12500.00"
+          },
+          {
+            "column": "Tenure (months)",
+            "label": "Tenure (months)",
+            "key": "tenure_months",
+            "type": "number",
+            "raw": "24",
+            "value": "24"
+          },
+          {
+            "column": "Alt Phone",
+            "label": "Other number",
+            "key": "alt_phone",
+            "type": "phone",
+            "raw": "098765 43210",
+            "value": "09876543210"
+          },
+          {
+            "column": "Auto Debit",
+            "label": "Auto debit on",
+            "key": "auto_debit",
+            "type": "yes_no",
+            "raw": "Haan",
+            "value": "yes"
+          }
+        ]
+      }
+    }
   }
 }

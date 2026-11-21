@@ -1404,7 +1404,7 @@ class StationController extends Notifier<StationView?>
         ringback: manual.state == AttemptState.ringing && manual.bridgedAt == null && !_ringMuted,
       );
     }
-    final name = _cachedName(live.attemptId, () => displayNameFor(live.attempt.context, _s?.hosted.contextDisplay));
+    final name = _cachedName(live.attemptId, () => _campaignCallName(live.attempt, _s?.hosted.contextDisplay));
     return AudioTarget(
       attemptId: live.attemptId,
       bridged: live.bridgedAt != null,
@@ -1414,12 +1414,23 @@ class StationController extends Notifier<StationView?>
     );
   }
 
-  /// The matched contact's name, for CallKit and telemetry-free display: the station's hero
-  /// heuristic over the match's columns.
+  /// The matched contact's name, for CallKit and telemetry-free display: the domain's one rule
+  /// over the match's columns (AS19 S1: the name role's column first, else the name guess), then
+  /// on a legacy campaign the legacy card's guess ([callerNameOf]).
   static String? _inboundName(InboundCall call) {
     final match = call.match;
     if (match == null) return null;
-    return displayNameFor(match.context, match.contextDisplay);
+    return callerNameOf(match.context, match.contextDisplay);
+  }
+
+  /// A campaign call's name for CallKit, as the card heads it: with the campaign's chosen facts
+  /// (AS19 R9) the server's `facts.name` only (it already guessed); else the legacy guess.
+  static String? _campaignCallName(ReservedAttempt attempt, ContextDisplay? display) {
+    if (display?.facts != null) {
+      final name = attempt.facts?.name?.trim();
+      return name == null || name.isEmpty ? null : name;
+    }
+    return displayNameFor(attempt.context, display);
   }
 
   /// The contact's name for CallKit, worked out once per call (a campaign

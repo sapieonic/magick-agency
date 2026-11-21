@@ -58,17 +58,38 @@ import {
 } from '../../utils/agency/breakLimits';
 import { focusFirstFieldError, useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
 import { AgentScreenFields } from '../campaigns/agency/AgentScreenFields';
-import { CustomerFactsEditor } from '../campaigns/agency/CustomerFactsEditor';
+import { CustomerFactsEditor, type ColumnsRead, type FactFocusRequest } from '../campaigns/agency/CustomerFactsEditor';
 import { ScriptEditor } from '../campaigns/agency/ScriptEditor';
-import { useCampaignColumns } from '../../hooks/useCampaignColumns';
+import { useCampaignColumns, useCampaignSampleRows } from '../../hooks/useCampaignColumns';
 import {
+  COLUMNS_FAILED_MESSAGE,
+  COLUMNS_LOADING_MESSAGE,
   campaignColumns,
+  factsChanged,
+  factsErrors,
+  factsFormOf,
+  factsReordered,
   hiddenColumns,
+  isLegacyDisplay,
+  newFact,
+  putBack,
+  removedFactsInUse,
+  replaceToken,
   stationErrors,
   stationPayload,
+  stationPlan,
   stationSettingsOf,
+  withoutPlacedFactErrors,
+  type FactsForm,
   type StationSettingsForm,
 } from '../../utils/agency/stationSettings';
+import { factKeyFromColumn } from '@magick-agency/domain/fact-fields';
+import {
+  AGENCY_FACT_FIELDS_MAX,
+  AGENCY_FACT_KEY_MAX_CHARS,
+  AGENCY_FACT_KEY_PATTERN,
+  AGENCY_SCRIPT_FIXED_PLACEHOLDERS,
+} from '@magick-agency/contracts/agency';
 import { CallerIdPicker } from './CallerIdPicker';
 import { CampaignCarrierField } from '../../components/agency/CampaignCarrierField';
 import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
@@ -126,8 +147,12 @@ import styles from './AgencyCampaignSettingsPage.module.css';
  * unsaved ("2 unsaved changes · Discard · Save changes", counted by `changedSettings`), and
  * leaving the page with unsaved edits asks first (`useUnsavedChangesGuard`).
  */
-/** The form's fields as a stored campaign has them: what a load or a save seeds. */
-function formOfCampaign(record: AgencyCampaign): CampaignSettingsForm {
+/**
+ * The form's fields as a stored campaign has them: what a load or a save seeds. `columns`, the
+ * roster's when known, opens the card of a campaign still on the old model (AS19) with what its
+ * agents see today.
+ */
+function formOfCampaign(record: AgencyCampaign, columns: readonly string[] | null = null): CampaignSettingsForm {
   return {
     name: record.name,
     callerIds: record.caller_ids ?? [],
@@ -135,7 +160,7 @@ function formOfCampaign(record: AgencyCampaign): CampaignSettingsForm {
     recording: recordingStateFromCampaign(record),
     config: configFromCampaign(record),
     breakReasons: breakReasonsFormOf(record.break_reasons),
-    station: stationSettingsOf(record),
+    station: stationSettingsOf(record, columns),
   };
 }
 
@@ -248,6 +273,8 @@ export function AgencyCampaignSettingsPage() {
   */
   const routeIdRef = useRef(id);
   routeIdRef.current = id;
+  /** The roster's columns once read (null until then): a load or a save opens an old-model card from them. */
+  const knownColumnsRef = useRef<readonly string[] | null>(null);
   const readTokenRef = useRef(0);
   const loadSeqRef = useRef(0);
 
@@ -274,7 +301,7 @@ export function AgencyCampaignSettingsPage() {
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
       if (seq !== loadSeqRef.current) return;
-      if (commitCampaign(record)) seedForm(formOfCampaign(record));
+      if (commitCampaign(record)) seedForm(formOfCampaign(record, knownColumnsRef.current));
     } catch (err: unknown) {
       if (seq !== loadSeqRef.current) return;
       setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
@@ -324,6 +351,51 @@ export function AgencyCampaignSettingsPage() {
     },
   });
 
+  /*
+    The customer list's columns, for the card's pickers: read by an editor only (`agency.supervise`
+    floors the read), once THIS campaign is loaded, so its lineage root is known at the one read.
+    A few customers' rows beside them, for the samples and the script's preview.
+  */
+  const hidden = useMemo(() => hiddenColumns(campaign?.context_display), [campaign?.context_display]);
+  const columnsEnabled = canEdit && canSupervise && campaign?.id === id;
+  const imported = useCampaignColumns(id, campaign?.root_campaign_id ?? null, tenantId, accountId, columnsEnabled);
+  const samples = useCampaignSampleRows(id, tenantId, accountId, columnsEnabled);
+  const columnsRead: ColumnsRead = !columnsEnabled ? 'done' : imported.failed ? 'failed' : imported.ready ? 'done' : 'loading';
+  /*
+    S9: a card on the old model is opened from the columns, so until they are read it is not shown
+    ("Loading…", or the failure with "Try again") and a save that would send it is held.
+  */
+  const cardWaiting = canEdit && campaign !== null && isLegacyDisplay(campaign.context_display) && columnsRead !== 'done'
+    ? (columnsRead === 'failed' ? COLUMNS_FAILED_MESSAGE : COLUMNS_LOADING_MESSAGE)
+    : null;
+  // The columns the card's selects offer (the roster's first): the guesses a save writes read them.
+  const selectColumns = useMemo(
+    () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
+    [imported.columns, campaign?.context_display, station],
+  );
+  // "The latest upload" is the newest import alone (S9): what a fact is added from and checked against.
+  const factsContext = useMemo(
+    () => ({ hidden, uploaded: imported.latest, columns: selectColumns, cardWaiting }),
+    [hidden, imported.latest, selectColumns, cardWaiting],
+  );
+  knownColumnsRef.current = imported.ready ? imported.columns : null;
+
+  /*
+    AS19: a campaign still on the old model opens its card with what its agents see today, which
+    needs the roster's columns (the hero guess and the name guess read them). They arrive after the
+    campaign: once they do, an untouched card is opened again from them, as saved and on screen
+    alike, so it counts as no change. Until then the card is not shown (S9).
+  */
+  useEffect(() => {
+    const columnsNow = knownColumnsRef.current;
+    if (!columnsNow || !campaign || !isLegacyDisplay(campaign.context_display)) return;
+    if (!station || !saved?.station || factsChanged(saved.station.facts, station.facts)) return;
+    const facts = factsFormOf(campaign.context_display, columnsNow);
+    if (!factsChanged(station.facts, facts)) return;
+    setSaved({ ...saved, station: { ...saved.station, facts } });
+    setStation({ ...station, facts });
+  }, [imported.ready, imported.columns, campaign, station, saved]);
+
   const onSave = useCallback(async () => {
     if (!id || !config || !recording) return;
     if (configBlockReason(config) !== null) {
@@ -351,7 +423,7 @@ export function AgencyCampaignSettingsPage() {
     // A break limit the rule refuses is said on its row as it is typed, and holds Save the same way.
     if (breakReasons && Object.keys(breakReasonsErrors(breakReasons)).length > 0) return;
     // The same for the station's settings (a target, the script, the facts), said on their fields.
-    if (station && saved?.station && Object.keys(stationErrors(saved.station, station, hiddenColumns(campaign?.context_display))).length > 0) return;
+    if (station && saved?.station && Object.keys(stationErrors(saved.station, station, campaign?.context_display, factsContext)).length > 0) return;
 
     setSaving(true);
     setSaveError(null);
@@ -403,6 +475,11 @@ export function AgencyCampaignSettingsPage() {
     const sendBreakReasons = breakReasons !== null
       && saved?.breakReasons !== undefined
       && !sameBreakLimits(saved.breakReasons, breakReasons);
+    // The card's columns as its selects offer them: a name left on "Guess from the column names" is
+    // saved as the column the select names (AS19 R1), so it stays a hero once the card has facts.
+    const stationSent = station && saved?.station
+      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns)
+      : {};
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -425,7 +502,7 @@ export function AgencyCampaignSettingsPage() {
             facts are merged into the campaign's `context_display` as last read, whose hero, order
             and hidden columns the roster import sets (a PATCH replaces the object whole).
           */
-          ...(station && saved?.station ? stationPayload(saved.station, station, campaign?.context_display) : {}),
+          ...stationSent,
           ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
@@ -453,8 +530,14 @@ export function AgencyCampaignSettingsPage() {
       // Re-seeding the config alone is the subtle version of the same bug: the
       // window would correct itself while the name silently kept the local
       // value.
-      seedForm(formOfCampaign(updated));
-      showToast('Campaign settings saved.', 'success');
+      seedForm(formOfCampaign(updated, knownColumnsRef.current));
+      // AS19 S8: the script, its keys and the card reach agents with their station's bootstrap.
+      showToast(
+        stationSent.agent_script !== undefined || stationSent.context_display !== undefined
+          ? 'Saved. Agents see this when they next start work.'
+          : 'Campaign settings saved.',
+        'success',
+      );
       trackAgencyCampaignConfigSaved({
         campaign_id: id,
         source: 'settings',
@@ -518,7 +601,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons, station,
+    breakReasons, station, factsContext, selectColumns,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -569,24 +652,81 @@ export function AgencyCampaignSettingsPage() {
     said on their fields, quietly, ahead of the server's answer to the last save (which is about
     what was sent, and may be fixed since), as the break limits do.
   */
-  const hidden = useMemo(() => hiddenColumns(campaign?.context_display), [campaign?.context_display]);
   const stationLive = useMemo(
-    () => (canEdit && station && saved?.station ? stationErrors(saved.station, station, hidden) : {}),
-    [canEdit, station, saved, hidden],
+    () => (canEdit && station && saved?.station ? stationErrors(saved.station, station, campaign?.context_display, factsContext) : {}),
+    [canEdit, station, saved, campaign?.context_display, factsContext],
   );
-  const stationFieldErrors = useMemo(() => ({ ...fieldErrors, ...stationLive }), [fieldErrors, stationLive]);
-  const stationQuiet = useMemo(() => new Set(Object.keys(stationLive)), [stationLive]);
+  /*
+    The card's findings are said on their rows whether or not they hold Save (a fact whose column a
+    newer upload dropped is shown even while only the target changes); only those of a card that is
+    sent hold it (`stationLive`).
+  */
+  const factsShown = useMemo(
+    () => (canEdit && station ? factsErrors(station.facts, factsContext) : {}),
+    [canEdit, station, factsContext],
+  );
+  const stationFieldErrors = useMemo(
+    () => ({ ...fieldErrors, ...factsShown, ...stationLive }),
+    [fieldErrors, factsShown, stationLive],
+  );
+  const stationQuiet = useMemo(
+    () => new Set([...Object.keys(factsShown), ...Object.keys(stationLive)]),
+    [factsShown, stationLive],
+  );
   const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
-  // The customer list's columns, for the facts' pickers: read by an editor only (`agency.supervise`
-  // floors the read), once THIS campaign is loaded, so its lineage root is known at the one read.
-  const imported = useCampaignColumns(
-    id, campaign?.root_campaign_id ?? null, tenantId, accountId,
-    canEdit && canSupervise && campaign?.id === id,
+  const plan = useMemo(
+    () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display) : null),
+    [station, saved, campaign?.context_display],
   );
-  const columns = useMemo(
-    () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
-    [imported.columns, campaign?.context_display, station],
+  const removedInUse = useMemo(
+    () => (station && saved?.station ? removedFactsInUse(saved.station.facts, station.facts, station.script) : []),
+    [station, saved],
   );
+
+  /** The fact row the editor focuses and announces after a change made from elsewhere (S9). */
+  const [factFocus, setFactFocus] = useState<FactFocusRequest | null>(null);
+
+  /**
+   * The card as edited. A change of the facts' order (a move, an add, a removal) clears the
+   * server's answer keyed by a fact's place, which now names another fact (S9).
+   */
+  const onFactsChange = useCallback((facts: FactsForm) => {
+    if (!station) return;
+    if (factsReordered(station.facts.list, facts.list)) setFieldErrors((errors) => withoutPlacedFactErrors(errors));
+    setStation({ ...station, facts });
+  }, [station]);
+
+  /** Put a saved fact the script uses back on the card; its row takes focus, and it is said. */
+  const onPutBack = useCallback((key: string) => {
+    if (!station || !saved?.station) return;
+    const list = putBack(saved.station.facts, station.facts, key);
+    const fact = list?.find((f) => f.key === key);
+    if (!list || !fact) return;
+    onFactsChange({ ...station.facts, list });
+    setFactFocus({ key, part: 'grip', said: `${fact.label.trim() || fact.column} put back on the card.` });
+  }, [station, saved, onFactsChange]);
+
+  /**
+   * The script's "Add … as a fact": `column` goes on the card with the script's word as its key
+   * when that word may be one, else the default key, and the script's `token` follows it.
+   */
+  const onAddFact = useCallback((column: string, token: string) => {
+    if (!station || station.facts.list.length >= AGENCY_FACT_FIELDS_MAX) return;
+    const list = station.facts.list;
+    const taken = list.map((f) => f.key);
+    const word = token.slice(1, -1).trim();
+    const fits = AGENCY_FACT_KEY_PATTERN.test(word) && word.length <= AGENCY_FACT_KEY_MAX_CHARS
+      && !taken.includes(word) && !(AGENCY_SCRIPT_FIXED_PLACEHOLDERS as readonly string[]).includes(word);
+    const fact = { ...newFact(column, list), key: fits ? word : factKeyFromColumn(column, taken) };
+    setFieldErrors((errors) => withoutPlacedFactErrors(errors));
+    setStation({
+      ...station,
+      facts: { ...station.facts, list: [...list, fact] },
+      script: token === `{${fact.key}}` ? station.script : replaceToken(station.script, token, `{${fact.key}}`),
+    });
+    // S9: the new fact's name takes focus (to rename it), and the add is said.
+    setFactFocus({ key: fact.key, part: 'label', said: `${fact.label.trim() || column} added to the card.` });
+  }, [station]);
   const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
   if (loading) return <LoadingSpinner />;
@@ -938,7 +1078,7 @@ export function AgencyCampaignSettingsPage() {
             <ComposerSection
               id="agent-screen"
               title="What agents see"
-              helper="The day’s target, how the customer’s number is shown, and which columns of the customer list are the name, place, amount due and due date."
+              helper="The day’s target, how the customer’s number is shown, and which columns of the customer list agents see on the customer card."
             >
               <AgentScreenFields
                 dailyTarget={station.dailyTarget}
@@ -949,11 +1089,19 @@ export function AgencyCampaignSettingsPage() {
               />
               <CustomerFactsEditor
                 value={station.facts}
-                onChange={(facts) => setStation({ ...station, facts })}
-                columns={columns}
+                onChange={onFactsChange}
+                columns={selectColumns}
+                uploaded={imported.latest}
                 hidden={hidden}
-                loading={imported.loading}
+                columnsRead={columnsRead}
+                onRetryColumns={imported.reload}
+                waitForColumns={cardWaiting !== null}
                 errors={stationErrorsView}
+                samples={samples}
+                phoneDisplay={station.phoneDisplay}
+                removedInUse={removedInUse}
+                onPutBack={onPutBack}
+                focusRequest={factFocus}
                 readOnly={!canEdit}
               />
             </ComposerSection>
@@ -968,6 +1116,20 @@ export function AgencyCampaignSettingsPage() {
                 onChange={(script) => setStation({ ...station, script })}
                 errors={stationErrorsView}
                 readOnly={!canEdit}
+                facts={station.facts}
+                offered={plan?.offered ?? []}
+                allowed={plan?.allowed ?? []}
+                columns={selectColumns}
+                uploaded={imported.latest}
+                hidden={hidden}
+                samples={samples}
+                phoneDisplay={station.phoneDisplay}
+                campaignName={name}
+                removedInUse={removedInUse}
+                onPutBack={onPutBack}
+                onAddFact={onAddFact}
+                // R5: until the card is saved here, agents read the script as on the old model.
+                legacy={isLegacyDisplay(campaign.context_display) && !plan?.displaySent}
               />
             </ComposerSection>
           </Fragment>

@@ -71,7 +71,8 @@ SoftphoneHostView hostView({
 );
 
 /// A campaign station on this phone (SP7), switched to the soft phone unless told otherwise.
-SoftphoneHostView campaignHost({bool onSoftphone = true, String campaignId = 'camp-1', ManualCall? call}) => hostView(
+SoftphoneHostView campaignHost({bool onSoftphone = true, String campaignId = 'camp-1', ManualCall? call}) =>
+    hostView(
   sessionId: 'sess-1',
   kind: SessionKind.campaign,
   campaignId: campaignId,

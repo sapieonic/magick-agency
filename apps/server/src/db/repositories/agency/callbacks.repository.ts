@@ -5,8 +5,8 @@
  *
  *  - {@link AgencyCallbacksRepository.activeCampaigns}: the account's ACTIVE campaigns (Home's
  *    set, `AGENCY_HOME_ACTIVE_STATUSES`), or the one named, with what the list needs of each: its
- *    name, mode, catalog (whose callback codes decide what a callback is) and zone (whose midnight
- *    ends "today").
+ *    name, mode, catalog (whose callback codes decide what a callback is), zone (whose midnight
+ *    ends "today") and display (how its rows' customers are named).
  *  - {@link callbacksPageStatement}: one keyset page of their callbacks, ordered by due time then
  *    contact id across every campaign.
  *
@@ -31,7 +31,7 @@
  */
 import { getPool } from '@magick-agency/db';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
-import type { AgencyAssignmentMode, AgencyDisposition } from '@magick-agency/contracts/agency';
+import type { AgencyAssignmentMode, AgencyContextDisplay, AgencyDisposition } from '@magick-agency/contracts/agency';
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import type { AgencyCallbacksDue } from '@magick-agency/contracts/api/agency/callbacks';
 import { isCallbackSql, presentSessionSql } from './assignment-sql.js';
@@ -44,6 +44,8 @@ export interface CallbacksListCampaignRow {
   assignment_mode: AgencyAssignmentMode;
   disposition_catalog: AgencyDisposition[] | null;
   default_timezone: string;
+  /** What the rows' customer names read (the `name` role, hidden columns, AS19 S1). */
+  context_display: AgencyContextDisplay | null;
 }
 
 /** A campaign as the page statement takes it. */
@@ -143,7 +145,7 @@ export class AgencyCallbacksRepository {
    */
   async activeCampaigns(tenantId: string, accountId: string, campaignId: string | null): Promise<CallbacksListCampaignRow[]> {
     const { rows } = await getPool().query<CallbacksListCampaignRow>(
-      `SELECT id::text AS id, name, assignment_mode, disposition_catalog, default_timezone
+      `SELECT id::text AS id, name, assignment_mode, disposition_catalog, default_timezone, context_display
          FROM agency_campaigns
         WHERE tenant_id = $1::uuid AND account_id = $2::uuid AND status = ANY($3::text[])
           AND ($4::uuid IS NULL OR id = $4::uuid)

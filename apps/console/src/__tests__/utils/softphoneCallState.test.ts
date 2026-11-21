@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   contactName,
+  contextName,
   callEndSummary,
   isCallLive,
   isCallUnsettled,
@@ -138,5 +139,37 @@ describe('contactName', () => {
     });
     expect(contactName(call, { hero: ['Loan account', 'Name'] })).toBe('Rahul Verma');
     expect(contactName(manualCall(), undefined)).toBeNull();
+  });
+
+  it('reads the `name` role first, by the server’s one rule (AS19 S1)', () => {
+    const context = { Borrower: 'Sunita Patil', Name: 'Branch office', 'Loan account': 'HL-20931' };
+    // The role names a column the guess would never read.
+    expect(contextName(context, { roles: { name: 'Borrower' } })).toBe('Sunita Patil');
+    // A role set but blank on this row: no name, never a guess.
+    expect(contextName({ ...context, Borrower: ' ' }, { roles: { name: 'Borrower' } })).toBeNull();
+    // No role: the guess from the column names, never a chosen fact's column.
+    expect(contextName(context, {})).toBe('Branch office');
+    expect(contextName(context, { facts: [{ column: 'Name', label: 'Branch', key: 'branch' }] })).toBeNull();
+    // `Customer ID` is not a name.
+    expect(contextName({ 'Customer ID': 'C-7' }, undefined)).toBeNull();
+  });
+
+  it('a campaign without chosen facts: when the rule finds no name, the card’s guess from before AS19 names the caller', () => {
+    const context = { 'Loan account': 'HL-20931', 'Borrower Name': 'Sunita Patil', City: 'Nashik' };
+    expect(contextName(context, undefined)).toBe('Sunita Patil');
+    expect(contextName(context, { hero: ['Loan account'] })).toBe('Sunita Patil');
+    expect(contextName({ 'Client Name': 'Arun Das' }, {})).toBe('Arun Das');
+    // The rule's own guess still comes first.
+    expect(contextName({ ...context, Name: 'Sunita P.' }, undefined)).toBe('Sunita P.');
+    // A hidden column is never read; a blank one is skipped.
+    expect(contextName(context, { hidden: ['borrower name'] })).toBeNull();
+    expect(contextName({ ...context, 'Borrower Name': ' - ' }, undefined)).toBeNull();
+  });
+
+  it('a campaign with chosen facts, or a name column, is never guessed beyond the rule', () => {
+    const context = { 'Loan account': 'HL-20931', 'Borrower Name': 'Sunita Patil' };
+    expect(contextName(context, { facts: [] })).toBeNull();
+    expect(contextName(context, { facts: [{ column: 'Loan account', label: 'Loan', key: 'loan' }] })).toBeNull();
+    expect(contextName(context, { roles: { name: 'Full Name' } })).toBeNull();
   });
 });

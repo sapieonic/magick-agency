@@ -1054,7 +1054,7 @@ Neither test fails before then, because nothing registers the paths yet.
 
 `tile_icons`, `phone_displays`, `attempt_callback_sources`, `context_roles`,
 `context_field_types`, `fact_tile_roles`, `script_placeholders`, `my_day_target_metrics`,
-`my_call_later_left_goes_to` (84 vocabularies in all). New samples: `session.json`
+`my_call_later_left_goes_to` (84 vocabularies in all; 85 since AS19's fixed placeholders). New samples: `session.json`
 `bootstrap_agent_station`; `station.json` `reserved_call_later`, `ready_help_open_ready`;
 `floor-assist.json` `help_response_raised_on_break`; `reads.json` `my_day`, `my_day_pool_no_target`.
 
@@ -1063,7 +1063,8 @@ Neither test fails before then, because nothing registers the paths yet.
 `lib/src/agent_station.dart`: `TileIcon` (`TileIcon.tryFromWire`: unknown is null),
 `PhoneDisplay`, `AttemptCallbackSource`, `AttemptCallback`, `ContextRole`, `ContextFieldType`,
 `FactTileRole`, `ContextRoles`, `contextFieldTypesFromJson`, `FactTile`, `CustomerFacts`
-(`amountDue`, `dueDate`, `tileFor`), `ScriptPlaceholder`, `fillScriptPlaceholders`,
+(`amountDue`, `dueDate`, `tileFor`), `ScriptPlaceholder`, `fillScriptPlaceholders` *(removed by
+AS19 S12: the app fills scripts with `scriptPieces` and its own `fillScriptRuns`)*,
 `AgentScriptStep`, `AgentScript`, `MyDayTargetMetric`, `CallLaterLeftGoesTo`, `MyDayQuery`,
 `MyDayTarget`, `MyCallLaterRow`, `MyCallLater`, `MyDay`. Wired into `Disposition.icon`,
 `BreakReason.icon`, `ContextDisplay.roles` / `.types`, `SessionBootstrap.script` /
@@ -1096,7 +1097,11 @@ what was built.
   reading: no "first columns" fallback), minus the name and place columns, then the `amount_due`
   and `due_date` role columns when the heroes leave them out; at most four, the role tiles kept
   when the cap bites. Hidden columns are never a role, a guess or a tile. `context` is still sent
-  raw.
+  raw. *(Superseded by AS19, `docs/agent-station.md`: a campaign with `context_display.facts` gets
+  exactly those tiles, with their `label`, `key` and highlight (`chosenFactTiles`,
+  `packages/domain/src/fact-tiles.ts`), and no place guess (S2); the name and place guess moved
+  to the domain (`packages/domain/src/customer-name.ts`, S1), matched ignoring `-` and `.` too.
+  The rule above is still the one for a campaign without `facts`.)*
 - **BE-6 write**: `contextDisplayIssues` (both campaign-config validators) refuses an unknown role,
   a column name that is blank or over 200 characters, a hidden column as a role, one column in two
   roles, and a type other than `text` / `money` / `date`. The internal PATCH then checks every role
@@ -1104,6 +1109,11 @@ what was built.
   imports, never a check; a retry campaign's lineage root's too), ignoring case, and the 400 lists
   them. A campaign with no import yet is not checked against a roster. A create is shape-checked
   only. The `matchName` callers (callbacks list, floor, inbound) do not read the `name` role yet.
+  *(Superseded by AS19: the types are six (`number`, `phone` and `yes_no` added); `facts` is
+  checked (at most 4, names, keys, one highlight, not a role's column, on the roster); the name
+  and the line under it may not be a phone-typed column (S3(e)); a retry's override gets the
+  roster check (R4); and every `matchName` caller reads the `name` role first (`customerNameFrom`,
+  S1).)*
   The refusals are sentences for a supervisor with no field name or wire code (fix stream: "Choose
   how to read 'City': as text, money or a date."); `field` names the setting.
 - **BE-8** (`apps/server/src/agency/agent-script.ts`): `agent_script` is patchable (JSONB) and
@@ -1113,6 +1123,11 @@ what was built.
   underscores in braces, spaces allowed inside) that is not exactly one of the six placeholders, so
   `{Name}` and `{ name }` are refused; braces round anything else are plain text. Refusals in a
   supervisor's words ("Step 2 must have its words."), naming only the placeholders a supervisor types. Stored trimmed.
+  *(Superseded by AS19: the six are the set only for a campaign without `context_display.facts`;
+  with it the allowed keys are `{name}`, `{place}`, `{agent_name}`, `{campaign_name}` and each
+  fact's key, judged against the campaign's resulting display both ways (a script with an unknown
+  key, and a card that drops a key the stored script uses, are refused), and `{Name}` gets "Write it
+  as {name}." (S13). The clients fill with `scriptPieces`, not `fillScriptPlaceholders`.)*
   `{}` clears it. The bootstrap's `script` is absent when there is no opening and no step; a
   malformed stored part is left out, never a failed join. A create does not store `agent_script`
   (`CAMPAIGN_INSERT_COLUMNS_SQL` is shared with the retry create): New campaign sets it with a
@@ -1360,6 +1375,11 @@ contract or migration change beyond the route table's reason text.
   once, after the campaign loads, so a retry campaign's read names its root), together with the
   campaign's stored roles and types (the server took them, and its check counts every import of the
   lineage, not only the newest three); names compare ignoring case, as the server's do.
+  *(Superseded by AS19, `docs/agent-station.md`: "What agents see" edits the card as the name, the
+  line under it and up to 4 chosen facts (`CustomerFactsEditor.tsx`, `context_display.facts`,
+  refusals also on `context_display.facts.<i>.<part>`); a fact is added from the newest import's
+  columns only (S9); the script editor offers the campaign's own keys; Save says "Saved. Agents see
+  this when they next start work." (S8).)*
 - **Tile pictures** (BE-13): `packages/web-ui/src/components/TileIcon.tsx` is the one map from
   `AGENCY_TILE_ICONS` to lucide icons and names (`TILE_ICONS`, `TILE_ICON_LABELS`, `<TileIcon>`);
   the console's `TileIconPicker` offers it on outcomes (`DispositionCatalogEditor icons`) and break

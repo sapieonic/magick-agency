@@ -3,9 +3,15 @@ import {
   AGENCY_ATTEMPT_CALLBACK_SOURCES,
   AGENCY_CONTEXT_FIELD_TYPES,
   AGENCY_CONTEXT_ROLES,
+  AGENCY_FACT_FIELDS_MAX,
+  AGENCY_FACT_KEY_MAX_CHARS,
+  AGENCY_FACT_KEY_PATTERN,
+  AGENCY_FACT_KEY_PATTERN_SOURCE,
+  AGENCY_FACT_LABEL_MAX_CHARS,
   AGENCY_FACT_TILE_ROLES,
   AGENCY_PHONE_DISPLAYS,
   AGENCY_PHONE_DISPLAY_DEFAULT,
+  AGENCY_SCRIPT_FIXED_PLACEHOLDERS,
   AGENCY_SCRIPT_OPENING_MAX_CHARS,
   AGENCY_SCRIPT_PLACEHOLDERS,
   AGENCY_SCRIPT_STEPS_MAX,
@@ -14,7 +20,10 @@ import {
   agencyTileIconOrNone,
   isAgencyTileIcon,
   type AgencyBreakReason,
+  type AgencyContextDisplay,
   type AgencyDisposition,
+  type AgencyFactField,
+  type AgencyFactTile,
   type AgencyTileIcon,
 } from '../src/agency';
 import { AgencyApi } from '../src/index';
@@ -58,7 +67,7 @@ describe('agent station: the panel, the bootstrap and the campaign', () => {
   it('declares the call-later sources, the fact roles and types, and the number display (SNAPSHOT)', () => {
     expect([...AGENCY_ATTEMPT_CALLBACK_SOURCES]).toEqual(['outcome', 'promise', 'inbound']);
     expect([...AGENCY_CONTEXT_ROLES]).toEqual(['name', 'place', 'amount_due', 'due_date']);
-    expect([...AGENCY_CONTEXT_FIELD_TYPES]).toEqual(['text', 'money', 'date']);
+    expect([...AGENCY_CONTEXT_FIELD_TYPES]).toEqual(['text', 'money', 'date', 'number', 'phone', 'yes_no']);
     expect([...AGENCY_FACT_TILE_ROLES]).toEqual(['amount_due', 'due_date']);
     // Every tile role is a context role.
     for (const role of AGENCY_FACT_TILE_ROLES) expect(AGENCY_CONTEXT_ROLES).toContain(role);
@@ -75,6 +84,39 @@ describe('agent station: the panel, the bootstrap and the campaign', () => {
     ]);
   });
 
+  it('bounds the chosen facts and names the fixed placeholders (AS19, SNAPSHOT)', () => {
+    expect([AGENCY_FACT_FIELDS_MAX, AGENCY_FACT_LABEL_MAX_CHARS, AGENCY_FACT_KEY_MAX_CHARS]).toEqual([4, 16, 32]);
+    expect(AGENCY_FACT_KEY_PATTERN_SOURCE).toBe('^[a-z][a-z0-9_]*$');
+    expect(AGENCY_FACT_KEY_PATTERN.source).toBe(AGENCY_FACT_KEY_PATTERN_SOURCE);
+    expect(AGENCY_FACT_KEY_PATTERN.flags).toBe('');
+    for (const ok of ['amount_due', 'a', 'emi2', 'loan_no_3']) expect(AGENCY_FACT_KEY_PATTERN.test(ok), ok).toBe(true);
+    for (const bad of ['', '2emi', '_x', 'Amount', 'amount-due', 'amount due', 'amount_due ']) {
+      expect(AGENCY_FACT_KEY_PATTERN.test(bad), bad).toBe(false);
+    }
+    expect([...AGENCY_SCRIPT_FIXED_PLACEHOLDERS]).toEqual(['name', 'place', 'agent_name', 'campaign_name']);
+    // The fixed ones are the legacy set minus the two tile roles, which become ordinary fact keys.
+    expect(AGENCY_SCRIPT_PLACEHOLDERS.filter((p) => !(AGENCY_FACT_TILE_ROLES as readonly string[]).includes(p))).toEqual([
+      ...AGENCY_SCRIPT_FIXED_PLACEHOLDERS,
+    ]);
+    // Every fixed placeholder is a valid key shape (so a client's key pattern matches them), and
+    // reserved: the write refuses a fact keyed with one.
+    for (const p of AGENCY_SCRIPT_FIXED_PLACEHOLDERS) expect(AGENCY_FACT_KEY_PATTERN.test(p)).toBe(true);
+  });
+
+  it('adds the chosen facts and the tile\'s name, key and highlight as optional fields (AS18, AS19)', () => {
+    const facts: Equals<AgencyContextDisplay['facts'], AgencyFactField[] | undefined> = true;
+    const label: Equals<AgencyFactTile['label'], string | undefined> = true;
+    const key: Equals<AgencyFactTile['key'], string | undefined> = true;
+    const highlight: Equals<AgencyFactTile['highlight'], boolean | undefined> = true;
+    const fieldHighlight: Equals<AgencyFactField['highlight'], boolean | undefined> = true;
+    const campaignDisplay: Equals<NonNullable<AgencyApi.AgencyCampaign['context_display']>['facts'], AgencyFactField[] | undefined> = true;
+    void [facts, label, key, highlight, fieldHighlight, campaignDisplay];
+    // A display without `facts` and a tile without the three still type-check: older rows and servers.
+    const legacy: AgencyContextDisplay = { hero: ['Loan No'] };
+    const tile: AgencyFactTile = { column: 'Loan No', type: 'text', raw: 'LN-1', value: null };
+    expect([legacy.facts, tile.label]).toEqual([undefined, undefined]);
+  });
+
   it('bounds the daily target (SNAPSHOT) and carries the station settings on the campaign wire type', () => {
     expect([AgencyApi.AGENCY_DAILY_TARGET_CALLS_MIN, AgencyApi.AGENCY_DAILY_TARGET_CALLS_MAX]).toEqual([1, 2000]);
     const target: Equals<AgencyApi.AgencyCampaign['daily_target_calls'], number | null | undefined> = true;
@@ -88,6 +130,15 @@ describe('agent station: the panel, the bootstrap and the campaign', () => {
     expect(AgencyApi.AGENCY_PHONE_DISPLAYS).toBe(AGENCY_PHONE_DISPLAYS);
     expect(AgencyApi.AGENCY_ATTEMPT_CALLBACK_SOURCES).toBe(AGENCY_ATTEMPT_CALLBACK_SOURCES);
     expect(AgencyApi.AGENCY_SCRIPT_PLACEHOLDERS).toBe(AGENCY_SCRIPT_PLACEHOLDERS);
+    expect(AgencyApi.AGENCY_SCRIPT_FIXED_PLACEHOLDERS).toBe(AGENCY_SCRIPT_FIXED_PLACEHOLDERS);
+    expect(AgencyApi.AGENCY_FACT_KEY_PATTERN).toBe(AGENCY_FACT_KEY_PATTERN);
+    expect([AgencyApi.AGENCY_FACT_FIELDS_MAX, AgencyApi.AGENCY_FACT_LABEL_MAX_CHARS, AgencyApi.AGENCY_FACT_KEY_MAX_CHARS]).toEqual([
+      AGENCY_FACT_FIELDS_MAX,
+      AGENCY_FACT_LABEL_MAX_CHARS,
+      AGENCY_FACT_KEY_MAX_CHARS,
+    ]);
+    const field: Equals<AgencyApi.AgencyFactField, AgencyFactField> = true;
+    void field;
   });
 });
 

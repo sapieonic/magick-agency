@@ -27,7 +27,7 @@ import type {
   AgencyCampaignStatus,
   AgencyContactState,
 } from './enums';
-import type { AgencyContextDisplay, AgencyDisposition, AgencyStationIntervals } from './session';
+import type { AgencyContextDisplay, AgencyDisposition, AgencyPhoneDisplay, AgencyStationIntervals } from './session';
 import type { AgencyKeysetPage } from './spine';
 import type { AgencyStationDeviceFields } from './station-device';
 import type { AgencyClientKind, AgencyPriorAttempt, AgencyReleaseReason } from './station';
@@ -488,6 +488,14 @@ export interface AgencySoftphoneCampaign {
   analysis_profile: AgencySoftphoneProfileSummary | null;
   /** How to render a matched contact's `context`. */
   context_display: AgencyContextDisplay;
+  /**
+   * Agent station (AS9, AS19 S3(b)): how the campaign shows the customer's number, its
+   * `agency_campaigns.phone_display`. A call tagged to it shows a matched contact's phone facts
+   * by it (the dialled number stays as typed: the agent typed it). Absent (an older server) or a
+   * value the client does not know reads as `full` ({@link AGENCY_PHONE_DISPLAY_DEFAULT}, AS18).
+   * The number itself is still sent in full.
+   */
+  phone_display?: AgencyPhoneDisplay;
 }
 
 /** What an untagged call dials with and is dispositioned against. */

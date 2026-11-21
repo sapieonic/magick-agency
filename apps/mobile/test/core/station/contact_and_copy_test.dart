@@ -135,6 +135,27 @@ void main() {
     });
   });
 
+  group('callerNameOf (an inbound caller, a soft-phone contact)', () {
+    const row = {'Loan No': 'HL-4471', 'Borrower Name': 'Sunita Patil', 'City': 'Nashik'};
+
+    test('the domain\'s rule first', () {
+      expect(callerNameOf(const {...row, 'Name': 'Sunita P.'}, null), 'Sunita P.');
+      expect(callerNameOf(null, null), isNull);
+    });
+
+    test('a legacy campaign: the legacy card\'s guess when the rule finds none', () {
+      expect(callerNameOf(row, null), 'Sunita Patil');
+      expect(callerNameOf(row, display(hero: ['Loan No'])), 'Sunita Patil');
+      expect(callerNameOf(const {'Client Name': 'Arun Das'}, null), 'Arun Das');
+      expect(callerNameOf(row, display(hidden: ['borrower name'])), isNull);
+    });
+
+    test('a chosen campaign, or one with a name column, is never guessed beyond the rule', () {
+      expect(callerNameOf(row, wire.ContextDisplay(facts: const [])), isNull);
+      expect(callerNameOf(row, wire.ContextDisplay(roles: const wire.ContextRoles(name: 'Full Name'))), isNull);
+    });
+  });
+
   group('priorAttemptsFor', () {
     wire.PriorAttempt prior(String campaignId, {String? code, wire.AttemptOutcome? outcome, int day = 1}) => wire.PriorAttempt(
           attemptNumber: day,

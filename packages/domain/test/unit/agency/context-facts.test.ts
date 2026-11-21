@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseContextFact, parseDateFact, parseMoneyFact } from '../../../src/context-facts';
+import { AGENCY_CONTEXT_FIELD_TYPES, type AgencyContextFieldType } from '@magick-agency/contracts/agency';
+import {
+  parseContextFact, parseDateFact, parseMoneyFact, parseNumberFact, parsePhoneFact, parseYesNoFact,
+  type ContextFactType,
+} from '../../../src/context-facts';
 
 /**
- * The parse rule behind `AgencyFactTile.value` (`src/context-facts.ts`, BE-6): money and dates as
+ * The parse rule behind `AgencyFactTile.value` (`src/context-facts.ts`, BE-6, AS19): money, dates,
+ * numbers, phone numbers and yes / no as
  * real rosters carry them, read tolerantly of Indian formats, and `null` whenever the reading is
  * not certain (the client then shows the raw text). A table of real-world values, each side.
  */
@@ -144,7 +149,115 @@ describe('parseDateFact: a two-digit year is the century nearest today', () => {
   });
 });
 
+describe('parseNumberFact (AS19)', () => {
+  const READ: Array<[string, string]> = [
+    ['24', '24'],
+    ['1,25,000', '125000'],
+    ['125,000', '125000'],
+    ['1 25 000', '125000'],
+    ['10.375', '10.375'],
+    ['0012', '12'],
+    ['0', '0'],
+    ['  7  ', '7'],
+    ['1,250,000.5', '1250000.5'],
+  ];
+  it.each(READ)('reads %j as %j', (raw, value) => {
+    expect(parseNumberFact(raw)).toBe(value);
+  });
+
+  const REFUSED: Array<[string, string]> = [
+    ['blank', ''],
+    ['a placeholder', '-'],
+    ['a rupee sign', '₹1,25,000'],
+    ['a currency word', 'Rs 500'],
+    ['a minus sign', '-5'],
+    ['a plus sign', '+5'],
+    ['a percent', '12%'],
+    ['a decimal comma', '12,50'],
+    ['a grouping of neither form', '1,2,3'],
+    ['two numbers side by side', '5000 2500'],
+    ['spaces and commas mixed', '1,25 000'],
+    ['two decimal points', '1.2.3'],
+    ['a trailing point', '12.'],
+    ['words', '1.25 lakh'],
+    ['an exponent', '1e5'],
+    ['too long', '1'.repeat(65)],
+  ];
+  it.each(REFUSED)('refuses %s (%j)', (_why, raw) => {
+    expect(parseNumberFact(raw)).toBeNull();
+  });
+});
+
+describe('parsePhoneFact (AS19)', () => {
+  const READ: Array<[string, string]> = [
+    ['9876543210', '9876543210'],
+    ['+91 98765 43210', '+919876543210'],
+    ['098765 43210', '09876543210'],
+    ['(020) 2567-8901', '02025678901'],
+    ['+1 (415) 555-0100', '+14155550100'],
+    ['123456', '123456'],
+    ['123456789012345', '123456789012345'],
+    ['  98765-43210  ', '9876543210'],
+  ];
+  it.each(READ)('reads %j as %j', (raw, value) => {
+    expect(parsePhoneFact(raw)).toBe(value);
+  });
+
+  const REFUSED: Array<[string, string]> = [
+    ['blank', ''],
+    ['a placeholder', 'N/A'],
+    ['five digits', '12345'],
+    ['sixteen digits', '1234567890123456'],
+    ['a plus not first', '91+9876543210'],
+    ['two pluses', '++919876543210'],
+    ['letters', '98765 ABCDE'],
+    ['an extension', '020 2567 8901 ext 12'],
+    ['dots', '98765.43210'],
+    ['a spreadsheet float', '9876543210.0'],
+    ['two numbers', '9876543210 / 9123456780'],
+    ['punctuation only', '(--)'],
+  ];
+  it.each(REFUSED)('refuses %s (%j)', (_why, raw) => {
+    expect(parsePhoneFact(raw)).toBeNull();
+  });
+});
+
+describe('parseYesNoFact (AS19)', () => {
+  it.each(['yes', 'Yes', 'Y', 'y', 'TRUE', 'true', '1', 'haan', 'Haan', 'ha', '  YES  '])('reads %j as yes', (raw) => {
+    expect(parseYesNoFact(raw)).toBe('yes');
+  });
+  it.each(['no', 'No', 'N', 'n', 'FALSE', 'false', '0', 'nahi', 'Nahin', ' no '])('reads %j as no', (raw) => {
+    expect(parseYesNoFact(raw)).toBe('no');
+  });
+  it.each(['', '-', 'maybe', 'yes please', 'yess', 'nope', '2', 'हाँ', 'y e s', 'ok'])('refuses %j', (raw) => {
+    expect(parseYesNoFact(raw)).toBeNull();
+  });
+});
+
 describe('parseContextFact', () => {
+  it('knows exactly the contract\'s field types', () => {
+    const same: [ContextFactType] extends [AgencyContextFieldType]
+      ? [AgencyContextFieldType] extends [ContextFactType] ? true : false
+      : false = true;
+    void same;
+    // Every listed type other than text reads something.
+    const samples: Record<AgencyContextFieldType, string> = {
+      text: 'x', money: '₹5', date: '2026-11-25', number: '5', phone: '9876543210', yes_no: 'yes',
+    };
+    for (const type of AGENCY_CONTEXT_FIELD_TYPES) {
+      expect(parseContextFact(samples[type], type) === null, type).toBe(type === 'text');
+    }
+  });
+
+  it('reads the AS19 types by the column type, and a type it does not know as null', () => {
+    expect(parseContextFact('1,25,000', 'number')).toBe('125000');
+    expect(parseContextFact('+91 98765 43210', 'phone')).toBe('+919876543210');
+    expect(parseContextFact('Haan', 'yes_no')).toBe('yes');
+    expect(parseContextFact('1,25,000', 'phone')).toBeNull();
+    expect(parseContextFact('Haan', 'number')).toBeNull();
+    expect(parseContextFact('yes', 'percent' as ContextFactType)).toBeNull();
+  });
+
   it('reads by the column type; text is never parsed', () => {
     expect(parseContextFact('₹1,25,000', 'money')).toBe('125000');
     expect(parseContextFact('25/11/2026', 'date')).toBe('2026-11-25');

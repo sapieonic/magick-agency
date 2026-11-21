@@ -12,7 +12,7 @@
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
-import { INBOUND_MATCH_NAME_COLUMNS } from '../../../agency/inbound/match-name.js';
+import { NAME_GUESS_COLUMNS, squashColumnName } from '@magick-agency/domain/customer-name';
 
 /** Need help (LF4): the session row's request is open, raised and not answered. Bare column names. */
 export const HELP_OPEN_SQL = 'help_raised_at IS NOT NULL AND help_answered_at IS NULL';
@@ -620,13 +620,27 @@ export function ahtSecondsSql(voicemailCodeParam: string): string {
                     AND disposition_code IS DISTINCT FROM ${voicemailCodeParam})`;
 }
 
+/** The guess's column names squashed (`customer_name` is `customername`), as SQL string literals. */
+const NAME_GUESS_SQUASHED_SQL = NAME_GUESS_COLUMNS.map((c) => `'${squashColumnName(c)}'`).join(', ');
+
 /**
- * A roster contact's name columns ({@link INBOUND_MATCH_NAME_COLUMNS}) from its `context`, as one
- * JSONB object (NULL when the join found no contact): what `matchName` reads in TypeScript. Only
- * those keys leave the database, never the rest of the row's CSV columns. `alias` is the
- * `agency_contacts` row's alias in the caller's query; the caller names the column.
+ * The part of a roster contact's `context` its name can be read from (AS19 S1), as one JSONB object
+ * (NULL when the join found no contact): what `matchName` (`customerNameFrom`) reads in TypeScript,
+ * beside the campaign's `context_display`, which the caller selects too. Only those columns leave
+ * the database, never the rest of the row's CSV columns:
+ *  - every column whose name, lower-cased with everything but `a-z` and `0-9` taken out, is one of
+ *    the guess's names (`NAME_GUESS_COLUMNS`). A superset of the domain's match (which ignores only
+ *    case, spaces, `_`, `-` and `.`): TypeScript makes the exact choice;
+ *  - the column the campaign's `name` role names, matched ignoring case and surrounding spaces.
+ * `contactAlias` is the `agency_contacts` row's alias in the caller's query, `campaignAlias` its
+ * campaign's (`agency_campaigns`, possibly LEFT joined: no campaign is the guess alone); the
+ * caller names the column.
  */
-export function contactNameContextSql(alias: string): string {
-  const pairs = INBOUND_MATCH_NAME_COLUMNS.map((k) => `'${k}', ${alias}.context->'${k}'`).join(', ');
-  return `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE jsonb_build_object(${pairs}) END`;
+export function contactNameContextSql(contactAlias: string, campaignAlias: string): string {
+  return `CASE WHEN ${contactAlias}.id IS NULL THEN NULL
+       WHEN jsonb_typeof(${contactAlias}.context) <> 'object' THEN '{}'::jsonb
+       ELSE (SELECT COALESCE(jsonb_object_agg(nc.key, nc.value), '{}'::jsonb)
+               FROM jsonb_each(${contactAlias}.context) AS nc
+              WHERE regexp_replace(lower(nc.key), '[^a-z0-9]+', '', 'g') IN (${NAME_GUESS_SQUASHED_SQL})
+                 OR lower(btrim(nc.key)) = lower(btrim(${campaignAlias}.context_display #>> '{roles,name}'))) END`;
 }

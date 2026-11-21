@@ -474,8 +474,13 @@ export interface AgencyMyContact {
   /** ISO-8601: the latest attempt on it, or null if never attempted. */
   last_attempt_at: string | null;
   /**
-   * The campaign's hero columns (`context_display.hero`) for this contact, in order, minus
-   * hidden ones: what the agent recognises a customer by.
+   * The campaign's hero columns for this contact, in order, minus hidden ones: what the agent
+   * recognises a customer by. `context_display.hero`; on a campaign that chose its card's facts
+   * (`context_display.facts`, agent station AS19), the customer's name (the `name` role's column,
+   * else the name guess over `hero`) then each fact's column, at most the name and 4 facts (AS19
+   * R1, R2). On a campaign that hides numbers (`phone_display: 'masked'`, AS9) a column
+   * `context_display.types` reads as a phone number arrives masked by the one phone rule
+   * (`98••• ••210`, AS19 S3(d)); `q` still matches the stored value.
    */
   hero: Array<{ name: string; value: string }>;
   retry: {

@@ -860,7 +860,10 @@
     "values": [
       "text",
       "money",
-      "date"
+      "date",
+      "number",
+      "phone",
+      "yes_no"
     ]
   },
   "fact_tile_roles": {
@@ -877,6 +880,15 @@
       "place",
       "amount_due",
       "due_date",
+      "agent_name",
+      "campaign_name"
+    ]
+  },
+  "script_fixed_placeholders": {
+    "source": "packages/contracts/src/agency/agent-script.ts#AGENCY_SCRIPT_FIXED_PLACEHOLDERS",
+    "values": [
+      "name",
+      "place",
       "agent_name",
       "campaign_name"
     ]

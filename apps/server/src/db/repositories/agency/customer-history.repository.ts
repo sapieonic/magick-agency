@@ -108,7 +108,8 @@ export interface CustomerHistoryCampaignRow {
   status: string;
   root_id: string;
   retry_generation: number;
-  context_display: { hero?: unknown; order?: unknown; hidden?: unknown } | null;
+  /** As stored: `hero` and `hidden`, and with AS19's `facts` the `name` role and each fact's column. */
+  context_display: { hero?: unknown; order?: unknown; hidden?: unknown; roles?: unknown; facts?: unknown } | null;
   disposition_catalog: unknown;
 }
 

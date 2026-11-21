@@ -12,7 +12,7 @@ import type { AgencyClientKind, AgencyQueueState } from './station';
 import type { AgencyAssignmentMode } from './assignment';
 import type { AgencyStationDeviceFields } from './station-device';
 import type { AgencyTileIcon } from './tile-icons';
-import type { AgencyContextFieldType, AgencyContextRoles } from './customer-facts';
+import type { AgencyContextFieldType, AgencyContextRoles, AgencyFactField } from './customer-facts';
 import type { AgencyAgentScript } from './agent-script';
 import type { AllListed } from '../primitives';
 import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
@@ -144,14 +144,27 @@ export interface AgencyContextDisplay {
    * Agent station (BE-6, `./customer-facts.ts`): which column plays each role (the customer's name,
    * place, amount due, due date). Read by the server to build `AgencyReservedAttempt.facts`, and by
    * the name lookups (callbacks list, floor, inbound) before their guesses. Absent: the server
-   * guesses as before. A `hidden` column is never a role.
+   * guesses as before. A `hidden` column is never a role. With `facts` (AS19) only `name` and
+   * `place` are read: `amount_due` and `due_date` are no longer read for tiles (a fact keyed
+   * `amount_due` or `due_date` plays that role), and the place is never guessed.
    */
   roles?: AgencyContextRoles;
   /**
    * Agent station (BE-6): how to read a column, by its header name. A column not named here is
-   * `text`. The `amount_due` and `due_date` roles are read as `money` and `date` whatever this says.
+   * `text`. The `amount_due` and `due_date` roles are read as `money` and `date` whatever this says
+   * (on the BE-6 path; with `facts`, every tile is read by this alone).
    */
   types?: Record<string, AgencyContextFieldType>;
+  /**
+   * AS19 (`./customer-facts.ts`): the card's facts, in order, at most `AGENCY_FACT_FIELDS_MAX`.
+   * PRESENT (even `[]`) means the campaign uses the new model: the tiles are exactly these (minus
+   * hidden or missing columns), and `hero` and `roles.amount_due` / `roles.due_date` are no longer
+   * read for tiles; the configured heroes (the contact panel, customer history, the own-contacts
+   * list) are `roles.name` then these columns. The script's placeholders are then the fixed ones
+   * plus these keys (`./agent-script.ts`). ABSENT: today's rule (BE-6), and the legacy six
+   * placeholders.
+   */
+  facts?: AgencyFactField[];
 }
 
 /**

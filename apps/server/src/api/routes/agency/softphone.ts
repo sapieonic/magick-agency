@@ -67,7 +67,7 @@ import {
   type SoftphoneSettingsAudit,
   type SoftphoneSwitchAudit,
 } from './softphone-answer.js';
-import { dispositionsWithKnownIcons } from '../../../agency/station-tiles.js';
+import { dispositionsWithKnownIcons, phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'agency-softphone-routes' });
 
@@ -187,6 +187,9 @@ function taggableCampaign(
     record_calls: campaign.record_calls,
     analysis_profile: profileId ? profiles.get(profileId) ?? null : null,
     context_display: campaign.context_display ?? {},
+    // AS19 S3(b): the campaign's own number setting, so a call tagged to it shows its contact's
+    // phone facts as that campaign says, whatever campaign (if any) the session is on.
+    phone_display: phoneDisplayOf(campaign.phone_display),
   };
 }
 

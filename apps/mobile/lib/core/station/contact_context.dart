@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:agency_wire/agency_wire.dart' as wire;
 import 'package:meta/meta.dart';
 
@@ -14,24 +12,16 @@ import 'station_view.dart';
 ///
 /// The resolution rules are a cross-client contract (`AgencyContextDisplay`),
 /// in precedence order:
-///   1. `hero` first, pinned, in array order (capped at [maxHeroFields]);
+///   1. the heroes first, pinned: the domain's one hero rule (`wire.heroColumnsFor`, the
+///      domain's `context-hero.ts`): with the campaign's chosen facts (AS19) the customer's name
+///      (the name role's column, else the name guess) then each fact's column, capped at the name
+///      and four facts (R2); else `hero`, or a guess of one name, money, identity and place
+///      column, capped at four ([wire.heroCapFor]);
 ///   2. then the `order` columns, in array order;
 ///   3. then every remaining column in ORIGINAL roster order;
 ///   4. minus `hidden`, at every stage.
-/// Names match case- and whitespace-insensitively. With no configured hero, a
-/// heuristic picks up to one name, money, identity and place column, and the UI
-/// says "auto-selected".
-
-const int maxHeroFields = 4;
-
-const _placeholders = {'-', '--', 'n/a', 'na', 'null', 'none', ''};
-
-final _heroHeuristics = <RegExp>[
-  RegExp(r'^(full[\s_-]?)?name$|customer|contact|first.?name|client', caseSensitive: false),
-  RegExp(r'amount|balance|due|outstanding|premium|emi|total', caseSensitive: false),
-  RegExp(r'policy|account|loan|invoice|order|ticket|ref', caseSensitive: false),
-  RegExp(r'city|branch|region|zone|state', caseSensitive: false),
-];
+/// Names match case- and whitespace-insensitively. A guess is said as one ("auto-selected"); with
+/// chosen facts nothing but the name is guessed, even when the choice is empty.
 
 @immutable
 final class ResolvedField {
@@ -70,41 +60,25 @@ final class ResolvedContextFields {
   final List<ResolvedField> empty;
 }
 
-bool _isEmptyValue(String raw) => _placeholders.contains(raw.trim().toLowerCase());
-
-/// Readable text for any roster value: a nested object renders as JSON, never
-/// as an object's type name.
-String contextDisplayString(Object? value) => switch (value) {
-      null => '',
-      final String s => s,
-      final num n => n.toString(),
-      final bool b => b.toString(),
-      _ => _jsonOr(value),
-    };
-
-String _jsonOr(Object value) {
-  try {
-    return jsonEncode(value);
-  } catch (_) {
-    return value.toString();
-  }
-}
+/// Readable text for any roster value, the domain's reading (`wire.contextValueText`): a nested
+/// object renders as JSON, never as an object's type name; a whole number as it was written.
+String contextDisplayString(Object? value) => wire.contextValueText(value) ?? '';
 
 String _norm(String key) => key.trim().toLowerCase();
 
+/// [maxHero] overrides the hero cap ([wire.heroCapFor]: the name and four facts with chosen
+/// facts, else four).
 ResolvedContextFields resolveContextFields(
   Map<String, Object?> context,
   wire.ContextDisplay? display, {
-  int maxHero = maxHeroFields,
+  int? maxHero,
 }) {
   final original = context.keys.toList(growable: false);
   final hiddenKeys = {for (final k in display?.hidden ?? const <String>[]) _norm(k)};
   bool isHidden(String key) => hiddenKeys.contains(_norm(key));
 
-  ResolvedField field(String key) {
-    final value = contextDisplayString(context[key]);
-    return ResolvedField(label: key, value: value, isEmpty: _isEmptyValue(value));
-  }
+  ResolvedField field(String key) =>
+      ResolvedField(label: key, value: contextDisplayString(context[key]), isEmpty: wire.isBlankContextValue(context[key]));
 
   List<String> resolveNames(List<String>? names) {
     if (names == null) return const [];
@@ -122,9 +96,14 @@ ResolvedContextFields resolveContextFields(
     return out;
   }
 
-  var heroKeys = resolveNames(display?.hero);
-  if (heroKeys.length > maxHero) heroKeys = heroKeys.sublist(0, maxHero);
-  if (heroKeys.isEmpty) heroKeys = _heuristicHeroes(original, context, isHidden, maxHero);
+  // The panel lists every column under the heroes, so with nothing configured or guessed it pins
+  // nothing (the rule's last stage, the first columns, is off), as the console's panel.
+  final heroKeys = wire.heroColumnsFor(
+    context,
+    display,
+    max: maxHero ?? wire.heroCapFor(display),
+    fallbackToFirstColumns: false,
+  );
 
   final heroSet = heroKeys.toSet();
   final ordered = [
@@ -144,30 +123,10 @@ ResolvedContextFields resolveContextFields(
   );
 }
 
-List<String> _heuristicHeroes(
-  List<String> keys,
-  Map<String, Object?> context,
-  bool Function(String) isHidden,
-  int maxHero,
-) {
-  final picked = <String>[];
-  for (final pattern in _heroHeuristics) {
-    if (picked.length >= maxHero) break;
-    for (final key in keys) {
-      if (!picked.contains(key) &&
-          !isHidden(key) &&
-          pattern.hasMatch(key) &&
-          !_isEmptyValue(contextDisplayString(context[key]))) {
-        picked.add(key);
-        break;
-      }
-    }
-  }
-  return picked;
-}
-
-/// True when the operator configured heroes; false when they were guessed.
-bool heroesWereConfigured(wire.ContextDisplay? display) => (display?.hero ?? const <String>[]).isNotEmpty;
+/// True when the operator configured heroes (or chose the card's facts, AS19); false when they
+/// were guessed.
+bool heroesWereConfigured(wire.ContextDisplay? display) =>
+    display?.facts != null || (display?.hero ?? const <String>[]).isNotEmpty;
 
 // ─── The name to lead with ──────────────────────────────────────────────────
 
@@ -176,9 +135,13 @@ final _firstName = RegExp(r'^(first|given)[\s_-]?name$', caseSensitive: false);
 final _lastName = RegExp(r'^(last|sur|family)[\s_-]?name$|^surname$', caseSensitive: false);
 final _digitsOnly = RegExp(r'^[\d\s+()-]+$');
 
-/// The person's name for the headline, when a column says it plainly: a
-/// full-name column, else first + last. Hero columns are looked at first.
-/// Null when nothing looks like a name, and the UI leads with the number.
+/// The person's name for the headline of a campaign call WITHOUT chosen facts (the legacy card),
+/// when a column says it plainly: a full-name column, else first + last. Hero columns are looked
+/// at first. Null when nothing looks like a name, and the UI leads with the number.
+///
+/// Never for a campaign with chosen facts: that reads the customer's name by the domain's one rule
+/// ([customerNameOf], AS19 S1). An inbound caller or a soft-phone contact reads it by that rule
+/// first, and this guess only when the rule finds none on a legacy campaign ([callerNameOf]).
 String? displayNameFor(Map<String, Object?> context, wire.ContextDisplay? display, {List<String> heroKeys = const []}) {
   final hidden = {for (final k in display?.hidden ?? const <String>[]) _norm(k)};
   final keys = [...heroKeys, ...context.keys.where((k) => !heroKeys.contains(k))]
@@ -187,7 +150,7 @@ String? displayNameFor(Map<String, Object?> context, wire.ContextDisplay? displa
 
   String? valueOf(String key) {
     final v = contextDisplayString(context[key]).trim();
-    if (_isEmptyValue(v) || _digitsOnly.hasMatch(v)) return null;
+    if (wire.isBlankContextValue(v) || _digitsOnly.hasMatch(v)) return null;
     return v;
   }
 
@@ -206,6 +169,26 @@ String? displayNameFor(Map<String, Object?> context, wire.ContextDisplay? displa
   }
   if (first != null) return last != null ? '$first $last' : first;
   return null;
+}
+
+/// The customer's name on a roster row by the domain's one rule (AS19 S1, `wire.customerNameFrom`):
+/// the campaign's name role's column when it sets one (blank on this row: none), else the name
+/// guess, never a fact's column. Null when there is none. Inbound callers and soft-phone contacts.
+String? customerNameOf(Map<String, Object?>? context, wire.ContextDisplay? display) =>
+    context == null ? null : wire.customerNameFrom(context, display);
+
+/// An inbound caller's or a soft-phone contact's name: the domain's one rule ([customerNameOf])
+/// first. On a campaign WITHOUT chosen facts that names no name column (the legacy card), when the
+/// rule finds none, the legacy card's guess ([displayNameFor], [heroKeys] looked at first), so a
+/// caller under a `Borrower Name` column is named as before AS19. A campaign with chosen facts, or
+/// with a name column, is never guessed beyond the rule.
+String? callerNameOf(Map<String, Object?>? context, wire.ContextDisplay? display, {List<String> heroKeys = const []}) {
+  if (context == null) return null;
+  final ruled = wire.customerNameFrom(context, display);
+  if (ruled != null || display?.facts != null) return ruled;
+  final role = display?.roles?.name;
+  if (role != null && role.trim().isNotEmpty) return null;
+  return displayNameFor(context, display, heroKeys: heroKeys);
 }
 
 // ─── Earlier calls ──────────────────────────────────────────────────────────

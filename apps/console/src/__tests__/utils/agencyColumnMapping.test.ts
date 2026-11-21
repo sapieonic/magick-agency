@@ -7,6 +7,8 @@ import {
   mappingBlockReason,
   buildIngestRequest,
   buildContextDisplay,
+  cardFactsFromMapping,
+  cardRoleNote,
   phoneValidityLine,
   heroLimitReached,
   phoneColumn,
@@ -114,21 +116,93 @@ describe('role arity', () => {
     expect(after.roles['e']).not.toBe('hero');
   });
 
-  it('keeps hero order as the operator picked it, not file order', () => {
-    // This is the agent's reading order — the first hero is what they read while
-    // the phone is ringing — so it is a real decision, not cosmetic.
-    let state = initialMapping(analysis());
+  it('keeps the card order as the operator picked it, not file order, and saves it as the card’s facts (AS19)', () => {
+    // This is the agent's reading order on the card, so it is a real decision, not cosmetic.
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Full Name'), column('Loan Amount (₹)'), column('Internal Score')],
+    });
+    let state = initialMapping(file);
     state = setRole(state, 'Internal Score', 'hero');
-    state = setRole(state, 'Full Name', 'hero');
-    expect(state.heroOrder).toEqual(['Internal Score', 'Full Name']);
-    expect(buildContextDisplay(state).hero).toEqual(['Internal Score', 'Full Name']);
+    state = setRole(state, 'Loan Amount (₹)', 'hero');
+    expect(state.heroOrder).toEqual(['Internal Score', 'Loan Amount (₹)']);
+    const display = buildContextDisplay(state);
+    // Named and keyed by the default rule; no `hero` written. The guessed name column is the name
+    // role (AS19 R1): with facts the heroes are the name role and the facts.
+    expect(display).toEqual({
+      facts: [
+        { column: 'Internal Score', label: 'Internal Score', key: 'internal_score' },
+        { column: 'Loan Amount (₹)', label: 'Loan Amount (₹)', key: 'loan_amount' },
+      ],
+      roles: { name: 'Full Name' },
+    });
+    // No column the card would guess as the name: no role.
+    const nameless = setRole(initialMapping(analysis({ columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Score')] })), 'Score', 'hero');
+    expect(buildContextDisplay(nameless)).toEqual({ facts: [{ column: 'Score', label: 'Score', key: 'score' }] });
   });
 
-  it('drops a column out of hero order when it is re-roled', () => {
-    let state = setRole(initialMapping(analysis()), 'Full Name', 'hero');
-    state = setRole(state, 'Full Name', 'ignore');
+  it('leaves the column the card guesses as the name off the facts: the card shows it as the name', () => {
+    let state = initialMapping(analysis());
+    state = setRole(state, 'Full Name', 'hero');
+    state = setRole(state, 'Internal Score', 'hero');
+    expect(buildContextDisplay(state).facts).toEqual([{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }]);
+  });
+
+  it('writes the guessed line under the name as its role too, and leaves it off the facts (S2)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Full Name'), column('City'), column('Branch')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'City', 'hero');
+    state = setRole(state, 'Branch', 'hero');
+    // With facts the station guesses no line under the name: written, it stays shown.
+    expect(buildContextDisplay(state)).toEqual({
+      facts: [{ column: 'Branch', label: 'Branch', key: 'branch' }],
+      roles: { name: 'Full Name', place: 'City' },
+    });
+    expect(cardRoleNote(state)).toBe('‘City’ is shown as the line under the name, not as a fact.');
+  });
+
+  it('says when a column picked On the card became the name or the line under it (S9)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Customer Name'), column('Town'), column('Loan')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'Loan', 'hero');
+    expect(cardRoleNote(state)).toBeNull();
+    state = setRole(state, 'Customer Name', 'hero');
+    expect(cardRoleNote(state)).toBe('‘Customer Name’ is shown as the customer’s name, not as a fact.');
+    state = setRole(state, 'Town', 'hero');
+    expect(cardRoleNote(state)).toBe('‘Customer Name’ is shown as the customer’s name and ‘Town’ as the line under it, not as facts.');
+  });
+
+  it('names the facts unlike each other: a clash is cut to fit “ 2” (S9)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Outstanding Balance (₹)'), column('Outstanding Balance Today')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'Outstanding Balance (₹)', 'hero');
+    state = setRole(state, 'Outstanding Balance Today', 'hero');
+    expect(cardFactsFromMapping(state).map((f) => f.label)).toEqual(['Outstanding Bala', 'Outstanding Ba 2']);
+  });
+
+  it('cuts a long header to the 16-letter name, and keys repeats apart', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Outstanding principal amount'), column('Outstanding-Principal-Amount')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'Outstanding principal amount', 'hero');
+    state = setRole(state, 'Outstanding-Principal-Amount', 'hero');
+    expect(cardFactsFromMapping(state)).toEqual([
+      { column: 'Outstanding principal amount', label: 'Outstanding prin', key: 'outstanding_principal_amount' },
+      { column: 'Outstanding-Principal-Amount', label: 'Outstanding-Prin', key: 'outstanding_principal_amount_2' },
+    ]);
+  });
+
+  it('drops a column off the card when it is re-roled, and saves no display with none picked', () => {
+    let state = setRole(initialMapping(analysis()), 'Internal Score', 'hero');
+    state = setRole(state, 'Internal Score', 'ignore');
     expect(state.heroOrder).toEqual([]);
-    expect(buildContextDisplay(state).hero).toBeUndefined();
+    expect(buildContextDisplay(state)).toEqual({});
   });
 
   it('ignores a role change for a column that is not in the file', () => {

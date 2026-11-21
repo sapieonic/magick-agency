@@ -3,7 +3,9 @@
 /// history (with its search-box number rule), the platform shapes, and Mode B's
 /// push devices and ring routes, floor assist (Need help, a supervisor's
 /// messages), and the agent station redesign's additions (tile icons, the
-/// number display, the call-later tag, typed facts, the script, My day).
+/// number display, the call-later tag, typed facts, the script, My day), and
+/// the card's rules as the domain has them (AS19: the name guess, the hero
+/// rule, the phone rule, the chosen tiles, the parse rule).
 ///
 /// Hand-written against `packages/contracts/src`; every type names the
 /// TypeScript type it mirrors. Drift guards: `packages/contracts/fixtures/agent/`.
@@ -12,10 +14,12 @@ library;
 export 'src/actions.dart';
 export 'src/agent_station.dart';
 export 'src/assignment.dart';
+export 'src/context_facts.dart';
 export 'src/customer_history.dart';
 export 'src/customer_search_number.dart';
 export 'src/enums.dart' hide wireIndex;
 export 'src/errors.dart';
+export 'src/fact_rules.dart';
 export 'src/floor_assist.dart';
 export 'src/inbound.dart';
 export 'src/json.dart' show WireFormatException;

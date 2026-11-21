@@ -26,6 +26,26 @@ const bad: Array<[string, Record<string, unknown>]> = [
   ['unknown role', { context_display: { roles: { phone: 'Mobile' } } }],
   ['types not an object', { context_display: { types: 'money' } }],
   ['unknown type', { context_display: { types: { Amount: 'currency' } } }],
+  // AS19: the card's chosen facts and the script's keys per campaign.
+  ['facts not a list', { context_display: { facts: { column: 'A' } } }],
+  ['a fifth fact', { context_display: { facts: ['a', 'b', 'c', 'd', 'e'].map((k) => ({ column: k, label: k, key: k })) } }],
+  ['a fact not an object', { context_display: { facts: ['Amount'] } }],
+  ['a fact\'s unknown part', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a', colour_code: 1 }] } }],
+  ['a fact\'s column hidden', { context_display: { hidden: ['A'], facts: [{ column: 'A', label: 'A', key: 'a' }] } }],
+  ['a fact\'s column is the name', { context_display: { roles: { name: 'A' }, facts: [{ column: 'A', label: 'A', key: 'a' }] } }],
+  ['two facts on one column', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a' }, { column: 'a', label: 'B', key: 'b' }] } }],
+  ['a fact\'s column too long', { context_display: { facts: [{ column: 'x'.repeat(201), label: 'A', key: 'a' }] } }],
+  ['a fact with no name', { context_display: { facts: [{ column: 'A', label: ' ', key: 'a' }] } }],
+  ['a fact\'s name too long', { context_display: { facts: [{ column: 'A', label: 'x'.repeat(17), key: 'a' }] } }],
+  ['two facts with one name', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a' }, { column: 'B', label: 'a', key: 'b' }] } }],
+  ['a fact\'s key badly formed', { context_display: { facts: [{ column: 'A', label: 'A', key: 'Due Date' }] } }],
+  ['a fact\'s key too long', { context_display: { facts: [{ column: 'A', label: 'A', key: 'k'.repeat(33) }] } }],
+  ['a fact\'s key is a fixed one', { context_display: { facts: [{ column: 'A', label: 'A', key: 'campaign_name' }] } }],
+  ['two facts with one key', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a' }, { column: 'B', label: 'B', key: 'a' }] } }],
+  ['a highlight not on or off', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a', highlight: 1 }] } }],
+  ['two highlights', { context_display: { facts: [{ column: 'A', label: 'A', key: 'a', highlight: true }, { column: 'B', label: 'B', key: 'b', highlight: true }] } }],
+  ['a script key that is not a fact', { context_display: { facts: [] }, agent_script: { opening: 'From {branch_code}' } }],
+  ['script keys that are not facts', { context_display: { facts: [] }, agent_script: { opening: 'From {branch} and {emi}' } }],
 ];
 
 function messages(record: Record<string, unknown>): string[] {
@@ -53,6 +73,13 @@ describe('the station settings\' refusals are words for a supervisor', () => {
       expect(m, m).toMatch(/^[A-Z'"{]/);
       expect(m.endsWith('.'), m).toBe(true);
     }
+  });
+
+  it('AS19: taking away a fact the stored script uses, in the words the spec gives', () => {
+    const stored = { context_display: { facts: [{ column: 'Due Date', label: 'Due on', key: 'due_date' }] }, agent_script: { opening: 'By {due_date}.' } };
+    expect(agentScriptIssues({ context_display: { facts: [] } }, stored)).toEqual([
+      { field: 'context_display.facts', message: 'The script uses {due_date}. Take it out of the script first, or keep the fact.' },
+    ]);
   });
 
   it('the daily target in the station\'s words, with Indian grouping', () => {

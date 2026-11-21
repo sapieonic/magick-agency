@@ -350,6 +350,12 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       body.caller_ids = (body.caller_ids as string[]).map((id) => id.trim());
     }
 
+    // AS19: this also checks the script's keys against the card both ways (`agentScriptIssues`,
+    // the stored row as the base). Accepted race (AS19 R3, not fixed): the base is read before
+    // `writeCampaignPatch` takes the row's lock, so two PATCHes at once, one dropping a fact and
+    // one adding that fact's `{key}` to the script, can each pass against the old row and leave a
+    // script naming a key the card no longer has. The clients then show the `{word}` as written,
+    // and a later save that sends the script is refused until the key is taken out or put back.
     if (configRejected(reply, body, campaign)) return reply;
     // BE-6: the roles and types against the campaign's customer list, after the shape check.
     if (await contextColumnsRejected(reply, body, campaign)) return reply;

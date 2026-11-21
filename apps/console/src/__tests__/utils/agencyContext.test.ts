@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveContextFields, heroesWereConfigured } from '../../utils/agencyContext';
+import { resolveContextFields } from '../../utils/agencyContext';
 
 /**
  * The resolution rules are a CROSS-CLIENT contract — the API's `AgencyContextDisplay`
@@ -143,12 +143,14 @@ describe('heuristic hero selection', () => {
     const resolved = resolveContextFields(CONTEXT, { hero: ['Branch'] });
     expect(resolved.hero.map((f) => f.label)).toEqual(['Branch']);
   });
+});
 
-  it('reports whether heroes were configured, so the UI can label a guess', () => {
-    // Showing a heuristic's output as if it were the operator's choice is how
-    // an agent comes to trust the wrong four fields.
-    expect(heroesWereConfigured({ hero: ['City'] })).toBe(true);
-    expect(heroesWereConfigured({ hero: [] })).toBe(false);
-    expect(heroesWereConfigured(undefined)).toBe(false);
+describe('with the card\'s chosen facts (AS19)', () => {
+  it('pins the name and all four facts: the fourth fact is not dropped (R2)', () => {
+    const resolved = resolveContextFields(CONTEXT, {
+      roles: { name: 'First Name' },
+      facts: ['Policy #', 'City', 'Amount Due', 'Branch'].map((column, i) => ({ column, label: column, key: `k${i}` })),
+    });
+    expect(resolved.hero.map((f) => f.label)).toEqual(['First Name', 'Policy #', 'City', 'Amount Due', 'Branch']);
   });
 });

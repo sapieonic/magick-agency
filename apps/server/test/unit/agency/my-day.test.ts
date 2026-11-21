@@ -166,15 +166,19 @@ describe('callLaterCustomerName: the name, never the number', () => {
     expect(callLaterCustomerName({ borrower: '  Asha Rao ', name: 'Other' }, { roles: { name: 'borrower' } })).toBe('Asha Rao');
   });
 
-  it('else the floor\'s guess', () => {
+  it('else the guess, the card\'s one reading (AS19 S1): a name role that is blank on the row is no name (S16)', () => {
     expect(callLaterCustomerName({ customer_name: 'Ravi K' }, {})).toBe('Ravi K');
-    expect(callLaterCustomerName({ borrower: '' , full_name: 'Meena S' }, { roles: { name: 'borrower' } })).toBe('Meena S');
+    expect(callLaterCustomerName({ 'Customer Name': 'Ravi K' }, {})).toBe('Ravi K');
+    expect(callLaterCustomerName({ borrower: '' , full_name: 'Meena S' }, { roles: { name: 'borrower' } })).toBeNull();
+    // never a fact's column
+    expect(callLaterCustomerName({ name: 'Branch Name', full_name: 'Meena S' }, { facts: [{ column: 'name', label: 'Branch', key: 'branch' }] }))
+      .toBe('Meena S');
   });
 
   it('never a column the campaign hides from agents, by the role or by the guess (case ignored)', () => {
-    // The role names a hidden column: not used, and the guess does not fall back to it either.
+    // The role names a hidden column: no name (the role is set, so no guess either, AS19 S1).
     expect(callLaterCustomerName({ borrower: 'Asha Rao', name: 'Shown Name' }, { roles: { name: 'borrower' }, hidden: ['Borrower'] }))
-      .toBe('Shown Name');
+      .toBeNull();
     // The guess's column is hidden: the next visible guess, else nothing.
     expect(callLaterCustomerName({ name: 'Hidden', full_name: 'Meena S' }, { hidden: ['NAME'] })).toBe('Meena S');
     expect(callLaterCustomerName({ customer_name: 'Ravi K' }, { hidden: ['customer_name'] })).toBeNull();

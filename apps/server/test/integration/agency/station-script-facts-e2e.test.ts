@@ -10,7 +10,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     the paced call's `reserved` frame carries `facts` built from the contact's roster row: the
  *     name and place by their roles, the amount and due date parsed, an unreadable value `null`
  *     with its raw text, a hidden column nowhere.
- *  2. A campaign with no script (`{}`, the column default, or one with no opening and no steps):
+ *  2. AS19: a campaign with `context_display.facts`: the paced call's tiles are exactly those
+ *     facts (at most four), each with its label and key, the highlighted one first, typed by
+ *     `types` alone; `hero` is not read for tiles.
+ *  3. A campaign with no script (`{}`, the column default, or one with no opening and no steps):
  *     the join carries no `script` at all.
  *
  * The settings routes that write both: `test/integration/api/agent-station-campaign-settings.test.ts`.
@@ -213,7 +216,63 @@ describe('the script on the join and the facts on the call — real app, real ru
     expect(reserved.context).toEqual(ROW);
   });
 
-  it('2. a campaign with no script: the join carries no script at all', async () => {
+  it('2. AS19: a campaign with chosen facts: the call\'s tiles are those facts, labelled and keyed, the highlight first', async () => {
+    const display = {
+      hero: ['Loan No', 'Limit'],
+      hidden: ['Aadhaar'],
+      roles: { name: 'Customer Name', place: 'City' },
+      types: { 'Amount Due': 'money', 'Due Date': 'date', Tenure: 'number', 'Auto Debit': 'yes_no', 'Alt Phone': 'phone' },
+      facts: [
+        { column: 'Due Date', label: 'Due on', key: 'due_date' },
+        { column: 'Tenure', label: 'Tenure (months)', key: 'tenure' },
+        { column: 'amount due', label: 'Amount due', key: 'amount_due', highlight: true },
+        { column: 'Auto Debit', label: 'Auto debit on', key: 'auto_debit' },
+        // A fifth would be refused at the write; one written by hand is cut at the card's four.
+        { column: 'Alt Phone', label: 'Other number', key: 'alt_phone' },
+      ],
+    };
+    const script = { opening: 'Namaste {name}. {amount_due} is due on {due_date}; auto debit: {auto_debit}.' };
+    const campaign = await insertAgencyCampaign({
+      tenant_id: tenant, account_id: account, status: 'running', name: 'Chosen facts',
+      wrapup_seconds: 60, wrapup_auto_return: true,
+      agent_script: JSON.stringify(script), context_display: JSON.stringify(display),
+    });
+    const contact = await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919812360002',
+      context: JSON.stringify({ ...ROW, Tenure: '24', 'Auto Debit': 'Haan', 'Alt Phone': '098765 43210' }),
+    });
+    const agent = await newAgent();
+
+    const boot = await join(agent, campaign.id);
+    expect(boot.script).toEqual(script);
+    expect(boot.context_display).toEqual(display);
+
+    const frames: Frame[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${boot.station_ws_url}`);
+    sockets.push(ws);
+    ws.on('message', (raw, isBinary) => { if (!isBinary) frames.push(JSON.parse(raw.toString())); });
+    await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
+    const avail = await post(`/proxy/agency/sessions/${boot.session_id}/available`, agent);
+    expect(avail.statusCode, avail.body).toBe(200);
+
+    const reserved = await waitFor('reserved', () => frames.find((f) => f['event'] === 'reserved')?.['attempt']);
+    expect(reserved.contact_id).toBe(contact.id);
+    expect(reserved.facts).toEqual({
+      name: 'Ramesh Goud',
+      place: 'Hyderabad',
+      tiles: [
+        { column: 'Amount Due', label: 'Amount due', key: 'amount_due', highlight: true, role: 'amount_due', type: 'money', raw: '₹1,25,000', value: '125000' },
+        { column: 'Due Date', label: 'Due on', key: 'due_date', role: 'due_date', type: 'date', raw: '25/11/2026', value: '2026-11-25' },
+        { column: 'Tenure', label: 'Tenure (months)', key: 'tenure', type: 'number', raw: '24', value: '24' },
+        { column: 'Auto Debit', label: 'Auto debit on', key: 'auto_debit', type: 'yes_no', raw: 'Haan', value: 'yes' },
+      ],
+    });
+    // `hero` is not read for tiles once `facts` is set, and a hidden column is nowhere.
+    expect(reserved.facts.tiles.map((t: { column: string }) => t.column)).not.toContain('Loan No');
+    expect(JSON.stringify(reserved.facts)).not.toContain('1234 5678 9012');
+  });
+
+  it('3. a campaign with no script: the join carries no script at all', async () => {
     const none = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'paused' });
     const empty = await insertAgencyCampaign({
       tenant_id: tenant, account_id: account, status: 'paused', agent_script: JSON.stringify({ opening: '', steps: [] }),

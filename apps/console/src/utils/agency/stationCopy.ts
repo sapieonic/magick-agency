@@ -133,6 +133,10 @@ export const STATION_COPY = {
   stopRingingArmed: 'Press E again to stop this call.',
   whatTheySaid: 'What they said last time',
   lastCall: 'Last call',
+  /** AS19's hover card under a fact: where its value comes from. */
+  factFromColumn: (column: string) => `From column: ${column}`,
+  /** AS19 S11: what a screen reader hears for a fact this customer has no value for (the tile shows "—"). */
+  factNotGiven: (name: string) => `${name}: not given`,
   callAgainTag: (n: number, of: number) => `Calling again · ${n} of ${of}`,
 
   // 04 On call

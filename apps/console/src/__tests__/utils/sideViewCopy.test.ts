@@ -212,10 +212,26 @@ describe('the customer card on a side view', () => {
       prior_attempts: [],
     };
     const call = manualCall({ tag: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' }, contact });
-    const card = softphoneCustomerCard(call, CAMPAIGN.context_display);
+    const card = softphoneCustomerCard(call, CAMPAIGN);
     expect(card.name).toBe('Asha Rao');
     expect(card.facts.map((f) => f.value)).toEqual(['HL-4471']);
     expect(softphoneLastCalls(call, CAMPAIGN)).toEqual([]);
     expect(softphoneLastCalls(manualCall(), null)).toEqual([]);
+  });
+
+  it('a legacy campaign’s caller is named by the card’s guess from before AS19 when the rule finds none; a chosen one is not', () => {
+    const context = { 'Loan account': 'HL-4471', 'Borrower Name': 'Sunita Patil' };
+    const match = { ...inboundCall().match!, context, context_display: { hero: ['Loan account', 'Borrower Name'] } };
+    const inbound = inboundCustomerCard(inboundCall({ match }));
+    expect(inbound.name).toBe('Sunita Patil');
+    // The name is not a tile as well.
+    expect(inbound.facts.map((f) => f.value)).not.toContain('Sunita Patil');
+    const chosen = inboundCustomerCard(inboundCall({ match: { ...match, context_display: { facts: [] } } }));
+    expect(chosen.name).toBeNull();
+
+    const contact = { contact_id: 'ct-1', state: 'in_flight' as const, claimed: true, context, prior_attempts: [] };
+    const call = manualCall({ tag: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' }, contact });
+    expect(softphoneCustomerCard(call, { context_display: {} }).name).toBe('Sunita Patil');
+    expect(softphoneCustomerCard(call, { context_display: { facts: [] } }).name).toBeNull();
   });
 });

@@ -33,6 +33,11 @@ Every type cites the TypeScript type it mirrors in `packages/contracts/src`.
 - `packages/contracts/fixtures/agent/customer-search-numbers.json`: the one table the
   customer search's number rule is held to; `test/customer_search_number_test.dart`
   runs every case of it, as the TypeScript original's test does.
+- `packages/contracts/fixtures/agent/fact-rules.json`: the card's rules (AS19), as
+  the domain has them, in `lib/src/fact_rules.dart` (the name and place guess, the customer's
+  name, the hero rule, the phone rule, the chosen tiles) and `lib/src/context_facts.dart`
+  (the parse rule); `test/fact_rules_test.dart` runs every case of it, as the domain's
+  `fact-rules.test.ts` does.
 
 ```bash
 cd apps/mobile/packages/agency_wire && dart test
