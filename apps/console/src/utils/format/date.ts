@@ -81,9 +81,31 @@ export const LEGACY_ZONE_NAMES: Readonly<Record<string, string>> = {
   'Asia/Thimbu': 'Asia/Thimphu',
 };
 
-/** A zone by its current IANA name: a legacy alias ({@link LEGACY_ZONE_NAMES}) mapped, any other as given. */
+const ZONE_KNOWN = new Map<string, boolean>();
+
+/** Whether this browser's `Intl` knows `zone` (an older ICU may know `Asia/Calcutta` and not `Asia/Kolkata`). */
+export function zoneKnown(zone: string): boolean {
+  let known = ZONE_KNOWN.get(zone);
+  if (known === undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: zone });
+      known = true;
+    } catch {
+      known = false;
+    }
+    ZONE_KNOWN.set(zone, known);
+  }
+  return known;
+}
+
+/**
+ * A zone by its current IANA name: a legacy alias ({@link LEGACY_ZONE_NAMES}) mapped when this
+ * browser knows the current name, any other as given. A browser whose ICU predates the rename
+ * keeps the legacy name, which it can still format in, rather than one it would refuse.
+ */
 export function currentZoneName(zone: string): string {
-  return LEGACY_ZONE_NAMES[zone] ?? zone;
+  const current = LEGACY_ZONE_NAMES[zone];
+  return current !== undefined && zoneKnown(current) ? current : zone;
 }
 
 /**

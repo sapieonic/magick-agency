@@ -53,5 +53,8 @@ describe('the reader’s zone, by its current name', () => {
     for (const legacy of Object.keys(LEGACY_ZONE_NAMES)) expect(zones).not.toContain(legacy);
     // A subscription saved with the old name keeps it on screen, never silently swapped.
     expect(reportZoneOptions('Asia/Calcutta')).toContain('Asia/Calcutta');
+    // …in place of its current name: the one zone is never offered twice.
+    expect(reportZoneOptions('Asia/Calcutta')).not.toContain('Asia/Kolkata');
+    expect(reportZoneOptions('Asia/Calcutta')).toContain('Asia/Tokyo');
   });
 });

@@ -99,7 +99,9 @@ const FALLBACK_ZONES = [
  * The zones the select offers: every IANA zone this browser knows, by its current
  * name (ICU lists `Asia/Calcutta`; the select offers `Asia/Kolkata`, the name
  * {@link browserZone} defaults to), plus UTC and the zone already chosen (so a
- * default the list lacks is never silently swapped).
+ * default the list lacks is never silently swapped). A chosen zone by its legacy
+ * name (a subscription saved as `Asia/Calcutta`) stands in for its current name,
+ * so the list never offers the one zone twice.
  */
 export function reportZoneOptions(current: string): string[] {
   let zones: string[];
@@ -108,5 +110,7 @@ export function reportZoneOptions(current: string): string[] {
   } catch {
     zones = FALLBACK_ZONES;
   }
-  return [...new Set([...zones.map(currentZoneName), 'UTC', current])].sort((a, b) => a.localeCompare(b));
+  const same = currentZoneName(current);
+  const listed = zones.map(currentZoneName).filter((z) => z === current || z !== same);
+  return [...new Set([...listed, 'UTC', current])].sort((a, b) => a.localeCompare(b));
 }
