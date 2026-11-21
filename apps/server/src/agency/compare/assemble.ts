@@ -185,8 +185,8 @@ export function trendOf(metricId: string, picked: readonly string[], cohort: rea
 }
 
 /**
- * The counts cannot both be right: the value is WITHHELD (null, not reportable, no interval) and the
- * agent is left out of the metric's band, pooled figure and findings. The roster's `occupancy_pct`
+ * The counts cannot both be right: the value is WITHHELD (null, not reportable, no interval,
+ * `withheld: 'counts_disagree'`) and the agent is left out of the metric's band, pooled figure and findings. The roster's `occupancy_pct`
  * rule (`agent-roster-stats.ts`): its two halves come from different tables and clocks, so a
  * numerator past what its denominator allows is an inconsistency, never a figure to rank or name.
  *  - a rate over 1: `promises_rate` counts promises by when the outcome was written and its
@@ -235,10 +235,10 @@ export function assembleCompareResponse(input: CompareAssembleInput): AgencyComp
     const out = new Set<string>();
     for (const a of input.cohort) {
       const counts = metricCounts(metric, a);
-      const value = compareValue(metric.definition, counts.numerator, counts.denominator);
+      const value = compareValue(metric, counts.numerator, counts.denominator);
       if (impossibleFigure(metric, a, counts)) {
         out.add(a.agent_user_id);
-        perAgent.set(a.agent_user_id, { ...value, value: null, reportable: false, interval: null });
+        perAgent.set(a.agent_user_id, { ...value, value: null, reportable: false, interval: null, withheld: 'counts_disagree' });
       } else {
         perAgent.set(a.agent_user_id, value);
       }

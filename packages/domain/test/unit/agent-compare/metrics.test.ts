@@ -5,12 +5,14 @@ import {
   COMPARE_OUTCOME_SET_DEFINITION,
   type AgencyCompareMetricRef,
   type AgencyCompareOutcomeCode,
+  type CompareBuiltinMetricKey,
 } from '@magick-agency/contracts/api/agency/compare';
 import {
   catalogRecordsPromises,
   compareCohortMetric,
   compareOutcomeCodes,
   compareValue,
+  isCountableRef,
   resolveCompareMetric,
   resolveCompareMetrics,
 } from '../../../src/agent-compare/metrics';
@@ -22,6 +24,8 @@ const CODES: AgencyCompareOutcomeCode[] = [
 ];
 const NO_PROMISE = CODES.filter((c) => !c.requires_promise);
 const builtin = (key: string) => ({ kind: 'builtin', key }) as AgencyCompareMetricRef;
+/** A built-in as `compareValue` takes it: its ref and catalog definition. */
+const metricOf = (key: CompareBuiltinMetricKey) => ({ ref: { kind: 'builtin', key } as const, definition: COMPARE_BUILTIN_METRICS[key] });
 const set = (codes: string[], better: 'higher' | 'lower' | 'neutral' = 'higher', label?: string): AgencyCompareMetricRef =>
   ({ kind: 'outcomes', codes, better, ...(label !== undefined ? { label } : {}) });
 
@@ -104,7 +108,7 @@ describe('resolveCompareMetrics', () => {
 });
 
 describe('compareValue', () => {
-  const rate = COMPARE_BUILTIN_METRICS.success_rate;
+  const rate = metricOf('success_rate');
   it('a rate: a fraction, its interval, reportable at the floor', () => {
     const v = compareValue(rate, 5, 20);
     expect(v.value).toBe(0.25);
@@ -115,29 +119,63 @@ describe('compareValue', () => {
   });
 
   it('a zero denominator is a null value, never 0, and not reportable', () => {
-    expect(compareValue(rate, 0, 0)).toEqual({ value: null, numerator: 0, denominator: 0, reportable: false, interval: null });
-    expect(compareValue(COMPARE_BUILTIN_METRICS.calls_per_hour, 0, 0).value).toBeNull();
+    expect(compareValue(rate, 0, 0)).toEqual({ value: null, numerator: 0, denominator: 0, reportable: false, interval: null, withheld: 'too_few' });
+    expect(compareValue(metricOf('calls_per_hour'), 0, 0).value).toBeNull();
   });
 
   it('counts and amounts are themselves, always reportable, no denominator', () => {
-    expect(compareValue(COMPARE_BUILTIN_METRICS.calls_handled, 42, 999)).toEqual({ value: 42, numerator: 42, denominator: null, reportable: true, interval: null });
-    expect(compareValue(COMPARE_BUILTIN_METRICS.promised_amount, 125000, null).value).toBe(125000);
+    expect(compareValue(metricOf('calls_handled'), 42, 999)).toEqual({ value: 42, numerator: 42, denominator: null, reportable: true, interval: null, withheld: null });
+    expect(compareValue(metricOf('promised_amount'), 125000, null).value).toBe(125000);
   });
 
   it('per hour over logged-in seconds; seconds as an average with the roster floor', () => {
-    const perHour = compareValue(COMPARE_BUILTIN_METRICS.calls_per_hour, 30, 7200);
+    const perHour = compareValue(metricOf('calls_per_hour'), 30, 7200);
     expect(perHour.value).toBe(15);
     expect(perHour.reportable).toBe(true);
     expect(perHour.interval).toBeNull();
-    expect(compareValue(COMPARE_BUILTIN_METRICS.choose_time, 600, 20)).toMatchObject({ value: 30, reportable: true, interval: null });
-    expect(compareValue(COMPARE_BUILTIN_METRICS.choose_time, 600, 19).reportable).toBe(false);
+    expect(compareValue(metricOf('choose_time'), 600, 20)).toMatchObject({ value: 30, reportable: true, interval: null });
+    expect(compareValue(metricOf('choose_time'), 600, 19).reportable).toBe(false);
+  });
+});
+
+describe('compareValue: why a figure is withheld', () => {
+  it('reportable: none; under the floor: too_few, figure or not', () => {
+    expect(compareValue(metricOf('success_rate'), 5, 20).withheld).toBeNull();
+    expect(compareValue(metricOf('success_rate'), 5, 19).withheld).toBe('too_few');
+    expect(compareValue(metricOf('success_rate'), 0, 0).withheld).toBe('too_few');
+    expect(compareValue(metricOf('choose_time'), 0, 0).withheld).toBe('too_few');
+  });
+
+  it('call-backs kept with none due: none_due; with some due under the floor: too_few', () => {
+    expect(compareValue(metricOf('callbacks_kept_rate'), 0, 0).withheld).toBe('none_due');
+    expect(compareValue(metricOf('callbacks_kept_rate'), 1, 3).withheld).toBe('too_few');
+  });
+
+  it('calls per hour with no logged-in time: no_logged_in_time', () => {
+    expect(compareValue(metricOf('calls_per_hour'), 4, 0).withheld).toBe('no_logged_in_time');
+    expect(compareValue(metricOf('calls_per_hour'), 4, null).withheld).toBe('no_logged_in_time');
+    expect(compareValue(metricOf('calls_per_hour'), 4, 3600).withheld).toBeNull();
+  });
+
+  it('an outcome set under the floor: too_few, never none_due', () => {
+    const m = { ref: set(['paid']), definition: { ...COMPARE_OUTCOME_SET_DEFINITION, better: 'higher' as const } };
+    expect(compareValue(m, 0, 0).withheld).toBe('too_few');
+  });
+});
+
+describe('isCountableRef', () => {
+  it('an outcome set or a built-in the catalog marks countable (promises_rate), nothing else', () => {
+    expect(isCountableRef(set(['paid']))).toBe(true);
+    expect(isCountableRef(builtin('promises_rate'))).toBe(true);
+    for (const key of ['success_rate', 'calls_handled', 'callbacks_kept_rate', 'promised_amount']) expect(isCountableRef(builtin(key)), key).toBe(false);
   });
 });
 
 describe('compareCohortMetric', () => {
   it('percentiles over reportable values only; pooled over every agent, thin ones included', () => {
-    const def = COMPARE_BUILTIN_METRICS.success_rate;
-    const values = [compareValue(def, 10, 40), compareValue(def, 10, 20), compareValue(def, 30, 60), compareValue(def, 3, 3)];
+    const m = metricOf('success_rate');
+    const def = m.definition;
+    const values = [compareValue(m, 10, 40), compareValue(m, 10, 20), compareValue(m, 30, 60), compareValue(m, 3, 3)];
     const c = compareCohortMetric(def, values);
     expect(c.agents_rated).toBe(3);
     expect(c.median).toBe(0.5);
@@ -146,13 +184,14 @@ describe('compareCohortMetric', () => {
   });
 
   it('counts have a band and no pooled figure; nothing rated is all null', () => {
-    const def = COMPARE_BUILTIN_METRICS.calls_handled;
-    expect(compareCohortMetric(def, [compareValue(def, 1, null), compareValue(def, 3, null)])).toEqual({ p25: 1.5, median: 2, p75: 2.5, pooled: null, agents_rated: 2 });
+    const m = metricOf('calls_handled');
+    const def = m.definition;
+    expect(compareCohortMetric(def, [compareValue(m, 1, null), compareValue(m, 3, null)])).toEqual({ p25: 1.5, median: 2, p75: 2.5, pooled: null, agents_rated: 2 });
     expect(compareCohortMetric(COMPARE_BUILTIN_METRICS.success_rate, [])).toEqual({ p25: null, median: null, p75: null, pooled: null, agents_rated: 0 });
   });
 
   it('per hour pools calls over hours', () => {
-    const def = COMPARE_BUILTIN_METRICS.calls_per_hour;
-    expect(compareCohortMetric(def, [compareValue(def, 10, 3600), compareValue(def, 30, 7200)]).pooled).toBeCloseTo(40 / 3, 12);
+    const m = metricOf('calls_per_hour');
+    expect(compareCohortMetric(m.definition, [compareValue(m, 10, 3600), compareValue(m, 30, 7200)]).pooled).toBeCloseTo(40 / 3, 12);
   });
 });

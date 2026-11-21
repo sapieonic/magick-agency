@@ -39,7 +39,7 @@ import {
   type CompareBuiltinMetricKey,
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
-import { catalogRecordsPromises } from './metrics';
+import { catalogRecordsPromises, isCountableRef } from './metrics';
 
 /** The main outcome's place among a lens's built-ins. */
 const MAIN = 'main' as const;
@@ -87,6 +87,6 @@ export function compareLensDefaults(lens: CompareLens, codes: readonly AgencyCom
     if (slot !== MAIN) metrics.push({ kind: 'builtin', key: slot });
     else if (main !== null) metrics.push(main);
   }
-  const trend = main !== null && (main.kind === 'outcomes' || main.key === 'promises_rate') ? main : null;
+  const trend = main !== null && isCountableRef(main) ? main : null;
   return { metrics, trend };
 }

@@ -1,14 +1,12 @@
 /**
  * The supervisor's roster (`GET /api/v1/agency-agents/stats`): its vocabulary,
- * query parsing, percentiles and sort. Split out of `agent-record.ts`, which re-exports
+ * query parsing and sort (its percentiles are `cohortPercentiles`, `@magick-agency/domain`). Split out of `agent-record.ts`, which re-exports
  * everything here — import from that path.
  */
 import type {
   AgencyRosterAgentRow,
-  AgencyRosterPercentiles,
   AgencyRosterSort,
 } from '@magick-agency/contracts/agency';
-import { cohortPercentiles } from '@magick-agency/domain/agent-compare/percentiles';
 import {
   parseCampaignIdParam,
   parseRequiredWindow,
@@ -241,41 +239,6 @@ export function rosterParams(q: { from: Date; to: Date; campaignId?: string }): 
   });
   if (!parsed.ok) throw new Error(`report roster window refused: ${parsed.issues.map((i) => `${i.param} ${i.message}`).join('; ')}`);
   return parsed.filters;
-}
-
-/**
- * p25 / median / p75 over an already-filtered set of values.
- *
- * ── The filtering is the CALLER's job, and that is the interesting half ──────
- *
- * This function ranks whatever it is handed. Which rows are handed to it — only
- * those whose denominator cleared `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, and never
- * a `null` rate — is the rule stated on `AgencyRosterBenchmark`, and it lives at
- * the call site because the qualifying denominator differs per metric while the
- * ranking does not. Passing a `null` through here would be the failure the whole
- * threshold exists to prevent: JavaScript sorts `null` as 0, so one agent who
- * connected nobody would sit at the bottom of the distribution as a hard 0% and
- * pull p25 down with them.
- *
- * ── `percentile_cont`, not `percentile_disc` ────────────────────────────────
- *
- * Linear interpolation between the two neighbouring values, which is what
- * Postgres's `percentile_cont` computes and what a reader means by "the median".
- * The discrete reading snaps to an actual row, and on a floor of four agents that
- * makes the median one named person's number — which invites reading the
- * benchmark as a comparison against THEM.
- *
- * The arithmetic is `cohortPercentiles` in `@magick-agency/domain/agent-compare`:
- * the Compare agents page draws its band with the same function, so the roster's
- * benchmark and that band cannot be two implementations that drift
- * (docs/compare-agents.md §5).
- *
- * Empty input yields all three `null`, never 0 — the same rule as every rate on
- * this surface, for the same reason: "nothing qualified" and "the cohort scores
- * zero" are different facts.
- */
-export function rosterPercentiles(values: readonly number[]): AgencyRosterPercentiles {
-  return cohortPercentiles(values);
 }
 
 /**

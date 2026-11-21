@@ -6,7 +6,7 @@
  *
  * - `wilson.ts`: the 95% Wilson score interval every rate carries.
  * - `percentiles.ts`: p25 / median / p75 by `percentile_cont`, the roster benchmark's method
- *   (the roster's `rosterPercentiles` delegates here).
+ *   (the roster's benchmark reads it too).
  * - `metrics.ts`: resolving refs against a campaign's catalog, one agent's value, the cohort's band.
  * - `lens.ts`: the lenses' starting metrics and trend, and the campaign's starting lens.
  * - `findings.ts`: what stands out, and what is not clear yet (§6).

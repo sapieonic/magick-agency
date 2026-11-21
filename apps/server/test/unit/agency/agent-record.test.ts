@@ -39,7 +39,6 @@ import {
   parseAgentAttemptFilters,
   parseAgentStatsQuery,
   parseRosterQuery,
-  rosterPercentiles,
   sortRosterRows,
   zeroOccupancy,
 } from '../../../src/agency/agent-record.js';
@@ -895,37 +894,6 @@ describe('sortRosterRows: `agent_user_id` is the tiebreaker on every sort', () =
       expect(sortRosterRows(rows, sort, 'desc')[0]?.agent_user_id, sort).toBe('u-big');
       expect(sortRosterRows(rows, sort, 'asc')[0]?.agent_user_id, sort).toBe('u-small');
     }
-  });
-});
-
-describe('rosterPercentiles: the `percentile_cont` reading, null when empty', () => {
-  it('nulls all three on an empty pool rather than reporting 0', () => {
-    // Same rule as every rate on this surface: "nothing qualified" and "the cohort
-    // scores zero" are different facts, and only one of them is a measurement.
-    expect(rosterPercentiles([])).toEqual({ p25: null, median: null, p75: null });
-  });
-
-  it('reports a single value as all three quantiles', () => {
-    expect(rosterPercentiles([42])).toEqual({ p25: 42, median: 42, p75: 42 });
-  });
-
-  it('interpolates between neighbours rather than snapping to a row', () => {
-    // `percentile_disc` would snap to an actual row, and on a floor of four agents
-    // that makes the median one named person's number — which invites reading the
-    // benchmark as a comparison against THEM.
-    expect(rosterPercentiles([0, 20, 50])).toEqual({ p25: 10, median: 20, p75: 35 });
-    expect(rosterPercentiles([20, 30])).toEqual({ p25: 22.5, median: 25, p75: 27.5 });
-  });
-
-  it('sorts the input itself, and does not mutate it', () => {
-    const values = [50, 0, 20];
-    expect(rosterPercentiles(values).median).toBe(20);
-    expect(values).toEqual([50, 0, 20]);
-  });
-
-  it('matches Postgres percentile_cont on a known four-value set', () => {
-    // percentile_cont over (1,2,3,4): p25 = 1.75, p50 = 2.5, p75 = 3.25.
-    expect(rosterPercentiles([4, 1, 3, 2])).toEqual({ p25: 1.75, median: 2.5, p75: 3.25 });
   });
 });
 

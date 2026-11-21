@@ -11,7 +11,6 @@
  */
 import { z } from 'zod';
 import {
-  COMPARE_BUILTIN_METRICS,
   COMPARE_LENSES,
   COMPARE_MAX_METRICS,
   COMPARE_PAGE_MAX_AGENTS,
@@ -26,7 +25,7 @@ import {
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
 import { REPORT_MAX_WINDOW_DAYS } from '@magick-agency/contracts/api/agency/reports';
-import { resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
+import { isCountableRef, resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
 import { UUID_RE } from '../../utils/uuid.js';
 import type { CompareViewContent } from '../../db/repositories/agency.repository.js';
 import { isRequestZone } from '../zone.js';
@@ -208,9 +207,7 @@ export function checkCompareView(draft: CompareViewDraft, codes: readonly Agency
       ids.add(id);
     }
     if (trendRef !== null) {
-      if (compareMetricRefProblem(trendRef) !== null) return null;
-      const countable = trendRef.kind === 'outcomes' || COMPARE_BUILTIN_METRICS[trendRef.key].countable;
-      if (!countable) return null;
+      if (compareMetricRefProblem(trendRef) !== null || !isCountableRef(trendRef)) return null;
     }
   }
   return {

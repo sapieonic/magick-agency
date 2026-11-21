@@ -21,6 +21,7 @@ import {
   type AgencyCompareMetricRef,
   type AgencyCompareOutcomeCode,
   type AgencyCompareValue,
+  type AgencyCompareWithheld,
   type CompareMetricDefinition,
   type CompareMetricRefProblem,
 } from '@magick-agency/contracts/api/agency/compare';
@@ -129,24 +130,56 @@ export function resolveCompareMetrics(
   if (trend === null || trend === undefined) return { ok: true, metrics, trend: null };
   const t = resolveCompareMetric(trend, codes);
   if (!t.ok) return { ok: false, problem: t.problem, at: 'trend' };
-  if (!t.metric.definition.countable) return { ok: false, problem: 'trend_not_countable', at: 'trend' };
+  if (!isCountableRef(t.metric.ref)) return { ok: false, problem: 'trend_not_countable', at: 'trend' };
   return { ok: true, metrics, trend: t.metric };
+}
+
+/**
+ * Whether a ref can be the per-day trend (`countable`: an outcome set, or a built-in the catalog
+ * marks so, today `promises_rate`). The route's and a saved view's trend rule, the lens's trend and
+ * the console's trend choices all ask this.
+ */
+export function isCountableRef(ref: AgencyCompareMetricRef): boolean {
+  return ref.kind === 'outcomes' || COMPARE_BUILTIN_METRICS[ref.key].countable;
+}
+
+/** A ratio in the unit's scale (`per_hour`: per 3,600 seconds), null on a zero denominator, never 0. */
+function ratio(unit: CompareMetricDefinition['unit'], numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return unit === 'per_hour' ? (numerator / denominator) * 3600 : numerator / denominator;
 }
 
 /**
  * One agent's figure for a metric, from its two counts (see {@link AgencyCompareValue} for what
  * `numerator` and `denominator` are per unit). A zero denominator gives a null value, never 0.
- * For `count` and `amount` the denominator is ignored and served as null.
+ * For `count` and `amount` the denominator is ignored and served as null. A figure that is not
+ * reportable says why (`withheld`): `calls_per_hour` with no logged-in time is
+ * `no_logged_in_time`, `callbacks_kept_rate` with none due is `none_due`, anything else under the
+ * floor or with nothing to divide by `too_few`. (`counts_disagree` is the server's, from counts
+ * it knows cannot both be right.)
  */
-export function compareValue(definition: CompareMetricDefinition, numerator: number, denominator: number | null): AgencyCompareValue {
+export function compareValue(
+  metric: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>,
+  numerator: number,
+  denominator: number | null,
+): AgencyCompareValue {
+  const { definition } = metric;
   if (definition.unit === 'count' || definition.unit === 'amount') {
-    return { value: numerator, numerator, denominator: null, reportable: true, interval: null };
+    return { value: numerator, numerator, denominator: null, reportable: true, interval: null, withheld: null };
   }
   const den = denominator ?? 0;
-  const value = den > 0 ? (definition.unit === 'per_hour' ? (numerator / den) * 3600 : numerator / den) : null;
+  const value = ratio(definition.unit, numerator, den);
   const reportable = value !== null && (definition.min_denominator === null || den >= definition.min_denominator);
   const interval = definition.unit === 'rate' ? wilsonInterval(numerator, den) : null;
-  return { value, numerator, denominator: denominator ?? 0, reportable, interval };
+  return { value, numerator, denominator: den, reportable, interval, withheld: reportable ? null : withheldWhy(metric, den) };
+}
+
+/** Why a figure that is not reportable is withheld, from its metric and denominator (see {@link compareValue}). */
+function withheldWhy(metric: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, denominator: number): AgencyCompareWithheld {
+  if (denominator > 0) return 'too_few';
+  if (metric.definition.unit === 'per_hour') return 'no_logged_in_time';
+  if (metric.ref.kind === 'builtin' && metric.ref.key === 'callbacks_kept_rate') return 'none_due';
+  return 'too_few';
 }
 
 /**
@@ -163,7 +196,7 @@ export function compareCohortMetric(
   if (definition.unit !== 'count' && definition.unit !== 'amount') {
     const num = values.reduce((sum, v) => sum + v.numerator, 0);
     const den = values.reduce((sum, v) => sum + (v.denominator ?? 0), 0);
-    pooled = den > 0 ? (definition.unit === 'per_hour' ? (num / den) * 3600 : num / den) : null;
+    pooled = ratio(definition.unit, num, den);
   }
   return { ...cohortPercentiles(rated), pooled, agents_rated: rated.length };
 }

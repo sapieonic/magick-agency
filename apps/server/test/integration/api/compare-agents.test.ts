@@ -472,13 +472,15 @@ describe('every figure equals the seed and the roster screen', () => {
       expect(a.agent_user_id).toBe(agent(i).id);
       expect(a.agent_name).toBe(`agent 0.${i}`);
       // calls handled: the roster's `connected`
-      expect(a.values['calls_handled']).toEqual({ value: t.connected, numerator: t.connected, denominator: null, reportable: true, interval: null });
+      expect(a.values['calls_handled']).toEqual({ value: t.connected, numerator: t.connected, denominator: null, reportable: true, interval: null, withheld: null });
       expect(row['connected']).toBe(t.connected);
       // success: successes / connected, the roster's rate and floor
       expect(a.values['success_rate']!.numerator).toBe(t.successes);
       expect(a.values['success_rate']!.denominator).toBe(t.connected);
       expect(a.values['success_rate']!.value! * 100).toBeCloseTo(row['success_rate_pct'] as number, 9);
       expect(a.values['success_rate']!.reportable).toBe(row['success_rate_reportable']);
+      // Why it is not drawn, said by the server: under the floor, too few; else nothing withheld.
+      expect(a.values['success_rate']!.withheld).toBe(row['success_rate_reportable'] ? null : 'too_few');
       // connect rate: human connects / placed first dials
       expect(a.values['connect_rate']!.numerator).toBe(t.humanConnects);
       expect(a.values['connect_rate']!.denominator).toBe(t.firstDials);
@@ -529,7 +531,7 @@ describe('outcome sets, promises, call-backs and breaks', () => {
     const res = await ok(body({ agent_ids: [agent(0).id, agent(2).id], metrics: [builtin('promises_rate'), builtin('promised_amount')], trend: null }));
     const t0 = truth[0]!;
     expect(res.agents[0]!.values['promises_rate']).toMatchObject({ numerator: t0.promises, denominator: t0.connected + t0.otherConversations });
-    expect(res.agents[0]!.values['promised_amount']).toEqual({ value: t0.amount, numerator: t0.amount, denominator: null, reportable: true, interval: null });
+    expect(res.agents[0]!.values['promised_amount']).toEqual({ value: t0.amount, numerator: t0.amount, denominator: null, reportable: true, interval: null, withheld: null });
     expect(t0.otherConversations).toBe(2);
     const t2 = truth[2]!;
     expect(res.agents[1]!.values['promises_rate']).toMatchObject({ numerator: t2.promises, denominator: t2.connected });
