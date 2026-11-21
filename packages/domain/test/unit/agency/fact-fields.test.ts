@@ -109,23 +109,24 @@ describe('defaultFactLabel', () => {
 describe('legacyFactFields (the editor\'s pre-fill for a campaign without `facts`)', () => {
   const columns = ['Customer Name', 'City', 'Loan No', 'Balance', 'Due Date', 'EMI', 'Branch', 'Internal ID'];
 
-  it('the hero columns minus name and place, then the amount and due date roles, keyed for the old script', () => {
+  it('the old card\'s order (S9): the amount and due date roles, then the heroes minus name and place, keyed for the old script', () => {
     const display = {
       hero: ['Customer Name', 'Loan No', 'EMI'],
       roles: { name: 'Customer Name', place: 'City', amount_due: 'Balance', due_date: 'Due Date' },
     };
     expect(legacyFactFields(display, columns)).toEqual([
-      { column: 'Loan No', label: 'Loan No', key: 'loan_no' },
-      { column: 'EMI', label: 'EMI', key: 'emi' },
       { column: 'Balance', label: 'Balance', key: 'amount_due' },
       { column: 'Due Date', label: 'Due Date', key: 'due_date' },
+      { column: 'Loan No', label: 'Loan No', key: 'loan_no' },
+      { column: 'EMI', label: 'EMI', key: 'emi' },
     ]);
   });
 
-  it('a role column already among the heroes keeps its place and takes the role\'s key', () => {
-    const display = { hero: ['Balance', 'Branch'], roles: { amount_due: 'balance' } };
+  it('a role column among the heroes takes the role\'s key and moves to the role\'s place (S9)', () => {
+    const display = { hero: ['Branch', 'Due Date', 'Balance'], roles: { amount_due: 'balance', due_date: 'due date' } };
     expect(legacyFactFields(display, columns)).toEqual([
       { column: 'Balance', label: 'Balance', key: 'amount_due' },
+      { column: 'Due Date', label: 'Due Date', key: 'due_date' },
       { column: 'Branch', label: 'Branch', key: 'branch' },
     ]);
   });
@@ -136,7 +137,7 @@ describe('legacyFactFields (the editor\'s pre-fill for a campaign without `facts
       roles: { amount_due: 'Balance', due_date: 'Due Date' },
     };
     const facts = legacyFactFields(display, columns);
-    expect(facts.map((f) => f.column)).toEqual(['Loan No', 'EMI', 'Balance', 'Due Date']);
+    expect(facts.map((f) => f.column)).toEqual(['Balance', 'Due Date', 'Loan No', 'EMI']);
     expect(facts.some((f) => 'highlight' in f)).toBe(false);
   });
 
@@ -152,8 +153,8 @@ describe('legacyFactFields (the editor\'s pre-fill for a campaign without `facts
   it('a non-role column whose key would be a role\'s is deduped against it', () => {
     const display = { hero: ['Amount Due'], roles: { amount_due: 'Balance' } };
     expect(legacyFactFields(display, ['Amount Due', 'Balance'])).toEqual([
-      { column: 'Amount Due', label: 'Amount Due', key: 'amount_due_2' },
       { column: 'Balance', label: 'Balance', key: 'amount_due' },
+      { column: 'Amount Due', label: 'Amount Due', key: 'amount_due_2' },
     ]);
   });
 
@@ -165,8 +166,8 @@ describe('legacyFactFields (the editor\'s pre-fill for a campaign without `facts
     // No roster yet: only what is configured, as written.
     expect(legacyFactFields({}, null)).toEqual([]);
     expect(legacyFactFields({ hero: ['Loan No'], roles: { due_date: 'Due' } }, null).map((f) => [f.column, f.key])).toEqual([
-      ['Loan No', 'loan_no'],
       ['Due', 'due_date'],
+      ['Loan No', 'loan_no'],
     ]);
   });
 

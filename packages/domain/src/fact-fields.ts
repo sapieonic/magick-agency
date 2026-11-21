@@ -142,15 +142,16 @@ export interface LegacyFactFieldsOptions {
  * The facts a campaign without `facts` opens with in the Settings editor (AS19): what its agents
  * see on the card today, so saving without a change changes nothing they see.
  *
- *  1. The hero columns, in order: `hero` (matched to `columns` ignoring case, in the roster's
- *     spelling), or, with no hero on the roster, the hero rule's guess over `columns`
- *     (`heroColumnsFor`, as the server builds today's tiles), minus the `name` and `place` role
- *     columns and `options.exclude`;
- *  2. then the `amount_due` role's column, then the `due_date` role's, when not already listed;
- *  3. hidden columns never, each column once (ignoring case), a column missing from `columns`
+ *  1. The hero columns: `hero` (matched to `columns` ignoring case, in the roster's spelling),
+ *     or, with no hero on the roster, the hero rule's guess over `columns` (`heroColumnsFor`, as
+ *     the server builds today's tiles), minus the `name` and `place` role columns and
+ *     `options.exclude`; and the `amount_due` and `due_date` role columns, when not among them;
+ *  2. hidden columns never, each column once (ignoring case), a column missing from `columns`
  *     never (when `columns` is null, the names as written are taken);
- *  4. at most `AGENCY_FACT_FIELDS_MAX` (4), dropping the last column that plays no role until it
- *     fits, as today's tiles keep the role columns when the cap bites.
+ *  3. at most `AGENCY_FACT_FIELDS_MAX` (4), dropping the last column that plays no role until it
+ *     fits, as today's tiles keep the role columns when the cap bites;
+ *  4. in the old card's order (S9): the `amount_due` role's column, then the `due_date` role's,
+ *     then the other heroes in their order.
  *
  * Each fact's name is {@link defaultFactLabel}, unique on the card (S9); its key is `amount_due` / `due_date` for the role
  * columns (so a script's `{amount_due}` keeps working) and {@link factKeyFromColumn} for the
@@ -211,10 +212,15 @@ export function legacyFactFields(
     while (last > 0 && roleOf.has(listed[last]!)) last--;
     listed.splice(last, 1);
   }
+  // The old card's order (S9): the amount due, then the due date, then the other heroes.
+  const ordered = [
+    ...FACT_TILE_ROLES.flatMap((role) => listed.filter((c) => roleOf.get(c) === role)),
+    ...listed.filter((c) => !roleOf.has(c)),
+  ];
 
-  const taken = new Set<string>(listed.flatMap((c) => (roleOf.has(c) ? [roleOf.get(c)!] : [])));
-  const labels = uniqueFactLabels(listed);
-  return listed.map((column, i): AgencyFactField => {
+  const taken = new Set<string>(ordered.flatMap((c) => (roleOf.has(c) ? [roleOf.get(c)!] : [])));
+  const labels = uniqueFactLabels(ordered);
+  return ordered.map((column, i): AgencyFactField => {
     const role = roleOf.get(column);
     const key = role ?? factKeyFromColumn(column, taken);
     taken.add(key);

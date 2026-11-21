@@ -2,11 +2,12 @@
   "_about": [
     "AS19 S5: the card's rules as cases, read by the domain's TypeScript tests (packages/domain/test/unit/agency/fact-rules.test.ts)",
     "and by the agent app's Dart port (apps/mobile/packages/agency_wire/test/fact_rules_test.dart). Every case is run by both,",
-    "except unique_fact_labels (the console's Settings editor only). Edit a case here, and both sides follow.",
+    "except unique_fact_labels and legacy_fact_fields (the console's Settings editor only). Edit a case here, and both sides follow.",
     "phone: formatFactPhone / maskFactPhone (R6, S3). parse: parseContextFact (now: parse.now). script_pieces: scriptPieces.",
     "script_placeholders: scriptPlaceholdersFor. configured_heroes: configuredHeroNames. hero_columns: heroColumnsFor.",
     "guess_columns: guessNameColumn / guessPlaceColumn over a list of columns or a row. customer: customerNameFrom /",
-    "customerNameColumn / customerPlaceFrom / customerPlaceColumn. chosen_fact_tiles: chosenFactTiles. null is none."
+    "customerNameColumn / customerPlaceFrom / customerPlaceColumn. chosen_fact_tiles: chosenFactTiles. null is none.",
+    "unique_fact_labels: uniqueFactLabels. legacy_fact_fields: legacyFactFields, the pre-fill of a card saved before AS19 (S9: amount due, due date, then the other heroes)."
   ],
   "phone": [
     {
@@ -2368,6 +2369,155 @@
       "labels": [
         "Loan Account Num",
         "Loan Account N 2"
+      ]
+    }
+  ],
+  "legacy_fact_fields": [
+    {
+      "display": {
+        "hero": [
+          "Customer Name",
+          "Loan No",
+          "EMI"
+        ],
+        "roles": {
+          "name": "Customer Name",
+          "place": "City",
+          "amount_due": "Balance",
+          "due_date": "Due Date"
+        }
+      },
+      "columns": [
+        "Customer Name",
+        "City",
+        "Loan No",
+        "Balance",
+        "Due Date",
+        "EMI"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        },
+        {
+          "column": "EMI",
+          "label": "EMI",
+          "key": "emi"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Branch",
+          "Due Date",
+          "Balance"
+        ],
+        "roles": {
+          "amount_due": "balance",
+          "due_date": "due date"
+        }
+      },
+      "columns": [
+        "Branch",
+        "Due Date",
+        "Balance"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Branch",
+          "label": "Branch",
+          "key": "branch"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No",
+          "EMI",
+          "Branch",
+          "Internal ID"
+        ],
+        "roles": {
+          "due_date": "Due Date",
+          "amount_due": "Balance"
+        }
+      },
+      "columns": [
+        "Loan No",
+        "EMI",
+        "Branch",
+        "Internal ID",
+        "Balance",
+        "Due Date"
+      ],
+      "facts": [
+        {
+          "column": "Balance",
+          "label": "Balance",
+          "key": "amount_due"
+        },
+        {
+          "column": "Due Date",
+          "label": "Due Date",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        },
+        {
+          "column": "EMI",
+          "label": "EMI",
+          "key": "emi"
+        }
+      ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Loan No"
+        ],
+        "roles": {
+          "due_date": "Due"
+        }
+      },
+      "columns": null,
+      "facts": [
+        {
+          "column": "Due",
+          "label": "Due",
+          "key": "due_date"
+        },
+        {
+          "column": "Loan No",
+          "label": "Loan No",
+          "key": "loan_no"
+        }
       ]
     }
   ]

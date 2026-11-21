@@ -57,7 +57,7 @@ import { factDisplay } from './stationCustomer';
  * under it left out, the old amount-due and due-date columns read as money and a date as they
  * were), and nothing is written until the supervisor saves a change to the card. Then the save
  * writes `facts` and drops `roles.amount_due` / `roles.due_date`. The old card drew the amount due
- * and the due date first, so the list opens in that order (AS19 S9). The name and the line under
+ * and the due date first, so `legacyFactFields` opens the list in that order (AS19 S9). The name and the line under
  * it are guessed by the domain's one guess (`@magick-agency/domain/customer-name`, S1); a save of
  * the card writes each guess as its role (R1, S2), so "None" under the name is none.
  *
@@ -166,8 +166,8 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
       ...(name === '' ? [guessNameColumn(columns, { hidden })] : []),
       ...(place === '' ? [guessPlaceColumn(columns, { hidden })] : []),
     ].filter((c): c is string => c !== undefined);
-  const facts = legacyFactFields(shown, columns, { exclude });
-  const list = chosen ? facts : oldCardOrder(facts);
+  // On the old model, in the old card's order (S9: the amount due, the due date, then the other heroes).
+  const list = legacyFactFields(shown, columns, { exclude });
   let form: FactsForm = { name, place, list, types };
   if (!chosen) {
     // AS19 R10: the old role overrode `types`, so the role's column is read as money or a date
@@ -180,12 +180,6 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
     }
   }
   return form;
-}
-
-/** The old card's order (AS19 S9): the amount due, then the due date, then the other heroes. */
-function oldCardOrder(list: readonly AgencyFactField[]): AgencyFactField[] {
-  const keyed = (key: string) => list.filter((f) => f.key === key);
-  return [...keyed('amount_due'), ...keyed('due_date'), ...list.filter((f) => f.key !== 'amount_due' && f.key !== 'due_date')];
 }
 
 /** Whether a display is on the old model (no `facts`): its card is opened from what agents see today. */

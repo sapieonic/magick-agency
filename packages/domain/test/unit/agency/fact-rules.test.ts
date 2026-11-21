@@ -8,7 +8,7 @@ import {
   customerNameColumn, customerNameFrom, customerPlaceColumn, customerPlaceFrom, guessNameColumn, guessPlaceColumn,
   NAME_GUESS_COLUMNS,
 } from '../../../src/customer-name';
-import { scriptPieces, scriptPlaceholdersFor, uniqueFactLabels } from '../../../src/fact-fields';
+import { legacyFactFields, scriptPieces, scriptPlaceholdersFor, uniqueFactLabels } from '../../../src/fact-fields';
 import { formatFactPhone, maskFactPhone } from '../../../src/fact-phone';
 import { chosenFactTiles } from '../../../src/fact-tiles';
 
@@ -34,6 +34,7 @@ interface Rules {
   }>;
   chosen_fact_tiles: Array<{ context: Row; display: unknown; now: string; tiles: unknown[] }>;
   unique_fact_labels: Array<{ headers: string[]; taken: string[]; labels: string[] }>;
+  legacy_fact_fields: Array<{ display: unknown; columns: string[] | null; facts: unknown[] }>;
 }
 
 const RULES = JSON.parse(
@@ -132,5 +133,11 @@ describe('fact-rules.json: chosenFactTiles (S6)', () => {
 describe('fact-rules.json: uniqueFactLabels (S9)', () => {
   it.each(RULES.unique_fact_labels.map((c) => [title(c.headers), c] as const))('%s', (_t, c) => {
     expect(uniqueFactLabels(c.headers, c.taken)).toEqual(c.labels);
+  });
+});
+
+describe('fact-rules.json: legacyFactFields, the pre-fill in the old card\'s order (S9)', () => {
+  it.each(RULES.legacy_fact_fields.map((c) => [title(c.display), c] as const))('%s', (_t, c) => {
+    expect(legacyFactFields(display(c.display), c.columns)).toEqual(c.facts);
   });
 });

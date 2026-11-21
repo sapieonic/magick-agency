@@ -1,7 +1,8 @@
 // AS19 S5: the card's rules (the domain's, in Dart), against the shared cases
 // (packages/contracts/fixtures/agent/fact-rules.json) the TypeScript
 // originals run too (packages/domain/test/unit/agency/fact-rules.test.ts).
-// Every case of every table but unique_fact_labels (the console's editor).
+// Every case of every table but unique_fact_labels and legacy_fact_fields
+// (the console's editor).
 
 import 'dart:convert';
 
