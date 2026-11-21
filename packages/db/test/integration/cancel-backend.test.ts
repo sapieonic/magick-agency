@@ -16,7 +16,8 @@ describe('cancelBackend', () => {
     try {
       const client = await pool.connect();
       // The backend's own pid, as the readers read it (never `processID`: a pooler's number).
-      const { rows: [{ pid }] } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid') as { rows: [{ pid: number }] };
+      const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const pid = rows[0]!.pid;
       const sleeping = client.query('SELECT pg_sleep(30)').then(() => 'finished', (err: { code?: string }) => err.code);
       // The pool is exhausted: a cancel through it would wait for this very statement.
       await new Promise((r) => setTimeout(r, 100));
