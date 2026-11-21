@@ -45,16 +45,22 @@ export const CAMPAIGN_SETTINGS_SECTIONS: { id: string; label: string; keywords: 
     keywords: ['contact assignment', 'assignment mode', 'assign contacts', 'owner', 'own contacts', 'agent retry', 'sticky agent', 'inbound', 'put callers through', 'break', 'breaks', 'break limit', 'break reasons', 'tea', 'lunch', 'break picture'],
   },
   {
-    // Agent station (AS6, AS9, BE-6): the daily target, the number display and the customer facts.
+    // Agent station (AS6, AS9, AS19): the daily target, the number display and the customer card
+    // (the name, the line under it, up to 4 facts with their names, keys and highlight, and how
+    // each column is read).
     id: 'agent-screen',
     label: 'What agents see',
-    keywords: ['daily target', 'target', 'calls a day', 'goal', 'phone number', 'full number', 'hidden number', 'mask', 'masked', 'hide number', 'customer facts', 'customer name', 'amount due', 'due date', 'place', 'column', 'money', 'date'],
+    keywords: [
+      'daily target', 'target', 'calls a day', 'goal', 'phone number', 'full number', 'hidden number', 'mask', 'masked',
+      'hide number', 'customer card', 'customer facts', 'facts', 'fact name', 'highlight', 'key', 'customer name',
+      'line under the name', 'place', 'column', 'money', 'date', 'number', 'yes / no', 'full and half',
+    ],
   },
   {
-    // Agent station (BE-8): the opening line and the steps agents read out.
+    // Agent station (BE-8, AS19): the opening line and the steps agents read out, with the card's keys.
     id: 'script',
     label: 'Script',
-    keywords: ['script', 'opening line', 'what to say', 'steps', 'pitch', 'placeholder'],
+    keywords: ['script', 'opening line', 'what to say', 'steps', 'pitch', 'placeholder', 'keys'],
   },
   {
     // The page shows the campaign's lifecycle and its roster upload history here.

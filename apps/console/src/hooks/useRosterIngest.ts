@@ -97,11 +97,12 @@ export interface UseRosterIngestOptions {
    *
    * That ordering is inherited from the builder, deliberately: the hook exists
    * to move the flow without changing it. It also happens to be the ordering
-   * this particular caller wants — the builder writes `context_display` here,
-   * and those hero fields are what the Agent Console reads to decide which
-   * contact fields get the big type. Persisting them after the roster is
-   * accepted would leave a window where agents take calls against a contact
-   * panel rendering the wrong field as the headline.
+   * this particular caller wants — the builder writes `context_display` here:
+   * the customer card's facts picked "On the card" and the name and
+   * line-under-name roles (AS19), which are what the agent station's customer
+   * card shows. Persisting them after the roster is accepted would leave a
+   * window where agents take calls against a card showing the server's guess
+   * instead of the facts the operator chose.
    *
    * Named `onIngestStarted`, which reads as after-the-fact and is not. Renaming
    * it is the obvious fix and is deliberately not done here: the name is load

@@ -4,8 +4,12 @@ import { parseContextFact } from '@magick-agency/domain/context-facts';
 import { configuredHeroNames } from '@magick-agency/domain/context-hero';
 import { factDisplay } from '../../utils/agency/stationCustomer';
 import {
+  COLUMNS_FAILED_MESSAGE,
+  COLUMNS_LOADING_MESSAGE,
   FACTS_LIMIT_MESSAGE,
   FACT_COLUMN_MISSING_MESSAGE,
+  NAME_PHONE_MESSAGE,
+  PLACE_PHONE_MESSAGE,
   campaignColumns,
   canMoveFact,
   columnNamed,
@@ -13,12 +17,15 @@ import {
   contextDisplayPayload,
   dailyTargetError,
   dailyTargetPayload,
+  factsChanged,
   factsErrors,
   factsFormOf,
-  guessedColumn,
+  factsReordered,
   insertAt,
   moveFact,
+  nameColumnOf,
   newFact,
+  placeColumnOf,
   putBack,
   removedFactsInUse,
   replaceToken,
@@ -31,8 +38,10 @@ import {
   stationPayload,
   stationPlan,
   stationSettingsOf,
+  withAmountDue,
   withColumnType,
   withHighlight,
+  withoutPlacedFactErrors,
   type FactsForm,
   type StationSettingsForm,
 } from '../../utils/agency/stationSettings';
@@ -87,7 +96,7 @@ describe('stationSettingsOf', () => {
 describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
   const roster = ['Name', 'City', 'Loan ID', 'Branch', 'Amount', 'Due On', 'PAN'];
 
-  it('opens with what agents see today: the heroes (minus the name and place), then the amount and due date', () => {
+  it('opens with what agents see today, in the old card’s order: the amount, the due date, then the other heroes (S9)', () => {
     const display = {
       hero: ['Name', 'Loan ID', 'Branch'],
       hidden: ['PAN'],
@@ -97,10 +106,10 @@ describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
       name: '',
       place: '',
       list: [
-        fact('Loan ID', 'loan_id'),
-        fact('Branch', 'branch'),
         fact('Amount', 'amount_due'),
         fact('Due On', 'due_date'),
+        fact('Loan ID', 'loan_id'),
+        fact('Branch', 'branch'),
       ],
       // Read as money and a date, as their roles read them before: the new model reads by type alone.
       types: { Amount: 'money', 'Due On': 'date' },
@@ -115,10 +124,10 @@ describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
     };
     const card = factsFormOf(display, ['Outstanding principal amount', 'Branch', 'Loan ID', 'City', 'Amount']);
     expect(card.list).toEqual([
+      fact('Amount', 'amount_due'),
       fact('Outstanding principal amount', 'outstanding_principal_amount', 'Outstanding prin'),
       fact('Branch', 'branch'),
       fact('Loan ID', 'loan_id'),
-      fact('Amount', 'amount_due'),
     ]);
     // The role overrode `types` before, so its column is money whatever was stored (AS19 R10).
     expect(card.types).toEqual({ Amount: 'money' });
@@ -137,11 +146,22 @@ describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
   });
 });
 
-describe('guessing the name and the line under it, as the server does', () => {
-  it('takes the server’s guesses in its order, ignoring case, spaces and underscores, never a hidden column', () => {
-    expect(guessedColumn(['First Name', 'Full_Name'], ['name', 'full_name', 'customer_name', 'first_name'], [])).toBe('Full_Name');
-    expect(guessedColumn(['NAME', 'City'], ['name'], ['name'])).toBeUndefined();
-    expect(guessedColumn(['Loan'], ['name'], [])).toBeUndefined();
+describe('guessing the name and the line under it, by the domain’s one guess (S1)', () => {
+  it('takes the guesses in their order, ignoring case, spaces and underscores, never a hidden column', () => {
+    expect(nameColumnOf(facts(), ['First Name', 'Full_Name'], [])).toBe('Full_Name');
+    expect(nameColumnOf(facts(), ['NAME', 'City'], ['name'])).toBeUndefined();
+    expect(nameColumnOf(facts(), ['Loan'], [])).toBeUndefined();
+    expect(placeColumnOf(facts(), ['Name', 'Town', 'City'], [])).toBe('City');
+  });
+
+  it('never guesses a fact’s column, nor the other role’s; a chosen one wins; “None” is none (S2)', () => {
+    const columns = ['Name', 'Full Name', 'City', 'Town'];
+    expect(nameColumnOf(facts({ list: [fact('Name', 'name_2')] }), columns, [])).toBe('Full Name');
+    expect(nameColumnOf(facts({ place: 'Name' }), columns, [])).toBe('Full Name');
+    expect(placeColumnOf(facts({ list: [fact('City', 'city')] }), columns, [])).toBe('Town');
+    expect(placeColumnOf(facts({ name: 'City' }), columns, [])).toBe('Town');
+    expect(placeColumnOf(facts({ place: 'Branch' }), columns, [])).toBe('Branch');
+    expect(placeColumnOf(facts({ place: null }), columns, [])).toBeUndefined();
   });
 });
 
@@ -211,10 +231,26 @@ describe('the script (BE-8, AS19)', () => {
 });
 
 describe('the card’s facts (AS19)', () => {
-  it('makes a new fact’s name and key from the header, the key unlike the others’', () => {
+  it('makes a new fact’s name and key from the header, each unlike the others’ (S9)', () => {
     expect(newFact('Loan ID', [])).toEqual(fact('Loan ID', 'loan_id'));
     expect(newFact('Loan-ID', [fact('Loan ID', 'loan_id')])).toEqual(fact('Loan-ID', 'loan_id_2'));
     expect(newFact('Outstanding principal amount', []).label).toBe('Outstanding prin');
+    // Two headers alike in their first 16 letters: the second name is cut to fit " 2".
+    const first = newFact('Outstanding Balance (₹)', []);
+    expect(newFact('Outstanding Balance Today', [first]).label).toBe('Outstanding Ba 2');
+    expect(newFact('loan id', [fact('Loan ID', 'loan_id')]).label).toBe('loan id 2');
+  });
+
+  it('uses one money fact for Full and Half: its key becomes {amount_due}, the one before gets its own back (S9)', () => {
+    const list = [fact('Loan Amount', 'amount_due', 'Loan'), fact('EMI', 'emi'), fact('Branch', 'branch')];
+    const emi = withAmountDue(list, 1, true);
+    expect(emi.map((f) => f.key)).toEqual(['loan_amount', 'amount_due', 'branch']);
+    // Names, columns and order stay; no other key is touched.
+    expect(emi.map((f) => f.label)).toEqual(['Loan', 'EMI', 'Branch']);
+    // Off: its own default key, never {amount_due} again, even for a column named so.
+    expect(withAmountDue(emi, 1, false).map((f) => f.key)).toEqual(['loan_amount', 'emi', 'branch']);
+    expect(withAmountDue([fact('Amount Due', 'amount_due')], 0, false)[0]!.key).toBe('amount_due_2');
+    expect(withAmountDue(list, 7, true)).toEqual(list);
   });
 
   it('keeps a fact’s key when its name is renamed', () => {
@@ -287,6 +323,20 @@ describe('the card’s facts (AS19)', () => {
     expect(Object.keys(errors).sort()).toEqual(['context_display.facts.0.key', 'context_display.facts.1.key', 'context_display.facts.3.key']);
   });
 
+  it('refuses a phone number as the name or the line under it, chosen or guessed, in the server’s words (S3(e))', () => {
+    const phone = { Name: 'phone' as const, City: 'phone' as const };
+    expect(factsErrors(facts({ name: 'Name', place: 'City', types: phone }), ctx())).toEqual({
+      'context_display.roles.name': NAME_PHONE_MESSAGE,
+      'context_display.roles.place': PLACE_PHONE_MESSAGE,
+    });
+    expect(NAME_PHONE_MESSAGE).toBe("A phone number cannot be the customer's name. Add it as a fact instead.");
+    expect(PLACE_PHONE_MESSAGE).toBe('A phone number cannot be the line under the name. Add it as a fact instead.');
+    // On "Guess" the column a save would write is judged as a chosen one; "None" is not.
+    expect(Object.keys(factsErrors(facts({ types: phone }), { ...ctx(), columns: ['Name', 'City'] })).sort())
+      .toEqual(['context_display.roles.name', 'context_display.roles.place']);
+    expect(factsErrors(facts({ place: null, types: { City: 'phone' } }), { ...ctx(), columns: ['Name', 'City'] })).toEqual({});
+  });
+
   it('refuses a hidden name or line under it, and one column as both', () => {
     expect(factsErrors(facts({ name: 'PAN' }), ctx({ hidden: ['pan'] }))).toEqual({
       'context_display.roles.name': '‘PAN’ is hidden from agents, so it cannot be the customer’s name.',
@@ -354,9 +404,9 @@ describe('the card’s save (AS19)', () => {
         hero: ['Loan ID'],
         types: { Amount: 'money', 'Due On': 'date' },
         facts: [
-          { column: 'Loan ID', label: 'Loan', key: 'loan_id' },
-          { column: 'Amount', label: 'Amount', key: 'amount_due' },
+          { column: 'Amount', label: 'Loan', key: 'amount_due' },
           { column: 'Due On', label: 'Due On', key: 'due_date' },
+          { column: 'Loan ID', label: 'Loan ID', key: 'loan_id' },
         ],
       },
     });
@@ -387,16 +437,45 @@ describe('the card’s save (AS19)', () => {
     expect(loaded.facts.list.map((f) => f.column)).toEqual(['Amount Due']);
     const renamed = { ...loaded, facts: { ...loaded.facts, list: [{ ...loaded.facts.list[0]!, label: 'Amount' }] } };
     const display = stationPayload(loaded, renamed, stored, columns).context_display!;
-    expect(display.roles).toEqual({ name: 'Customer Name' });
+    // The line under the name too (S2): with facts the station guesses none, so the guess is written.
+    expect(display.roles).toEqual({ name: 'Customer Name', place: 'City' });
     // …and so every surface that reads the heroes keeps it: the own-contacts list, customer history.
     expect(configuredHeroNames(display)).toEqual(['Customer Name', 'Amount Due']);
     // A name chosen in the select is written as chosen; no guess, nothing written.
     expect(contextDisplayPayload(stored, { ...renamed.facts, name: 'City' }, columns).roles).toEqual({ name: 'City' });
     expect(contextDisplayPayload(stored, renamed.facts, ['Amount Due']).roles).toBeUndefined();
     // Never a hidden column, nor one that is already a fact or the line under it (the server would refuse it).
-    expect(contextDisplayPayload({ ...stored, hidden: ['customer name'] }, renamed.facts, columns).roles).toBeUndefined();
-    expect(contextDisplayPayload(stored, { ...renamed.facts, list: [fact('Customer Name', 'cn')] }, columns).roles).toBeUndefined();
-    expect(contextDisplayPayload(stored, { ...renamed.facts, place: 'customer name' }, columns).roles).toEqual({ place: 'customer name' });
+    expect(contextDisplayPayload({ ...stored, hidden: ['customer name'] }, renamed.facts, columns).roles).toEqual({ place: 'City' });
+    expect(contextDisplayPayload(stored, { ...renamed.facts, list: [fact('Customer Name', 'cn')] }, columns).roles).toEqual({ place: 'City' });
+    // A chosen column is written in the roster's spelling (S9).
+    expect(contextDisplayPayload(stored, { ...renamed.facts, place: 'customer name' }, columns).roles).toEqual({ place: 'Customer Name' });
+  });
+
+  it('writes the guessed line under the name as its role, and “None” as none (S2)', () => {
+    const columns = ['Name', 'City', 'Loan ID'];
+    const card = facts({ list: [fact('Loan ID', 'loan_id')] });
+    expect(contextDisplayPayload({}, card, columns).roles).toEqual({ name: 'Name', place: 'City' });
+    expect(contextDisplayPayload({}, { ...card, place: null }, columns).roles).toEqual({ name: 'Name' });
+    // Never a fact's column, and not without the columns to guess from.
+    expect(contextDisplayPayload({}, { ...card, list: [fact('City', 'city')] }, columns).roles).toEqual({ name: 'Name' });
+    expect(contextDisplayPayload({}, card).roles).toBeUndefined();
+    // From the guess to "None" is a change of the card, though neither names a column.
+    expect(factsChanged(card, { ...card, place: null })).toBe(true);
+    expect(factsChanged(card, { ...card })).toBe(false);
+  });
+
+  it('opens a card with facts and no line under the name as none, an old one as the guess (S2)', () => {
+    expect(factsFormOf({ facts: [] }, ['Name', 'City']).place).toBeNull();
+    expect(factsFormOf({ facts: [], roles: { place: 'Town' } }, ['Name', 'City']).place).toBe('Town');
+    expect(factsFormOf({}, ['Name', 'City']).place).toBe('');
+  });
+
+  it('writes each fact’s column in the roster’s spelling (S9), so the own-contacts list matches it', () => {
+    const card = facts({ list: [fact('loan id', 'loan_id'), fact('Gone', 'gone')] });
+    expect(contextDisplayPayload({}, card, ['Loan ID']).facts).toEqual([
+      { column: 'Loan ID', label: 'loan id', key: 'loan_id' },
+      { column: 'Gone', label: 'Gone', key: 'gone' },
+    ]);
   });
 
   it('reads Text as no entry: absent is text', () => {
@@ -492,15 +571,55 @@ describe('what a save sends, and what holds it', () => {
     });
   });
 
-  it('offers a removed fact the script uses back, where it was', () => {
+  it('offers a removed fact the script uses back, where it was, or says why it cannot go back (S9)', () => {
     const now = { ...card, list: [card.list[0]!] };
-    expect(removedFactsInUse(card, now, saved.script)).toEqual([card.list[1]]);
+    expect(removedFactsInUse(card, now, saved.script)).toEqual([{ fact: card.list[1], blocked: null }]);
     expect(removedFactsInUse(card, now, { opening: '', steps: [] })).toEqual([]);
     expect(putBack(card, now, 'due_date')).toEqual(card.list);
-    // Not when the card is full, or when its column is on the card again.
+    // Not when the card is full, or when its column is on the card again; each said.
     const full = { ...now, list: ['A', 'B', 'C', 'D'].map((c) => fact(c, c.toLowerCase())) };
     expect(putBack(card, full, 'due_date')).toBeNull();
-    expect(putBack(card, { ...now, list: [...now.list, fact('Due', 'due')] }, 'due_date')).toBeNull();
+    expect(removedFactsInUse(card, full, saved.script)).toEqual([{ fact: card.list[1], blocked: 'The card is full (4 of 4). Remove a fact first.' }]);
+    const again = { ...now, list: [...now.list, fact('Due', 'due')] };
+    expect(putBack(card, again, 'due_date')).toBeNull();
+    expect(removedFactsInUse(card, again, saved.script)[0]!.blocked).toBe('‘Due’ is on the card again.');
+  });
+
+  it('holds Save exactly as the server refuses a card that takes a key from the stored script (S9)', () => {
+    // Several keys: one message, the server's plural.
+    const both = { ...saved, script: { opening: 'Hi {loan_id}', steps: ['On {due_date}'] } };
+    expect(stationErrors(both, { ...both, facts: facts() }, storedNew, ctx())).toEqual({
+      'context_display.facts': 'The script uses {loan_id} and {due_date}. Take them out of the script first, or keep the facts.',
+    });
+    // A key the stored card never allowed is not the card's to lose: the server says nothing of it.
+    const odd = { ...saved, script: { opening: 'Hi {branch}', steps: ['On {due_date}'] } };
+    const changed = { ...odd, facts: { ...card, types: { Due: 'date' as const } } };
+    expect(stationErrors(odd, changed, storedNew, ctx())).toEqual({});
+  });
+
+  it('holds a save that would send an old-model card before the columns it is opened from are read (S9)', () => {
+    const storedOld = { hero: ['Loan ID'] };
+    const old = form({ facts: facts({ list: [fact('Loan ID', 'loan_id')] }) });
+    const keyed = { ...old, script: { opening: 'Loan {loan_id}', steps: [] } };
+    expect(stationErrors(old, keyed, storedOld, { ...ctx(), cardWaiting: COLUMNS_LOADING_MESSAGE })).toEqual({
+      'context_display.facts': 'Loading the customer list’s columns…',
+    });
+    expect(COLUMNS_FAILED_MESSAGE).toBe('Could not read the customer list’s columns. Try again.');
+    // A save that does not send the card is not held by it.
+    expect(stationErrors(old, { ...old, dailyTarget: '20' }, storedOld, { ...ctx(), cardWaiting: COLUMNS_FAILED_MESSAGE })).toEqual({});
+  });
+
+  it('clears the server’s answer keyed by a fact’s place once the facts move (S9)', () => {
+    const list = [fact('A', 'a'), fact('B', 'b')];
+    expect(factsReordered(list, [...list])).toBe(false);
+    expect(factsReordered(list, [list[1]!, list[0]!])).toBe(true);
+    expect(factsReordered(list, [list[0]!])).toBe(true);
+    expect(withoutPlacedFactErrors({
+      'context_display.facts.0.label': 'x',
+      'context_display.facts.12.column': 'y',
+      'context_display.facts': 'z',
+      'context_display.roles.name': 'w',
+    })).toEqual({ 'context_display.facts': 'z', 'context_display.roles.name': 'w' });
   });
 
   it('holds the save only for a setting that is sent', () => {

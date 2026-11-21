@@ -9,19 +9,18 @@ import {
   type AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
 import {
+  AMOUNT_DUE_KEY,
+  COLUMNS_LOADING_MESSAGE,
   CONTEXT_TYPE_LABELS,
   FACTS_FIELD,
   FACTS_LIMIT_MESSAGE,
   NAME_FIELD,
-  NAME_GUESS_COLUMNS,
   PLACE_FIELD,
-  PLACE_GUESS_COLUMNS,
   canMoveFact,
   columnNamed,
   columnType,
   factField,
   firstSample,
-  guessedColumn,
   labelLength,
   moveFact,
   nameColumnOf,
@@ -30,16 +29,38 @@ import {
   sameColumn,
   sampleText,
   typeField,
+  withAmountDue,
   withColumnType,
   withHighlight,
   type FactsForm,
+  type RemovedFact,
   type SampleRow,
 } from '../../../utils/agency/stationSettings';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './StationSettings.module.css';
 
+/** A control of a fact's row that can take focus. */
+export type FactRowPart = 'grip' | 'up' | 'down' | 'label' | 'amount';
+
 /** Which control of a row takes focus once a change is on screen. */
-type FocusTarget = { key: string; part: 'grip' | 'up' | 'down' | 'label' } | { key: null; part: 'add' };
+type FocusTarget = { key: string; part: FactRowPart } | { key: null; part: 'add' };
+
+/**
+ * A fact the page put on the card from elsewhere (the script's "Put it back" or "Add … as a
+ * fact", AS19 S9): the control of its row to focus once it is on screen, and what to announce. A
+ * new object for each request.
+ */
+export interface FactFocusRequest {
+  key: string;
+  part: FactRowPart;
+  said: string;
+}
+
+/** Where the customer list's columns are: being read, the read failed, or read (none: no upload). */
+export type ColumnsRead = 'loading' | 'failed' | 'done';
+
+/** The line-under-the-name select's value for "None" (the form's null): never a CSV header. */
+const PLACE_NONE = '\u0000none';
 
 /**
  * Campaign Settings › What agents see › the customer card (AS19): the column that is the
@@ -50,13 +71,21 @@ type FocusTarget = { key: string; part: 'grip' | 'up' | 'down' | 'label' } | { k
  * at most, always first). Facts move by drag, by the arrows, or by the arrow keys on a focused
  * grip, and each move is said in a live region. Last, how each column is read (six types).
  *
+ * The name and the line under it default to the domain's one guess from the column names (S1),
+ * which a save writes as the role; the line under it may also be "None" (S2). A column read as a
+ * phone number is never offered for either (S3(e)). A money fact may be the one used for Full and
+ * Half on What happened? (its key then `{amount_due}`, S9).
+ *
  * The columns are the customer list's (`useCampaignColumns`); a column hidden from agents is never
- * offered, and a fact is added from the latest upload's columns only (`uploaded`), never from a
- * column only the stored settings name. A sample is drawn as the station draws it, and a phone
- * number only so, never as its digits beside it. A fact whose column the latest upload does not
- * have is said on its row, with a select to choose another. A saved fact the script still uses that was taken off the card is offered
- * back ("Put it back"); the page holds Save until the script no longer uses it. Errors come keyed
- * as the server keys them (`context_display.roles.<role>`, `context_display.facts.<i>.<part>`,
+ * offered, and a fact is added from the latest upload's columns only (`uploaded`: the newest
+ * import's), never from a column only the stored settings name. While they are read, or when the
+ * read failed, the picker says so (with "Try again"); a card on the old model is not shown at all
+ * until they are read (`waitForColumns`), since it is opened from them. A sample is drawn as the
+ * station draws it, and a phone number only so, never as its digits beside it. A fact whose column
+ * the latest upload does not have is said on its row, with a select to choose another. A saved
+ * fact the script still uses that was taken off the card is offered back ("Put it back", disabled
+ * with its reason when it cannot go back), under the one message that holds Save. Errors come
+ * keyed as the server keys them (`context_display.roles.<role>`, `context_display.facts.<i>.<part>`,
  * `context_display.types.<column>`), so the server's refusal lands on the field it is about.
  *
  * Column names match as the server matches them, ignoring case. Ids are made from places in the
@@ -68,12 +97,15 @@ export function CustomerFactsEditor({
   columns,
   uploaded,
   hidden,
-  loading,
+  columnsRead = 'done',
+  onRetryColumns,
+  waitForColumns = false,
   errors,
   samples = [],
   phoneDisplay = 'full',
   removedInUse = [],
   onPutBack,
+  focusRequest = null,
   readOnly = false,
 }: {
   value: FactsForm;
@@ -81,21 +113,29 @@ export function CustomerFactsEditor({
   /** The customer list's columns, hidden ones included. */
   columns: readonly string[];
   /**
-   * The latest upload's columns (AS19 R12): the only ones a fact may be added from or moved to, so
-   * a column only the stored settings name is never offered. Absent: every column of `columns`.
+   * The latest upload's columns (AS19 R12, S9: the newest import's): the only ones a fact may be
+   * added from or moved to, so a column only the stored settings name is never offered. Absent:
+   * every column of `columns`.
    */
   uploaded?: readonly string[];
   /** The columns hidden from agents (`context_display.hidden`). */
   hidden: readonly string[];
-  loading: boolean;
+  /** Where the read of the customer list's columns is. */
+  columnsRead?: ColumnsRead;
+  /** Read the columns again, after a failure. */
+  onRetryColumns?: () => void;
+  /** The card is on the old model and is opened from the columns: shown only once they are read. */
+  waitForColumns?: boolean;
   errors: ConfigFieldErrors;
   /** A few customers' rows, for the sample beside each column. */
   samples?: readonly SampleRow[];
   phoneDisplay?: AgencyPhoneDisplay;
-  /** Saved facts taken off the card that the script still uses. */
-  removedInUse?: readonly AgencyFactField[];
-  /** Put a removed saved fact back, by its key. */
+  /** Saved facts taken off the card that the script still uses, each with why it cannot go back. */
+  removedInUse?: readonly RemovedFact[];
+  /** Put a removed saved fact back, by its key (the page then asks for its row's focus). */
   onPutBack?: (key: string) => void;
+  /** A fact the page put on the card: focus its row and say so. */
+  focusRequest?: FactFocusRequest | null;
   readOnly?: boolean;
 }) {
   const id = useId();
@@ -125,6 +165,14 @@ export function CustomerFactsEditor({
     if (!full) setLimitSaid(false);
   }, [full]);
 
+  // S9: after "Put it back" or "Add … as a fact", the fact's row takes focus and the change is said.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const target = controls.current.get(`${focusRequest.part}:${focusRequest.key}`) ?? controls.current.get(`grip:${focusRequest.key}`);
+    target?.focus();
+    setAnnouncement(focusRequest.said);
+  }, [focusRequest]);
+
   const register = (part: string, key: string) => (node: HTMLElement | null) => {
     if (node) controls.current.set(`${part}:${key}`, node);
     else controls.current.delete(`${part}:${key}`);
@@ -141,13 +189,13 @@ export function CustomerFactsEditor({
 
   const setList = (next: AgencyFactField[]) => onChange({ ...value, list: next });
 
-  const move = (from: number, to: number, focus: FocusTarget['part']) => {
+  const move = (from: number, to: number, focus: FactRowPart) => {
     const fact = list[from];
     if (!fact) return;
     const next = moveFact(list, from, to);
     const at = next.findIndex((f) => f.key === fact.key);
     if (at === from) return;
-    focusAfter.current = { key: fact.key, part: focus } as FocusTarget;
+    focusAfter.current = { key: fact.key, part: focus };
     setAnnouncement(`${nameOf(fact)} moved to position ${at + 1} of ${next.length}.`);
     setList(next);
   };
@@ -202,21 +250,37 @@ export function CustomerFactsEditor({
     setList(withHighlight(list, index, on));
   };
 
+  const toggleAmount = (index: number, on: boolean) => {
+    const fact = list[index]!;
+    const next = withAmountDue(list, index, on);
+    // The key changes, and the row with it: focus follows the row to its new key.
+    focusAfter.current = { key: next[index]!.key, part: 'amount' };
+    setAnnouncement(on ? `${nameOf(fact)} is used for Full and Half.` : `${nameOf(fact)} is no longer used for Full and Half.`);
+    setList(next);
+  };
+
+  /**
+   * A select of the columns for the name or the line under it: `lead` first (the guess, "None"),
+   * then each column. `current` is a column or a lead's value. A column read as a phone number is
+   * offered disabled (S3(e)) unless it is the one chosen (its error then says why).
+   */
   const columnSelect = (
     selectId: string,
     current: string,
+    lead: ReadonlyArray<{ value: string; label: string }>,
     field: string,
-    emptyLabel: string,
     testId: string,
     onPick: (column: string) => void,
     hint: string,
   ) => {
-    const listed = current === '' ? undefined : columnNamed(shown, current);
-    const missing = current !== '' && listed === undefined;
+    const isLead = lead.some((o) => o.value === current);
+    const listed = isLead ? undefined : columnNamed(shown, current);
+    const missing = !isLead && listed === undefined;
     return (
       <>
         <select
           id={selectId}
+          className={styles.roleSelect}
           value={listed ?? current}
           disabled={readOnly}
           onChange={(event) => onPick(event.target.value)}
@@ -224,17 +288,44 @@ export function CustomerFactsEditor({
           aria-describedby={[`${selectId}-hint`, errors.describedBy(field)].filter(Boolean).join(' ')}
           data-testid={testId}
         >
-          <option value="">{emptyLabel}</option>
+          {lead.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           {missing ? <option value={current}>{`${current} (not in the list)`}</option> : null}
-          {shown.map((column) => (
-            <option key={column} value={column}>{column}</option>
-          ))}
+          {shown.map((column) => {
+            const phone = typeOf(column) === 'phone';
+            return (
+              <option key={column} value={column} disabled={phone && column !== listed}>
+                {phone ? `${column} (phone number)` : column}
+              </option>
+            );
+          })}
         </select>
         <p id={`${selectId}-hint`} className={styles.hint}>{hint}</p>
         {errors.render(field)}
       </>
     );
   };
+
+  /** Why the columns are not here: being read, or the read failed (with "Try again"). */
+  const columnsState = (testId: string) => (columnsRead === 'failed' ? (
+    <div className={styles.columnsState} role="alert" data-testid={testId}>
+      <span>Could not read the customer list’s columns.</span>
+      {onRetryColumns ? (
+        <button type="button" className={styles.fixBtn} onClick={onRetryColumns} data-testid={`${testId}-retry`}>Try again</button>
+      ) : null}
+    </div>
+  ) : (
+    <p className={styles.hint} role="status" data-testid={testId}>{COLUMNS_LOADING_MESSAGE}</p>
+  ));
+
+  // S9: a card on the old model is opened from the columns, so it waits for them (and is not saved).
+  if (!readOnly && columnsRead !== 'done' && (waitForColumns || (shown.length === 0 && list.length === 0))) {
+    return (
+      <div className={styles.stack} data-testid="customer-facts">
+        <h3 className={styles.subhead}>The customer card</h3>
+        {columnsState('customer-facts-columns')}
+      </div>
+    );
+  }
 
   if (shown.length === 0 && list.length === 0) {
     return (
@@ -243,9 +334,7 @@ export function CustomerFactsEditor({
         <p className={styles.hint} data-testid="customer-facts-empty">
           {readOnly
             ? 'No customer facts are set for this campaign.'
-            : loading
-              ? 'Reading the columns of this campaign’s customer list…'
-              : 'Upload a customer list to this campaign first. Then choose here which columns agents see on the customer card.'}
+            : 'Upload a customer list to this campaign first. Then choose here which columns agents see on the customer card.'}
         </p>
         {errors.render(NAME_FIELD)}
         {errors.render(PLACE_FIELD)}
@@ -254,8 +343,9 @@ export function CustomerFactsEditor({
     );
   }
 
-  const nameGuess = guessedColumn(shown, NAME_GUESS_COLUMNS, hidden);
-  const placeGuess = guessedColumn(shown, PLACE_GUESS_COLUMNS, hidden);
+  // What "Guess" picks now (S1), and so what a save writes (R1, S2).
+  const nameGuess = nameColumnOf({ ...value, name: '' }, shown, hidden);
+  const placeGuess = placeColumnOf({ ...value, place: '' }, shown, hidden);
   const typeErrorShown = Object.keys(value.types).some((c) => errors.message(typeField(c)) !== null)
     || shown.some((c) => errors.message(typeField(c)) !== null);
 
@@ -268,8 +358,8 @@ export function CustomerFactsEditor({
           {columnSelect(
             `${id}-name`,
             value.name,
+            [{ value: '', label: nameGuess ? `Guess (${nameGuess})` : 'Guess from the column names' }],
             NAME_FIELD,
-            nameGuess ? `Guess from the column names (${nameGuess})` : 'Guess from the column names',
             'fact-role-name',
             (name) => onChange({ ...value, name }),
             'The heading of the card. {name} in the script.',
@@ -281,13 +371,12 @@ export function CustomerFactsEditor({
           </label>
           {columnSelect(
             `${id}-place`,
-            value.place,
+            // "Guess" with nothing to guess reads as "None": neither writes a line under the name.
+            value.place === null || (value.place === '' && !placeGuess) ? PLACE_NONE : value.place,
+            [...(placeGuess ? [{ value: '', label: `Guess (${placeGuess})` }] : []), { value: PLACE_NONE, label: 'None' }],
             PLACE_FIELD,
-            // With nothing chosen the server guesses it from the column names; "None" only when it
-            // would find nothing.
-            placeGuess ? `Guess from the column names (${placeGuess})` : 'None',
             'fact-role-place',
-            (place) => onChange({ ...value, place }),
+            (place) => onChange({ ...value, place: place === PLACE_NONE ? null : place }),
             'Beside the number. {place} in the script.',
           )}
         </div>
@@ -480,6 +569,20 @@ export function CustomerFactsEditor({
                     In the script: <code className={styles.key} data-testid={`fact-key-${index}`}>{`{${fact.key}}`}</code>
                   </span>
                   {fact.highlight ? <span className={styles.pill}>Highlighted, always first</span> : null}
+                  {/* S9: a money fact may be the one the Full and Half amounts on What happened? read (one at most). */}
+                  {type === 'money' || fact.key === AMOUNT_DUE_KEY ? (
+                    <label className={styles.amountToggle} title="The Full and Half amounts on What happened? come from this fact.">
+                      <input
+                        type="checkbox"
+                        ref={register('amount', fact.key)}
+                        checked={fact.key === AMOUNT_DUE_KEY}
+                        disabled={readOnly}
+                        onChange={(event) => toggleAmount(index, event.target.checked)}
+                        data-testid={`fact-amount-${index}`}
+                      />
+                      Use for Full and Half
+                    </label>
+                  ) : null}
                 </div>
                 {errors.render(labelErr)}
                 {errors.render(columnErr)}
@@ -490,35 +593,26 @@ export function CustomerFactsEditor({
         })}
       </ol>
 
-      {removedInUse.map((fact) => {
+      {/* The one message that holds Save (the server's words), then a way back for each fact it names. */}
+      {errors.render(FACTS_FIELD)}
+      {!readOnly && onPutBack ? removedInUse.map(({ fact, blocked }) => {
         const label = fact.label.trim() || fact.column;
-        const blocked = full || list.some((f) => sameColumn(f.column, fact.column));
-        const said = `The script uses {${fact.key}}. Take it out of the script first, or keep the fact.`;
+        const reasonId = `${id}-put-back-${fact.key}`;
         return (
           <div key={fact.key} className={styles.putBack} data-testid={`fact-put-back-${fact.key}`}>
-            {/* Said once: not again when the list's own message (what holds Save) already says it. */}
-            {errors.message(FACTS_FIELD) !== said ? <span>{said}</span> : null}
-            {!readOnly && onPutBack ? (
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={blocked}
-                onClick={() => {
-                  focusAfter.current = { key: fact.key, part: 'grip' };
-                  setAnnouncement(`${label} put back on the card.`);
-                  onPutBack(fact.key);
-                }}
-              >
-                {`Put ‘${label}’ back`}
-              </button>
-            ) : null}
-            {blocked && !readOnly ? (
-              <span className={styles.hint}>{full ? 'Remove another fact first.' : `${fact.column} is on the card again.`}</span>
-            ) : null}
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={blocked !== null}
+              aria-describedby={blocked !== null ? reasonId : undefined}
+              onClick={() => onPutBack(fact.key)}
+            >
+              {`Put ‘${label}’ back`}
+            </button>
+            {blocked !== null ? <span id={reasonId} className={styles.hint}>{blocked}</span> : null}
           </div>
         );
-      })}
-      {errors.render(FACTS_FIELD)}
+      }) : null}
 
       {!readOnly ? (
         <div className={styles.addWrap}>
@@ -552,11 +646,12 @@ export function CustomerFactsEditor({
               }}
               data-testid="fact-picker"
             >
-              <h4 className={styles.minorHead} id={`${id}-picker-head`}>Columns of the customer list not on the card</h4>
-              {free.length === 0 ? (
+              <h4 className={styles.minorHead} id={`${id}-picker-head`}>Columns of the latest upload not on the card</h4>
+              {/* S9: reading, a failed read and no upload are three different things to say. */}
+              {columnsRead !== 'done' ? columnsState('fact-picker-columns') : free.length === 0 ? (
                 <p className={styles.hint} data-testid="fact-picker-none">
                   {offerable.length === 0
-                    ? 'Upload a customer list to this campaign first.'
+                    ? 'This campaign has no customer list yet. Upload one first.'
                     : 'Every column agents may see is already on the card.'}
                 </p>
               ) : (

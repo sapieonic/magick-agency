@@ -243,6 +243,24 @@
   gap: 4px 16px;
 }
 
+/* A long column name in "Guess (…)" is cut with an ellipsis, never past the select (S9). */
+.roleSelect {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The customer list's columns being read, or a failed read with "Try again" (S9). */
+.columnsState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .typeRows {
   display: flex;
   flex-direction: column;
@@ -271,7 +289,6 @@
   overflow-wrap: anywhere;
 }
 
-.typeNote,
 .typeError {
   grid-column: 1 / -1;
   font-size: 0.8125rem;
@@ -314,8 +331,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+  Small text on these styles meets WCAG AA (4.5:1) in both themes (S10): each tint is its token
+  mixed toward the theme's text colour, which darkens it on light and lightens it on dark. From the
+  theme tokens: this count 6.67:1 light, 11.29:1 dark (`--warning` alone is 3.42:1 on white).
+*/
 .count[data-full] {
-  color: var(--warning);
+  color: color-mix(in srgb, var(--warning) 60%, var(--text-primary));
   font-weight: 600;
 }
 
@@ -461,11 +483,12 @@
   color: var(--text-secondary);
 }
 
+/* `--accent` alone is 3.77:1 on its chip on dark; mixed 60/40 toward the text it is 5.07:1 at worst. */
 .key {
   padding: 1px 6px;
   border-radius: 6px;
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--text-primary));
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
@@ -474,7 +497,7 @@
   padding: 1px 6px;
   border-radius: 6px;
   background: var(--danger-subtle);
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 75%, var(--text-primary));
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
@@ -483,10 +506,26 @@
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--text-primary));
   font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* "Use for Full and Half" on a money fact (S9). */
+.amountToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.amountToggle input {
+  margin: 0;
 }
 
 .putBack,
@@ -522,6 +561,12 @@
   width: auto;
   padding: 3px 8px;
   font-size: 0.8125rem;
+}
+
+/* A sentence in a fix row: the card is full, or why a fact cannot be put back. */
+.fixNote {
+  flex: 1 1 100%;
+  color: var(--text-primary);
 }
 
 .addWrap {
@@ -598,12 +643,25 @@
 
 /* The script's keys, tinted behind the text (AS19) */
 
+/*
+  The field and the `{` list under it. The tint layer is bounded to the field's own box
+  (`.tokField`), so it can never reach under the list; the list comes after it and above it.
+*/
 .tokWrap {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.tokField {
+  position: relative;
   border-radius: var(--radius);
   background: var(--bg-primary);
+}
+
+:global([data-theme='light']) .tokField {
+  background: var(--bg-secondary);
 }
 
 .tokBack {
@@ -644,18 +702,23 @@
   text-underline-offset: 3px;
 }
 
-.tokWrap .tokArea {
+/* The field grows with its text (ScriptEditor sets its height), so it never scrolls from its tint. */
+.tokField .tokArea {
   position: relative;
   display: block;
   background: transparent;
   box-shadow: none;
+  resize: none;
+  overflow-y: hidden;
 }
 
-.tokWrap .tokArea[aria-invalid='true'] {
+.tokField .tokArea[aria-invalid='true'] {
   border-color: var(--danger-border);
 }
 
 .keyPick {
+  position: relative;
+  z-index: 2;
   margin-top: 4px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -699,6 +762,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.keyPickNone {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 /* As the agent reads it */
@@ -749,11 +819,12 @@
   color: var(--text-secondary);
 }
 
+/* `--text-muted` is 4.18:1 on this chip in light; `--text-secondary` is 6.70:1 light, 8.44:1 dark (S10). */
 .notGiven {
   padding: 0 4px;
   border-radius: 4px;
   background: var(--bg-tertiary);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-style: italic;
 }
 

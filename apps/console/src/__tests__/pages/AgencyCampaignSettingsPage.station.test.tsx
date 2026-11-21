@@ -125,7 +125,7 @@ beforeEach(() => {
   });
   mocks.getIngestJob.mockImplementation(async (id: string) => ({
     id,
-    context_columns: id === 'job-new' ? ['Borrower', 'City', 'Due Amount', 'PAN'] : ['Borrower', 'Due Date'],
+    context_columns: id === 'job-new' ? ['Borrower', 'City', 'Due Amount', 'Due Date', 'PAN'] : ['Borrower', 'Old Branch'],
   }));
   mocks.getCampaignContacts.mockResolvedValue({ rows: [{ id: 'ct-1' }, { id: 'ct-2' }], next_cursor: null, limit: 3 });
   mocks.getCampaignContact.mockImplementation(async (_campaign: string, contactId: string) => ({
@@ -247,7 +247,7 @@ describe('Settings › Script (BE-8, AS19)', () => {
     expect(sentBody().agent_script).toEqual({ opening: 'Hello {name}', steps: [{ text: 'You owe {amount_due} today' }] });
     // The card did not change and the stored one allows every key: it is not sent.
     expect(sentBody()).not.toHaveProperty('context_display');
-    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this from their next call.', 'success');
+    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this when they next start work.', 'success');
   });
 
   it('stops at twelve steps', async () => {
@@ -319,10 +319,11 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
     renderPage();
     const name = await cardReady();
     const offered = within(name).getAllByRole('option').map((o) => o.textContent);
-    expect(offered).toEqual(['Guess from the column names', 'Borrower', 'City', 'Due Amount', 'Due Date']);
+    expect(offered).toEqual(['Guess from the column names', 'Borrower', 'City', 'Due Amount', 'Due Date', 'Old Branch']);
     expect(mocks.getIngestJob).toHaveBeenCalledTimes(2);
     expect(mocks.getIngestJob.mock.calls.map((c) => c[0])).toEqual(['job-new', 'job-old']);
-    // The add-fact picker: not the guessed line under the name, not a fact already on the card; a sample beside each.
+    // The add-fact picker: the latest upload only (the newest import, S9), not the guessed line under
+    // the name, not a fact already on the card; a sample beside each.
     fireEvent.click(screen.getByTestId('fact-add'));
     const picker = screen.getByTestId('fact-picker');
     expect(within(picker).getAllByRole('button').map((b) => b.querySelector('b')!.textContent)).toEqual(['Borrower', 'Due Date']);
@@ -369,14 +370,15 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
     expect(sentBody().context_display).toEqual({
       hero: ['Due Amount'],
       hidden: ['PAN'],
-      roles: { name: 'Borrower' },
+      // The line under the name it guessed (City) is written too (S2): with facts none is guessed.
+      roles: { name: 'Borrower', place: 'City' },
       types: { 'Due Amount': 'money', 'Due Date': 'date' },
       facts: [
         { column: 'Due Date', label: 'Due Date', key: 'due_date', highlight: true },
         { column: 'Due Amount', label: 'Amount due', key: 'amount_due' },
       ],
     });
-    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this from their next call.', 'success');
+    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this when they next start work.', 'success');
   });
 
   it('holds Save while a fact the script uses is off the card, and “Put it back” restores it', async () => {
@@ -476,6 +478,99 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
     expect(screen.getByTestId('fact-label-0').getAttribute('aria-describedby')).toContain(labelMessage.closest('p')!.id);
     const typeMessage = screen.getByText('Not this type.');
     expect(screen.getByTestId('fact-type-Due Date').getAttribute('aria-describedby')).toContain(typeMessage.closest('p')!.id);
+  });
+
+  it('opens an old-model card only once the columns are read: loading, then a failure with Try again, and holds a save that would send it (S9)', async () => {
+    let fail = true;
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => { release = resolve; });
+    mocks.getInsightsUploads.mockImplementation(async (campaignId: string) => {
+      await first;
+      if (fail) throw new Error('down');
+      return { campaign_id: campaignId, uploads: [upload('job-new', '2026-11-10T10:00:00Z')], generated_at: '2026-11-20T10:00:00Z' };
+    });
+    mocks.getIngestJob.mockImplementation(async (id: string) => ({ id, context_columns: ['Borrower', 'Due Amount', 'Loan No'] }));
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      agent_script: { opening: 'Hello' },
+      context_display: { hero: ['Due Amount', 'Loan No'], roles: { amount_due: 'Due Amount' } },
+    }));
+    renderPage();
+    const state = await screen.findByTestId('customer-facts-columns');
+    expect(state.textContent).toBe('Loading the customer list’s columns…');
+    expect(screen.queryByTestId('fact-rows')).toBeNull();
+    // A script that names a fact's key sends the card with it: held while the card waits.
+    fireEvent.change(screen.getByTestId('script-opening'), { target: { value: 'Hello {loan_no}' } });
+    save();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+    await act(async () => { release(); });
+    const failed = await screen.findByText('Could not read the customer list’s columns.');
+    expect(failed.closest('[role="alert"]')).not.toBeNull();
+    expect(screen.queryByTestId('fact-rows')).toBeNull();
+    save();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+    fail = false;
+    fireEvent.click(screen.getByTestId('customer-facts-columns-retry'));
+    // Read: the card opens from them, in the old card's order, and the same save goes through.
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}', '{loan_no}']));
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect((sentBody().context_display as Record<string, unknown>).facts).toEqual([
+      { column: 'Due Amount', label: 'Due Amount', key: 'amount_due' },
+      { column: 'Loan No', label: 'Loan No', key: 'loan_no' },
+    ]);
+  });
+
+  it('says a fact whose column only an older import has is not in the latest upload (S9)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      context_display: { facts: [{ column: 'Old Branch', label: 'Branch', key: 'branch' }, { column: 'Due Amount', label: 'Amount', key: 'amount_due' }] },
+    }));
+    renderPage();
+    await cardReady();
+    expect(await screen.findByText('This column is not in the latest upload. Choose another or remove the fact.')).toBeTruthy();
+    expect(screen.getByTestId('fact-row-0').hasAttribute('data-error')).toBe(true);
+    expect(screen.getByTestId('fact-row-1').hasAttribute('data-error')).toBe(false);
+  });
+
+  it('puts a fact back from the script’s fix row: its row takes focus, and it is said (S9)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      agent_script: { opening: 'Pay by {due_date}' },
+      context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }, { column: 'Due Date', label: 'Due date', key: 'due_date' }] },
+    }));
+    renderPage();
+    await cardReady();
+    fireEvent.click(screen.getByTestId('fact-remove-1'));
+    // The one message: on the facts, not again on the put-back row.
+    expect(await screen.findAllByText('The script uses {due_date}. Take it out of the script first, or keep the fact.')).toHaveLength(1);
+    fireEvent.click(await screen.findByTestId('script-fix-opening-due_date-put-back'));
+    expect(factKeys()).toEqual(['{amount_due}', '{due_date}']);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('fact-grip-1')));
+    expect(screen.getByTestId('facts-announce').textContent).toBe('Due date put back on the card.');
+  });
+
+  it('adds a column the script names as a fact: its name takes focus, and it is said (S9)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }] } }));
+    renderPage();
+    await cardReady();
+    fireEvent.change(screen.getByTestId('script-opening'), { target: { value: 'Hello {borrower}' } });
+    fireEvent.click(await screen.findByTestId('script-fix-opening-borrower-add'));
+    expect(factKeys()).toEqual(['{amount_due}', '{borrower}']);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('fact-label-1')));
+    expect(screen.getByTestId('facts-announce').textContent).toBe('Borrower added to the card.');
+  });
+
+  it('clears the server’s answer about a fact once the facts move: its place now names another (S9)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }, { column: 'Due Date', label: 'Due', key: 'due_date' }] },
+    }));
+    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ 'context_display.facts.0.label': 'This name is refused here.' }));
+    renderPage();
+    await cardReady();
+    fireEvent.change(screen.getByTestId('fact-label-1'), { target: { value: 'Due on' } });
+    save();
+    expect(await screen.findByText('This name is refused here.')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('fact-down-0'));
+    expect(factKeys()).toEqual(['{due_date}', '{amount_due}']);
+    expect(screen.queryByText('This name is refused here.')).toBeNull();
   });
 
   it('says to upload a list first when the campaign has none', async () => {
