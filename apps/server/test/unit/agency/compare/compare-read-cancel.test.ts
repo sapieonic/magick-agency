@@ -30,7 +30,7 @@ import { clientGoneSignal } from '../../../../src/api/routes/proxy-agency-compar
 /** The fake's settings answer: the backend's own pid, and the session's own statement_timeout (none). */
 const BACKEND_PID = 4242;
 function settingsRow(values: unknown[] | undefined) {
-  return { rows: [{ pid: BACKEND_PID, session_ms: '0', applied_ms: String(values?.[0]) }] };
+  return { rows: [{ pid: BACKEND_PID, ceiling_ms: '0', applied_ms: String(values?.[0]) }] };
 }
 
 const SCOPE: CompareWindowScope = {
@@ -115,7 +115,7 @@ describe('the whole read\'s deadline', () => {
     const [budget, workers] = conn.settings[0]!;
     expect(Number(budget)).toBeLessThanOrEqual(2_000 - COMPARE_STATEMENT_TIMEOUT_MARGIN_MS);
     expect(Number(budget)).toBeGreaterThan(2_000 - COMPARE_STATEMENT_TIMEOUT_MARGIN_MS - 100);
-    expect(workers).toBe(COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER);
+    expect(Number(workers)).toBe(COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER);
   }, 10_000);
 
   it('a statement past it is ended by the server first: rolled back, the connection reused, no cancel: 503', async () => {
@@ -230,19 +230,22 @@ describe('statement_timeout follows the whole read\'s budget', () => {
 });
 
 describe('a query read shared by identical requests (SharedLoad)', () => {
-  /** A connection whose roster statement waits until `finish` or a cancel. */
+  /** A connection whose roster statement (a read's first) waits until `finish` or a cancel; the rest answer at once. */
   function held() {
     const log: string[] = [];
     let settle: ((v: unknown) => void) | null = null;
     let fail: ((e: unknown) => void) | null = null;
     let connects = 0;
+    let first = false;
     const client = {
       processID: 1,
       query(text: string, values?: unknown[]) {
         const t = text.trim();
-        if (/^BEGIN/.test(t)) return Promise.resolve({ rows: [] });
+        if (/^BEGIN/.test(t)) { first = true; return Promise.resolve({ rows: [] }); }
         if (/pg_backend_pid/.test(t)) return Promise.resolve(settingsRow(values));
         if (/set_config/.test(t) || t === 'ROLLBACK') return Promise.resolve({ rows: [] });
+        if (!first) return Promise.resolve({ rows: [] });
+        first = false;
         log.push('statement');
         return new Promise((res, rej) => { settle = res; fail = rej; });
       },

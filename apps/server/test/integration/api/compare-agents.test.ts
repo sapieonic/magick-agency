@@ -65,7 +65,7 @@ import { bulkInsert } from '../agency/insights-rollup-world.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
 import { localDateOf, localInstant } from '../../../src/agency/reports/schedule.js';
 import { localDates } from '../../../src/agency/reports/datasets/shared.js';
-import { setZoneLookupForTests } from '../../../src/agency/reports/zone.js';
+import { setZoneLookupForTests } from '../../../src/agency/zone.js';
 
 let loaded: LoadApp;
 let floor: TenantFloor;
@@ -472,13 +472,15 @@ describe('every figure equals the seed and the roster screen', () => {
       expect(a.agent_user_id).toBe(agent(i).id);
       expect(a.agent_name).toBe(`agent 0.${i}`);
       // calls handled: the roster's `connected`
-      expect(a.values['calls_handled']).toEqual({ value: t.connected, numerator: t.connected, denominator: null, reportable: true, interval: null });
+      expect(a.values['calls_handled']).toEqual({ value: t.connected, numerator: t.connected, denominator: null, reportable: true, interval: null, withheld: null });
       expect(row['connected']).toBe(t.connected);
       // success: successes / connected, the roster's rate and floor
       expect(a.values['success_rate']!.numerator).toBe(t.successes);
       expect(a.values['success_rate']!.denominator).toBe(t.connected);
       expect(a.values['success_rate']!.value! * 100).toBeCloseTo(row['success_rate_pct'] as number, 9);
       expect(a.values['success_rate']!.reportable).toBe(row['success_rate_reportable']);
+      // Why it is not drawn, said by the server: under the floor, too few; else nothing withheld.
+      expect(a.values['success_rate']!.withheld).toBe(row['success_rate_reportable'] ? null : 'too_few');
       // connect rate: human connects / placed first dials
       expect(a.values['connect_rate']!.numerator).toBe(t.humanConnects);
       expect(a.values['connect_rate']!.denominator).toBe(t.firstDials);
@@ -529,7 +531,7 @@ describe('outcome sets, promises, call-backs and breaks', () => {
     const res = await ok(body({ agent_ids: [agent(0).id, agent(2).id], metrics: [builtin('promises_rate'), builtin('promised_amount')], trend: null }));
     const t0 = truth[0]!;
     expect(res.agents[0]!.values['promises_rate']).toMatchObject({ numerator: t0.promises, denominator: t0.connected + t0.otherConversations });
-    expect(res.agents[0]!.values['promised_amount']).toEqual({ value: t0.amount, numerator: t0.amount, denominator: null, reportable: true, interval: null });
+    expect(res.agents[0]!.values['promised_amount']).toEqual({ value: t0.amount, numerator: t0.amount, denominator: null, reportable: true, interval: null, withheld: null });
     expect(t0.otherConversations).toBe(2);
     const t2 = truth[2]!;
     expect(res.agents[1]!.values['promises_rate']).toMatchObject({ numerator: t2.promises, denominator: t2.connected });
@@ -905,9 +907,22 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
     expect(again.as_of).toBe(first.as_of);
     expect(again.agents).toEqual(first.agents);
     expect(again.metrics[0]!.label).toBe('Promised to pay');
-    // Another agent order is another key: read afresh.
+    // Another pick with no calls per hour on screen is another snapshot (its occupancy is the picks'): read afresh.
     const fresh = await ok({ ...b, agent_ids: [agent(3).id] });
     expect(fresh.agents[0]!.agent_user_id).toBe(agent(3).id);
+    expect(fresh.as_of).not.toBe(first.as_of);
+  });
+
+  it('a pick change with calls per hour on screen, or a reorder, is answered from the cached snapshot', async () => {
+    const b = body({ agent_ids: [agent(2).id], metrics: [builtin('calls_per_hour'), WILL_PAY], trend: null, from: DAYS[1]!, to: DAYS[1]! });
+    const first = await ok(b);
+    const picked = await ok({ ...b, agent_ids: [agent(3).id, agent(2).id], metrics: [WILL_PAY, builtin('calls_per_hour')] });
+    expect(picked.as_of).toBe(first.as_of);
+    expect(picked.agents.map((a) => a.agent_user_id)).toEqual([agent(3).id, agent(2).id]);
+    expect(picked.metrics.map((m) => m.id)).toEqual([compareMetricId(WILL_PAY), 'calls_per_hour']);
+    // The same figures for the agent both asked about, and the same cohort.
+    expect(picked.agents[1]).toEqual(first.agents[0]);
+    expect(picked.cohort).toEqual(first.cohort);
   });
 });
 

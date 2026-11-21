@@ -15,7 +15,6 @@ import { getPresignedUrl, type PresignOptions } from '../../../storage/s3.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { platformAuditLogger, type PlatformCreateAuditLogInput } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
-import { isUsableTimezone } from '../../../agency/calling-hours.js';
 import type { AppConfig } from '../../../config/index.js';
 import {
   agencyCampaignRepository,
@@ -27,7 +26,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { isMemberOfAccountEver, usersWithPermissionOnAccount } from '../../../agency/reports/access.js';
 import { resolveReportNames, type ReportNameRef, type ReportNames } from '../../../agency/reports/run-view.js';
-import { postgresKnowsZone } from '../../../agency/reports/zone.js';
+import { isRequestZone, postgresKnowsZone } from '../../../agency/zone.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { sendRefusal } from '../helpers/refusal.js';
@@ -152,18 +151,13 @@ export function callerSupervises(request: FastifyRequest): boolean {
   return hasPermission(request.membership?.role, 'agency.supervise');
 }
 
-/** An IANA zone this server can cut days in (`Area/Location` or `UTC`, untrimmed text refused). */
-export function isReportTimezone(timezone: unknown): timezone is string {
-  return typeof timezone === 'string' && timezone === timezone.trim() && timezone.length <= 64 && isUsableTimezone(timezone);
-}
-
 /**
- * A zone a report may be cut in: {@link isReportTimezone} (`Intl`) AND known to Postgres, whose
- * `AT TIME ZONE` the dataset reads cut the window with (`agency/reports/zone.ts`). Else the
+ * A zone a report may be cut in: `isRequestZone` (`Intl`, `agency/zone.ts`) AND known to Postgres,
+ * whose `AT TIME ZONE` the dataset reads cut the window with. Else the
  * route answers `report_timezone_invalid` (null here).
  */
 export async function usableReportZone(deps: Pick<ReportRouteDeps, 'zoneKnownToDatabase'>, timezone: unknown): Promise<string | null> {
-  return isReportTimezone(timezone) && (await deps.zoneKnownToDatabase(timezone)) ? timezone : null;
+  return isRequestZone(timezone) && (await deps.zoneKnownToDatabase(timezone)) ? timezone : null;
 }
 
 /** What a run or subscription about one subject resolves to, for this caller. */

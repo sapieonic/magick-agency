@@ -514,6 +514,20 @@ export interface AgencyCompareQuery {
   timezone: string;
 }
 
+/**
+ * Why a figure is not drawn as a bar (`AgencyCompareValue.withheld`), decided by the server so the
+ * console words it the same everywhere:
+ * - `too_few`: under the metric's floor (`denominator < min_denominator`), or a zero denominator
+ *   with nothing more particular to say;
+ * - `none_due`: `callbacks_kept_rate` with no call-back due at all (0 of 0): nothing to keep yet,
+ *   which is not "too few";
+ * - `counts_disagree`: the counts cannot both be right, so the value is withheld though they clear
+ *   the floor (the roster's `occupancy_pct` rule; see `value`);
+ * - `no_logged_in_time`: `calls_per_hour` with no logged-in time to divide by.
+ */
+export type AgencyCompareWithheld = 'too_few' | 'none_due' | 'counts_disagree' | 'no_logged_in_time';
+export const AGENCY_COMPARE_WITHHELD = ['too_few', 'none_due', 'counts_disagree', 'no_logged_in_time'] as const satisfies readonly AgencyCompareWithheld[];
+
 /** One agent's figure for one metric. Every figure travels with its counts (CP9). */
 export interface AgencyCompareValue {
   /**
@@ -538,13 +552,20 @@ export interface AgencyCompareValue {
   reportable: boolean;
   /** `rate` only: the 95% Wilson score interval `[low, high]` (fractions); null otherwise or on a zero denominator. */
   interval: [number, number] | null;
+  /**
+   * Why the figure is not `reportable` ({@link AgencyCompareWithheld}); null when it is. Set by the
+   * shared rule (`compareValue` in `@magick-agency/domain/agent-compare`) and the server's
+   * counts-disagree step. Additive: this server always sends it; an answer recorded before it has
+   * none, and the console then words the figure from its counts.
+   */
+  withheld?: AgencyCompareWithheld | null;
 }
 
 /**
  * The cohort's figures for one metric. Percentiles are `percentile_cont` (linear interpolation)
  * over the REPORTABLE, non-null values of every cohort agent, picked agents included: the roster
  * benchmark's method (`cohortPercentiles` in `@magick-agency/domain/agent-compare`, which the
- * roster's `rosterPercentiles` delegates to). All three null when no agent qualifies.
+ * roster's benchmark reads it too). All three null when no agent qualifies.
  */
 export interface AgencyCompareCohortMetric {
   p25: number | null;

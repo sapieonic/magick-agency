@@ -5,8 +5,8 @@
  *
  * p25 / median / p75 over a cohort's values, by **linear interpolation between the two
  * neighbouring values: Postgres's `percentile_cont`**, which is the method the roster benchmark
- * has always used (`rosterPercentiles`, `apps/server/src/agency/agent-record/roster.ts`, which now
- * delegates here). One implementation for both, so the Compare page's band and the roster's
+ * has always used (`apps/server/src/db/repositories/agency/agent-roster-stats.ts` calls it). One
+ * implementation for both, so the Compare page's band and the roster's
  * benchmark cannot disagree (docs/compare-agents.md §5: "not a second percentile implementation").
  *
  * Why continuous, not discrete: the discrete reading snaps to an actual row, and on a floor of

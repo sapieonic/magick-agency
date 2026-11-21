@@ -1,5 +1,7 @@
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
+import { currentZoneName as legacyZoneTarget } from '@magick-agency/domain/zone-clock';
 import { DISPLAY_LOCALE } from './number';
+import { zoneFormatter } from './zone';
 
 /**
  * Dates and times for the console's analytics surfaces: one locale, cached
@@ -66,46 +68,17 @@ export function formatClockTime(date: Date): string {
 }
 
 /**
- * Legacy IANA names that ICU (so Chromium and Node) still reports as a zone's
- * canonical ID, to their current names. A browser in India says `Asia/Calcutta`;
- * the console sends and shows `Asia/Kolkata`, the name the rest of the product
- * stores, so the reader's zone and a campaign's read the same.
- */
-export const LEGACY_ZONE_NAMES: Readonly<Record<string, string>> = {
-  'Asia/Calcutta': 'Asia/Kolkata',
-  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
-  'Asia/Katmandu': 'Asia/Kathmandu',
-  'Asia/Rangoon': 'Asia/Yangon',
-  'Europe/Kiev': 'Europe/Kyiv',
-  'Asia/Dacca': 'Asia/Dhaka',
-  'Asia/Thimbu': 'Asia/Thimphu',
-};
-
-const ZONE_KNOWN = new Map<string, boolean>();
-
-/** Whether this browser's `Intl` knows `zone` (an older ICU may know `Asia/Calcutta` and not `Asia/Kolkata`). */
-export function zoneKnown(zone: string): boolean {
-  let known = ZONE_KNOWN.get(zone);
-  if (known === undefined) {
-    try {
-      new Intl.DateTimeFormat('en-US', { timeZone: zone });
-      known = true;
-    } catch {
-      known = false;
-    }
-    ZONE_KNOWN.set(zone, known);
-  }
-  return known;
-}
-
-/**
- * A zone by its current IANA name: a legacy alias ({@link LEGACY_ZONE_NAMES}) mapped when this
- * browser knows the current name, any other as given. A browser whose ICU predates the rename
- * keeps the legacy name, which it can still format in, rather than one it would refuse.
+ * A zone by its current IANA name: a legacy name ICU (so Chromium and Node) still reports as a
+ * zone's canonical ID mapped to its current one (`currentZoneName` of
+ * `@magick-agency/domain/zone-clock`, the table the server cuts days by too) when this browser knows
+ * the current name (`zoneFormatter`), any other as given. A browser in India says `Asia/Calcutta`;
+ * the console sends and shows `Asia/Kolkata`, the name the rest of the product stores, so the
+ * reader's zone and a campaign's read the same. A browser whose ICU predates the rename keeps the
+ * legacy name, which it can still format in, rather than one it would refuse.
  */
 export function currentZoneName(zone: string): string {
-  const current = LEGACY_ZONE_NAMES[zone];
-  return current !== undefined && zoneKnown(current) ? current : zone;
+  const current = legacyZoneTarget(zone);
+  return current !== null && zoneFormatter(current) !== null ? current : zone;
 }
 
 /**

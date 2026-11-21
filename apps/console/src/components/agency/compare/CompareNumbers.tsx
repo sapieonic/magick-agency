@@ -1,16 +1,45 @@
 import type { AgencyCompareResponse } from '@magick-agency/contracts/api/agency/compare';
 import { DAY_SPLIT_PARTS, wholePercents } from '../../../utils/agency/compare/compareCharts';
-import { COUNTS_DISAGREE_SHORT, NONE_DUE_WORDS, formatMetricValue, infoLabel, withheldKind } from '../../../utils/agency/compare/compareMetrics';
+import type { AgencyCompareMetricInfo } from '@magick-agency/contracts/api/agency/compare';
+import {
+  COUNTS_DISAGREE_SHORT,
+  NONE_DUE_WORDS,
+  NO_LOGGED_IN_WORDS,
+  formatMetricValue,
+  infoLabel,
+  withheldKind,
+  type WithheldKind,
+} from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import { agentColour, type ChartAgent } from './CompareCharts';
 import styles from './Compare.module.css';
 
 /**
+ * A withheld figure's cell (`withheldKind`, the server's reason, the one the chart words too):
+ * "None due yet", "too few" with how many it had and needs, "not shown" with "counts don’t agree",
+ * "No logged-in time".
+ */
+const WITHHELD_CELL: Readonly<Record<WithheldKind, string>> = {
+  none_due: NONE_DUE_WORDS,
+  too_few: 'too few',
+  counts_disagree: 'not shown',
+  no_logged_in_time: NO_LOGGED_IN_WORDS,
+};
+
+/** The line under a withheld cell: what too few had and needs, or why it is not shown. */
+function withheldCellSub(withheld: WithheldKind, info: AgencyCompareMetricInfo, denominator: number | null) {
+  if (withheld === 'counts_disagree') return <span className={styles.cellSub}>{COUNTS_DISAGREE_SHORT.toLowerCase()}</span>;
+  if (withheld === 'too_few' && denominator !== null && info.definition.min_denominator !== null) {
+    return <span className={styles.cellSub}>{`${formatCount(denominator)} of ${formatCount(info.definition.min_denominator)} needed`}</span>;
+  }
+  return null;
+}
+
+/**
  * The numbers (`docs/compare-agents.md` §2 item 6): the table behind every chart, so each figure
- * is readable as text. A rate shows its counts under it; a figure under the floor says how many
- * it had and needs; one whose counts don't agree is "not shown" and says why; the team column is
- * the median of the agents who clear the floor.
+ * is readable as text. A rate shows its counts under it; a withheld figure says why, as the chart
+ * does ({@link WITHHELD_CELL}); the team column is the median of the agents who clear the floor.
  */
 export function CompareNumbers({ response, agents }: { response: AgencyCompareResponse; agents: readonly ChartAgent[] }) {
   const columns = agents.map((a) => ({ agent: a, column: response.agents.find((c) => c.agent_user_id === a.id) }));
@@ -41,41 +70,25 @@ export function CompareNumbers({ response, agents }: { response: AgencyCompareRe
                 <th scope="row">{infoLabel(info)}</th>
                 {columns.map(({ agent, column }) => {
                   const v = column?.values[info.id];
-                  const withheld = v && !v.reportable ? withheldKind(info, v) : null;
-                  if (withheld === 'none_due') {
-                    return (
-                      <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
-                        {NONE_DUE_WORDS}
-                      </td>
-                    );
-                  }
-                  if (withheld === 'counts_disagree') {
-                    return (
-                      <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
-                        not shown
-                        <span className={styles.cellSub}>{COUNTS_DISAGREE_SHORT.toLowerCase()}</span>
-                      </td>
-                    );
-                  }
-                  if (!v || v.value === null) {
+                  if (!v || (v.reportable && v.value === null)) {
                     return (
                       <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
                         –
                       </td>
                     );
                   }
-                  const counts =
-                    unit === 'rate' && v.denominator !== null ? `${formatCount(v.numerator)} of ${formatCount(v.denominator)}` : null;
                   if (!v.reportable) {
+                    // The chart's reason in the table's few words: the same reason, never a dash.
+                    const withheld = withheldKind(info, v);
                     return (
                       <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
-                        too few
-                        {v.denominator !== null && info.definition.min_denominator !== null ? (
-                          <span className={styles.cellSub}>{`${formatCount(v.denominator)} of ${formatCount(info.definition.min_denominator)} needed`}</span>
-                        ) : null}
+                        {WITHHELD_CELL[withheld]}
+                        {withheldCellSub(withheld, info, v.denominator)}
                       </td>
                     );
                   }
+                  const counts =
+                    unit === 'rate' && v.denominator !== null ? `${formatCount(v.numerator)} of ${formatCount(v.denominator)}` : null;
                   return (
                     <td key={agent.id} className={styles.num}>
                       {formatMetricValue(unit, v.value)}

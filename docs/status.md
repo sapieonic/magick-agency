@@ -2501,7 +2501,7 @@ database, reviewed by fresh-context reviewers and fixed; the test counts are in 
 |---|---|
 | Wire | `api/agency/compare.ts` (the metric catalog, lenses, metric ids, the query, options, response and saved views), the compare codes in `errors.ts`, the flag |
 | Rules | `packages/domain/src/agent-compare/`: Wilson intervals, the roster's percentiles, metric resolution and values, lenses, findings |
-| Database | `0064_compare_views.sql` (saved views), `0065_session_events_offline_index.sql` (a session's offline boundaries, for the trend's days) |
+| Database | `0064_compare_views.sql` (saved views), `0065_session_events_offline_index.sql` (a session's offline boundaries, for the trend's days), `0066_session_events_break_overrun_index.sql` (the events that ended a break over its limit, for breaks over their limit) |
 | Server | `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options`, the saved views' routes; the read in the primary in one read-only snapshot under a 3 s budget, two reads per tenant and a sixth of the pool per process, a 30 s cache; metrics `agency_compare_read_seconds`, `agency_compare_reads_refused_total` |
 | Console | The tab: lenses, the metric picker, agent chips, Side by side, What stands out, the trend, Where their day went, The numbers, saved views, the state in the URL |
 

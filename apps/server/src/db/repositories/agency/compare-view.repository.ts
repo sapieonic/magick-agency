@@ -127,17 +127,6 @@ export class AgencyCompareViewRepository {
     return rows;
   }
 
-  /** The view if the caller may see it (their own, or shared), else null. */
-  async findVisible(scope: CompareViewScope & { userId: string }, id: string): Promise<CompareViewRecord | null> {
-    const { rows } = await getPool().query<CompareViewRecord>(
-      `SELECT ${COLUMNS} FROM agency_compare_views
-        WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid
-          AND (owner_user_id = $4::uuid OR shared)`,
-      [id, scope.tenantId, scope.accountId, scope.userId],
-    );
-    return rows[0] ?? null;
-  }
-
   /** The caller's own view, else null (also for another supervisor's). */
   async findOwned(scope: CompareViewScope & { userId: string }, id: string): Promise<CompareViewRecord | null> {
     const { rows } = await getPool().query<CompareViewRecord>(

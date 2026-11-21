@@ -21,12 +21,12 @@ import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
 import { agencyAgentStatsRepository } from '../../../db/repositories/agency.repository.js';
 import { getPool } from '@magick-agency/db';
-import { parseRosterQuery, ROSTER_MAX_LIMIT, type AgentRosterParams } from '../../agent-record.js';
+import { rosterParams } from '../../agent-record.js';
 import { enrichAttemptAgentNames } from '../../agency-spine.js';
 import { agentNamesOrNone, resolveAgentNames, scopeRowsToMembers } from '../../agency-agent-identity.js';
 import { parseInsightsRange, type ServedInsightsRange } from '../../insights/range.js';
 import { localDayBounds } from '../schedule.js';
-import { postgresZoneName } from '../zone.js';
+import { postgresZoneName } from '../../zone.js';
 import { ReportSubjectUnavailableError } from './types.js';
 
 const log = createChildLogger({ component: 'report-datasets' });
@@ -87,7 +87,7 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
 }
 
 /**
- * The run's zone as Postgres names it (`postgresZoneName`, `../zone.ts`: the routes' own lookup,
+ * The run's zone as Postgres names it (`postgresZoneName`, `agency/zone.ts`: the routes' own lookup,
  * remembered per process). A zone Postgres does not know fails the build (`assembly_failed`) with
  * a clear message: the shared reads would otherwise cut the account's days in UTC without saying
  * so (`resolvedZoneCte`) or fail with a bare SQL error.
@@ -132,25 +132,6 @@ export function insightsRangeFor(
 /** `structuredClone` through JSON: a value exactly as it would cross the wire (Dates to ISO strings). */
 export function wire<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-/**
- * The roster read's parameters for a window (and optionally one campaign), parsed by the roster
- * route's own parser (`parseRosterQuery`) with the report's query: `sort=attempts`, `order=desc`,
- * `limit=200`. Shared by {@link readAccountRoster} and Compare agents' cohort read
- * (`agency/compare/read.ts`), so both read the roster the screen reads.
- */
-export function rosterParams(q: { from: Date; to: Date; campaignId?: string }): AgentRosterParams {
-  const parsed = parseRosterQuery({
-    from: q.from.toISOString(),
-    to: q.to.toISOString(),
-    ...(q.campaignId ? { campaign_id: q.campaignId } : {}),
-    sort: 'attempts',
-    order: 'desc',
-    limit: String(ROSTER_MAX_LIMIT),
-  });
-  if (!parsed.ok) throw new Error(`report roster window refused: ${parsed.issues.map((i) => `${i.param} ${i.message}`).join('; ')}`);
-  return parsed.filters;
 }
 
 /** The roster screen's read for the window: rows with names, and the benchmark. */

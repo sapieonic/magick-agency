@@ -92,12 +92,12 @@ describe('checkCompareMetrics', () => {
 
 describe('checkCompareWindow', () => {
   const today = () => '2026-11-21';
-  const known = () => true;
-  it('the zone first: missing, untrimmed, unknown to Intl, unknown to Postgres', () => {
-    for (const tz of [undefined, ' Asia/Kolkata', 'Mars/Olympus']) {
+  const known = 'Postgres/Name';
+  it('the zone first: missing, untrimmed, too long, unknown to Intl, unknown to Postgres', () => {
+    for (const tz of [undefined, '', ' Asia/Kolkata', 'Mars/Olympus', `Asia/${'x'.repeat(60)}`]) {
       expect(checkCompareWindow({ from: '2026-11-01', to: '2026-11-02', timezone: tz }, known, today)).toEqual({ ok: false, code: 'compare_timezone_invalid' });
     }
-    expect(checkCompareWindow({ from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata' }, () => false, today)).toEqual({ ok: false, code: 'compare_timezone_invalid' });
+    expect(checkCompareWindow({ from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata' }, null, today)).toEqual({ ok: false, code: 'compare_timezone_invalid' });
     expect(checkCompareWindow({ from: 'bad', to: 'bad', timezone: 'nope' }, known, today)).toEqual({ ok: false, code: 'compare_timezone_invalid' });
   });
   it.each([
@@ -109,8 +109,9 @@ describe('checkCompareWindow', () => {
     expect(checkCompareWindow({ from, to, timezone: 'UTC' }, known, today)).toEqual({ ok: false, code: 'compare_window_invalid' });
   });
   it('accepts up to today, and a whole 31-day month', () => {
-    expect(checkCompareWindow({ from: '2026-11-21', to: '2026-11-21', timezone: 'Asia/Kolkata' }, known, today)).toEqual({ ok: true, timezone: 'Asia/Kolkata' });
-    expect(checkCompareWindow({ from: '2026-10-01', to: '2026-10-31', timezone: 'UTC' }, known, today)).toEqual({ ok: true, timezone: 'UTC' });
+    expect(checkCompareWindow({ from: '2026-11-21', to: '2026-11-21', timezone: 'Asia/Kolkata' }, known, today))
+      .toEqual({ ok: true, timezone: 'Asia/Kolkata', databaseTimezone: known });
+    expect(checkCompareWindow({ from: '2026-10-01', to: '2026-10-31', timezone: 'UTC' }, known, today)).toEqual({ ok: true, timezone: 'UTC', databaseTimezone: known });
   });
 });
 

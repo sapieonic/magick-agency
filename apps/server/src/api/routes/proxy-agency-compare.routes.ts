@@ -6,8 +6,6 @@ import { registerCompareReadRoutes } from './proxy-agency-compare/read.js';
 import { registerCompareViewRoutes } from './proxy-agency-compare/views.js';
 import { defaultCompareRouteDeps, type CompareRouteDeps } from './proxy-agency-compare/shared.js';
 
-export { registerCompareReadRoutes, registerCompareViewRoutes };
-
 export interface ProxyAgencyCompareOptions {
   /** Tests replace any dependency (`./proxy-agency-compare/shared.ts`). */
   deps?: Partial<CompareRouteDeps>;
@@ -26,10 +24,10 @@ export interface ProxyAgencyCompareOptions {
  *    `COMPARE_CACHE_TTL_MS`);
  *  - saved views (`./views.ts`): `GET|POST /compare/views`, `PATCH|DELETE /compare/views/:id`.
  *
- * Guards, in this order, on every route: the session and the tenant context (the hooks below), the
- * RBAC floor `agency.supervise` (CP3: an agent never sees other agents' figures here; the RBAC 403),
- * the `agency_compare_enabled` flag (`403 feature_disabled`, the dialer gate's body shape) before
- * any body is read, the account scope (`400 account_scope_required`), then the body (the generic
+ * Guards, in this order, on every route: the session and the tenant context (the hooks below), then
+ * the route's own preHandlers (`compareGuards`): the RBAC floor `agency.supervise` (CP3: an agent
+ * never sees other agents' figures here; the RBAC 403) and the `agency_compare_enabled` flag (`403
+ * feature_disabled`, the dialer gate's body shape) before any body is read; then the account scope (`400 account_scope_required`), then the body (the generic
  * agency 400) and the compare refusals in the contract's order, `{ error, code, message }` with the
  * contract's status per code. The routes validate their own ids, so the family gets no wrapper id
  * guard. Never cached by a browser (`Cache-Control: no-store`): answers name agents.

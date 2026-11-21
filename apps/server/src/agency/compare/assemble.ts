@@ -35,17 +35,9 @@ import {
 } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyAgentOccupancy } from '@magick-agency/contracts/agency';
 import { cohortPercentiles, compareCohortMetric, compareFindings, compareValue } from '@magick-agency/domain/agent-compare';
+import type { CompareCallbackClasses } from '../../db/repositories/agency.repository.js';
 import { AUTO_DISPOSITION_CODE } from '../disposition.js';
 import { roundPreservingSum } from '../reports/datasets/shared.js';
-
-/** The IN4 classes of one agent's booked call-backs. */
-export interface CompareCallbackClasses {
-  on_time: number;
-  late: number;
-  missed: number;
-  pending_future: number;
-  pending_due: number;
-}
 
 /** What the read holds for ONE cohort agent. A source the request did not need is null. */
 export interface CompareAgentSources {
@@ -69,8 +61,9 @@ export interface CompareAgentSources {
   break_overruns: number | null;
 }
 
-/** The sources a metric needs beyond the roster's attempt counts. */
-export type CompareSource = 'occupancy' | 'rollup' | 'promises' | 'callbacks' | 'breaks';
+/** The sources a metric needs beyond the roster's attempt counts, in the order the read sends them. */
+export const COMPARE_SOURCES = ['occupancy', 'rollup', 'promises', 'callbacks', 'breaks'] as const;
+export type CompareSource = (typeof COMPARE_SOURCES)[number];
 
 /** Which sources `metric` reads (the read runs only these). */
 export function metricSources(metric: Pick<AgencyCompareMetricInfo, 'ref'>): CompareSource[] {
@@ -192,8 +185,8 @@ export function trendOf(metricId: string, picked: readonly string[], cohort: rea
 }
 
 /**
- * The counts cannot both be right: the value is WITHHELD (null, not reportable, no interval) and the
- * agent is left out of the metric's band, pooled figure and findings. The roster's `occupancy_pct`
+ * The counts cannot both be right: the value is WITHHELD (null, not reportable, no interval,
+ * `withheld: 'counts_disagree'`) and the agent is left out of the metric's band, pooled figure and findings. The roster's `occupancy_pct`
  * rule (`agent-roster-stats.ts`): its two halves come from different tables and clocks, so a
  * numerator past what its denominator allows is an inconsistency, never a figure to rank or name.
  *  - a rate over 1: `promises_rate` counts promises by when the outcome was written and its
@@ -242,10 +235,10 @@ export function assembleCompareResponse(input: CompareAssembleInput): AgencyComp
     const out = new Set<string>();
     for (const a of input.cohort) {
       const counts = metricCounts(metric, a);
-      const value = compareValue(metric.definition, counts.numerator, counts.denominator);
+      const value = compareValue(metric, counts.numerator, counts.denominator);
       if (impossibleFigure(metric, a, counts)) {
         out.add(a.agent_user_id);
-        perAgent.set(a.agent_user_id, { ...value, value: null, reportable: false, interval: null });
+        perAgent.set(a.agent_user_id, { ...value, value: null, reportable: false, interval: null, withheld: 'counts_disagree' });
       } else {
         perAgent.set(a.agent_user_id, value);
       }

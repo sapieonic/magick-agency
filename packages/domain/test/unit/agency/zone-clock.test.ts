@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { instantForLocalTime, isoDowOf, isUsableTimezone, localParts } from '../../../src/zone-clock.js';
+import { LEGACY_ZONE_ALIASES, currentZoneName, instantForLocalTime, isoDowOf, isUsableTimezone, localParts } from '../../../src/zone-clock.js';
 
 /*
  * The one wall-clock reader (calling hours, the report schedule, the inbound schedule). The
@@ -53,5 +53,30 @@ describe('instantForLocalTime', () => {
 
   it('is null for an unusable zone', () => {
     expect(instantForLocalTime('Mars/Olympus_Mons', 2026, 11, 9, 0)).toBeNull();
+  });
+});
+
+describe('LEGACY_ZONE_ALIASES and currentZoneName', () => {
+  it('maps each legacy name to a current one, ignoring case, never to another legacy name; both are zones Intl knows', () => {
+    for (const [from, to] of Object.entries(LEGACY_ZONE_ALIASES)) {
+      expect(currentZoneName(from), from).toBe(to);
+      expect(currentZoneName(from.toUpperCase()), from).toBe(to);
+      expect(currentZoneName(to), `${to} is itself a legacy name`).toBeNull();
+      expect(isUsableTimezone(from), from).toBe(true);
+      expect(isUsableTimezone(to), to).toBe(true);
+    }
+    expect(currentZoneName('Asia/Kolkata')).toBeNull();
+    expect(currentZoneName('Mars/Olympus')).toBeNull();
+  });
+
+  it('links only zones with the same clock: the same offset now and half a year from now', () => {
+    const offset = (zone: string, at: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'longOffset' })
+      .formatToParts(at).find((p) => p.type === 'timeZoneName')!.value;
+    const now = new Date();
+    const later = new Date(now.getTime() + 182 * 86_400_000);
+    for (const [from, to] of Object.entries(LEGACY_ZONE_ALIASES)) {
+      expect(offset(from, now), from).toBe(offset(to, now));
+      expect(offset(from, later), from).toBe(offset(to, later));
+    }
   });
 });

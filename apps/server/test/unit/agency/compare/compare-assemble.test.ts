@@ -181,8 +181,8 @@ describe('assembleCompareResponse', () => {
       campaignId: 'c', from: 'x', to: 'y', timezone: 'UTC', asOf: new Date(0), metrics: m.metrics, trendMetric: null,
       picked: ['b', 'a'], cohort: [odd, ...rest], names: new Map(), trend: null,
     });
-    expect(r.agents[0]!.values['promises_rate']).toEqual({ value: null, numerator: 30, denominator: 25, reportable: false, interval: null });
-    expect(r.agents[0]!.values['calls_per_hour']).toEqual({ value: null, numerator: 25, denominator: 600, reportable: false, interval: null });
+    expect(r.agents[0]!.values['promises_rate']).toEqual({ value: null, numerator: 30, denominator: 25, reportable: false, interval: null, withheld: 'counts_disagree' });
+    expect(r.agents[0]!.values['calls_per_hour']).toEqual({ value: null, numerator: 25, denominator: 600, reportable: false, interval: null, withheld: 'counts_disagree' });
     expect(r.agents[1]!.values['promises_rate']).toMatchObject({ value: 4 / 40, reportable: true });
     // Out of the band and the pooled rate: six agents at 4 of 40.
     expect(r.cohort.per_metric['promises_rate']).toMatchObject({ agents_rated: 6, median: 4 / 40 });

@@ -23,7 +23,6 @@ import {
   type AgencyCompareView,
   type AgencyCompareViewList,
 } from '@magick-agency/contracts/api/agency/compare';
-import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import {
   uuidOf,
   checkCompareView,
@@ -35,11 +34,17 @@ import {
 import type { CompareViewRecord } from '../../../db/repositories/agency.repository.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
-import { resolveCompareCampaign } from './read.js';
-import { compareGate, compareViewToWire, sendCompareRefusal, type CompareCampaign, type CompareRouteDeps } from './shared.js';
+import {
+  compareGuards,
+  compareViewToWire,
+  resolveCompareCampaign,
+  sendCompareRefusal,
+  type CompareCampaign,
+  type CompareRouteDeps,
+} from './shared.js';
 
 export async function registerCompareViewRoutes(app: FastifyInstance, deps: CompareRouteDeps): Promise<void> {
-  const supervise = { preHandler: [requirePermission('agency.supervise')] };
+  const supervise = compareGuards(deps);
 
   const wire = async (rows: readonly CompareViewRecord[], tenantId: string): Promise<AgencyCompareView[]> => {
     const names = await deps.names([...new Set(rows.map((r) => r.owner_user_id))], tenantId);
@@ -48,7 +53,6 @@ export async function registerCompareViewRoutes(app: FastifyInstance, deps: Comp
 
   // ── GET /compare/views ──────────────────────────────────────────────────────
   app.get('/compare/views', supervise, async (request, reply) => {
-    if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
     const parsed = parseOr400(compareViewListQuerySchema, request.query ?? {}, reply, 'agency');
@@ -79,7 +83,6 @@ export async function registerCompareViewRoutes(app: FastifyInstance, deps: Comp
 
   // ── POST /compare/views ─────────────────────────────────────────────────────
   app.post('/compare/views', supervise, async (request, reply) => {
-    if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
     const parsed = parseOr400(compareViewCreateSchema, request.body ?? {}, reply, 'agency');
@@ -112,7 +115,6 @@ export async function registerCompareViewRoutes(app: FastifyInstance, deps: Comp
 
   // ── PATCH /compare/views/:id ────────────────────────────────────────────────
   app.patch<{ Params: { id: string } }>('/compare/views/:id', supervise, async (request, reply) => {
-    if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
     const id = uuidOf(request.params.id);
@@ -153,7 +155,6 @@ export async function registerCompareViewRoutes(app: FastifyInstance, deps: Comp
 
   // ── DELETE /compare/views/:id ───────────────────────────────────────────────
   app.delete<{ Params: { id: string } }>('/compare/views/:id', supervise, async (request, reply) => {
-    if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
     const id = uuidOf(request.params.id);

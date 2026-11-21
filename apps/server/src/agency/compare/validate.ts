@@ -11,7 +11,6 @@
  */
 import { z } from 'zod';
 import {
-  COMPARE_BUILTIN_METRICS,
   COMPARE_LENSES,
   COMPARE_MAX_METRICS,
   COMPARE_PAGE_MAX_AGENTS,
@@ -26,9 +25,10 @@ import {
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
 import { REPORT_MAX_WINDOW_DAYS } from '@magick-agency/contracts/api/agency/reports';
-import { resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
+import { isCountableRef, resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
 import { UUID_RE } from '../../utils/uuid.js';
-import { isUsableTimezone } from '../calling-hours.js';
+import type { CompareViewContent } from '../../db/repositories/agency.repository.js';
+import { isRequestZone } from '../zone.js';
 
 /** English fallback copy per code (AS15). The console shows its own words for a known code. */
 export const COMPARE_ERROR_MESSAGES: Readonly<Record<AgencyCompareErrorCode, string>> = Object.freeze({
@@ -144,21 +144,21 @@ export function checkCompareMetrics(
 
 /**
  * The zone and the window, in that order (`compare_timezone_invalid`, `compare_window_invalid`).
- * `zoneKnownToDatabase` is whether Postgres can cut the zone's days (`AT TIME ZONE`): it knows the
- * zone, or the current name of a legacy one (the route passes whether `postgresZoneName` found a
- * name); `today` is the local date of now in that zone.
+ * The zone must pass `isRequestZone` (the reports' rule: `Intl`, trimmed, at most 64 characters) AND
+ * be one Postgres can cut days in: `databaseZone` is the name `postgresZoneName` found for it (its
+ * own, or a legacy name's current one), null when it found none. The route asks Postgres only for
+ * a zone that passes `isRequestZone`, and passes null for any other. `today` is the local date of
+ * now in that zone.
  */
 export function checkCompareWindow(
   q: { from: string; to: string; timezone: string | undefined },
-  zoneKnownToDatabase: (zone: string) => boolean,
+  databaseZone: string | null,
   todayIn: (zone: string) => string,
-): { ok: true; timezone: string } | { ok: false; code: AgencyCompareErrorCode } {
+): { ok: true; timezone: string; databaseTimezone: string } | { ok: false; code: AgencyCompareErrorCode } {
   const tz = q.timezone;
-  if (typeof tz !== 'string' || tz !== tz.trim() || tz.length === 0 || tz.length > 64 || !isUsableTimezone(tz) || !zoneKnownToDatabase(tz)) {
-    return { ok: false, code: 'compare_timezone_invalid' };
-  }
+  if (!isRequestZone(tz) || databaseZone === null) return { ok: false, code: 'compare_timezone_invalid' };
   if (compareWindowProblem(q.from, q.to, todayIn(tz)) !== null) return { ok: false, code: 'compare_window_invalid' };
-  return { ok: true, timezone: tz };
+  return { ok: true, timezone: tz, databaseTimezone: databaseZone };
 }
 
 /** A view's content before its campaign is looked up: every field resolved to its stored value. */
@@ -172,26 +172,17 @@ export interface CompareViewDraft {
   is_campaign_default: boolean;
 }
 
-/** A view's content as stored, once {@link checkCompareView} accepts it. */
-export interface CheckedCompareView {
-  name: string;
-  lens: CompareLens;
-  metrics: AgencyCompareMetricRef[];
-  trend: AgencyCompareMetricRef | null;
-  campaign_id: string | null;
-  shared: boolean;
-  is_campaign_default: boolean;
-}
 
 /**
- * A view's content (`compare_view_invalid` on any failure): the name (1 to
+ * A view's content as stored (`CompareViewContent`, the repository's), or null: `compare_view_invalid`
+ * on any failure: the name (1 to
  * `COMPARE_VIEW_NAME_MAX` after trimming; stored trimmed), the lens, 1 to `COMPARE_MAX_METRICS` refs
  * with distinct ids each passing `compareMetricRefProblem`, a `countable` trend or none; with a
  * campaign (`codes` its current catalog), every code in it and no promise metric on a catalog
  * without promises; a default needs the campaign and `shared`. Without a campaign (`codes`
  * null) the codes are checked when a query applies the view.
  */
-export function checkCompareView(draft: CompareViewDraft, codes: readonly AgencyCompareOutcomeCode[] | null): CheckedCompareView | null {
+export function checkCompareView(draft: CompareViewDraft, codes: readonly AgencyCompareOutcomeCode[] | null): CompareViewContent | null {
   if (typeof draft.name !== 'string') return null;
   const name = draft.name.trim();
   if (name.length === 0 || name.length > COMPARE_VIEW_NAME_MAX) return null;
@@ -216,9 +207,7 @@ export function checkCompareView(draft: CompareViewDraft, codes: readonly Agency
       ids.add(id);
     }
     if (trendRef !== null) {
-      if (compareMetricRefProblem(trendRef) !== null) return null;
-      const countable = trendRef.kind === 'outcomes' || COMPARE_BUILTIN_METRICS[trendRef.key].countable;
-      if (!countable) return null;
+      if (compareMetricRefProblem(trendRef) !== null || !isCountableRef(trendRef)) return null;
     }
   }
   return {

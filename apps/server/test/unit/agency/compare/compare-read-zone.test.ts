@@ -52,7 +52,7 @@ function resolved(trend: AgencyCompareMetricRef) {
 /** A connection that answers the transaction's own statements; the reads are stubbed above. */
 const client = {
   query: async (text: string, values?: unknown[]) =>
-    (/pg_backend_pid/.test(text) ? { rows: [{ pid: 1, session_ms: '0', applied_ms: String(values?.[0]) }] } : { rows: [] }),
+    (/pg_backend_pid/.test(text) ? { rows: [{ pid: 1, ceiling_ms: '0', applied_ms: String(values?.[0]) }] } : { rows: [] }),
   release: () => undefined,
 };
 

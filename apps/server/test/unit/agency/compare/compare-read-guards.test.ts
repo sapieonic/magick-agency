@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { AgencyCompareMetricInfo } from '@magick-agency/contracts/api/agency/compare';
-import { compareCacheKey, TenantReadLimiter, type CompareQueryRead } from '../../../../src/agency/compare/read.js';
+import type { AgencyCompareMetricInfo, CompareBuiltinMetricKey } from '@magick-agency/contracts/api/agency/compare';
+import { compareSnapshotKey, TenantReadLimiter, type CompareQueryRead } from '../../../../src/agency/compare/read.js';
 
 /**
  * Compare agents' guards that need no database (docs/compare-agents.md §7): the per-tenant limit and
- * the cache key. The limit refusing, the timeout and the cache serving are held on real Postgres in
+ * the snapshot's cache key. The limit refusing, the timeout and the cache serving are held on real Postgres in
  * `test/integration/api/compare-agents.test.ts`.
  */
 
@@ -38,27 +38,40 @@ describe('TenantReadLimiter', () => {
   });
 });
 
-describe('compareCacheKey', () => {
-  const metric = (id: string) => ({ id }) as AgencyCompareMetricInfo;
+describe('compareSnapshotKey', () => {
+  const builtin = (key: CompareBuiltinMetricKey) => ({ id: key, ref: { kind: 'builtin', key } }) as AgencyCompareMetricInfo;
+  const set = (codes: string[], label?: string) =>
+    ({ id: `outcomes:higher:${codes.join(',')}`, ref: { kind: 'outcomes', codes, better: 'higher' }, label: label ?? null }) as AgencyCompareMetricInfo;
   const base: CompareQueryRead = {
     tenantId: 't', accountId: 'acc', campaignId: 'c', from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata', databaseTimezone: 'Asia/Kolkata',
-    start: new Date(0), end: new Date(1), agentIds: ['a', 'b'], metrics: [metric('success_rate'), metric('outcomes:higher:x')], trend: null,
+    start: new Date(0), end: new Date(1), agentIds: ['a', 'b'], metrics: [builtin('success_rate'), set(['x'])], trend: null,
   };
-  const key = (o: Partial<CompareQueryRead>) => compareCacheKey({ ...base, ...o });
+  const key = (o: Partial<CompareQueryRead>) => compareSnapshotKey({ ...base, ...o });
 
-  it('keys by tenant, account (the caller\'s scope), campaign, window, zone, agents in order, metric ids in order and the trend', () => {
+  it('keys by tenant, account (the caller\'s scope), campaign, window, zone, the sources read and the trend', () => {
     const k = key({});
     for (const o of [
       { tenantId: 't2' }, { accountId: 'acc2' }, { campaignId: 'c2' }, { from: '2026-10-31' }, { to: '2026-11-03' },
-      { timezone: 'UTC' }, { agentIds: ['b', 'a'] }, { metrics: [metric('outcomes:higher:x'), metric('success_rate')] },
-      { trend: metric('outcomes:higher:x') },
+      { timezone: 'UTC' }, { metrics: [builtin('success_rate'), set(['x']), builtin('promises_rate')] },
+      { metrics: [builtin('success_rate')] }, { trend: set(['x']) },
     ] satisfies Array<Partial<CompareQueryRead>>) {
       expect(key(o), JSON.stringify(o)).not.toBe(k);
     }
   });
 
-  it('a label is not part of the key (the id carries no label)', () => {
-    const labelled = { ...metric('outcomes:higher:x'), label: 'Pays' } as AgencyCompareMetricInfo;
-    expect(key({ metrics: [metric('success_rate'), labelled] })).toBe(key({}));
+  it('a pick\'s order, the metrics\' order, a label, or another metric of the same sources is the same snapshot', () => {
+    const k = key({});
+    for (const o of [
+      { agentIds: ['b', 'a'] }, { metrics: [set(['x']), builtin('success_rate')] }, { metrics: [builtin('success_rate'), set(['x'], 'Pays')] },
+      { metrics: [builtin('connect_rate'), set(['y', 'z'])] },
+    ] satisfies Array<Partial<CompareQueryRead>>) {
+      expect(key(o), JSON.stringify(o)).toBe(k);
+    }
+  });
+
+  it('the picks are in the key only when their occupancy is read for them alone (no calls per hour on screen)', () => {
+    expect(key({ agentIds: ['a', 'c'] })).not.toBe(key({}));
+    const perHour = [builtin('calls_per_hour'), builtin('success_rate')];
+    expect(key({ metrics: perHour, agentIds: ['a', 'c'] })).toBe(key({ metrics: perHour }));
   });
 });

@@ -14,6 +14,7 @@ import {
   droppedNote,
   fallbackNote,
   formatMetricValue,
+  formatRate,
   inCatalogOrder,
   metricLabel,
   metricSubtitle,
@@ -97,11 +98,12 @@ describe('units', () => {
 
   it('says "None due yet" for call-backs kept on time with no call-back due, never "Too few (0 of 8)"', () => {
     const kept = metricInfo(builtin('callbacks_kept_rate'));
-    expect(tooFewWords(kept, 0)).toBe('None due yet');
-    expect(tooFewShort(kept, 0)).toBe('None due yet');
-    expect(tooFewShort(kept, 3)).toBe('Too few (3 of 8)');
+    const noneDue = { value: null, denominator: 0, withheld: 'none_due' as const };
+    expect(withheldWords(kept, noneDue)).toBe('None due yet');
+    expect(withheldShort(kept, noneDue)).toBe('None due yet');
+    expect(withheldShort(kept, { value: 0.3, denominator: 3, withheld: 'too_few' })).toBe('Too few (3 of 8)');
     // Only call-backs: a rate with no calls at all is still too few.
-    expect(tooFewShort(metricInfo(builtin('success_rate')), 0)).toBe('Too few (0 of 20)');
+    expect(withheldShort(metricInfo(builtin('success_rate')), { value: null, denominator: 0, withheld: 'too_few' })).toBe('Too few (0 of 20)');
   });
 
   it('never writes an unknown count as 0', () => {
@@ -112,7 +114,27 @@ describe('units', () => {
 });
 
 describe('a withheld figure (contract AgencyCompareValue)', () => {
+  /** A value recorded before the server sent `withheld`: its reason is read from the counts. */
   const v = (value: number | null, denominator: number | null) => ({ value, denominator });
+
+  it('takes the server\'s reason as it is, whatever the counts look like', () => {
+    const promises = metricInfo(builtin('promises_rate'));
+    // Counts under the floor that the server still says disagree: the server decides.
+    expect(withheldKind(promises, { value: null, denominator: 12, withheld: 'counts_disagree' })).toBe('counts_disagree');
+    expect(withheldKind(promises, { value: null, denominator: 45, withheld: 'too_few' })).toBe('too_few');
+    for (const kind of ['too_few', 'none_due', 'counts_disagree', 'no_logged_in_time'] as const) {
+      const value = { value: null, denominator: 30, withheld: kind };
+      expect(withheldKind(promises, value)).toBe(kind);
+      expect(withheldWords(promises, value), kind).not.toBe('');
+      expect(withheldShort(promises, value), kind).not.toBe('');
+      expect(withheldSpoken(promises, value), kind).not.toBe('');
+    }
+    // Every reason has its own words.
+    const words = (['too_few', 'none_due', 'counts_disagree', 'no_logged_in_time'] as const)
+      .map((kind) => withheldWords(promises, { value: null, denominator: 30, withheld: kind }));
+    expect(new Set(words).size).toBe(4);
+    expect(words).toEqual(['Too few to compare (30 calls; needs 20)', 'None due yet', 'Not shown: its counts don’t agree', 'No logged-in time']);
+  });
 
   it('says its counts don’t agree when it clears the floor and still has no figure, never "too few"', () => {
     // 52 promises on 45 conversations: 45 clears the floor of 20.
@@ -134,15 +156,34 @@ describe('a withheld figure (contract AgencyCompareValue)', () => {
     expect(withheldShort(perHour, v(null, 5400))).toBe('Counts don’t agree');
     expect(withheldWords(perHour, v(null, 0))).toBe('No logged-in time');
     expect(withheldWords(perHour, v(null, null))).toBe('No logged-in time');
-    // Even called directly, the under-floor words never print its denominator.
-    expect(tooFewWords(perHour, 5400)).toBe('Too few to compare');
-    expect(tooFewShort(perHour, 5400)).toBe('Too few');
+    expect(withheldWords(perHour, { value: null, denominator: 0, withheld: 'no_logged_in_time' })).toBe('No logged-in time');
   });
 
   it('keeps "None due yet" for call-backs kept with none due', () => {
     const kept = metricInfo(builtin('callbacks_kept_rate'));
     expect(withheldWords(kept, v(null, 0))).toBe('None due yet');
     expect(withheldKind(kept, v(null, 9))).toBe('counts_disagree');
+  });
+});
+
+describe('formatRate and amounts, through the shared number formatters', () => {
+  it('a rate as a whole percentage, rounded half up as before', () => {
+    expect(formatRate(0.194)).toBe('19%');
+    expect(formatRate(0.195)).toBe('20%');
+    expect(formatRate(0.285)).toBe('28%');
+    expect(formatRate(0)).toBe('0%');
+    expect(formatRate(1)).toBe('100%');
+    for (let i = 0; i <= 10_000; i += 1) {
+      const f = i / 10_000;
+      expect(formatRate(f), String(f)).toBe(`${Math.round(f * 100)}%`);
+    }
+  });
+
+  it('an amount grouped, whole, as the dropped formatter wrote it', () => {
+    const whole = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+    for (const a of [0, 0.4, 0.5, 1.5, 2.5, 999.5, 1000, 125000, 1250000.4, 1250000.5, 99999999.49]) {
+      expect(formatMetricValue('amount', a), String(a)).toBe(whole.format(a));
+    }
   });
 });
 

@@ -13,6 +13,7 @@ import {
   type AgencyCompareOutcomeCode,
   type AgencyCompareOutcomeSetRef,
   type AgencyCompareValue,
+  type AgencyCompareWithheld,
   type CompareBuiltinMetricKey,
   type CompareLens,
   type CompareMetricBetter,
@@ -20,10 +21,10 @@ import {
   type CompareMetricGroup,
   type CompareMetricUnit,
 } from '@magick-agency/contracts/api/agency/compare';
-import { resolveCompareMetric } from '@magick-agency/domain/agent-compare/metrics';
+import { isCountableRef, resolveCompareMetric } from '@magick-agency/domain/agent-compare/metrics';
 import { COMPARE_LENS_LAYOUT, compareLensDefaults } from '@magick-agency/domain/agent-compare/lens';
 import { durationWords } from '../../format/duration';
-import { DISPLAY_LOCALE, formatCount, plural } from '../../format/number';
+import { DISPLAY_LOCALE, formatCount, pct, plural } from '../../format/number';
 
 /**
  * Compare agents' metric vocabulary in the console's words (`docs/compare-agents.md` §3, AS15).
@@ -137,12 +138,11 @@ export function metricSubtitle(info: AgencyCompareMetricInfo): string {
 
 // ─── Formatting by unit ─────────────────────────────────────────────────────
 
-const WHOLE = new Intl.NumberFormat(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 const ONE_DECIMAL = new Intl.NumberFormat(DISPLAY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 /** A rate (a FRACTION on the wire) as a whole percentage: `0.194` → `19%`. */
 export function formatRate(fraction: number): string {
-  return `${Math.round(fraction * 100)}%`;
+  return pct(fraction * 100, 0);
 }
 
 /**
@@ -159,7 +159,6 @@ export function formatMetricValue(unit: CompareMetricUnit, value: number | null)
     case 'per_hour':
       return ONE_DECIMAL.format(value);
     case 'amount':
-      return WHOLE.format(value);
     case 'count':
       return formatCount(Math.round(value));
   }
@@ -169,34 +168,33 @@ export function formatMetricValue(unit: CompareMetricUnit, value: number | null)
 export const NONE_DUE_WORDS = 'None due yet';
 
 /**
- * Whether a withheld figure is call-backs kept on time with no call-back due at all (0 of 0):
- * nothing to keep yet, which is not the same as too few, so it is never worded "Too few (0 of 8)".
+ * Whether a figure is call-backs kept on time with no call-back due at all (0 of 0): nothing to
+ * keep yet, which is not the same as too few, so it is never worded "Too few (0 of 8)". The server
+ * says so of a value (`withheld: 'none_due'`); a finding's copy asks this of its count.
  */
 export function isNoneDue(info: Pick<AgencyCompareMetricInfo, 'ref'>, denominator: number | null): boolean {
   return info.ref.kind === 'builtin' && info.ref.key === 'callbacks_kept_rate' && denominator === 0;
 }
 
-/** Why a figure is not drawn as a bar (contract `AgencyCompareValue`). */
-export type WithheldKind =
-  /** Call-backs kept on time with none due ({@link isNoneDue}). */
-  | 'none_due'
-  /**
-   * The counts cannot both be right, so the server sent no figure though the denominator clears
-   * the floor (or the metric has none): more promises than conversations, or calls per hour over a
-   * shift shorter than the calls themselves. Not "too few": there are enough, they disagree.
-   */
-  | 'counts_disagree'
-  /** Calls per hour with no logged-in time to divide by. */
-  | 'no_logged_in_time'
-  /** Under the metric's floor. */
-  | 'too_few';
+/** Why a figure is not drawn as a bar: the server's reason (contract `AgencyCompareWithheld`). */
+export type WithheldKind = AgencyCompareWithheld;
 
-export function withheldKind(info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): WithheldKind {
+/**
+ * Why a figure that is not reportable is withheld: the server's `withheld`, decided once by the
+ * shared rule (`compareValue`) and the server's counts-disagree step. An answer recorded before the
+ * server sent it has none: then the reason is read from the counts as the server decides it.
+ */
+export function withheldKind(
+  info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>,
+  v: Pick<AgencyCompareValue, 'value' | 'denominator' | 'withheld'>,
+): WithheldKind {
+  return v.withheld ?? inferredWithheld(info, v);
+}
+
+/** {@link withheldKind} for an answer without `withheld` (recorded before the server sent it). */
+function inferredWithheld(info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): WithheldKind {
   if (isNoneDue(info, v.denominator)) return 'none_due';
-  if (info.definition.unit === 'per_hour') {
-    // Its denominator is logged-in SECONDS: never a count of anything to call "too few".
-    return v.denominator !== null && v.denominator > 0 ? 'counts_disagree' : 'no_logged_in_time';
-  }
+  if (info.definition.unit === 'per_hour') return v.denominator !== null && v.denominator > 0 ? 'counts_disagree' : 'no_logged_in_time';
   if (v.value !== null || v.denominator === null) return 'too_few';
   const floor = info.definition.min_denominator;
   return (floor === null ? v.denominator > 0 : v.denominator >= floor) ? 'counts_disagree' : 'too_few';
@@ -207,64 +205,51 @@ export const COUNTS_DISAGREE_WORDS = 'Not shown: its counts don’t agree';
 export const COUNTS_DISAGREE_SHORT = 'Counts don’t agree';
 export const NO_LOGGED_IN_WORDS = 'No logged-in time';
 
+/** How each reason is worded: in full, short (a narrow chart, the table), and as a screen reader hears it in a chart's summary. */
+interface WithheldCopy {
+  words(info: AgencyCompareMetricInfo, denominator: number | null): string;
+  short(info: AgencyCompareMetricInfo, denominator: number | null): string;
+  spoken: string;
+}
+
+/** Every reason's words, the one table the chart and the table read; only "too few" is computed (it states its counts). */
+const WITHHELD_COPY: Readonly<Record<WithheldKind, WithheldCopy>> = {
+  too_few: { words: tooFewWords, short: tooFewShort, spoken: 'too few to compare' },
+  none_due: { words: () => NONE_DUE_WORDS, short: () => NONE_DUE_WORDS, spoken: 'none due yet' },
+  counts_disagree: { words: () => COUNTS_DISAGREE_WORDS, short: () => COUNTS_DISAGREE_SHORT, spoken: 'not shown, its counts don’t agree' },
+  no_logged_in_time: { words: () => NO_LOGGED_IN_WORDS, short: () => NO_LOGGED_IN_WORDS, spoken: 'no logged-in time' },
+};
+
+type WithheldValue = Pick<AgencyCompareValue, 'value' | 'denominator' | 'withheld'>;
+
 /**
  * The bar's words in place of a bar: "Too few to compare (12 calls; needs 20)" under the floor,
  * "None due yet" for call-backs kept on time with none due, "Not shown: its counts don’t agree"
  * for a figure the server withheld though its counts clear the floor, "No logged-in time" for
- * calls per hour with none. A null denominator (none sent) states no count: an unknown count is
- * never written as 0.
+ * calls per hour with none.
  */
-export function withheldWords(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
-  switch (withheldKind(info, v)) {
-    case 'none_due':
-      return NONE_DUE_WORDS;
-    case 'counts_disagree':
-      return COUNTS_DISAGREE_WORDS;
-    case 'no_logged_in_time':
-      return NO_LOGGED_IN_WORDS;
-    case 'too_few':
-      return tooFewWords(info, v.denominator);
-  }
+export function withheldWords(info: AgencyCompareMetricInfo, v: WithheldValue): string {
+  return WITHHELD_COPY[withheldKind(info, v)].words(info, v.denominator);
 }
 
 /** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
-export function withheldShort(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
-  switch (withheldKind(info, v)) {
-    case 'none_due':
-      return NONE_DUE_WORDS;
-    case 'counts_disagree':
-      return COUNTS_DISAGREE_SHORT;
-    case 'no_logged_in_time':
-      return NO_LOGGED_IN_WORDS;
-    case 'too_few':
-      return tooFewShort(info, v.denominator);
-  }
+export function withheldShort(info: AgencyCompareMetricInfo, v: WithheldValue): string {
+  return WITHHELD_COPY[withheldKind(info, v)].short(info, v.denominator);
 }
 
 /** How a screen reader hears a withheld figure, inside the chart's summary: "too few to compare". */
-export function withheldSpoken(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
-  switch (withheldKind(info, v)) {
-    case 'none_due':
-      return 'none due yet';
-    case 'counts_disagree':
-      return 'not shown, its counts don’t agree';
-    case 'no_logged_in_time':
-      return 'no logged-in time';
-    case 'too_few':
-      return 'too few to compare';
-  }
+export function withheldSpoken(info: AgencyCompareMetricInfo, v: WithheldValue): string {
+  return WITHHELD_COPY[withheldKind(info, v)].spoken;
 }
 
 /**
- * Under the floor: "Too few to compare (12 calls; needs 20)". The count is the metric's own
- * denominator ({@link perWords}); calls per hour's is logged-in seconds, never a count, so it is
- * worded {@link withheldWords}' way and never reaches here as one.
+ * Under the floor: "Too few to compare (12 calls; needs 20)", the count being the metric's own
+ * denominator ({@link perWords}). A null denominator (none sent) states no count: an unknown count
+ * is never written as 0.
  */
 export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number | null): string {
-  if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
-  const counted = info.definition.unit === 'per_hour' ? null : denominator;
   const floor = info.definition.min_denominator;
-  const parts = [counted === null ? null : perWords(info, counted), floor === null ? null : `needs ${formatCount(floor)}`].filter(
+  const parts = [denominator === null ? null : perWords(info, denominator), floor === null ? null : `needs ${formatCount(floor)}`].filter(
     (p): p is string => p !== null,
   );
   return parts.length > 0 ? `Too few to compare (${parts.join('; ')})` : 'Too few to compare';
@@ -272,11 +257,9 @@ export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number |
 
 /** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
 export function tooFewShort(info: AgencyCompareMetricInfo, denominator: number | null): string {
-  if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
-  const counted = info.definition.unit === 'per_hour' ? null : denominator;
   const floor = info.definition.min_denominator;
-  if (counted === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
-  const have = formatCount(counted);
+  if (denominator === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
+  const have = formatCount(denominator);
   return floor === null ? `Too few (${have})` : `Too few (${have} of ${formatCount(floor)})`;
 }
 
@@ -313,11 +296,6 @@ export function removeMetric(metrics: readonly AgencyCompareMetricRef[], id: str
   return metrics.filter((m) => compareMetricId(m) !== id);
 }
 
-/** A ref that can be the per-day trend: an outcome set or `promises_rate`. */
-export function isCountable(ref: AgencyCompareMetricRef): boolean {
-  return definitionOf(ref).countable;
-}
-
 /**
  * The trend's choices: every countable metric on screen, then `promises_rate` when the campaign
  * records promises, then the current trend if it is neither (a saved view's trend need not be on
@@ -332,7 +310,7 @@ export function trendChoices(
   const seen = new Set<string>();
   const push = (ref: AgencyCompareMetricRef) => {
     const id = compareMetricId(ref);
-    if (seen.has(id) || !isCountable(ref) || !resolveCompareMetric(ref, codes).ok) return;
+    if (seen.has(id) || !isCountableRef(ref) || !resolveCompareMetric(ref, codes).ok) return;
     seen.add(id);
     out.push(ref);
   };
@@ -428,7 +406,7 @@ export function applyToCatalog(
   if (trend === null) return { metrics, trend: null, dropped, trendDropped: null };
   const label = metricLabel(trend, codes);
   if (!resolveCompareMetric(trend, codes).ok) return { metrics, trend: null, dropped, trendDropped: { label, reason: 'catalog' } };
-  if (!isCountable(trend)) return { metrics, trend: null, dropped, trendDropped: { label, reason: 'not_countable' } };
+  if (!isCountableRef(trend)) return { metrics, trend: null, dropped, trendDropped: { label, reason: 'not_countable' } };
   return { metrics, trend: inCatalogOrder(trend, codes), dropped, trendDropped: null };
 }
 

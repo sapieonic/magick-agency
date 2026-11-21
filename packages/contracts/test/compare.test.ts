@@ -6,6 +6,7 @@ import {
   COMPARE_BUILTIN_METRIC_KEYS,
   COMPARE_CALLBACKS_MIN_DENOMINATOR,
   COMPARE_FINDING_CODES,
+  AGENCY_COMPARE_WITHHELD,
   COMPARE_LENSES,
   COMPARE_METRIC_BETTER,
   COMPARE_METRIC_GROUPS,
@@ -27,6 +28,7 @@ import {
   type CompareBuiltinMetricKey,
   type CompareFindingCode,
   type CompareLens,
+  type AgencyCompareWithheld,
   type CompareMetricBetter,
   type CompareMetricGroup,
   type CompareMetricRefProblem,
@@ -46,9 +48,10 @@ const _groups: Equals<(typeof COMPARE_METRIC_GROUPS)[number], CompareMetricGroup
 const _findings: Equals<(typeof COMPARE_FINDING_CODES)[number], CompareFindingCode> = true;
 const _steps: Equals<(typeof COMPARE_NEXT_STEPS)[number], CompareNextStep> = true;
 const _problems: Equals<(typeof COMPARE_METRIC_REF_PROBLEMS)[number], CompareMetricRefProblem> = true;
+const _withheld: Equals<(typeof AGENCY_COMPARE_WITHHELD)[number], AgencyCompareWithheld> = true;
 // Reached through the AgencyApi namespace like its siblings.
 const _namespaced: Equals<AgencyApi.AgencyCompareMetricRef, AgencyCompareMetricRef> = true;
-void [_lenses, _keys, _units, _better, _groups, _findings, _steps, _problems, _namespaced];
+void [_lenses, _keys, _units, _better, _groups, _findings, _steps, _problems, _withheld, _namespaced];
 
 const CATALOG: AgencyCompareOutcomeCode[] = [
   { code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true },
@@ -69,6 +72,10 @@ describe('compare vocabularies (SNAPSHOT, written out by hand)', () => {
       'listen_recent', 'listen_outcome', 'share_best_call', 'open_breaks', 'message_outcome_tip', 'late_callbacks',
     ]);
     expect(COMPARE_PAGE_MAX_AGENTS).toBe(3);
+  });
+
+  it('the reasons a figure is withheld', () => {
+    expect([...AGENCY_COMPARE_WITHHELD]).toEqual(['too_few', 'none_due', 'counts_disagree', 'no_logged_in_time']);
   });
 });
 

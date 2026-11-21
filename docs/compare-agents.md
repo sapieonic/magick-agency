@@ -149,7 +149,7 @@ most 50 per supervisor per account.
 Drawn in SVG in the console, as `AgentBucketChart` is; no chart library. Agent colours are the
 first three categorical slots; activity colours are a separate set, so a colour never means both a
 person and an activity. The band and median are the roster benchmark's method
-(`cohortPercentiles`, `percentile_cont`, which the roster's `rosterPercentiles` now calls), over the
+(`cohortPercentiles`, `percentile_cont`, which the roster's benchmark calls too), over the
 campaign's agents who clear the metric's floor, not a second percentile implementation.
 
 ## 6. Findings
@@ -205,9 +205,8 @@ agents and the campaign's cohort:
 
 Guards: `SET LOCAL statement_timeout` of 3 s inside the read's transaction (the pool sets none by
 default, `db-hygiene.md`); at most 2 compare reads at a time per tenant (429 past it); a 30 s
-in-process cache keyed by tenant, the caller's membership scope, campaign, window, zone, agents,
-metric ids and trend id (`COMPARE_TENANT_CONCURRENT_READS`, `COMPARE_READ_TIMEOUT_MS`,
-`COMPARE_CACHE_TTL_MS`). The options read counts against the same limit. Metrics: `agency_compare_read_seconds` (histogram), `agency_compare_reads_refused_total`.
+in-process cache of the cohort's snapshot, keyed by what its SQL reads ("The caches" below)
+(`COMPARE_TENANT_CONCURRENT_READS`, `COMPARE_READ_TIMEOUT_MS`, `COMPARE_CACHE_TTL_MS`). The options read counts against the same limit. Metrics: `agency_compare_read_seconds` (histogram), `agency_compare_reads_refused_total`.
 
 **Trigger for the analytics child:** the read's p95 above 1.5 s for a day, or `db_pool_acquire_seconds`
 rising while compare reads run. Then the read moves to a child forked by the primary with its own
@@ -253,19 +252,31 @@ reads a number other than the way the text above words it, the reason:
   is in the series and in that day's median. A server test plans the statement with its
   `OFFLINE_BOUNDARY_EVENT_SQL` and finds 0065's index in the plan.
 - **Outcome codes** are the campaign's current catalog, or the default catalog when it stores none
-  (My day's `effectiveCatalog`). `success_rate` keeps the roster's rule (the stored catalog).
-- **The caches** (30 s each): the query's answer, and the options' cohort on its own key (tenant,
-  account, campaign, window, zone); the options' default view is read fresh every time, so a save
-  shows at once. An answer from either takes no slot. The query's key carries no outcome set's label
-  (the id has none), so a cached answer is served with the request's own `metrics` and
-  `trend_metric`. The caller's scope in the keys is the context account: the cohort is the account's
-  roster whoever in the account asks.
-- **Zones.** A legacy zone name a browser's ICU reports (Chromium's `Asia/Calcutta` for India) that
-  Postgres does not know is cut in its current name (`LEGACY_ZONE_ALIASES`, `agency/reports/zone.ts`,
-  shared with report exports). The answer echoes the request's zone; the days are cut in Postgres's
-  name for it.
-- **Impossible counts are withheld** (`value` null, not reportable, no interval; the counts still
-  served), as the roster does for `occupancy_pct`: a rate over its denominator (`promises_rate`
+  (`effectiveCatalog`, `agency/disposition-policy.ts`, which My day reads too). `success_rate` keeps
+  the roster's rule (the stored catalog).
+- **The caches** (30 s each): a query's **snapshot**, not its answer: the cohort's sources, keyed
+  by what its SQL reads (`compareSnapshotKey`: tenant, account, campaign, window, zone, the sources
+  the metrics need, the trend's id, and whose occupancy is read: the whole cohort when
+  `calls_per_hour` is on screen, else the picked agents, sorted). Every request is answered from it
+  for its own picks, metrics, labels and order (`compareAnswer`, pure; the cohort's names are in the
+  snapshot), so a chip toggled with `calls_per_hour` on screen, a reorder of the chips or the
+  metrics, or another metric of a source already read sends no SQL and takes no slot. Without
+  `calls_per_hour` on screen a new pick is a new snapshot: its day split needs that agent's
+  occupancy, and the whole cohort's statement costs 3.3 s on a busy month against 0.1 s for three
+  agents ("Cost, measured"), so it is not read for every snapshot; and one answer's sources are never
+  split across two snapshots. The options' cohort is cached on its own key (tenant, account, campaign,
+  window, zone); the options' default view is read fresh every time, so a save shows at once. A
+  snapshot or a cohort from the cache takes no slot. The caller's scope in the keys is the context
+  account: the cohort is the account's roster whoever in the account asks.
+- **Zones.** A zone must pass the cheap rules first (`isRequestZone`, `agency/zone.ts`, the
+  reports' rule: `Intl`, trimmed, at most 64 characters); only then is Postgres asked whether it can
+  cut days in it (`postgresZoneName`). A legacy zone name a browser's ICU reports (Chromium's
+  `Asia/Calcutta` for India) that Postgres does not know is cut in its current name
+  (`LEGACY_ZONE_ALIASES` and `currentZoneName` in `@magick-agency/domain/zone-clock`, the one table:
+  the console maps the reader's zone by it too, when the browser knows the current name). The answer
+  echoes the request's zone; the days are cut in Postgres's name for it.
+- **Impossible counts are withheld** (`value` null, not reportable, no interval,
+  `withheld: 'counts_disagree'`; the counts still served), as the roster does for `occupancy_pct`: a rate over its denominator (`promises_rate`
   counts promises when recorded and conversations when dialled) or `calls_per_hour` over a shift
   shorter than the calls' own talk and wrap-up. Such an agent is left out of that metric's band,
   pooled figure and findings.
@@ -294,24 +305,18 @@ reads a number other than the way the text above words it, the reason:
 - **Stopping a read.** The deadline itself is the backstop (and stops a read between statements);
   the client going away is the other stop (its connection closes before the answer, or was already
   closed when the handler started, as when the console aborts a superseded read; a query read is
-  aborted once no request waits on it). Either way the statement running is cancelled on a
-  connection of its own (`cancelBackend`, `packages/db`, never through the shared pool, where it
-  would queue behind every borrower), by the backend's own pid: `pg_backend_pid()`, read in the
-  settings statement, never `client.processID`, which behind the Supabase session pooler (the
-  deployment default) is the pooler's own number, so a cancel by it signalled nothing or, by chance,
-  another backend of the same role. (The protocol's CancelRequest, `processID` and the secret key, is
-  not used: it depends on the pooler forwarding it, and `pg` sends it without TLS.) The cancel never
-  throws (the pool's options are read inside it, its connection built and ended inside it, and a
-  rejection counts as not sent), it is awaited, no further statement is sent, and the connection is
-  destroyed rather than returned to the pool, so a cancel that lands late can never stop another
-  borrower's statement. A signalled statement still running a second after its cancel is abandoned
-  with its connection. A cancel that could not be sent (no connection for it, the server refusing
-  it) leaves the statement running until its own `statement_timeout`, so the slot is held until that
-  bound has passed, plus the second, before the read gives up. The slot comes back once the
-  statement has ended or that bound has passed. The report cursor reads its pid and sends its cancel
-  the same way (its bound is the report's deadline). The cancel's connection and a destroyed
-  connection's backend that is still finishing are counted in the Postgres connection budget
-  (`operations.md`, "Sizing the media workers", *Postgres connections*).
+  aborted once no request waits on it). Either way the statement running is cancelled as
+  `withCancellableRead` does it (`packages/db/src/utils/cancellable-read.ts`, whose note has the whole
+  rule): on a connection of its own (`cancelBackend`), by the backend's own pid
+  (`pg_backend_pid()`, never `processID`, a pooler's number behind the Supabase session pooler), the
+  cancel awaited, no further statement sent, the connection destroyed rather than returned to the
+  pool. Compare's options: a signalled statement still running a second after its cancel is
+  abandoned with its connection; a cancel that could not be sent leaves the statement running until
+  its own `statement_timeout`, so the slot is held until that bound has passed, plus the second. The
+  report cursor runs through the same helper with its own options (a fixed bound, the role's ceiling,
+  no grace). The cancel's connection and a destroyed connection's backend that is still finishing are
+  counted in the Postgres connection budget (`operations.md`, "Sizing the media workers", *Postgres
+  connections*).
 - **Saved views' default.** An edit that does not send `is_campaign_default` keeps the view's value
   as read under the row's lock in the edit's own transaction (after the campaign's lock), never the
   value the route read before it: a rename cannot take the default back from another supervisor who
@@ -323,8 +328,13 @@ parallel workers (the read now allows one: about 0.1 s more on the attempt state
 above): the roster attempt statement 1.3–1.5 s (a parallel scan of the window; `idx_agency_attempts_campaign_dialed` on a 7-day window,
 0.5 s), the roster occupancy statement for the whole cohort **4.3 s** (every event of the window, its
 window sort spilling to disk; 0.9 s on 7 days), the same for three picked agents 0.1 s, rollup codes
-0.1 s, promises 0.03 s, call-backs 0.03 s, breaks over the limit 0.08 s, the trend's days 0.03 s (an
-index scan of 0065 per session, 3,100 probes; walking the window's state events took 5.5 s).
+0.1 s, promises 0.03 s, call-backs 0.03 s, breaks over the limit 0.002 s on 0066's index (0.09 s and
+28,000 buffers before it: every state change of the window), the trend's days 0.03 s (an index scan
+of 0065 per session, 3,100 probes; walking the window's state events took 5.5 s). Measured again
+for the snapshot cache (2026-11-21, the same seed): the cohort's attempt statement 0.98 s on 31 days
+(0.39 s on 7), the whole cohort's occupancy 3.3 s (0.86 s on 7), three picked agents' 0.10 s (0.02 s
+on 7); so the occupancy stays per pick unless `calls_per_hour` is on screen, and a cached snapshot
+answers any pick it covers.
 So on a campaign this busy a month with `calls_per_hour` on screen (the Sales and Verification
 lenses) answers `503 compare_timed_out`; a week answers. That is the roster screen's own statement
 and cost for the same window (it has no timeout); the trigger above is the remedy, or a narrower
@@ -358,10 +368,17 @@ Refusals are `{ error, code, message }` with the codes of `src/errors.ts` §9
 through the error mask), `compare_view_not_found` 404, `compare_view_invalid` 400,
 `compare_view_limit` 409.
 
+A figure that is not `reportable` says why in `withheld` (`AgencyCompareWithheld`,
+`AGENCY_COMPARE_WITHHELD`: `too_few`, `none_due`, `counts_disagree`, `no_logged_in_time`; null when
+reportable), set by `compareValue` and the read's counts-disagree step, so the chart and the table
+word it the same. Additive: optional in the type, always sent by this server; the console reads a
+recorded answer without it from its counts.
+
 The rules both sides share are in `@magick-agency/domain/agent-compare`: `resolveCompareMetrics`
-(a request's or view's refs against the catalog), `compareValue`, `compareCohortMetric`
-(`cohortPercentiles`, the roster benchmark's `percentile_cont`; the roster's `rosterPercentiles`
-delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`, `compareFindings`.
+(a request's or view's refs against the catalog), `isCountableRef` (the trend rule), `compareValue`
+(a metric's figure and why it is withheld), `compareCohortMetric` (`cohortPercentiles`, the roster
+benchmark's `percentile_cont`, which the roster calls too), `wilsonInterval`, `compareLensDefaults`,
+`compareStartingLens`, `compareFindings`.
 
 ## 9. Build plan and status
 
@@ -423,9 +440,19 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   `pg_backend_pid()`, the awaited cancel, the abandon, the slot held until the statement ends or,
   when the cancel was not sent, until its timeout bound, a throwing cancel, the process-wide limit,
   a shared read's joiner and last waiter, an already-gone socket):
-  `apps/server/test/unit/agency/compare/compare-read-cancel.test.ts`; the day statements given
+  `apps/server/test/unit/agency/compare/compare-read-cancel.test.ts`; the snapshot cache (a pick
+  change with calls per hour on screen, a reorder of picks or metrics: no SQL, no slot; a new source
+  or a new pick without calls per hour: a new snapshot): `compare-read-cache.test.ts` and its key
+  `compare-read-guards.test.ts`; the helper itself (the cancel once by pid, awaited, the connection
+  destroyed, the grace, an unsent cancel's bound, a deadline's lowering):
+  `packages/db/test/unit/utils/cancellable-read.test.ts` and, on Postgres, its ceilings and a real
+  stop, `packages/db/test/integration/cancellable-read.test.ts`; the day statements given
   Postgres's zone name, not the request's: `compare-read-zone.test.ts`; the options route's order and
-  a PATCH's unsent default: `test/unit/api/routes/proxy-agency-compare.routes.test.ts`; the trend
-  days' plan on 0065: `test/integration/agency/compare-offline-index.test.ts`; the shared cancel with
+  a PATCH's unsent default, a zone looked up only after the cheap rules, the busy and timed-out
+  bodies byte for byte: `test/unit/api/routes/proxy-agency-compare.routes.test.ts`; the trend
+  days' plan on 0065: `test/integration/agency/compare-offline-index.test.ts`; the breaks over their
+  limit on 0066: `compare-break-overrun-index.test.ts` and the db package's
+  `session-events-break-overrun-index-migration.test.ts`; each withheld reason: the domain's
+  `metrics.test.ts`, the console's `compareMetrics.test.ts` and `CompareNumbers.test.tsx`; the shared cancel with
   the pool exhausted, and never throwing: `packages/db/test/integration/cancel-backend.test.ts`; the
   report cursor's cancel by its backend's pid: `report-assembler-deadline.test.ts`. Mutation-checked.

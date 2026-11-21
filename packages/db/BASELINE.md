@@ -1860,6 +1860,21 @@ a statement repeating the predicate uses it, the invalid-index refusal, down the
 `test/integration/api/compare-agents.test.ts` (the days, open sessions with offline gaps) and the
 down → up inventory suite.
 
+### 0066 — `migrations/0066_session_events_break_overrun_index.sql`
+
+Compare agents' breaks over their limit (docs/compare-agents.md §7).
+**`idx_agency_session_events_break_overrun`** `(campaign_id, at) WHERE break_overrun_seconds IS NOT
+NULL` on `agency_agent_session_events`: the events that ended a break over its limit (0060's column,
+at most one per break), by campaign and time. `COMPARE_BREAK_OVERRUNS_SQL` read them through
+`idx_agency_session_events_campaign_at`, every state change of the window (on a month of 100 agents,
+1.4M events: 86 ms and 28,000 buffers; on this index 1.8 ms and 3,100). `CREATE INDEX IF NOT EXISTS`
+after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first on a large
+table; an invalid index left under the name by a failed concurrent build fails the migration.
+**Down** drops it. **Tests**: `test/integration/db/session-events-break-overrun-index-migration.test.ts`
+(the definition and comment, a statement repeating the predicate uses it, the invalid-index refusal,
+down then up), the server's `test/integration/agency/compare-break-overrun-index.test.ts` (the read's
+own statement is planned on it) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

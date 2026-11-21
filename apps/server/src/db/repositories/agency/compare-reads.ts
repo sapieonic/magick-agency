@@ -74,18 +74,22 @@ export interface ComparePromiseRow {
   other_conversations: number;
 }
 
+/** IN4's classes of one agent's booked call-backs, counted. */
+export type CompareCallbackClasses = Readonly<Record<InsightsCallbackClass, number>>;
+
+/** An agent with no booked call-back. */
+export const ZERO_CALLBACKS: CompareCallbackClasses = Object.freeze({ on_time: 0, late: 0, missed: 0, pending_future: 0, pending_due: 0 });
+
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
 /**
- * The cohort's promises (CP2): recorded on the campaign in the window, every call type, by the
- * agent who took the call; and their soft-phone and inbound conversations. Each call table on its
- * 0050 promise index (`idx_*_promise_written`: tenant, account, `dispositioned_at`), the soft-phone
- * conversations on `idx_agency_manual_calls_campaign`, the inbound on
- * `idx_agency_inbound_calls_account_arrived`.
+ * Every promise recorded (`dispositioned_at`) on the campaign in the window by a cohort agent, on
+ * the three call tables, each by the agent who took the call: `(agent_user_id, promise_amount, at)`.
+ * Each call table on its 0050 promise index (`idx_*_promise_written`: tenant, account,
+ * `dispositioned_at`). Shared by {@link COMPARE_PROMISES_SQL} and {@link COMPARE_PROMISE_DAYS_SQL}.
  */
-export const COMPARE_PROMISES_SQL = `
-  WITH promised AS (
-    SELECT s.agent_user_id, p.promise_amount
+const PROMISED_ROWS_SQL = `
+    SELECT s.agent_user_id, p.promise_amount, p.dispositioned_at AS at
       FROM agency_call_attempts p
       JOIN agency_agent_sessions s ON s.id = p.reserved_agent_id
      WHERE p.tenant_id = $2::uuid AND p.account_id = $3::uuid AND p.promise_date IS NOT NULL
@@ -94,19 +98,27 @@ export const COMPARE_PROMISES_SQL = `
        AND s.tenant_id = $2::uuid AND s.account_id = $3::uuid
        AND s.agent_user_id = ANY($6::uuid[])
     UNION ALL
-    SELECT m.agent_user_id, m.promise_amount
+    SELECT m.agent_user_id, m.promise_amount, m.dispositioned_at
       FROM agency_manual_calls m
      WHERE m.tenant_id = $2::uuid AND m.account_id = $3::uuid AND m.promise_date IS NOT NULL
        AND m.dispositioned_at >= $4::timestamptz AND m.dispositioned_at < $5::timestamptz
        AND m.campaign_id = $1::uuid
        AND m.agent_user_id = ANY($6::uuid[])
     UNION ALL
-    SELECT i.answered_by_user_id, i.promise_amount
+    SELECT i.answered_by_user_id, i.promise_amount, i.dispositioned_at
       FROM agency_inbound_calls i
      WHERE i.tenant_id = $2::uuid AND i.account_id = $3::uuid AND i.promise_date IS NOT NULL
        AND i.dispositioned_at >= $4::timestamptz AND i.dispositioned_at < $5::timestamptz
        AND i.matched_campaign_id = $1::uuid
-       AND i.answered_by_user_id = ANY($6::uuid[])
+       AND i.answered_by_user_id = ANY($6::uuid[])`;
+
+/**
+ * The cohort's promises (CP2, {@link PROMISED_ROWS_SQL}) and their soft-phone and inbound
+ * conversations: the soft-phone ones on `idx_agency_manual_calls_campaign`, the inbound on
+ * `idx_agency_inbound_calls_account_arrived`.
+ */
+export const COMPARE_PROMISES_SQL = `
+  WITH promised AS (${PROMISED_ROWS_SQL}
   ), conversations AS (
     SELECT m.agent_user_id, COUNT(*) AS n
       FROM agency_manual_calls m
@@ -137,48 +149,30 @@ export const COMPARE_PROMISES_SQL = `
     ) x
    GROUP BY x.agent_user_id`;
 
-/** The cohort's promises per local day of `dispositioned_at` in `$7` (the trend of `promises_rate`). */
+/** The cohort's promises ({@link PROMISED_ROWS_SQL}) per local day of `dispositioned_at` in `$7` (the trend of `promises_rate`). */
 export const COMPARE_PROMISE_DAYS_SQL = `
   SELECT x.agent_user_id, to_char(x.at AT TIME ZONE $7::text, 'YYYY-MM-DD') AS date, COUNT(*)::text AS n
-    FROM (
-      SELECT s.agent_user_id, p.dispositioned_at AS at
-        FROM agency_call_attempts p
-        JOIN agency_agent_sessions s ON s.id = p.reserved_agent_id
-       WHERE p.tenant_id = $2::uuid AND p.account_id = $3::uuid AND p.promise_date IS NOT NULL
-         AND p.dispositioned_at >= $4::timestamptz AND p.dispositioned_at < $5::timestamptz
-         AND p.campaign_id = $1::uuid
-         AND s.tenant_id = $2::uuid AND s.account_id = $3::uuid
-         AND s.agent_user_id = ANY($6::uuid[])
-      UNION ALL
-      SELECT m.agent_user_id, m.dispositioned_at
-        FROM agency_manual_calls m
-       WHERE m.tenant_id = $2::uuid AND m.account_id = $3::uuid AND m.promise_date IS NOT NULL
-         AND m.dispositioned_at >= $4::timestamptz AND m.dispositioned_at < $5::timestamptz
-         AND m.campaign_id = $1::uuid
-         AND m.agent_user_id = ANY($6::uuid[])
-      UNION ALL
-      SELECT i.answered_by_user_id, i.dispositioned_at
-        FROM agency_inbound_calls i
-       WHERE i.tenant_id = $2::uuid AND i.account_id = $3::uuid AND i.promise_date IS NOT NULL
-         AND i.dispositioned_at >= $4::timestamptz AND i.dispositioned_at < $5::timestamptz
-         AND i.matched_campaign_id = $1::uuid
-         AND i.answered_by_user_id = ANY($6::uuid[])
+    FROM (${PROMISED_ROWS_SQL}
     ) x
    GROUP BY 1, 2`;
 
 /**
- * The cohort's dialler conversations on the campaign by code: the rollup's codes table through
- * the campaign row matched on id AND tenant (the rollup carries no tenant, as every Insights read
- * opens). `uq_agency_insights_rollup_codes` leads with (campaign_id, bucket_start).
+ * The cohort's dialler conversations on the campaign in the window: the rollup's codes table
+ * through the campaign row matched on id AND tenant (the rollup carries no tenant, as every Insights
+ * read opens). `uq_agency_insights_rollup_codes` leads with (campaign_id, bucket_start). Shared by
+ * {@link COMPARE_ROLLUP_CODES_SQL} and {@link COMPARE_ROLLUP_CODE_DAYS_SQL}.
  */
-export const COMPARE_ROLLUP_CODES_SQL = `
-  SELECT r.agent_user_id, r.disposition_code, SUM(r.conversations)::text AS conversations
+const ROLLUP_CODES_FROM_SQL = `
     FROM agency_insights_rollup_codes r
     JOIN agency_campaigns c ON c.id = r.campaign_id AND c.tenant_id = $2::uuid
    WHERE r.campaign_id = $1::uuid
      AND r.bucket_start >= $3::timestamptz AND r.bucket_start < $4::timestamptz
      AND r.agent_user_id = ANY($5::uuid[])
-     AND r.conversations > 0
+     AND r.conversations > 0`;
+
+/** The cohort's dialler conversations on the campaign by code ({@link ROLLUP_CODES_FROM_SQL}). */
+export const COMPARE_ROLLUP_CODES_SQL = `
+  SELECT r.agent_user_id, r.disposition_code, SUM(r.conversations)::text AS conversations${ROLLUP_CODES_FROM_SQL}
    GROUP BY r.agent_user_id, r.disposition_code`;
 
 /**
@@ -187,14 +181,8 @@ export const COMPARE_ROLLUP_CODES_SQL = `
  */
 export const COMPARE_ROLLUP_CODE_DAYS_SQL = `
   SELECT r.agent_user_id, to_char(r.bucket_start AT TIME ZONE $7::text, 'YYYY-MM-DD') AS date,
-         SUM(r.conversations)::text AS n
-    FROM agency_insights_rollup_codes r
-    JOIN agency_campaigns c ON c.id = r.campaign_id AND c.tenant_id = $2::uuid
-   WHERE r.campaign_id = $1::uuid
-     AND r.bucket_start >= $3::timestamptz AND r.bucket_start < $4::timestamptz
-     AND r.agent_user_id = ANY($5::uuid[])
+         SUM(r.conversations)::text AS n${ROLLUP_CODES_FROM_SQL}
      AND r.disposition_code = ANY($6::text[])
-     AND r.conversations > 0
    GROUP BY 1, 2`;
 
 /**
@@ -228,7 +216,9 @@ export const COMPARE_CALLBACKS_SQL = `
 /**
  * Breaks that ended over their reason's limit, per cohort agent, on the campaign's sessions in the
  * window: 0060's column, set only on the event that ended a break that ran over (a reserved break
- * never), read on `idx_agency_session_events_campaign_at` (campaign_id, at).
+ * never), read on 0066's `idx_agency_session_events_break_overrun` ((campaign_id, at) where the
+ * column is set), never the campaign's every state change. Held by
+ * `test/integration/agency/compare-break-overrun-index.test.ts`, which plans this statement.
  */
 export const COMPARE_BREAK_OVERRUNS_SQL = `
   SELECT e.agent_user_id, count(*)::int AS breaks
@@ -355,7 +345,7 @@ export class AgencyCompareReadRepository {
   }
 
   /** {@link COMPARE_CALLBACKS_SQL}: per agent, the count in each IN4 class. */
-  async callbacks(db: RosterQueryable, q: CompareCohortScope & { now: Date }): Promise<Map<string, Record<InsightsCallbackClass, number>>> {
+  async callbacks(db: RosterQueryable, q: CompareCohortScope & { now: Date }): Promise<Map<string, CompareCallbackClasses>> {
     const out = new Map<string, Record<InsightsCallbackClass, number>>();
     if (q.agentIds.length === 0) return out;
     const { rows } = await db.query<{ agent_user_id: string; cls: InsightsCallbackClass; n: number }>(
@@ -363,7 +353,7 @@ export class AgencyCompareReadRepository {
       [...scopeValues(q), q.now, AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES],
     );
     for (const r of rows) {
-      const classes = out.get(r.agent_user_id) ?? { on_time: 0, late: 0, missed: 0, pending_future: 0, pending_due: 0 };
+      const classes = out.get(r.agent_user_id) ?? { ...ZERO_CALLBACKS };
       classes[r.cls] += n(r.n);
       out.set(r.agent_user_id, classes);
     }

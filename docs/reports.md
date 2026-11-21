@@ -206,7 +206,7 @@ review's agent has no ACTIVE membership of the account (a supervisor's review ta
 so someone who left can still be reviewed), and when a campaign report's campaign has changed its
 time zone since the run was requested (the window was cut in the old zone, the Insights day
 buckets would be cut in the new one: "run it again"). The agent and account builders resolve the
-run's zone against `pg_timezone_names` (`resolveReportZone`, through `zone.ts`'s `postgresZoneName`,
+run's zone against `pg_timezone_names` (`resolveReportZone`, through `agency/zone.ts`'s `postgresZoneName`,
 the routes' own lookup, remembered per process); a zone Postgres does not know
 fails assembly with a clear message rather than the account's days being cut in UTC silently. RP1 is held by `test/integration/api/report-datasets-oracle.test.ts`,
 which checks every block a screen serves against that screen's response for the same window,
