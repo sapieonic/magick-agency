@@ -22,6 +22,8 @@ const BAR_BOTTOM = 20;
 const BAR_RIGHT = 58;
 /** Roughly the width of one character of the 12px value label, to keep it inside the SVG. */
 const CHAR_WIDTH = 7;
+/** Roughly the width of one character of the 11.5px italic withheld words. */
+const WITHHELD_CHAR_WIDTH = 6;
 
 export interface BarRowInput {
   /** The figure in its unit (a rate as a fraction). */
@@ -33,6 +35,8 @@ export interface BarRowInput {
   valueText: string;
   /** What is drawn in place of a bar under the floor, already worded. */
   withheldText: string;
+  /** The same in fewer words, drawn when the long form would not fit the plot. */
+  withheldShort?: string;
 }
 
 export interface BarChartInput {
@@ -99,7 +103,10 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
   const band = p25 !== null && p75 !== null ? { x: x(p25), width: Math.max(2, x(p75) - x(p25)) } : null;
   const rows = input.rows.map((row, i): BarRowGeometry => {
     const y = BAR_TOP + i * BAR_ROW_HEIGHT;
-    if (!row.reportable || row.value === null) return { kind: 'withheld', y, x0: left, text: row.withheldText };
+    if (!row.reportable || row.value === null) {
+      const fits = row.withheldText.length * WITHHELD_CHAR_WIDTH <= width - left;
+      return { kind: 'withheld', y, x0: left, text: fits || !row.withheldShort ? row.withheldText : row.withheldShort };
+    }
     const barW = Math.max(3, x(row.value) - left);
     const whisker = row.interval ? { x1: x(row.interval[0]), x2: x(row.interval[1]) } : null;
     const after = Math.max(left + barW, whisker ? whisker.x2 : 0) + 6;

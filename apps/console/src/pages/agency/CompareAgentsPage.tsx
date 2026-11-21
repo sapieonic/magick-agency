@@ -32,6 +32,7 @@ import {
   EMPTY_SLOTS,
   compareStateFromParams,
   compareStateToParams,
+  keepAgents,
   longerWindow,
   pickedAgents,
   toggleAgent,
@@ -49,7 +50,8 @@ import {
 } from '../../utils/agency/compare/compareMetrics';
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
-import { formatClockTime } from '../../utils/format/date';
+import { dateFormatter } from '../../utils/format/date';
+import { plural } from '../../utils/format/number';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
 import { CompareMetricPicker } from '../../components/agency/compare/CompareMetricPicker';
 import { CompareFindings } from '../../components/agency/compare/CompareFindings';
@@ -445,7 +447,11 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
             </h2>
             <span className={styles.cardSub}>{`${opts.agents.length} took calls on ${opts.campaign_name} in this window`}</span>
           </div>
-          <CompareAgentChips agents={opts.agents} slots={state.slots} onToggle={(id) => update({ slots: toggleAgent(state.slots, id) })} />
+          <CompareAgentChips
+            agents={opts.agents}
+            slots={state.slots}
+            onToggle={(id) => update({ slots: toggleAgent(keepAgents(state.slots, cohortIds), id) })}
+          />
           {outOfCohort > 0 ? (
             <p className={styles.note} role="status">
               {outOfCohort === 1
@@ -456,7 +462,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
         </section>
       ) : null}
 
-      {opts && chartAgents.length > 0 ? (
+      {response && chartAgents.length > 0 ? (
         <ul className={styles.legend} aria-label="Legend">
           {chartAgents.map((a) => (
             <li key={a.id}>
@@ -496,7 +502,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
                 <h2 className={styles.cardTitle} id={`${ids}-sbs`}>
                   Side by side
                 </h2>
-                <span className={styles.cardSub}>{`${response.cohort.agents} agents on this campaign · as of ${formatClockTime(new Date(response.as_of))}`}</span>
+                <span className={styles.cardSub}>{`${response.cohort.agents} agents on this campaign · as of ${asOfTime(response.as_of)}`}</span>
               </div>
               <div className={styles.bars}>
                 {response.metrics.map((info) => (
@@ -524,7 +530,9 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
                 <h2 className={styles.cardTitle} id={`${ids}-trend`}>
                   {response.trend_metric ? `${infoLabel(response.trend_metric)} per day` : 'Per day'}
                 </h2>
-                {response.trend ? <span className={styles.cardSub}>{`${response.trend.dates.length} days · dashed: team median`}</span> : null}
+                {response.trend ? (
+                  <span className={styles.cardSub}>{`${plural(response.trend.dates.length, 'day')} · dashed: team median`}</span>
+                ) : null}
               </div>
               {response.trend && response.trend_metric && response.trend.dates.length > 1 ? (
                 <TrendChart trend={response.trend} agents={chartAgents} label={infoLabel(response.trend_metric)} />
@@ -569,6 +577,13 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
       ) : null}
     </div>
   );
+}
+
+/** When the figures were read, as the console writes a time: "3:05 PM" (AS15). */
+export function asOfTime(iso: string): string {
+  return dateFormatter({ hour: 'numeric', minute: '2-digit', hour12: true })
+    .format(new Date(iso))
+    .replace(/\s*(am|pm)$/i, (_m, half: string) => ` ${half.toUpperCase()}`);
 }
 
 function ReadError({ error, onRetry, fallback }: { error: unknown; onRetry: () => void; fallback: string }) {

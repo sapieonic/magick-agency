@@ -192,7 +192,7 @@ export function OutcomeSetBuilder({ codes, metrics, onAdd }: OutcomeSetBuilderPr
         })}
       </div>
       <div className={styles.builderRow}>
-        <div className={styles.field}>
+        <div className={`${styles.field} ${styles.nameField}`}>
           <label className={styles.fieldLabel} htmlFor={`${ids}-name`}>
             Name (optional)
           </label>

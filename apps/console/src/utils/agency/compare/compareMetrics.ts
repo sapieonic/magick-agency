@@ -161,6 +161,13 @@ export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number |
   return floor === null ? `Too few to compare (${have})` : `Too few to compare (${have}; needs ${formatCount(floor)})`;
 }
 
+/** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
+export function tooFewShort(info: AgencyCompareMetricInfo, denominator: number | null): string {
+  const floor = info.definition.min_denominator;
+  const have = formatCount(denominator ?? 0);
+  return floor === null ? `Too few (${have})` : `Too few (${have} of ${formatCount(floor)})`;
+}
+
 // ─── The picker ────────────────────────────────────────────────────────────
 
 /** The built-ins this campaign may show, in catalog order (promise metrics only when it records promises). */

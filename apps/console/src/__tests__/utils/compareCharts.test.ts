@@ -68,6 +68,13 @@ describe('side by side', () => {
     expect((g.rows[0] as { text: string }).text).toBe('Too few to compare (12 calls; needs 20)');
   });
 
+  it('says it in fewer words when the long form would not fit', () => {
+    const rows = [row(0.4, { reportable: false, withheldShort: 'Too few (12 of 20)' })];
+    const cohort = { p25: null, median: null, p75: null };
+    expect((barChartGeometry({ width: 500, rows, cohort, isRate: true }).rows[0] as { text: string }).text).toBe('Too few to compare (12 calls; needs 20)');
+    expect((barChartGeometry({ width: 240, rows, cohort, isRate: true }).rows[0] as { text: string }).text).toBe('Too few (12 of 20)');
+  });
+
   it('puts a rate’s whisker on its interval and the value past its end, inside the SVG', () => {
     const g = barChartGeometry({
       width: 300,

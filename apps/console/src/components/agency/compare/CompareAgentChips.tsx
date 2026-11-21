@@ -35,7 +35,9 @@ export interface CompareAgentChipsProps {
 
 export function CompareAgentChips({ agents, slots, onToggle }: CompareAgentChipsProps) {
   const [filter, setFilter] = useState('');
-  const picked = pickedAgents(slots);
+  // Only the picks in this window's cohort count: one from a link who did not dial here holds no chip.
+  const inCohort = new Set(agents.map((a) => a.agent_user_id));
+  const picked = pickedAgents(slots).filter((id) => inCohort.has(id));
   const full = picked.length >= COMPARE_PAGE_MAX_AGENTS;
   const needle = filter.trim().toLowerCase();
   const shown = agents.filter((a) => slots.includes(a.agent_user_id) || !needle || cohortAgentName(a).toLowerCase().includes(needle));

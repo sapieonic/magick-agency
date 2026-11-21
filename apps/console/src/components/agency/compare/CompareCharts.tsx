@@ -18,7 +18,7 @@ import {
   trendGeometry,
   type DaySplitKey,
 } from '../../../utils/agency/compare/compareCharts';
-import { formatMetricValue, formatRate, infoLabel, metricSubtitle, tooFewWords } from '../../../utils/agency/compare/compareMetrics';
+import { formatMetricValue, formatRate, infoLabel, metricSubtitle, tooFewShort, tooFewWords } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import styles from './Compare.module.css';
@@ -76,7 +76,8 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
         reportable: v?.reportable ?? false,
         interval: unit === 'rate' ? (v?.interval ?? null) : null,
         valueText: formatMetricValue(unit, v?.value ?? null),
-        withheldText: v && v.value === null ? 'No calls in this window' : tooFewWords(info, v?.denominator ?? 0),
+        withheldText: tooFewWords(info, v?.denominator ?? 0),
+        withheldShort: tooFewShort(info, v?.denominator ?? 0),
       },
     };
   });

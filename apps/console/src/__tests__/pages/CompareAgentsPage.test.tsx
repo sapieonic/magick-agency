@@ -52,7 +52,7 @@ vi.mock('../../api/compare', async () => {
   };
 });
 
-import CompareAgentsPage, { CompareAgentsView } from '../../pages/agency/CompareAgentsPage';
+import CompareAgentsPage, { CompareAgentsView, asOfTime } from '../../pages/agency/CompareAgentsPage';
 
 const NOW = new Date('2026-11-21T09:00:00.000Z');
 
@@ -227,6 +227,12 @@ describe('what it shows', () => {
     expect(screen.getAllByTestId('compare-day-row')).toHaveLength(3);
     expect(screen.getByTestId('compare-numbers').textContent).toContain('Time to choose outcome');
     expect(screen.getByText('Shown for context, never flagged: Calls handled.')).toBeTruthy();
+    expect(screen.getByText(/9 agents on this campaign · as of 9:30 AM/)).toBeTruthy();
+  });
+
+  it('writes the read time as the console writes a time (AS15)', () => {
+    expect(asOfTime('2026-11-21T15:05:00.000Z')).toBe('3:05 PM');
+    expect(asOfTime('2026-11-21T00:07:00.000Z')).toBe('12:07 AM');
   });
 
   it('explains why nothing is judged when fewer than six agents clear the floor (§6)', async () => {

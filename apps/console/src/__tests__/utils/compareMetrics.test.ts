@@ -21,6 +21,7 @@ import {
   pickerGroups,
   removeMetric,
   toggleCode,
+  tooFewShort,
   tooFewWords,
   trendChoices,
 } from '../../utils/agency/compare/compareMetrics';
@@ -86,6 +87,7 @@ describe('units', () => {
     expect(tooFewWords(metricInfo(builtin('callbacks_kept_rate')), 1)).toBe('Too few to compare (1 call-back due; needs 8)');
     expect(tooFewWords(metricInfo(builtin('choose_time')), 9)).toBe('Too few to compare (9 wrap-ups; needs 20)');
     expect(perWords(metricInfo(WILL_PAY), 1)).toBe('1 call');
+    expect(tooFewShort(metricInfo(builtin('success_rate')), 12)).toBe('Too few (12 of 20)');
   });
 });
 
