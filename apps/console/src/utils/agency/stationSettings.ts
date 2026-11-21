@@ -16,7 +16,9 @@ import {
   type AgencyFactField,
   type AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
+import { fold } from '@magick-agency/domain/context-columns';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
+import { guessNameColumn, guessPlaceColumn } from '@magick-agency/domain/customer-name';
 import {
   defaultFactLabel,
   factKeyFromColumn,
@@ -54,7 +56,10 @@ import { factDisplay } from './stationCustomer';
  * before AS19 opens with what its agents see today (`legacyFactFields`, the guessed name and line
  * under it left out, the old amount-due and due-date columns read as money and a date as they
  * were), and nothing is written until the supervisor saves a change to the card. Then the save
- * writes `facts` and drops `roles.amount_due` / `roles.due_date`.
+ * writes `facts` and drops `roles.amount_due` / `roles.due_date`. The old card drew the amount due
+ * and the due date first, so the list opens in that order (AS19 S9). The name and the line under
+ * it are guessed by the domain's one guess (`@magick-agency/domain/customer-name`, S1); a save of
+ * the card writes each guess as its role (R1, S2), so "None" under the name is none.
  *
  * ── The script's keys and the save order ────────────────────────────────────
  * The server checks the script against the campaign's RESULTING display both ways: a script with a
@@ -83,8 +88,12 @@ export interface ScriptForm {
 export interface FactsForm {
   /** `roles.name`: `''` guesses it from the column names. */
   name: string;
-  /** `roles.place`, the line under the name: `''` guesses it (or shows none). */
-  place: string;
+  /**
+   * `roles.place`, the line under the name: `''` guesses it from the column names (a save writes
+   * the guess), null is none. A card on the new model with no `place` role opens as none (the
+   * station shows none there, S2); one on the old model opens as the guess, as its agents see it.
+   */
+  place: string | null;
   /** The facts on the card, in order (at most {@link AGENCY_FACT_FIELDS_MAX}). */
   list: AgencyFactField[];
   /** Each column's type; absent is text. */
@@ -97,46 +106,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const TYPES: ReadonlySet<string> = new Set(AGENCY_CONTEXT_FIELD_TYPES);
 
-/** Column names compare as the server compares them: ignoring case. */
-function fold(column: string): string {
-  return column.trim().toLowerCase();
-}
-
-/** Spaces, underscores, dashes and dots ignored too: how the server's name and place guess compares. */
-function squash(column: string): string {
-  return column.toLowerCase().replace(/[\s_\-.]+/g, '');
+/** The line under the name as chosen: its column, or `''` when it is guessed or none. */
+function placeChosen(facts: FactsForm): string {
+  return facts.place?.trim() ?? '';
 }
 
 /**
- * The columns the server reads as the customer's name when no column is chosen, in its order
- * (`NAME_GUESS_COLUMNS` in `apps/server/src/agency/customer-facts.ts`, the inbound match's list).
+ * The name column the card shows: the chosen one, else the domain's guess over `columns` (S1),
+ * never a hidden column, a fact's or the chosen line under the name (a save writes the guess).
  */
-export const NAME_GUESS_COLUMNS: readonly string[] = ['name', 'full_name', 'customer_name', 'first_name'];
-/** The columns the server reads as the line under the name when none is chosen (`PLACE_GUESS_COLUMNS`). */
-export const PLACE_GUESS_COLUMNS: readonly string[] = ['city', 'town', 'place', 'location', 'district', 'village'];
-
-/**
- * The column the server would guess from the column names (its order of guesses, each compared
- * ignoring case, spaces, underscores, dashes and dots), never a hidden one; undefined for none.
- */
-export function guessedColumn(columns: readonly string[], guesses: readonly string[], hidden: readonly string[]): string | undefined {
-  const hiddenSet = new Set(hidden.map(fold));
-  const visible = columns.filter((c) => !hiddenSet.has(fold(c)));
-  for (const guess of guesses) {
-    const match = visible.find((c) => squash(c) === squash(guess));
-    if (match !== undefined) return match;
-  }
-  return undefined;
-}
-
-/** The name column the card shows: the chosen one, else the guess. */
 export function nameColumnOf(facts: FactsForm, columns: readonly string[], hidden: readonly string[]): string | undefined {
-  return facts.name.trim() !== '' ? facts.name : guessedColumn(columns, NAME_GUESS_COLUMNS, hidden);
+  if (facts.name.trim() !== '') return facts.name;
+  return guessNameColumn(columns, { hidden, exclude: [...facts.list.map((f) => f.column), placeChosen(facts)] });
 }
 
-/** The line-under-the-name column the card shows: the chosen one, else the guess. */
+/**
+ * The line-under-the-name column the card shows: the chosen one; none when it is set to none;
+ * else the domain's guess over `columns`, never a hidden column, a fact's or the name's.
+ */
 export function placeColumnOf(facts: FactsForm, columns: readonly string[], hidden: readonly string[]): string | undefined {
-  return facts.place.trim() !== '' ? facts.place : guessedColumn(columns, PLACE_GUESS_COLUMNS, hidden);
+  if (facts.place === null) return undefined;
+  if (facts.place.trim() !== '') return facts.place;
+  const name = nameColumnOf(facts, columns, hidden);
+  return guessPlaceColumn(columns, { hidden, exclude: [...facts.list.map((f) => f.column), ...(name ? [name] : [])] });
 }
 
 /** The old tile roles and the type each read its column as, whatever `types` said. */
@@ -156,8 +148,11 @@ const LEGACY_ROLE_TYPES: ReadonlyArray<readonly ['amount_due' | 'due_date', Agen
 export function factsFormOf(display: AgencyContextDisplay | null | undefined, columns: readonly string[] | null): FactsForm {
   const shown = isRecord(display) ? display : {};
   const roles = isRecord(shown.roles) ? shown.roles : {};
+  const chosen = Array.isArray(shown.facts);
   const name = typeof roles.name === 'string' ? roles.name : '';
-  const place = typeof roles.place === 'string' ? roles.place : '';
+  // On the new model no `place` role is none (S2); on the old one the server guessed it.
+  const placeRole = typeof roles.place === 'string' && roles.place.trim() !== '' ? roles.place : null;
+  const place = placeRole ?? (chosen ? null : '');
   const types: Record<string, AgencyContextFieldType> = {};
   if (isRecord(shown.types)) {
     for (const [column, type] of Object.entries(shown.types)) {
@@ -168,12 +163,13 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
   const exclude = columns === null
     ? []
     : [
-      ...(name === '' ? [guessedColumn(columns, NAME_GUESS_COLUMNS, hidden)] : []),
-      ...(place === '' ? [guessedColumn(columns, PLACE_GUESS_COLUMNS, hidden)] : []),
+      ...(name === '' ? [guessNameColumn(columns, { hidden })] : []),
+      ...(place === '' ? [guessPlaceColumn(columns, { hidden })] : []),
     ].filter((c): c is string => c !== undefined);
-  const list = legacyFactFields(shown, columns, { exclude });
+  const facts = legacyFactFields(shown, columns, { exclude });
+  const list = chosen ? facts : oldCardOrder(facts);
   let form: FactsForm = { name, place, list, types };
-  if (!Array.isArray(shown.facts)) {
+  if (!chosen) {
     // AS19 R10: the old role overrode `types`, so the role's column is read as money or a date
     // whatever `types` stored; the first save then changes nothing agents see.
     for (const [role, fixed] of LEGACY_ROLE_TYPES) {
@@ -184,6 +180,12 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
     }
   }
   return form;
+}
+
+/** The old card's order (AS19 S9): the amount due, then the due date, then the other heroes. */
+function oldCardOrder(list: readonly AgencyFactField[]): AgencyFactField[] {
+  const keyed = (key: string) => list.filter((f) => f.key === key);
+  return [...keyed('amount_due'), ...keyed('due_date'), ...list.filter((f) => f.key !== 'amount_due' && f.key !== 'due_date')];
 }
 
 /** Whether a display is on the old model (no `facts`): its card is opened from what agents see today. */
@@ -249,12 +251,12 @@ function scriptTexts(script: ScriptForm): string[] {
 }
 
 /** The `{word}`s a script uses anywhere, as written, each once (`{name}`, `{ Name }`). */
-export function scriptTokens(script: ScriptForm): string[] {
+function scriptTokens(script: ScriptForm): string[] {
   return placeholdersIn(scriptTexts(script).join('\n'));
 }
 
 /** The `{word}`s of a script that are not one of `allowed`, as written, each once, in order. */
-export function scriptUnknowns(script: ScriptForm, allowed: Iterable<string>): string[] {
+function scriptUnknowns(script: ScriptForm, allowed: Iterable<string>): string[] {
   return unknownPlaceholdersIn(scriptTexts(script).join('\n'), allowed);
 }
 
@@ -264,7 +266,7 @@ function listed(words: readonly string[]): string {
 }
 
 /** The server's refusal of a script `{word}` the card has no fact for, for one or several. */
-export function unknownKeysMessage(tokens: readonly string[]): string {
+function unknownKeysMessage(tokens: readonly string[]): string {
   return tokens.length === 1
     ? `The script uses ${tokens[0]}, which is not a fact on the card. Add it as a fact or take it out.`
     : `The script uses ${listed(tokens)}, which are not facts on the card. Add them as facts or take them out.`;
@@ -375,6 +377,21 @@ export function factField(index: number, part: 'column' | 'label' | 'key'): stri
   return `${FACTS_FIELD}.${index}.${part}`;
 }
 
+/** Whether two lists hold their facts in a different order (or different facts): a reorder, an add, a removal. */
+export function factsReordered(before: readonly AgencyFactField[], after: readonly AgencyFactField[]): boolean {
+  return before.length !== after.length || before.some((f, i) => f.key !== after[i]?.key);
+}
+
+/**
+ * `errors` without the ones keyed by a fact's place (`context_display.facts.<i>.<part>`): after a
+ * reorder the place names another fact, so the server's answer to the last save no longer fits
+ * (S9). The list's own (`context_display.facts`) stays.
+ */
+export function withoutPlacedFactErrors(errors: Record<string, string>): Record<string, string> {
+  const placed = new RegExp(`^${FACTS_FIELD.replace(/\./g, '\\.')}\\.\\d+\\.`);
+  return Object.fromEntries(Object.entries(errors).filter(([field]) => !placed.test(field)));
+}
+
 /** A column's type field path (the server's `details` key). */
 export function typeField(column: string): string {
   return `context_display.types.${column}`;
@@ -384,13 +401,31 @@ export function typeField(column: string): string {
 export const FACTS_LIMIT_MESSAGE = `You can show ${AGENCY_FACT_FIELDS_MAX} facts at most. Remove one to add another.`;
 /** The message on a fact whose column the latest upload does not have. */
 export const FACT_COLUMN_MISSING_MESSAGE = 'This column is not in the latest upload. Choose another or remove the fact.';
+/** While the customer list's columns are read: an old-model card is not opened without them (S9). */
+export const COLUMNS_LOADING_MESSAGE = 'Loading the customer list’s columns…';
+/** When that read failed: the card cannot be saved until it is read again. */
+export const COLUMNS_FAILED_MESSAGE = 'Could not read the customer list’s columns. Try again.';
+
+/** The server's refusal of a phone number as the customer's name (AS19 S3(e)), in its words. */
+export const NAME_PHONE_MESSAGE = "A phone number cannot be the customer's name. Add it as a fact instead.";
+/** The server's refusal of a phone number as the line under the name (AS19 S3(e)), in its words. */
+export const PLACE_PHONE_MESSAGE = "A phone number cannot be the line under the name. Add it as a fact instead.";
 
 /** What the facts are judged against besides themselves. */
 export interface FactsContext {
   /** The columns hidden from agents. */
   hidden: readonly string[];
-  /** The latest upload's columns; empty while unknown (then no column is said to be missing). */
+  /**
+   * The latest upload's columns (the newest import's only, S9); empty while unknown (then no
+   * column is said to be missing).
+   */
   uploaded: readonly string[];
+  /**
+   * The columns the name and line-under-name selects offer, for the guesses a save writes: a
+   * guessed column read as a phone number is refused as a chosen one is. Absent: only a chosen
+   * column is judged.
+   */
+  columns?: readonly string[];
 }
 
 /** A fact's name's length as the server counts it: code points, after trimming. */
@@ -409,12 +444,21 @@ export function factsErrors(facts: FactsForm, context: FactsContext): Record<str
   const errors: Record<string, string> = {};
   const hiddenSet = new Set(context.hidden.map(fold));
   const name = facts.name.trim();
-  const place = facts.place.trim();
+  const place = placeChosen(facts);
   if (name !== '' && hiddenSet.has(fold(name))) errors[NAME_FIELD] = `‘${name}’ is hidden from agents, so it cannot be the customer’s name.`;
   if (place !== '' && hiddenSet.has(fold(place))) {
     errors[PLACE_FIELD] = `‘${place}’ is hidden from agents, so it cannot be the line under the name.`;
   } else if (place !== '' && name !== '' && fold(place) === fold(name)) {
     errors[PLACE_FIELD] = `‘${place}’ is already the customer’s name. Choose another column.`;
+  }
+  // S3(e): a column read as a phone number is never the name or the line under it, chosen or guessed.
+  const shownName = context.columns ? nameColumnOf(facts, context.columns, context.hidden) : name || undefined;
+  const shownPlace = context.columns ? placeColumnOf(facts, context.columns, context.hidden) : place || undefined;
+  if (errors[NAME_FIELD] === undefined && shownName !== undefined && columnType(facts, shownName) === 'phone') {
+    errors[NAME_FIELD] = NAME_PHONE_MESSAGE;
+  }
+  if (errors[PLACE_FIELD] === undefined && shownPlace !== undefined && columnType(facts, shownPlace) === 'phone') {
+    errors[PLACE_FIELD] = PLACE_PHONE_MESSAGE;
   }
 
   if (facts.list.length > AGENCY_FACT_FIELDS_MAX) errors[FACTS_FIELD] = FACTS_LIMIT_MESSAGE;
@@ -454,9 +498,37 @@ export function factsErrors(facts: FactsForm, context: FactsContext): Record<str
   return errors;
 }
 
-/** A new fact for `column`: its name and key by the default rule, its key unlike `list`'s. */
+/**
+ * A new fact for `column`: its name and key by the default rule, each unlike `list`'s (S9: a name
+ * that would repeat one gets ` 2`, cut to fit: `Outstanding Bala`, then `Outstanding Ba 2`).
+ */
 export function newFact(column: string, list: readonly AgencyFactField[]): AgencyFactField {
-  return { column, label: defaultFactLabel(column), key: factKeyFromColumn(column, list.map((f) => f.key)) };
+  return {
+    column,
+    label: defaultFactLabel(column, list.map((f) => f.label.trim())),
+    key: factKeyFromColumn(column, list.map((f) => f.key)),
+  };
+}
+
+/** The key the Full and Half amounts on What happened? read: the amount-due tile's. */
+export const AMOUNT_DUE_KEY = 'amount_due';
+
+/**
+ * The list with fact `index` used for Full and Half (AS19 S9), or not. On: its key becomes
+ * `amount_due`, and the fact that had it gets its default key back. Off: it gets its default key.
+ * One at most; no other key is ever edited.
+ */
+export function withAmountDue(list: readonly AgencyFactField[], index: number, on: boolean): AgencyFactField[] {
+  if (index < 0 || index >= list.length) return [...list];
+  // A default key never `amount_due` again: that is what "off" means.
+  const defaultKey = (i: number) => factKeyFromColumn(list[i]!.column, [...list.filter((_, j) => j !== i).map((f) => f.key), AMOUNT_DUE_KEY]);
+  return list.map((fact, i) => {
+    if (i === index) {
+      if (on) return { ...fact, key: AMOUNT_DUE_KEY };
+      return fact.key === AMOUNT_DUE_KEY ? { ...fact, key: defaultKey(i) } : fact;
+    }
+    return on && fact.key === AMOUNT_DUE_KEY ? { ...fact, key: defaultKey(i) } : fact;
+  });
 }
 
 /**
@@ -498,30 +570,45 @@ export function moveFact(list: readonly AgencyFactField[], from: number, to: num
 /** The name and line-under-name roles a save sends: only those set. */
 function rolesPayload(facts: FactsForm): AgencyContextRoles {
   const name = facts.name.trim();
-  const place = facts.place.trim();
+  const place = placeChosen(facts);
   return { ...(name !== '' ? { name } : {}), ...(place !== '' ? { place } : {}) };
 }
 
-/**
- * The name role a save of the card writes (AS19 R1): the chosen column, else, with "Guess from the
- * column names", the column the select names as the guess over `columns` (hidden ones never), so
- * the name stays a hero on every surface once the card has facts. No guess is written when it is
- * already a fact or the line under the name (the server would refuse it), or when `columns` is
- * not given.
- */
-function nameRoleToWrite(facts: FactsForm, columns: readonly string[] | null, hidden: readonly string[]): string {
-  const chosen = facts.name.trim();
-  if (chosen !== '' || columns === null) return chosen;
-  const guess = guessedColumn(columns, NAME_GUESS_COLUMNS, hidden);
-  if (guess === undefined) return '';
-  const place = facts.place.trim();
-  if (place !== '' && sameColumn(place, guess)) return '';
-  return facts.list.some((f) => sameColumn(f.column, guess)) ? '' : guess;
+/** How the line under the name is set: a column, the guess, or none. */
+function placeMode(facts: FactsForm): 'none' | 'guess' | 'set' {
+  if (facts.place === null) return 'none';
+  return facts.place.trim() === '' ? 'guess' : 'set';
 }
 
-/** The facts a save sends: each name trimmed, `highlight` only when on. */
-function factsPayload(facts: FactsForm): AgencyFactField[] {
-  return facts.list.map((f) => ({ column: f.column, label: f.label.trim(), key: f.key, ...(f.highlight ? { highlight: true } : {}) }));
+/**
+ * The name and line-under-name roles a save of the card writes (AS19 R1, S2): each chosen column;
+ * else, on "Guess from the column names", the column the select names as the guess over
+ * `columns` ({@link nameColumnOf}, {@link placeColumnOf}: never hidden, never a fact's), so the
+ * name stays a hero on every surface once the card has facts and the line under it stays shown
+ * (with facts the station guesses no place). None writes no place. Nothing is guessed when
+ * `columns` is not given. Each in the roster's spelling when `columns` has it.
+ */
+function rolesToWrite(facts: FactsForm, columns: readonly string[] | null, hidden: readonly string[]): AgencyContextRoles {
+  const spelt = (column: string) => (columns ? columnNamed(columns, column) ?? column : column);
+  const name = facts.name.trim() !== '' ? spelt(facts.name.trim()) : columns ? nameColumnOf(facts, columns, hidden) ?? '' : '';
+  const mode = placeMode(facts);
+  const place = mode === 'set'
+    ? spelt(placeChosen(facts))
+    : mode === 'guess' && columns ? placeColumnOf({ ...facts, name }, columns, hidden) ?? '' : '';
+  return rolesPayload({ ...facts, name, place });
+}
+
+/**
+ * The facts a save sends: each name trimmed, `highlight` only when on, and each column in the
+ * roster's spelling when `columns` has it (S9: the own-contacts list matches a column exactly).
+ */
+function factsPayload(facts: FactsForm, columns: readonly string[] | null = null): AgencyFactField[] {
+  return facts.list.map((f) => ({
+    column: (columns ? columnNamed(columns, f.column) : undefined) ?? f.column,
+    label: f.label.trim(),
+    key: f.key,
+    ...(f.highlight ? { highlight: true } : {}),
+  }));
 }
 
 /**
@@ -529,8 +616,9 @@ function factsPayload(facts: FactsForm): AgencyFactField[] {
  * where the roster is imported, and a PATCH replaces the whole object) with this card: the name
  * and line-under-name roles (the old amount-due and due-date roles dropped), the types, and the
  * facts, always written (AS19: the campaign is on the new model from its first save of the card).
- * An empty roles or types map is left out. With `columns` (the columns the card's selects offer), a
- * name left on "Guess from the column names" is written as the column guessed (AS19 R1).
+ * An empty roles or types map is left out. With `columns` (the columns the card's selects offer,
+ * the roster's first), a name or line under it left on "Guess from the column names" is written as
+ * the column guessed (AS19 R1, S2), and every column in the roster's spelling.
  */
 export function contextDisplayPayload(
   stored: AgencyContextDisplay | null | undefined,
@@ -541,13 +629,12 @@ export function contextDisplayPayload(
   void _roles;
   void _types;
   void _facts;
-  const name = nameRoleToWrite(facts, columns, hiddenColumns(stored));
-  const roles = rolesPayload({ ...facts, name });
+  const roles = rolesToWrite(facts, columns, hiddenColumns(stored));
   return {
     ...rest,
     ...(Object.keys(roles).length > 0 ? { roles } : {}),
     ...(Object.keys(facts.types).length > 0 ? { types: { ...facts.types } } : {}),
-    facts: factsPayload(facts),
+    facts: factsPayload(facts, columns),
   };
 }
 
@@ -681,6 +768,7 @@ function sortedTypes(types: Record<string, AgencyContextFieldType>): Array<[stri
 /** Whether the card differs between two forms (spaces round a name ignored). */
 export function factsChanged(saved: FactsForm, now: FactsForm): boolean {
   return !same(rolesPayload(saved), rolesPayload(now))
+    || placeMode(saved) !== placeMode(now)
     || !same(factsPayload(saved), factsPayload(now))
     || !same(sortedTypes(saved.types), sortedTypes(now.types));
 }
@@ -750,21 +838,43 @@ export function stationPayload(
   };
 }
 
+/** A saved fact taken off the card that the script still uses, and why it cannot go back (null: it can). */
+export interface RemovedFact {
+  fact: AgencyFactField;
+  blocked: string | null;
+}
+
 /** The saved facts a script still uses that the form has taken off the card: what "Put it back" restores. */
-export function removedFactsInUse(saved: FactsForm, now: FactsForm, script: ScriptForm): AgencyFactField[] {
+export function removedFactsInUse(saved: FactsForm, now: FactsForm, script: ScriptForm): RemovedFact[] {
   const used = new Set(scriptTokens(script).map((t) => t.slice(1, -1)));
-  return saved.list.filter((f) => used.has(f.key) && !now.list.some((n) => n.key === f.key));
+  return saved.list
+    .filter((f) => used.has(f.key) && !now.list.some((n) => n.key === f.key))
+    .map((fact) => ({ fact, blocked: putBackBlocked(saved, now, fact.key) }));
+}
+
+/**
+ * Why a removed saved fact cannot be put back, said beside its disabled "Put it back" (S9), or
+ * null when it can: the card is full, or its column or its key is on the card again.
+ */
+function putBackBlocked(saved: FactsForm, now: FactsForm, key: string): string | null {
+  const fact = saved.list.find((f) => f.key === key);
+  if (!fact) return 'This fact is not on the saved card.';
+  if (now.list.length >= AGENCY_FACT_FIELDS_MAX) {
+    return `The card is full (${AGENCY_FACT_FIELDS_MAX} of ${AGENCY_FACT_FIELDS_MAX}). Remove a fact first.`;
+  }
+  if (now.list.some((f) => sameColumn(f.column, fact.column))) return `‘${fact.column}’ is on the card again.`;
+  if (now.list.some((f) => f.key === key)) return `Another fact uses {${key}} now.`;
+  return null;
 }
 
 /**
  * The list with a removed saved fact put back where it was (or last), when the card has room and
- * its column is not on the card again; null when it cannot go back.
+ * its column and key are not on the card again; null when it cannot go back ({@link putBackBlocked}).
  */
 export function putBack(saved: FactsForm, now: FactsForm, key: string): AgencyFactField[] | null {
   const at = saved.list.findIndex((f) => f.key === key);
   const fact = saved.list[at];
-  if (!fact || now.list.length >= AGENCY_FACT_FIELDS_MAX) return null;
-  if (now.list.some((f) => f.key === key || sameColumn(f.column, fact.column))) return null;
+  if (!fact || putBackBlocked(saved, now, key) !== null) return null;
   // Highlighted again only when no other fact has taken the highlight meanwhile.
   if (fact.highlight && !now.list.some((f) => f.highlight)) return [{ ...plainFact(fact), highlight: true }, ...now.list];
   const floor = now.list[0]?.highlight ? 1 : 0;
@@ -773,16 +883,45 @@ export function putBack(saved: FactsForm, now: FactsForm, key: string): AgencyFa
 }
 
 /**
+ * The server's refusal of a card that takes away a key the stored script uses (`lostKeyIssues` in
+ * `apps/server/src/agency/agent-script.ts`), exactly: each `{key}` of the script, as written and
+ * each once, that the stored display allowed and the sent card does not; null for none. One
+ * message for one key or several, in the server's words.
+ */
+function lostKeysMessage(
+  script: ScriptForm,
+  storedDisplay: AgencyContextDisplay | null | undefined,
+  sent: FactsForm,
+): string | null {
+  const before = new Set(scriptPlaceholdersFor(isRecord(storedDisplay) ? storedDisplay : {}));
+  const after = new Set(cardKeys(sent));
+  const lost = scriptTokens(script).filter((token) => before.has(token.slice(1, -1)) && !after.has(token.slice(1, -1)));
+  if (lost.length === 0) return null;
+  return lost.length === 1
+    ? `The script uses ${lost[0]}. Take it out of the script first, or keep the fact.`
+    : `The script uses ${listed(lost)}. Take them out of the script first, or keep the facts.`;
+}
+
+/** What {@link stationErrors} judges the card against. */
+export interface StationContext extends FactsContext {
+  /**
+   * Why the card cannot be sent yet, or null: an old-model card waits for the customer list's
+   * columns (S9), so a save that would send it is held with this, said on the facts.
+   */
+  cardWaiting?: string | null;
+}
+
+/**
  * Every finding here that holds Save, keyed by field path; empty when it may be saved. Only what is
  * sent is judged: one stored before a rule existed (or written another way) is not sent back, so
  * it does not hold a save of something else. A card that is sent while the stored script (not sent)
- * uses a key it no longer has is said on the facts list, as the server says it.
+ * loses a key it uses is said on the facts list, as the server says it ({@link lostKeysMessage}).
  */
 export function stationErrors(
   saved: StationSettingsForm,
   now: StationSettingsForm,
   storedDisplay: AgencyContextDisplay | null | undefined,
-  context: FactsContext,
+  context: StationContext,
 ): Record<string, string> {
   const plan = stationPlan(saved, now, storedDisplay);
   const target = plan.changes.includes('dailyTarget') ? dailyTargetError(now.dailyTarget) : null;
@@ -791,12 +930,12 @@ export function stationErrors(
     ...(plan.scriptSent ? scriptErrors(now.script, plan.allowed) : {}),
     ...(plan.displaySent ? factsErrors(now.facts, context) : {}),
   };
-  if (plan.displaySent && !plan.scriptSent && errors[FACTS_FIELD] === undefined) {
-    const unknown = scriptUnknowns(now.script, plan.allowed);
-    // The server's refusal of a card that leaves the stored script a key, in its words, on its field.
-    if (unknown.length > 0) {
-      errors[FACTS_FIELD] = `The script uses ${listed(unknown)}. Take ${unknown.length === 1 ? 'it' : 'them'} out of the script first, or keep the fact.`;
-    }
+  if (plan.displaySent && context.cardWaiting) {
+    errors[FACTS_FIELD] = context.cardWaiting;
+  } else if (plan.displaySent && !plan.scriptSent && errors[FACTS_FIELD] === undefined) {
+    // The server's refusal of a card that takes a key from the stored script, in its words, on its field.
+    const lost = lostKeysMessage(now.script, storedDisplay, now.facts);
+    if (lost !== null) errors[FACTS_FIELD] = lost;
   }
   return errors;
 }

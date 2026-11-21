@@ -167,8 +167,9 @@ export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
   retry_policy: 'retry policy',
   disposition_catalog: 'call outcomes',
   outcome_dispositions: 'automatic outcomes for unanswered calls',
-  // The contact details' layout and, since agent station BE-6, the customer facts (which column
-  // is the name, place, amount due and due date, and how each column is read).
+  // The contact details' layout and the customer card (agent station BE-6, AS19): which column is
+  // the name and the line under it, the facts on the card (their names, script keys and
+  // highlight), and how each column is read.
   context_display: 'contact details and customer facts',
   break_reasons: 'break reasons',
   record_calls: 'call recording',

@@ -1,11 +1,10 @@
-import { Fragment, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import {
   AGENCY_FACT_FIELDS_MAX,
   AGENCY_SCRIPT_OPENING_MAX_CHARS,
   AGENCY_SCRIPT_STEPS_MAX,
   AGENCY_SCRIPT_STEP_MAX_CHARS,
-  type AgencyFactField,
   type AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
 import { factKeyFromColumn, scriptPieces, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
@@ -24,6 +23,7 @@ import {
   scriptLength,
   scriptStepField,
   type FactsForm,
+  type RemovedFact,
   type SampleRow,
   type ScriptForm,
 } from '../../../utils/agency/stationSettings';
@@ -59,12 +59,18 @@ const QUERY = /^[A-Za-z0-9_]*$/;
  * The keys a script may use are this campaign's: `{name}`, `{place}`, `{agent_name}`,
  * `{campaign_name}`, and each fact's on the card (`offered`). In the text a known key is tinted and
  * a `{word}` the card has no fact for is underlined in red, with a fix under its field: add the
- * column it names as a fact (when the card has room), use another key, or take it out; or put a
- * fact taken off the card back. Typing `{` opens a list of the keys, with each one's name and
- * sample value, filtered as more is typed (↑ ↓ to move, Enter or Tab to add, Esc to close); the
- * chips under the fields add a key at the caret of the field last typed in. "As the agent reads it"
- * fills the keys from a sample customer, an empty one as "<name> not given", as the station shows
- * it. The stored text stays plain `{key}` text.
+ * column it names as a fact (when the card has room; when it has none, the row says so), use
+ * another key, or take it out; or put a fact taken off the card back (disabled, with the reason,
+ * when it cannot go back). The tint is a layer behind the field's own box only, re-measured and
+ * re-scrolled with it on every render; the field grows with its text, so it never scrolls away
+ * from the tint (AS19 S9). Typing `{` opens a list of the keys under the field, with each one's
+ * name and sample value, filtered as more is typed (↑ ↓ to move, Enter or Tab to add, Esc to
+ * close); the field names it (`aria-haspopup`, `aria-expanded`, `aria-controls` while it is open,
+ * `aria-activedescendant`) and a live region says how many keys it shows. The chips under the
+ * fields add a key at the caret of the field last typed in. "As the agent reads it" fills the keys
+ * from a sample customer as the station would (R5): on a card with chosen facts an empty one reads
+ * "<name> not given"; on a campaign still on the old model it is left out. The stored text stays
+ * plain `{key}` text.
  *
  * Errors come keyed as the server keys them (`agent_script.opening`, `agent_script.steps[<i>].text`),
  * so the server's refusal lands on the field it is about.
@@ -86,6 +92,7 @@ export function ScriptEditor({
   removedInUse = [],
   onPutBack,
   onAddFact,
+  legacy = false,
 }: {
   value: ScriptForm;
   onChange: (next: ScriptForm) => void;
@@ -105,11 +112,16 @@ export function ScriptEditor({
   samples?: readonly SampleRow[];
   phoneDisplay?: AgencyPhoneDisplay;
   campaignName?: string;
-  /** Saved facts taken off the card that the script still uses. */
-  removedInUse?: readonly AgencyFactField[];
+  /** Saved facts taken off the card that the script still uses, each with why it cannot go back. */
+  removedInUse?: readonly RemovedFact[];
   onPutBack?: (key: string) => void;
   /** Put `column` on the card for the script's `token`; the page adds the fact and fixes the text. */
   onAddFact?: (column: string, token: string) => void;
+  /**
+   * The script is filled as on a campaign still on the old model (R5): a key with no value is
+   * left out, not "not given".
+   */
+  legacy?: boolean;
 }) {
   const id = useId();
   const [target, setTarget] = useState<Target>('opening');
@@ -128,6 +140,26 @@ export function ScriptEditor({
     if (!field) return;
     field.focus();
     field.setSelectionRange(pending.at, pending.at);
+  });
+
+  /*
+    S9: the tint lies behind each field's own box and must keep to its text. Every render, each
+    field grows to its text (so it has no scroll of its own to drift from), and its tint takes the
+    field's scroll all the same, should one be left (a field typed into faster than it grows).
+  */
+  useLayoutEffect(() => {
+    for (const field of fields.current.values()) {
+      if (field.scrollHeight > 0) {
+        field.style.height = 'auto';
+        const border = field.offsetHeight - field.clientHeight;
+        field.style.height = `${field.scrollHeight + Math.max(0, border)}px`;
+      }
+      const back = field.previousElementSibling as HTMLElement | null;
+      if (back) {
+        back.scrollTop = field.scrollTop;
+        back.scrollLeft = field.scrollLeft;
+      }
+    }
   });
 
   const register = (t: Target) => (node: HTMLTextAreaElement | null) => {
@@ -274,16 +306,33 @@ export function ScriptEditor({
     if (unknown.length === 0 || readOnly) return null;
     return unknown.map((token) => {
       const word = token.slice(1, -1).trim();
-      const removed = removedInUse.find((f) => f.key === word);
+      const removed = removedInUse.find((r) => r.fact.key === word);
       const column = removed ? undefined : columnFor(token);
       const testId = `script-fix-${keyOf(t)}-${word}`;
+      const reasonId = `${id}-${keyOf(t)}-${word}-reason`;
       return (
         <div key={token} className={styles.fix} data-testid={testId}>
           <code className={styles.keyBad}>{token}</code>
+          {/* S9: a card with no room says so in full, in place of the button it cannot offer. */}
+          {column && cardFull ? (
+            <span className={styles.fixNote} data-testid={`${testId}-full`}>
+              {`The card is full (${AGENCY_FACT_FIELDS_MAX} of ${AGENCY_FACT_FIELDS_MAX}), so ‘${column}’ cannot be added. Use another key or take it out.`}
+            </span>
+          ) : null}
           {removed && onPutBack ? (
-            <button type="button" className={styles.fixBtn} disabled={cardFull} onClick={() => onPutBack(removed.key)}>
-              {`Put ‘${removed.label.trim() || removed.column}’ back`}
+            <button
+              type="button"
+              className={styles.fixBtn}
+              disabled={removed.blocked !== null}
+              aria-describedby={removed.blocked !== null ? reasonId : undefined}
+              onClick={() => onPutBack(removed.fact.key)}
+              data-testid={`${testId}-put-back`}
+            >
+              {`Put ‘${removed.fact.label.trim() || removed.fact.column}’ back`}
             </button>
+          ) : null}
+          {removed && onPutBack && removed.blocked !== null ? (
+            <span id={reasonId} className={styles.fixNote}>{removed.blocked}</span>
           ) : null}
           {column && onAddFact && !cardFull ? (
             <button type="button" className={styles.fixBtn} onClick={() => onAddFact(column, token)} data-testid={`${testId}-add`}>
@@ -311,7 +360,11 @@ export function ScriptEditor({
     });
   };
 
-  /** A field with its keys tinted behind the text, and the `{` list under it. */
+  /**
+   * A field with its keys tinted behind the text, and the `{` list under it. The tint layer is the
+   * field's own box (`tokField`), so it can never reach past the field; the list is outside it,
+   * after it and above it.
+   */
   const keyedField = (t: Target, inputId: string, field: string, rows: number, placeholder?: string) => {
     const text = textOf(t);
     const open = pick && pick.target === t ? pick : null;
@@ -320,46 +373,50 @@ export function ScriptEditor({
     const activeId = open && list.length > 0 ? `${listId}-${Math.min(open.active, list.length - 1)}` : undefined;
     return (
       <div className={styles.tokWrap}>
-        <div className={styles.tokBack} aria-hidden="true" data-testid={`script-tint-${keyOf(t)}`}>
-          {scriptPieces(text, allowed).map((piece, i) => (
-            piece.kind === 'text'
-              ? <Fragment key={i}>{piece.text}</Fragment>
-              : piece.kind === 'key'
-                ? <mark key={i} className={styles.tokKey}>{`{${piece.key}}`}</mark>
-                : <mark key={i} className={styles.tokBad} data-unknown="">{piece.token}</mark>
-          ))}
-          {'\n'}
+        <div className={styles.tokField}>
+          <div className={styles.tokBack} aria-hidden="true" data-testid={`script-tint-${keyOf(t)}`}>
+            {scriptPieces(text, allowed).map((piece, i) => (
+              piece.kind === 'text'
+                ? <Fragment key={i}>{piece.text}</Fragment>
+                : piece.kind === 'key'
+                  ? <mark key={i} className={styles.tokKey}>{`{${piece.key}}`}</mark>
+                  : <mark key={i} className={styles.tokBad} data-unknown="">{piece.token}</mark>
+            ))}
+            {'\n'}
+          </div>
+          <textarea
+            id={inputId}
+            ref={register(t)}
+            className={`${styles.textarea} ${styles.tokArea}`}
+            rows={rows}
+            value={text}
+            placeholder={placeholder}
+            disabled={readOnly}
+            spellCheck={false}
+            autoComplete="off"
+            onFocus={() => setTarget(t)}
+            onBlur={() => setPick((p) => (p && p.target === t ? null : p))}
+            onScroll={(event) => {
+              const back = event.currentTarget.previousElementSibling as HTMLElement | null;
+              if (back) {
+                back.scrollTop = event.currentTarget.scrollTop;
+                back.scrollLeft = event.currentTarget.scrollLeft;
+              }
+            }}
+            onChange={(event) => onType(t, event.target.value, event.target.selectionStart ?? event.target.value.length)}
+            onKeyDown={(event) => onKeyDown(event, t)}
+            aria-invalid={errors.message(field) || unknownPlaceholdersIn(text, allowed).length > 0 ? true : undefined}
+            aria-describedby={errors.describedBy(field)}
+            // A text field with a `{` list (S9): no combobox role; the list it opens, while it is open.
+            aria-haspopup="listbox"
+            aria-expanded={open !== null}
+            aria-controls={open && list.length > 0 ? listId : undefined}
+            aria-activedescendant={activeId}
+            data-testid={t === 'opening' ? 'script-opening' : `script-step-${t}`}
+          />
         </div>
-        <textarea
-          id={inputId}
-          ref={register(t)}
-          className={`${styles.textarea} ${styles.tokArea}`}
-          rows={rows}
-          value={text}
-          placeholder={placeholder}
-          disabled={readOnly}
-          spellCheck={false}
-          autoComplete="off"
-          onFocus={() => setTarget(t)}
-          onBlur={() => setPick((p) => (p && p.target === t ? null : p))}
-          onScroll={(event) => {
-            const back = event.currentTarget.previousElementSibling as HTMLElement | null;
-            if (back) back.scrollTop = event.currentTarget.scrollTop;
-          }}
-          onChange={(event) => onType(t, event.target.value, event.target.selectionStart ?? event.target.value.length)}
-          onKeyDown={(event) => onKeyDown(event, t)}
-          aria-invalid={errors.message(field) || unknownPlaceholdersIn(text, allowed).length > 0 ? true : undefined}
-          aria-describedby={errors.describedBy(field)}
-          // A combobox over its `{` list (AS19 R12): the list it controls, and whether it is open.
-          role="combobox"
-          aria-autocomplete="list"
-          aria-controls={listId}
-          aria-expanded={open !== null}
-          aria-activedescendant={activeId}
-          data-testid={t === 'opening' ? 'script-opening' : `script-step-${t}`}
-        />
         {open ? (
-          <div className={styles.keyPick}>
+          <div className={styles.keyPick} data-testid="script-key-pick">
             <div className={styles.keyPickHead}>Keys of this campaign · ↑ ↓ to move, Enter to add, Esc to close</div>
             {list.length > 0 ? (
               <ul role="listbox" id={listId} aria-label="Keys of this campaign" data-testid="script-key-list">
@@ -382,7 +439,7 @@ export function ScriptEditor({
                 ))}
               </ul>
             ) : (
-              <p className={styles.hint} id={listId}>{`No key matches “${open.query}”.`}</p>
+              <p className={styles.keyPickNone}>{`No key matches “${open.query}”.`}</p>
             )}
           </div>
         ) : null}
@@ -390,16 +447,33 @@ export function ScriptEditor({
     );
   };
 
-  /** A text as the agent reads it for the sample customer. */
+  /**
+   * A text as the agent reads it for the sample customer (R5): a value as the station writes it; a
+   * key with no value "<name> not given" on a card with chosen facts, left out on one still on the
+   * old model, and `{campaign_name}` with none left out always. `{agent_name}` (whoever takes the
+   * call) and, with no sample customer, every customer key show their names.
+   */
   const readAloud = (text: string): ReactNode => scriptPieces(text, allowed).map((piece, i) => {
     if (piece.kind === 'text') return <Fragment key={i}>{piece.text}</Fragment>;
     if (piece.kind === 'unknown') return <Fragment key={i}>{piece.token}</Fragment>;
     const filled = valueOf(piece.key, row);
     const label = keyLabel(piece.key, facts);
+    if (piece.key === 'campaign_name' && !filled) return null;
     if (filled === null) return <span key={i} className={styles.readKey}>{label}</span>;
-    if (filled === '') return <span key={i} className={styles.notGiven} data-testid="script-not-given">{`${label} not given`}</span>;
+    if (filled === '') {
+      return legacy ? null : <span key={i} className={styles.notGiven} data-testid="script-not-given">{`${label} not given`}</span>;
+    }
     return <span key={i} className={styles.readValue}>{filled}</span>;
   });
+
+  /** What the `{` list shows, said in the live region (S9). */
+  const listSaid = (() => {
+    if (!pick) return '';
+    const shownKeys = filtered(pick.query);
+    if (shownKeys.length === 0) return `No key matches “${pick.query}”.`;
+    const count = shownKeys.length === 1 ? '1 key' : `${shownKeys.length} keys`;
+    return `${count} of this campaign. Up and down arrows to move, Enter to add, Escape to close.`;
+  })();
 
   const targetName = target === 'opening' || target >= value.steps.length ? 'the opening line' : `step ${target + 1}`;
   const full = value.steps.length >= AGENCY_SCRIPT_STEPS_MAX;
@@ -539,12 +613,15 @@ export function ScriptEditor({
             </ol>
           ) : null}
           <p className={styles.hint}>
-            {row
-              ? 'A fact this customer has no value for shows its name and “not given”, so the agent asks or skips it.'
-              : 'There is no customer in this campaign yet, so each key shows its name.'}
+            {!row
+              ? 'There is no customer in this campaign yet, so each key shows its name.'
+              : legacy
+                ? 'A key this customer has no value for is left out, as agents see it until the customer card is saved here.'
+                : 'A fact this customer has no value for shows its name and “not given”, so the agent asks or skips it.'}
           </p>
         </section>
       ) : null}
+      <div className={styles.srOnly} role="status" aria-live="polite" data-testid="script-key-announce">{listSaid}</div>
     </div>
   );
 }

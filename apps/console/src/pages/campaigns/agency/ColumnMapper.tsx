@@ -4,6 +4,7 @@ import {
   MAX_HERO_FIELDS,
   ROLE_LABELS,
   addDedupeKey,
+  cardRoleNote,
   canAddDedupeKey,
   combinationLine,
   countryCodeError,
@@ -101,6 +102,8 @@ export function ColumnMapper({
   const block = mappingBlockReason(state);
   const validity = phoneValidityLine(analysis, phone);
   const heroFull = heroLimitReached(state);
+  // S9: a pick the card shows as the name or the line under it is said, not dropped in silence.
+  const shownElsewhere = cardChoice ? cardRoleNote(state) : null;
   const countryError = countryCodeError(state.defaultCountryCode);
   const keys = dedupeKeys(state.dedupe);
   const canAddKey = canAddDedupeKey(analysis, state);
@@ -208,6 +211,9 @@ export function ColumnMapper({
           ? `Columns set to On the card are what agents see on the customer card, in the order you pick them (${MAX_HERO_FIELDS} at most). Change their names and order later in the campaign’s Settings.`
           : 'What agents see on the customer card is chosen in the campaign’s Settings.'}
       </p>
+      {cardChoice && shownElsewhere ? (
+        <p className={styles.timezoneNote} data-testid="card-role-note">{shownElsewhere}</p>
+      ) : null}
 
       {block ? (
         <p className={styles.block} data-testid="mapping-block">

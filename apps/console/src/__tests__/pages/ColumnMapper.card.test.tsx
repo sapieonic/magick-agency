@@ -48,6 +48,20 @@ describe('ColumnMapper: On the card', () => {
     });
   });
 
+  it('says when a column picked On the card became the customer’s name instead (S9)', () => {
+    const named: AgencyColumnAnalysis = {
+      ...ANALYSIS,
+      headers: [...ANALYSIS.headers, 'Customer Name'],
+      columns: [...ANALYSIS.columns, { name: 'Customer Name', index: 3, samples: ['Lakshmi'], non_empty: 10, phone_score: 0, distinct: 10, distinct_phones: 0 }],
+    };
+    const picked = setRole(setRole(initialMapping(named), 'Amount', 'hero'), 'Customer Name', 'hero');
+    render(<ColumnMapper analysis={named} state={picked} onChange={vi.fn()} fileName="loans.csv" cardChoice />);
+    expect(screen.getByTestId('card-role-note').textContent).toBe('‘Customer Name’ is shown as the customer’s name, not as a fact.');
+    cleanup();
+    render(<ColumnMapper analysis={named} state={picked} onChange={vi.fn()} fileName="loans.csv" />);
+    expect(screen.queryByTestId('card-role-note')).toBeNull();
+  });
+
   it('is not offered on a list added to a campaign, where Settings chooses the card', () => {
     renderMapper(false);
     expect(choices('Loan No')).toEqual(['Phone number', 'Timezone', 'Detail', 'Ignore']);

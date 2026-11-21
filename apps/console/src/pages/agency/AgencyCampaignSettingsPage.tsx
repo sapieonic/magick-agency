@@ -58,14 +58,17 @@ import {
 } from '../../utils/agency/breakLimits';
 import { focusFirstFieldError, useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
 import { AgentScreenFields } from '../campaigns/agency/AgentScreenFields';
-import { CustomerFactsEditor } from '../campaigns/agency/CustomerFactsEditor';
+import { CustomerFactsEditor, type ColumnsRead, type FactFocusRequest } from '../campaigns/agency/CustomerFactsEditor';
 import { ScriptEditor } from '../campaigns/agency/ScriptEditor';
 import { useCampaignColumns, useCampaignSampleRows } from '../../hooks/useCampaignColumns';
 import {
+  COLUMNS_FAILED_MESSAGE,
+  COLUMNS_LOADING_MESSAGE,
   campaignColumns,
   factsChanged,
   factsErrors,
   factsFormOf,
+  factsReordered,
   hiddenColumns,
   isLegacyDisplay,
   newFact,
@@ -76,6 +79,8 @@ import {
   stationPayload,
   stationPlan,
   stationSettingsOf,
+  withoutPlacedFactErrors,
+  type FactsForm,
   type StationSettingsForm,
 } from '../../utils/agency/stationSettings';
 import { factKeyFromColumn } from '@magick-agency/domain/fact-fields';
@@ -355,14 +360,31 @@ export function AgencyCampaignSettingsPage() {
   const columnsEnabled = canEdit && canSupervise && campaign?.id === id;
   const imported = useCampaignColumns(id, campaign?.root_campaign_id ?? null, tenantId, accountId, columnsEnabled);
   const samples = useCampaignSampleRows(id, tenantId, accountId, columnsEnabled);
-  const factsContext = useMemo(() => ({ hidden, uploaded: imported.columns }), [hidden, imported.columns]);
-  knownColumnsRef.current = imported.ready && imported.columns.length > 0 ? imported.columns : null;
+  const columnsRead: ColumnsRead = !columnsEnabled ? 'done' : imported.failed ? 'failed' : imported.ready ? 'done' : 'loading';
+  /*
+    S9: a card on the old model is opened from the columns, so until they are read it is not shown
+    ("Loading…", or the failure with "Try again") and a save that would send it is held.
+  */
+  const cardWaiting = canEdit && campaign !== null && isLegacyDisplay(campaign.context_display) && columnsRead !== 'done'
+    ? (columnsRead === 'failed' ? COLUMNS_FAILED_MESSAGE : COLUMNS_LOADING_MESSAGE)
+    : null;
+  // The columns the card's selects offer (the roster's first): the guesses a save writes read them.
+  const selectColumns = useMemo(
+    () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
+    [imported.columns, campaign?.context_display, station],
+  );
+  // "The latest upload" is the newest import alone (S9): what a fact is added from and checked against.
+  const factsContext = useMemo(
+    () => ({ hidden, uploaded: imported.latest, columns: selectColumns, cardWaiting }),
+    [hidden, imported.latest, selectColumns, cardWaiting],
+  );
+  knownColumnsRef.current = imported.ready ? imported.columns : null;
 
   /*
     AS19: a campaign still on the old model opens its card with what its agents see today, which
     needs the roster's columns (the hero guess and the name guess read them). They arrive after the
     campaign: once they do, an untouched card is opened again from them, as saved and on screen
-    alike, so it counts as no change.
+    alike, so it counts as no change. Until then the card is not shown (S9).
   */
   useEffect(() => {
     const columnsNow = knownColumnsRef.current;
@@ -456,8 +478,7 @@ export function AgencyCampaignSettingsPage() {
     // The card's columns as its selects offer them: a name left on "Guess from the column names" is
     // saved as the column the select names (AS19 R1), so it stays a hero once the card has facts.
     const stationSent = station && saved?.station
-      ? stationPayload(saved.station, station, campaign?.context_display,
-        campaignColumns(imported.columns, campaign?.context_display, station.facts))
+      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns)
       : {};
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
@@ -510,10 +531,10 @@ export function AgencyCampaignSettingsPage() {
       // window would correct itself while the name silently kept the local
       // value.
       seedForm(formOfCampaign(updated, knownColumnsRef.current));
-      // AS19: a change to what agents see or say reaches them from their next call.
+      // AS19 S8: the script, its keys and the card reach agents with their station's bootstrap.
       showToast(
         stationSent.agent_script !== undefined || stationSent.context_display !== undefined
-          ? 'Saved. Agents see this from their next call.'
+          ? 'Saved. Agents see this when they next start work.'
           : 'Campaign settings saved.',
         'success',
       );
@@ -580,7 +601,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons, station, factsContext, imported.columns,
+    breakReasons, station, factsContext, selectColumns,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -653,10 +674,6 @@ export function AgencyCampaignSettingsPage() {
     [factsShown, stationLive],
   );
   const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
-  const columns = useMemo(
-    () => (station ? campaignColumns(imported.columns, campaign?.context_display, station.facts) : []),
-    [imported.columns, campaign?.context_display, station],
-  );
   const plan = useMemo(
     () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display) : null),
     [station, saved, campaign?.context_display],
@@ -666,12 +683,28 @@ export function AgencyCampaignSettingsPage() {
     [station, saved],
   );
 
-  /** Put a saved fact the script uses back on the card. */
+  /** The fact row the editor focuses and announces after a change made from elsewhere (S9). */
+  const [factFocus, setFactFocus] = useState<FactFocusRequest | null>(null);
+
+  /**
+   * The card as edited. A change of the facts' order (a move, an add, a removal) clears the
+   * server's answer keyed by a fact's place, which now names another fact (S9).
+   */
+  const onFactsChange = useCallback((facts: FactsForm) => {
+    if (!station) return;
+    if (factsReordered(station.facts.list, facts.list)) setFieldErrors((errors) => withoutPlacedFactErrors(errors));
+    setStation({ ...station, facts });
+  }, [station]);
+
+  /** Put a saved fact the script uses back on the card; its row takes focus, and it is said. */
   const onPutBack = useCallback((key: string) => {
     if (!station || !saved?.station) return;
     const list = putBack(saved.station.facts, station.facts, key);
-    if (list) setStation({ ...station, facts: { ...station.facts, list } });
-  }, [station, saved]);
+    const fact = list?.find((f) => f.key === key);
+    if (!list || !fact) return;
+    onFactsChange({ ...station.facts, list });
+    setFactFocus({ key, part: 'grip', said: `${fact.label.trim() || fact.column} put back on the card.` });
+  }, [station, saved, onFactsChange]);
 
   /**
    * The script's "Add … as a fact": `column` goes on the card with the script's word as its key
@@ -685,11 +718,14 @@ export function AgencyCampaignSettingsPage() {
     const fits = AGENCY_FACT_KEY_PATTERN.test(word) && word.length <= AGENCY_FACT_KEY_MAX_CHARS
       && !taken.includes(word) && !(AGENCY_SCRIPT_FIXED_PLACEHOLDERS as readonly string[]).includes(word);
     const fact = { ...newFact(column, list), key: fits ? word : factKeyFromColumn(column, taken) };
+    setFieldErrors((errors) => withoutPlacedFactErrors(errors));
     setStation({
       ...station,
       facts: { ...station.facts, list: [...list, fact] },
       script: token === `{${fact.key}}` ? station.script : replaceToken(station.script, token, `{${fact.key}}`),
     });
+    // S9: the new fact's name takes focus (to rename it), and the add is said.
+    setFactFocus({ key: fact.key, part: 'label', said: `${fact.label.trim() || column} added to the card.` });
   }, [station]);
   const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
@@ -1053,16 +1089,19 @@ export function AgencyCampaignSettingsPage() {
               />
               <CustomerFactsEditor
                 value={station.facts}
-                onChange={(facts) => setStation({ ...station, facts })}
-                columns={columns}
-                uploaded={imported.columns}
+                onChange={onFactsChange}
+                columns={selectColumns}
+                uploaded={imported.latest}
                 hidden={hidden}
-                loading={imported.loading}
+                columnsRead={columnsRead}
+                onRetryColumns={imported.reload}
+                waitForColumns={cardWaiting !== null}
                 errors={stationErrorsView}
                 samples={samples}
                 phoneDisplay={station.phoneDisplay}
                 removedInUse={removedInUse}
                 onPutBack={onPutBack}
+                focusRequest={factFocus}
                 readOnly={!canEdit}
               />
             </ComposerSection>
@@ -1080,8 +1119,8 @@ export function AgencyCampaignSettingsPage() {
                 facts={station.facts}
                 offered={plan?.offered ?? []}
                 allowed={plan?.allowed ?? []}
-                columns={columns}
-                uploaded={imported.columns}
+                columns={selectColumns}
+                uploaded={imported.latest}
                 hidden={hidden}
                 samples={samples}
                 phoneDisplay={station.phoneDisplay}
@@ -1089,6 +1128,8 @@ export function AgencyCampaignSettingsPage() {
                 removedInUse={removedInUse}
                 onPutBack={onPutBack}
                 onAddFact={onAddFact}
+                // R5: until the card is saved here, agents read the script as on the old model.
+                legacy={isLegacyDisplay(campaign.context_display) && !plan?.displaySent}
               />
             </ComposerSection>
           </Fragment>

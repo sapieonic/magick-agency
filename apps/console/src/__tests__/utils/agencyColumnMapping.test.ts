@@ -8,6 +8,7 @@ import {
   buildIngestRequest,
   buildContextDisplay,
   cardFactsFromMapping,
+  cardRoleNote,
   phoneValidityLine,
   heroLimitReached,
   phoneColumn,
@@ -144,6 +145,44 @@ describe('role arity', () => {
     state = setRole(state, 'Full Name', 'hero');
     state = setRole(state, 'Internal Score', 'hero');
     expect(buildContextDisplay(state).facts).toEqual([{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }]);
+  });
+
+  it('writes the guessed line under the name as its role too, and leaves it off the facts (S2)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Full Name'), column('City'), column('Branch')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'City', 'hero');
+    state = setRole(state, 'Branch', 'hero');
+    // With facts the station guesses no line under the name: written, it stays shown.
+    expect(buildContextDisplay(state)).toEqual({
+      facts: [{ column: 'Branch', label: 'Branch', key: 'branch' }],
+      roles: { name: 'Full Name', place: 'City' },
+    });
+    expect(cardRoleNote(state)).toBe('‘City’ is shown as the line under the name, not as a fact.');
+  });
+
+  it('says when a column picked On the card became the name or the line under it (S9)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Customer Name'), column('Town'), column('Loan')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'Loan', 'hero');
+    expect(cardRoleNote(state)).toBeNull();
+    state = setRole(state, 'Customer Name', 'hero');
+    expect(cardRoleNote(state)).toBe('‘Customer Name’ is shown as the customer’s name, not as a fact.');
+    state = setRole(state, 'Town', 'hero');
+    expect(cardRoleNote(state)).toBe('‘Customer Name’ is shown as the customer’s name and ‘Town’ as the line under it, not as facts.');
+  });
+
+  it('names the facts unlike each other: a clash is cut to fit “ 2” (S9)', () => {
+    const file = analysis({
+      columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Outstanding Balance (₹)'), column('Outstanding Balance Today')],
+    });
+    let state = initialMapping(file);
+    state = setRole(state, 'Outstanding Balance (₹)', 'hero');
+    state = setRole(state, 'Outstanding Balance Today', 'hero');
+    expect(cardFactsFromMapping(state).map((f) => f.label)).toEqual(['Outstanding Bala', 'Outstanding Ba 2']);
   });
 
   it('cuts a long header to the 16-letter name, and keys repeats apart', () => {

@@ -2,9 +2,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { useState } from 'react';
 import type { AgencyFactField } from '@magick-agency/contracts/agency';
-import { CustomerFactsEditor } from '../../pages/campaigns/agency/CustomerFactsEditor';
+import { CustomerFactsEditor, type ColumnsRead, type FactFocusRequest } from '../../pages/campaigns/agency/CustomerFactsEditor';
 import { useConfigFieldErrors } from '../../pages/campaigns/agency/configFieldErrors';
-import { factsErrors, type FactsForm } from '../../utils/agency/stationSettings';
+import { NAME_PHONE_MESSAGE, factsErrors, type FactsForm, type RemovedFact } from '../../utils/agency/stationSettings';
 
 /**
  * Campaign Settings › What agents see › the customer card (AS19): the name and line-under-name
@@ -29,6 +29,10 @@ function Harness({
   removedInUse = [],
   onPutBack,
   phoneDisplay,
+  columnsRead,
+  onRetryColumns,
+  waitForColumns,
+  focusRequest,
 }: {
   initial: FactsForm;
   columns: string[];
@@ -38,9 +42,13 @@ function Harness({
   onChange?: (next: FactsForm) => void;
   readOnly?: boolean;
   samples?: Array<Record<string, unknown>>;
-  removedInUse?: AgencyFactField[];
+  removedInUse?: RemovedFact[];
   onPutBack?: (key: string) => void;
   phoneDisplay?: 'full' | 'masked';
+  columnsRead?: ColumnsRead;
+  onRetryColumns?: () => void;
+  waitForColumns?: boolean;
+  focusRequest?: FactFocusRequest | null;
 }) {
   const [value, setValue] = useState(initial);
   // As the page does: the card's own findings, then the server's.
@@ -55,7 +63,10 @@ function Harness({
       columns={columns}
       uploaded={uploaded}
       hidden={hidden}
-      loading={false}
+      columnsRead={columnsRead}
+      onRetryColumns={onRetryColumns}
+      waitForColumns={waitForColumns}
+      focusRequest={focusRequest}
       phoneDisplay={phoneDisplay}
       errors={view}
       readOnly={readOnly}
@@ -77,17 +88,45 @@ describe('the name and the line under it', () => {
     render(<Harness initial={card({ place: 'city' })} columns={['Name', 'City']} />);
     const place = screen.getByTestId('fact-role-place') as HTMLSelectElement;
     expect(place.value).toBe('City');
-    // With none chosen, the server would guess City: the empty choice says so.
-    expect(within(place).getAllByRole('option').map((o) => o.textContent)).toEqual(['Guess from the column names (City)', 'Name', 'City']);
+    // The guess names what it would pick, briefly enough to fit (S9); "None" is its own choice (S2).
+    expect(within(place).getAllByRole('option').map((o) => o.textContent)).toEqual(['Guess (City)', 'None', 'Name', 'City']);
     cleanup();
     render(<Harness initial={card()} columns={['Name', 'Loan']} />);
-    expect(within(screen.getByTestId('fact-role-place')).getAllByRole('option')[0]!.textContent).toBe('None');
+    const nothing = screen.getByTestId('fact-role-place') as HTMLSelectElement;
+    expect(within(nothing).getAllByRole('option')[0]!.textContent).toBe('None');
+    expect(within(nothing).getAllByRole('option')[nothing.selectedIndex]!.textContent).toBe('None');
   });
 
-  it('names the column the server would guess when none is chosen', () => {
-    render(<Harness initial={card()} columns={['Customer Name', 'Town', 'Loan']} />);
-    expect(within(screen.getByTestId('fact-role-name')).getAllByRole('option')[0]!.textContent).toBe('Guess from the column names (Customer Name)');
-    expect(within(screen.getByTestId('fact-role-place')).getAllByRole('option')[0]!.textContent).toBe('Guess from the column names (Town)');
+  it('names the column the domain’s guess would pick when none is chosen, never a fact’s (S1)', () => {
+    render(<Harness initial={card({ list: [fact('Customer Name', 'cn')] })} columns={['Customer Name', 'Full Name', 'Town', 'Loan']} />);
+    expect(within(screen.getByTestId('fact-role-name')).getAllByRole('option')[0]!.textContent).toBe('Guess (Full Name)');
+    expect(within(screen.getByTestId('fact-role-place')).getAllByRole('option')[0]!.textContent).toBe('Guess (Town)');
+  });
+
+  it('sets the line under the name to none, and back to the guess (S2)', () => {
+    const onChange = vi.fn();
+    render(<Harness initial={card()} columns={['Name', 'City']} onChange={onChange} />);
+    const place = screen.getByTestId('fact-role-place') as HTMLSelectElement;
+    fireEvent.change(place, { target: { value: within(place).getByRole('option', { name: 'None' }).getAttribute('value') } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ place: null }));
+    expect(within(place).getAllByRole('option')[place.selectedIndex]!.textContent).toBe('None');
+    fireEvent.change(place, { target: { value: '' } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ place: '' }));
+  });
+
+  it('never offers a column read as a phone number for the name or the line under it (S3(e))', () => {
+    render(<Harness initial={card({ types: { Mobile: 'phone' } })} columns={['Name', 'Mobile']} />);
+    for (const id of ['fact-role-name', 'fact-role-place']) {
+      const option = within(screen.getByTestId(id)).getByRole('option', { name: 'Mobile (phone number)' }) as HTMLOptionElement;
+      expect(option.disabled).toBe(true);
+    }
+    cleanup();
+    // One chosen before it was read as a phone number: shown, with the server's words.
+    render(<Harness initial={card({ name: 'Mobile', types: { Mobile: 'phone' } })} columns={['Name', 'Mobile']} />);
+    const name = screen.getByTestId('fact-role-name') as HTMLSelectElement;
+    expect(name.value).toBe('Mobile');
+    expect(screen.getByText(NAME_PHONE_MESSAGE)).toBeTruthy();
+    expect(name.getAttribute('aria-invalid')).toBe('true');
   });
 });
 
@@ -142,7 +181,46 @@ describe('adding facts', () => {
     render(<Harness initial={card({ list: [fact('Loan ID', 'loan_id')] })} columns={['Loan ID', 'Branch']} uploaded={[]} />);
     fireEvent.click(screen.getByTestId('fact-add'));
     expect(within(screen.getByTestId('fact-picker')).queryAllByRole('button')).toEqual([]);
-    expect(screen.getByTestId('fact-picker-none').textContent).toBe('Upload a customer list to this campaign first.');
+    expect(screen.getByTestId('fact-picker-none').textContent).toBe('This campaign has no customer list yet. Upload one first.');
+  });
+
+  it('says the columns are being read, or that the read failed with a way to try again, never “no upload” (S9)', () => {
+    render(<Harness initial={card({ list: [fact('Loan ID', 'loan_id')] })} columns={['Loan ID']} uploaded={[]} columnsRead="loading" />);
+    fireEvent.click(screen.getByTestId('fact-add'));
+    expect(screen.getByTestId('fact-picker-columns').textContent).toBe('Loading the customer list’s columns…');
+    expect(screen.queryByTestId('fact-picker-none')).toBeNull();
+    cleanup();
+    const retry = vi.fn();
+    render(<Harness initial={card({ list: [fact('Loan ID', 'loan_id')] })} columns={['Loan ID']} uploaded={[]} columnsRead="failed" onRetryColumns={retry} />);
+    fireEvent.click(screen.getByTestId('fact-add'));
+    const failed = screen.getByTestId('fact-picker-columns');
+    expect(failed.textContent).toContain('Could not read the customer list’s columns.');
+    expect(failed.getAttribute('role')).toBe('alert');
+    fireEvent.click(within(failed).getByRole('button', { name: 'Try again' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a card on the old model only once the columns it is opened from are read (S9)', () => {
+    const retry = vi.fn();
+    const old = card({ list: [fact('Due', 'amount_due')] });
+    render(<Harness initial={old} columns={['Due']} waitForColumns columnsRead="loading" />);
+    expect(screen.getByTestId('customer-facts-columns').textContent).toBe('Loading the customer list’s columns…');
+    expect(screen.queryByTestId('fact-rows')).toBeNull();
+    cleanup();
+    render(<Harness initial={old} columns={['Due']} waitForColumns columnsRead="failed" onRetryColumns={retry} />);
+    expect(screen.queryByTestId('fact-rows')).toBeNull();
+    fireEvent.click(screen.getByTestId('customer-facts-columns-retry'));
+    expect(retry).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<Harness initial={old} columns={['Due']} waitForColumns columnsRead="done" />);
+    expect(screen.getByTestId('fact-rows')).toBeTruthy();
+  });
+
+  it('names a new fact unlike the others: a clash is cut to fit “ 2” (S9)', () => {
+    render(<Harness initial={card({ list: [fact('Outstanding Balance (₹)', 'ob', 'Outstanding Bala')] })} columns={['Outstanding Balance (₹)', 'Outstanding Balance Today']} />);
+    fireEvent.click(screen.getByTestId('fact-add'));
+    fireEvent.click(screen.getByTestId('fact-pick-Outstanding Balance Today'));
+    expect(labels()).toEqual(['Outstanding Bala', 'Outstanding Ba 2']);
   });
 
   it('shows a phone fact’s sample only as agents see it, never its digits beside it (AS19 R12)', () => {
@@ -264,13 +342,74 @@ describe('each fact', () => {
     expect(screen.queryByText(/not in the latest upload/)).toBeNull();
   });
 
-  it('offers a removed fact the script uses back', () => {
+  it('offers a removed fact the script uses back, under the one message that holds Save (S9)', () => {
     const onPutBack = vi.fn();
-    render(<Harness initial={card()} columns={['Due']} removedInUse={[fact('Due', 'due_date', 'Due date')]} onPutBack={onPutBack} />);
+    const said = 'The script uses {due_date}. Take it out of the script first, or keep the fact.';
+    render(
+      <Harness
+        initial={card()}
+        columns={['Due']}
+        removedInUse={[{ fact: fact('Due', 'due_date', 'Due date'), blocked: null }]}
+        onPutBack={onPutBack}
+        serverErrors={{ 'context_display.facts': said }}
+      />,
+    );
+    // Said once, not again on the row.
+    expect(screen.getAllByText(said)).toHaveLength(1);
     const note = screen.getByTestId('fact-put-back-due_date');
-    expect(note.textContent).toContain('The script uses {due_date}. Take it out of the script first, or keep the fact.');
+    expect(note.textContent).not.toContain('The script uses');
     fireEvent.click(within(note).getByRole('button', { name: 'Put ‘Due date’ back' }));
     expect(onPutBack).toHaveBeenCalledWith('due_date');
+  });
+
+  it('disables “Put it back” with the reason when it cannot go back (S9)', () => {
+    render(
+      <Harness
+        initial={card()}
+        columns={['Due']}
+        removedInUse={[{ fact: fact('Due', 'due_date', 'Due date'), blocked: 'The card is full (4 of 4). Remove a fact first.' }]}
+        onPutBack={vi.fn()}
+      />,
+    );
+    const button = within(screen.getByTestId('fact-put-back-due_date')).getByRole('button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const reason = screen.getByText('The card is full (4 of 4). Remove a fact first.');
+    expect(button.getAttribute('aria-describedby')).toBe(reason.id);
+  });
+
+  it('focuses and announces a fact the page put on the card (S9)', () => {
+    const list = [fact('Loan ID', 'loan_id'), fact('Due', 'due_date', 'Due date')];
+    const { rerender } = render(<Harness initial={card({ list })} columns={['Loan ID', 'Due']} />);
+    rerender(<Harness initial={card({ list })} columns={['Loan ID', 'Due']} focusRequest={{ key: 'due_date', part: 'grip', said: 'Due date put back on the card.' }} />);
+    expect(document.activeElement).toBe(screen.getByTestId('fact-grip-1'));
+    expect(screen.getByTestId('facts-announce').textContent).toBe('Due date put back on the card.');
+    rerender(<Harness initial={card({ list })} columns={['Loan ID', 'Due']} focusRequest={{ key: 'loan_id', part: 'label', said: 'Loan ID added to the card.' }} />);
+    expect(document.activeElement).toBe(screen.getByTestId('fact-label-0'));
+    expect(screen.getByTestId('facts-announce').textContent).toBe('Loan ID added to the card.');
+  });
+
+  it('uses one money fact for Full and Half: its key becomes {amount_due}, focus stays on the choice (S9)', () => {
+    const onChange = vi.fn();
+    render(
+      <Harness
+        initial={card({ list: [fact('Loan Amount', 'amount_due', 'Loan'), fact('EMI', 'emi'), fact('Branch', 'branch')], types: { 'Loan Amount': 'money', EMI: 'money' } })}
+        columns={['Loan Amount', 'EMI', 'Branch']}
+        onChange={onChange}
+      />,
+    );
+    // Offered on a money fact only.
+    expect((screen.getByTestId('fact-amount-0') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId('fact-amount-1') as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByTestId('fact-amount-2')).toBeNull();
+    fireEvent.click(screen.getByTestId('fact-amount-1'));
+    expect(keys()).toEqual(['{loan_amount}', '{amount_due}', '{branch}']);
+    expect((screen.getByTestId('fact-amount-0') as HTMLInputElement).checked).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('fact-amount-1'));
+    expect(screen.getByTestId('facts-announce').textContent).toBe('EMI is used for Full and Half.');
+    // A fact holding the key keeps the choice to let it go, whatever its type now.
+    fireEvent.change(screen.getByTestId('fact-row-type-1'), { target: { value: 'number' } });
+    fireEvent.click(screen.getByTestId('fact-amount-1'));
+    expect(keys()).toEqual(['{loan_amount}', '{emi}', '{branch}']);
   });
 });
 
