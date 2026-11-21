@@ -107,6 +107,39 @@ describe('a client that goes away', () => {
   });
 });
 
+describe('a statement that ends by itself while its cancel is on the way', () => {
+  it('the connection is given up only once the cancel has been sent, and destroyed', async () => {
+    const log: string[] = [];
+    let finish: ((v: unknown) => void) | null = null;
+    const client = {
+      processID: 7,
+      query(text: string) {
+        if (/^BEGIN|set_config/.test(text.trim())) return Promise.resolve({ rows: [] });
+        if (text.trim() === 'ROLLBACK') { log.push('ROLLBACK'); return Promise.resolve({ rows: [] }); }
+        log.push('statement');
+        return new Promise((resolve) => { finish = resolve; });
+      },
+      release(destroy?: boolean) { log.push(destroy === true ? 'destroyed' : 'released'); },
+    };
+    const r = new CompareReads({
+      timeoutMs: 10_000,
+      deps: {
+        pool: { connect: async () => client as never },
+        // A slow cancel: the statement finishes on its own before the cancel is through.
+        cancelBackend: async () => { log.push('cancel'); finish?.({ rows: [] }); await new Promise((res) => setTimeout(res, 80)); log.push('cancel sent'); return true; },
+        poolMax: () => 30, memberships: async () => [], names: async () => new Map(), now: () => new Date(),
+      },
+    });
+    const gone = new AbortController();
+    const read = r.cohort(SCOPE, gone.signal).catch((e: unknown) => e);
+    await new Promise((res) => setTimeout(res, 20));
+    gone.abort();
+    expect(await read).toBeInstanceOf(CompareAborted);
+    expect(log).toEqual(['statement', 'cancel', 'cancel sent', 'destroyed']);
+    expect(r.inFlight('t1')).toBe(0);
+  });
+});
+
 describe('the process-wide limit', () => {
   it('is a sixth of the pool, never under one tenant\'s limit', () => {
     expect(compareGlobalReadLimit(30)).toBe(5);
