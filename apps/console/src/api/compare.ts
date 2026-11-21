@@ -7,7 +7,6 @@ import {
   AGENCY_COMPARE_ERROR_CODES,
   COMPARE_MAX_METRICS,
   COMPARE_PAGE_MAX_AGENTS,
-  COMPARE_TENANT_CONCURRENT_READS,
   COMPARE_VIEWS_PER_USER_MAX,
   type AgencyCompareErrorCode,
   type AgencyCompareOptions,
@@ -140,7 +139,9 @@ export const COMPARE_ERROR_MESSAGES: Record<CompareRefusalCode, string> = {
   compare_timezone_invalid: 'Your browser’s time zone isn’t recognised, so the days can’t be worked out.',
   compare_agent_not_in_cohort:
     'One of the agents didn’t take calls on this campaign in this window. Remove them or choose a longer window.',
-  compare_busy: `Your organisation is already running ${COMPARE_TENANT_CONCURRENT_READS} comparisons. Try again in a moment.`,
+  // Refused by the account's limit or by the server's own (both answer compare_busy), so the words
+  // name neither.
+  compare_busy: 'Too many comparisons are running right now. Try again in a moment.',
   compare_timed_out: 'This comparison took too long to work out. Try a shorter window, or try again.',
   compare_view_not_found: 'That saved view no longer exists, or isn’t yours to change.',
   compare_view_invalid:

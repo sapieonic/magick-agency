@@ -30,8 +30,8 @@ printed that day for unit files and for the integration files of the final run. 
 shared campaign stats read (2026-11-14) and its review fixes (the cache-invalidation channel,
 `markStale`, Home's read past the shared read) added or changed show the counts Vitest printed that
 day; where a changed file's old count was already stale (`left-session-guards.test.ts`), the new one
-corrects it. The server, contracts, domain and db files Compare agents (CP1–CP18, 2026-11-21) and its
-final review fixes added or changed show the counts Vitest printed that day, unit files and the
+corrects it. The server, contracts, domain, db and console files Compare agents (CP1–CP18, 2026-11-21)
+and its final review fixes added or changed show the counts Vitest printed that day, unit files and the
 integration files of the final run (the server's in its two CI lanes).
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
@@ -1810,7 +1810,7 @@ Files: `abandonment-predicate.ts`, `agent-compare.ts` (and `agent-compare/`), `a
 | Test file | Cases |
 |---|---|
 | `packages/domain/test/unit/agent-compare/findings.test.ts` (§6: the Priya example both ways, leave-one-out, thin agents in the pool, smallest gap, praise, neutral, times, breaks, the six-agent guard, too few calls, caps and order; mutation-checked) | 39 |
-| `packages/domain/test/unit/agent-compare/lens.test.ts` | 7 |
+| `packages/domain/test/unit/agent-compare/lens.test.ts` (each lens's metrics and trend; Collections on Promises whenever the catalog records promises, else the Success rule) | 8 |
 | `packages/domain/test/unit/agent-compare/metrics.test.ts` | 24 |
 | `packages/domain/test/unit/agent-compare/percentiles.test.ts` (against Postgres `percentile_cont` values) | 7 |
 | `packages/domain/test/unit/agent-compare/wilson.test.ts` | 15 |
@@ -2157,15 +2157,18 @@ Compare agents, Reports' tab for supervisors (docs/compare-agents.md §2, §5, �
 
 Files: `Compare.module.css`, `CompareAgentChips.tsx`, `CompareCharts.tsx`, `CompareFindings.tsx`, `CompareMetricPicker.tsx`, `CompareNumbers.tsx`, `CompareViews.tsx`
 
-| Test file | What it holds |
+| Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/api/compare.test.ts` | each route's path, method, body and scope; words for every refusal code and `feature_disabled`; the window rule worded as the reports'; Try again only for busy, timed out, 429, 5xx and the network |
-| `apps/console/src/__tests__/utils/compareUrl.test.ts` | the URL round trip, the allow-list, the colour slots, the windows and Check a longer window |
-| `apps/console/src/__tests__/utils/compareMetrics.test.ts` | the metric words and units, an unknown count never written as 0, six metrics, five codes, promise metrics only with promise codes, a view's gone metrics and trend dropped and named with their own reasons, the lens fallback note |
-| `apps/console/src/__tests__/utils/compareFindingsCopy.test.ts` | a sentence for every finding code and unit, the reasons (each flaggable metric's too-few reason), a likely range never rounded onto its baseline, an outcome set's label kept as written, every next step and the listening ones hidden without listening rights, Not clear yet (a time by its ratio), the cohort-under-six note |
-| `apps/console/src/__tests__/utils/compareCharts.test.ts` | the bar, trend and day-split geometry: scale, band, whiskers, words under the floor, a line broken on days off, labels apart, percentages that add up to 100 |
-| `apps/console/src/__tests__/components/CompareMetricPicker.test.tsx` | the picker's limits, the outcome-set builder's codes, name and direction, the trend choice, the agent chips' three-agent limit and marks |
-| `apps/console/src/__tests__/pages/CompareAgentsPage.test.tsx` | the gates, the URL in and out, the lens defaults, the default view, a dropped metric and the lens fallback note, the reads (held for a new window's options, one read per burst of picks, only the answer's agents drawn), the refusals and Try again, saving and changing a view (flags keep unsaved edits, campaign default only for this campaign's views), the lens buttons and heading levels |
+| `apps/console/src/__tests__/api/compare.test.ts` (each route's path, method, body and scope; words for every refusal code and `feature_disabled`; the window rule worded as the reports'; Try again only for busy, timed out, 429, 5xx and the network) | 13 |
+| `apps/console/src/__tests__/utils/compareUrl.test.ts` (the URL round trip, the allow-list, the colour slots, the windows and Check a longer window) | 16 |
+| `apps/console/src/__tests__/utils/compareMetrics.test.ts` (the metric words and units, an unknown count never written as 0, six metrics, five codes, promise metrics only with promise codes, a view's gone metrics and trend dropped and named with their own reasons, the lens fallback note) | 23 |
+| `apps/console/src/__tests__/utils/compareFindingsCopy.test.ts` (a sentence for every finding code and unit, the reasons (each flaggable metric's too-few reason), a likely range never rounded onto its baseline, an outcome set's label kept as written, every next step and the listening ones hidden without listening rights, Not clear yet (a time by its ratio), the cohort-under-six note) | 26 |
+| `apps/console/src/__tests__/utils/compareCharts.test.ts` (the bar, trend and day-split geometry: scale, band, whiskers, words under the floor, a line broken on days off, labels apart, percentages that add up to 100) | 23 |
+| `apps/console/src/__tests__/components/CompareCharts.test.tsx` (the charts drawn from recorded real answers: withheld rows and the band kept apart, a degenerate band left out, the count scale's minimum, None due yet, trend end labels at each series' last point) | 6 |
+| `apps/console/src/__tests__/components/CompareMetricPicker.test.tsx` (the picker's limits, the outcome-set builder's codes, name and direction, the trend choice, the agent chips' three-agent limit and marks) | 16 |
+| `apps/console/src/__tests__/pages/CompareAgentsPage.test.tsx` (the gates, the URL in and out, the lens defaults, the default view, a dropped metric and the lens fallback note, the reads (held for a new window's options, one read per burst of picks, only the answer's agents drawn), the refusals and Try again, saving and changing a view (flags keep unsaved edits, campaign default only for this campaign's views), the lens buttons and heading levels) | 48 |
+| `apps/console/src/__tests__/utils/currentZoneName.test.ts` (a legacy zone name mapped to its current one only when the browser knows it) | 2 |
+| `apps/console/src/__tests__/utils/readerZone.timezone.test.ts` (the reader's zone under a real legacy `TZ`: sent by its current name) | 3 |
 
 ### `apps/console/src/components/agency/inbound/`
 
@@ -2556,7 +2559,7 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/stationSettings.test.ts` (the station's campaign settings, AS6, AS9, BE-6, BE-8: read from the campaign, malformed as unset; the target's 1–2,000 and `null`; the mask; the script's placeholders, bounds by code point, 12 steps, the trimmed payload and the caret insert; the facts' two-roles and hidden rules, the merge into the stored display, Text as no entry, the offered columns; the changes counted, only changed settings sent, only changed ones judged) | 21 |
 | `apps/console/src/__tests__/utils/floorAlerts.test.ts` (AS16: each kind in words, minutes over and minutes disconnected on the server's clock, the fallback name, unknown kinds left out, each alert's chime key) | 6 |
-| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 84 |
+| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 85 |
 
 `softphoneCallState.test.ts` also covers the station reducer's `manual_call` action (`utils/agencyStationReducer.ts`); `softphoneFields.test.ts` covers `callFields`, `fieldSettings`, `settingsForm`, the override note, `refusalCopy` and `callStats`.
 

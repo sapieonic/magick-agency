@@ -3,7 +3,6 @@ import {
   AGENCY_COMPARE_ERROR_CODES,
   COMPARE_MAX_METRICS,
   COMPARE_PAGE_MAX_AGENTS,
-  COMPARE_TENANT_CONCURRENT_READS,
   COMPARE_VIEWS_PER_USER_MAX,
   type AgencyCompareQuery,
 } from '@magick-agency/contracts/api/agency/compare';
@@ -140,7 +139,6 @@ describe('refusals', () => {
   it('writes British spelling and no American forms', () => {
     const all = Object.values(COMPARE_ERROR_MESSAGES).join(' ');
     expect(all).not.toMatch(/\b(organization|recognized|canceled|dialed|color)\b/i);
-    expect(COMPARE_ERROR_MESSAGES.compare_busy).toContain('organisation');
     expect(COMPARE_ERROR_MESSAGES.compare_timezone_invalid).toContain('recognised');
   });
 
@@ -173,10 +171,15 @@ describe('refusals', () => {
     expect(COMPARE_NETWORK_MESSAGE).toBe('Couldn’t reach the server. Check your connection and try again.');
   });
 
+  it('words compare_busy for either limit: it names neither the organisation nor a count', () => {
+    // The server refuses compare_busy for the account's limit and for its own process-wide one.
+    expect(COMPARE_ERROR_MESSAGES.compare_busy).toBe('Too many comparisons are running right now. Try again in a moment.');
+    expect(COMPARE_ERROR_MESSAGES.compare_busy).not.toMatch(/organisation|\d/);
+  });
+
   it('reads the limits it states from the contract', () => {
     expect(COMPARE_ERROR_MESSAGES.compare_too_many_agents).toContain(`at most ${COMPARE_PAGE_MAX_AGENTS} agents`);
     expect(COMPARE_ERROR_MESSAGES.compare_too_many_metrics).toContain(`at most ${COMPARE_MAX_METRICS} metrics`);
-    expect(COMPARE_ERROR_MESSAGES.compare_busy).toContain(`running ${COMPARE_TENANT_CONCURRENT_READS} comparisons`);
     expect(COMPARE_ERROR_MESSAGES.compare_view_limit).toContain(`${COMPARE_VIEWS_PER_USER_MAX} saved views`);
   });
 });

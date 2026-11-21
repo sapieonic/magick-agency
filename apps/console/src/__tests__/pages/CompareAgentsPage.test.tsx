@@ -391,7 +391,7 @@ describe('refusals', () => {
     mocks.queryCompare.mockRejectedValueOnce(refusal(429, 'compare_busy'));
     renderView('?campaign=camp-1&agents=u-lak');
     const error = await screen.findByTestId('compare-error');
-    expect(error.textContent).toContain('Your organisation is already running 2 comparisons. Try again in a moment.');
+    expect(error.textContent).toContain('Too many comparisons are running right now. Try again in a moment.');
     fireEvent.click(within(error).getByRole('button', { name: 'Try again' }));
     await screen.findByTestId('compare-findings');
     expect(mocks.queryCompare).toHaveBeenCalledTimes(2);
