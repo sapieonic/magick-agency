@@ -234,7 +234,9 @@ export const COMPARE_CALLBACKS_SQL = `
 /**
  * Breaks that ended over their reason's limit, per cohort agent, on the campaign's sessions in the
  * window: 0060's column, set only on the event that ended a break that ran over (a reserved break
- * never), read on `idx_agency_session_events_campaign_at` (campaign_id, at).
+ * never), read on 0066's `idx_agency_session_events_break_overrun` ((campaign_id, at) where the
+ * column is set), never the campaign's every state change. Held by
+ * `test/integration/agency/compare-break-overrun-index.test.ts`, which plans this statement.
  */
 export const COMPARE_BREAK_OVERRUNS_SQL = `
   SELECT e.agent_user_id, count(*)::int AS breaks
