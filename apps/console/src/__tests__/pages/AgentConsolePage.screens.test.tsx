@@ -596,7 +596,9 @@ describe('04 On call with the campaign’s chosen facts (AS19)', () => {
     script: { steps: [{ text: 'Say {amount_due} is due at {branch_2}.' }] },
   };
 
-  it('shows the chosen tiles, the card wider than the right column, and "not given" in What to say', async () => {
+  // jsdom lays nothing out: the widths (the card taking the rest beside the right column) are
+  // checked in a browser, not here. This holds the card in the on-call body that sets them.
+  it('shows the chosen tiles in the On call body (bodyOnCall), and "not given" in What to say', async () => {
     mocks.createAgencySession.mockResolvedValue(BOOT);
     await mounted();
     await frames(

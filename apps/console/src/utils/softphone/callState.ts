@@ -1,4 +1,4 @@
-import { resolveContextFields } from '../agencyContext';
+import { customerNameFrom } from '@magick-agency/domain/customer-name';
 import { ATTEMPT_OUTCOME_WORDS } from '../agency/stationCopy';
 import type { AgencyContextDisplay } from '../../types/agency';
 import type { AgencyManualCall, AgencyManualCallEndReason } from '../../types/softphone';
@@ -102,12 +102,8 @@ export function callEndSummary(call: AgencyManualCall): string {
 }
 
 /**
- * The matched contact's name, for "On call with Rahul Verma".
- *
- * Read through the tag's `context_display` and the same hero resolution the
- * station's contact panel uses, then the first hero that looks like a name —
- * never the first column of an arbitrary CSV, which is as likely to be a loan
- * number as a person.
+ * The matched contact's name, for "On call with Rahul Verma", read through the tag's
+ * `context_display` by {@link contextName}.
  */
 export function contactName(
   call: AgencyManualCall | null | undefined,
@@ -119,16 +115,16 @@ export function contactName(
 }
 
 /**
- * A contact's name off its uploaded context: the first hero (then field) whose label reads
- * like a name. Shared by the soft phone's call and an inbound caller's matched contact.
+ * A contact's name off its uploaded context, by the server's one rule (AS19 S1, the domain's
+ * `customerNameFrom`): the `name` role's column when the display sets one (none when it is blank
+ * on this row), else the guess from the column names (`Name`, `Customer Name`, …), never a
+ * hidden column or a chosen fact's, and never the first column of an arbitrary CSV, which is as
+ * likely to be a loan number as a person. Shared by the soft phone's call and an inbound
+ * caller's matched contact (`inboundMatchName`).
  */
 export function contextName(
   context: Record<string, unknown>,
   display: AgencyContextDisplay | undefined,
 ): string | null {
-  const resolved = resolveContextFields(context, display);
-  const named = [...resolved.hero, ...resolved.fields].find(
-    (field) => !field.isEmpty && /(^|[\s_-])(full[\s_-]?)?name$|^name$|customer|contact[\s_-]?name/i.test(field.label),
-  );
-  return named?.value ?? null;
+  return customerNameFrom(context, display) ?? null;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   contactName,
+  contextName,
   callEndSummary,
   isCallLive,
   isCallUnsettled,
@@ -138,5 +139,18 @@ describe('contactName', () => {
     });
     expect(contactName(call, { hero: ['Loan account', 'Name'] })).toBe('Rahul Verma');
     expect(contactName(manualCall(), undefined)).toBeNull();
+  });
+
+  it('reads the `name` role first, by the server’s one rule (AS19 S1)', () => {
+    const context = { Borrower: 'Sunita Patil', Name: 'Branch office', 'Loan account': 'HL-20931' };
+    // The role names a column the guess would never read.
+    expect(contextName(context, { roles: { name: 'Borrower' } })).toBe('Sunita Patil');
+    // A role set but blank on this row: no name, never a guess.
+    expect(contextName({ ...context, Borrower: ' ' }, { roles: { name: 'Borrower' } })).toBeNull();
+    // No role: the guess from the column names, never a chosen fact's column.
+    expect(contextName(context, {})).toBe('Branch office');
+    expect(contextName(context, { facts: [{ column: 'Name', label: 'Branch', key: 'branch' }] })).toBeNull();
+    // `Customer ID` is not a name.
+    expect(contextName({ 'Customer ID': 'C-7' }, undefined)).toBeNull();
   });
 });

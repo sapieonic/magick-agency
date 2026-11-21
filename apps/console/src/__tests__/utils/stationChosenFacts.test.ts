@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parsePhoneFact } from '@magick-agency/domain/context-facts';
+import { chosenFactTiles } from '@magick-agency/domain/fact-tiles';
 import {
   chosenFactsFromContext,
   chosenSpans,
@@ -10,11 +11,11 @@ import {
   tileName,
 } from '../../utils/agency/stationCustomer';
 import { factDay, factPhone, groupedNumber } from '../../utils/agency/stationFormat';
-import { fillScriptLine, fillScriptPlaceholders, scriptFillFor } from '../../utils/agency/stationScript';
+import { fillScriptLine, scriptFillFor } from '../../utils/agency/stationScript';
 import { inboundCustomerCard, softphoneCustomerCard } from '../../utils/agency/sideViewCustomer';
 import type { AgencyContextDisplay, AgencyFactTile, AgencyReservedAttempt } from '../../types/agency';
 import type { AgencyInboundCall } from '../../types/inbound';
-import { PHONE_RULE_TABLE } from '../helpers/phoneRule';
+import { PHONE_RULE_TABLE, PHONE_RULE_UNREAD } from '../helpers/phoneRule';
 import type { AgencyManualCall } from '../../types/softphone';
 
 /**
@@ -110,6 +111,24 @@ describe('value formats on a chosen fact (AS19, spec §6)', () => {
     const phone = tile({ column: 'P', type: 'phone', raw: input, value });
     expect(factDisplay(phone).text).toBe(full);
     expect(factDisplay(phone, { phoneDisplay: 'masked' }).text).toBe(masked);
+  });
+
+  it('holds the console to the shared cases (fact-rules.json), R6’s six rows among them', () => {
+    expect(PHONE_RULE_TABLE).toEqual(expect.arrayContaining([
+      ['9876543210', '+91 98765 43210', '98••• ••210'],
+      ['919876543210', '+91 98765 43210', '98••• ••210'],
+      ['+919876543210', '+91 98765 43210', '98••• ••210'],
+      ['09876543210', '+91 98765 43210', '98••• ••210'],
+      ['1234567890', '1234567890', '12••• ••890'],
+      ['+14155550123', '+14155550123', '14••• ••123'],
+    ]));
+    expect(PHONE_RULE_UNREAD.length).toBeGreaterThan(0);
+  });
+
+  it.each(PHONE_RULE_UNREAD)('an unread phone (%s) is masked by the shared rule (%s) and shown as uploaded in full', (input, masked) => {
+    const unread = tile({ column: 'P', type: 'phone', raw: input, value: null });
+    expect(factDisplay(unread, { phoneDisplay: 'masked' }).text).toBe(masked);
+    expect(factDisplay(unread).text).toBe(input.trim());
   });
 
   it('a phone the server could not read is masked the same way on its digits, and too short a one shows none', () => {
@@ -254,15 +273,44 @@ describe('the side views build the chosen facts from the contact’s row (AS19)'
   };
   const context = { Borrower: 'Ramesh Goud', Town: 'Siddipet', Outstanding: '12500', Secret: 'x', 'Alt phone': '9876512345' };
 
-  it('reads the row by the server’s rule: matched ignoring case, never hidden or missing, typed by `types`', () => {
+  it('reads the row by the server’s rule: matched ignoring case, never hidden or missing, typed by `types`, highlight first (S6)', () => {
     const facts = chosenFactsFromContext(context, display)!;
     expect(facts.name).toBe('Ramesh Goud');
     expect(facts.place).toBe('Siddipet');
     expect(facts.tiles.map((t) => [t.column, t.label, t.type, t.value, t.highlight === true, t.role])).toEqual([
-      ['Outstanding', 'Amount due', 'money', '12500', false, 'amount_due'],
       ['Alt phone', 'Other number', 'phone', '9876512345', true, undefined],
+      ['Outstanding', 'Amount due', 'money', '12500', false, 'amount_due'],
     ]);
+    // The server's own builder, exactly (the console keeps no copy).
+    expect(facts.tiles).toEqual(chosenFactTiles(context, display));
     expect(chosenFactsFromContext(context, { hero: ['Outstanding'] })).toBeNull();
+  });
+
+  it('de-dupes a repeated column and trims labels, as the server does (S6)', () => {
+    const twice: AgencyContextDisplay = {
+      facts: [
+        { column: 'Outstanding', label: '  Amount due  ', key: 'amount_due' },
+        { column: 'outstanding', label: 'Again', key: 'again' },
+      ],
+    };
+    expect(chosenFactsFromContext(context, twice)!.tiles.map((t) => [t.column, t.label])).toEqual([['Outstanding', 'Amount due']]);
+  });
+
+  it('names the customer by the server’s rule (S1): the guess from the column names, no place guess with facts (S2)', () => {
+    // `Branch` read as the place by the console's old guess; the server's rule never does.
+    const row = { 'Customer Name': 'Asha Rao', Branch: 'Kothrud', City: 'Pune', Outstanding: '12500' };
+    const chosen = chosenFactsFromContext(row, { facts: [{ column: 'Outstanding', label: 'Amount due', key: 'amount_due' }] })!;
+    expect([chosen.name, chosen.place]).toEqual(['Asha Rao', undefined]);
+    // Without facts (today's card on a side view): the guess, City as the place, never Branch.
+    const call = (c: Record<string, unknown>, d: AgencyContextDisplay | undefined) =>
+      ({ from_e164: '+919876543321', match: { campaign_id: 'camp-1', context: c, prior_attempts: [], context_display: d } }) as unknown as AgencyInboundCall;
+    const legacy = inboundCustomerCard(call(row, {}));
+    expect([legacy.name, legacy.place]).toEqual(['Asha Rao', 'Pune']);
+    const noGuess = inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, {}));
+    expect([noGuess.name, noGuess.place]).toEqual([null, null]);
+    // A role names the column, even one the guess would not read.
+    const roles = inboundCustomerCard(call({ Borrower: 'Ramesh', Branch: 'Kothrud' }, { roles: { name: 'Borrower', place: 'Branch' } }));
+    expect([roles.name, roles.place]).toEqual(['Ramesh', 'Kothrud']);
   });
 
   it('an inbound caller and a soft-phone call show the same card, the inbound number masked as the station says', () => {
@@ -279,6 +327,46 @@ describe('the side views build the chosen facts from the contact’s row (AS19)'
     ]);
     const manual = { destination_e164: '+919876543321', contact: { context, prior_attempts: [] } } as unknown as AgencyManualCall;
     expect(softphoneCustomerCard(manual, display).facts.map((f) => f.label)).toEqual(['Other number', 'Amount due']);
+  });
+
+  it('the soft phone masks its phone facts as the station says, the dialled number as typed (S3(b))', () => {
+    const manual = { destination_e164: '+919876543321', contact: { context, prior_attempts: [] } } as unknown as AgencyManualCall;
+    const masked = softphoneCustomerCard(manual, display, 'masked');
+    expect(masked.facts.map((f) => f.value)).toEqual(['98••• ••345', '₹12,500']);
+    expect(masked.phone).toBe('+91 98765 43321');
+    const full = softphoneCustomerCard(manual, display, 'full');
+    expect(full.facts.map((f) => f.value)).toEqual(['+91 98765 12345', '₹12,500']);
+    // Today's card on the soft phone: a column `types` calls a phone is masked too.
+    const legacy = softphoneCustomerCard(manual, { hero: ['Alt phone', 'Outstanding'], types: { 'Alt phone': 'phone' } }, 'masked');
+    expect(legacy.facts.map((f) => [f.label, f.value])).toEqual([['Alt phone', '98••• ••345'], ['Outstanding', '12500']]);
+    expect(legacy.phone).toBe('+91 98765 43321');
+  });
+});
+
+describe('a phone number never escapes hidden-number on today’s card (S3(b))', () => {
+  const typed = (over: Partial<AgencyFactTile>): AgencyReservedAttempt => ({
+    ...ATTEMPT,
+    facts: { name: 'Sunita', tiles: [tile({ column: 'Alt phone', type: 'phone', raw: '98765 12345', value: '9876512345', ...over })] },
+  });
+
+  it('a phone-typed tile is formatted and masked by the one phone rule', () => {
+    expect(customerCard(typed({}), undefined, { phoneDisplay: 'masked' }).facts[0]).toMatchObject({ label: 'Alt phone', value: '98••• ••345', kind: 'phone' });
+    expect(customerCard(typed({}), undefined, { phoneDisplay: 'full' }).facts[0]).toMatchObject({ value: '+91 98765 12345', kind: 'phone' });
+    // One the server could not read: masked on its digits, as uploaded in full.
+    const unread = typed({ raw: '98765 12345 (home)', value: null });
+    expect(customerCard(unread, undefined, { phoneDisplay: 'masked' }).facts[0]).toMatchObject({ value: '98••• ••345', kind: 'text' });
+    expect(customerCard(unread, undefined, { phoneDisplay: 'full' }).facts[0]!.value).toBe('98765 12345 (home)');
+  });
+
+  it('a name or place read from a phone-typed column is masked (a display stored before S3(e))', () => {
+    const attempt = { ...ATTEMPT, context: { Contact: '9876512345', Mobile: '9123456780' }, facts: { name: '9876512345', place: '9123456780', tiles: [] } };
+    const display: AgencyContextDisplay = { roles: { name: 'Contact', place: 'Mobile' }, types: { Contact: 'phone', mobile: 'phone' } };
+    const masked = customerCard(attempt, display, { phoneDisplay: 'masked' });
+    expect([masked.name, masked.place, masked.initials]).toEqual(['98••• ••345', '91••• ••780', '']);
+    const full = customerCard(attempt, display, { phoneDisplay: 'full' });
+    expect([full.name, full.place]).toEqual(['9876512345', '9123456780']);
+    // A text column is never masked.
+    expect(customerCard(attempt, { roles: { name: 'Contact', place: 'Mobile' } }, { phoneDisplay: 'masked' }).name).toBe('9876512345');
   });
 });
 
@@ -334,6 +422,7 @@ describe('the script filled from the chosen facts (AS19)', () => {
   });
 
   it('the legacy fill reads keys with digits too (the one reading of braces)', () => {
-    expect(fillScriptPlaceholders('Pay {emi_2} by {due_date}', (k) => (k === 'emi_2' ? '₹4,500' : null), ['emi_2', 'due_date'])).toBe('Pay ₹4,500 by ');
+    const legacy = { allowed: ['emi_2', 'due_date'], valueOf: (k: string) => (k === 'emi_2' ? '₹4,500' : null), labelOf: () => null };
+    expect(fillScriptLine('Pay {emi_2} by {due_date}', legacy).shown).toBe('Pay ₹4,500 by ');
   });
 });

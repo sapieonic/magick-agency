@@ -51,6 +51,31 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+describe('the customer card on a campaign that hides numbers (AS19 S3(b))', () => {
+  it('masks a phone fact as the station says; the dialled number stays as typed', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({
+      ...BOOTSTRAP,
+      taggable_campaigns: [{
+        ...CAMPAIGN,
+        context_display: { roles: { name: 'Name' }, types: { 'Alt phone': 'phone' }, facts: [{ column: 'Alt phone', label: 'Other number', key: 'alt_phone' }] },
+      }],
+    });
+    const view = await mount({ presetCampaignId: 'camp-1', phoneDisplay: 'masked' });
+    await view.frame(manualCall({
+      state: 'bridged',
+      tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name },
+      contact: { contact_id: 'c-1', state: 'in_flight', claimed: true, context: { Name: 'Rahul Verma', 'Alt phone': '9876512345' } },
+      answered_at: '2026-10-30T10:00:05Z',
+      bridged_at: '2026-10-30T10:00:05Z',
+    }));
+    const card = screen.getByTestId('customer-card');
+    expect(within(card).getByTestId('customer-name').textContent).toBe('Rahul Verma');
+    expect(within(card).getByTestId('customer-fact').getAttribute('aria-label')).toBe('Other number: 98••• ••345');
+    expect(card.textContent).not.toContain('98765');
+    expect(within(card).getByTestId('customer-phone').textContent).toBe('+91 98204 61733');
+  });
+});
+
 describe('Ready', () => {
   it('opens on the dial pad with recent calls, the account’s default caller ID and Call disabled', async () => {
     await mount();

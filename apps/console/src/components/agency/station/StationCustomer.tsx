@@ -3,7 +3,7 @@ import { Calendar, Clock, IndianRupee, MapPin, MessageSquare, Mic, Phone } from 
 import { NotesField, type NotesFieldProps } from '../NotesField';
 import { useDictation } from '../../../hooks/useSpeech';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
-import { fitFontSize, type CustomerCard, type CustomerFact, type LastCallRow } from '../../../utils/agency/stationCustomer';
+import { FACT_POP_MIN_WIDTH, factPopPlacement, fitFontSize, type CustomerCard, type CustomerFact, type LastCallRow } from '../../../utils/agency/stationCustomer';
 import styles from './Station.module.css';
 
 const FACT_ICON: Record<CustomerFact['kind'], typeof Phone | null> = {
@@ -20,10 +20,11 @@ const FACT_ICON: Record<CustomerFact['kind'], typeof Phone | null> = {
  * A number, amount, date or phone that shrinks to fit its tile (AS19) down to 65 %, then takes
  * the ellipsis. Measured once per value and width: a ResizeObserver on the value re-measures only
  * when its width changes, and the size is set in one write (no read-write loop). It measures again
- * when the page's fonts finish loading (a value measured in the fallback font is the wrong width)
- * and when the tile is highlighted or stops being (the highlight's value is set larger).
+ * when the page's fonts finish loading (`document.fonts.ready`, and each later `loadingdone`: a
+ * value measured in the fallback font is the wrong width) and when the tile is highlighted or
+ * stops being (the highlight's value is set larger).
  */
-function FitValue({ text, className, testId, empty, highlight }: { text: string; className: string; testId: string; empty?: boolean; highlight?: boolean }) {
+function FitValue({ text, className, testId, highlight }: { text: string; className: string; testId: string; highlight?: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -39,11 +40,14 @@ function FitValue({ text, className, testId, empty, highlight }: { text: string;
     };
     fit(el.clientWidth);
     // Fonts that load after the first measure change the value's width but not the tile's.
-    void document.fonts?.ready.then(() => {
+    const refit = () => {
       if (!live) return;
       width = -1;
       fit(el.clientWidth);
-    });
+    };
+    const fonts = typeof document === 'undefined' ? undefined : document.fonts;
+    void fonts?.ready?.then(refit);
+    fonts?.addEventListener?.('loadingdone', refit);
     const observer = typeof ResizeObserver === 'undefined'
       ? null
       : new ResizeObserver((entries) => fit(Math.round(entries[0]?.contentRect.width ?? el.clientWidth)));
@@ -51,27 +55,48 @@ function FitValue({ text, className, testId, empty, highlight }: { text: string;
     return () => {
       live = false;
       observer?.disconnect();
+      fonts?.removeEventListener?.('loadingdone', refit);
     };
   }, [text, highlight]);
-  return <span ref={ref} className={className} data-testid={testId} data-empty={empty ? 'true' : undefined}>{text}</span>;
+  return <span ref={ref} className={className} data-testid={testId}>{text}</span>;
 }
 
 /**
  * One chosen fact (AS19): its name, its value on one line, and a hover card with the name, the
- * whole value and "From column: X" while it is pointed at or focused (tiles are focusable, so the
- * keyboard reaches it). Escape closes it (here, and from anywhere through {@link ChosenFacts}). The card shows the value as the tile writes it, so a
- * masked phone never shows its digits there.
+ * whole value and "From column: X" while it is pointed at or focused from the keyboard (tiles are
+ * focusable). A mouse click that focuses the tile does not open it (`:focus-visible` semantics,
+ * S11): it closes when the pointer leaves. The card stays inside the card's column
+ * ({@link factPopPlacement}). Escape closes it (here, and from anywhere through
+ * {@link ChosenFacts}). The card shows the value as the tile writes it, so a masked phone never
+ * shows its digits there.
  */
 function FactTile({ fact, open, onOpen, onClose }: { fact: CustomerFact; open: boolean; onOpen: (via: 'hover' | 'focus') => void; onClose: (via: 'hover' | 'focus' | 'escape') => void }) {
   const popId = useId();
   const tileRef = useRef<HTMLDivElement>(null);
-  const [alignEnd, setAlignEnd] = useState(false);
-  const show = (via: 'hover' | 'focus') => {
-    const rect = tileRef.current?.getBoundingClientRect();
-    // Open towards the inside of the window: a tile near the right edge aligns the card to its end.
-    setAlignEnd(rect ? rect.left + 300 > window.innerWidth - 16 && rect.right > 300 : false);
-    onOpen(via);
-  };
+  const popRef = useRef<HTMLDivElement>(null);
+  // A focus that a pointer press brings is not a keyboard focus: no card for it.
+  const pressed = useRef(false);
+  useLayoutEffect(() => {
+    const pop = popRef.current;
+    const tile = tileRef.current;
+    if (!open || !pop || !tile) return;
+    pop.style.left = '';
+    pop.style.maxWidth = '';
+    pop.style.minWidth = '';
+    delete pop.dataset['side'];
+    const column = (tile.parentElement ?? tile).getBoundingClientRect();
+    const at = tile.getBoundingClientRect();
+    const box = pop.getBoundingClientRect();
+    const place = factPopPlacement(at, column, { width: Math.max(box.width, FACT_POP_MIN_WIDTH), height: box.height }, window.innerHeight);
+    if (!place) return;
+    pop.style.maxWidth = `${place.maxWidth}px`;
+    pop.style.minWidth = `${Math.min(FACT_POP_MIN_WIDTH, place.maxWidth)}px`;
+    // The width can change with the max: place it again on the width it now has.
+    const width = pop.getBoundingClientRect().width || Math.min(box.width, place.maxWidth);
+    const final = factPopPlacement(at, column, { width, height: box.height }, window.innerHeight) ?? place;
+    pop.style.left = `${final.shift}px`;
+    if (final.above) pop.dataset['side'] = 'top';
+  }, [open, fact.label, fact.value, fact.column]);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && open) {
       // The card closes, and nothing else on the screen hears this Escape.
@@ -88,25 +113,36 @@ function FactTile({ fact, open, onOpen, onClose }: { fact: CustomerFact; open: b
       style={{ '--span': fact.span ?? 3 } as CSSProperties}
       tabIndex={0}
       role="group"
-      aria-label={`${fact.label}: ${fact.value}`}
+      aria-label={fact.empty ? STATION_COPY.factNotGiven(fact.label) : `${fact.label}: ${fact.value}`}
       aria-describedby={open ? popId : undefined}
       data-highlight={fact.highlight ? 'true' : undefined}
       data-span={fact.span}
       data-testid="customer-fact"
-      onPointerEnter={() => show('hover')}
+      onPointerEnter={() => onOpen('hover')}
       onPointerLeave={() => onClose('hover')}
-      onFocus={() => show('focus')}
-      onBlur={() => onClose('focus')}
+      onPointerDown={() => {
+        // A press on the tile that already has the focus brings no focus event: the blur clears it.
+        pressed.current = true;
+      }}
+      onFocus={() => {
+        const byPointer = pressed.current;
+        pressed.current = false;
+        if (!byPointer) onOpen('focus');
+      }}
+      onBlur={() => {
+        pressed.current = false;
+        onClose('focus');
+      }}
       onKeyDown={onKeyDown}
     >
       <small data-testid="customer-fact-label">{fact.label}</small>
       {fact.fit ? (
-        <FitValue text={fact.value} className={valueClass} testId="customer-fact-value" empty={fact.empty} highlight={fact.highlight} />
+        <FitValue text={fact.value} className={valueClass} testId="customer-fact-value" highlight={fact.highlight} />
       ) : (
         <span className={valueClass} data-testid="customer-fact-value" data-empty={fact.empty ? 'true' : undefined}>{fact.value}</span>
       )}
       {open ? (
-        <div id={popId} role="tooltip" className={styles.factPop} data-align={alignEnd ? 'end' : undefined} data-testid="fact-hover-card">
+        <div ref={popRef} id={popId} role="tooltip" className={styles.factPop} data-testid="fact-hover-card">
           <small>{fact.label}</small>
           <b>{fact.value}</b>
           {fact.column ? <span>{STATION_COPY.factFromColumn(fact.column)}</span> : null}
@@ -177,6 +213,8 @@ export function CustomerCardView({
   const title = card.name ?? (card.chosen ? STATION_COPY.customer : card.phone);
   if (compact) {
     const first = card.facts.find((f) => f.kind !== 'last_call' && !f.empty) ?? null;
+    // S4: "Customer" says nothing on its own, so the line under it starts with the number.
+    const numberFirst = card.chosen && card.name === null;
     return (
       <section className={styles.card} aria-label={title} data-testid="customer-card">
         {card.redial ? (
@@ -186,8 +224,9 @@ export function CustomerCardView({
           {card.initials ? <span className={`${styles.avatar} ${styles.avatarSm}`} aria-hidden="true">{card.initials}</span> : null}
           <div>
             <h2 className={`${styles.custName} ${styles.custNameSm}`} data-testid="customer-name">{title}</h2>
-            <div className={styles.custMeta}>
-              {first ? <span>{first.label}: <b>{first.value}</b></span> : <span>{card.phone}</span>}
+            <div className={styles.custMeta} data-testid="customer-line">
+              {numberFirst || !first ? <span data-testid="customer-phone">{card.phone}</span> : null}
+              {first ? <span data-testid="customer-first-fact">{first.label}: <b>{first.value}</b></span> : null}
             </div>
           </div>
         </div>

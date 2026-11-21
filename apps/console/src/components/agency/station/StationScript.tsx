@@ -16,7 +16,7 @@ export interface ReadAloud {
 }
 
 /** A filled line: its text, and each "not given" run in the muted style. */
-export function ScriptLineText({ line }: { line: FilledLine }) {
+function ScriptLineText({ line }: { line: FilledLine }) {
   return (
     <>
       {line.pieces.map((piece, i) =>
