@@ -5,6 +5,8 @@
 /// text in a test, on a fresh install and after a locale change).
 library;
 
+export '../../../core/station/fact_phone.dart' show formatFactPhone, maskFactPhone;
+
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -158,24 +160,4 @@ String formatFactDate(String ymd, {DateTime? now}) {
   final year = int.parse(m.group(1)!);
   final day = '${int.parse(m.group(3)!)} ${_months[month - 1]}';
   return now == null || now.toLocal().year == year ? day : '$day $year';
-}
-
-final _indianLocal = RegExp(r'^(0?)([6-9]\d{4})(\d{5})$');
-
-/// A phone fact's parsed digits (AS19) as the station shows them: `+91 98765 43210`, an Indian
-/// mobile written without its code as `98765 43210` (`098765 43210` with the leading 0), anything
-/// else as it is. Display only.
-String formatFactPhone(String digits) {
-  final local = _indianLocal.firstMatch(digits);
-  if (local != null) return '${local.group(1)}${local.group(2)} ${local.group(3)}';
-  return formatPhone(digits);
-}
-
-/// A phone fact hidden as the customer's own number is (AS9): `98••• ••210`, an Indian mobile's
-/// leading 0 left out so it reads like the number above it. Never a digit more. [number] may be
-/// written any way (`+91 98765 43210`, `098765-43210`).
-String maskFactPhone(String number) {
-  final digits = '${number.trimLeft().startsWith('+') ? '+' : ''}${number.replaceAll(RegExp(r'\D'), '')}';
-  final local = _indianLocal.firstMatch(digits);
-  return maskPhone(local == null ? digits : '${local.group(2)}${local.group(3)}');
 }

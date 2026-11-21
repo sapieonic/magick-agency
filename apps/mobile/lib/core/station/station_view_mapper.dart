@@ -1,11 +1,11 @@
 import 'package:agency_wire/agency_wire.dart' as wire;
 
-import '../../features/station/logic/format.dart' show maskFactPhone;
 import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
 import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
 
 import 'contact_context.dart';
+import 'fact_phone.dart' show maskFactPhone;
 import 'server_clock.dart';
 import 'station_copy.dart';
 import 'station_signals.dart';
@@ -210,11 +210,14 @@ class StationViewMapper {
 
   /// The panel's typed facts (BE-6) as the card shows them; null when the server sent none. A
   /// tile's name is the fact's label, else its column (AS19); a type this build does not know is
-  /// text.
-  static FactsView? factsOf(wire.CustomerFacts? facts) {
-    if (facts == null) return null;
+  /// text. [chosen]: the campaign's `context_display.facts` is a list (AS19), which alone decides
+  /// it; then even a server that sent no panel gets an empty one, so the card draws no tiles
+  /// rather than the BE-6 card.
+  static FactsView? factsOf(wire.CustomerFacts? facts, {bool chosen = false}) {
+    if (facts == null) return chosen ? const FactsView(chosen: true) : null;
     String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
     return FactsView(
+      chosen: chosen,
       name: clean(facts.name),
       place: clean(facts.place),
       tiles: List.unmodifiable([
@@ -236,7 +239,6 @@ class StationViewMapper {
             dueDate: t.role == wire.FactTileRole.dueDate,
             key: t.key,
             highlight: t.highlight,
-            chosen: t.label != null || t.key != null,
           ),
       ]),
     );
@@ -560,7 +562,7 @@ class StationViewMapper {
       callback: attempt.callback == null
           ? null
           : CallLaterTag(dueAt: correctedInstant(attempt.callback!.dueAt, _offset)!, bookedByMe: attempt.callback!.bookedByMe),
-      facts: factsOf(attempt.facts),
+      facts: factsOf(attempt.facts, chosen: display?.facts != null),
     );
   }
 

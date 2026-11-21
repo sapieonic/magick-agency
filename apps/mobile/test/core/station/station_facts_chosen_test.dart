@@ -11,7 +11,8 @@ import 'controller_harness.dart';
 /// AS19 through the real station core: the campaign's chosen facts (`session.json`
 /// `bootstrap_facts_chosen`, `station.json` `reserved_facts_chosen`) reach the view with their
 /// names, keys, highlight and types; the script's keys are the campaign's; a column read as a phone
-/// number is hidden in Details too when the campaign hides numbers.
+/// number is hidden in Details too when the campaign hides numbers. Whether the campaign chose its
+/// facts is the bootstrap's `context_display.facts` being a list, even an empty one (R8).
 void main() {
   Map<String, Object?> bootstrap() => {
         ...contractSample('session.json', 'bootstrap_facts_chosen'),
@@ -94,7 +95,7 @@ void main() {
     });
   });
 
-  test('a type this build does not know is text; a tile with neither label nor key is the BE-6 tile', () {
+  test('a type this build does not know is text; a tile is named by its label, else its column', () {
     final facts = StationViewMapper.factsOf(wire.CustomerFacts.fromJson({
       'tiles': [
         {'column': 'Branch', 'type': 'colour', 'raw': 'Pune', 'value': null},
@@ -102,9 +103,61 @@ void main() {
       ],
     }))!;
     expect(facts.tiles.first.kind, FactKind.text);
-    expect(facts.tiles.first.chosen, isFalse);
-    expect(facts.tiles.last.chosen, isTrue);
-    expect(facts.chosen, isTrue);
+    expect([for (final t in facts.tiles) t.label], ['Branch', 'Second EMI']);
+    expect(facts.chosen, isFalse, reason: 'the tiles never decide it; the campaign does');
+  });
+
+  Map<String, Object?> chosenEmpty() {
+    final boot = bootstrap();
+    boot['context_display'] = {...(boot['context_display']! as Map<String, Object?>), 'facts': <Object?>[]};
+    return boot;
+  }
+
+  test('an empty choice (`facts: []`) is still chosen: no tiles, and the script says "not given"', () {
+    fakeAsync((async) {
+      final app = App(async);
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, chosenEmpty());
+      app.start();
+      final frame = reserved();
+      (frame['attempt']! as Map<String, Object?>)['facts'] = {'name': 'Sunita Patil', 'tiles': <Object?>[]};
+      app.frame(frame);
+      final call = app.view!.call!;
+      expect(call.factsChosen, isTrue);
+      expect(call.facts!.tiles, isEmpty);
+      expect(app.view!.script!.placeholders, ['name', 'place', 'agent_name', 'campaign_name']);
+      app.dispose();
+    });
+  });
+
+  test('a chosen campaign\'s call with no panel from the server is still chosen, with no tiles', () {
+    fakeAsync((async) {
+      final app = App(async);
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, chosenEmpty());
+      app.start();
+      final frame = reserved();
+      (frame['attempt']! as Map<String, Object?>).remove('facts');
+      app.frame(frame);
+      final call = app.view!.call!;
+      expect(call.factsChosen, isTrue);
+      expect(call.facts!.tiles, isEmpty);
+      expect(call.customerName, isNull, reason: 'the name is the server\'s only, never the guess');
+      app.dispose();
+    });
+  });
+
+  test('labelled tiles on a campaign whose bootstrap has no facts list are the BE-6 card', () {
+    fakeAsync((async) {
+      final app = App(async);
+      final boot = bootstrap();
+      boot['context_display'] = {...(boot['context_display']! as Map<String, Object?>)}..remove('facts');
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, boot);
+      app.start();
+      app.frame(reserved());
+      final call = app.view!.call!;
+      expect(call.facts!.tiles.first.label, 'Amount due', reason: 'still named by the server\'s label');
+      expect(call.factsChosen, isFalse);
+      app.dispose();
+    });
   });
 
   test('with chosen facts and no name role, the heroes are the facts\' columns and nothing is guessed', () {

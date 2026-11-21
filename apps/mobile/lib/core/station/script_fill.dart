@@ -19,7 +19,15 @@ final class ScriptFact {
 /// What a script's `{key}`s say for the call on screen (BE-8, AS19).
 @immutable
 final class ScriptValues {
-  const ScriptValues({this.name, this.place, this.agentName, this.campaignName, this.facts = const {}, this.factLabels = const {}});
+  const ScriptValues({
+    this.name,
+    this.place,
+    this.agentName,
+    this.campaignName,
+    this.facts = const {},
+    this.factLabels = const {},
+    this.chosen = false,
+  });
 
   /// The customer's name and place (`{name}`, `{place}`); null when the customer has none.
   final String? name;
@@ -35,6 +43,11 @@ final class ScriptValues {
 
   /// The campaign's fact names by key, for a key this customer has no tile for.
   final Map<String, String> factLabels;
+
+  /// The campaign chose the card's facts (AS19, `FactsView.chosen`): a `{name}`, `{place}` or fact
+  /// key with no value says "`<name> not given`". False (a campaign not saved since AS19): a key with
+  /// no value is left out, as before.
+  final bool chosen;
 }
 
 /// One run of a filled script line.
@@ -77,13 +90,15 @@ final class NotGivenRun extends ScriptRun {
   String toString() => 'NotGivenRun($label)';
 }
 
-/// The names of the keys every script may use, for "`<name> not given`".
-const _fixedLabels = {'name': 'Name', 'place': 'Place', 'amount_due': 'Amount due', 'due_date': 'Due date'};
+/// The names of the customer's own keys, for "`<name> not given`" (the contract's).
+const _fixedLabels = {'name': 'Name', 'place': 'Place'};
 
-/// A script line filled for the call on screen (AS19): each `{key}` in [allowed] (the campaign's
-/// keys, `ScriptView.placeholders`) is its value, or "`<name> not given`" when this customer has none
-/// (the agent's own name and the work's name are left out instead); any other `{word}` stays as
-/// written. Keys may hold digits (`{emi_2}`). The contract's one reading of braces, `scriptPieces`.
+/// A script line filled for the call on screen: each `{key}` in [allowed] (the campaign's keys,
+/// `ScriptView.placeholders`) is its value; any other `{word}` stays as written. Keys may hold
+/// digits (`{emi_2}`). The contract's one reading of braces, `scriptPieces`. A key with no value is
+/// left out, except on a campaign with chosen facts ([ScriptValues.chosen], AS19), where `{name}`,
+/// `{place}` and each fact's key say "`<name> not given`" instead. `{agent_name}` and
+/// `{campaign_name}` with no value are always left out.
 List<ScriptRun> fillScriptRuns(String text, Iterable<String> allowed, ScriptValues v) {
   final runs = <ScriptRun>[];
   void say(String t) {
@@ -114,7 +129,7 @@ List<ScriptRun> fillScriptRuns(String text, Iterable<String> allowed, ScriptValu
             final value = clean(key == 'name' ? v.name : v.place);
             if (value != null) {
               say(value);
-            } else {
+            } else if (v.chosen) {
               runs.add(NotGivenRun(_fixedLabels[key]!));
             }
           default:
@@ -122,8 +137,8 @@ List<ScriptRun> fillScriptRuns(String text, Iterable<String> allowed, ScriptValu
             final value = clean(fact?.value);
             if (value != null) {
               say(value);
-            } else {
-              runs.add(NotGivenRun(fact?.label ?? v.factLabels[key] ?? _fixedLabels[key] ?? key));
+            } else if (v.chosen) {
+              runs.add(NotGivenRun(fact?.label ?? v.factLabels[key] ?? key));
             }
         }
     }
@@ -134,11 +149,11 @@ List<ScriptRun> fillScriptRuns(String text, Iterable<String> allowed, ScriptValu
 /// The line as the screen shows it, "not given" included.
 String shownScript(List<ScriptRun> runs) => runs.map((r) => r.text).join();
 
-/// The line as read aloud (AS13, AS19): without the "not given" runs, spaces closed up.
-String spokenScript(List<ScriptRun> runs) => runs
-    .whereType<SaidRun>()
-    .map((r) => r.text)
-    .join()
-    .replaceAll(RegExp(r'[ \t]{2,}'), ' ')
-    .replaceAllMapped(RegExp(r' +([,.;:!?])'), (m) => m[1]!)
-    .trim();
+final _spaceBeforeMark = RegExp(r'\s+([,.;:!?])');
+final _spaces = RegExp(r'\s{2,}');
+
+/// The line as read aloud (AS13, AS19): without the "not given" runs, cleaned up as the console
+/// does it: no space before `,` `.` `;` `:` `!` `?`, any run of spaces (line breaks included) one
+/// space, trimmed.
+String spokenScript(List<ScriptRun> runs) =>
+    runs.whereType<SaidRun>().map((r) => r.text).join().replaceAllMapped(_spaceBeforeMark, (m) => m[1]!).replaceAll(_spaces, ' ').trim();

@@ -12,8 +12,9 @@ import '../station_providers.dart';
 /// "What to say" on On call. Shown only when the campaign has one; without it On call shows the last
 /// calls and the note (04c). Each line is filled for the customer on screen ([fillScriptRuns], the
 /// contract's reading of braces): their name and place, each fact by its key (AS19) as the card
-/// shows it (a hidden number stays hidden), the agent's first name and the work's name. A key the
-/// customer has no value for reads "`<name> not given`", muted, and is never read aloud.
+/// shows it (a hidden number stays hidden), the agent's first name and the work's name. On a
+/// campaign with chosen facts a `{name}`, `{place}` or fact key the customer has no value for reads
+/// "`<name> not given`", muted, and is never read aloud; elsewhere a key with no value is left out.
 
 /// What the keys say for [call]. [masked]: the campaign hides numbers (AS9). [now]: for a chosen
 /// date fact's year (AS19).
@@ -26,8 +27,9 @@ ScriptValues scriptValuesFor(
   Map<String, String> factLabels = const {},
 }) {
   final facts = call.facts;
+  final chosen = call.factsChosen;
   final byKey = <String, ScriptFact>{};
-  if (facts != null && facts.chosen) {
+  if (facts != null && chosen) {
     for (final t in facts.tiles) {
       final key = t.key;
       if (key == null || byKey.containsKey(key)) continue;
@@ -42,14 +44,14 @@ ScriptValues scriptValuesFor(
     }
   }
 
-  final name = (facts?.name ?? call.displayName)?.trim();
   return ScriptValues(
-    name: name == null || name.isEmpty ? null : name,
+    name: call.customerName,
     place: facts?.place,
     agentName: agentName == null ? null : StationCopy.firstName(agentName),
     campaignName: campaignName.trim().isEmpty ? null : campaignName,
     facts: byKey,
     factLabels: factLabels,
+    chosen: chosen,
   );
 }
 
