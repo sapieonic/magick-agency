@@ -2,6 +2,8 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+  AGENCY_COMPARE_ERROR_CODES,
+  AGENCY_COMPARE_ERROR_STATUS,
   AGENCY_FLOOR_ASSIST_ERROR_CODES,
   AGENCY_INBOUND_ERROR_CODES,
   AGENCY_LISTEN_ERROR_CODES,
@@ -11,6 +13,7 @@ import {
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
+  type AgencyCompareErrorCode,
   type AgencyFloorAssistErrorCode,
   type AgencyInboundErrorCode,
   type AgencyListenErrorCode,
@@ -450,5 +453,63 @@ describe('floor assist codes', () => {
       ...AGENCY_LISTEN_ERROR_CODES,
     ]);
     for (const code of AGENCY_FLOOR_ASSIST_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Compare agents (src/errors.ts §9, re-exported by src/api/agency/compare.ts; docs/compare-agents.md).
+const _compareExact: Equals<(typeof AGENCY_COMPARE_ERROR_CODES)[number], AgencyCompareErrorCode> = true;
+const _consoleCompareAgrees: Equals<AgencyApi.AgencyCompareErrorCode, AgencyCompareErrorCode> = true;
+const _compareStatusKeys: Equals<keyof typeof AGENCY_COMPARE_ERROR_STATUS, AgencyCompareErrorCode> = true;
+void [_compareExact, _consoleCompareAgrees, _compareStatusKeys];
+
+describe('compare codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_COMPARE_ERROR_CODES]).toEqual([
+      'compare_campaign_required',
+      'compare_campaign_not_found',
+      'compare_too_many_agents',
+      'compare_too_many_metrics',
+      'compare_metric_invalid',
+      'compare_window_invalid',
+      'compare_timezone_invalid',
+      'compare_agent_not_in_cohort',
+      'compare_busy',
+      'compare_timed_out',
+      'compare_view_not_found',
+      'compare_view_invalid',
+      'compare_view_limit',
+    ]);
+    expectUnique(AGENCY_COMPARE_ERROR_CODES);
+  });
+
+  it('answer these statuses (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_COMPARE_ERROR_STATUS).toEqual({
+      compare_campaign_required: 400,
+      compare_campaign_not_found: 404,
+      compare_too_many_agents: 400,
+      compare_too_many_metrics: 400,
+      compare_metric_invalid: 400,
+      compare_window_invalid: 400,
+      compare_timezone_invalid: 400,
+      compare_agent_not_in_cohort: 404,
+      compare_busy: 429,
+      compare_timed_out: 503,
+      compare_view_not_found: 404,
+      compare_view_invalid: 400,
+      compare_view_limit: 409,
+    });
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_COMPARE_ERROR_CODES).toBe(AGENCY_COMPARE_ERROR_CODES);
+    expect(AgencyApi.AGENCY_COMPARE_ERROR_STATUS).toBe(AGENCY_COMPARE_ERROR_STATUS);
+  });
+
+  it('do not overlap the action, soft-phone, report, inbound, listen or floor assist unions', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES,
+      ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_FLOOR_ASSIST_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_COMPARE_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

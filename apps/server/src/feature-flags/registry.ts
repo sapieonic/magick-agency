@@ -124,4 +124,6 @@ export const FLAGS = {
   agency_live_listen_unrecorded: defineFlag<boolean>(AGENCY_FLAGS.agency_live_listen_unrecorded),
 
   agency_floor_assist_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_floor_assist_enabled),
+
+  agency_compare_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_compare_enabled),
 } as const;

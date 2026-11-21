@@ -799,3 +799,89 @@ export interface AgencyFloorAssistErrorResponse {
   code: AgencyFloorAssistErrorCode;
   message: string;
 }
+
+// ─── 9. Compare agents refusals ─────────────────────────────────────────────
+//
+// The codes of the Compare agents routes (`/proxy/agency/compare/*`, docs/compare-agents.md; shapes
+// in `./api/agency/compare`). The body is `{ error, code, message }`. HTTP status beside each code.
+// The flag gate (`agency_compare_enabled` off) answers the dialer gate's `403 feature_disabled`, and
+// a caller without `agency.supervise` the RBAC 403, not one of these. None may overlap the report
+// codes (the page is a Reports tab and the console reads both).
+
+/** Why a compare route refused. */
+export type AgencyCompareErrorCode =
+  /** 400. `campaign_id` is missing: a comparison is always of one campaign (CP8). */
+  | 'compare_campaign_required'
+  /** 404. `campaign_id` (of a query, the options, a view or the view list) is not a campaign of the context account. Uniform: it never says a campaign exists elsewhere. */
+  | 'compare_campaign_not_found'
+  /** 400. More than `COMPARE_PAGE_MAX_AGENTS` agents (CP1). */
+  | 'compare_too_many_agents'
+  /** 400. More than `COMPARE_MAX_METRICS` metrics. */
+  | 'compare_too_many_metrics'
+  /**
+   * 400. A metric or the trend cannot be compared: a malformed ref (`compareMetricRefProblem`), two
+   * refs with one id, an outcome code not in the campaign's current catalog, `promises_rate` or
+   * `promised_amount` on a catalog without a `requires_promise` entry, or a trend that is not
+   * countable.
+   */
+  | 'compare_metric_invalid'
+  /** 400. `from` or `to` is malformed, `to` is before `from` or after today in the zone, or the window is longer than the reports allow (`compareWindowProblem`). */
+  | 'compare_window_invalid'
+  /** 400. `timezone` is missing or not an IANA zone the server knows. */
+  | 'compare_timezone_invalid'
+  /** 404. A picked agent has no row in the campaign's cohort for the window (did not dial it, or is not of this account). */
+  | 'compare_agent_not_in_cohort'
+  /** 429. The tenant already runs `COMPARE_TENANT_CONCURRENT_READS` compare reads. Retry in a moment. */
+  | 'compare_busy'
+  /**
+   * 503. The read ran past `COMPARE_READ_TIMEOUT_MS` and was cancelled. Try a shorter window. A
+   * fixed, reviewed body: the server sends it through the error mask's reviewed opt-out so it is
+   * not masked as "contact support".
+   */
+  | 'compare_timed_out'
+  /** 404. No such saved view in the account, or (for `PATCH`, `DELETE`) not one the caller owns. */
+  | 'compare_view_not_found'
+  /** 400. The view is invalid: a bad name, metrics, trend or default (`AgencyCreateCompareViewRequest` lists each). */
+  | 'compare_view_invalid'
+  /** 409. The caller already owns `COMPARE_VIEWS_PER_USER_MAX` views in the account. */
+  | 'compare_view_limit';
+
+/** Runtime list of {@link AgencyCompareErrorCode}, in declaration order. */
+export const AGENCY_COMPARE_ERROR_CODES = [
+  'compare_campaign_required',
+  'compare_campaign_not_found',
+  'compare_too_many_agents',
+  'compare_too_many_metrics',
+  'compare_metric_invalid',
+  'compare_window_invalid',
+  'compare_timezone_invalid',
+  'compare_agent_not_in_cohort',
+  'compare_busy',
+  'compare_timed_out',
+  'compare_view_not_found',
+  'compare_view_invalid',
+  'compare_view_limit',
+] as const satisfies readonly AgencyCompareErrorCode[];
+
+const _allCompareCodesListed: AllListed<
+  AgencyCompareErrorCode,
+  typeof AGENCY_COMPARE_ERROR_CODES
+> = true;
+void _allCompareCodesListed;
+
+/** The HTTP status of each compare refusal, for the server's replies and the route tests. */
+export const AGENCY_COMPARE_ERROR_STATUS = {
+  compare_campaign_required: 400,
+  compare_campaign_not_found: 404,
+  compare_too_many_agents: 400,
+  compare_too_many_metrics: 400,
+  compare_metric_invalid: 400,
+  compare_window_invalid: 400,
+  compare_timezone_invalid: 400,
+  compare_agent_not_in_cohort: 404,
+  compare_busy: 429,
+  compare_timed_out: 503,
+  compare_view_not_found: 404,
+  compare_view_invalid: 400,
+  compare_view_limit: 409,
+} as const satisfies Record<AgencyCompareErrorCode, number>;

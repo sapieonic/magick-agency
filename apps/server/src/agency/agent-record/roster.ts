@@ -8,6 +8,7 @@ import type {
   AgencyRosterPercentiles,
   AgencyRosterSort,
 } from '@magick-agency/contracts/agency';
+import { cohortPercentiles } from '@magick-agency/domain/agent-compare/percentiles';
 import {
   parseCampaignIdParam,
   parseRequiredWindow,
@@ -245,24 +246,17 @@ export function parseRosterQuery(query: Record<string, unknown>): FilterParse<Ag
  * makes the median one named person's number — which invites reading the
  * benchmark as a comparison against THEM.
  *
+ * The arithmetic is `cohortPercentiles` in `@magick-agency/domain/agent-compare`:
+ * the Compare agents page draws its band with the same function, so the roster's
+ * benchmark and that band cannot be two implementations that drift
+ * (docs/compare-agents.md §5).
+ *
  * Empty input yields all three `null`, never 0 — the same rule as every rate on
  * this surface, for the same reason: "nothing qualified" and "the cohort scores
  * zero" are different facts.
  */
 export function rosterPercentiles(values: readonly number[]): AgencyRosterPercentiles {
-  if (values.length === 0) return { p25: null, median: null, p75: null };
-  const sorted = [...values].sort((a, b) => a - b);
-  const at = (fraction: number): number => {
-    // `(n - 1) * fraction` is the `percentile_cont` position: 0 for the first row,
-    // n-1 for the last, so a single value returns itself for all three quantiles.
-    const position = (sorted.length - 1) * fraction;
-    const lower = Math.floor(position);
-    const upper = Math.ceil(position);
-    const low = sorted[lower] as number;
-    const high = sorted[upper] as number;
-    return low + (high - low) * (position - lower);
-  };
-  return { p25: at(0.25), median: at(0.5), p75: at(0.75) };
+  return cohortPercentiles(values);
 }
 
 /**

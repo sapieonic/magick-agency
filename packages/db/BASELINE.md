@@ -1806,6 +1806,31 @@ the row a transition locks). Catalog-only on a small table after `SET LOCAL lock
 **Down** drops the column. **Tests**: `test/integration/db/agent-station-migrations.test.ts` and the
 down → up inventory suite.
 
+### 0063 — `migrations/0063_compare_views.sql`
+
+Compare agents' saved views (docs/compare-agents.md; wire shape `AgencyCompareView`,
+`packages/contracts/src/api/agency/compare.ts`). **`agency_compare_views`** (new): `id`, `tenant_id`
+(FK `tenants` ON DELETE CASCADE), `account_id` (no FK, the context account), `owner_user_id` (no FK,
+as the actor columns: only the owner edits or deletes), `name` (CHECK **`ck_agency_compare_views_name`**:
+trimmed, 1–80 characters), `lens` (CHECK **`ck_agency_compare_views_lens`**: `collections`, `sales`,
+`verification`), `metrics` JSONB (CHECK **`ck_agency_compare_views_metrics`**: an array of 1–6 objects,
+the metric refs; the server validates each against the contract and the campaign's catalog), `trend`
+JSONB NULL (CHECK **`ck_agency_compare_views_trend`**: an object or NULL), `campaign_id` NULL (FK
+`agency_campaigns` ON DELETE CASCADE, the house rule for a campaign's satellite rows: a view's outcome
+sets name that campaign's codes), `shared` (default false), `is_campaign_default` (default false; CHECK
+**`ck_agency_compare_views_default`**: needs `campaign_id` and `shared`), `created_at`, `updated_at` (no
+trigger; the repository sets it). **`uq_agency_compare_views_campaign_default`** `(campaign_id) WHERE
+is_campaign_default`: at most one default per campaign (the server clears the old one in the same
+transaction). **`idx_agency_compare_views_owner`** `(tenant_id, account_id, owner_user_id, updated_at
+DESC)` (the caller's own, and the 50-per-owner limit's count), **`idx_agency_compare_views_shared`**
+`(tenant_id, account_id, updated_at DESC) WHERE shared`, **`idx_agency_compare_views_campaign`**
+`(campaign_id) WHERE campaign_id IS NOT NULL` (the list by campaign, the cascade). A new, empty table;
+the FK takes SHARE ROW EXCLUSIVE on `agency_campaigns`, so the Up starts with `SET LOCAL lock_timeout =
+'10s'`. **Down** drops the table (every saved view is lost). **Tests**:
+`test/integration/db/compare-views-migration.test.ts` (the columns, every CHECK both ways, the unique
+index, both cascades, the listing indexes and their plans, the lock timeout, down then up) and the down →
+up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

@@ -168,7 +168,7 @@ describe('super-admin feature-flags routes', () => {
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
         'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled', 'agency_inbound_enabled',
         'agency_inbound_ring_enabled', 'agency_live_listen_enabled', 'agency_live_listen_unrecorded',
-        'agency_floor_assist_enabled',
+        'agency_floor_assist_enabled', 'agency_compare_enabled',
       ]);
     });
 

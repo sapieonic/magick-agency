@@ -41,7 +41,7 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled, agency_inbound_enabled, agency_inbound_ring_enabled, agency_live_listen_enabled, agency_live_listen_unrecorded, agency_floor_assist_enabled', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled, agency_inbound_enabled, agency_inbound_ring_enabled, agency_live_listen_enabled, agency_live_listen_unrecorded, agency_floor_assist_enabled, agency_compare_enabled', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
@@ -54,11 +54,12 @@ describe('feature-flag registry', () => {
       expect(getFlag('agency_live_listen_enabled')).toBeDefined();
       expect(getFlag('agency_live_listen_unrecorded')).toBeDefined();
       expect(getFlag('agency_floor_assist_enabled')).toBeDefined();
+      expect(getFlag('agency_compare_enabled')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
         'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled', 'agency_inbound_enabled',
         'agency_inbound_ring_enabled', 'agency_live_listen_enabled', 'agency_live_listen_unrecorded',
-        'agency_floor_assist_enabled',
+        'agency_floor_assist_enabled', 'agency_compare_enabled',
       ]);
     });
 
@@ -182,6 +183,18 @@ describe('feature-flag registry', () => {
       expect(f.envVar).toBe('FF_AGENCY_FLOOR_ASSIST');
       expect(f.policy).toBeUndefined();
     });
+
+    it('agency_compare_enabled is boolean, default OFF, tri-scoped, client-exposed, with no handling policy', () => {
+      const f = getFlag('agency_compare_enabled')!;
+      expect(f.type).toBe('boolean');
+      // Off until a super admin turns it on per tenant or account (docs/compare-agents.md).
+      expect(f.default).toBe(false);
+      expect(f.scopes).toEqual(['global', 'tenant', 'account']);
+      // The console shows or hides Reports' Compare agents tab.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_COMPARE');
+      expect(f.policy).toBeUndefined();
+    });
   });
 
   describe('defineFlag', () => {
@@ -264,6 +277,7 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_live_listen_enabled');
       expect(keys).toContain('agency_live_listen_unrecorded');
       expect(keys).toContain('agency_floor_assist_enabled');
+      expect(keys).toContain('agency_compare_enabled');
       expect(keys).not.toContain('agency_late_binding');
       expect(keys).not.toContain('agency_inbound_ring_enabled');
     });

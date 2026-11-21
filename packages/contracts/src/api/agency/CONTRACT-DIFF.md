@@ -277,6 +277,15 @@ re-exported, like the soft-phone codes. The report DATASET (`../../reports/`, it
 embeds console wire types from this directory (the Insights objects, `AgencyAgentStatsTotals`,
 the roster row with its name and `AgencyRosterBenchmark`), never their dialer twins.
 
+Compare agents (`compare.ts`, docs/compare-agents.md) is console-side only too: the read
+(`AgencyCompareQuery`, `AgencyCompareResponse` and its parts), the options
+(`AgencyCompareOptions`), the saved views (`AgencyCompareView` and its requests), the metric refs and
+ids, the catalog (`COMPARE_BUILTIN_METRICS`, `COMPARE_OUTCOME_SET_DEFINITION`) and the limits are served
+by the public API layer itself and have no dialer counterpart. `AgencyCompareErrorCode` /
+`AGENCY_COMPARE_ERROR_CODES` / `AGENCY_COMPARE_ERROR_STATUS` are declared in `../../errors.ts` (§9) and
+re-exported. It reads one dialer-contract name unchanged, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, the
+floor of its rates.
+
 Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live list
 (`AgencyLiveCall`, `AgencyLiveCallsResponse`, `AgencyLiveCallsQuery`, the listeners), the number
 reveal (`AgencyLiveCallNumberResponse`, its refusal `AgencyLiveCallNumberErrorResponse`), the
