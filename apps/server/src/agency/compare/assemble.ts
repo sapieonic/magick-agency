@@ -165,13 +165,21 @@ export interface CompareTrendSources {
 }
 
 /**
- * The per-day series: each picked agent's count on a day they had logged-in time on the campaign
- * (0 a real zero), null on any other day; per day the median count over the cohort agents logged
- * in that day (`percentile_cont`, the roster benchmark's method), null when none were.
+ * The per-day series: each picked agent's count on a day they worked the campaign (0 a real zero),
+ * null on any other day; per day the median count over the cohort agents who worked that day
+ * (`percentile_cont`, the roster benchmark's method), null when none did.
+ *
+ * A day is worked when the agent had logged-in time on the campaign that day OR the count is not
+ * zero. A count with no campaign session is real work on the campaign: a promise taken on the soft
+ * phone (its session has no campaign) or on an inbound call matched to the campaign but answered
+ * from a station on another one. Leaving such a day out would drop those promises from the series
+ * and from that day's median.
  */
 export function trendOf(metricId: string, picked: readonly string[], cohort: readonly string[], t: CompareTrendSources): AgencyCompareTrend {
-  const countOn = (agent: string, date: string): number | null =>
-    t.loggedIn.get(agent)?.has(date) ? (t.counts.get(agent)?.get(date) ?? 0) : null;
+  const countOn = (agent: string, date: string): number | null => {
+    const n = t.counts.get(agent)?.get(date) ?? 0;
+    return n !== 0 || t.loggedIn.get(agent)?.has(date) === true ? n : null;
+  };
   return {
     metric: metricId,
     dates: [...t.dates],

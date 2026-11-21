@@ -165,12 +165,17 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
   // connection of its own (`cancelBackend`), never through the shared pool, where it would wait
   // behind every borrower; and it is awaited below before this client is given up, so no cancel
   // is still in flight when the connection is destroyed (a cancelled cursor is always `broken`).
+  // The pid is the backend's own (`pg_backend_pid()`, read by the transaction's settings
+  // statement), never `processID`: behind the session pooler that is the pooler's number, and a
+  // cancel by it signals nothing or another backend (`cancelBackend`, "Which pid"). Before it is
+  // known only BEGIN and that statement can be running, and neither needs a cancel. The cancel
+  // never throws (the pool's options are read inside it), so nothing escapes this listener.
   let running = false;
   let cancelling: Promise<boolean> | null = null;
-  const pid = (client as unknown as { processID?: number | null }).processID;
+  let pid: number | null = null;
   const cancel = () => {
-    if (!running || pid == null || cancelling) return;
-    cancelling = cancelBackend(pid, getPool().options);
+    if (!running || pid === null || cancelling) return;
+    cancelling = cancelBackend(pid, () => getPool().options).catch(() => false);
   };
   const query = async (sql: string, params?: unknown[]) => {
     signal?.throwIfAborted();
@@ -198,13 +203,16 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
     // A lower limit from the role or database (`reset_val`: what the session has before the
     // pool's own SET) is kept: the exemption is from the server's own timeouts only, never from
     // a ceiling the operator put on every session, which a report has always run under.
-    await query(
+    const settings = await query(
       `SELECT set_config(name, (CASE WHEN reset_val::bigint > 0 THEN LEAST(reset_val::bigint, $1::bigint)
-                                     ELSE $1::bigint END)::text, true)
+                                     ELSE $1::bigint END)::text, true),
+              pg_backend_pid() AS pid
          FROM pg_settings
         WHERE name IN ('idle_in_transaction_session_timeout', 'statement_timeout')`,
       [boundMs],
     );
+    const backend = (settings.rows[0] as { pid?: number } | undefined)?.pid;
+    pid = typeof backend === 'number' ? backend : null;
     await query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
     for (;;) {
       const { rows } = await query(`FETCH ${batch} FROM report_rows`);
@@ -216,17 +224,20 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
     throw err;
   } finally {
     signal?.removeEventListener('abort', cancel);
-    if (cancelling) {
-      // Signalled before the connection is given up, and never back to the pool after a cancel.
-      await cancelling;
-      broken ??= new Error('report cursor cancelled');
-    }
     try {
-      await client.query('ROLLBACK');
-    } catch (err) {
-      broken ??= err instanceof Error ? err : new Error(String(err));
+      if (cancelling) {
+        // Signalled before the connection is given up, and never back to the pool after a cancel.
+        await cancelling;
+        broken ??= new Error('report cursor cancelled');
+      }
+      try {
+        await client.query('ROLLBACK');
+      } catch (err) {
+        broken ??= err instanceof Error ? err : new Error(String(err));
+      }
+    } finally {
+      client.release(broken);
     }
-    client.release(broken);
   }
 }
 

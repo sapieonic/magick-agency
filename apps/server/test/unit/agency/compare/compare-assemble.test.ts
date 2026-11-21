@@ -117,14 +117,16 @@ describe('trendOf', () => {
   ]);
   const t = trendOf('m', ['a', 'b'], ['a', 'b', 'c'], { dates, counts, loggedIn });
 
-  it('a count on a logged-in day (0 is a real zero), null on a day off, even with a count', () => {
+  it('a count on a logged-in day (0 is a real zero); a count with no campaign session is a worked day; null on a day off with none', () => {
+    // b's 9 on the 2nd: promises taken on the soft phone or an inbound call, no campaign session that day.
     expect(t.agents).toEqual([
       { agent_user_id: 'a', counts: [3, 0, 1] },
-      { agent_user_id: 'b', counts: [5, null, 0] },
+      { agent_user_id: 'b', counts: [5, 9, 0] },
     ]);
+    expect(trendOf('m', ['c'], ['c'], { dates, counts, loggedIn }).agents).toEqual([{ agent_user_id: 'c', counts: [1, null, null] }]);
   });
-  it('the cohort median over who worked that day; null when nobody did', () => {
-    expect(t.cohort_median).toEqual([3, 0, 0.5]);
+  it('the cohort median over who worked that day (a count counts as working it); null when nobody did', () => {
+    expect(t.cohort_median).toEqual([3, 4.5, 0.5]);
     expect(trendOf('m', [], ['c'], { dates, counts, loggedIn }).cohort_median).toEqual([1, null, null]);
   });
 });

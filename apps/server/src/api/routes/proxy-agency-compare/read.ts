@@ -127,10 +127,10 @@ export async function registerCompareReadRoutes(app: FastifyInstance, deps: Comp
     if (!scope) return reply;
 
     try {
-      const [cohort, defaultView] = await Promise.all([
-        deps.reads.cohort(scope, gone),
-        deps.views.findCampaignDefault({ tenantId, accountId }, campaign.id),
-      ]);
+      // One after the other: the cohort's snapshot holds a pooled connection until it ends, and a
+      // compare request never holds two (the process-wide limit counts one per read).
+      const cohort = await deps.reads.cohort(scope, gone);
+      const defaultView = await deps.views.findCampaignDefault({ tenantId, accountId }, campaign.id);
       const ownerNames = defaultView === null ? new Map<string, string | null>() : await deps.names([defaultView.owner_user_id], tenantId);
       const body: AgencyCompareOptions = {
         campaign_id: campaign.id,

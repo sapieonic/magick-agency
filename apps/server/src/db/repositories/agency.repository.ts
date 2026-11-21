@@ -368,4 +368,4 @@ export {
 } from './agency/compare-reads.js';
 export type { CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
 export { AgencyCompareViewRepository, agencyCompareViewRepository, COMPARE_VIEW_LIST_SQL } from './agency/compare-view.repository.js';
-export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope } from './agency/compare-view.repository.js';
+export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';

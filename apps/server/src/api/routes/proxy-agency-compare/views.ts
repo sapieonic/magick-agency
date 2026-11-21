@@ -12,7 +12,10 @@
  *    compare_view_limit`); 201;
  *  - edit and delete: the caller's own view only; another supervisor's, a missing one and a
  *    malformed id are the same `404 compare_view_not_found`. An edit is validated as the view it
- *    makes (the stored fields under the ones sent).
+ *    makes (the stored fields under the ones sent). An edit that does not send
+ *    `is_campaign_default` keeps the row's value as the repository reads it under the row's lock,
+ *    never the value read here before the transaction: another supervisor's new default, made
+ *    meanwhile, is not undone by a rename.
  */
 import type { FastifyInstance } from 'fastify';
 import {
@@ -137,7 +140,12 @@ export async function registerCompareViewRoutes(app: FastifyInstance, deps: Comp
     const content = checkCompareView(draft, campaign?.codes ?? null);
     if (content === null) return sendCompareRefusal(reply, 'compare_view_invalid');
 
-    const updated = await deps.views.update({ tenantId, accountId, ownerUserId: request.user!.id }, id, content);
+    // Unsent: keep the row's value as it stands in the update's own transaction (see the module note).
+    const updated = await deps.views.update(
+      { tenantId, accountId, ownerUserId: request.user!.id },
+      id,
+      { ...content, is_campaign_default: patch.is_campaign_default ?? null },
+    );
     if (updated === null) return sendCompareRefusal(reply, 'compare_view_not_found');
     const [view] = await wire([updated], tenantId);
     return reply.send(view);

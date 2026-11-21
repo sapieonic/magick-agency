@@ -125,6 +125,64 @@ describe('lock order: the campaign\'s default lock before any row', () => {
   }, 15_000);
 });
 
+describe('an edit that does not name the default keeps the row\'s value, read under its lock', () => {
+  it('a rename after another supervisor made a new default does not take the default back', async () => {
+    const mine = await repo.create({ ...scope, ownerUserId: sup1, maxPerOwner: 50 }, content({ name: 'Old default', is_campaign_default: true }));
+    if (!mine.ok) throw new Error('limit');
+    // What the route read before the edit's transaction: the view was the default then.
+    const stale = await repo.findOwned({ ...scope, userId: sup1 }, mine.view.id);
+    expect(stale).toMatchObject({ is_campaign_default: true });
+    // Meanwhile another supervisor makes a new default, clearing it.
+    const theirs = await repo.create({ ...scope, ownerUserId: sup2, maxPerOwner: 50 }, content({ name: 'New default', is_campaign_default: true }));
+    if (!theirs.ok) throw new Error('limit');
+    // The owner's rename sends no `is_campaign_default`: kept as the row stands now.
+    const renamed = await repo.update({ ...scope, ownerUserId: sup1 }, mine.view.id, { ...content({ name: 'Renamed' }), is_campaign_default: null });
+    expect(renamed).toMatchObject({ name: 'Renamed', is_campaign_default: false });
+    expect((await repo.findCampaignDefault(scope, campaign))!.id).toBe(theirs.view.id);
+  });
+
+  it('also when the new default commits while the rename waits on the campaign\'s lock', async () => {
+    const mine = await repo.create({ ...scope, ownerUserId: sup1, maxPerOwner: 50 }, content({ name: 'Old default', is_campaign_default: true }));
+    if (!mine.ok) throw new Error('limit');
+    // Another save holds the campaign's lock and is about to clear this default and set its own.
+    const other = await getTestPool().connect();
+    let theirs = '';
+    try {
+      await other.query('BEGIN');
+      await other.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [campaign]);
+      const rename = repo.update({ ...scope, ownerUserId: sup1 }, mine.view.id, { ...content({ name: 'Renamed' }), is_campaign_default: null });
+      for (let i = 0; ; i++) {
+        const { rows } = await getTestPool().query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE a.datname = current_database() AND l.locktype = 'advisory' AND NOT l.granted`);
+        if (rows[0]!.n > 0) break;
+        if (i > 200) throw new Error('the rename never waited on the default lock');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      await other.query(`UPDATE agency_compare_views SET is_campaign_default = false WHERE campaign_id = $1::uuid AND is_campaign_default`, [campaign]);
+      const { rows } = await other.query<{ id: string }>(
+        `INSERT INTO agency_compare_views (tenant_id, account_id, owner_user_id, name, lens, metrics, campaign_id, shared, is_campaign_default)
+         VALUES ($1, $2, $3, 'New default', 'sales', '[{"kind":"builtin","key":"calls_handled"}]', $4, true, true) RETURNING id`,
+        [tenant, account, sup2, campaign]);
+      theirs = rows[0]!.id;
+      await other.query('COMMIT');
+      expect(await rename).toMatchObject({ name: 'Renamed', is_campaign_default: false });
+    } finally {
+      await other.query('ROLLBACK').catch(() => undefined);
+      other.release();
+    }
+    expect((await repo.findCampaignDefault(scope, campaign))!.id).toBe(theirs);
+  }, 15_000);
+
+  it('a kept default stays the default when nobody changed it', async () => {
+    const mine = await repo.create({ ...scope, ownerUserId: sup1, maxPerOwner: 50 }, content({ name: 'Default', is_campaign_default: true }));
+    if (!mine.ok) throw new Error('limit');
+    const renamed = await repo.update({ ...scope, ownerUserId: sup1 }, mine.view.id, { ...content({ name: 'Still default' }), is_campaign_default: null });
+    expect(renamed).toMatchObject({ name: 'Still default', is_campaign_default: true });
+    expect((await repo.findCampaignDefault(scope, campaign))!.id).toBe(mine.view.id);
+  });
+});
+
 describe('the per-owner limit', () => {
   it('holds under concurrent creates', async () => {
     const owner = randomUUID();
