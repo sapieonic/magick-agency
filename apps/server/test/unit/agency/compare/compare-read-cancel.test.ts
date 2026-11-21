@@ -30,7 +30,7 @@ import { clientGoneSignal } from '../../../../src/api/routes/proxy-agency-compar
 /** The fake's settings answer: the backend's own pid, and the session's own statement_timeout (none). */
 const BACKEND_PID = 4242;
 function settingsRow(values: unknown[] | undefined) {
-  return { rows: [{ pid: BACKEND_PID, session_ms: '0', applied_ms: String(values?.[0]) }] };
+  return { rows: [{ pid: BACKEND_PID, ceiling_ms: '0', applied_ms: String(values?.[0]) }] };
 }
 
 const SCOPE: CompareWindowScope = {
@@ -115,7 +115,7 @@ describe('the whole read\'s deadline', () => {
     const [budget, workers] = conn.settings[0]!;
     expect(Number(budget)).toBeLessThanOrEqual(2_000 - COMPARE_STATEMENT_TIMEOUT_MARGIN_MS);
     expect(Number(budget)).toBeGreaterThan(2_000 - COMPARE_STATEMENT_TIMEOUT_MARGIN_MS - 100);
-    expect(workers).toBe(COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER);
+    expect(Number(workers)).toBe(COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER);
   }, 10_000);
 
   it('a statement past it is ended by the server first: rolled back, the connection reused, no cancel: 503', async () => {

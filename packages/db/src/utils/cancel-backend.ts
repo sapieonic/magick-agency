@@ -4,22 +4,12 @@ import pg from 'pg';
  * Cancel the statement running on one backend, over a connection of its own.
  *
  * ── Why not `pool.query('SELECT pg_cancel_backend($1)')` ─────────────────────
- * Two readers stop a statement when their caller goes away (Compare agents' read,
- * `apps/server/src/agency/compare/read.ts`; the report cursor, `report-dataset-reads.ts`), and
- * both used to send the cancel through the shared pool, fire and forget. That is wrong twice
- * over when the pool is busy, which is exactly when it matters:
- *
- *  - the cancel WAITS in the pool's queue behind every other borrower, so the statement it means
- *    to stop runs on, and may finish, before the cancel is sent;
- *  - a cancel that lands late finds the backend serving whoever borrowed the connection next (the
- *    reader rolled back and released it meanwhile), and cancels THEIR statement: a dialler write.
- *
- * So the cancel goes on a fresh, unpooled connection built from the pool's own settings (its
- * connection string and TLS options: the same server, role and certificate rules), and the
- * caller AWAITS it. `pg_cancel_backend` has returned once the backend has been signalled, so a
- * caller that awaits this before giving its connection up knows no cancel is still in flight;
- * a caller that sent one destroys its connection rather than return it to the pool (the
- * backend's cancel is processed at its next interrupt check, which may still be pending).
+ * Through the shared pool the cancel WAITS behind every other borrower when the pool is busy,
+ * which is exactly when it matters, so the statement it means to stop runs on. So it goes on a
+ * fresh, unpooled connection built from the pool's own settings (its connection string and TLS
+ * options: the same server, role and certificate rules). `pg_cancel_backend` has returned once the
+ * backend has been signalled. Why the caller awaits it and then destroys its connection:
+ * `cancellable-read.ts`, whose readers (Compare agents' read, the report cursor) are its callers.
  *
  * ── Which pid ───────────────────────────────────────────────────────────────
  * The pid MUST be the backend's own, read with `pg_backend_pid()` on the connection whose statement
