@@ -19,13 +19,18 @@ import {
   type CarrierChoice,
 } from '../../../utils/agencyCarriers';
 import { CampaignRecordingField } from '../../../components/agency/CampaignRecordingField';
+import { CampaignCallSummaryField } from '../../../components/agency/CampaignCallSummaryField';
 import {
+  AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
   NO_ANALYSIS_PROFILE,
   campaignSaveRefusal,
+  payloadSetsProfile,
   recordingPayload,
+  resolveProfileId,
   type CampaignRecordingState,
 } from '../../../utils/agencyCampaignRecording';
+import { useCallAnalysisProfiles } from '../../../hooks/useCallAnalysisProfiles';
 import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
 import { useRosterIngest } from '../../../hooks/useRosterIngest';
@@ -112,8 +117,8 @@ import styles from './CampaignBuilderPage.module.css';
  */
 type BuilderForm = Omit<CampaignSettingsForm, 'carrier'> & { carrier: CarrierChoice | null };
 
-/** The builder's recording as a form holds it: on or off, never with an analysis profile. */
-const builderRecording = (record: boolean): CampaignRecordingState => ({ record, profileId: NO_ANALYSIS_PROFILE });
+/** A new campaign records nothing and has no call summary until the operator picks them. */
+const NEW_CAMPAIGN_RECORDING: CampaignRecordingState = { record: false, profileId: NO_ANALYSIS_PROFILE };
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
@@ -138,13 +143,23 @@ export default function CampaignBuilderPage() {
   const carrierChoices = useMemo(() => carrierOptions(carriers ?? [], null), [carriers]);
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
   /**
-   * Recording, set on the behaviour step and saved with the config. The account's
-   * `agency.recording` decides whether it can be switched on (UX gating; the API's
-   * 403 is the enforcement, and `useGovernance` fails open).
+   * Recording and the call summary (the analysis profile, whose custom dimensions each
+   * connected call is summarised against), set on the behaviour step and saved with the
+   * config. The account's `agency.recording` decides whether recording can be switched on,
+   * and `agency.analytics` whether a profile can be picked (UX gating; the API's 403 is the
+   * enforcement, and `useGovernance` fails open), as on campaign Settings.
    */
-  const [recordCalls, setRecordCalls] = useState(false);
+  const [recording, setRecording] = useState<CampaignRecordingState>(NEW_CAMPAIGN_RECORDING);
+  const recordCalls = recording.record;
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
+  const analyticsEnabled = isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY);
+  const {
+    profiles: analysisProfiles,
+    loading: profilesLoading,
+    error: profilesError,
+  } = useCallAnalysisProfiles({ enabled: analyticsEnabled });
+  const chosenProfileName = analysisProfiles.find((p) => p.id === recording.profileId)?.name ?? null;
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
   /**
@@ -175,7 +190,7 @@ export default function CampaignBuilderPage() {
     name: '',
     callerIds: [],
     carrier: null,
-    recording: builderRecording(false),
+    recording: NEW_CAMPAIGN_RECORDING,
     config,
   }));
   /**
@@ -355,13 +370,8 @@ export default function CampaignBuilderPage() {
     setFieldErrors({});
     // A refusal from an earlier save must not outlive the save that fixed it.
     setError(null);
-    // The builder has no call-summary picker, so only `record_calls` is taken: the
-    // same omit-when-it-would-be-refused rule the settings page uses.
-    const { record_calls } = recordingPayload({
-      recordingEnabled,
-      analyticsEnabled: false,
-      next: builderRecording(recordCalls),
-    });
+    // The same omit-when-it-would-be-refused rule the settings page uses.
+    const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
     try {
       const id = await ensureCampaign();
       /*
@@ -379,7 +389,7 @@ export default function CampaignBuilderPage() {
           id,
           {
             ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
-            ...(record_calls !== undefined ? { record_calls } : {}),
+            ...recordingFields,
             ...(sendName ? { name: trimmedName } : {}),
             ...(sendCallerIds ? { caller_ids: callerIds } : {}),
             ...(sendCarrier
@@ -399,7 +409,7 @@ export default function CampaignBuilderPage() {
       serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
       setConfigSaved(true);
       setSavedOnce(true);
-      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording: builderRecording(recordCalls), config });
+      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording, config });
       {
         const priorOrder = initialDispositionOrderRef.current;
         const nextOrder = config.dispositions.map((d) => d.code);
@@ -428,8 +438,7 @@ export default function CampaignBuilderPage() {
             }
             : {}),
           recording_enabled: recordCalls,
-          // The builder has no call-summary picker; only the settings page sets one.
-          analysis_profile_set: false,
+          analysis_profile_set: resolveProfileId(recording.profileId) !== null,
           reordered,
         });
       }
@@ -441,7 +450,7 @@ export default function CampaignBuilderPage() {
       }
       // A `capability_disabled` 403 (recording switched on for an account that may
       // not record) carries no `details`; say what happened, on the step that has the box.
-      const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: false });
+      const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: payloadSetsProfile(recordingFields) });
       if (refusal !== null) {
         setError(refusal);
         goTo('behaviour');
@@ -470,7 +479,7 @@ export default function CampaignBuilderPage() {
       setSavingConfig(false);
     }
   }, [
-    config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
+    config, recording, recordCalls, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
     name, callerIds, carrier, chosenCarrier, goToFinding,
   ]);
 
@@ -574,7 +583,7 @@ export default function CampaignBuilderPage() {
   */
   const settingsChanged = changedSettings(
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
-    { name, callerIds, carrier, recording: builderRecording(recordCalls), config },
+    { name, callerIds, carrier, recording, config },
   ).length > 0;
   const unsaved = settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
   const leaveGuard = useUnsavedChangesGuard(unsaved);
@@ -936,12 +945,31 @@ export default function CampaignBuilderPage() {
                   <CampaignRecordingField
                     checked={recordCalls}
                     onChange={(next) => {
-                      setRecordCalls(next);
+                      setRecording((current) => ({ ...current, record: next }));
                       setConfigSaved(false);
                     }}
                     capabilityEnabled={recordingEnabled}
                     error={fieldErrors['record_calls']}
                   />
+                  {/*
+                    A new campaign has no profile to clear, so the field shows only while
+                    the account may set one (Settings also shows it to clear a stored one).
+                  */}
+                  {analyticsEnabled ? (
+                    <CampaignCallSummaryField
+                      profileId={recording.profileId}
+                      onChange={(profileId) => {
+                        setRecording((current) => ({ ...current, profileId }));
+                        setConfigSaved(false);
+                      }}
+                      capabilityEnabled
+                      profiles={analysisProfiles}
+                      loading={profilesLoading}
+                      loadError={profilesError}
+                      loadErrorConsequence="You can save without one and set it later in the campaign’s Settings."
+                      error={fieldErrors['analysis_profile_id']}
+                    />
+                  ) : null}
                 </>
               ) : null}
 
@@ -1030,6 +1058,18 @@ export default function CampaignBuilderPage() {
                     errors={rowFindings.get('recording')}
                     onEdit={editRow('recording', 'behaviour')}
                   />
+                  {analyticsEnabled ? (
+                    <ReviewRow
+                      label="Call summary"
+                      value={
+                        resolveProfileId(recording.profileId) === null
+                          ? 'No summary'
+                          : chosenProfileName ?? 'A summary profile is set'
+                      }
+                      errors={rowFindings.get('summary')}
+                      onEdit={editRow('summary', 'behaviour')}
+                    />
+                  ) : null}
                   <p className={styles.reviewNote}>
                     Saving creates a draft. Nothing is dialled until you open the campaign and start it.
                   </p>

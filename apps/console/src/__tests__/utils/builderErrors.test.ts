@@ -42,6 +42,7 @@ describe('reviewRowForConfigField', () => {
     expect(reviewRowForConfigField('callback_fallback')).toBe('assignment');
     expect(reviewRowForConfigField('abandonment_ceiling_pct')).toBe('abandonment');
     expect(reviewRowForConfigField('record_calls')).toBe('recording');
+    expect(reviewRowForConfigField('analysis_profile_id')).toBe('summary');
     expect(reviewRowForConfigField('name')).toBe('name');
     expect(reviewRowForConfigField('caller_ids')).toBe('callFrom');
   });
