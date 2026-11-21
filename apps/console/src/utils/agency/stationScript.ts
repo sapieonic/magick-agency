@@ -14,8 +14,9 @@ import { factDisplay, factsChosen, factText, factTilesInOrder, tileName } from '
  *    `{place}`, `{agent_name}`, `{campaign_name}` and each fact's key (digits allowed: `{emi_2}`).
  *    A fact key is filled from the panel's tile carrying that `key` (an `amount_due` / `due_date`
  *    tile from an older server, by its role), written as the card writes it (`₹1,25,000`, `20 Nov`,
- *    a masked phone stays masked). A key with no value for this customer shows "<label> not given"
- *    in the muted style (`{ kind: 'missing' }`), and Read aloud skips it.
+ *    a masked phone stays masked). `{name}`, `{place}` or a fact key with no value for this
+ *    customer shows "<label> not given" in the muted style (`{ kind: 'missing' }`), and Read aloud
+ *    skips it; `{agent_name}` / `{campaign_name}` with no value are left out.
  *  - **Without** (a campaign not saved since AS19): the legacy six, `{amount_due}` and
  *    `{due_date}` from the role tiles; a key with no value is left out (the line still shows), as
  *    before.
@@ -93,13 +94,18 @@ export function firstName(name: string | null | undefined): string | null {
   return first ? first : null;
 }
 
-/** How the fixed keys are named in "<label> not given" (the contract's: "Name", "Place"). */
+/**
+ * How the customer's fixed keys are named in "<label> not given" (the contract's: "Name",
+ * "Place"). `{agent_name}` and `{campaign_name}` are not here: with no value they are left out,
+ * always, as on the legacy path and in the agent app.
+ */
 const FIXED_LABELS: Readonly<Record<string, string>> = {
   name: 'Name',
   place: 'Place',
-  agent_name: 'Your name',
-  campaign_name: 'Campaign name',
 };
+
+/** The fixed keys that are never "not given": a missing value is left out. */
+const LEFT_OUT_WHEN_EMPTY: ReadonlySet<string> = new Set(['agent_name', 'campaign_name']);
 
 /** What the script's keys say for the customer on screen. */
 export function scriptFillFor(
@@ -144,6 +150,7 @@ export function scriptFillFor(
       return shown.empty ? null : shown.text;
     },
     labelOf: (key) => {
+      if (LEFT_OUT_WHEN_EMPTY.has(key)) return null;
       if (Object.hasOwn(FIXED_LABELS, key)) return FIXED_LABELS[key]!;
       const fact = display?.facts?.find((f) => f?.key === key);
       if (fact?.label?.trim()) return fact.label.trim();

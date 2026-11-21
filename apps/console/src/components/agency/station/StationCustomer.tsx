@@ -1,4 +1,4 @@
-import { forwardRef, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Calendar, Clock, IndianRupee, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
 import { NotesField, type NotesFieldProps } from '../NotesField';
 import { useDictation } from '../../../hooks/useSpeech';
@@ -19,14 +19,17 @@ const FACT_ICON: Record<CustomerFact['kind'], typeof Phone | null> = {
 /**
  * A number, amount, date or phone that shrinks to fit its tile (AS19) down to 65 %, then takes
  * the ellipsis. Measured once per value and width: a ResizeObserver on the value re-measures only
- * when its width changes, and the size is set in one write (no read-write loop).
+ * when its width changes, and the size is set in one write (no read-write loop). It measures again
+ * when the page's fonts finish loading (a value measured in the fallback font is the wrong width)
+ * and when the tile is highlighted or stops being (the highlight's value is set larger).
  */
-function FitValue({ text, className, testId, empty }: { text: string; className: string; testId: string; empty?: boolean }) {
+function FitValue({ text, className, testId, empty, highlight }: { text: string; className: string; testId: string; empty?: boolean; highlight?: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     let width = -1;
+    let live = true;
     const fit = (next: number) => {
       if (next === width) return;
       width = next;
@@ -35,18 +38,28 @@ function FitValue({ text, className, testId, empty }: { text: string; className:
       if (size !== null) el.style.fontSize = `${size}px`;
     };
     fit(el.clientWidth);
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver((entries) => fit(Math.round(entries[0]?.contentRect.width ?? el.clientWidth)));
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [text]);
+    // Fonts that load after the first measure change the value's width but not the tile's.
+    void document.fonts?.ready.then(() => {
+      if (!live) return;
+      width = -1;
+      fit(el.clientWidth);
+    });
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver((entries) => fit(Math.round(entries[0]?.contentRect.width ?? el.clientWidth)));
+    observer?.observe(el);
+    return () => {
+      live = false;
+      observer?.disconnect();
+    };
+  }, [text, highlight]);
   return <span ref={ref} className={className} data-testid={testId} data-empty={empty ? 'true' : undefined}>{text}</span>;
 }
 
 /**
  * One chosen fact (AS19): its name, its value on one line, and a hover card with the name, the
  * whole value and "From column: X" while it is pointed at or focused (tiles are focusable, so the
- * keyboard reaches it). Escape closes it. The card shows the value as the tile writes it, so a
+ * keyboard reaches it). Escape closes it (here, and from anywhere through {@link ChosenFacts}). The card shows the value as the tile writes it, so a
  * masked phone never shows its digits there.
  */
 function FactTile({ fact, open, onOpen, onClose }: { fact: CustomerFact; open: boolean; onOpen: (via: 'hover' | 'focus') => void; onClose: (via: 'hover' | 'focus' | 'escape') => void }) {
@@ -88,7 +101,7 @@ function FactTile({ fact, open, onOpen, onClose }: { fact: CustomerFact; open: b
     >
       <small data-testid="customer-fact-label">{fact.label}</small>
       {fact.fit ? (
-        <FitValue text={fact.value} className={valueClass} testId="customer-fact-value" empty={fact.empty} />
+        <FitValue text={fact.value} className={valueClass} testId="customer-fact-value" empty={fact.empty} highlight={fact.highlight} />
       ) : (
         <span className={valueClass} data-testid="customer-fact-value" data-empty={fact.empty ? 'true' : undefined}>{fact.value}</span>
       )}
@@ -103,20 +116,43 @@ function FactTile({ fact, open, onOpen, onClose }: { fact: CustomerFact; open: b
   );
 }
 
-/** The campaign's chosen facts (AS19), four across, one hover card open at a time. */
+/**
+ * The campaign's chosen facts (AS19), four across, one hover card open at a time: the tile under
+ * the pointer, else the focused one. So pointing at B while A has the focus shows B's card, and
+ * leaving B brings A's back (none when nothing has the focus). Escape closes it wherever the
+ * focus is (a document listener while a card is open); it opens again on the next hover or focus.
+ */
 function ChosenFacts({ facts }: { facts: CustomerFact[] }) {
-  const [open, setOpen] = useState<{ key: string; via: 'hover' | 'focus' } | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const open = hovered ?? focused;
+  useEffect(() => {
+    if (open === null) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setHovered(null);
+      setFocused(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
   return (
     <div className={styles.chosenFacts} data-testid="customer-facts">
       {facts.map((fact) => (
         <FactTile
           key={fact.key}
           fact={fact}
-          open={open?.key === fact.key}
-          onOpen={(via) => setOpen({ key: fact.key, via })}
-          onClose={(via) =>
-            setOpen((current) => (current?.key !== fact.key || (via !== 'escape' && current.via !== via) ? current : null))
-          }
+          open={open === fact.key}
+          onOpen={(via) => (via === 'hover' ? setHovered(fact.key) : setFocused(fact.key))}
+          onClose={(via) => {
+            const mine = (current: string | null) => (current === fact.key ? null : current);
+            if (via === 'hover') setHovered(mine);
+            else if (via === 'focus') setFocused(mine);
+            else {
+              setHovered(null);
+              setFocused(null);
+            }
+          }}
         />
       ))}
     </div>

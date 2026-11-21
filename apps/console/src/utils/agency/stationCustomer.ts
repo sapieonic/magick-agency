@@ -32,8 +32,8 @@ import {
  * reserved attempt, the campaign's `context_display` and the bootstrap's `phone_display` (AS9).
  *
  * ── The campaign's chosen facts (AS19) ───────────────────────────────────────
- * When the campaign has chosen its facts (`context_display.facts`, or tiles that carry a `label`
- * or `key`), the card shows exactly those tiles, in the server's order with the highlighted one
+ * When the campaign has chosen its facts (`context_display.facts` is an array, even `[]`), the
+ * card shows exactly those tiles, in the server's order with the highlighted one
  * first, up to four: each named `label ?? column`, an empty one as `—` (it keeps its place), and
  * each value written by its type ({@link factDisplay}). There is no "Last call" tile: Last calls
  * has its own card. The tiles are laid out four across ({@link chosenSpans}).
@@ -198,7 +198,7 @@ export function factDisplay(
   if (raw === '') return { text: EMPTY_FACT, kind: 'text', empty: true, fit: false };
   const phoneDisplay = options.phoneDisplay ?? 'full';
   if (tile.value === null) {
-    if (tile.type === 'phone' && phoneDisplay === 'masked') return { text: phoneForDisplay(raw, 'masked'), kind: 'text', empty: false, fit: false };
+    if (tile.type === 'phone' && phoneDisplay === 'masked') return { text: factPhone(raw, 'masked'), kind: 'text', empty: false, fit: false };
     return { text: raw, kind: 'text', empty: false, fit: false };
   }
   switch (tile.type) {
@@ -229,10 +229,13 @@ export function tileName(tile: Pick<AgencyFactTile, 'label' | 'column'>): string
   return label ? label : tile.column;
 }
 
-/** True when the campaign chose its facts (AS19): `context_display.facts` set, or tiles that carry a label or key. */
-export function factsChosen(facts: AgencyCustomerFacts | undefined, display: AgencyContextDisplay | undefined): boolean {
-  if (Array.isArray(display?.facts)) return true;
-  return Boolean(facts?.tiles.some((t) => t.label !== undefined || t.key !== undefined));
+/**
+ * True when the campaign chose its facts (AS19, R8): its `context_display.facts` is an array, even
+ * `[]` (no tiles then, never today's card). The display decides alone, on both clients: tiles that
+ * carry a `label` or `key` under a display without `facts` still get today's card.
+ */
+export function factsChosen(_facts: AgencyCustomerFacts | undefined, display: AgencyContextDisplay | undefined): boolean {
+  return Array.isArray(display?.facts);
 }
 
 /**
