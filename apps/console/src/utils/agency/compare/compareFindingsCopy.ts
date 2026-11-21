@@ -14,7 +14,7 @@ import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../../types/agency-stats'
 import { DISPLAY_LOCALE, formatCount } from '../../format/number';
 import { addDaysToDay, zoneDayStart } from '../insights/range';
 import { CALLBACKS_CAMPAIGN_PARAM } from '../accountCallbacks';
-import { formatMetricValue, formatRate, infoLabel, infoLabelInSentence, infoNoun, perWords } from './compareMetrics';
+import { formatMetricValue, formatRate, infoLabel, infoLabelInSentence, infoNoun, isNoneDue, perWords } from './compareMetrics';
 
 /**
  * "What stands out" in the console's words (`docs/compare-agents.md` §6, CP4, CP12, AS15).
@@ -242,6 +242,13 @@ export function findingCopy(finding: AgencyCompareFinding, ctx: FindingContext):
   }
 
   if (finding.code === 'too_few_calls') {
+    if (info && isNoneDue(info, finding.count ?? finding.value)) {
+      return {
+        ...base,
+        rest: ` has no call-backs due yet here, so call-backs kept on time can’t be compared.`,
+        why: `None of their call-backs has come due in this window, so there is nothing to keep on time yet. ${tooFewWhy(info, finding.baseline ?? 0)}`,
+      };
+    }
     const den = info ? perWords(info, finding.count ?? finding.value) : plainCalls(finding.count ?? finding.value);
     // No claim that the counts are shown: a rate under the floor is withheld, hits included (CP9).
     return {
@@ -326,10 +333,26 @@ export function neutralNote(response: Pick<AgencyCompareResponse, 'metrics'>): s
   return names.length > 0 ? `Shown for context, never flagged: ${names.join(', ')}.` : null;
 }
 
+/** `a`, `a and b`, `a, b and c` (no serial comma). */
+function joinAnd(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Metric names as a list in a sentence; the first capitalised when it starts the sentence. */
+function metricList(infos: readonly AgencyCompareMetricInfo[], startsSentence: boolean): string {
+  return joinAnd(infos.map((m, i) => (startsSentence && i === 0 ? infoLabel(m) : infoLabelInSentence(m))));
+}
+
 /**
  * Why "What stands out" is empty, when it is: no metric on the page has a direction; too few
- * agents clear the floor on every flaggable metric (§6, under {@link COMPARE_MIN_RATED_COHORT});
- * or nothing passed the rules. Null when there are findings.
+ * agents clear the floor on a flaggable metric (§6, under {@link COMPARE_MIN_RATED_COHORT}), so it
+ * is not judged at all; or nothing passed the rules. Null when there are findings.
+ *
+ * Each flaggable metric is judged or not on its own rated cohort. A metric with no floor (breaks
+ * over their limit) rates every agent of the campaign, so its count must never stand in for the
+ * floored ones: on a one-day window where no agent has 20 calls, breaks are still judged, while
+ * every rate and time is not, and the page says which and offers a longer window.
  */
 export function emptyFindingsNote(response: AgencyCompareResponse): string | null {
   if (response.findings.length > 0) return null;
@@ -337,11 +360,16 @@ export function emptyFindingsNote(response: AgencyCompareResponse): string | nul
   if (flaggable.length === 0) {
     return 'Every metric on the page is shown for context only, so none is judged. Add one with a direction, such as an outcome set, to see what stands out.';
   }
-  const rated = flaggable.map((m) => response.cohort.per_metric[m.id]?.agents_rated ?? 0);
-  const most = Math.max(...rated);
-  if (most < COMPARE_MIN_RATED_COHORT) {
-    const have = most === 0 ? 'none does' : most === 1 ? 'only 1 does' : `only ${most} do`;
-    return `Nothing is judged yet: at least ${COMPARE_MIN_RATED_COHORT} agents on this campaign need enough calls in this window to compare fairly, and ${have}. Check a longer window.`;
-  }
-  return 'Nothing clear stands out among these agents on these metrics.';
+  const ratedOf = (m: AgencyCompareMetricInfo) => response.cohort.per_metric[m.id]?.agents_rated ?? 0;
+  const unjudged = flaggable.filter((m) => ratedOf(m) < COMPARE_MIN_RATED_COHORT);
+  if (unjudged.length === 0) return 'Nothing clear stands out among these agents on these metrics.';
+  const counts = unjudged.map(ratedOf);
+  const most = Math.max(...counts);
+  const same = counts.every((c) => c === most);
+  const have = most === 0 ? 'none does' : !same ? `at most ${most} do` : most === 1 ? 'only 1 does' : `only ${most} do`;
+  const need = `at least ${COMPARE_MIN_RATED_COHORT} agents on this campaign need enough calls in this window to compare fairly, and ${have}. Check a longer window.`;
+  if (unjudged.length === flaggable.length) return `Nothing is judged yet: ${need}`;
+  const judged = flaggable.filter((m) => !unjudged.includes(m));
+  const verb = unjudged.length === 1 ? 'is' : 'are';
+  return `Nothing clear stands out on ${metricList(judged, false)}. ${metricList(unjudged, true)} ${verb} not judged yet: ${need}`;
 }

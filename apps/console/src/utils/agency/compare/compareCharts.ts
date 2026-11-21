@@ -45,7 +45,16 @@ export interface BarChartInput {
   cohort: { p25: number | null; median: number | null; p75: number | null };
   /** Rates cap the scale at 100%. */
   isRate: boolean;
+  /** Whole counts: the scale reaches at least {@link COUNT_SCALE_MIN}, so all zeros never fill it. */
+  isCount?: boolean;
 }
+
+/**
+ * The least top of a count's scale. A count of breaks over their limit is mostly 0, and the
+ * team's p75 can be 0.25; scaled to that, a quarter of a break would fill the chart. Four keeps
+ * the two breaks that name an agent at half the width.
+ */
+export const COUNT_SCALE_MIN = 4;
 
 export type BarRowGeometry =
   | { kind: 'bar'; y: number; x0: number; width: number; whisker: { x1: number; x2: number } | null; valueX: number; valueText: string }
@@ -58,13 +67,22 @@ export interface BarChartGeometry {
   left: number;
   /** The scale's top value. */
   max: number;
-  /** The middle half of the team, p25 to p75, behind the bars; null when the team has no band. */
+  /**
+   * The middle half of the team, p25 to p75, behind the bars; null when the team has no band, or
+   * none worth drawing (p25 and p75 the same: the median line says it).
+   */
   band: { x: number; width: number } | null;
   /** The team median's line; null when no agent clears the floor. */
   median: { x: number } | null;
-  /** The plot's vertical extent, which the band and median line span. */
+  /** The plot's vertical extent. */
   plotTop: number;
   plotBottom: number;
+  /**
+   * The stretches the band and median line are drawn over: each run of rows with a bar. A row of
+   * words ("Too few to compare …") is left clear, so the line never runs through its text; with
+   * no bar at all there is no stretch, and the median is said in words under the chart.
+   */
+  spans: Array<{ top: number; bottom: number }>;
   rows: BarRowGeometry[];
 }
 
@@ -75,9 +93,10 @@ export function barLabelWidth(width: number): number {
 
 /**
  * The scale's top: 12% past the largest thing drawn (a bar, a whisker's end, the band's top or
- * the median), so nothing touches the edge; a rate's scale stops at 100%. Never 0.
+ * the median), so nothing touches the edge; a rate's scale stops at 100%, a count's is at least
+ * {@link COUNT_SCALE_MIN}. Never 0.
  */
-export function barScaleMax(input: Pick<BarChartInput, 'rows' | 'cohort' | 'isRate'>): number {
+export function barScaleMax(input: Pick<BarChartInput, 'rows' | 'cohort' | 'isRate' | 'isCount'>): number {
   const values: number[] = [];
   for (const row of input.rows) {
     if (!row.reportable || row.value === null) continue;
@@ -86,9 +105,11 @@ export function barScaleMax(input: Pick<BarChartInput, 'rows' | 'cohort' | 'isRa
   }
   for (const v of [input.cohort.p75, input.cohort.median, input.cohort.p25]) if (v !== null) values.push(v);
   const top = Math.max(0, ...values.filter(Number.isFinite));
-  if (top <= 0) return input.isRate ? 1 : 1;
+  const floor = input.isCount ? COUNT_SCALE_MIN : 1;
+  if (top <= 0) return floor;
   const padded = top * 1.12;
-  return input.isRate ? Math.min(1, padded) : padded;
+  if (input.isRate) return Math.min(1, padded);
+  return input.isCount ? Math.max(floor, padded) : padded;
 }
 
 export function barChartGeometry(input: BarChartInput): BarChartGeometry {
@@ -100,7 +121,7 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
   const plotTop = BAR_TOP - 2;
   const plotBottom = BAR_TOP + input.rows.length * BAR_ROW_HEIGHT - 4;
   const { p25, median, p75 } = input.cohort;
-  const band = p25 !== null && p75 !== null ? { x: x(p25), width: Math.max(2, x(p75) - x(p25)) } : null;
+  const band = p25 !== null && p75 !== null && x(p75) - x(p25) >= 1 ? { x: x(p25), width: x(p75) - x(p25) } : null;
   const rows = input.rows.map((row, i): BarRowGeometry => {
     const y = BAR_TOP + i * BAR_ROW_HEIGHT;
     if (!row.reportable || row.value === null) {
@@ -113,6 +134,15 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
     const valueX = Math.min(after, width - row.valueText.length * CHAR_WIDTH - 2);
     return { kind: 'bar', y, x0: left, width: barW, whisker, valueX, valueText: row.valueText };
   });
+  const spans: Array<{ top: number; bottom: number }> = [];
+  rows.forEach((row, i) => {
+    if (row.kind !== 'bar') return;
+    const top = BAR_TOP + i * BAR_ROW_HEIGHT - 2;
+    const bottom = BAR_TOP + (i + 1) * BAR_ROW_HEIGHT - 4;
+    const last = spans[spans.length - 1];
+    if (last && rows[i - 1]?.kind === 'bar') last.bottom = bottom;
+    else spans.push({ top, bottom });
+  });
   return {
     width,
     height: BAR_TOP + input.rows.length * BAR_ROW_HEIGHT + BAR_BOTTOM,
@@ -122,6 +152,7 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
     median: median !== null ? { x: x(median) } : null,
     plotTop,
     plotBottom,
+    spans,
     rows,
   };
 }
@@ -136,13 +167,48 @@ export function barPath(x0: number, y: number, width: number, height = BAR_THICK
   return `M${x0} ${y}h${width - r}a${r} ${r} 0 0 1 ${r} ${r}v${height - 2 * r}a${r} ${r} 0 0 1 ${-r} ${r}h${-(width - r)}z`;
 }
 
+// ─── Agents' names on a chart ──────────────────────────────────────────────
+
+/** Roughly the width of one character of a 12px name. */
+const NAME_CHAR_WIDTH = 6.6;
+
+/** A name cut to fit `width` pixels of 12px text: "Lakshmi Prasa…". */
+export function fitName(name: string, width: number): string {
+  const max = Math.max(4, Math.floor(width / NAME_CHAR_WIDTH));
+  return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
+}
+
+/**
+ * Each name cut to fit `width` ({@link fitName}), and never two the same on one chart: names that
+ * cut to the same words keep their ends instead ("Lakshmi…Pillai"), and names that are the same
+ * in full are numbered ("Priya M (2)"), so a label always tells the agents apart.
+ */
+export function distinctNames(names: readonly string[], width: number): string[] {
+  const max = Math.max(4, Math.floor(width / NAME_CHAR_WIDTH));
+  const out = names.map((n) => fitName(n, width));
+  const clashes = (i: number) => out.some((o, j) => j !== i && o === out[i]);
+  const cut = names.map((n, i) => {
+    if (!clashes(i) || n.length <= max) return out[i]!;
+    const tail = Math.ceil((max - 1) / 2);
+    return `${n.slice(0, max - 1 - tail)}…${n.slice(-tail)}`;
+  });
+  const seen = new Map<string, number>();
+  return cut.map((c) => {
+    const k = (seen.get(c) ?? 0) + 1;
+    seen.set(c, k);
+    return k === 1 ? c : `${c} (${k})`;
+  });
+}
+
 // ─── The trend: a line per agent per working day ────────────────────────────
 
 const TREND_TOP = 12;
 const TREND_BOTTOM = 26;
 const TREND_LEFT = 34;
-/** Room for the end labels ("Priya · 12"). */
-const TREND_RIGHT = 92;
+/** The width an end label's name is cut to: the bars' names column at its usual width. */
+export const TREND_NAME_WIDTH = 92;
+/** The gap between a line's last point and its label. */
+const END_LABEL_OFFSET = 8;
 /** The least space between two x-axis dates, so their labels never touch. */
 const MIN_LABEL_GAP = 52;
 /** The least space between two end labels. */
@@ -151,7 +217,7 @@ const END_LABEL_GAP = 14;
 export interface TrendSeriesInput {
   id: string;
   counts: ReadonlyArray<number | null>;
-  /** The end label's name ("Priya"). */
+  /** The agent's full name; the end label cuts it as the bars do ({@link distinctNames}). */
   name: string;
 }
 
@@ -176,7 +242,8 @@ export interface TrendGeometry {
   xLabels: Array<{ index: number; x: number; text: string }>;
   series: Array<{ id: string; path: string; dots: Array<{ x: number; y: number }>; last: { x: number; y: number } | null }>;
   medianPath: string;
-  endLabels: Array<{ id: string; y: number; text: string; team: boolean }>;
+  /** Each line's label, beside its LAST point (a line that stopped early is labelled where it stopped). */
+  endLabels: Array<{ id: string; x: number; y: number; text: string; team: boolean }>;
 }
 
 /**
@@ -247,6 +314,27 @@ export function labelledDateIndexes(count: number, plotWidth: number): number[] 
   return out;
 }
 
+/** Roughly how wide a label is drawn. */
+function labelWidth(text: string): number {
+  return text.length * NAME_CHAR_WIDTH;
+}
+
+/**
+ * End labels that could touch, grouped: labels whose spans across (x to x + width) overlap, so
+ * only those are pushed apart and a label that stands clear stays beside its point.
+ */
+export function overlappingGroups(labels: ReadonlyArray<{ x: number; text: string }>): number[][] {
+  const order = labels.map((l, i) => ({ i, x: l.x, right: l.x + labelWidth(l.text) })).sort((a, b) => a.x - b.x || a.i - b.i);
+  const groups: number[][] = [];
+  let right = -Infinity;
+  for (const o of order) {
+    if (groups.length > 0 && o.x < right) groups[groups.length - 1]!.push(o.i);
+    else groups.push([o.i]);
+    right = groups[groups.length - 1]!.length === 1 ? o.right : Math.max(right, o.right);
+  }
+  return groups;
+}
+
 /**
  * End labels pushed apart so none overlaps the one above it (at least {@link END_LABEL_GAP}
  * apart, top to bottom), then pulled back up if the last went past the plot's foot.
@@ -280,8 +368,22 @@ function lastPoint(values: ReadonlyArray<number | null>): { index: number; value
 export function trendGeometry(input: TrendInput): TrendGeometry {
   const width = Math.max(260, Math.round(input.width));
   const height = input.height;
+  const names = distinctNames(
+    input.series.map((s) => s.name),
+    TREND_NAME_WIDTH,
+  );
+  const texts = input.series.map((s, i) => {
+    const last = lastPoint(s.counts);
+    return last ? `${names[i]} · ${last.value}` : null;
+  });
+  const medianLast = lastPoint(input.median);
+  const teamText = medianLast ? `Team · ${formatMedian(medianLast.value)}` : null;
+  // Room right of the plot for the longest label of a line that runs to the last day.
+  const widest = Math.max(0, ...[...texts, teamText].filter((t): t is string => t !== null).map(labelWidth));
   const plotLeft = TREND_LEFT;
-  const plotRight = width - TREND_RIGHT;
+  const plotRight = width - Math.round(Math.min(width / 3, Math.max(40, END_LABEL_OFFSET + widest + 4)));
+  // Beside the point, kept inside the SVG on the narrowest charts.
+  const labelX = (pointX: number, text: string) => round(Math.min(pointX + END_LABEL_OFFSET, width - labelWidth(text) - 2));
   const plotTop = TREND_TOP;
   const plotBottom = height - TREND_BOTTOM;
   const n = input.dates.length;
@@ -298,18 +400,25 @@ export function trendGeometry(input: TrendInput): TrendGeometry {
     return { id: s.id, path: line.path, dots: line.dots, last: last ? { x: round(x(last.index)), y: round(y(last.value)) } : null };
   });
   const medianPath = brokenLinePath(input.median, x, y).path;
-  const ends: Array<{ id: string; y: number; text: string; team: boolean }> = [];
+  const ends: Array<{ id: string; x: number; y: number; text: string; team: boolean }> = [];
   input.series.forEach((s, i) => {
-    const last = lastPoint(s.counts);
-    if (last) ends.push({ id: s.id, y: series[i]!.last!.y + 4, text: `${s.name} · ${last.value}`, team: false });
+    const last = series[i]!.last;
+    if (last && texts[i]) ends.push({ id: s.id, x: labelX(last.x, texts[i]!), y: last.y + 4, text: texts[i]!, team: false });
   });
-  const medianLast = lastPoint(input.median);
-  if (medianLast) ends.push({ id: 'team', y: round(y(medianLast.value)) + 4, text: `Team · ${formatMedian(medianLast.value)}`, team: true });
-  const spread = spreadLabels(
-    ends.map((e) => e.y),
-    plotTop + 4,
-    plotBottom + 4,
-  );
+  if (medianLast && teamText) {
+    ends.push({ id: 'team', x: labelX(x(medianLast.index), teamText), y: round(y(medianLast.value)) + 4, text: teamText, team: true });
+  }
+  const spread = ends.map((e) => e.y);
+  for (const group of overlappingGroups(ends)) {
+    const ys = spreadLabels(
+      group.map((i) => ends[i]!.y),
+      plotTop + 4,
+      plotBottom + 4,
+    );
+    group.forEach((i, k) => {
+      spread[i] = ys[k]!;
+    });
+  }
   return {
     width,
     height,

@@ -163,11 +163,24 @@ export function formatMetricValue(unit: CompareMetricUnit, value: number | null)
   }
 }
 
+/** The words for call-backs kept on time when none of the agent's call-backs has come due. */
+export const NONE_DUE_WORDS = 'None due yet';
+
 /**
- * The bar's words in place of a bar under the floor: "Too few to compare (12 calls; needs 20)".
+ * Whether a withheld figure is call-backs kept on time with no call-back due at all (0 of 0):
+ * nothing to keep yet, which is not the same as too few, so it is never worded "Too few (0 of 8)".
+ */
+export function isNoneDue(info: Pick<AgencyCompareMetricInfo, 'ref'>, denominator: number | null): boolean {
+  return info.ref.kind === 'builtin' && info.ref.key === 'callbacks_kept_rate' && denominator === 0;
+}
+
+/**
+ * The bar's words in place of a bar under the floor: "Too few to compare (12 calls; needs 20)",
+ * or "None due yet" for call-backs kept on time with none due ({@link isNoneDue}).
  * A null denominator (none sent) states no count: an unknown count is never written as 0.
  */
 export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number | null): string {
+  if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
   const floor = info.definition.min_denominator;
   const parts = [denominator === null ? null : perWords(info, denominator), floor === null ? null : `needs ${formatCount(floor)}`].filter(
     (p): p is string => p !== null,
@@ -177,6 +190,7 @@ export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number |
 
 /** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
 export function tooFewShort(info: AgencyCompareMetricInfo, denominator: number | null): string {
+  if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
   const floor = info.definition.min_denominator;
   if (denominator === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
   const have = formatCount(denominator);

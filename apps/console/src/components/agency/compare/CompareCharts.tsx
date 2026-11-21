@@ -13,12 +13,13 @@ import {
   barLabelWidth,
   barPath,
   daySplitSegments,
+  distinctNames,
   formatMedian,
   shortDate,
   trendGeometry,
   type DaySplitKey,
 } from '../../../utils/agency/compare/compareCharts';
-import { formatMetricValue, formatRate, infoLabel, metricSubtitle, tooFewShort, tooFewWords } from '../../../utils/agency/compare/compareMetrics';
+import { formatMetricValue, formatRate, infoLabel, isNoneDue, metricSubtitle, tooFewShort, tooFewWords } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import styles from './Compare.module.css';
@@ -43,12 +44,6 @@ export interface ChartAgent {
 
 export function agentColour(slot: number): string {
   return `var(--cmp-agent-${slot + 1})`;
-}
-
-/** A name cut to fit `width` pixels of 12px text. */
-function fitName(name: string, width: number): string {
-  const max = Math.max(4, Math.floor(width / 6.6));
-  return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
 }
 
 // ─── Side by side ──────────────────────────────────────────────────────────
@@ -82,11 +77,19 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
       },
     };
   });
-  const g = barChartGeometry({ width, rows: rows.map((r) => r.input), cohort: band, isRate: unit === 'rate' });
+  const g = barChartGeometry({ width, rows: rows.map((r) => r.input), cohort: band, isRate: unit === 'rate', isCount: unit === 'count' });
+  const names = distinctNames(
+    rows.map((r) => r.agent.name),
+    barLabelWidth(g.width) - 8,
+  );
   const label = infoLabel(info);
   const median = formatMetricValue(unit, band.median);
   const summary = `${label}: ${rows
-    .map((r) => `${r.agent.name} ${r.input.reportable && r.input.value !== null ? r.input.valueText : r.value ? 'too few to compare' : 'no figure'}`)
+    .map((r) => {
+      if (r.input.reportable && r.input.value !== null) return `${r.agent.name} ${r.input.valueText}`;
+      if (!r.value) return `${r.agent.name} no figure`;
+      return `${r.agent.name} ${isNoneDue(info, r.value.denominator) ? 'none due yet' : 'too few to compare'}`;
+    })
     .join(', ')}${band.median !== null ? `; team median ${median}` : ''}.`;
 
   return (
@@ -98,11 +101,15 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
       </h3>
       <div ref={ref} className={styles.chart}>
         <svg width={g.width} height={g.height} viewBox={`0 0 ${g.width} ${g.height}`} role="img" aria-label={summary}>
-          {g.band ? <rect className={styles.band} x={g.band.x} y={g.plotTop} width={g.band.width} height={g.plotBottom - g.plotTop} rx={3} /> : null}
-          {g.median ? <line className={styles.medianLine} x1={g.median.x} x2={g.median.x} y1={g.plotTop - 1} y2={g.plotBottom} /> : null}
+          {g.spans.map((span) => (
+            <g key={span.top} data-testid="compare-team-span">
+              {g.band ? <rect className={styles.band} x={g.band.x} y={span.top} width={g.band.width} height={span.bottom - span.top} rx={3} /> : null}
+              {g.median ? <line className={styles.medianLine} x1={g.median.x} x2={g.median.x} y1={span.top - 1} y2={span.bottom} /> : null}
+            </g>
+          ))}
           {g.rows.map((row, i) => {
             const r = rows[i]!;
-            const name = fitName(r.agent.name, barLabelWidth(g.width) - 8);
+            const name = names[i]!;
             const mid = row.y + BAR_THICKNESS / 2;
             const counts =
               r.value && r.value.denominator !== null && unit === 'rate'
@@ -140,9 +147,14 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
               </g>
             );
           })}
-          {g.median ? (
+          {g.median && g.spans.length > 0 ? (
             <text className={styles.axis} x={g.median.x} y={g.height - 4} textAnchor="middle">
               {`median ${median}`}
+            </text>
+          ) : g.median ? (
+            // No bar to set the line against: the median in words.
+            <text className={styles.axis} x={g.left} y={g.height - 4}>
+              {`team median ${median}`}
             </text>
           ) : null}
         </svg>
@@ -171,7 +183,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
     width,
     height: 240,
     dates: trend.dates,
-    series: series.map((s) => ({ id: s.agent.id, counts: s.counts, name: s.agent.name.split(/\s+/)[0] ?? s.agent.name })),
+    series: series.map((s) => ({ id: s.agent.id, counts: s.counts, name: s.agent.name })),
     median: trend.cohort_median,
   });
   const slotOf = new Map(agents.map((a) => [a.id, a.slot] as const));
@@ -210,7 +222,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
             );
           })}
           {g.endLabels.map((e) => (
-            <text key={e.id} className={e.team ? styles.axis : styles.label} x={g.plotRight + 8} y={e.y} fontWeight={e.team ? 400 : 600}>
+            <text key={e.id} className={e.team ? `${styles.axis} ${styles.endLabelTeam}` : styles.endLabel} x={e.x} y={e.y} fontWeight={e.team ? 400 : 600} data-testid="compare-trend-end">
               {e.text}
             </text>
           ))}

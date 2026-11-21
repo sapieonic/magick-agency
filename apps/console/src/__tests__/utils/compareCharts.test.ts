@@ -5,14 +5,19 @@ import {
   barPath,
   barScaleMax,
   brokenLinePath,
+  COUNT_SCALE_MIN,
   daySplitSegments,
+  distinctNames,
+  fitName,
   labelledDateIndexes,
   niceCountMax,
+  overlappingGroups,
   shortDate,
   spreadLabels,
   trendGeometry,
   wholePercents,
 } from '../../utils/agency/compare/compareCharts';
+import { THREE_DAYS_COLLECTIONS } from '../helpers/compareRecorded';
 
 /**
  * Compare agents' chart geometry (`docs/compare-agents.md` §5): pure functions from figures and a
@@ -91,6 +96,56 @@ describe('side by side', () => {
     expect(b!.y - a!.y).toBe(28);
   });
 
+  it('keeps the team’s band and median line off a row of words, so the line never runs through "Too few to compare"', () => {
+    // Recorded: Will pay for agent 0.0 and 0.6 (14%), agent 0.7 under the floor; team median 14%.
+    const g = barChartGeometry({
+      width: 330,
+      rows: [row(0.14, { valueText: '14%' }), row(0.14, { valueText: '14%' }), row(0.2, { reportable: false })],
+      cohort: { p25: 0.12, median: 0.14, p75: 0.17 },
+      isRate: true,
+    });
+    expect(g.spans).toEqual([{ top: g.plotTop, bottom: 6 + 2 * 28 - 4 }]);
+    const words = g.rows[2]!;
+    expect(words.kind).toBe('withheld');
+    // The words' row starts below every stretch the line is drawn over.
+    expect(words.y - 1).toBeGreaterThan(g.spans[0]!.bottom);
+    // A row of words between two bars splits the line in two.
+    const split = barChartGeometry({
+      width: 330,
+      rows: [row(0.14), row(0.2, { reportable: false }), row(0.3)],
+      cohort: { p25: 0.12, median: 0.14, p75: 0.17 },
+      isRate: true,
+    });
+    expect(split.spans).toEqual([
+      { top: 4, bottom: 30 },
+      { top: 60, bottom: 86 },
+    ]);
+    // No bar at all: no stretch, so no line through any words.
+    expect(barChartGeometry({ width: 330, rows: [row(0.2, { reportable: false })], cohort: { p25: 0.1, median: 0.14, p75: 0.2 }, isRate: true }).spans).toEqual([]);
+  });
+
+  it('draws no band when p25 and p75 are the same: the median line says it', () => {
+    const g = barChartGeometry({ width: 400, rows: [row(0.14)], cohort: { p25: 0.14, median: 0.14, p75: 0.14 }, isRate: true });
+    expect(g.band).toBeNull();
+    expect(g.median).not.toBeNull();
+  });
+
+  it('gives a count of all zeros a whole-count scale, so the team’s quarter of a break never fills the chart (recorded breaks over their limit)', () => {
+    const breaks = THREE_DAYS_COLLECTIONS.cohort.per_metric['breaks_over_limit']!;
+    const cohort = { p25: breaks.p25, median: breaks.median, p75: breaks.p75 };
+    const rows = [row(0, { valueText: '0' }), row(0, { valueText: '0' }), row(0, { valueText: '0' })];
+    expect(barScaleMax({ rows, cohort, isRate: false, isCount: true })).toBe(COUNT_SCALE_MIN);
+    const g = barChartGeometry({ width: 330, rows, cohort, isRate: false, isCount: true });
+    const plot = g.width - g.left - 58;
+    expect(g.band!.width).toBeLessThan(plot * 0.1);
+    // A count past the least scale keeps the usual 12% headroom.
+    expect(barScaleMax({ rows: [row(40)], cohort: { p25: null, median: null, p75: null }, isRate: false, isCount: true })).toBeCloseTo(44.8);
+    // Nothing at all to draw: still a whole-count scale, and no band.
+    const none = barChartGeometry({ width: 330, rows, cohort: { p25: 0, median: 0, p75: 0 }, isRate: false, isCount: true });
+    expect(none.max).toBe(COUNT_SCALE_MIN);
+    expect(none.band).toBeNull();
+  });
+
   it('rounds a bar’s data end and keeps a sliver square', () => {
     expect(barPath(10, 0, 50)).toBe('M10 0h46a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-46z');
     expect(barPath(10, 0, 5)).toBe('M10 0h5v14h-5z');
@@ -127,6 +182,55 @@ describe('the trend', () => {
   it('spreads end labels so none overlaps, within the plot', () => {
     expect(spreadLabels([50, 52, 51], 0, 200)).toEqual([50, 78, 64]);
     expect(spreadLabels([199, 200], 0, 200)).toEqual([186, 200]);
+  });
+
+  it('cuts names as the bars do, and never draws two the same', () => {
+    expect(fitName('agent 0.0', 92)).toBe('agent 0.0');
+    expect(fitName('Lakshmi Prasad Rao', 92)).toBe('Lakshmi Pras…');
+    // Two agents sharing a first name, or named "agent 0.x", stay apart.
+    expect(distinctNames(['agent 0.0', 'agent 0.6', 'agent 0.7'], 92)).toEqual(['agent 0.0', 'agent 0.6', 'agent 0.7']);
+    expect(distinctNames(['Priya Menon', 'Priya Krishnan'], 92)).toEqual(['Priya Menon', 'Priya Krishn…']);
+    // Cut to the same words: each keeps its end.
+    const cut = distinctNames(['Lakshmi Prasad Rao', 'Lakshmi Prasad Rani'], 92);
+    expect(cut[0]).not.toBe(cut[1]);
+    expect(cut).toEqual(['Lakshm…ad Rao', 'Lakshm…d Rani']);
+    // The same in full: numbered.
+    expect(distinctNames(['Priya M', 'Priya M'], 92)).toEqual(['Priya M', 'Priya M (2)']);
+  });
+
+  it('labels each line where it stops, not at the last day, with the whole short name (recorded trend)', () => {
+    const t = THREE_DAYS_COLLECTIONS.trend!;
+    const names: Record<string, string> = Object.fromEntries(THREE_DAYS_COLLECTIONS.agents.map((a) => [a.agent_user_id, a.agent_name ?? '']));
+    const g = trendGeometry({
+      width: 620,
+      height: 240,
+      dates: t.dates,
+      series: t.agents.map((a) => ({ id: a.agent_user_id, counts: a.counts, name: names[a.agent_user_id]! })),
+      median: t.cohort_median,
+    });
+    const label = (id: string) => g.endLabels.find((e) => e.id === id)!;
+    // agent 0.7 logged in on the first day only: labelled beside that day's point.
+    const stopped = t.agents.find((a) => a.counts[2] === null)!;
+    expect(label(stopped.agent_user_id).text).toBe('agent 0.7 · 1');
+    expect(label(stopped.agent_user_id).x).toBe(g.xs[0]! + 8);
+    // The others run to the last day: labelled past its point, each by its own name.
+    const ran = t.agents.filter((a) => a.counts[2] !== null);
+    expect(ran.map((a) => label(a.agent_user_id).text)).toEqual(['agent 0.0 · 2', 'agent 0.6 · 2']);
+    for (const a of ran) expect(label(a.agent_user_id).x).toBe(g.xs[2]! + 8);
+    expect(label('team').x).toBe(g.xs[2]! + 8);
+    // The three at the last day all sit on 2: pushed apart, none overlapping.
+    const ys = [...ran.map((a) => label(a.agent_user_id).y), label('team').y].sort((a, b) => a - b);
+    for (let k = 1; k < ys.length; k += 1) expect(ys[k]! - ys[k - 1]!).toBeGreaterThanOrEqual(14);
+    // The lone label stays beside its own point.
+    const dot = g.series.find((s) => s.id === stopped.agent_user_id)!.last!;
+    expect(label(stopped.agent_user_id).y).toBe(dot.y + 4);
+    // Every label inside the SVG.
+    for (const e of g.endLabels) expect(e.x + e.text.length * 6.6).toBeLessThanOrEqual(g.width);
+  });
+
+  it('groups only the end labels whose spans across overlap', () => {
+    expect(overlappingGroups([{ x: 400, text: 'agent 0.0 · 2' }, { x: 40, text: 'agent 0.7 · 1' }, { x: 400, text: 'Team · 2' }])).toEqual([[1], [0, 2]]);
+    expect(overlappingGroups([{ x: 40, text: 'agent 0.7 · 1' }, { x: 80, text: 'Ravi · 3' }])).toEqual([[0, 1]]);
   });
 
   it('says dates as "20 Nov", whatever the reader’s zone', () => {

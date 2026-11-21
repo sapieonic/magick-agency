@@ -441,6 +441,21 @@
   stroke-linejoin: round;
 }
 
+/* A trend line's label, beside its last point: inside the plot when the line stopped early, so it
+   carries the same halo as a value and no other line cuts it. */
+.endLabel {
+  fill: var(--text-secondary);
+  font-size: 12px;
+}
+
+.endLabel,
+.endLabelTeam {
+  paint-order: stroke;
+  stroke: var(--bg-secondary);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 .withheld {
   fill: var(--text-muted);
   font-size: 11.5px;

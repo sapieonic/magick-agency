@@ -91,6 +91,15 @@ describe('units', () => {
     expect(tooFewShort(metricInfo(builtin('success_rate')), 12)).toBe('Too few (12 of 20)');
   });
 
+  it('says "None due yet" for call-backs kept on time with no call-back due, never "Too few (0 of 8)"', () => {
+    const kept = metricInfo(builtin('callbacks_kept_rate'));
+    expect(tooFewWords(kept, 0)).toBe('None due yet');
+    expect(tooFewShort(kept, 0)).toBe('None due yet');
+    expect(tooFewShort(kept, 3)).toBe('Too few (3 of 8)');
+    // Only call-backs: a rate with no calls at all is still too few.
+    expect(tooFewShort(metricInfo(builtin('success_rate')), 0)).toBe('Too few (0 of 20)');
+  });
+
   it('never writes an unknown count as 0', () => {
     expect(tooFewWords(metricInfo(builtin('success_rate')), null)).toBe('Too few to compare (needs 20)');
     expect(tooFewShort(metricInfo(builtin('success_rate')), null)).toBe('Too few (needs 20)');

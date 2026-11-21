@@ -1,6 +1,6 @@
 import type { AgencyCompareResponse } from '@magick-agency/contracts/api/agency/compare';
 import { DAY_SPLIT_PARTS, wholePercents } from '../../../utils/agency/compare/compareCharts';
-import { formatMetricValue, infoLabel } from '../../../utils/agency/compare/compareMetrics';
+import { NONE_DUE_WORDS, formatMetricValue, infoLabel, isNoneDue } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import { agentColour, type ChartAgent } from './CompareCharts';
@@ -40,6 +40,13 @@ export function CompareNumbers({ response, agents }: { response: AgencyCompareRe
                 <th scope="row">{infoLabel(info)}</th>
                 {columns.map(({ agent, column }) => {
                   const v = column?.values[info.id];
+                  if (v && !v.reportable && isNoneDue(info, v.denominator)) {
+                    return (
+                      <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
+                        {NONE_DUE_WORDS}
+                      </td>
+                    );
+                  }
                   if (!v || v.value === null) {
                     return (
                       <td key={agent.id} className={`${styles.num} ${styles.muted}`}>

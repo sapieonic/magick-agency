@@ -25,6 +25,7 @@ import {
   type FindingContext,
 } from '../../utils/agency/compare/compareFindingsCopy';
 import { CODES, REFUSED_LOWER, WILL_PAY, compareResponse, finding, metricInfo } from '../helpers/compare';
+import { ONE_DAY_COLLECTIONS } from '../helpers/compareRecorded';
 
 /**
  * "What stands out" in the console's words (`docs/compare-agents.md` §6, CP12, AS15): a sentence
@@ -139,6 +140,9 @@ describe('a sentence for every code and unit', () => {
     expect(findingCopy(kept.f, ctx(kept.response)).why).toBe(
       'Call-backs kept on time are compared only from 8 call-backs due. Agents book only a handful a week, so this floor is lower than the roster’s 20, and a few lucky or unlucky ones still never name anyone.',
     );
+    const noneDue = on(builtin('callbacks_kept_rate'), { code: 'too_few_calls', value: 0, baseline: 8, count: 0, interval: null });
+    expect(sentence(noneDue.response, noneDue.f)).toBe('Priya M has no call-backs due yet here, so call-backs kept on time can’t be compared.');
+    expect(findingCopy(noneDue.f, ctx(noneDue.response)).why).toMatch(/^None of their call-backs has come due in this window, so there is nothing to keep on time yet\. Call-backs kept on time are compared only from 8 call-backs due\./);
     const time = on(builtin('choose_time'), { code: 'too_few_calls', value: 9, baseline: 20, count: 9, interval: null });
     expect(sentence(time.response, time.f)).toBe('Priya M has 9 wrap-ups here, too few to compare time to choose outcome fairly.');
     expect(findingCopy(time.f, ctx(time.response)).why).toBe(
@@ -308,6 +312,31 @@ describe('Not clear yet, and the notes', () => {
     expect(emptyFindingsNote(response)).toBe('Nothing clear stands out among these agents on these metrics.');
     expect(emptyFindingsNote({ ...response, metrics: [metricInfo(builtin('calls_handled'))] })).toMatch(/shown for context only/);
     expect(emptyFindingsNote(compareResponse())).toBeNull();
+  });
+
+  it('judges each metric on its own rated cohort: breaks, with no floor, never stand in for the rates and times (recorded one-day window)', () => {
+    // As the server sent it: Will pay, time to choose and no outcome rate 0 agents (14 calls
+    // each, the floor is 20); breaks over their limit rates all 8.
+    expect(emptyFindingsNote(ONE_DAY_COLLECTIONS)).toBe(
+      'Nothing clear stands out on breaks over their limit. Will pay, time to choose outcome and no outcome chosen are not judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and none does. Check a longer window.',
+    );
+    // With breaks off the page, nothing at all is judged.
+    const noBreaks = { ...ONE_DAY_COLLECTIONS, metrics: ONE_DAY_COLLECTIONS.metrics.filter((m) => m.id !== 'breaks_over_limit') };
+    expect(emptyFindingsNote(noBreaks)).toBe(
+      'Nothing is judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and none does. Check a longer window.',
+    );
+    // One metric short, the others judged: it alone is named, and differing counts say "at most".
+    const perMetric = { ...ONE_DAY_COLLECTIONS.cohort.per_metric };
+    perMetric['outcomes:higher:will_pay'] = { ...perMetric['outcomes:higher:will_pay']!, agents_rated: 7 };
+    perMetric['choose_time'] = { ...perMetric['choose_time']!, agents_rated: 7 };
+    perMetric['no_outcome_rate'] = { ...perMetric['no_outcome_rate']!, agents_rated: 3 };
+    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })).toBe(
+      'Nothing clear stands out on Will pay, time to choose outcome and breaks over their limit. No outcome chosen is not judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and only 3 do. Check a longer window.',
+    );
+    perMetric['choose_time'] = { ...perMetric['choose_time']!, agents_rated: 2 };
+    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })).toMatch(
+      /^Nothing clear stands out on Will pay and breaks over their limit\. Time to choose outcome and no outcome chosen are not judged yet: .*and at most 3 do\. Check a longer window\.$/,
+    );
   });
 });
 
