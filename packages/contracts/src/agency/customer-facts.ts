@@ -69,6 +69,12 @@ void _allFieldTypesListed;
  * role naming a column the roster does not have (with the roster's columns, when it knows them),
  * and a column that is `hidden` (`hidden` wins over everything: a hidden column is never a role).
  * `amount_due` is read as `money` and `due_date` as `date` whatever `types` says.
+ *
+ * With `AgencyContextDisplay.facts` (AS19) only `name` and `place` are read: the tiles are the
+ * chosen facts, typed by `types` alone, and `amount_due` / `due_date` are not read for tiles (the
+ * tile keyed `amount_due` or `due_date` carries that role instead). `place` is then the role's
+ * column only, never a guess. Neither `name` nor `place` may be a column `types` reads as `phone`
+ * (AS19 S3(e)).
  */
 export interface AgencyContextRoles {
   name?: string;
@@ -160,11 +166,15 @@ export interface AgencyFactTile {
  */
 export interface AgencyCustomerFacts {
   /**
-   * The customer's name: the `name` role's value, else the server's own guess from the column
-   * names (`context-hero.ts`, `match-name.ts`); absent when there is none. Never the number.
+   * The customer's name: the `name` role's value (none when it is blank on this row), else the
+   * server's own guess from the column names (`packages/domain/src/customer-name.ts`, AS19 S1:
+   * never a hidden column, never a chosen fact's); absent when there is none. Never the number.
    */
   name?: string;
-  /** The `place` role's value, else the server's guess; absent when there is none. */
+  /**
+   * The `place` role's value, else (without `facts`) the server's guess; with `facts` (AS19 S2) the
+   * role's value only. Absent when there is none.
+   */
   place?: string;
   /**
    * With `context_display.facts` (AS19): one tile per fact whose column the row has and is not

@@ -93,12 +93,19 @@ call row is shipped to build it (`loadCustomerSummary`).
   "This number is on more than 2,000 roster rows. This history covers the 2,000 most recent."
 - **Hero fields** follow the contact panel's rule, one copy for both (`heroColumnsFor`,
   `packages/domain/src/context-hero.ts`; the panel's `resolveContextFields` calls it with the
-  last stage off, the agent's own-contacts list reads its first stage, `configuredHeroNames`): the campaign's `context_display.hero` columns, matched
+  last stage off, the agent's own-contacts list reads its first stage, `configuredHeroNames`).
+  A campaign that chose its card's facts (`context_display.facts` an array, agent station AS19,
+  `docs/agent-station.md`): the customer's name (the `name` role's column, else the name guess,
+  never a fact's column, AS19 R1, S1) then each fact's column, at most the name and 4 facts
+  (R2), and nothing else, so the history matches the agent's card (`facts: []` with no name
+  shows none, S2). Any other campaign: its `context_display.hero` columns, matched
   case-insensitively, at most four; else one column per heuristic group (a name, an amount, an
   identifier, a place); else the first four columns with a value. A column in
   `context_display.hidden` is never chosen. "First" is the order of the columns in the newest
   import of the row's campaign, else of its chain root (`agency_ingest_jobs.context_columns`), not
-  the JSONB object's key order. Columns with no value are left out.
+  the JSONB object's key order. Columns with no value are left out. Values are shown as stored,
+  phone-typed facts included: the history does not read a campaign's hidden-number setting (AS9;
+  the server masks phone facts in the agent's own-contacts list, AS19 S3(d), not here).
 - **totals**: calls placed (campaign attempts with `dialed_at`, soft-phone calls with
   `dialed_at`), connected (`outcome = 'connected'`), and the last contact: the newest placed call
   with when, by whom, its channel, outcome and code.

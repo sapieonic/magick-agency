@@ -164,7 +164,7 @@ Copy is exact. Sample data in the mock-ups: agent Sunita Yadav, work "Sahyadri F
 ### 03 Call coming (`03-call-coming`, `03b-call-later-arriving`)
 
 - **Purpose:** two or three seconds to read who is coming.
-- **Shown:** customer card: initials, name, city, phone; three big tiles **Amount due / Due date / Last call**; **"What they said last time"** with the last note in quotes. Right: **"First, say this"** with the opening line.
+- **Shown:** customer card: initials, name, city, phone; the campaign's chosen facts as big tiles, **up to 4, chosen per campaign** in Settings with their own short names, one of them highlighted first and wide (AS19, `docs/agent-station.md`; the heading is "Customer" when there is no name, and there is no Last call tile beside them); **"What they said last time"** with the last note in quotes. Right: **"First, say this"** with the opening line. *A campaign not saved since AS19 keeps the mock-up's card: three big tiles **Amount due / Due date / Last call**.*
 - **Footer:** "The call connects by itself." **No button.**
 - **`03b` a call-later arriving:** same screen with a tag above the name: **"Call later · You said you will call at 3:00 PM"**. No separate alert; the list on Ready already said it was coming.
 - **Inbound** (a customer rings in; behind today's inbound flag): same screen, title **"Customer is calling"**, subtitle "Get ready. Say Namaste first." Not drawn.
@@ -476,7 +476,7 @@ Only two: **Don't call again** and **Finish work for today**. End call is one pr
 | The thin state rail with small text | Too small to read at a glance or from across the floor | The full-width band |
 | "Go available" / "End break" / "Offline" wording | Jargon | "Start work", "Start calls again" |
 | Press-and-hold to hang up | Agents asked for one press | One press (open question 2) |
-| The full contact field list with its filter (`ContactDetail`, key `/`) | Agents use up to 4 facts, chosen per campaign (AS19) | The campaign's hero fields as big tiles. The rest is not shown on the station |
+| The full contact field list with its filter (`ContactDetail`, key `/`) | Agents use up to 4 facts, chosen per campaign (AS19) | The campaign's chosen facts as big tiles (`context_display.facts`, AS19); a campaign not saved since AS19 shows its hero fields and the amount-due and due-date columns, as before. The rest is not shown on the station |
 | The list of every past attempt on every call | Only the last one is used | "Last call" + "What they said last time". The list remains in `04c` and in My calls today |
 | "Attempt 3", caller ID, "Calling from" | Not needed to do the call | Not shown |
 | Retry banner ("Retry 1 of 'Q3 Winback' — these contacts were previously…") | Supervisor language | Not shown. "Last call" tells the agent they have been called before |

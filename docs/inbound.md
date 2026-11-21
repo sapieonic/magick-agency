@@ -542,8 +542,9 @@ offer wins, then settled over unsettled, then progress within one offer; the row
 and look (`components/agency/inbound/InboundCallView.tsx`, the agent station redesign's AS1):
 **Customer is calling** (no button; "The call connects by itself"), **On call** with the talk timer
 and **What happened?** with the time left before `outcome_due_at`; the outbound customer card
-(the matched contact's name, place and facts, the number as the station's `phone_display` says,
-"Number hidden" when withheld), About this call (the number they called, the line, how long they
+(the matched contact's name, place and facts read with the matched campaign's `context_display`,
+its chosen facts when it has them (agent station AS19, `docs/agent-station.md`), the number and
+any phone-typed fact as the station's `phone_display` says, "Number hidden" when withheld), About this call (the number they called, the line, how long they
 waited, their work, whether they are the agent's own customer, asked not to be called), Last calls
 and the note; one main button bottom right (End call held, then Save, faded until it can save), the
 station's outcome tiles and follow-ups, and Don't call again asked first. Controls are hidden, not
@@ -1242,9 +1243,14 @@ answers the row (200 also when it is already theirs), refuses `inbound_missed_ca
 when someone else has it and `inbound_missed_call_handled` (409) for a handled row, and is audited
 `agency_inbound_call.claimed` (`from: null`, `to`) when it changed. An agent may play the voicemail
 of an open unassigned row, to decide. Every row carries `match_name` (IQ54): the matched contact's
-name (the first of `name`, `full_name`, `customer_name`, `first_name` in its roster columns, trimmed,
-at most 100 characters; `match-name.ts`), null when the caller was not matched, withheld their
-number or the contact has no name.
+name by the one rule the station's card uses (`match-name.ts`, the domain's `customerNameFrom`,
+agent station AS19 S1, `docs/agent-station.md`): the column the matched campaign's
+`context_display.roles.name` names (none when it is blank on that row), else the first of `name`,
+`full_name`, `customer_name`, `first_name` in its roster columns, matched ignoring case, spaces,
+`_`, `-` and `.`, never a hidden column or one of the campaign's chosen facts; trimmed, at most 100
+characters. Null when the caller was not matched, withheld their number or the contact has no
+name. "Your customer is waiting" names the caller the same way. The read sends only those columns
+out of the database (`contactNameContextSql`), beside the campaign's `context_display`.
 
 Voicemail (optional per route, IB3) is recorded from our own stream (we hold the μ-law frames), not
 by moving the call to `<Record>` XML, unless the P0 check proves the transfer clean: the bridge's

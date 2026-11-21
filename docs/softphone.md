@@ -512,7 +512,12 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   the call details and My recent calls, with **Back to my calls** bottom right (hidden, with the
   reason, while a manual call is live or awaiting its outcome) and Finish work in ⋮ More;
   **Calling** is the station's customer card (the number dialled, and the roster contact's name and
-  facts when the number is on the tag's list), the SP3 warning while ringing, Mute ring and End
+  facts when the number is on the tag's list, read with the tagged campaign's `context_display`:
+  the name by the domain's one rule, `customerNameFrom`, and its chosen facts when it has them,
+  agent station AS19, `docs/agent-station.md`; a phone-typed fact follows the tagged campaign's own
+  `phone_display`, `AgencySoftphoneCampaign.phone_display` on `taggable_campaigns` and
+  `call_campaign`, whatever campaign the station is on, while the dialled number shows as typed,
+  AS19 S3(b)), the SP3 warning while ringing, Mute ring and End
   call held (or `E` twice); **On call** adds Last calls, the note and the call details; **What
   happened?** is the station's outcome tiles and follow-ups with Save bottom right, faded until it
   can save, and Don't call again asked first. The keys are the soft phone's. The ordinary End break
@@ -628,7 +633,9 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   hold-to-confirm hang-up with the SP3 warning, Mute ring versus the microphone's mute, the
   station in place (SP7) with the queued switch, its pill and Return to campaign, "Close the soft
   phone and join" (`closeSoftphoneSession`, read in the session's own account first), and My
-  calls' "Soft-phone calls" (the agent's own; `media` never rendered).
+  calls' "Soft-phone calls" (the agent's own; `media` never rendered); the contact's card on a
+  tagged call, by the tagged campaign's `context_display` and its own `phone_display` (agent
+  station AS19 S3(b), S4).
 - **Call back from a Missed row** ([`mobile.md`](mobile.md) "Missed calls"): the console's prefill
   (`SoftphoneActions.callBack`: the number, the matched campaign as "Log to" where taggable, Call
   focused, never dialled; an open override prompt closed, as on a redial), and the dial's

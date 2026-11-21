@@ -241,6 +241,16 @@ describes (`taggable_campaigns`, `call_campaign`), so a call tagged to any campa
 contact's phone facts as that campaign says; it is declared once, in the dialer contract, and
 re-exported unchanged (§3). The number itself is still sent in full.
 
+Agent station, the card's chosen facts beyond the panel (AS19, docs/agent-station.md). No shape
+changed on the console wire; three readings did. `AgencyMyContact.hero` and customer history's
+`CustomerHistoryContact.fields` follow the hero rule with `context_display.facts` (the customer's
+name then the facts' columns, at most the name and 4 facts, R1, R2); on a campaign that hides
+numbers, `AgencyMyContact.hero`'s phone-typed values arrive masked by the domain's phone rule (S3(d),
+the dialer has no twin of the list), while customer history sends them as stored. `match_name`
+(`AgencyInboundMissedCall`, `customer_waiting`) and the other names read beside a call (floor,
+live calls, listening history, callbacks list) read the campaign's `name` role first
+(`customerNameFrom`, S1), the same on both sides.
+
 Agent station, pool queue state (BE-5, AS18). `AgencyStationCapability` gained `queue_pool`
 (`AGENCY_STATION_QUEUE_POOL_CAPABILITY`, in `AGENCY_STATION_CAPABILITIES` and the app's
 `station_capabilities` vocabulary): a station that declares it is sent a `pool` campaign's queue state

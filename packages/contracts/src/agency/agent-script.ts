@@ -10,15 +10,19 @@
  * The text may name the campaign's placeholders in braces (`{name}`, `{amount_due}`, …). Which ones
  * depends on the campaign's `context_display` (AS19, `./customer-facts.ts`):
  *  - **with `facts`**: {@link AGENCY_SCRIPT_FIXED_PLACEHOLDERS} plus every fact's `key`. The client
- *    fills a fact key from the panel's tile carrying that `key` (`AgencyFactTile.key`). A key whose
- *    value is empty for this customer is shown as "<label> not given" in the muted style, not
- *    removed (the label is the fact's name; "Name" for `{name}`, "Place" for `{place}`);
+ *    fills a fact key from the panel's tile carrying that `key` (`AgencyFactTile.key`). A `{name}`,
+ *    `{place}` or fact key whose value is empty for this customer is shown as "<label> not given"
+ *    in the muted style, not removed, and never read aloud (the label is the fact's name; "Name"
+ *    for `{name}`, "Place" for `{place}`);
  *  - **without** (a campaign not saved since AS19): {@link AGENCY_SCRIPT_PLACEHOLDERS}, the legacy
  *    six. The client fills them from the panel's typed facts (`AgencyReservedAttempt.facts`, BE-6:
- *    the `amount_due` and `due_date` tiles by role).
+ *    the `amount_due` and `due_date` tiles by role). A placeholder with no value for this customer
+ *    is replaced by nothing and the step still shows, as before AS19.
  * The fixed ones come from the panel and the session on both paths (`{agent_name}`: the agent's own
  * name; `{campaign_name}`: the bootstrap's), each written with the client's own formatting
- * (`₹12,500`, `20 Nov`). The campaign-config write refuses a `{word}` not in the campaign's set
+ * (`₹12,500`, `20 Nov`). `{agent_name}` or `{campaign_name}` with no value is always replaced by
+ * nothing, never "not given" (`docs/agent-station.md`, AS19 R5). A client from before AS19 fills
+ * only the legacy six and shows any other `{key}` as written (AS19 S14). The campaign-config write refuses a `{word}` not in the campaign's set
  * (checked against the campaign's resulting `context_display`, so a write that drops a fact the
  * stored script uses is refused too), a step or opening out of bounds, and more than
  * {@link AGENCY_SCRIPT_STEPS_MAX} steps. Plain text in any language the supervisor types, never

@@ -2469,6 +2469,20 @@ server sentence for an unknown code; BE-3b, BE-7 step 2 and BE-14 to BE-17 (out 
 Not verified: nothing has run on a real phone, a real carrier or with real agents; read aloud has
 not run on a device.
 
+### Agent station, the card's chosen facts 2026-11-21 (AS19, [`agent-station.md`](agent-station.md))
+
+Supervisors choose what the customer card shows: in campaign Settings → What agents see, the name,
+the line under it and an ordered list of up to 4 facts (`context_display.facts`), each with its own
+short name, a script key and an optional highlight; column types gain Number, Phone number and
+Yes / No; the script's keys are per campaign, with an editor that offers them and fixes unknown
+ones. The station's card shows exactly those facts on the console (a hover card for the full
+value) and the app (press and hold), a phone fact follows the campaign's hidden-number setting
+everywhere an agent sees it, and the name follows one rule in the domain on every surface. A
+campaign not saved under the new model keeps its card and script as before. Built in four streams,
+reviewed twice and fixed (rulings R1–R13 and S1–S16, with what was accepted and not built, in
+[`agent-station.md`](agent-station.md) §1), then a third round; per-stream status in §3, the test
+counts in the PR. Not verified: nothing has run on a real phone or with real agents.
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon

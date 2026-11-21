@@ -144,7 +144,9 @@ export interface AgencyContextDisplay {
    * Agent station (BE-6, `./customer-facts.ts`): which column plays each role (the customer's name,
    * place, amount due, due date). Read by the server to build `AgencyReservedAttempt.facts`, and by
    * the name lookups (callbacks list, floor, inbound) before their guesses. Absent: the server
-   * guesses as before. A `hidden` column is never a role.
+   * guesses as before. A `hidden` column is never a role. With `facts` (AS19) only `name` and
+   * `place` are read: `amount_due` and `due_date` are no longer read for tiles (a fact keyed
+   * `amount_due` or `due_date` plays that role), and the place is never guessed.
    */
   roles?: AgencyContextRoles;
   /**

@@ -496,7 +496,10 @@ export interface AgencyStationCustomerWaitingFrame {
   inbound_call_id: string;
   /** E.164; NULL when withheld. */
   from_e164: string | null;
-  /** The matched contact's display name, when the roster has one. */
+  /**
+   * The matched contact's display name, when the roster has one: the campaign's `name` role's
+   * column, else the name guess (agent station AS19 S1, as the Missed row's `match_name`).
+   */
   match_name?: string;
   /** ISO-8601: when the caller started waiting. */
   waiting_since: string;

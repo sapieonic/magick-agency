@@ -531,10 +531,13 @@ export interface AgencyInboundMissedCall {
   /** The caller's number is on a DNC list: never dialled automatically; the agent decides. */
   caller_dnc: boolean;
   /**
-   * IQ54: the matched contact's display name (the roster's `name`, `full_name`, `customer_name` or
-   * `first_name` column, the first that has one, trimmed, at most 100 characters: the name the
-   * "customer is waiting" notice shows); null when the caller matched no contact, withheld their
-   * number, or the contact has no name. Shown above the number.
+   * IQ54: the matched contact's display name, by the one rule the station's card uses (agent
+   * station AS19 S1, the domain's `customerNameFrom`): the column the matched campaign's
+   * `context_display.roles.name` names (none when blank on that row), else the roster's `name`,
+   * `full_name`, `customer_name` or `first_name` column (ignoring case, spaces, `_`, `-` and `.`),
+   * the first that has one, never a hidden or chosen-fact column; trimmed, at most 100 characters:
+   * the name the "customer is waiting" notice shows. Null when the caller matched no contact,
+   * withheld their number, or the contact has no name. Shown above the number.
    */
   match_name: string | null;
   matched_contact_id: string | null;

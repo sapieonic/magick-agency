@@ -240,7 +240,7 @@ assist") are sent on every connect, a re-minted one included.
 
 ## The station's screens (the agent station redesign, phases 0 to 2)
 
-The station follows the redesign ([`agent-station.md`](agent-station.md), rulings AS1–AS18;
+The station follows the redesign ([`agent-station.md`](agent-station.md), rulings AS1–AS19;
 [`agent-station/design-spec.md`](agent-station/design-spec.md), the phone column of its §4). Phase 0
 built the screens on the data every server sends (backend plan BE-0); phases 1–2 read stream F's
 optional fields (the list at the end of this section). Every one of them is optional (AS18): from a
@@ -312,17 +312,43 @@ text the band scrolls with the content and the main action keeps its place.
   today"). A call that ended without needing an
   outcome is the one-line banner "The last call did not connect. You do not need to do anything." for
   6 s, in the station's own words (AS15).
-- **The customer card** (Call coming, On call): the server's facts (BE-6) when it sends them, its
-  name, place and tiles, amount due and due date first, money the campaign typed as ₹ with Indian
-  grouping and typed dates as "20 Nov", untyped values exactly as written; else the campaign's hero
-  fields. The last call's date takes the third tile. A booked call-later coming due is tagged above the
-  name, "Call later · You said you will call at 3:00 PM" (BE-4). A campaign that masks the number
-  (AS9) shows `98••• ••321` on the card, the band, Details and the Don't call again sheets. A tap opens
-  every field.
+- **The customer card** (Call coming, On call). On a campaign that chose its facts (agent station
+  AS19, `docs/agent-station.md`; chosen when the bootstrap's `context_display.facts` is a list, even
+  an empty one, R8): headed by the server's `facts.name`, else "Customer", always with the number
+  under it, then the place on one line ending in "…" (R9, S12); then the chosen facts in a 2 × 2
+  grid (`features/station/parts/fact_grid.dart`): the highlighted fact first and across the whole
+  row in the call colour, a lone last tile the full width, at large text one under the other; each
+  named by the supervisor's name (`label`, else its column); money as `₹1,25,000`, numbers as
+  `1,25,000`, dates as "20 Nov" ("20 Nov 2027" in another year), yes / no as Yes / No, a value the
+  server could not read as uploaded (trimmed, R13), an empty one "—"; text on one line with "…",
+  figures shrinking to fit (to 65 %) before they are ever cut (`features/station/logic/facts.dart`).
+  Press and hold a fact for a bottom sheet with its name, its full value and "From column: X", and
+  OK; it closes only when the call changes (S12). No Last call tile (R7): Last calls has its own
+  card. `facts: []` shows no tiles. A phone fact follows the one phone rule (R6, S3; `agency_wire`'s
+  `formatFactPhone` / `maskFactPhone`, held to `fact-rules.json`): `+91 98765 43210`, and
+  `98••• ••210` when the campaign hides numbers (AS9), on the tile, the sheet, the script and the
+  screen-reader text. On any other campaign the card is as before AS19: the server's facts (BE-6)
+  when it sends them, its name, place and up to three tiles in a row, amount due and due date first,
+  money the campaign typed as ₹ with Indian grouping and typed dates as "20 Nov", untyped values
+  exactly as written; else the campaign's hero fields; the last call's date takes the third tile.
+  A booked call-later coming due is tagged above the name, "Call later · You said you will call
+  at 3:00 PM" (BE-4). A campaign that masks the number (AS9) shows `98••• ••321` on the card, the
+  band, Details and the Don't call again sheets. A tap opens every field (Details: the hero cap is
+  the name and 4 facts on a chosen campaign, R2). The compact card (What happened?, the soft
+  phone's) of a chosen campaign with no name is "Customer" over the number and then the first fact
+  with a value (S4).
 - **The script** (BE-8), when the campaign has one: "First, say this" with the opening line on Call
   coming; "What to say" on On call, the current step and the next two with "1 of 4 done", a tap
-  marking a step (and every one before it) done, afresh for each call. Every line is filled for the
-  customer and the agent by the contract's `fillScriptPlaceholders` (`core/station/script_fill.dart`).
+  marking a step (and every one before it) done, afresh for each call. Each line is read by the
+  domain's one reading of braces (`agency_wire`'s `scriptPieces`) and filled by `fillScriptRuns`
+  (`core/station/script_fill.dart`) with the campaign's keys (`ScriptView.placeholders`: on a chosen
+  campaign `{name}`, `{place}`, `{agent_name}`, `{campaign_name}` and each fact's key, filled from
+  the tile carrying that key as the card writes it; else the legacy six). A `{word}` the campaign
+  does not have stays as written. On a chosen campaign `{name}`, `{place}` or a fact's key with no
+  value reads "<name> not given" in a muted style, never read aloud; on any other campaign a key
+  with no value is left out, as before; `{agent_name}` and `{campaign_name}` with no value are
+  always left out (R5). Read aloud says `spokenScript`: without the "not given" runs, runs of
+  spaces made one, no space before a full stop or comma, as the console does (R13).
 - **On call**: the customer card, then the script when the campaign has one, else Last calls (04c);
   the note; nothing about AI (AS2); no break button (AS10: Save & take break on the next screen).
   Don't call again is a row on the call and on What happened? when the campaign's outcomes have no
@@ -353,7 +379,13 @@ text the band scrolls with the content and the main action keeps its place.
   `android.intent.action.TTS_SERVICE` query that Android 11+ needs to see the engines.
 - **An inbound caller** follows the campaign's `phone_display` (AS9): the caller's line, the band,
   the announcer, Details, Your customer is waiting and the Don't call again sheets mask the number
-  when the campaign masks numbers. Its What happened? is the outbound screen's: the tiles, the
+  when the campaign masks numbers. The caller is named by the domain's one rule (`customerNameOf`,
+  AS19 S1: the matched campaign's `name` role, else the name guess); on a campaign that has not
+  chosen its facts and names no name column, a caller the rule cannot name is named by the card's
+  guess from before AS19 (`callerNameOf`). When the matched campaign chose its facts the match shows
+  the chosen card's grid (`FactGrid`), and a nameless caller is "Customer" with the number under
+  it (S4); otherwise the hero fields. Either way a phone-typed fact is hidden by the station's
+  number setting, as the caller's own number is (S3(c)). Its What happened? is the outbound screen's: the tiles, the
   follow-up sheet, the note with Speak a note, the Don't call again row and Save, faded until ready.
   A call-later follows the matched campaign's routing (AS8): "This call will come to you" on a
   `strict` or `preferred` one (this station's, or another's read from its My contacts summary), "We
@@ -381,7 +413,8 @@ text the band scrolls with the content and the main action keeps its place.
   Save is not ready.
 - **My calls and My customers** show each row's number as its campaign does (AS9): the server's
   `phone_display` on the row, masked with `stationPhone` (in the list, a call's detail and the Call
-  button's spoken label); an older server sends none, and the number shows in full.
+  button's spoken label); an older server sends none, and the number shows in full. On a campaign
+  that hides numbers, My customers' phone-typed hero values arrive masked from the server (AS19 S3(d)).
 - **Light by default (AS14).** The app opens light whatever the phone's setting until the agent
   turns the dark theme on (the Me tab, or ⋮ More → Sound); every station screen is tested in light
   and its colours' contrast in both.
@@ -390,7 +423,8 @@ text the band scrolls with the content and the main action keeps its place.
 cards) and `phone_display` (`StationView.maskPhone`); `Disposition.icon`, `BreakReason.icon`
 (`DispositionOption.icon`, `BreakOption.icon`, `TilePicture`); the `reserved` frame's
 `attempt.callback` (`CallView.callback`, the tag) and `attempt.facts` (`CallView.facts`, the card and
-the script's values); `GET /my-day` (`station_reads.dart`); `help_not_on_call` from an older server
+the script's values; AS19's tile `label`, `key` and `highlight`); the bootstrap's `context_display.facts`
+(AS19: whether the campaign chose its facts, its script keys and their names); `GET /my-day` (`station_reads.dart`); `help_not_on_call` from an older server
 (`HelpView.onlyOnCall`). The mapper reads them in `station_view_mapper.dart`; the contract's own
 samples drive them through the real station core (`test/core/station/station_agent_station_test.dart`).
 
@@ -625,6 +659,12 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   rings just cancels it. A system hang-up the server refused shows on
   the soft phone, and a call CallKit already ended on its side is reported to it again. CallKit
   names the call by the matched contact, else the number.
+- **The contact on a tagged call (AS19).** A call tagged to a campaign shows its matched contact by
+  that campaign's `context_display` and its own `phone_display` (`AgencySoftphoneCampaign.phone_display`;
+  absent from an older server, `full`), whatever campaign the station is on: a phone-typed fact is
+  hidden by it, while the dialled number shows as typed (S3(b)). The name is the domain's one rule,
+  else, on a campaign that has not chosen its facts, the card's guess from before AS19 (S1); a
+  chosen campaign's compact card with no name is "Customer" over the number (S4).
 - **My calls.** A "Soft-phone calls" segment shows where the Phone tab shows, or when a `limit=1`
   read finds any of the agent's soft-phone calls: keyset pages, number and status filters, rows
   with "Logged to <campaign>" or "Not logged". The detail shows the record, the outcome and who

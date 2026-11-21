@@ -1000,5 +1000,7 @@ The rulings AS1–AS18 (one state per screen, AI last, end call kept protected, 
 call-later routing unchanged, phone display per campaign, break over-time alerts, device speech,
 light by default, Indian English, supervisor alerts on every page, scope, old app builds) are in
 [`agent-station.md`](agent-station.md) §1, with the build plan beside them. Decided by Manas
-on 2026-11-20.
+on 2026-11-20. AS19 (supervisors choose the card's facts, 2026-11-21) is there too, with its
+review rulings R1–R13 and S1–S16 (§1, "AS19 review rulings"); a comment that cites `AS19 R<n>` or
+`AS19 S<n>` resolves there, not to this file's S1 or to the build streams and slices named S1 to S4.
 

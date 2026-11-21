@@ -196,7 +196,11 @@ export const CUSTOMER_RECORDING_STATES = ['available', 'not_recorded', 'expired'
 
 // ─── The summary ────────────────────────────────────────────────────────────
 
-/** One column of a roster row, as the campaign displays it (`context_display.hero`). */
+/**
+ * One column of a roster row, as the campaign displays it: a hero column (`context_display.hero`),
+ * or, on a campaign that chose its card's facts (`context_display.facts`, agent station AS19), the
+ * customer's name or one of the facts. The value as stored.
+ */
 export interface CustomerHistoryField {
   column: string;
   value: string;
@@ -222,7 +226,14 @@ export interface CustomerHistoryContact {
   suppressed_reason: string | null;
   /** Placed calls across the chain. */
   attempt_count: number;
-  /** The row's hero columns (the campaign's `context_display.hero`), else its first columns. */
+  /**
+   * The row's hero columns, columns with no value left out (`heroColumnsFor`,
+   * `packages/domain/src/context-hero.ts`, `docs/customer-history.md`). A campaign that chose its
+   * card's facts (`context_display.facts`, AS19): the customer's name (the `name` role's column,
+   * else the name guess) then each fact's column, at most the name and 4 facts, nothing else.
+   * Otherwise the campaign's `context_display.hero`, else one column per heuristic group, else its
+   * first columns. Never a hidden column. Values as stored: a phone-typed fact is not masked here.
+   */
   fields: CustomerHistoryField[];
   /** The agent the contact is assigned to (contact assignment); NULL = the shared pool. */
   assigned_to: CustomerHistoryUser | null;
