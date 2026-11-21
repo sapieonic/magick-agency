@@ -154,6 +154,16 @@ const NEW_CAMPAIGN: PageEntry = {
   keywords: ['create campaign', 'add campaign', 'upload', 'roster'],
 };
 
+/** Archived campaigns (AR1–AR6): the Campaigns page's link under its list, gated as that page is. */
+const ARCHIVED_CAMPAIGNS: PageEntry = {
+  key: 'campaigns:archived',
+  title: 'Archived campaigns',
+  detail: 'Campaigns',
+  to: '/agency/campaigns/archived',
+  gate: agencyGate({ permission: 'agency.campaigns.read' }),
+  keywords: ['archive', 'archived', 'restore', 'old campaigns', 'hidden campaigns'],
+};
+
 const CUSTOMER_HISTORY: PageEntry = {
   key: 'customers:history',
   title: 'Customer history',
@@ -175,12 +185,12 @@ function sidebarPage(section: ConsoleSection, tab: SectionTab): PageEntry {
   };
 }
 
-/** Every page ⌘K can open: the sidebar's tabs in sidebar order, New campaign right after Campaigns, then Customer history. */
+/** Every page ⌘K can open: the sidebar's tabs in sidebar order, New campaign and Archived campaigns right after Campaigns, then Customer history. */
 const SEARCH_PAGES: readonly PageEntry[] = [
   ...CONSOLE_SECTIONS.flatMap((section) =>
     section.tabs.flatMap((tab) => {
       const page = sidebarPage(section, tab);
-      return page.key === 'campaigns:campaigns' ? [page, NEW_CAMPAIGN] : [page];
+      return page.key === 'campaigns:campaigns' ? [page, NEW_CAMPAIGN, ARCHIVED_CAMPAIGNS] : [page];
     }),
   ),
   CUSTOMER_HISTORY,

@@ -217,6 +217,18 @@ export interface AgencyCampaignRecord {
    */
   stopping_at: Date | null;
   /**
+   * When the campaign was archived (0063, decisions AR1–AR6), or NULL when it is not. Archiving is
+   * not a status: only a `draft` or `stopped` campaign is archived (the CHECK
+   * `ck_agency_campaign_archived_status`), it keeps that status, and `transitionStatus` refuses it,
+   * so an archived draft cannot be started until it is restored. Written and cleared only by
+   * `archive` / `unarchive`, with the two actor columns below.
+   */
+  archived_at: Date | null;
+  /** Who archived it (the public layer's user id), or NULL. Served folded into `archived_by`. */
+  archived_by_user_id: string | null;
+  /** Their display name when they archived it (a snapshot), or NULL. Served folded into `archived_by`. */
+  archived_by_name: string | null;
+  /**
    * LEGACY spelling of {@link ended_at}. Same value, always.
    *
    * Kept rather than dropped for the reason `agency_contacts.source_row_number`

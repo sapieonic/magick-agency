@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Headset, Phone, Plus, Search } from 'lucide-react';
+import { Archive, Headset, Phone, Plus, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useNavGate } from '../../hooks/useNavGate';
 import { hasPermission } from '../../utils/permissions';
@@ -17,6 +17,7 @@ import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useCampaignsHome } from './campaigns-home/useCampaignsHome';
 import { useActiveCards } from './campaigns-home/useActiveCards';
+import { useArchivedCount } from './campaigns-home/useArchivedCampaigns';
 import { ActiveCampaignCard } from './campaigns-home/ActiveCampaignCard';
 import { CampaignRow } from './campaigns-home/CampaignRow';
 import { RulesCard } from './campaigns-home/Rules';
@@ -90,6 +91,8 @@ export function AgencyCampaignsPage() {
     loadMore,
   } = useCampaignsHome(tenantId, accountId);
   const cards = useActiveCards(tenantId, accountId, role, active, () => load(true));
+  // Archived campaigns are not in this page's list (AR3); the link under it says how many there are.
+  const archivedCount = useArchivedCount(tenantId, accountId);
   const canTakeCalls = passesGate(TAKE_CALLS_GATE, useNavGate());
   const [searchParams, setSearchParams] = useSearchParams();
   // In the URL, so a reload and Back keep it (`campaignFilterFromParams`). Replaced, not pushed:
@@ -142,6 +145,7 @@ export function AgencyCampaignsPage() {
       {loading && !campaigns && <LoadingSpinner />}
 
       {isEmpty && <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />}
+      {isEmpty && <ArchivedLink count={archivedCount} />}
 
       {hasCampaigns && (
         <div className={styles.layout}>
@@ -250,6 +254,7 @@ export function AgencyCampaignsPage() {
                   {moreError && <p className={styles.moreError}>{moreError}</p>}
                 </div>
               )}
+              <ArchivedLink count={archivedCount} />
             </section>
           </div>
 
@@ -259,6 +264,20 @@ export function AgencyCampaignsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The way to Archived campaigns (AR1–AR6), shown once the account has archived one. Nothing while
+ * the count is unknown or zero: an empty screen is not worth a link, and search finds it anyway.
+ */
+function ArchivedLink({ count }: { count: number | null }) {
+  if (!count) return null;
+  return (
+    <Link to="/agency/campaigns/archived" className={styles.archivedLink} data-testid="archived-campaigns-link">
+      <Archive size={14} aria-hidden="true" />
+      {`Archived campaigns (${formatCount(count)})`}
+    </Link>
   );
 }
 

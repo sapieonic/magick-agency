@@ -778,7 +778,44 @@ export interface AgencyCampaign {
    * narrowing it here would invite a consumer to trust the shape.
    */
   retry_selector?: unknown | null;
+
+  // ── Archived campaigns (decisions AR1–AR6) ──────────────────────────────────
+  //
+  // Archiving is NOT a status. A draft or stopped campaign is archived to take it off the
+  // Campaigns page (`GET /proxy/agency/campaigns` leaves it out unless `archived=true`), and it
+  // keeps its status, so every reader of `status` is unchanged and a restore puts it back as it
+  // was. Optional for the reason every field here is: `undefined` is "not carried".
+
+  /** ISO-8601 instant it was archived, or `null` when it is not archived. */
+  archived_at?: string | null;
+  /**
+   * Who archived it, folded like {@link last_transition_by}. `null` on a campaign that is not
+   * archived, and on one archived by a caller with no user id.
+   */
+  archived_by?: AgencyCampaignActor | null;
 }
+
+/**
+ * The statuses a campaign may be archived in (AR2): a draft nobody started, or a campaign a
+ * supervisor stopped. Not `completed`, by ruling: only what was asked for. A started campaign
+ * that has not finished is never archived, and an archived draft is not started until restored.
+ */
+export const AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES = ['draft', 'stopped'] as const satisfies readonly AgencyCampaignStatus[];
+
+/**
+ * The 409 codes of `POST /proxy/agency/campaigns/:id/{archive,unarchive}` and of Start on an
+ * archived draft:
+ *  - `campaign_not_archivable`: archive refused, the campaign is not draft or stopped;
+ *  - `campaign_archived`: archive of one already archived, or Start of an archived draft;
+ *  - `campaign_not_archived`: restore of one that is not archived.
+ * Each 409 carries `current_status` and `archived_at` as the row stands.
+ */
+export const AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES = [
+  'campaign_not_archivable',
+  'campaign_archived',
+  'campaign_not_archived',
+] as const;
+export type AgencyCampaignArchiveErrorCode = (typeof AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES)[number];
 
 // ── Carriers a campaign may dial on ───────────────────────────
 

@@ -10,6 +10,7 @@ import type { CampaignTabId } from '../../../utils/agencyCampaignTabs';
 import { CampaignDetailHeader } from './CampaignDetailHeader';
 import type { AgencyCampaignDetail } from './useAgencyCampaignDetail';
 import { useCampaignLifecycle } from './useCampaignLifecycle';
+import { useCampaignArchive } from './useCampaignArchive';
 import type { AgencyCampaignStats } from '../../../types/agency-campaign';
 
 /**
@@ -118,6 +119,19 @@ export function useCampaignChrome({
     fromTab: active,
   });
 
+  /*
+    Archive and Restore (AR1–AR6): `agency.campaigns.write`, the server's gate on both routes. It
+    tidies the account's list, like an edit, so it is the PATCH's permission, not `agency.supervise`.
+  */
+  const archive = useCampaignArchive({
+    id: campaignId,
+    tenantId,
+    accountId,
+    campaignStatus: campaign?.status,
+    refreshCampaign,
+    commitCampaign,
+  });
+
   const openRetry = () => setRetryOpenFor(campaignId ?? null);
   const retryOpen = retryOpenFor !== null && retryOpenFor === campaignId;
 
@@ -138,6 +152,7 @@ export function useCampaignChrome({
       role={role}
       onRefresh={onRefresh ?? (() => void load())}
       historyCurrent={active === 'activity'}
+      archive={canAddContacts ? { busy: archive.busy, onArchive: archive.onArchive, onRestore: archive.onRestore } : undefined}
     />
   ) : null;
 
@@ -154,6 +169,7 @@ export function useCampaignChrome({
   const dialogs = (
     <>
       {lifecycle.confirmDialog}
+      {archive.confirmDialog}
       {/* Mounted only while open: the preview is a count over the whole
           campaign and has no business running on every page view. */}
       {retryOpen && campaign ? (

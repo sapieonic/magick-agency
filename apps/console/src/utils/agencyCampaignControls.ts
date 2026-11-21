@@ -23,6 +23,7 @@
  */
 
 import type { AgencyCampaignStatus } from '../types/agency-campaign';
+import { ARCHIVED_START_REASON } from './agencyCampaignArchive';
 
 /**
  * Narrows `AgencyCampaign.status` — deliberately `string` (the server's CHECK
@@ -160,7 +161,10 @@ const CONTROLS_FOR_STATUS: Record<string, AgencyCampaignControl[]> = {
  * offering Start on it is a click that fails at the API — the exact outcome
  * the refused controls exist to prevent.
  */
-export function agencyCampaignControls(status: string): AgencyCampaignControl[] {
+export function agencyCampaignControls(status: string, opts: { archived?: boolean } = {}): AgencyCampaignControl[] {
+  // An archived campaign moves nowhere until it is restored (AR2). Only a draft or stopped campaign
+  // is archived, and of those only a draft has a control: Start, refused beside its reason.
+  if (opts.archived) return status === 'draft' ? [{ action: 'start', disabledReason: ARCHIVED_START_REASON }] : [];
   return CONTROLS_FOR_STATUS[status] ?? [];
 }
 
@@ -174,8 +178,12 @@ export function agencyCampaignControls(status: string): AgencyCampaignControl[] 
  * "do not send", not "the button is missing": the next render then shows the
  * real controls.
  */
-export function isLifecycleActionEnabled(status: string, action: AgencyCampaignAction): boolean {
-  const control = agencyCampaignControls(status).find((entry) => entry.action === action);
+export function isLifecycleActionEnabled(
+  status: string,
+  action: AgencyCampaignAction,
+  opts: { archived?: boolean } = {},
+): boolean {
+  const control = agencyCampaignControls(status, opts).find((entry) => entry.action === action);
   return control !== undefined && control.disabledReason === null;
 }
 

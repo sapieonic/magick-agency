@@ -147,6 +147,20 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     // Gate (or not) and ownership are each route's `ownedCampaign` preHandler.
     const campaign = campaignOf(request);
 
+    // An archived campaign moves nowhere until it is restored (AR2). Of the archivable statuses
+    // only `draft` has a transition (Start), so this is the Start of an archived draft; before the
+    // status check, so it is told what to do (restore it) rather than that the move is invalid.
+    // `transitionStatus` refuses it too, against the row as it is written.
+    if (campaign.archived_at) {
+      return reply.code(409).send({
+        error: 'Invalid Transition',
+        code: 'campaign_archived',
+        message: 'This campaign is archived. Restore it before starting it.',
+        current_status: campaign.status,
+        archived_at: campaign.archived_at,
+      });
+    }
+
     if (!from.includes(campaign.status)) {
       return reply.code(409).send({
         error: 'Invalid Transition',

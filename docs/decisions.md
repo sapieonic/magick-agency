@@ -748,6 +748,7 @@ are IQ67, the take-over ending `away_ring` is OS3).
 | LF1–LF39 | Live floor | LF2 (the currency), LF3 (customer names on the cards), LF8 (Join call, whisper) and LF39 open; LF4–LF7 decided 2026-11-19 and built (Phase 3); LF1, LF9, LF10 and Phase 3's defaults LF11–LF38 built, pending ratification (§"Live floor (LF)") | Manas |
 | AD1–AD2 | A call summary delayed by the AI service | Built, pending ratification (§"Summary delayed by the AI service (AD)"): every queued summary reads delayed while the AI vendor's newest answer is a refusal (the newest refusal of a queued job is newer than the newest completion), whichever tenant's | Manas (ratify) |
 | TR1 | Truncated recordings: how often the same audio is transcribed | Built, pending ratification (§"Truncated recordings (TR)"): identical bytes are transcribed at most twice across attempts that each end `AUDIO_TOO_SHORT`, then taken as truly truncated (any other ending in between starts the count afresh: at worst 2 per attempt) | Manas (ratify) |
+| AR1–AR6 | Archived campaigns | Built, pending ratification (§"Archived campaigns (AR)"): archiving is a flag beside the status, not a status; draft and stopped only (not completed); archived campaigns are left out of every campaign list and picker; `agency.campaigns.write` | Manas (ratify) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
 
@@ -1002,3 +1003,19 @@ light by default, Indian English, supervisor alerts on every page, scope, old ap
 [`agent-station.md`](agent-station.md) §1, with the build plan beside them. Decided by Manas
 on 2026-11-20.
 
+## Archived campaigns (AR)
+
+A supervisor archives a draft or a stopped campaign to take it off the Campaigns page; it is listed
+on its own Archived campaigns screen (`/agency/campaigns/archived`, linked under the Campaigns
+list and found by search) and can be restored. Asked for by Manas on 2026-11-21 ("campaigns in
+draft or stopped state should be archivable, and they should come up in a separate screen"); the
+rest are defaults decided while building it:
+
+| ID | Decision | Status |
+|---|---|---|
+| AR1 | Archiving is not a status. `agency_campaigns.archived_at` (0063) marks it, beside `archived_by_user_id` and `archived_by_name`; the campaign keeps `draft` or `stopped`, so nothing that reads `status` (reports, Insights, customer history, the pacing leader, the status badge) changes, and a restore puts it back as it was. The wire carries `archived_at` and `archived_by` (folded like `last_transition_by`) | **Default, pending Manas** |
+| AR2 | Only a `draft` or `stopped` campaign is archived (`AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES`); any other is refused 409 `campaign_not_archivable`, one already archived 409 `campaign_archived`. Not `completed`: only what was asked for (adding it is one word in the list and the CHECK). An archived campaign moves nowhere: Start on an archived draft is refused 409 `campaign_archived` ("Restore it before starting it"), `transitionStatus` requires `archived_at IS NULL`, and the CHECK `ck_agency_campaign_archived_status` is the backstop. The archive's conditional UPDATE and Start cannot both win | **Default, pending Manas** |
+| AR3 | `GET /campaigns` leaves archived campaigns out unless `archived=true`, which lists only them, newest archived first (`total` narrowed the same way; any other value is a 400). So the Campaigns page and every picker (reports, analytics, inbound routes, search's campaigns) leave them out; an archived campaign's own pages, its reports and its history are unchanged and reached from Archived campaigns | **Default, pending Manas** |
+| AR4 | Restore (`POST …/unarchive`) clears all three columns; 409 `campaign_not_archived` on one that is not archived. Offered on the campaign's archived notice and on each Archived campaigns row, with no confirm (nothing is lost by it); Archive asks first and says that nothing is deleted | **Default, pending Manas** |
+| AR5 | Who archived it is the session's user, resolved to a display name by the public route as the lifecycle controls are, and shown "Archived on 20 Nov 2026 by Ravi Kumar"; never a caller-supplied id, and an id that is not a UUID is stored as unattributed. Each archive and restore writes a platform audit row (`agency_campaign.archived`, `agency_campaign.restored`) shown on the campaign's History | **Default, pending Manas** |
+| AR6 | Permission: `agency.campaigns.write` for both, the PATCH's (archiving tidies the account's list and dials or stops nothing, so not `agency.supervise`); the screen reads with `agency.campaigns.read`. Gated on the dialer flag like the PATCH | **Default, pending Manas** |

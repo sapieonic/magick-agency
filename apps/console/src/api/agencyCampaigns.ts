@@ -235,10 +235,13 @@ async function fetchCampaignPage(
   tenantId?: string,
   accountId?: string,
   statuses?: readonly string[],
+  archived = false,
 ): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
   const filter = statuses && statuses.length > 0 ? `&status=${encodeURIComponent(statuses.join(','))}` : '';
+  // Absent is "not archived" on the server (AR3), so only the archived read says anything.
+  const archivedFilter = archived ? '&archived=true' : '';
   const body = await apiFetch<AgencyCampaign[] | { campaigns?: AgencyCampaign[]; total?: number }>(
-    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}`,
+    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}${archivedFilter}`,
     {},
     tenantId,
     accountId,
@@ -282,7 +285,10 @@ export async function listAgencyCampaigns(
   return all;
 }
 
-/** One page of the campaign list, newest first, with the account's total. */
+/**
+ * One page of the campaign list, newest first, with the account's total. Archived campaigns are
+ * not in it (AR3): the server leaves them out of every list unless asked.
+ */
 export async function listAgencyCampaignsPage(
   tenantId: string | undefined,
   accountId: string,
@@ -290,6 +296,19 @@ export async function listAgencyCampaignsPage(
   limit = LIST_PAGE_SIZE,
 ): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
   return fetchCampaignPage(offset, limit, tenantId, accountId);
+}
+
+/**
+ * One page of the account's ARCHIVED campaigns (AR3), newest archived first, with how many there
+ * are. `limit = 1` is the Campaigns page's count for its link to them.
+ */
+export async function listArchivedAgencyCampaignsPage(
+  tenantId: string | undefined,
+  accountId: string,
+  offset: number,
+  limit = LIST_PAGE_SIZE,
+): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  return fetchCampaignPage(offset, limit, tenantId, accountId, undefined, true);
 }
 
 export async function getAgencyCampaign(
@@ -377,6 +396,27 @@ export async function getAgencyCampaignStats(
 export async function transitionAgencyCampaign(
   id: string,
   action: 'start' | 'pause' | 'resume' | 'stop',
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCampaign> {
+  return apiFetch<AgencyCampaign>(
+    `${AGENCY_BASE}/campaigns/${id}/${action}`,
+    { method: 'POST' },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Archive a draft or stopped campaign, or restore an archived one (decisions AR1–AR6). Answers
+ * the campaign as it now is. Archiving keeps its status; an archived campaign is off the
+ * Campaigns page and every picker, and an archived draft cannot be started until restored.
+ * `agency.campaigns.write`. A 409 carries `campaign_not_archivable`, `campaign_archived` or
+ * `campaign_not_archived` with the campaign's `current_status`.
+ */
+export async function setAgencyCampaignArchived(
+  id: string,
+  action: 'archive' | 'unarchive',
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyCampaign> {

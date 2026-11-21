@@ -6,6 +6,7 @@ import { registerCampaignStatsRoutes } from './agency-campaigns/stats.js';
 import { registerCampaignSpineRoutes } from './agency-campaigns/spine.js';
 import { registerCampaignRetryRoutes } from './agency-campaigns/retry.js';
 import { registerCampaignLifecycleRoutes } from './agency-campaigns/lifecycle.js';
+import { registerCampaignArchiveRoutes } from './agency-campaigns/archive.js';
 export { parseStatusFilter } from './agency-campaigns/crud.js';
 
 /**
@@ -89,4 +90,5 @@ export async function agencyCampaignRoutes(
   await registerCampaignSpineRoutes(app);
   await registerCampaignRetryRoutes(app);
   await registerCampaignLifecycleRoutes(app);
+  await registerCampaignArchiveRoutes(app);
 }

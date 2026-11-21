@@ -132,3 +132,64 @@ describe('campaign header: the clocks', () => {
     expect(screen.getByText(/^Updated .* · status and agents auto-refresh$/)).toBeTruthy();
   });
 });
+
+describe('campaign header: archiving (AR1–AR6)', () => {
+  const archive = () => ({ busy: null, onArchive: vi.fn(), onRestore: vi.fn() });
+
+  it('offers Archive on a draft and on a stopped campaign, to a role given it', () => {
+    for (const status of ['draft', 'stopped']) {
+      const a = archive();
+      show({ status }, { archive: a });
+      screen.getByTestId('campaign-archive-action').click();
+      expect(a.onArchive, status).toHaveBeenCalledTimes(1);
+      cleanup();
+    }
+  });
+
+  it('never offers Archive on a campaign that has started and not been stopped, or one that completed', () => {
+    for (const status of ['running', 'paused', 'stopping', 'completed']) {
+      show({ status }, { archive: archive() });
+      expect(screen.queryByTestId('campaign-archive-action'), status).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('offers nothing to a role not given it', () => {
+    show({ status: 'draft' });
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+  });
+
+  it('says an archived draft is archived, by whom, refuses Start beside why, and offers Restore', () => {
+    const a = archive();
+    show(
+      { status: 'draft', archived_at: '2026-11-20T06:00:00Z', archived_by: { user_id: 'u-1', name: 'Ravi Kumar' } },
+      { archive: a },
+    );
+    const note = screen.getByTestId('campaign-archived-note');
+    expect(note.textContent).toContain('Archived on 20 Nov 2026 by Ravi Kumar. It is not on the Campaigns page and cannot be started until it is restored.');
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+    const start = within(screen.getByTestId('campaign-actions')).getByRole('button', { name: 'Start dialling' });
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('control-reason-start').textContent).toContain('Restore it before starting it.');
+    // No Stop on an archived draft, and no Add contacts to a campaign nobody can start.
+    expect(within(screen.getByTestId('campaign-actions')).queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Add contacts/ })).toBeNull();
+    screen.getByTestId('campaign-restore-action').click();
+    expect(a.onRestore).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells a reader who may not restore that it is archived, with no button', () => {
+    show({ status: 'stopped', archived_at: '2026-11-20T06:00:00Z', archived_by: null });
+    expect(screen.getByTestId('campaign-archived-note').textContent).toContain('Archived on 20 Nov 2026. It is not on the Campaigns page.');
+    expect(screen.queryByTestId('campaign-restore-action')).toBeNull();
+  });
+
+  it('disables Archive and Restore while either is in flight, or a lifecycle action is', () => {
+    show({ status: 'draft' }, { archive: { ...archive(), busy: 'archive' } });
+    expect((screen.getByTestId('campaign-archive-action') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('campaign-archive-action').textContent).toContain('Archiving…');
+    cleanup();
+    show({ status: 'draft' }, { busy: 'start', archive: archive() });
+    expect((screen.getByTestId('campaign-archive-action') as HTMLButtonElement).disabled).toBe(true);
+  });
+});

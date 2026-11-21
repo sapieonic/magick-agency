@@ -28,6 +28,7 @@ import { board, onBoard, stats as homeStats } from '../helpers/home';
  *    full on their own, so an old paused one still gets its card, and the next
  *    page's offset counts only the paged history;
  *  - the filter tabs and the search box;
+ *  - the link to Archived campaigns (AR1–AR6), with their count, once there are any;
  *  - per role: no rail repeating the sidebar for anyone; New campaign for a role
  *    that can create; Take calls for a viewer or operator (the sidebar's gate),
  *    never for a supervisor; a viewer's and an operator's cards are links only.
@@ -36,6 +37,7 @@ import { board, onBoard, stats as homeStats } from '../helpers/home';
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   listAgencyCampaignsPage: vi.fn(),
+  listArchivedAgencyCampaignsPage: vi.fn(),
   listAgencyCampaigns: vi.fn(),
   getAgencyCampaign: vi.fn(),
   getAgencyCampaignStats: vi.fn(),
@@ -45,6 +47,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agencyCampaigns', () => ({
   listAgencyCampaignsPage: mocks.listAgencyCampaignsPage,
+  listArchivedAgencyCampaignsPage: mocks.listArchivedAgencyCampaignsPage,
   listAgencyCampaigns: mocks.listAgencyCampaigns,
   getAgencyCampaign: mocks.getAgencyCampaign,
   getAgencyCampaignStats: mocks.getAgencyCampaignStats,
@@ -144,12 +147,45 @@ beforeEach(() => {
   mocks.useTenant.mockReturnValue(tenant());
   mocks.listAgencyCampaigns.mockResolvedValue([]);
   mocks.getAgencyHomeBoard.mockResolvedValue(board([]));
+  mocks.listArchivedAgencyCampaignsPage.mockResolvedValue(listing([], 0));
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+});
+
+describe('AgencyCampaignsPage — archived campaigns (AR1–AR6)', () => {
+  it('links to Archived campaigns with their count, read as one row of the archived list', async () => {
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT]));
+    mocks.listArchivedAgencyCampaignsPage.mockResolvedValue(listing([DONE], 3));
+    renderPage();
+    const link = await screen.findByTestId('archived-campaigns-link');
+    expect(link.textContent).toContain('Archived campaigns (3)');
+    expect(link.getAttribute('href')).toBe('/agency/campaigns/archived');
+    expect(mocks.listArchivedAgencyCampaignsPage).toHaveBeenCalledWith('tenant-1', 'account-1', 0, 1);
+  });
+
+  it('says nothing about the archive when nothing is archived, or the count cannot be read', async () => {
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT]));
+    renderPage();
+    await screen.findByText('Diwali leads');
+    expect(screen.queryByTestId('archived-campaigns-link')).toBeNull();
+
+    cleanup();
+    mocks.listArchivedAgencyCampaignsPage.mockRejectedValue(new Error('down'));
+    renderPage();
+    await screen.findByText('Diwali leads');
+    expect(screen.queryByTestId('archived-campaigns-link')).toBeNull();
+  });
+
+  it('keeps the link under the getting-started guide when every campaign is archived', async () => {
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([]));
+    mocks.listArchivedAgencyCampaignsPage.mockResolvedValue(listing([DONE], 1));
+    renderPage();
+    expect((await screen.findByTestId('archived-campaigns-link')).textContent).toContain('Archived campaigns (1)');
+  });
 });
 
 describe('AgencyCampaignsPage — no campaigns yet', () => {

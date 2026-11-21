@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import {
   Activity,
+  Archive,
+  ArchiveRestore,
   Headphones,
   Pause,
   Play,
@@ -24,6 +26,8 @@ import {
 import { campaignTimeline } from '../../../utils/agency/overview/lifecycle';
 import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
+import { archivedLine, canArchiveCampaign, isArchivedCampaign } from '../../../utils/agencyCampaignArchive';
+import type { CampaignArchiveAction } from './useCampaignArchive';
 import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
 import styles from '../AgencyCampaignDetailPage.module.css';
 
@@ -70,6 +74,15 @@ interface CampaignDetailHeaderProps {
   onRefresh: () => void;
   /** On History itself (`CampaignWorkspace` with `active="activity"`): its button is marked as where you are. */
   historyCurrent?: boolean;
+  /**
+   * Archive and Restore (AR1–AR6), given only to a role with `agency.campaigns.write`. Without it
+   * an archived campaign still says it is archived, with no button.
+   */
+  archive?: {
+    busy: CampaignArchiveAction | null;
+    onArchive: () => void;
+    onRestore: () => void;
+  };
 }
 
 /**
@@ -97,9 +110,14 @@ export function CampaignDetailHeader({
   role,
   onRefresh,
   historyCurrent = false,
+  archive,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
-  const controls = agencyCampaignControls(campaign.status);
+  const archived = isArchivedCampaign(campaign);
+  // An archived draft's Start is refused beside its reason (restore it first); see the controls.
+  const controls = agencyCampaignControls(campaign.status, { archived });
+  const archivedText = archivedLine(campaign);
+  const anyBusy = busy !== null || (archive?.busy ?? null) !== null;
   /*
     HOW it ended, not merely THAT it did. `stopped` and `completed` are different
     events — a supervisor ended one, the other ran out of list — and the badge
@@ -203,7 +221,7 @@ export function CampaignDetailHeader({
                   type="button"
                   className={`${styles.actionButton} ${meta.danger ? 'btn-danger' : 'btn-primary'}`}
                   onClick={() => onAction(action)}
-                  disabled={busy !== null || disabledReason !== null}
+                  disabled={anyBusy || disabledReason !== null}
                   title={disabledReason ?? undefined}
                 >
                   <meta.icon size={16} aria-hidden="true" />
@@ -217,7 +235,25 @@ export function CampaignDetailHeader({
               </span>
             );
           })}
-        {canAddContacts && (
+        {/*
+          Archive (AR1–AR6): a draft or a stopped campaign leaves the Campaigns page for Archived
+          campaigns. A secondary action, after the lifecycle controls: it tidies the list, it
+          changes nothing about the calls. Restore is in the archived notice below the header.
+        */}
+        {archive && canArchiveCampaign(campaign) && (
+          <button
+            type="button"
+            className={`${styles.actionButton} ${styles.secondaryAction}`}
+            onClick={archive.onArchive}
+            disabled={anyBusy}
+            data-testid="campaign-archive-action"
+            title="Archive this campaign: it leaves the Campaigns page and can be restored"
+          >
+            <Archive size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>{archive.busy === 'archive' ? 'Archiving…' : 'Archive'}</span>
+          </button>
+        )}
+        {canAddContacts && !archived && (
           <>
             {terminal ? (
               <Link
@@ -305,6 +341,31 @@ export function CampaignDetailHeader({
       moving: pause stops NEW calls only. A supervisor who believes they cut
       off live conversations may say so to a customer who is still on one.
     */}
+    {/*
+      An archived campaign says so on every tab, with when and by whom, and Restore for whoever
+      may archive: it is off the Campaigns page, and an archived draft cannot be started.
+    */}
+    {archivedText && (
+      <div className={styles.archivedNote} role="status" data-testid="campaign-archived-note">
+        <Archive size={15} aria-hidden="true" />
+        <span>
+          {archivedText}. It is not on the Campaigns page
+          {campaign.status === 'draft' ? ' and cannot be started until it is restored.' : '.'}
+        </span>
+        {archive && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={archive.onRestore}
+            disabled={anyBusy}
+            data-testid="campaign-restore-action"
+          >
+            <ArchiveRestore size={15} aria-hidden="true" />
+            {archive.busy === 'unarchive' ? 'Restoring…' : 'Restore'}
+          </button>
+        )}
+      </div>
+    )}
     {canControl && showsPauseInFlightNote(campaign.status) && (
       <p className={styles.pauseNote}>
         <Activity size={15} aria-hidden="true" />

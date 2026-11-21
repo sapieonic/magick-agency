@@ -23,7 +23,10 @@ export const PAGE_SIZE = 100;
  * campaign disappear for no reason the supervisor can see.
  *
  * That reasoning rests on campaigns never being deleted (there is no delete
- * route), so a row missing from page one has moved down, not gone. It is also
+ * route), so a row missing from page one has moved down, not gone. Archiving
+ * (AR1–AR6) does take a row out of this list; one archived from another window
+ * stays on screen until the next full load (leaving the page and coming back),
+ * which is the honest cost of never dropping a row that merely moved. It is also
  * why the history's length is a safe offset for the next page: inserts only
  * push rows down, so a later page can repeat a row already held (dropped by id)
  * but never skip one.

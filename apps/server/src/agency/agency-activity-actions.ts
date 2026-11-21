@@ -170,6 +170,8 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   // through it, and authoring a retry is something that happens to a campaign
   // that has already finished.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign' },
+  { value: 'agency_campaign.archived', label: 'Archived', group: 'Campaign' },
+  { value: 'agency_campaign.restored', label: 'Restored from the archive', group: 'Campaign' },
   { value: 'agency_campaign.assignment_mode_changed', label: 'Assignment mode changed', group: 'Campaign' },
   { value: 'agency_campaign.config_changed', label: 'Settings changed', group: 'Campaign' },
   { value: 'agency_campaign.roster_upload_started', label: 'Roster upload started', group: 'Campaign' },

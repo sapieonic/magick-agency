@@ -146,6 +146,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // Two unrelated things called "retry" on adjacent surfaces is how an operator
   // reads a roster of 812 new contacts as 812 redials.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.archived', label: 'Campaign archived', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.restored', label: 'Campaign restored from the archive', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.assignment_mode_changed', label: 'Campaign assignment mode changed', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.config_changed', label: 'Campaign settings changed', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.roster_upload_started', label: 'Campaign roster upload started', group: 'Campaign', product: 'agency' },
