@@ -230,19 +230,22 @@ describe('statement_timeout follows the whole read\'s budget', () => {
 });
 
 describe('a query read shared by identical requests (SharedLoad)', () => {
-  /** A connection whose roster statement waits until `finish` or a cancel. */
+  /** A connection whose roster statement (a read's first) waits until `finish` or a cancel; the rest answer at once. */
   function held() {
     const log: string[] = [];
     let settle: ((v: unknown) => void) | null = null;
     let fail: ((e: unknown) => void) | null = null;
     let connects = 0;
+    let first = false;
     const client = {
       processID: 1,
       query(text: string, values?: unknown[]) {
         const t = text.trim();
-        if (/^BEGIN/.test(t)) return Promise.resolve({ rows: [] });
+        if (/^BEGIN/.test(t)) { first = true; return Promise.resolve({ rows: [] }); }
         if (/pg_backend_pid/.test(t)) return Promise.resolve(settingsRow(values));
         if (/set_config/.test(t) || t === 'ROLLBACK') return Promise.resolve({ rows: [] });
+        if (!first) return Promise.resolve({ rows: [] });
+        first = false;
         log.push('statement');
         return new Promise((res, rej) => { settle = res; fail = rej; });
       },

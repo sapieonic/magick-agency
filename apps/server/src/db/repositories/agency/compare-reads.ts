@@ -74,6 +74,12 @@ export interface ComparePromiseRow {
   other_conversations: number;
 }
 
+/** IN4's classes of one agent's booked call-backs, counted. */
+export type CompareCallbackClasses = Readonly<Record<InsightsCallbackClass, number>>;
+
+/** An agent with no booked call-back. */
+export const ZERO_CALLBACKS: CompareCallbackClasses = Object.freeze({ on_time: 0, late: 0, missed: 0, pending_future: 0, pending_due: 0 });
+
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
 /**
@@ -355,7 +361,7 @@ export class AgencyCompareReadRepository {
   }
 
   /** {@link COMPARE_CALLBACKS_SQL}: per agent, the count in each IN4 class. */
-  async callbacks(db: RosterQueryable, q: CompareCohortScope & { now: Date }): Promise<Map<string, Record<InsightsCallbackClass, number>>> {
+  async callbacks(db: RosterQueryable, q: CompareCohortScope & { now: Date }): Promise<Map<string, CompareCallbackClasses>> {
     const out = new Map<string, Record<InsightsCallbackClass, number>>();
     if (q.agentIds.length === 0) return out;
     const { rows } = await db.query<{ agent_user_id: string; cls: InsightsCallbackClass; n: number }>(
@@ -363,7 +369,7 @@ export class AgencyCompareReadRepository {
       [...scopeValues(q), q.now, AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES],
     );
     for (const r of rows) {
-      const classes = out.get(r.agent_user_id) ?? { on_time: 0, late: 0, missed: 0, pending_future: 0, pending_due: 0 };
+      const classes = out.get(r.agent_user_id) ?? { ...ZERO_CALLBACKS };
       classes[r.cls] += n(r.n);
       out.set(r.agent_user_id, classes);
     }

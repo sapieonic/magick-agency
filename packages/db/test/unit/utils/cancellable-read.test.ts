@@ -127,6 +127,30 @@ describe('a read that is stopped', () => {
     expect(f.log).toEqual(['BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY', 'settings', 'SELECT slow', `cancel ${PID}`, 'cancel sent', 'destroyed']);
   });
 
+  it('a statement that ends while its cancel is on the way: the connection is given up only once the cancel is through', async () => {
+    const log: string[] = [];
+    let finish: ((v: unknown) => void) | null = null;
+    const client = {
+      query(text: string, values?: unknown[]) {
+        if (/pg_backend_pid/.test(text)) return Promise.resolve({ rows: [{ pid: PID, ceiling_ms: '0', applied_ms: String(values?.[0]) }] });
+        if (/^BEGIN/.test(text.trim())) return Promise.resolve({ rows: [] });
+        if (text.trim() === 'ROLLBACK') { log.push('ROLLBACK'); return Promise.resolve({ rows: [] }); }
+        log.push('statement');
+        return new Promise((resolve) => { finish = resolve; });
+      },
+      release(destroy?: boolean) { log.push(destroy === true ? 'destroyed' : 'released'); },
+    };
+    const stop = new AbortController();
+    const read = withCancellableRead({ connect: async () => client as never }, {
+      signal: stop.signal, timeout: { boundMs: 5_000 }, ceiling: 'session',
+      cancel: async () => { log.push('cancel'); finish?.({ rows: [] }); await tick(80); log.push('cancel sent'); return true; },
+    }, (tx) => tx.query('SELECT slow')).catch((e: unknown) => e);
+    await tick();
+    stop.abort();
+    await read;
+    expect(log).toEqual(['statement', 'cancel', 'cancel sent', 'destroyed']);
+  });
+
   it('cancels once however often the signal is heard', async () => {
     const f = fake({ endsOnCancel: true });
     const stop = new AbortController();

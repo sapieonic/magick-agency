@@ -905,9 +905,22 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
     expect(again.as_of).toBe(first.as_of);
     expect(again.agents).toEqual(first.agents);
     expect(again.metrics[0]!.label).toBe('Promised to pay');
-    // Another agent order is another key: read afresh.
+    // Another pick with no calls per hour on screen is another snapshot (its occupancy is the picks'): read afresh.
     const fresh = await ok({ ...b, agent_ids: [agent(3).id] });
     expect(fresh.agents[0]!.agent_user_id).toBe(agent(3).id);
+    expect(fresh.as_of).not.toBe(first.as_of);
+  });
+
+  it('a pick change with calls per hour on screen, or a reorder, is answered from the cached snapshot', async () => {
+    const b = body({ agent_ids: [agent(2).id], metrics: [builtin('calls_per_hour'), WILL_PAY], trend: null, from: DAYS[1]!, to: DAYS[1]! });
+    const first = await ok(b);
+    const picked = await ok({ ...b, agent_ids: [agent(3).id, agent(2).id], metrics: [WILL_PAY, builtin('calls_per_hour')] });
+    expect(picked.as_of).toBe(first.as_of);
+    expect(picked.agents.map((a) => a.agent_user_id)).toEqual([agent(3).id, agent(2).id]);
+    expect(picked.metrics.map((m) => m.id)).toEqual([compareMetricId(WILL_PAY), 'calls_per_hour']);
+    // The same figures for the agent both asked about, and the same cohort.
+    expect(picked.agents[1]).toEqual(first.agents[0]);
+    expect(picked.cohort).toEqual(first.cohort);
   });
 });
 

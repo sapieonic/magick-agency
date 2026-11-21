@@ -35,17 +35,9 @@ import {
 } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyAgentOccupancy } from '@magick-agency/contracts/agency';
 import { cohortPercentiles, compareCohortMetric, compareFindings, compareValue } from '@magick-agency/domain/agent-compare';
+import type { CompareCallbackClasses } from '../../db/repositories/agency.repository.js';
 import { AUTO_DISPOSITION_CODE } from '../disposition.js';
 import { roundPreservingSum } from '../reports/datasets/shared.js';
-
-/** The IN4 classes of one agent's booked call-backs. */
-export interface CompareCallbackClasses {
-  on_time: number;
-  late: number;
-  missed: number;
-  pending_future: number;
-  pending_due: number;
-}
 
 /** What the read holds for ONE cohort agent. A source the request did not need is null. */
 export interface CompareAgentSources {
@@ -69,8 +61,9 @@ export interface CompareAgentSources {
   break_overruns: number | null;
 }
 
-/** The sources a metric needs beyond the roster's attempt counts. */
-export type CompareSource = 'occupancy' | 'rollup' | 'promises' | 'callbacks' | 'breaks';
+/** The sources a metric needs beyond the roster's attempt counts, in the order the read sends them. */
+export const COMPARE_SOURCES = ['occupancy', 'rollup', 'promises', 'callbacks', 'breaks'] as const;
+export type CompareSource = (typeof COMPARE_SOURCES)[number];
 
 /** Which sources `metric` reads (the read runs only these). */
 export function metricSources(metric: Pick<AgencyCompareMetricInfo, 'ref'>): CompareSource[] {
