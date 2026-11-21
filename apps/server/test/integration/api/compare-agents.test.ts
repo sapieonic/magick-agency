@@ -113,8 +113,14 @@ function contact(campaignId: string, state = 'completed'): string {
   return id;
 }
 
-/** The days each agent works: agent 1 is off on the last day; agent 7 (thin) works the first only. */
-const daysOf = (i: number): string[] => (i === 1 ? DAYS.slice(0, 2) : i === 7 ? DAYS.slice(0, 1) : [...DAYS]);
+/**
+ * The days each agent works: agent 1 is off on the last day; agent 7 (thin) works the first only;
+ * agent 6 is off on the middle day, on ONE session row that never leaves (`left_at` NULL): it goes
+ * offline each evening without leaving, and the next join reuses the row (`offline -> break`), as
+ * the station's close, the heartbeat lapse and the join's upsert do.
+ */
+const daysOf = (i: number): string[] => (i === 1 ? DAYS.slice(0, 2) : i === 7 ? DAYS.slice(0, 1) : i === 6 ? [DAYS[0]!, DAYS[2]!] : [...DAYS]);
+let openSession: string | null = null;
 
 /** One agent's conversations on one day, by code (null: closed with no outcome). */
 function codesFor(i: number, k: number): Array<string | null> {
@@ -141,12 +147,21 @@ function seedAgent(i: number): void {
   daysOf(i).forEach((day) => {
     const k = DAYS.indexOf(day);
     t.days.add(day);
-    const sid = randomUUID();
     const join = L(day, '09:00');
-    sessions.push({ id: sid, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c0, agent_user_id: a, kind: 'campaign', state: 'offline', joined_at: join, left_at: L(day, '17:00') });
+    const reused = i === 6 && openSession !== null;
+    const sid = i === 6 ? (openSession ??= randomUUID()) : randomUUID();
+    if (!reused) {
+      sessions.push({
+        id: sid, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c0, agent_user_id: a, kind: 'campaign', state: 'offline',
+        joined_at: join, left_at: i === 6 ? null : L(day, '17:00'),
+      });
+    }
     const overrun = i === 5 || (i === 4 && k === 0);
     const steps: Array<[string | null, string, Date, string | null, number | null]> = [
-      [null, 'available', join, null, null],
+      // A rejoin of the open row comes back from offline on a one-second break.
+      ...(reused
+        ? [['offline', 'break', join, null, null], ['break', 'available', plus(join, 1), null, null]] as Array<[string | null, string, Date, string | null, number | null]>
+        : [[null, 'available', join, null, null]] as Array<[string | null, string, Date, string | null, number | null]>),
       ['available', 'on_call', L(day, '10:00'), null, null],
       ['on_call', 'wrapup', L(day, '10:30'), null, null],
       ['wrapup', 'available', L(day, '10:35'), null, null],
@@ -165,7 +180,7 @@ function seedAgent(i: number): void {
     t.shift += 8 * 3600;
     t.onCall += 1800;
     t.choosing += 300;
-    t.brk += 1800;
+    t.brk += 1800 + (reused ? 1 : 0);
 
     codesFor(i, k).forEach((code, n) => {
       const dialed = plus(L(day, '11:00'), n * 300 + i);
@@ -258,6 +273,48 @@ function seedOtherCallTypes(): void {
   for (const [from, to, at] of [[null, 'available', L(offDay, '09:00')], ['available', 'offline', L(offDay, '17:00')]] as const) {
     events.push({ id: randomUUID(), session_id: elsewhere, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c1, agent_user_id: agent(1).id, from_state: from, to_state: to, at, break_reason: null, break_limit_minutes: null, break_overrun_seconds: null });
   }
+  seedWindowEdges();
+}
+
+/**
+ * Agent 2 on the window's edges, in local time: a night shift with a promise at 23:50 on the first
+ * day and one at 00:10 on the second (each on its own local day), and promises just outside the
+ * window (23:57 the day before it, 00:00:30 the day after it), each on a session of its own there.
+ */
+function seedWindowEdges(): void {
+  const a = agent(2).id;
+  const t = truth[2]!;
+  const session = (joined: Date, left: Date): string => {
+    const id = randomUUID();
+    sessions.push({ id, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c0, agent_user_id: a, kind: 'campaign', state: 'offline', joined_at: joined, left_at: left });
+    for (const [from, to, at] of [[null, 'available', joined], ['available', 'offline', left]] as const) {
+      events.push({ id: randomUUID(), session_id: id, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c0, agent_user_id: a, from_state: from, to_state: to, at, break_reason: null, break_limit_minutes: null, break_overrun_seconds: null });
+    }
+    return id;
+  };
+  const promise = (sid: string, dialed: Date, day: string): void => {
+    const ended = plus(dialed, 4 + 62);
+    attempts.push({
+      id: randomUUID(), campaign_id: c0, contact_id: contact(c0), tenant_id: floor.tenant, account_id: floor.account, attempt_number: 1,
+      caller_id: '+919000000001', reserved_agent_id: sid, state: 'ended', outcome: 'connected', disposition_code: 'will_pay',
+      dialed_at: dialed, answered_at: plus(dialed, 3), bridged_at: plus(dialed, 4), ended_at: ended, redial_number: 0,
+      wrapup_started_at: ended, wrapup_ended_at: plus(ended, 22), wrapup_resolution: 'disposition_submitted',
+      callback_at: null, dispositioned_at: plus(ended, 22), promise_date: day, promise_amount: 1002,
+    });
+  };
+  const night = session(L(DAYS[0]!, '23:00'), L(DAYS[1]!, '01:00'));
+  promise(night, L(DAYS[0]!, '23:50'), DAYS[0]!);
+  promise(night, L(DAYS[1]!, '00:10'), DAYS[1]!);
+  for (const day of [DAYS[0]!, DAYS[1]!]) {
+    t.connected += 1; t.talk += 62; t.wrapup += 22; t.measured += 1; t.firstDials += 1; t.humanConnects += 1;
+    t.willPay += 1; t.promises += 1; t.amount += 1002;
+    t.willPayByDay.set(day, (t.willPayByDay.get(day) ?? 0) + 1);
+  }
+  t.shift += 2 * 3600;
+  const before = shiftDate(FROM, -1);
+  promise(session(L(before, '23:30'), L(before, '23:59:30')), L(before, '23:57'), before);
+  const after = shiftDate(TO, 1);
+  promise(session(L(after, '00:00'), L(after, '00:30')), L(after, '00:00:30'), after);
 }
 
 // ── Requests ─────────────────────────────────────────────────────────────────
@@ -493,6 +550,26 @@ describe('the trend and the findings', () => {
     expect(res.trend_metric!.id).toBe(WILL_PAY_ID);
   });
 
+  it('the promises trend: by the local day the promise was recorded (23:50 and 00:10 on their own days, none from outside the window); a day off on a session that never left is null', async () => {
+    const r = await ok(body({ agent_ids: [agent(6).id, agent(2).id], metrics: [builtin('promises_rate')], trend: builtin('promises_rate') }));
+    /** Promises per local day: the dialler's (one per will-pay conversation) and agent 0's soft-phone and inbound ones on the middle day. */
+    const promisesOn = (i: number, d: string): number => (truth[i]!.willPayByDay.get(d) ?? 0) + (i === 0 && d === DAYS[1] ? 2 : 0);
+    const series = (i: number) => DAYS.map((d) => (truth[i]!.days.has(d) ? promisesOn(i, d) : null));
+    expect(r.trend!.agents).toEqual([
+      { agent_user_id: agent(6).id, counts: series(6) },
+      { agent_user_id: agent(2).id, counts: series(2) },
+    ]);
+    // Agent 6's open session went offline on the first evening and came back on the last morning.
+    expect(r.trend!.agents[0]!.counts[1]).toBeNull();
+    expect(r.trend!.agents[1]!.counts).toEqual([3, 3, 2]);
+    const median = (xs: number[]): number => {
+      const v = [...xs].sort((x, y) => x - y);
+      const pos = (v.length - 1) / 2;
+      return v[Math.floor(pos)]! + (v[Math.ceil(pos)]! - v[Math.floor(pos)]!) * (pos - Math.floor(pos));
+    };
+    expect(r.trend!.cohort_median).toEqual(DAYS.map((d) => median(truth.map((t, i) => (t.days.has(d) ? promisesOn(i, d) : null)).filter((x): x is number => x !== null))));
+  });
+
   it('names the seeded clear gap, and the thin agent only as too few calls', () => {
     expect(res.findings).toContainEqual(expect.objectContaining({
       code: 'clear_gap', agent_user_id: agent(0).id, metric: 'success_rate', value: 1 / 42, count: 42, next_step: 'listen_recent',
@@ -506,7 +583,7 @@ describe('the trend and the findings', () => {
   it('a slow outcome choice is a time gap against the cohort median', async () => {
     const r = await ok(body({ agent_ids: [agent(6).id], metrics: [builtin('choose_time')], trend: null }));
     const f = r.findings.find((x) => x.agent_user_id === agent(6).id)!;
-    expect(f).toMatchObject({ code: 'clear_gap', metric: 'choose_time', count: 42, next_step: 'message_outcome_tip' });
+    expect(f).toMatchObject({ code: 'clear_gap', metric: 'choose_time', count: truth[6]!.measured, next_step: 'message_outcome_tip' });
     expect(f.ratio!).toBeGreaterThan(1.5);
     expect(f.baseline).toBe(r.cohort.per_metric['choose_time']!.median);
   });

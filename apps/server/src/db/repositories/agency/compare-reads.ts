@@ -30,8 +30,8 @@
  *  - breaks over their limit: 0060's `break_overrun_seconds` on the events of the campaign's
  *    sessions in the window (the agent review's `agentBreakOverruns` scoped to the campaign);
  *  - the trend's days: each agent's local days with logged-in time on the campaign, from their
- *    campaign sessions' lives clipped as the roster's occupancy intervals clip the shift
- *    (`COMPARE_LOGGED_IN_DAYS_SQL` says why the sessions suffice).
+ *    campaign sessions' online spans (the session's start and its offline boundaries, clipped as
+ *    the roster's occupancy intervals clip the shift; `COMPARE_LOGGED_IN_DAYS_SQL`).
  */
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import type { InsightsCallbackClass } from './insights-range-reads.js';
@@ -241,35 +241,67 @@ export const COMPARE_BREAK_OVERRUNS_SQL = `
    GROUP BY e.agent_user_id`;
 
 /**
+ * The partial index's predicate, byte for byte as 0064 writes it, so the planner proves the index
+ * applies: the events where a session goes offline or comes back from it.
+ */
+export const OFFLINE_BOUNDARY_EVENT_SQL = "(e.to_state = 'offline' OR e.from_state = 'offline')";
+
+/**
  * Each cohort agent's local days (in `$7`) with logged-in time on the campaign: the days their
- * campaign sessions' lives touch, each life `[joined_at, left_at)` clipped to the window and to
- * now (a live session runs to now), as the occupancy intervals clip the shift. A session's life IS
- * its logged-in time: an agent is offline only once the session has ended (`leave` writes the
- * closing `offline` event at `left_at`), so the event log is needed to split the time by state,
- * never to say which days had any. A life `[from, to)` touches the dates from its start's to the
- * date of the instant just before its end. On the campaign's sessions by agent
- * (`idx_agency_agent_sessions_agent`); the roster's occupancy statement walks every state event of
- * the window instead, about 1,000 times the rows on a busy month (docs/compare-agents.md §7).
+ * campaign sessions were ONLINE (any state but `offline`), each online span clipped to the window,
+ * to the session's `left_at` and to now, as the occupancy intervals clip the shift.
+ *
+ * A session row is not one stretch of logged-in time. A live session goes `offline` without
+ * `left_at` (the station closed or its heartbeat lapsed, `markAllOffline` at a restart, the dialler
+ * releasing it), and the agent's next join REUSES the row (the join's upsert: `offline → break`,
+ * `joined_at` unchanged). So one row can span a week of nights and weekends off. The spans come from
+ * the session's start and its offline boundaries only (an event whose `to_state` or `from_state` is
+ * `offline`): online from `joined_at`, off at each move to `offline`, on again at each move out of
+ * it. Those boundaries are two or three a day per agent, read on
+ * `idx_agency_session_events_offline` (0064: `(session_id, at)` where {@link OFFLINE_BOUNDARY_EVENT_SQL}),
+ * every boundary of a session before the window's end (the state at the window's start is the last
+ * boundary before it), never the state changes of a working day, which the roster's occupancy
+ * statement walks (1.4M on a busy month).
  */
 export const COMPARE_LOGGED_IN_DAYS_SQL = `
-  WITH lives AS (
-    SELECT s.agent_user_id,
-           GREATEST(s.joined_at, $4::timestamptz) AS started,
-           LEAST(COALESCE(s.left_at, 'infinity'::timestamptz), $5::timestamptz, now()) AS ended
+  WITH sess AS MATERIALIZED (
+    SELECT s.id, s.agent_user_id, s.joined_at, s.left_at
       FROM agency_agent_sessions s
      WHERE s.agent_user_id = ANY($6::uuid[])
        AND s.campaign_id = $1::uuid
        AND s.tenant_id = $2::uuid AND s.account_id = $3::uuid
        AND s.joined_at < $5::timestamptz
        AND (s.left_at IS NULL OR s.left_at > $4::timestamptz)
+  ), marks AS (
+    -- The session's start: online.
+    SELECT sess.id AS session_id, sess.joined_at AS at, true AS online, 0 AS ord, NULL::uuid AS event_id
+      FROM sess
+    UNION ALL
+    -- Each offline boundary: off when it goes to offline, on when it comes back from it.
+    SELECT e.session_id, e.at, e.to_state <> 'offline', 1, e.id
+      FROM sess
+      JOIN agency_agent_session_events e ON e.session_id = sess.id
+     WHERE ${OFFLINE_BOUNDARY_EVENT_SQL}
+       AND e.at < $5::timestamptz
+  ), spans AS (
+    SELECT sess.agent_user_id, m.online,
+           GREATEST(m.at, $4::timestamptz) AS started,
+           LEAST(
+             COALESCE(lead(m.at) OVER (PARTITION BY m.session_id ORDER BY m.at, m.ord, m.event_id), 'infinity'::timestamptz),
+             COALESCE(sess.left_at, 'infinity'::timestamptz),
+             $5::timestamptz,
+             now()
+           ) AS ended
+      FROM marks m
+      JOIN sess ON sess.id = m.session_id
   )
-  SELECT DISTINCT l.agent_user_id, to_char(d, 'YYYY-MM-DD') AS date
-    FROM lives l
+  SELECT DISTINCT sp.agent_user_id, to_char(d, 'YYYY-MM-DD') AS date
+    FROM spans sp
     CROSS JOIN LATERAL generate_series(
-           date_trunc('day', l.started AT TIME ZONE $7::text),
-           date_trunc('day', (l.ended - interval '1 microsecond') AT TIME ZONE $7::text),
+           date_trunc('day', sp.started AT TIME ZONE $7::text),
+           date_trunc('day', (sp.ended - interval '1 microsecond') AT TIME ZONE $7::text),
            interval '1 day') d
-   WHERE l.ended > l.started`;
+   WHERE sp.online AND sp.ended > sp.started`;
 
 const scopeValues = (q: CompareCohortScope): unknown[] =>
   [q.campaignId, q.tenantId, q.accountId, q.from, q.to, [...q.agentIds]];

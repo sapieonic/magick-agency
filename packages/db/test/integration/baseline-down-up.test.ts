@@ -103,6 +103,7 @@ const ALL_MIGRATIONS = [
   '0061_session_event_break_limit_comment',
   '0062_session_suspended_break',
   '0063_compare_views',
+  '0064_session_events_offline_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */
