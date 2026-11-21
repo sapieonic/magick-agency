@@ -19,6 +19,7 @@ import {
   agencyContactRepository,
 } from '../../../db/repositories/agency.repository.js';
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
+import { afterSessionLeft } from '../../../agency/idle-session-sweep.js';
 import type { AgencyAgentSessionRecord, AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { StationTokenUnavailableError, type StationTokenStore } from '../../../agency/station-token.js';
@@ -538,15 +539,10 @@ export async function leaveSession(
   const awayRinging = lease?.ring === true || awaySince !== null;
   await runtime.agents.clear(session.id);
   await leave(session.id);
-  // The session's open Need help ends with it (LF4), before the detach, so a station still attached
-  // hears `help_cleared { session_ended }`.
-  await runtime.floorAssist?.endWithSession(session.id);
-  await runtime.stations.detach(session.id);
-  // Agent station (BE-11): a session that ended never attaches again, so when its station went is
-  // forgotten now (here, the primary's directory over IPC from a media worker, and the floor's
-  // reader when it is not this process's registry), not left for the supervisors' alerts read.
-  runtime.stations.sessionEnded(session.id);
-  runtime.stationDisconnects?.forgetEnded([session.id]);
+  // Its open Need help ends (LF4), the station is detached, and when it went is forgotten (BE-11:
+  // here, the primary's directory over IPC from a media worker, and the floor's reader when it is
+  // not this process's registry), as the idle-session sweep (OS9) ends one.
+  await afterSessionLeft(runtime, session.id);
   if (awayRinging && session.agent_user_id) {
     runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'left', awaySince);
   }
