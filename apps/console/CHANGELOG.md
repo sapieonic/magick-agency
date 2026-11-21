@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.32.0](https://github.com/sapieonic/magick-agency/compare/console-v0.31.0...console-v0.32.0) (2026-11-21)
+
+
+### Features
+
+* **server,console,contracts,db:** archive draft and stopped campaigns, on their own screen ([#111](https://github.com/sapieonic/magick-agency/issues/111)) ([6f746d7](https://github.com/sapieonic/magick-agency/commit/6f746d75e177178f6ec75fac0e8bdd5e18579dc4))
+* **server,console,contracts,domain,db,observability:** Compare agents, a metric-driven comparison of agents on Reports ([#113](https://github.com/sapieonic/magick-agency/issues/113)) ([f044649](https://github.com/sapieonic/magick-agency/commit/f044649d88410421bf526e855fd6943394137b76))
+* **server,console,mobile,contracts,domain:** supervisors choose the customer card's facts, with per-campaign script keys (AS19) ([#114](https://github.com/sapieonic/magick-agency/issues/114)) ([5a55653](https://github.com/sapieonic/magick-agency/commit/5a556535f59d22f2cc60e67c61e93fec4340552f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.29.0
+    * @magick-agency/domain bumped to 0.15.0
+
 ## [0.31.0](https://github.com/sapieonic/magick-agency/compare/console-v0.30.0...console-v0.31.0) (2026-11-20)
 
 

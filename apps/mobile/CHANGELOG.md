@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.17.0...mobile-v0.18.0) (2026-11-21)
+
+
+### Features
+
+* **server,console,mobile,contracts,domain:** supervisors choose the customer card's facts, with per-campaign script keys (AS19) ([#114](https://github.com/sapieonic/magick-agency/issues/114)) ([5a55653](https://github.com/sapieonic/magick-agency/commit/5a556535f59d22f2cc60e67c61e93fec4340552f))
+
 ## [0.17.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.16.0...mobile-v0.17.0) (2026-11-20)
 
 

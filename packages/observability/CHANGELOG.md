@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.17.0...observability-v0.18.0) (2026-11-21)
+
+
+### Features
+
+* **server,console,contracts,domain,db,observability:** Compare agents, a metric-driven comparison of agents on Reports ([#113](https://github.com/sapieonic/magick-agency/issues/113)) ([f044649](https://github.com/sapieonic/magick-agency/commit/f044649d88410421bf526e855fd6943394137b76))
+
 ## [0.17.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.16.0...observability-v0.17.0) (2026-11-20)
 
 
