@@ -1,0 +1,395 @@
+import type { AgencyCompareDaySplit } from '@magick-agency/contracts/api/agency/compare';
+import { dateFormatter } from '../../format/date';
+
+/**
+ * Compare agents' chart geometry (`docs/compare-agents.md` §5): pure functions from figures and
+ * a measured width to SVG coordinates, so every mark is unit-tested without a browser and one SVG
+ * unit is one CSS pixel at every width (`useChartWidth`). The components only draw what these
+ * return.
+ *
+ * Mark specs follow the house's chart rules: thin bars with a rounded data end, 2px lines,
+ * markers of at least 8px, a 2px surface gap between stacked segments, the team as a recessive
+ * band and line, never a colour of its own.
+ */
+
+// ─── Side by side: one bar per agent against the team ───────────────────────
+
+export const BAR_ROW_HEIGHT = 28;
+export const BAR_THICKNESS = 14;
+const BAR_TOP = 6;
+const BAR_BOTTOM = 20;
+/** Room right of the plot for the value at a bar's end. */
+const BAR_RIGHT = 58;
+/** Roughly the width of one character of the 12px value label, to keep it inside the SVG. */
+const CHAR_WIDTH = 7;
+
+export interface BarRowInput {
+  /** The figure in its unit (a rate as a fraction). */
+  value: number | null;
+  reportable: boolean;
+  /** A rate's 95% interval (fractions), drawn as a whisker. */
+  interval: [number, number] | null;
+  /** The text at the bar's end, already formatted. */
+  valueText: string;
+  /** What is drawn in place of a bar under the floor, already worded. */
+  withheldText: string;
+}
+
+export interface BarChartInput {
+  width: number;
+  rows: readonly BarRowInput[];
+  cohort: { p25: number | null; median: number | null; p75: number | null };
+  /** Rates cap the scale at 100%. */
+  isRate: boolean;
+}
+
+export type BarRowGeometry =
+  | { kind: 'bar'; y: number; x0: number; width: number; whisker: { x1: number; x2: number } | null; valueX: number; valueText: string }
+  | { kind: 'withheld'; y: number; x0: number; text: string };
+
+export interface BarChartGeometry {
+  width: number;
+  height: number;
+  /** Where the bars start (right of the agents' names). */
+  left: number;
+  /** The scale's top value. */
+  max: number;
+  /** The middle half of the team, p25 to p75, behind the bars; null when the team has no band. */
+  band: { x: number; width: number } | null;
+  /** The team median's line; null when no agent clears the floor. */
+  median: { x: number } | null;
+  /** The plot's vertical extent, which the band and median line span. */
+  plotTop: number;
+  plotBottom: number;
+  rows: BarRowGeometry[];
+}
+
+/** The width of the names column: a third of the chart, between 64 and 120px. */
+export function barLabelWidth(width: number): number {
+  return Math.round(Math.min(120, Math.max(64, width * 0.3)));
+}
+
+/**
+ * The scale's top: 12% past the largest thing drawn (a bar, a whisker's end, the band's top or
+ * the median), so nothing touches the edge; a rate's scale stops at 100%. Never 0.
+ */
+export function barScaleMax(input: Pick<BarChartInput, 'rows' | 'cohort' | 'isRate'>): number {
+  const values: number[] = [];
+  for (const row of input.rows) {
+    if (!row.reportable || row.value === null) continue;
+    values.push(row.value);
+    if (row.interval) values.push(row.interval[1]);
+  }
+  for (const v of [input.cohort.p75, input.cohort.median, input.cohort.p25]) if (v !== null) values.push(v);
+  const top = Math.max(0, ...values.filter(Number.isFinite));
+  if (top <= 0) return input.isRate ? 1 : 1;
+  const padded = top * 1.12;
+  return input.isRate ? Math.min(1, padded) : padded;
+}
+
+export function barChartGeometry(input: BarChartInput): BarChartGeometry {
+  const width = Math.max(200, Math.round(input.width));
+  const left = barLabelWidth(width);
+  const plotW = Math.max(40, width - left - BAR_RIGHT);
+  const max = barScaleMax(input);
+  const x = (v: number) => left + plotW * Math.min(1, Math.max(0, v / max));
+  const plotTop = BAR_TOP - 2;
+  const plotBottom = BAR_TOP + input.rows.length * BAR_ROW_HEIGHT - 4;
+  const { p25, median, p75 } = input.cohort;
+  const band = p25 !== null && p75 !== null ? { x: x(p25), width: Math.max(2, x(p75) - x(p25)) } : null;
+  const rows = input.rows.map((row, i): BarRowGeometry => {
+    const y = BAR_TOP + i * BAR_ROW_HEIGHT;
+    if (!row.reportable || row.value === null) return { kind: 'withheld', y, x0: left, text: row.withheldText };
+    const barW = Math.max(3, x(row.value) - left);
+    const whisker = row.interval ? { x1: x(row.interval[0]), x2: x(row.interval[1]) } : null;
+    const after = Math.max(left + barW, whisker ? whisker.x2 : 0) + 6;
+    const valueX = Math.min(after, width - row.valueText.length * CHAR_WIDTH - 2);
+    return { kind: 'bar', y, x0: left, width: barW, whisker, valueX, valueText: row.valueText };
+  });
+  return {
+    width,
+    height: BAR_TOP + input.rows.length * BAR_ROW_HEIGHT + BAR_BOTTOM,
+    left,
+    max,
+    band,
+    median: median !== null ? { x: x(median) } : null,
+    plotTop,
+    plotBottom,
+    rows,
+  };
+}
+
+/**
+ * The path of a bar with its data end rounded (radius 4) and its baseline end square, anchored at
+ * `x0`. Under 8px wide it is a plain rectangle: a rounded end would be wider than the bar.
+ */
+export function barPath(x0: number, y: number, width: number, height = BAR_THICKNESS, radius = 4): string {
+  if (width < 8) return `M${x0} ${y}h${width}v${height}h${-width}z`;
+  const r = Math.min(radius, height / 2);
+  return `M${x0} ${y}h${width - r}a${r} ${r} 0 0 1 ${r} ${r}v${height - 2 * r}a${r} ${r} 0 0 1 ${-r} ${r}h${-(width - r)}z`;
+}
+
+// ─── The trend: a line per agent per working day ────────────────────────────
+
+const TREND_TOP = 12;
+const TREND_BOTTOM = 26;
+const TREND_LEFT = 34;
+/** Room for the end labels ("Priya · 12"). */
+const TREND_RIGHT = 92;
+/** The least space between two x-axis dates, so their labels never touch. */
+const MIN_LABEL_GAP = 52;
+/** The least space between two end labels. */
+const END_LABEL_GAP = 14;
+
+export interface TrendSeriesInput {
+  id: string;
+  counts: ReadonlyArray<number | null>;
+  /** The end label's name ("Priya"). */
+  name: string;
+}
+
+export interface TrendInput {
+  width: number;
+  height: number;
+  dates: readonly string[];
+  series: readonly TrendSeriesInput[];
+  median: ReadonlyArray<number | null>;
+}
+
+export interface TrendGeometry {
+  width: number;
+  height: number;
+  plotLeft: number;
+  plotRight: number;
+  plotTop: number;
+  plotBottom: number;
+  yMax: number;
+  ticks: Array<{ value: number; y: number }>;
+  xs: number[];
+  xLabels: Array<{ index: number; x: number; text: string }>;
+  series: Array<{ id: string; path: string; dots: Array<{ x: number; y: number }>; last: { x: number; y: number } | null }>;
+  medianPath: string;
+  endLabels: Array<{ id: string; y: number; text: string; team: boolean }>;
+}
+
+/**
+ * A clean axis top for counts: four gridlines of a whole step, the step from the ladder
+ * 1, 2, 3, 4, 5, 6, 8 times a power of ten (the bucket chart's, whose middle rungs keep a
+ * count of 21 from jumping to an axis of 40). At least 4, so every tick is a whole number.
+ */
+export function niceCountMax(value: number): number {
+  const need = Number.isFinite(value) && value > 0 ? value / 4 : 1;
+  const power = 10 ** Math.floor(Math.log10(Math.max(1, need)));
+  for (const rung of [1, 2, 3, 4, 5, 6, 8, 10]) {
+    if (rung * power >= need) return rung * power * 4;
+  }
+  return 40 * power;
+}
+
+/**
+ * An SVG path through the non-null points, broken on every null so a day off is a gap, never a
+ * dip (§5). A point with no non-null neighbour cannot be a line; it is returned in `dots`.
+ */
+export function brokenLinePath(
+  values: ReadonlyArray<number | null>,
+  x: (i: number) => number,
+  y: (v: number) => number,
+): { path: string; dots: Array<{ x: number; y: number }> } {
+  let path = '';
+  const dots: Array<{ x: number; y: number }> = [];
+  values.forEach((v, i) => {
+    if (v === null) return;
+    const prev = i > 0 ? values[i - 1] : null;
+    const next = i < values.length - 1 ? values[i + 1] : null;
+    const px = round(x(i));
+    const py = round(y(v));
+    if (prev === null || prev === undefined) {
+      if (next === null || next === undefined) dots.push({ x: px, y: py });
+      path += `M${px} ${py}`;
+    } else {
+      path += `L${px} ${py}`;
+    }
+  });
+  return { path, dots };
+}
+
+function round(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** "20 Nov" for a `YYYY-MM-DD` date, read from its own parts (no zone can move it a day). */
+export function shortDate(day: string): string {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  return dateFormatter({ day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** Which dates get a label: every k-th so labels stay {@link MIN_LABEL_GAP} apart, and always the last. */
+export function labelledDateIndexes(count: number, plotWidth: number): number[] {
+  if (count <= 0) return [];
+  if (count === 1) return [0];
+  const spacing = plotWidth / (count - 1);
+  const every = Math.max(1, Math.ceil(MIN_LABEL_GAP / Math.max(1, spacing)));
+  const out: number[] = [];
+  for (let i = 0; i < count; i += every) out.push(i);
+  const last = count - 1;
+  if (out[out.length - 1] !== last) {
+    // The last date always shows; the label before it gives way when the two would touch.
+    if (out.length > 1 && (last - out[out.length - 1]!) * spacing < MIN_LABEL_GAP) out.pop();
+    out.push(last);
+  }
+  return out;
+}
+
+/**
+ * End labels pushed apart so none overlaps the one above it (at least {@link END_LABEL_GAP}
+ * apart, top to bottom), then pulled back up if the last went past the plot's foot.
+ */
+export function spreadLabels(ys: readonly number[], top: number, bottom: number, gap = END_LABEL_GAP): number[] {
+  const order = ys.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y || a.i - b.i);
+  const placed = order.map((o) => o.y);
+  for (let k = 0; k < placed.length; k += 1) {
+    const floor = k === 0 ? top : placed[k - 1]! + gap;
+    placed[k] = Math.max(placed[k]!, floor);
+  }
+  for (let k = placed.length - 1; k >= 0; k -= 1) {
+    const ceiling = k === placed.length - 1 ? bottom : placed[k + 1]! - gap;
+    placed[k] = Math.min(placed[k]!, ceiling);
+  }
+  const out = new Array<number>(ys.length);
+  order.forEach((o, k) => {
+    out[o.i] = placed[k]!;
+  });
+  return out;
+}
+
+function lastPoint(values: ReadonlyArray<number | null>): { index: number; value: number } | null {
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return { index: i, value: v };
+  }
+  return null;
+}
+
+export function trendGeometry(input: TrendInput): TrendGeometry {
+  const width = Math.max(260, Math.round(input.width));
+  const height = input.height;
+  const plotLeft = TREND_LEFT;
+  const plotRight = width - TREND_RIGHT;
+  const plotTop = TREND_TOP;
+  const plotBottom = height - TREND_BOTTOM;
+  const n = input.dates.length;
+  const all = [...input.series.flatMap((s) => s.counts), ...input.median].filter((v): v is number => v !== null);
+  const yMax = niceCountMax(Math.max(0, ...all) * 1.1);
+  const x = (i: number) => (n <= 1 ? (plotLeft + plotRight) / 2 : plotLeft + ((plotRight - plotLeft) * i) / (n - 1));
+  const y = (v: number) => plotBottom - ((plotBottom - plotTop) * v) / yMax;
+  const ticks = [0, 1, 2, 3, 4].map((k) => ({ value: (yMax * k) / 4, y: round(y((yMax * k) / 4)) }));
+  const xs = input.dates.map((_, i) => round(x(i)));
+  const xLabels = labelledDateIndexes(n, plotRight - plotLeft).map((i) => ({ index: i, x: xs[i]!, text: shortDate(input.dates[i]!) }));
+  const series = input.series.map((s) => {
+    const line = brokenLinePath(s.counts, x, y);
+    const last = lastPoint(s.counts);
+    return { id: s.id, path: line.path, dots: line.dots, last: last ? { x: round(x(last.index)), y: round(y(last.value)) } : null };
+  });
+  const medianPath = brokenLinePath(input.median, x, y).path;
+  const ends: Array<{ id: string; y: number; text: string; team: boolean }> = [];
+  input.series.forEach((s, i) => {
+    const last = lastPoint(s.counts);
+    if (last) ends.push({ id: s.id, y: series[i]!.last!.y + 4, text: `${s.name} · ${last.value}`, team: false });
+  });
+  const medianLast = lastPoint(input.median);
+  if (medianLast) ends.push({ id: 'team', y: round(y(medianLast.value)) + 4, text: `Team · ${formatMedian(medianLast.value)}`, team: true });
+  const spread = spreadLabels(
+    ends.map((e) => e.y),
+    plotTop + 4,
+    plotBottom + 4,
+  );
+  return {
+    width,
+    height,
+    plotLeft,
+    plotRight,
+    plotTop,
+    plotBottom,
+    yMax,
+    ticks,
+    xs,
+    xLabels,
+    series,
+    medianPath,
+    endLabels: ends.map((e, i) => ({ ...e, y: round(spread[i]!) })),
+  };
+}
+
+/** A median count: whole when it is, else to one decimal (the median of two days can be 10.5). */
+export function formatMedian(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+// ─── Where their day went: a 100% stacked bar per agent ─────────────────────
+
+export type DaySplitKey = 'on_call' | 'choosing' | 'break' | 'waiting';
+
+/** The order and words of the four parts of the shift (CP5: breaks inside; waiting never flagged). */
+export const DAY_SPLIT_PARTS: ReadonlyArray<{ key: DaySplitKey; label: string }> = [
+  { key: 'on_call', label: 'On a call' },
+  { key: 'choosing', label: 'Choosing outcome' },
+  { key: 'break', label: 'Break' },
+  { key: 'waiting', label: 'Waiting for a call' },
+];
+
+/**
+ * Whole percentages that add up to exactly 100 (largest remainder), so the four labels of one
+ * bar never read 99% or 101% in all. All zeros when there is nothing to share out.
+ */
+export function wholePercents(parts: readonly number[]): number[] {
+  const total = parts.reduce((s, p) => s + Math.max(0, p), 0);
+  if (total <= 0) return parts.map(() => 0);
+  const exact = parts.map((p) => (Math.max(0, p) / total) * 100);
+  const floors = exact.map(Math.floor);
+  let left = 100 - floors.reduce((s, f) => s + f, 0);
+  const order = exact.map((e, i) => ({ i, r: e - Math.floor(e) })).sort((a, b) => b.r - a.r || a.i - b.i);
+  for (const { i } of order) {
+    if (left <= 0) break;
+    floors[i] = floors[i]! + 1;
+    left -= 1;
+  }
+  return floors;
+}
+
+export interface DaySegment {
+  key: DaySplitKey;
+  label: string;
+  seconds: number;
+  /** Whole percent of the shift (the four add up to 100). */
+  percent: number;
+  x: number;
+  width: number;
+}
+
+/** The 2px surface gap between two touching segments. */
+const SEGMENT_GAP = 2;
+
+/**
+ * One agent's bar from `x0` across `width`: each part's share of the logged-in time, in the
+ * order of {@link DAY_SPLIT_PARTS}, with a 2px gap between parts; a part of no time has no
+ * segment. Empty when there was no logged-in time.
+ */
+export function daySplitSegments(split: AgencyCompareDaySplit, x0: number, width: number): DaySegment[] {
+  const seconds = DAY_SPLIT_PARTS.map((p) => Math.max(0, split[p.key]));
+  const total = seconds.reduce((s, v) => s + v, 0);
+  if (total <= 0 || width <= 0) return [];
+  const percents = wholePercents(seconds);
+  const out: DaySegment[] = [];
+  const lastIndex = seconds.reduce((last, v, i) => (v > 0 ? i : last), -1);
+  let x = x0;
+  DAY_SPLIT_PARTS.forEach((part, i) => {
+    const share = seconds[i]! / total;
+    const w = width * share;
+    if (seconds[i]! > 0) {
+      const gap = i === lastIndex ? 0 : SEGMENT_GAP;
+      out.push({ key: part.key, label: part.label, seconds: seconds[i]!, percent: percents[i]!, x: round(x), width: round(Math.max(1, w - gap)) });
+    }
+    x += w;
+  });
+  return out;
+}

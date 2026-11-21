@@ -58,6 +58,7 @@ describe('the pages', () => {
       'Missed calls',
       'Inbound summary',
       'Analytics',
+      'Compare agents',
       'Exports',
       'Do Not Call',
       'Take calls',
@@ -66,7 +67,16 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(13);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(14);
+  });
+
+  it('finds Compare agents for a supervisor with its flag on, and never for a viewer or with it off', () => {
+    const keys = (q: string, gate: GateInput) => pageResults(searchTokens(q), gate).map((r) => r.key);
+    for (const q of ['compare', 'compare agents', 'side by side', 'coaching']) {
+      expect(keys(q, ALL_ON('account_admin')), q).toContain('page:reports:compare');
+    }
+    expect(keys('compare', ALL_ON('viewer'))).not.toContain('page:reports:compare');
+    expect(keys('compare', ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_compare_enabled' }))).not.toContain('page:reports:compare');
   });
 
   it('finds Live floor by its old name, and Callbacks however people spell it (LF1)', () => {

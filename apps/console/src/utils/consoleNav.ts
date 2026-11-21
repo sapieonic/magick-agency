@@ -3,6 +3,7 @@ import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { REPORTS_FLAG } from './reports/reportsFlag';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
 import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
+import { COMPARE_FLAG, COMPARE_PATH } from './agency/compare/compareFlag';
 import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from './agencyPersona';
 import { campaignLandingPath } from './agencyCampaignTabs';
 import type { Role } from '../types/auth';
@@ -272,10 +273,13 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'reports',
     label: 'Reports',
-    paths: ['/agency/analytics', '/agency/reports'],
+    paths: ['/agency/analytics', COMPARE_PATH, '/agency/reports'],
     tabs: [
       /* Reads the campaign list plus one `/stats` each, both `agency.campaigns.read`. */
       { id: 'analytics', label: 'Analytics', to: '/agency/analytics', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
+      /* `docs/compare-agents.md`: supervisors only (CP3, every compare route floors at
+         `agency.supervise`), behind its flag. */
+      { id: 'compare', label: 'Compare agents', to: COMPARE_PATH, gate: agencyGate({ permission: 'agency.supervise', flags: [COMPARE_FLAG] }) },
       /* `docs/reports.md`: a supervisor's history and subscriptions, anyone else's own runs. */
       /* "Exports" in the bar, under the Reports section; the id and URL keep the old name. */
       {
