@@ -19,7 +19,7 @@ import {
   trendGeometry,
   type DaySplitKey,
 } from '../../../utils/agency/compare/compareCharts';
-import { formatMetricValue, formatRate, infoLabel, isNoneDue, metricSubtitle, tooFewShort, tooFewWords } from '../../../utils/agency/compare/compareMetrics';
+import { formatMetricValue, formatRate, infoLabel, metricSubtitle, withheldShort, withheldSpoken, withheldWords } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import styles from './Compare.module.css';
@@ -72,8 +72,8 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
         interval: unit === 'rate' ? (v?.interval ?? null) : null,
         valueText: formatMetricValue(unit, v?.value ?? null),
         // No value in the answer is not "too few": nothing is known, so nothing is claimed.
-        withheldText: v ? tooFewWords(info, v.denominator) : 'No figure',
-        withheldShort: v ? tooFewShort(info, v.denominator) : 'No figure',
+        withheldText: v ? withheldWords(info, v) : 'No figure',
+        withheldShort: v ? withheldShort(info, v) : 'No figure',
       },
     };
   });
@@ -88,7 +88,7 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
     .map((r) => {
       if (r.input.reportable && r.input.value !== null) return `${r.agent.name} ${r.input.valueText}`;
       if (!r.value) return `${r.agent.name} no figure`;
-      return `${r.agent.name} ${isNoneDue(info, r.value.denominator) ? 'none due yet' : 'too few to compare'}`;
+      return `${r.agent.name} ${withheldSpoken(info, r.value)}`;
     })
     .join(', ')}${band.median !== null ? `; team median ${median}` : ''}.`;
 
@@ -267,7 +267,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
             <tbody>
               {trend.dates.map((date, i) => (
                 <tr key={date}>
-                  <td>{shortDate(date)}</td>
+                  <td className={styles.day}>{shortDate(date)}</td>
                   {series.map((s) => (
                     <td key={s.agent.id} className={styles.num}>
                       {s.counts[i] === null || s.counts[i] === undefined ? <span className={styles.muted}>not logged in</span> : formatCount(s.counts[i]!)}

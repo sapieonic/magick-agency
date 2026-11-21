@@ -55,8 +55,8 @@ Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom
 4. **What stands out:** at most 5 findings (§6), each with **Why this?** and a next step; under them
    **Not clear yet (N)**, gaps that could still be chance, with **Check a longer window**; and the
    list of metrics on screen that are shown for context and never flagged.
-5. **The lens's main outcome per working day** (the trend: an outcome set or promises) and **Where
-   their day went** (on a call, choosing outcome, break, waiting; waiting in grey and never flagged).
+5. **The lens's main outcome per working day** (the trend: promises for Collections, an outcome
+   set or promises otherwise, §4) and **Where their day went** (on a call, choosing outcome, break, waiting; waiting in grey and never flagged).
 6. **The numbers:** the table behind every chart.
 
 Copy follows AS15. The state of the page (lens, campaign, window, agents, metrics by their ids,
@@ -67,11 +67,17 @@ shown, it shows the lens's metrics and says so.
 
 The console asks the query only with the options of the current campaign, window and zone (the
 cohort changes with the window), holding it while a new window's options load, and only once the
-picks have stayed still for 300 ms, so a burst of clicks is one read and a page never has the
-options read and a query in flight together (the per-tenant limit is 2, §7). The charts draw the
-picked agents the answer on screen has; a pick still loading is not drawn until its figures come.
+picks have stayed still for 300 ms, so a burst of clicks is one read. A query still in flight when
+a new window's options start loading, or once the picks have moved on, is cancelled, so a page
+never has the options read and a query in flight together (the per-tenant limit is 2, §7); the
+last answer stays on screen, marked as updating. The charts draw the picked agents the answer on
+screen has; a pick still loading is not drawn until its figures come. When a read fails, the last
+answer is never passed off as the new one: after a failed comparison it stays, labelled as the
+last figures that loaded with their window; after a failed options read the charts are taken off.
 Try again is offered only for a failure that can clear by itself (busy, timed out, 429, 5xx, the
-network).
+network); a failure with no answer at all is worded by the console, never the browser. Today, the
+window's presets and the date pickers' latest day follow the clock, so a page left open past
+midnight moves on with it.
 
 ## 3. Metric catalog
 
@@ -105,21 +111,25 @@ campaign (`compare_metric_invalid`); the console drops it from a saved view it a
 
 ## 4. Lenses
 
-A lens is a starting set: fixed built-ins plus one slot for the campaign's **main outcome**, an
-outcome set built from its current catalog, which is also the per-day trend
-(`compareLensDefaults`, `packages/domain/src/agent-compare/lens.ts`).
+A lens is a starting set: fixed built-ins plus one slot for the campaign's **main outcome**, which
+is also the per-day trend when it can be counted per day (`compareLensDefaults`,
+`packages/domain/src/agent-compare/lens.ts`).
 
 | Lens | Metrics | Main outcome (and trend) |
 |---|---|---|
-| Collections | calls handled, main, time to choose outcome, no outcome chosen, average call, breaks over limit | "Will pay": the `requires_promise` codes, higher is better |
+| Collections | calls handled, main, time to choose outcome, no outcome chosen, average call, breaks over limit | **Promises** (`promises_rate`): promises made on dialler, soft-phone and inbound calls (CP2), higher is better; also the trend |
 | Sales | calls handled, main, call-backs booked, call-backs kept on time, average call, calls per hour | "Success": the `is_success` codes, higher is better |
 | Verification and surveys | calls handled, calls per hour, main, no outcome chosen, average call, time to choose outcome | "Success", as Sales |
 | New joiner (phase 2) | one agent against their own previous four weeks and the team median | the lens's main outcome |
 
-More qualifying codes than a set holds (5): the built-in that counts all of them, `promises_rate`
-for Will pay (still the trend) or `success_rate` for Success (no trend), never a cut list. No
-qualifying code: Collections falls back to Success; Sales and Verification leave the slot out. No
-lens starts with a lower-is-better set (CP18): a supervisor who wants "Refused" adds it.
+Collections' main outcome is the built-in, not an outcome set over the `requires_promise` codes:
+a set counts dialler conversations only (the Insights rollup, CP17), and will-pay counts promises
+made on every call type that records one (CP2). A supervisor who wants a "Will pay" outcome set
+builds it in the picker and can keep it in a saved view. More success codes than a set holds (5):
+`success_rate`, which counts all of them (no trend), never a cut list. A catalog that records no
+promises: Collections falls back to Success; with no success code either, Sales and Verification
+(and Collections) leave the slot out. No lens starts with a lower-is-better set (CP18): a
+supervisor who wants "Refused" adds it.
 
 The campaign's starting lens (`compareStartingLens`): Collections when its outcome catalog has a
 `requires_promise` entry, otherwise Sales. **Saved views** (`agency_compare_views`, 0064): a lens,

@@ -32,13 +32,23 @@ describe('compareStartingLens', () => {
 });
 
 describe('compareLensDefaults', () => {
-  it('collections: "Will pay" over the promise codes, higher, and it is the trend', () => {
+  it('collections: Promises, the built-in over every call type (CP2), and it is the trend', () => {
     const d = compareLensDefaults('collections', COLLECTIONS);
     expect(d.metrics.map(compareMetricId)).toEqual([
-      'calls_handled', 'outcomes:higher:promise_to_pay', 'choose_time', 'no_outcome_rate', 'avg_call', 'breaks_over_limit',
+      'calls_handled', 'promises_rate', 'choose_time', 'no_outcome_rate', 'avg_call', 'breaks_over_limit',
     ]);
-    expect(d.metrics[1]).toEqual({ kind: 'outcomes', codes: ['promise_to_pay'], better: 'higher', label: 'Will pay' });
-    expect(d.trend).toEqual(d.metrics[1]);
+    expect(d.metrics[1]).toEqual({ kind: 'builtin', key: 'promises_rate' });
+    expect(d.trend).toEqual({ kind: 'builtin', key: 'promises_rate' });
+  });
+
+  it('collections: Promises whatever the number of promise codes, never an outcome set over them', () => {
+    for (const n of [1, 2, 5, 6, 9]) {
+      const codes = Array.from({ length: n }, (_, i) => code(`p${i}`, { requires_promise: true }));
+      const d = compareLensDefaults('collections', [...codes, code('paid', { is_success: true })]);
+      expect(d.metrics.filter((m) => m.kind === 'outcomes'), `${n} promise codes`).toEqual([]);
+      expect(d.metrics[1]).toEqual({ kind: 'builtin', key: 'promises_rate' });
+      expect(d.trend).toEqual({ kind: 'builtin', key: 'promises_rate' });
+    }
   });
 
   it('sales and verification: "Success" over the success codes, higher, as the trend', () => {
@@ -57,14 +67,13 @@ describe('compareLensDefaults', () => {
     expect(compareLensDefaults('collections', SALES).metrics[1]).toMatchObject({ codes: ['sale', 'upsell'], label: 'Success' });
   });
 
-  it('more codes than an outcome set holds: the built-in that counts them all, never a cut list', () => {
+  it('more success codes than an outcome set holds: the built-in that counts them all, never a cut list', () => {
     const many = (o: Partial<AgencyCompareOutcomeCode>) => Array.from({ length: 6 }, (_, i) => code(`c${i}`, o));
-    const promises = compareLensDefaults('collections', many({ requires_promise: true }));
-    expect(promises.metrics[1]).toEqual({ kind: 'builtin', key: 'promises_rate' });
-    expect(promises.trend).toEqual({ kind: 'builtin', key: 'promises_rate' });
     const sales = compareLensDefaults('sales', many({ is_success: true }));
     expect(sales.metrics[1]).toEqual({ kind: 'builtin', key: 'success_rate' });
     expect(sales.trend).toBeNull();
+    // Collections on a catalog with no promise code falls back to the same rule.
+    expect(compareLensDefaults('collections', many({ is_success: true })).metrics[1]).toEqual({ kind: 'builtin', key: 'success_rate' });
   });
 
   it('no success code: the slot is left out and there is no trend', () => {

@@ -8,6 +8,7 @@ import {
   type AgencyCompareMetricRef,
   type AgencyCompareOptions,
   type AgencyCompareOutcomeCode,
+  type AgencyCompareQuery,
   type AgencyCompareResponse,
   type AgencyCompareValue,
   type AgencyCompareView,
@@ -154,5 +155,80 @@ export function compareView(over: Partial<AgencyCompareView> = {}): AgencyCompar
     created_at: '2026-11-20T04:00:00.000Z',
     updated_at: '2026-11-20T04:00:00.000Z',
     ...over,
+  };
+}
+
+/**
+ * The answer the real server gives to `query`: exactly the metrics asked, in their order, for
+ * exactly the agents asked, with the trend asked (or none). Figures come from `base`; a metric
+ * `base` lacks takes the figures (and the findings, when `base`'s own metric was not asked) of
+ * `base`'s first metric of the same unit, so a page test reads believable numbers whatever lens
+ * or view it asked with.
+ */
+export function compareAnswer(query: AgencyCompareQuery, base: AgencyCompareResponse = compareResponse()): AgencyCompareResponse {
+  const asked = new Set(query.metrics.map(compareMetricId));
+  const byId = new Map(base.metrics.map((m) => [m.id, m] as const));
+  const claimed = new Set<string>();
+  const source = new Map<string, string | null>();
+  const metrics = query.metrics.map((ref) => {
+    const id = compareMetricId(ref);
+    const own = byId.get(id);
+    if (own) {
+      source.set(id, id);
+      return { ...own, ref, ...(ref.kind === 'outcomes' ? { label: ref.label ?? own.label } : {}) };
+    }
+    const info = metricInfo(ref);
+    const template = base.metrics.find((m) => m.definition.unit === info.definition.unit);
+    source.set(id, template?.id ?? null);
+    return info;
+  });
+  const retarget = new Map<string, string>();
+  for (const m of metrics) {
+    const from = source.get(m.id);
+    if (from && from !== m.id && !asked.has(from) && !claimed.has(from)) {
+      claimed.add(from);
+      retarget.set(from, m.id);
+    }
+  }
+  const pick = <T extends AgencyCompareFinding>(list: readonly T[]): T[] =>
+    list.flatMap((f) => {
+      if (!query.agent_ids.includes(f.agent_user_id)) return [];
+      if (asked.has(f.metric)) return [f];
+      const to = retarget.get(f.metric);
+      return to ? [{ ...f, metric: to }] : [];
+    });
+  const agents = query.agent_ids.map((id) => {
+    const column = base.agents.find((a) => a.agent_user_id === id) ?? agentColumn(id, null, {});
+    const values: Record<string, AgencyCompareValue> = {};
+    for (const m of metrics) {
+      const from = source.get(m.id);
+      values[m.id] = (from ? column.values[from] : undefined) ?? value(m.definition.unit === 'rate' ? {} : { interval: null });
+    }
+    return { ...column, values };
+  });
+  const perMetric: AgencyCompareResponse['cohort']['per_metric'] = {};
+  for (const m of metrics) {
+    const from = source.get(m.id);
+    const c = from ? base.cohort.per_metric[from] : undefined;
+    if (c) perMetric[m.id] = c;
+  }
+  const trendRef = query.trend ?? null;
+  const trendInfo = trendRef ? (metrics.find((m) => m.id === compareMetricId(trendRef)) ?? metricInfo(trendRef)) : null;
+  return {
+    ...base,
+    campaign_id: query.campaign_id,
+    from: query.from,
+    to: query.to,
+    timezone: query.timezone,
+    metrics,
+    agents,
+    cohort: { ...base.cohort, per_metric: perMetric },
+    findings: pick(base.findings),
+    not_clear: pick(base.not_clear),
+    trend_metric: trendInfo,
+    trend:
+      trendInfo && base.trend
+        ? { ...base.trend, metric: trendInfo.id, agents: base.trend.agents.filter((a) => query.agent_ids.includes(a.agent_user_id)) }
+        : null,
   };
 }

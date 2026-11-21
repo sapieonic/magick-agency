@@ -124,7 +124,7 @@ describe('the outcome-set builder', () => {
     const { onMetrics } = picker([...FIVE, builtin('success_rate')]);
     fireEvent.click(code('refused'));
     fireEvent.click(screen.getByTestId('compare-outcome-add'));
-    expect(screen.getByRole('alert').textContent).toMatch(/Six metrics are chosen/);
+    expect(screen.getByRole('alert').textContent).toMatch(/6 metrics are chosen/);
     expect(onMetrics).not.toHaveBeenCalled();
   });
 });
@@ -152,7 +152,15 @@ describe('the agent chips', () => {
     expect(onToggle).not.toHaveBeenCalled();
     fireEvent.click(screen.getAllByTestId('compare-agent-chip')[0]!);
     expect(onToggle).toHaveBeenCalledWith('u-lak');
-    expect(screen.getByText(/Three is the most that stays readable/)).toBeTruthy();
+    expect(screen.getByText(/3 agents is the most that stays readable/)).toBeTruthy();
+  });
+
+  it('groups the calls in a chip’s tooltip the house way', () => {
+    const [lak] = compareOptions().agents;
+    render(<CompareAgentChips agents={[{ ...lak!, calls: 12345 }, { ...lak!, agent_user_id: 'u-one', name: 'Uma R', calls: 1 }]} slots={[null, null, null]} onToggle={vi.fn()} />);
+    const [many, one] = screen.getAllByTestId('compare-agent-chip');
+    expect(many!.getAttribute('title')).toBe('Lakshmi P: 12,345 calls on this campaign in this window');
+    expect(one!.getAttribute('title')).toBe('Uma R: 1 call on this campaign in this window');
   });
 
   it('gives a picked chip its slot’s colour', () => {

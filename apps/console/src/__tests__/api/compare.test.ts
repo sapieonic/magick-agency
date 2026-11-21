@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AGENCY_COMPARE_ERROR_CODES, type AgencyCompareQuery } from '@magick-agency/contracts/api/agency/compare';
+import {
+  AGENCY_COMPARE_ERROR_CODES,
+  COMPARE_MAX_METRICS,
+  COMPARE_PAGE_MAX_AGENTS,
+  COMPARE_TENANT_CONCURRENT_READS,
+  COMPARE_VIEWS_PER_USER_MAX,
+  type AgencyCompareQuery,
+} from '@magick-agency/contracts/api/agency/compare';
 
 /**
  * The Compare agents client (`docs/compare-agents.md` §8): one function per route, each at its
@@ -18,6 +25,7 @@ vi.mock('../../api/client', async () => {
 
 import {
   COMPARE_ERROR_MESSAGES,
+  COMPARE_NETWORK_MESSAGE,
   compareErrorCode,
   compareErrorMessage,
   compareOptionsQueryString,
@@ -155,6 +163,20 @@ describe('refusals', () => {
   it('ignores a code from another family, and says a plain 403 is about permission', () => {
     expect(compareErrorCode(refusal(400, 'report_window_invalid'))).toBeNull();
     expect(compareErrorMessage(new ApiError(403, { error: 'Forbidden' }), 'fallback')).toBe('You don’t have permission to compare agents.');
-    expect(compareErrorMessage(new Error('boom'), 'fallback')).toMatch(/boom|fallback/);
+    expect(compareErrorMessage(new ApiError(500, { error: 'Internal Server Error' }), 'fallback')).toMatch(/Internal Server Error|fallback/);
+  });
+
+  it('words a failure with no answer (the network) in the console’s words, never the browser’s', () => {
+    for (const err of [new TypeError('Failed to fetch'), new TypeError('NetworkError when attempting to fetch resource.'), new Error('boom')]) {
+      expect(compareErrorMessage(err, 'fallback')).toBe('Couldn’t reach the server. Check your connection and try again.');
+    }
+    expect(COMPARE_NETWORK_MESSAGE).toBe('Couldn’t reach the server. Check your connection and try again.');
+  });
+
+  it('reads the limits it states from the contract', () => {
+    expect(COMPARE_ERROR_MESSAGES.compare_too_many_agents).toContain(`at most ${COMPARE_PAGE_MAX_AGENTS} agents`);
+    expect(COMPARE_ERROR_MESSAGES.compare_too_many_metrics).toContain(`at most ${COMPARE_MAX_METRICS} metrics`);
+    expect(COMPARE_ERROR_MESSAGES.compare_busy).toContain(`running ${COMPARE_TENANT_CONCURRENT_READS} comparisons`);
+    expect(COMPARE_ERROR_MESSAGES.compare_view_limit).toContain(`${COMPARE_VIEWS_PER_USER_MAX} saved views`);
   });
 });

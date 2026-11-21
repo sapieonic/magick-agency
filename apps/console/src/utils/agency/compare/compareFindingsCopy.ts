@@ -294,6 +294,18 @@ function plainCalls(n: number): string {
   return `${formatCount(n)} ${n === 1 ? 'call' : 'calls'}`;
 }
 
+/**
+ * A ratio cut DOWN to two decimals, trailing zeros dropped ("1.47", "1.3"): a time not clear yet
+ * is under {@link COMPARE_TIME_RATIO_CLEAR} times the median, and 1.47 rounded to one decimal
+ * would read "1.5 times … named only from 1.5 times", as if it had reached the line it has not;
+ * cut to one decimal, 1.25 (where Not clear yet starts) would read 1.2.
+ */
+export function ratioDown(ratio: number): string {
+  // The small nudge keeps a ratio of exact hundredths, held a hair under it in floating point, from
+  // flooring a hundredth lower.
+  return String(Math.floor(ratio * 100 + 1e-9) / 100);
+}
+
 /** One line of "Not clear yet": a gap on the worse side that could still be chance. */
 export function notClearLine(finding: AgencyCompareFinding, ctx: Pick<FindingContext, 'response'>): string {
   const { response } = ctx;
@@ -305,7 +317,7 @@ export function notClearLine(finding: AgencyCompareFinding, ctx: Pick<FindingCon
   if (info.definition.unit === 'seconds') {
     // A time has no likely range: it is named by how many times the median it is (§6).
     const ratio = finding.ratio ?? (finding.baseline ? finding.value / finding.baseline : null);
-    const times = ratio === null ? '' : `, ${ratio.toFixed(1)} times the team median`;
+    const times = ratio === null ? '' : `, ${ratioDown(ratio)} times the team median`;
     return `${name}: takes ${value} to choose an outcome${times} (${formatMetricValue('seconds', finding.baseline)}). Named only from ${COMPARE_TIME_RATIO_CLEAR} times the median, so not yet.`;
   }
   const base = finding.baseline === null ? '–' : formatRate(finding.baseline);

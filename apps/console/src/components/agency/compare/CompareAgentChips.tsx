@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { COMPARE_PAGE_MAX_AGENTS, type AgencyCompareCohortAgent } from '@magick-agency/contracts/api/agency/compare';
 import { pickedAgents } from '../../../utils/agency/compare/compareUrl';
+import { plural } from '../../../utils/format/number';
 import { agentColour } from './CompareCharts';
 import styles from './Compare.module.css';
 
@@ -20,9 +21,9 @@ export function cohortAgentName(agent: Pick<AgencyCompareCohortAgent, 'name' | '
 
 export function pickHint(count: number): string {
   if (count >= COMPARE_PAGE_MAX_AGENTS) {
-    return 'Three is the most that stays readable, also for colour-blind viewers. Remove one to add another.';
+    return `${COMPARE_PAGE_MAX_AGENTS} agents is the most that stays readable, also for colour-blind viewers. Remove one to add another.`;
   }
-  if (count === 0) return 'Pick up to 3 agents to put side by side against the rest of the campaign’s agents.';
+  if (count === 0) return `Pick up to ${COMPARE_PAGE_MAX_AGENTS} agents to put side by side against the rest of the campaign’s agents.`;
   const left = COMPARE_PAGE_MAX_AGENTS - count;
   return `Pick ${left} more, or compare ${count === 1 ? 'one' : 'these two'} against the team.`;
 }
@@ -72,7 +73,7 @@ export function CompareAgentChips({ agents, slots, onToggle }: CompareAgentChips
               aria-pressed={on}
               aria-disabled={blocked || undefined}
               data-testid="compare-agent-chip"
-              title={`${cohortAgentName(agent)}: ${agent.calls} ${agent.calls === 1 ? 'call' : 'calls'} on this campaign in this window`}
+              title={`${cohortAgentName(agent)}: ${plural(agent.calls, 'call')} on this campaign in this window`}
               onClick={() => {
                 if (blocked) return;
                 onToggle(agent.agent_user_id);

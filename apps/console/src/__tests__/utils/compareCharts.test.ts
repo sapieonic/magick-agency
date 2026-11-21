@@ -43,6 +43,25 @@ describe('side by side', () => {
     expect(barScaleMax({ rows: [row(900, { reportable: false }), row(10)], cohort: { p25: null, median: null, p75: null }, isRate: false })).toBeCloseTo(11.2);
   });
 
+  it('never sets a bar’s value label on the median line when there is room past it (390 px)', () => {
+    const text = '1m';
+    let moved = 0;
+    for (const median of [60, 61, 62, 63, 64, 65, 66, 68, 70]) {
+      const g = barChartGeometry({ width: 330, rows: [row(60, { valueText: text }), row(66, { valueText: '1m 6s' })], cohort: { p25: null, median, p75: null }, isRate: false });
+      const mx = g.median!.x;
+      for (const r of g.rows) {
+        if (r.kind !== 'bar') continue;
+        const right = r.valueX + r.valueText.length * 7;
+        const onLine = mx >= r.valueX - 3 && mx <= right + 3;
+        expect(onLine, `median ${median}, label ${r.valueText} at ${r.valueX}–${right}, line at ${mx}`).toBe(false);
+        // Still after the bar's end.
+        expect(r.valueX).toBeGreaterThan(r.x0 + r.width);
+        if (r.valueX > r.x0 + r.width + 6) moved += 1;
+      }
+    }
+    expect(moved).toBeGreaterThan(0);
+  });
+
   it('is width-true: the plot fills the width given, right of the names', () => {
     const narrow = barChartGeometry({ width: 300, rows: [row(50)], cohort: { p25: null, median: 50, p75: null }, isRate: false });
     const wide = barChartGeometry({ width: 600, rows: [row(50)], cohort: { p25: null, median: 50, p75: null }, isRate: false });

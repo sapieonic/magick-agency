@@ -1,6 +1,6 @@
 import type { AgencyCompareResponse } from '@magick-agency/contracts/api/agency/compare';
 import { DAY_SPLIT_PARTS, wholePercents } from '../../../utils/agency/compare/compareCharts';
-import { NONE_DUE_WORDS, formatMetricValue, infoLabel, isNoneDue } from '../../../utils/agency/compare/compareMetrics';
+import { COUNTS_DISAGREE_SHORT, NONE_DUE_WORDS, formatMetricValue, infoLabel, withheldKind } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
 import { agentColour, type ChartAgent } from './CompareCharts';
@@ -9,7 +9,8 @@ import styles from './Compare.module.css';
 /**
  * The numbers (`docs/compare-agents.md` §2 item 6): the table behind every chart, so each figure
  * is readable as text. A rate shows its counts under it; a figure under the floor says how many
- * it had and needs; the team column is the median of the agents who clear the floor.
+ * it had and needs; one whose counts don't agree is "not shown" and says why; the team column is
+ * the median of the agents who clear the floor.
  */
 export function CompareNumbers({ response, agents }: { response: AgencyCompareResponse; agents: readonly ChartAgent[] }) {
   const columns = agents.map((a) => ({ agent: a, column: response.agents.find((c) => c.agent_user_id === a.id) }));
@@ -40,10 +41,19 @@ export function CompareNumbers({ response, agents }: { response: AgencyCompareRe
                 <th scope="row">{infoLabel(info)}</th>
                 {columns.map(({ agent, column }) => {
                   const v = column?.values[info.id];
-                  if (v && !v.reportable && isNoneDue(info, v.denominator)) {
+                  const withheld = v && !v.reportable ? withheldKind(info, v) : null;
+                  if (withheld === 'none_due') {
                     return (
                       <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
                         {NONE_DUE_WORDS}
+                      </td>
+                    );
+                  }
+                  if (withheld === 'counts_disagree') {
+                    return (
+                      <td key={agent.id} className={`${styles.num} ${styles.muted}`}>
+                        not shown
+                        <span className={styles.cellSub}>{COUNTS_DISAGREE_SHORT.toLowerCase()}</span>
                       </td>
                     );
                   }

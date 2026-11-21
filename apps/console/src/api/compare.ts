@@ -5,6 +5,10 @@ import { COMPARE_WINDOW_RULE } from '../utils/agency/compare/compareUrl';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   AGENCY_COMPARE_ERROR_CODES,
+  COMPARE_MAX_METRICS,
+  COMPARE_PAGE_MAX_AGENTS,
+  COMPARE_TENANT_CONCURRENT_READS,
+  COMPARE_VIEWS_PER_USER_MAX,
   type AgencyCompareErrorCode,
   type AgencyCompareOptions,
   type AgencyCompareOptionsQuery,
@@ -128,20 +132,20 @@ export type CompareRefusalCode = AgencyCompareErrorCode | 'feature_disabled';
 export const COMPARE_ERROR_MESSAGES: Record<CompareRefusalCode, string> = {
   compare_campaign_required: 'Choose a campaign to compare its agents.',
   compare_campaign_not_found: 'That campaign isn’t one of this account’s. Choose another campaign.',
-  compare_too_many_agents: 'You can compare at most 3 agents at a time. Remove one to add another.',
-  compare_too_many_metrics: 'You can show at most 6 metrics at a time. Remove one to add another.',
+  compare_too_many_agents: `You can compare at most ${COMPARE_PAGE_MAX_AGENTS} agents at a time. Remove one to add another.`,
+  compare_too_many_metrics: `You can show at most ${COMPARE_MAX_METRICS} metrics at a time. Remove one to add another.`,
   compare_metric_invalid:
     'One of the metrics can’t be shown for this campaign. Its outcomes may have changed. Choose the metrics again.',
   compare_window_invalid: `Those dates don’t make a valid window. ${COMPARE_WINDOW_RULE}`,
   compare_timezone_invalid: 'Your browser’s time zone isn’t recognised, so the days can’t be worked out.',
   compare_agent_not_in_cohort:
     'One of the agents didn’t take calls on this campaign in this window. Remove them or choose a longer window.',
-  compare_busy: 'Your organisation is already running two comparisons. Try again in a moment.',
+  compare_busy: `Your organisation is already running ${COMPARE_TENANT_CONCURRENT_READS} comparisons. Try again in a moment.`,
   compare_timed_out: 'This comparison took too long to work out. Try a shorter window, or try again.',
   compare_view_not_found: 'That saved view no longer exists, or isn’t yours to change.',
   compare_view_invalid:
     'The view couldn’t be saved. Check its name, and that a campaign default is shared and made for this campaign.',
-  compare_view_limit: 'You already have 50 saved views. Delete one to save another.',
+  compare_view_limit: `You already have ${COMPARE_VIEWS_PER_USER_MAX} saved views. Delete one to save another.`,
   feature_disabled: 'Compare agents isn’t turned on for this account.',
 };
 
@@ -167,13 +171,22 @@ export function isRetryableCompareError(err: unknown): boolean {
   return !(err instanceof DOMException && err.name === 'AbortError');
 }
 
+/** The words for a failure with no answer from the server at all (the network, never the browser's own). */
+export const COMPARE_NETWORK_MESSAGE = 'Couldn’t reach the server. Check your connection and try again.';
+
 /**
  * Any error from this client, as the words to show: the family's copy for a known code, a plain
- * permission line for a 403 without one, otherwise the client's own message or `fallback`.
+ * permission line for a 403 without one, the client's message (or `fallback`) for any other
+ * answer, and {@link COMPARE_NETWORK_MESSAGE} when there was no answer: a `fetch` that fails says
+ * "Failed to fetch" or "NetworkError when attempting to fetch resource.", which is the browser's
+ * English, not the console's (AS15).
  */
 export function compareErrorMessage(err: unknown, fallback: string): string {
   const code = compareErrorCode(err);
   if (code !== null) return COMPARE_ERROR_MESSAGES[code];
-  if (err instanceof ApiError && err.statusCode === 403) return 'You don’t have permission to compare agents.';
-  return getErrorMessage(err, fallback);
+  if (err instanceof ApiError) {
+    if (err.statusCode === 403) return 'You don’t have permission to compare agents.';
+    return getErrorMessage(err, fallback);
+  }
+  return COMPARE_NETWORK_MESSAGE;
 }

@@ -13,6 +13,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * read of the current key: the page offers it on a failure that can clear by itself. Nothing
  * polls: a comparison is a moment's figures (the server caches them for 30 s), read again only
  * when the reader asks.
+ *
+ * `paused`: no read runs. A read in flight is cancelled (its answer is never shown), the last
+ * answer stays on screen, and the read of the key starts again once unpaused, unless that key was
+ * already answered or refused. The page pauses the comparison while a new window's options load,
+ * so it never has the options read and a query in flight together (§2: the tenant limit is 2).
  */
 export type CompareReadState<T> =
   | { status: 'idle'; data: null; dataKey: null; doneKey: null; error: null }
@@ -23,29 +28,41 @@ export type CompareReadState<T> =
 export function useCompareRead<T>(
   key: string | null,
   read: (signal: AbortSignal) => Promise<T>,
+  paused = false,
 ): CompareReadState<T> & { retry: () => void } {
   const [state, setState] = useState<CompareReadState<T>>({ status: 'idle', data: null, dataKey: null, doneKey: null, error: null });
   const [attempt, setAttempt] = useState(0);
   const readRef = useRef(read);
   readRef.current = read;
+  // The key and attempt whose read finished (answered or refused): unpausing does not ask it again.
+  const settledRef = useRef<{ key: string; attempt: number } | null>(null);
 
   useEffect(() => {
     if (key === null) {
+      settledRef.current = null;
       setState({ status: 'idle', data: null, dataKey: null, doneKey: null, error: null });
       return;
     }
+    // Paused: the previous run's clean-up has cancelled any read in flight; start nothing.
+    if (paused) return;
+    const settled = settledRef.current;
+    if (settled !== null && settled.key === key && settled.attempt === attempt) return;
     const controller = new AbortController();
     setState((prev) => ({ status: 'loading', data: prev.data, dataKey: prev.dataKey, doneKey: prev.doneKey, error: null }));
     readRef
       .current(controller.signal)
       .then((data) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', data, dataKey: key, doneKey: key, error: null });
+        if (controller.signal.aborted) return;
+        settledRef.current = { key, attempt };
+        setState({ status: 'ready', data, dataKey: key, doneKey: key, error: null });
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState((prev) => ({ status: 'error', data: prev.data, dataKey: prev.dataKey, doneKey: key, error }));
+        if (controller.signal.aborted) return;
+        settledRef.current = { key, attempt };
+        setState((prev) => ({ status: 'error', data: prev.data, dataKey: prev.dataKey, doneKey: key, error }));
       });
     return () => controller.abort();
-  }, [key, attempt]);
+  }, [key, attempt, paused]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { ...state, retry };

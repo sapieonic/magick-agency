@@ -20,6 +20,7 @@ import {
   neutralNote,
   notClearFoot,
   notClearLine,
+  ratioDown,
   possessive,
   rangeBeside,
   type FindingContext,
@@ -290,6 +291,19 @@ describe('Not clear yet, and the notes', () => {
     const foot = notClearFoot({ ...response, not_clear: [f] });
     expect(foot).toBe('A longer window shows whether the time stays this slow over more wrap-ups.');
     expect(foot).not.toMatch(/range/);
+  });
+
+  it('never words a time not clear yet as reaching the 1.5 line: its ratio is cut down to two decimals, never rounded up', () => {
+    const { response } = on(builtin('choose_time'), { code: 'clear_gap' });
+    for (const [ratio, shown] of [[1.45, '1.45'], [1.47, '1.47'], [1.499, '1.49'], [35 / 24, '1.45'], [1.3, '1.3'], [1.25, '1.25'], [1.4, '1.4'], [1.29, '1.29']] as const) {
+      const f = finding({ code: 'clear_gap', metric: 'choose_time', value: 35, baseline: 24, interval: null, ratio });
+      const line = notClearLine(f, { response });
+      expect(line, String(ratio)).toContain(`, ${shown} times the team median`);
+      expect(line, String(ratio)).not.toContain('1.5 times the team median');
+    }
+    expect(ratioDown(1.1)).toBe('1.1');
+    expect(ratioDown(1.15)).toBe('1.15');
+    expect(ratioDown(1.7)).toBe('1.7');
   });
 
   it('lists the metrics shown for context only', () => {

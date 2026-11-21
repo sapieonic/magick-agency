@@ -6,6 +6,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import {
   COMPARE_LENSES,
+  COMPARE_PAGE_MAX_AGENTS,
   type AgencyCompareMetricRef,
   type AgencyCompareQuery,
   type AgencyCompareView,
@@ -16,7 +17,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { COMPARE_SETTLE_MS, useCompareRead, useSettledKey } from '../../hooks/useCompareRead';
 import { hasPermission } from '../../utils/permissions';
-import { listAgencyCampaigns } from '../../api/agencyCampaigns';
+import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
+import { pickerCampaignName } from '../../utils/agencyCampaignArchive';
 import {
   compareErrorMessage,
   getCompareOptions,
@@ -51,6 +53,7 @@ import {
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
 import { dateFormatter } from '../../utils/format/date';
+import { shortDate } from '../../utils/agency/compare/compareCharts';
 import { plural } from '../../utils/format/number';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
 import { agentName } from '../../utils/agency/compare/compareFindingsCopy';
@@ -145,11 +148,13 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     [setParams],
   );
   const [zone] = useState(browserZone);
-  const [clock] = useState(() => now ?? new Date());
-  const today = todayIn(zone, clock);
+  const today = useToday(zone, now);
   const ids = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [viewNote, setViewNote] = useState<string | null>(null);
+  // Views deleted on this page: a campaign default among them is never applied again from options
+  // read before the delete.
+  const [deletedViews, setDeletedViews] = useState<ReadonlySet<string>>(() => new Set());
 
   // ── Campaigns ──
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -173,6 +178,21 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     if (first) update({ campaignId: first });
   }, [state.campaignId, campaigns, update]);
   const campaign = campaigns?.find((c) => c.id === state.campaignId) ?? null;
+  // A campaign the URL holds that the list leaves out may be archived since: it is named
+  // "(archived)", as every other picker names one, rather than by its name alone.
+  const [archived, setArchived] = useState<Campaign[] | null>(null);
+  const heldMissing = campaigns !== null && state.campaignId !== null && campaign === null;
+  useEffect(() => {
+    if (!heldMissing || archived !== null) return;
+    let live = true;
+    listArchivedAgencyCampaigns(tenantId, accountId)
+      .then((list) => live && setArchived(list))
+      .catch(() => live && setArchived([]));
+    return () => {
+      live = false;
+    };
+  }, [heldMissing, archived, tenantId, accountId]);
+  const heldArchived = heldMissing ? (archived?.find((c) => c.id === state.campaignId) ?? null) : null;
 
   // ── The window ──
   const dates = windowDates(state, today);
@@ -197,6 +217,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
 
   // ── Saved views ──
   const [views, setViews] = useState<AgencyCompareView[] | null>(null);
+  const [viewsFailed, setViewsFailed] = useState(false);
   const [viewsVersion, setViewsVersion] = useState(0);
   // Another campaign's list is not this one's; a re-read after a save keeps the list (and the
   // applied view's buttons) on screen until the new one comes.
@@ -204,9 +225,11 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   useEffect(() => {
     if (!state.campaignId) return;
     let live = true;
+    setViewsFailed(false);
     listCompareViews({ campaign_id: state.campaignId }, tenantId, accountId)
       .then((list) => live && setViews(list.views))
-      .catch(() => live && setViews([]));
+      // A failed read is said, with a way to read again: never "No saved views yet".
+      .catch(() => live && setViewsFailed(true));
     return () => {
       live = false;
     };
@@ -228,7 +251,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
       }
       fallback = fallbackNote(applied, 'the link', lens);
     }
-    const view = opts.default_view;
+    const view = opts.default_view && !deletedViews.has(opts.default_view.id) ? opts.default_view : null;
     if (state.metrics === null && state.lens === null && state.viewId === null && view) {
       const applied = applyToCatalog(view.metrics, view.trend, codes);
       if (applied.metrics.length > 0) {
@@ -244,7 +267,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     // once the fallback note has said it, it is not said twice.
     const note = fallback ?? (trend ? droppedNote(trend) : null);
     return { lens, metrics: d.metrics, trend: trend?.trend ?? null, viewId: state.viewId, note };
-  }, [opts, codes, state.metrics, state.lens, state.trend, state.viewId]);
+  }, [opts, codes, state.metrics, state.lens, state.trend, state.viewId, deletedViews]);
 
   const appliedView =
     resolved?.viewId ? ((views ?? []).find((v) => v.id === resolved.viewId) ?? (opts?.default_view?.id === resolved.viewId ? opts.default_view : null)) : null;
@@ -272,11 +295,22 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
       : null;
   const queryKey = query ? JSON.stringify(query) : null;
   const askedKey = useSettledKey(queryKey, settleMs, optionsPending);
-  const result = useCompareRead(askedKey, (signal) =>
-    queryCompare(JSON.parse(askedKey!) as AgencyCompareQuery, tenantId, accountId, signal),
+  // Paused while a new window's options load, or once the question has moved on from the one
+  // asked: the query in flight is cancelled (its slot freed, §2; its answer would be for choices
+  // no longer on screen) and the last answer stays up, marked as updating.
+  const result = useCompareRead(
+    askedKey,
+    (signal) => queryCompare(JSON.parse(askedKey!) as AgencyCompareQuery, tenantId, accountId, signal),
+    optionsPending || askedKey !== queryKey,
   );
   const response = result.data && result.data.campaign_id === state.campaignId ? result.data : null;
-  const updating = optionsPending || result.status === 'loading' || (queryKey !== null && askedKey !== queryKey);
+  const optionsFailed = options.status === 'error' && options.doneKey === optionsKey;
+  const queryFailed = askedKey !== null && result.status === 'error';
+  // A read failed and the answer on screen was read for other choices (another window, agents
+  // or metrics): it is kept, but said to be the last that loaded, with its window, never passed
+  // off as the answer to what the filters now say.
+  const stale = response !== null && (optionsFailed || queryFailed) && result.dataKey !== queryKey;
+  const updating = !stale && (optionsPending || result.status === 'loading' || (queryKey !== null && askedKey !== queryKey));
   // The charts draw the picked agents the answer on screen has, in their colour slots. A pick
   // the answer does not have yet (its read pending or failed) is not drawn: it has no figures,
   // and drawing it as "too few calls" or "not logged in" would say what is not known.
@@ -289,18 +323,28 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     : [];
 
   // ── Changes ──
-  const setCampaign = (campaignId: string) =>
+  const setCampaign = (campaignId: string) => {
+    setViewNote(null);
     update({ campaignId, slots: [...EMPTY_SLOTS], lens: null, metrics: null, trend: undefined, viewId: null });
+  };
   const setWindow = (preset: CompareWindowPreset) =>
     update(preset === 'custom' ? { window: preset, from: dates?.from ?? today, to: dates?.to ?? today } : { window: preset, from: null, to: null });
   const setLens = (lens: CompareLens) => {
     setViewNote(null);
     update({ lens, metrics: null, trend: undefined, viewId: null });
   };
-  const setMetrics = (metrics: AgencyCompareMetricRef[]) =>
-    resolved && update({ lens: resolved.lens, metrics, trend: resolved.trend, viewId: resolved.viewId });
-  const setTrend = (trend: AgencyCompareMetricRef | null) =>
-    resolved && update({ lens: resolved.lens, metrics: resolved.metrics, trend, viewId: resolved.viewId });
+  // A note about what applying a view left out is about that moment: an edit, a save, a delete or
+  // another campaign ends it, so it never outranks the note of what is on screen now.
+  const setMetrics = (metrics: AgencyCompareMetricRef[]) => {
+    if (!resolved) return;
+    setViewNote(null);
+    update({ lens: resolved.lens, metrics, trend: resolved.trend, viewId: resolved.viewId });
+  };
+  const setTrend = (trend: AgencyCompareMetricRef | null) => {
+    if (!resolved) return;
+    setViewNote(null);
+    update({ lens: resolved.lens, metrics: resolved.metrics, trend, viewId: resolved.viewId });
+  };
   const applyView = (view: AgencyCompareView) => {
     const applied = applyToCatalog(view.metrics, view.trend, codes);
     if (applied.metrics.length === 0) {
@@ -320,7 +364,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     <div className={styles.page}>
       <PageHeader
         title="Compare agents"
-        subtitle="Up to 3 agents of one campaign side by side, against the rest of its agents, for coaching."
+        subtitle={`Up to ${COMPARE_PAGE_MAX_AGENTS} agents of one campaign side by side, against the rest of its agents, for coaching.`}
         actions={
           state.campaignId && resolved ? (
             <CompareViews
@@ -330,17 +374,28 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
               campaignId={state.campaignId}
               campaignName={opts?.campaign_name ?? campaign?.name ?? null}
               views={views}
+              viewsFailed={viewsFailed}
+              onRetryViews={() => {
+                setViewsFailed(false);
+                setViewsVersion((n) => n + 1);
+              }}
               applied={appliedView}
               current={{ lens: resolved.lens, metrics: resolved.metrics, trend: resolved.trend }}
               onApply={applyView}
               onSaved={(view) => {
+                setViewNote(null);
                 setViewsVersion((n) => n + 1);
                 update({ lens: view.lens, metrics: view.metrics, trend: view.trend ?? null, viewId: view.id });
               }}
               onChanged={() => setViewsVersion((n) => n + 1)}
-              onDeleted={() => {
+              onDeleted={(viewId) => {
+                setViewNote(null);
                 setViewsVersion((n) => n + 1);
-                update({ viewId: null });
+                setDeletedViews((prev) => new Set(prev).add(viewId));
+                // "The page stays as it is": what the deleted view put on screen goes into the URL,
+                // so a campaign default the page opened on (no metrics in the link) stays applied
+                // as plain metrics rather than as a view that no longer exists.
+                update({ lens: resolved.lens, metrics: resolved.metrics, trend: resolved.trend, viewId: null });
               }}
             />
           ) : null
@@ -363,7 +418,9 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
             {campaigns === null ? <option value="">Loading campaigns…</option> : null}
             {campaigns !== null && !state.campaignId ? <option value="">Choose a campaign</option> : null}
             {state.campaignId && campaigns !== null && !campaign ? (
-              <option value={state.campaignId}>{opts?.campaign_name ?? 'This campaign'}</option>
+              <option value={state.campaignId}>
+                {heldArchived ? pickerCampaignName(heldArchived) : (opts?.campaign_name ?? 'This campaign')}
+              </option>
             ) : null}
             {(campaigns ?? []).map((c) => (
               <option key={c.id} value={c.id}>
@@ -426,7 +483,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
               type="button"
               className={`btn-secondary ${styles.metricsButton}`}
               aria-expanded={pickerOpen}
-              aria-controls={`${ids}-picker`}
+              aria-controls={pickerOpen ? `${ids}-picker` : undefined}
               onClick={() => setPickerOpen((o) => !o)}
               data-testid="compare-metrics-button"
             >
@@ -468,7 +525,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
         />
       ) : null}
 
-      {options.status === 'error' && options.doneKey === optionsKey ? (
+      {optionsFailed ? (
         <ReadError error={options.error} onRetry={options.retry} fallback="The campaign’s agents couldn’t be loaded." />
       ) : null}
       {options.status === 'loading' && !opts ? <LoadingSpinner /> : null}
@@ -477,7 +534,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
         <section className={styles.card} aria-labelledby={`${ids}-agents`}>
           <div className={styles.pickHead}>
             <h2 className={styles.cardTitle} id={`${ids}-agents`}>
-              Pick up to 3 agents
+              {`Pick up to ${COMPARE_PAGE_MAX_AGENTS} agents`}
             </h2>
             <span className={styles.cardSub}>{`${opts.agents.length} took calls on ${opts.campaign_name} in this window`}</span>
           </div>
@@ -489,8 +546,8 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
           {outOfCohort > 0 ? (
             <p className={styles.note} role="status">
               {outOfCohort === 1
-                ? 'One agent in the link didn’t take calls on this campaign in this window, so they are left out.'
-                : `${outOfCohort} agents in the link didn’t take calls on this campaign in this window, so they are left out.`}
+                ? 'One picked agent didn’t take calls on this campaign in this window, so they are left out.'
+                : `${outOfCohort} picked agents didn’t take calls on this campaign in this window, so they are left out.`}
             </p>
           ) : null}
         </section>
@@ -515,7 +572,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
         </ul>
       ) : null}
 
-      {askedKey !== null && result.status === 'error' ? (
+      {queryFailed ? (
         <ReadError error={result.error} onRetry={result.retry} fallback="The comparison couldn’t be worked out." />
       ) : null}
       {updating && pickedShown.length > 0 && (!response || chartAgents.length === 0) ? <LoadingSpinner /> : null}
@@ -525,6 +582,11 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
           {updating ? (
             <p className={styles.updating} role="status">
               Updating…
+            </p>
+          ) : null}
+          {stale ? (
+            <p className={styles.note} role="status" data-testid="compare-stale">
+              {`These are the last figures that loaded, for ${windowWords(response.from, response.to)}, not for the choices above.`}
             </p>
           ) : null}
           <div className={styles.board}>
@@ -608,6 +670,37 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
       ) : null}
     </div>
   );
+}
+
+/** A window in words: "15 Nov to 21 Nov", or "21 Nov" for one day. */
+export function windowWords(from: string, to: string): string {
+  return from === to ? shortDate(from) : `${shortDate(from)} to ${shortDate(to)}`;
+}
+
+/**
+ * Today in `zone`, kept current: read on every render, and the page re-renders when the day
+ * turns (checked each minute, and when the tab is shown or focused again), so a page left open
+ * past midnight moves Today, the presets and the date pickers' latest day with it. `now` (tests)
+ * fixes the clock.
+ */
+function useToday(zone: string, now: Date | undefined): string {
+  const [, setDay] = useState(() => todayIn(zone, now ?? new Date()));
+  useEffect(() => {
+    if (now) return;
+    const check = () => setDay(todayIn(zone, new Date()));
+    const timer = setInterval(check, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [zone, now]);
+  return todayIn(zone, now ?? new Date());
 }
 
 /** When the figures were read, as the console writes a time: "3:05 PM" (AS15). */

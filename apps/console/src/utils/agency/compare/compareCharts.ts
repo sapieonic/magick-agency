@@ -22,6 +22,8 @@ const BAR_BOTTOM = 20;
 const BAR_RIGHT = 58;
 /** Roughly the width of one character of the 12px value label, to keep it inside the SVG. */
 const CHAR_WIDTH = 7;
+/** The clear space kept between a value label and the median line. */
+const LINE_CLEAR = 3;
 /** Roughly the width of one character of the 11.5px italic withheld words. */
 const WITHHELD_CHAR_WIDTH = 6;
 
@@ -122,6 +124,7 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
   const plotBottom = BAR_TOP + input.rows.length * BAR_ROW_HEIGHT - 4;
   const { p25, median, p75 } = input.cohort;
   const band = p25 !== null && p75 !== null && x(p75) - x(p25) >= 1 ? { x: x(p25), width: x(p75) - x(p25) } : null;
+  const medianX = median !== null ? x(median) : null;
   const rows = input.rows.map((row, i): BarRowGeometry => {
     const y = BAR_TOP + i * BAR_ROW_HEIGHT;
     if (!row.reportable || row.value === null) {
@@ -131,7 +134,14 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
     const barW = Math.max(3, x(row.value) - left);
     const whisker = row.interval ? { x1: x(row.interval[0]), x2: x(row.interval[1]) } : null;
     const after = Math.max(left + barW, whisker ? whisker.x2 : 0) + 6;
-    const valueX = Math.min(after, width - row.valueText.length * CHAR_WIDTH - 2);
+    const textW = row.valueText.length * CHAR_WIDTH;
+    let valueX = Math.min(after, width - textW - 2);
+    // The median line runs down every row: a value it would cut moves just past it, when there
+    // is room; at the right edge the label's halo keeps it readable.
+    if (medianX !== null && medianX >= valueX - LINE_CLEAR && medianX <= valueX + textW + LINE_CLEAR) {
+      const past = medianX + LINE_CLEAR + 2;
+      if (past + textW <= width - 2) valueX = past;
+    }
     return { kind: 'bar', y, x0: left, width: barW, whisker, valueX, valueText: row.valueText };
   });
   const spans: Array<{ top: number; bottom: number }> = [];
@@ -149,7 +159,7 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
     left,
     max,
     band,
-    median: median !== null ? { x: x(median) } : null,
+    median: medianX !== null ? { x: medianX } : null,
     plotTop,
     plotBottom,
     spans,

@@ -3,6 +3,7 @@ import {
   COMPARE_BUILTIN_METRIC_KEYS,
   COMPARE_MAX_METRICS,
   COMPARE_METRIC_GROUPS,
+  COMPARE_OUTCOME_LABEL_MAX,
   COMPARE_OUTCOME_SET_DEFINITION,
   COMPARE_OUTCOME_SET_MAX_CODES,
   compareMetricId,
@@ -11,6 +12,7 @@ import {
   type AgencyCompareMetricRef,
   type AgencyCompareOutcomeCode,
   type AgencyCompareOutcomeSetRef,
+  type AgencyCompareValue,
   type CompareBuiltinMetricKey,
   type CompareLens,
   type CompareMetricBetter,
@@ -174,15 +176,95 @@ export function isNoneDue(info: Pick<AgencyCompareMetricInfo, 'ref'>, denominato
   return info.ref.kind === 'builtin' && info.ref.key === 'callbacks_kept_rate' && denominator === 0;
 }
 
+/** Why a figure is not drawn as a bar (contract `AgencyCompareValue`). */
+export type WithheldKind =
+  /** Call-backs kept on time with none due ({@link isNoneDue}). */
+  | 'none_due'
+  /**
+   * The counts cannot both be right, so the server sent no figure though the denominator clears
+   * the floor (or the metric has none): more promises than conversations, or calls per hour over a
+   * shift shorter than the calls themselves. Not "too few": there are enough, they disagree.
+   */
+  | 'counts_disagree'
+  /** Calls per hour with no logged-in time to divide by. */
+  | 'no_logged_in_time'
+  /** Under the metric's floor. */
+  | 'too_few';
+
+export function withheldKind(info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): WithheldKind {
+  if (isNoneDue(info, v.denominator)) return 'none_due';
+  if (info.definition.unit === 'per_hour') {
+    // Its denominator is logged-in SECONDS: never a count of anything to call "too few".
+    return v.denominator !== null && v.denominator > 0 ? 'counts_disagree' : 'no_logged_in_time';
+  }
+  if (v.value !== null || v.denominator === null) return 'too_few';
+  const floor = info.definition.min_denominator;
+  return (floor === null ? v.denominator > 0 : v.denominator >= floor) ? 'counts_disagree' : 'too_few';
+}
+
+/** The words for a figure whose counts don't agree ({@link WithheldKind}), in the chart and the table. */
+export const COUNTS_DISAGREE_WORDS = 'Not shown: its counts don’t agree';
+export const COUNTS_DISAGREE_SHORT = 'Counts don’t agree';
+export const NO_LOGGED_IN_WORDS = 'No logged-in time';
+
 /**
- * The bar's words in place of a bar under the floor: "Too few to compare (12 calls; needs 20)",
- * or "None due yet" for call-backs kept on time with none due ({@link isNoneDue}).
- * A null denominator (none sent) states no count: an unknown count is never written as 0.
+ * The bar's words in place of a bar: "Too few to compare (12 calls; needs 20)" under the floor,
+ * "None due yet" for call-backs kept on time with none due, "Not shown: its counts don’t agree"
+ * for a figure the server withheld though its counts clear the floor, "No logged-in time" for
+ * calls per hour with none. A null denominator (none sent) states no count: an unknown count is
+ * never written as 0.
+ */
+export function withheldWords(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
+  switch (withheldKind(info, v)) {
+    case 'none_due':
+      return NONE_DUE_WORDS;
+    case 'counts_disagree':
+      return COUNTS_DISAGREE_WORDS;
+    case 'no_logged_in_time':
+      return NO_LOGGED_IN_WORDS;
+    case 'too_few':
+      return tooFewWords(info, v.denominator);
+  }
+}
+
+/** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
+export function withheldShort(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
+  switch (withheldKind(info, v)) {
+    case 'none_due':
+      return NONE_DUE_WORDS;
+    case 'counts_disagree':
+      return COUNTS_DISAGREE_SHORT;
+    case 'no_logged_in_time':
+      return NO_LOGGED_IN_WORDS;
+    case 'too_few':
+      return tooFewShort(info, v.denominator);
+  }
+}
+
+/** How a screen reader hears a withheld figure, inside the chart's summary: "too few to compare". */
+export function withheldSpoken(info: AgencyCompareMetricInfo, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): string {
+  switch (withheldKind(info, v)) {
+    case 'none_due':
+      return 'none due yet';
+    case 'counts_disagree':
+      return 'not shown, its counts don’t agree';
+    case 'no_logged_in_time':
+      return 'no logged-in time';
+    case 'too_few':
+      return 'too few to compare';
+  }
+}
+
+/**
+ * Under the floor: "Too few to compare (12 calls; needs 20)". The count is the metric's own
+ * denominator ({@link perWords}); calls per hour's is logged-in seconds, never a count, so it is
+ * worded {@link withheldWords}' way and never reaches here as one.
  */
 export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number | null): string {
   if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
+  const counted = info.definition.unit === 'per_hour' ? null : denominator;
   const floor = info.definition.min_denominator;
-  const parts = [denominator === null ? null : perWords(info, denominator), floor === null ? null : `needs ${formatCount(floor)}`].filter(
+  const parts = [counted === null ? null : perWords(info, counted), floor === null ? null : `needs ${formatCount(floor)}`].filter(
     (p): p is string => p !== null,
   );
   return parts.length > 0 ? `Too few to compare (${parts.join('; ')})` : 'Too few to compare';
@@ -191,9 +273,10 @@ export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number |
 /** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
 export function tooFewShort(info: AgencyCompareMetricInfo, denominator: number | null): string {
   if (isNoneDue(info, denominator)) return NONE_DUE_WORDS;
+  const counted = info.definition.unit === 'per_hour' ? null : denominator;
   const floor = info.definition.min_denominator;
-  if (denominator === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
-  const have = formatCount(denominator);
+  if (counted === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
+  const have = formatCount(counted);
   return floor === null ? `Too few (${have})` : `Too few (${have} of ${formatCount(floor)})`;
 }
 
@@ -217,7 +300,7 @@ export function canAddMetric(metrics: readonly AgencyCompareMetricRef[]): boolea
   return metrics.length < COMPARE_MAX_METRICS;
 }
 
-/** `metrics` with `ref` added at the end, unless it is there already (by id) or six are chosen. */
+/** `metrics` with `ref` added at the end, unless it is there already (by id) or {@link COMPARE_MAX_METRICS} are chosen. */
 export function addMetric(metrics: readonly AgencyCompareMetricRef[], ref: AgencyCompareMetricRef): AgencyCompareMetricRef[] {
   const id = compareMetricId(ref);
   if (!canAddMetric(metrics) || metrics.some((m) => compareMetricId(m) === id)) return [...metrics];
@@ -294,8 +377,8 @@ export function outcomeSetProblem(
   catalog: readonly AgencyCompareOutcomeCode[],
 ): string | null {
   if (codes.length === 0) return 'Choose at least one outcome.';
-  if (!canAddMetric(metrics)) return `Six metrics are chosen. Remove one to add this.`;
-  if (name.trim().length > 60) return 'Keep the name to 60 characters.';
+  if (!canAddMetric(metrics)) return `${COMPARE_MAX_METRICS} metrics are chosen, the most a page shows. Remove one to add this.`;
+  if (name.trim().length > COMPARE_OUTCOME_LABEL_MAX) return `Keep the name to ${COMPARE_OUTCOME_LABEL_MAX} characters.`;
   const id = compareMetricId(buildOutcomeSet(codes, better, name, catalog));
   if (metrics.some((m) => compareMetricId(m) === id)) return 'That outcome set is already on the page.';
   return null;
@@ -321,7 +404,7 @@ export interface AppliedMetrics {
 /**
  * A saved view's (or a link's) metrics against the campaign's CURRENT catalog: each ref the
  * catalog can no longer show is dropped and named, never sent (the server would refuse the whole
- * query `compare_metric_invalid`, §3). Duplicates by id are dropped silently; at most six kept.
+ * query `compare_metric_invalid`, §3). Duplicates by id are dropped silently; at most {@link COMPARE_MAX_METRICS} kept.
  */
 export function applyToCatalog(
   refs: readonly AgencyCompareMetricRef[],

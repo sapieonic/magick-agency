@@ -25,6 +25,10 @@ import {
   tooFewShort,
   tooFewWords,
   trendChoices,
+  withheldKind,
+  withheldShort,
+  withheldSpoken,
+  withheldWords,
 } from '../../utils/agency/compare/compareMetrics';
 import { CODES, REFUSED_LOWER, SALES_CODES, WILL_PAY, metricInfo } from '../helpers/compare';
 
@@ -107,6 +111,41 @@ describe('units', () => {
   });
 });
 
+describe('a withheld figure (contract AgencyCompareValue)', () => {
+  const v = (value: number | null, denominator: number | null) => ({ value, denominator });
+
+  it('says its counts don’t agree when it clears the floor and still has no figure, never "too few"', () => {
+    // 52 promises on 45 conversations: 45 clears the floor of 20.
+    const promises = metricInfo(builtin('promises_rate'));
+    expect(withheldKind(promises, v(null, 45))).toBe('counts_disagree');
+    expect(withheldWords(promises, v(null, 45))).toBe('Not shown: its counts don’t agree');
+    expect(withheldShort(promises, v(null, 45))).toBe('Counts don’t agree');
+    expect(withheldSpoken(promises, v(null, 45))).toBe('not shown, its counts don’t agree');
+    // At the floor exactly, too.
+    expect(withheldKind(promises, v(null, 20))).toBe('counts_disagree');
+    // Under the floor it is too few, figure or not.
+    expect(withheldWords(promises, v(0.3, 12))).toBe('Too few to compare (12 calls; needs 20)');
+    expect(withheldWords(promises, v(null, 0))).toBe('Too few to compare (0 calls; needs 20)');
+  });
+
+  it('never words calls per hour’s logged-in seconds as a count of hours', () => {
+    const perHour = metricInfo(builtin('calls_per_hour'));
+    expect(withheldWords(perHour, v(null, 5400))).toBe('Not shown: its counts don’t agree');
+    expect(withheldShort(perHour, v(null, 5400))).toBe('Counts don’t agree');
+    expect(withheldWords(perHour, v(null, 0))).toBe('No logged-in time');
+    expect(withheldWords(perHour, v(null, null))).toBe('No logged-in time');
+    // Even called directly, the under-floor words never print its denominator.
+    expect(tooFewWords(perHour, 5400)).toBe('Too few to compare');
+    expect(tooFewShort(perHour, 5400)).toBe('Too few');
+  });
+
+  it('keeps "None due yet" for call-backs kept with none due', () => {
+    const kept = metricInfo(builtin('callbacks_kept_rate'));
+    expect(withheldWords(kept, v(null, 0))).toBe('None due yet');
+    expect(withheldKind(kept, v(null, 9))).toBe('counts_disagree');
+  });
+});
+
 describe('the picker', () => {
   it('offers promise metrics only when the campaign records promises', () => {
     expect(availableBuiltins(CODES)).toContain('promises_rate');
@@ -155,7 +194,7 @@ describe('the outcome-set builder', () => {
 
   it('says why a set cannot be added yet', () => {
     expect(outcomeSetProblem([], 'neutral', '', [], CODES)).toBe('Choose at least one outcome.');
-    expect(outcomeSetProblem(['refused'], 'lower', '', SIX, CODES)).toMatch(/Six metrics/);
+    expect(outcomeSetProblem(['refused'], 'lower', '', SIX, CODES)).toMatch(/6 metrics are chosen/);
     expect(outcomeSetProblem(['refused'], 'lower', 'x'.repeat(61), [], CODES)).toMatch(/60 characters/);
     expect(outcomeSetProblem(['refused'], 'lower', '', [REFUSED_LOWER], CODES)).toBe('That outcome set is already on the page.');
     expect(outcomeSetProblem(['refused'], 'higher', '', [REFUSED_LOWER], CODES)).toBeNull();

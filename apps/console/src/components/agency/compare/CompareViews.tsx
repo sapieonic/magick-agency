@@ -46,7 +46,11 @@ export interface CompareViewsProps {
   userId: string | null;
   campaignId: string;
   campaignName: string | null;
+  /** Null while the list loads (or has never loaded). */
   views: readonly AgencyCompareView[] | null;
+  /** The list couldn't be read: said, with a way to read it again, never as "No saved views yet". */
+  viewsFailed?: boolean;
+  onRetryViews?: () => void;
   applied: AgencyCompareView | null;
   current: CompareViewShape;
   onApply: (view: AgencyCompareView) => void;
@@ -61,7 +65,7 @@ export interface CompareViewsProps {
 }
 
 export function CompareViews(props: CompareViewsProps) {
-  const { tenantId, accountId, userId, campaignId, campaignName, views, applied, current, onApply, onSaved, onChanged, onDeleted } = props;
+  const { tenantId, accountId, userId, campaignId, campaignName, views, viewsFailed = false, onRetryViews, applied, current, onApply, onSaved, onChanged, onDeleted } = props;
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -115,13 +119,22 @@ export function CompareViews(props: CompareViewsProps) {
         className={styles.viewSelect}
         value={applied?.id ?? ''}
         disabled={views === null}
+        aria-invalid={viewsFailed || undefined}
         onChange={(e) => {
           const view = (views ?? []).find((v) => v.id === e.target.value);
           if (view) onApply(view);
         }}
         data-testid="compare-view-select"
       >
-        <option value="">{views === null ? 'Loading saved views…' : views.length ? 'Saved views' : 'No saved views yet'}</option>
+        <option value="">
+          {viewsFailed && views === null
+            ? 'Saved views couldn’t be loaded'
+            : views === null
+              ? 'Loading saved views…'
+              : views.length
+                ? 'Saved views'
+                : 'No saved views yet'}
+        </option>
         {own.length ? (
           <optgroup label="Yours">
             {own.map((v) => (
@@ -141,6 +154,18 @@ export function CompareViews(props: CompareViewsProps) {
           </optgroup>
         ) : null}
       </select>
+      {viewsFailed ? (
+        <>
+          <span className={styles.hint} role="alert" data-testid="compare-views-error">
+            Saved views couldn’t be loaded.
+          </span>
+          {onRetryViews ? (
+            <button type="button" className="btn-secondary" onClick={onRetryViews}>
+              Load saved views again
+            </button>
+          ) : null}
+        </>
+      ) : null}
       {applied && mine ? (
         <>
           {dirty ? (

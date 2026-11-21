@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { compareMetricId, type AgencyCompareQuery } from '@magick-agency/contracts/api/agency/compare';
 import { ApiError } from '../../api/client';
-import { WILL_PAY, compareOptions, compareResponse, compareView } from '../helpers/compare';
+import { WILL_PAY, compareAnswer, compareOptions, compareResponse, compareView } from '../helpers/compare';
 
 /**
  * The Compare agents page (`docs/compare-agents.md` §2): supervisors only, behind its flag; the
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   flags: { agency_compare_enabled: true } as Record<string, boolean>,
   listAgencyCampaigns: vi.fn(),
+  listArchivedAgencyCampaigns: vi.fn(),
   getCompareOptions: vi.fn(),
   queryCompare: vi.fn(),
   listCompareViews: vi.fn(),
@@ -38,7 +39,10 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../components/common/CapabilityUnavailable', () => ({
   CapabilityUnavailable: () => <div data-testid="capability-unavailable" />,
 }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
+}));
 vi.mock('../../api/compare', async () => {
   const actual = await vi.importActual<typeof import('../../api/compare')>('../../api/compare');
   return {
@@ -94,8 +98,10 @@ beforeEach(() => {
     { id: 'camp-1', name: 'Nov dues', status: 'running' },
   ]);
   mocks.getCompareOptions.mockImplementation(async (q: { campaign_id: string }) => compareOptions({ campaign_id: q.campaign_id }));
-  mocks.queryCompare.mockResolvedValue(compareResponse());
+  // As the real server: exactly the metrics, agents and trend asked.
+  mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => compareAnswer(q));
   mocks.listCompareViews.mockResolvedValue({ views: [] });
+  mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
 });
 
 describe('who sees it', () => {
@@ -141,18 +147,20 @@ describe('the URL', () => {
     expect(mocks.queryCompare).not.toHaveBeenCalled();
   });
 
-  it('starts from the campaign’s starting lens and its defaults (§4)', async () => {
+  it('starts from the campaign’s starting lens and its defaults (§4): Collections on Promises, also its trend (CP2)', async () => {
     renderView('?campaign=camp-1&agents=u-lak');
     await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
     expect(lastQuery().metrics.map(compareMetricId)).toEqual([
       'calls_handled',
-      compareMetricId(WILL_PAY),
+      'promises_rate',
       'choose_time',
       'no_outcome_rate',
       'avg_call',
       'breaks_over_limit',
     ]);
-    expect(compareMetricId(lastQuery().trend!)).toBe(compareMetricId(WILL_PAY));
+    expect(lastQuery().trend).toEqual({ kind: 'builtin', key: 'promises_rate' });
+    expect(await screen.findByRole('heading', { name: 'Promises per day' })).toBeTruthy();
+    expect(screen.queryByText(/Will pay/)).toBeNull();
     expect(screen.getByTestId('compare-lens-collections').getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -212,7 +220,7 @@ describe('the URL', () => {
     renderView('?campaign=camp-1&agents=u-gone,u-lak');
     await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
     expect(lastQuery().agent_ids).toEqual(['u-lak']);
-    expect(screen.getByText(/One agent in the link didn’t take calls on this campaign in this window/)).toBeTruthy();
+    expect(screen.getByText(/One picked agent didn’t take calls on this campaign in this window/)).toBeTruthy();
   });
 });
 
@@ -220,23 +228,23 @@ describe('what it shows', () => {
   it('draws a chart per metric, the findings in words, the trend, the day split and the numbers', async () => {
     renderView('?campaign=camp-1&agents=u-lak,u-ravi,u-priya');
     await screen.findByTestId('compare-findings');
-    expect(screen.getAllByTestId('compare-metric')).toHaveLength(3);
-    expect(screen.getAllByTestId('compare-bar-row')).toHaveLength(9);
+    expect(screen.getAllByTestId('compare-metric')).toHaveLength(6);
+    expect(screen.getAllByTestId('compare-bar-row')).toHaveLength(18);
     const findings = screen.getAllByTestId('compare-finding');
-    expect(findings[0]!.textContent).toContain('Priya M’s share of calls ending in Will pay is 17% (rest of the team 28%).');
+    expect(findings[0]!.textContent).toContain('Priya M’s share of calls with a promise is 17% (rest of the team 28%).');
     expect(findings[1]!.textContent).toContain('Worth asking whether the outcome buttons are clear to them.');
     expect(within(findings[0]!).getByTestId('compare-finding-action').getAttribute('href')).toMatch(/^\/agency\/campaigns\/camp-1\/attempts\?agent_user_id=u-priya/);
     expect(screen.getByTestId('compare-trend')).toBeTruthy();
     expect(screen.getAllByTestId('compare-trend-line')).toHaveLength(3);
     expect(screen.getAllByTestId('compare-day-row')).toHaveLength(3);
     expect(screen.getByTestId('compare-numbers').textContent).toContain('Time to choose outcome');
-    expect(screen.getByText('Shown for context, never flagged: Calls handled.')).toBeTruthy();
+    expect(screen.getByText('Shown for context, never flagged: Calls handled, Average call.')).toBeTruthy();
     expect(screen.getByText(/9 agents on this campaign · as of 9:30 AM/)).toBeTruthy();
   });
 
   it('counts the campaign’s agents with the house plural: “1 agent”, never “1 agents”', async () => {
     const base = compareResponse();
-    mocks.queryCompare.mockResolvedValue({ ...base, cohort: { ...base.cohort, agents: 1 } });
+    mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => compareAnswer(q, { ...base, cohort: { ...base.cohort, agents: 1 } }));
     renderView('?campaign=camp-1&agents=u-lak');
     expect(await screen.findByText(/^1 agent on this campaign · as of/)).toBeTruthy();
   });
@@ -270,11 +278,11 @@ describe('what it shows', () => {
 
   it('explains why nothing is judged when fewer than six agents clear the floor (§6)', async () => {
     const base = compareResponse();
-    mocks.queryCompare.mockResolvedValue({
+    mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => compareAnswer(q, {
       ...base,
       findings: [],
       cohort: { ...base.cohort, per_metric: Object.fromEntries(Object.entries(base.cohort.per_metric).map(([k, c]) => [k, { ...c, agents_rated: 3 }])) },
-    });
+    }));
     renderView('?campaign=camp-1&agents=u-lak');
     expect((await screen.findByTestId('compare-findings-empty')).textContent).toMatch(/at least 6 agents .* only 3 do/);
     fireEvent.click(within(screen.getByTestId('compare-findings-empty')).getByRole('button', { name: 'Check a longer window' }));
@@ -283,11 +291,11 @@ describe('what it shows', () => {
 
   it('lists the Not clear yet gaps with Check a longer window', async () => {
     const base = compareResponse();
-    mocks.queryCompare.mockResolvedValue({ ...base, findings: [], not_clear: [base.findings[0]!] });
+    mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => compareAnswer(q, { ...base, findings: [], not_clear: [base.findings[0]!] }));
     renderView('?campaign=camp-1&agents=u-priya&when=today');
     const unclear = await screen.findByTestId('compare-not-clear');
     expect(unclear.textContent).toContain('Not clear yet (1)');
-    expect(unclear.textContent).toContain('Priya M: Will pay 17% on 29 calls');
+    expect(unclear.textContent).toContain('Priya M: promises 17% on 29 calls');
     fireEvent.click(screen.getByTestId('compare-longer-window'));
     expect(where().get('when')).toBeNull();
     expect(where().get('campaign')).toBe('camp-1');
@@ -298,13 +306,6 @@ describe('reads', () => {
   const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   it('draws only the agents the answer has: a new pick waits for its figures, never “too few” or “not logged in”', async () => {
-    const base = compareResponse();
-    const onlyLak = {
-      ...base,
-      agents: base.agents.filter((a) => a.agent_user_id === 'u-lak'),
-      trend: { ...base.trend!, agents: base.trend!.agents.filter((a) => a.agent_user_id === 'u-lak') },
-    };
-    mocks.queryCompare.mockResolvedValueOnce(onlyLak);
     renderView('?campaign=camp-1&agents=u-lak');
     await screen.findByTestId('compare-findings');
     // Priya's read never answers, then it fails: either way her figures are not known.
@@ -314,7 +315,7 @@ describe('reads', () => {
     await screen.findByText('Updating…');
     await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
     const check = () => {
-      expect(screen.getAllByTestId('compare-bar-row')).toHaveLength(3);
+      expect(screen.getAllByTestId('compare-bar-row')).toHaveLength(6);
       expect(screen.getAllByTestId('compare-day-row')).toHaveLength(1);
       expect(screen.getAllByTestId('compare-trend-line')).toHaveLength(1);
       expect(document.body.textContent).not.toMatch(/Too few[^)]*\(0/);
@@ -390,7 +391,7 @@ describe('refusals', () => {
     mocks.queryCompare.mockRejectedValueOnce(refusal(429, 'compare_busy'));
     renderView('?campaign=camp-1&agents=u-lak');
     const error = await screen.findByTestId('compare-error');
-    expect(error.textContent).toContain('Your organisation is already running two comparisons. Try again in a moment.');
+    expect(error.textContent).toContain('Your organisation is already running 2 comparisons. Try again in a moment.');
     fireEvent.click(within(error).getByRole('button', { name: 'Try again' }));
     await screen.findByTestId('compare-findings');
     expect(mocks.queryCompare).toHaveBeenCalledTimes(2);
@@ -559,5 +560,222 @@ describe('saved views', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     expect(screen.getByText('“Collections weekly” will be deleted. The page stays as it is.')).toBeTruthy();
     expect(screen.queryByText(/shared with/)).toBeNull();
+  });
+});
+
+describe('review fixes', () => {
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('deleting the campaign default the page opened on keeps its metrics on screen, as plain metrics in the URL', async () => {
+    const view = compareView({ shared: true, is_campaign_default: true, lens: 'sales', metrics: [{ kind: 'builtin', key: 'avg_call' }], trend: null });
+    mocks.getCompareOptions.mockResolvedValue(compareOptions({ default_view: view }));
+    mocks.listCompareViews.mockResolvedValue({ views: [view] });
+    mocks.deleteCompareView.mockResolvedValue(undefined);
+    renderView('?campaign=camp-1&agents=u-lak');
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
+    expect(lastQuery().metrics).toEqual([{ kind: 'builtin', key: 'avg_call' }]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(mocks.deleteCompareView).toHaveBeenCalledWith('view-1', 't-1', 'a-1'));
+    await waitFor(() => expect(where().getAll('m')).toEqual(['avg_call']));
+    expect(where().get('lens')).toBe('sales');
+    expect(where().get('trend')).toBe('none');
+    expect(where().get('view')).toBeNull();
+    // No longer offered as applied: no Delete for a view that is gone.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull());
+    await pause(100);
+    expect(lastQuery().metrics).toEqual([{ kind: 'builtin', key: 'avg_call' }]);
+    expect(lastQuery().trend).toBeNull();
+  });
+
+  it('a deleted default view is never applied again from options read before the delete', async () => {
+    const view = compareView({ shared: true, is_campaign_default: true, lens: 'sales', metrics: [{ kind: 'builtin', key: 'avg_call' }], trend: null });
+    mocks.getCompareOptions.mockResolvedValue(compareOptions({ default_view: view }));
+    mocks.listCompareViews.mockResolvedValue({ views: [view] });
+    mocks.deleteCompareView.mockResolvedValue(undefined);
+    renderView('?campaign=camp-1&agents=u-lak');
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(where().getAll('m')).toEqual(['avg_call']));
+    // A lens tab clears the URL's metrics: the page falls back to the lens, not to the deleted view.
+    fireEvent.click(screen.getByTestId('compare-lens-collections'));
+    await waitFor(() => expect(lastQuery().metrics.map(compareMetricId)).toContain('promises_rate'));
+  });
+
+  it('a failed re-read never passes the last answer off as the new one: it is labelled with its window', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    expect(screen.queryByTestId('compare-stale')).toBeNull();
+    mocks.queryCompare.mockRejectedValueOnce(refusal(503, 'compare_timed_out'));
+    fireEvent.click(screen.getAllByTestId('compare-agent-chip')[1]!);
+    await screen.findByTestId('compare-error');
+    expect(screen.getByTestId('compare-stale').textContent).toBe(
+      'These are the last figures that loaded, for 15 Nov to 21 Nov, not for the choices above.',
+    );
+    expect(screen.queryByText('Updating…')).toBeNull();
+    // Try again answers the new question: the label goes.
+    fireEvent.click(within(screen.getByTestId('compare-error')).getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByTestId('compare-stale')).toBeNull());
+    await waitFor(() => expect(screen.getAllByTestId('compare-day-row')).toHaveLength(2));
+  });
+
+  it('a failed options read for a new window takes the last window’s figures off the page', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    mocks.getCompareOptions.mockRejectedValueOnce(new ApiError(500, { error: 'Internal Server Error' }));
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    await screen.findByTestId('compare-error');
+    await waitFor(() => expect(screen.queryAllByTestId('compare-metric')).toHaveLength(0));
+    expect(screen.queryByTestId('compare-findings')).toBeNull();
+    expect(screen.queryByTestId('compare-numbers')).toBeNull();
+  });
+
+  it('cancels a query in flight when a new window’s options start loading, keeping the last answer up', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    let signal: AbortSignal | undefined;
+    mocks.queryCompare.mockImplementationOnce((_q: unknown, _t: unknown, _a: unknown, s: AbortSignal) => {
+      signal = s;
+      return new Promise(() => {});
+    });
+    fireEvent.click(screen.getAllByTestId('compare-agent-chip')[1]!);
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    expect(signal!.aborted).toBe(false);
+    let answer: (o: unknown) => void = () => {};
+    mocks.getCompareOptions.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    await waitFor(() => expect(mocks.getCompareOptions).toHaveBeenCalledTimes(2));
+    // The options read and the query are never in flight together (§2).
+    expect(signal!.aborted).toBe(true);
+    expect(screen.getByText('Updating…')).toBeTruthy();
+    expect(screen.getAllByTestId('compare-day-row')).toHaveLength(1);
+    answer(compareOptions());
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(3));
+    expect(lastQuery()).toMatchObject({ from: '2026-11-21', to: '2026-11-21', agent_ids: ['u-lak', 'u-ravi'] });
+  });
+
+  it('words a network failure in the console’s words, never the browser’s', async () => {
+    mocks.queryCompare.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    renderView('?campaign=camp-1&agents=u-lak');
+    const error = await screen.findByTestId('compare-error');
+    expect(error.textContent).toContain('Couldn’t reach the server. Check your connection and try again.');
+    expect(error.textContent).not.toContain('Failed to fetch');
+  });
+
+  it('a view’s note ends with a campaign change and with an edit', async () => {
+    const gone = { kind: 'outcomes' as const, codes: ['paid_in_full'], better: 'higher' as const, label: 'Paid in full' };
+    const view = compareView({ id: 'view-2', metrics: [gone, WILL_PAY], trend: null, campaign_id: null });
+    mocks.listCompareViews.mockResolvedValue({ views: [view] });
+    renderView('?campaign=camp-1&agents=u-lak');
+    await waitFor(() => expect((screen.getByTestId('compare-view-select') as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(screen.getByTestId('compare-view-select'), { target: { value: 'view-2' } });
+    expect(screen.getByTestId('compare-note').textContent).toMatch(/^Paid in full was left out/);
+    // An edit: the trend.
+    fireEvent.click(screen.getByTestId('compare-metrics-button'));
+    fireEvent.change(await screen.findByTestId('compare-trend-select'), { target: { value: compareMetricId(WILL_PAY) } });
+    await waitFor(() => expect(screen.queryByTestId('compare-note')).toBeNull());
+    // Applied again, then another campaign: its own note (none here), never the old one.
+    fireEvent.change(screen.getByTestId('compare-view-select'), { target: { value: 'view-2' } });
+    expect(screen.getByTestId('compare-note')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('compare-campaign'), { target: { value: 'camp-0' } });
+    await waitFor(() => expect(where().get('campaign')).toBe('camp-0'));
+    expect(screen.queryByTestId('compare-note')).toBeNull();
+  });
+
+  it('a failed saved-views read says so and offers to read again, never “No saved views yet”', async () => {
+    mocks.listCompareViews.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    renderView('?campaign=camp-1&agents=u-lak');
+    expect((await screen.findByTestId('compare-views-error')).textContent).toBe('Saved views couldn’t be loaded.');
+    expect(screen.queryByText('No saved views yet')).toBeNull();
+    mocks.listCompareViews.mockResolvedValueOnce({ views: [compareView()] });
+    fireEvent.click(screen.getByRole('button', { name: 'Load saved views again' }));
+    await waitFor(() => expect(screen.queryByTestId('compare-views-error')).toBeNull());
+    expect(await screen.findByRole('option', { name: 'Collections weekly' })).toBeTruthy();
+  });
+
+  it('names a campaign archived since “(archived)”, as other pickers do', async () => {
+    mocks.listArchivedAgencyCampaigns.mockResolvedValue([{ id: 'camp-9', name: 'Diwali dues', status: 'completed', archived_at: '2026-11-20T00:00:00.000Z' }]);
+    mocks.getCompareOptions.mockImplementation(async () => compareOptions({ campaign_id: 'camp-9', campaign_name: 'Diwali dues' }));
+    renderView('?campaign=camp-9');
+    expect(await screen.findByRole('option', { name: 'Diwali dues (archived)' })).toBeTruthy();
+  });
+
+  it('points aria-controls at the picker only while it is on the page', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    const button = await screen.findByTestId('compare-metrics-button');
+    expect(button.hasAttribute('aria-controls')).toBe(false);
+    fireEvent.click(button);
+    const picker = await screen.findByTestId('compare-metric-picker');
+    expect(button.getAttribute('aria-controls')).toBe(picker.id);
+  });
+
+  it('words an agent dropped by the reader’s own window change without blaming a link', async () => {
+    renderView('?campaign=camp-1&agents=u-lak,u-priya');
+    await screen.findByTestId('compare-findings');
+    const withoutPriya = compareOptions();
+    mocks.getCompareOptions.mockResolvedValueOnce({ ...withoutPriya, agents: withoutPriya.agents.filter((a) => a.agent_user_id !== 'u-priya') });
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    expect(await screen.findByText('One picked agent didn’t take calls on this campaign in this window, so they are left out.')).toBeTruthy();
+    expect(screen.queryByText(/link/)).toBeNull();
+  });
+
+  it('moves Today on when the day turns while the page is open', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-21T23:58:00.000Z'));
+      render(
+        <MemoryRouter initialEntries={['/agency/compare?campaign=camp-1&when=custom&from=2026-11-20&to=2026-11-21']}>
+          <Where />
+          <Routes>
+            <Route path="/agency/compare" element={<CompareAgentsView tenantId="t-1" accountId="a-1" userId="sup-1" canListen settleMs={20} />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const from = (await screen.findByLabelText('From')) as HTMLInputElement;
+      expect(from.max).toBe('2026-11-21');
+      vi.setSystemTime(new Date('2026-11-22T00:03:00.000Z'));
+      fireEvent.focus(window);
+      await waitFor(() => expect((screen.getByLabelText('From') as HTMLInputElement).max).toBe('2026-11-22'));
+      fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+      await waitFor(() => expect(mocks.getCompareOptions).toHaveBeenLastCalledWith(expect.objectContaining({ from: '2026-11-22', to: '2026-11-22' }), 't-1', 'a-1', expect.any(AbortSignal)));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('draws a withheld figure in its own words, calls per hour included', async () => {
+    const base = compareResponse();
+    const promises = compareMetricId({ kind: 'builtin', key: 'promises_rate' });
+    const perHour = 'calls_per_hour';
+    mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => {
+      const a = compareAnswer(q, base);
+      return {
+        ...a,
+        agents: a.agents.map((c) =>
+          c.agent_user_id === 'u-lak'
+            ? {
+                ...c,
+                values: {
+                  ...c.values,
+                  [promises]: { value: null, numerator: 52, denominator: 45, reportable: false, interval: null },
+                  [perHour]: { value: null, numerator: 60, denominator: 5400, reportable: false, interval: null },
+                },
+              }
+            : c,
+        ),
+      };
+    });
+    renderView('?campaign=camp-1&agents=u-lak,u-ravi&lens=collections&m=promises_rate&m=calls_per_hour&trend=none');
+    await screen.findByTestId('compare-findings');
+    const chart = (id: string) => screen.getAllByTestId('compare-metric').find((m) => m.getAttribute('data-metric') === id)!;
+    for (const id of [promises, perHour]) {
+      const c = chart(id);
+      expect(c.textContent).toContain('Not shown: its counts don’t agree');
+      expect(c.textContent).not.toMatch(/Too few|\d hours/);
+      expect(c.querySelector('svg')!.getAttribute('aria-label')).toContain('Lakshmi P not shown, its counts don’t agree');
+    }
+    const numbers = screen.getByTestId('compare-numbers');
+    expect(numbers.textContent).toContain('not showncounts don’t agree');
+    expect(document.body.textContent).not.toMatch(/5,400 hours|Too few to compare \(45/);
   });
 });
