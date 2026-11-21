@@ -9,7 +9,7 @@ import { helpAnsweredLine, releaseBanner, STATION_COPY } from '../../utils/agenc
 import { pickVoice } from '../../hooks/useSpeech';
 import { callLaterRowsFor, fromMyDay } from '../../pages/agency/station/useMyDay';
 import { agentReadsFixture } from '../helpers/agentReads';
-import { fillScript, fillScriptPlaceholders, firstName, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
+import { fillScriptLine, fillScriptPlaceholders, firstName, scriptFillFor, scriptOrNone } from '../../utils/agency/stationScript';
 import type { AgencyMyContact } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
 
@@ -351,9 +351,11 @@ describe('the script’s placeholders (BE-8, the contract’s fill rule)', () =>
         ],
       },
     };
-    const values = scriptValuesFor(attempt, { name: 'Sunita Patil', place: 'Pune' }, { agentName: '  Ravi Kumar ', campaignName: 'EMI' });
-    expect(values).toEqual({ name: 'Sunita Patil', place: 'Pune', amount_due: '₹12,500', due_date: '20 Nov', agent_name: 'Ravi', campaign_name: 'EMI' });
-    expect(fillScript('Namaste {name}, I am {agent_name} from {campaign_name}. {amount_due} by {due_date}.', values)).toBe(
+    const fill = scriptFillFor(attempt, { name: 'Sunita Patil', place: 'Pune' }, { agentName: '  Ravi Kumar ', campaignName: 'EMI' }, undefined);
+    expect(['name', 'place', 'amount_due', 'due_date', 'agent_name', 'campaign_name'].map(fill.valueOf)).toEqual([
+      'Sunita Patil', 'Pune', '₹12,500', '20 Nov', 'Ravi', 'EMI',
+    ]);
+    expect(fillScriptLine('Namaste {name}, I am {agent_name} from {campaign_name}. {amount_due} by {due_date}.', fill).shown).toBe(
       'Namaste Sunita Patil, I am Ravi from EMI. ₹12,500 by 20 Nov.',
     );
     expect(firstName('')).toBeNull();

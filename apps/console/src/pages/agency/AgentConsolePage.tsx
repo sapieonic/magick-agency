@@ -22,7 +22,7 @@ import { useStationHelp, type StationHelp } from './station/useStationHelp';
 import { useDeviceChecks } from './station/useDeviceChecks';
 import { useMyDay } from './station/useMyDay';
 import { ScriptOpeningCard, ScriptStepsCard } from '../../components/agency/station/StationScript';
-import { fillScript, scriptOrNone, scriptValuesFor } from '../../utils/agency/stationScript';
+import { fillScriptLine, scriptFillFor, scriptOrNone } from '../../utils/agency/stationScript';
 import { FloorAssistAnnouncer, useFloorAssistAnnouncer } from '../../components/agency/SupervisorMessages';
 import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { StationSoftphone } from '../../components/softphone/StationSoftphone';
@@ -235,9 +235,15 @@ function StationScreen({
   const script = useMemo(() => scriptOrNone(bootstrap?.script), [bootstrap?.script]);
   const filledScript = useMemo(() => {
     if (!script || !panelAttempt || !card) return null;
-    const values = scriptValuesFor(panelAttempt, card, { agentName: user?.display_name, campaignName: bootstrap?.campaign_name });
-    return { opening: script.opening ? fillScript(script.opening, values) : null, steps: script.steps.map((line) => fillScript(line, values)) };
-  }, [script, panelAttempt, card, user?.display_name, bootstrap?.campaign_name]);
+    const fill = scriptFillFor(
+      panelAttempt,
+      card,
+      { agentName: user?.display_name, campaignName: bootstrap?.campaign_name },
+      bootstrap?.context_display,
+      { phoneDisplay: bootstrap?.phone_display ?? 'full' },
+    );
+    return { opening: script.opening ? fillScriptLine(script.opening, fill) : null, steps: script.steps.map((line) => fillScriptLine(line, fill)) };
+  }, [script, panelAttempt, card, user?.display_name, bootstrap?.campaign_name, bootstrap?.context_display, bootstrap?.phone_display]);
   const lastCalls = useMemo(
     () => (panelAttempt ? lastCallRows(panelAttempt, bootstrap?.disposition_catalog) : []),
     [panelAttempt, bootstrap?.disposition_catalog],
@@ -1092,7 +1098,8 @@ function StationScreen({
       );
       break;
     case 'on_call':
-      bodyClass = stationStyles.bodyEven;
+      // AS19: the card takes the width the right column (clamp 320 to 420, 36%) leaves.
+      bodyClass = stationStyles.bodyOnCall;
       // With the campaign's steps: the card and the last calls left, What to say and the note right.
       // Without (04c): the card left, the last calls and the note right.
       body = filledScript && filledScript.steps.length > 0 ? (

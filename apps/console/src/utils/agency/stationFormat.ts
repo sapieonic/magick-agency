@@ -37,6 +37,47 @@ export function promisedAmount(raw: string | number): string | null {
   return rupees(raw)?.replace(/^₹/, '') ?? null;
 }
 
+/**
+ * A plain number fact (AS19, `number`): Indian grouping, `1,25,000`; its decimals as read, and
+ * none when they are all zero (`12.50` stays, `12.00` is `12`). Null when the text is not a plain
+ * decimal (the domain's parse answers one).
+ */
+export function groupedNumber(raw: string): string | null {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return null;
+  const whole = INDIAN_GROUPING.format(m[1]!.replace(/^0+(?=\d)/, '') as unknown as number);
+  const frac = m[2] ?? '';
+  return /^0*$/.test(frac) ? whole : `${whole}.${frac}`;
+}
+
+/**
+ * A read date fact (`YYYY-MM-DD`) as `20 Nov`, or `20 Nov 2027` when its year is not the
+ * reader's this year; the text as given when it is not a calendar day.
+ */
+export function factDay(day: string, now: Date | number = Date.now()): string {
+  const m = /^(\d{4})-\d{2}-\d{2}$/.exec(day.trim());
+  if (!m) return day;
+  const shown = calendarDay(day);
+  return Number(m[1]) === new Date(now).getFullYear() ? shown : `${shown} ${m[1]}`;
+}
+
+/**
+ * A read phone fact (the domain's parse: digits, `+` kept when written) the way the card shows
+ * the customer's own number (AS9, {@link phoneForDisplay}): ten digits, or twelve starting 91, are
+ * an Indian mobile (`+91 98765 43321`, masked `98••• ••321`); any other number as read in full,
+ * its digits masked. Masked never shows more than the first two and last three digits.
+ */
+export function factPhone(digits: string, display: 'full' | 'masked' = 'full'): string {
+  const text = digits.trim();
+  const bare = text.replace(/\D/g, '');
+  const indian = !text.startsWith('+') && bare.length === 10
+    ? bare
+    : !text.startsWith('+') && bare.length === 12 && bare.startsWith('91')
+      ? bare.slice(2)
+      : null;
+  return phoneForDisplay(indian ? `+91${indian}` : text, display);
+}
+
 /** Half of an amount as a plain decimal string, for the "Half" chip; null when not an amount. */
 export function halfAmount(raw: string): string | null {
   const parsed = parseAmount(raw);

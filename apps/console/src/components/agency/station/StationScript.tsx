@@ -1,16 +1,33 @@
 import { useState } from 'react';
 import { Check, ListOrdered, MessageSquareQuote, Volume2 } from 'lucide-react';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
+import type { FilledLine } from '../../../utils/agency/stationScript';
 import styles from './Station.module.css';
 
 /**
  * The campaign's script on the call screens (BE-8, spec 03 and 04). The lines arrive filled
- * (`stationScript.ts`). The opening line has a speaker that reads it aloud where the browser can
+ * (`stationScript.ts`); a key this customer has no value for reads "<label> not given" in the
+ * muted style (AS19), and Read aloud skips it. The opening line has a speaker that reads it aloud where the browser can
  * speak (AS13), until the call connects; What to say, on the call, has none.
  */
 export interface ReadAloud {
   available: boolean;
   say: (text: string) => void;
+}
+
+/** A filled line: its text, and each "not given" run in the muted style. */
+export function ScriptLineText({ line }: { line: FilledLine }) {
+  return (
+    <>
+      {line.pieces.map((piece, i) =>
+        piece.kind === 'missing' ? (
+          <span key={i} className={styles.scriptMissing} data-testid="script-missing">{piece.text}</span>
+        ) : (
+          piece.text
+        ),
+      )}
+    </>
+  );
 }
 
 function SpeakButton({ line, label, readAloud, testId }: { line: string; label: string; readAloud: ReadAloud; testId: string }) {
@@ -23,15 +40,15 @@ function SpeakButton({ line, label, readAloud, testId }: { line: string; label: 
 }
 
 /** "First, say this" (03): the opening line, big, for the call coming through. */
-export function ScriptOpeningCard({ line, readAloud }: { line: string; readAloud: ReadAloud }) {
+export function ScriptOpeningCard({ line, readAloud }: { line: FilledLine; readAloud: ReadAloud }) {
   return (
     <section className={`${styles.card} ${styles.scriptOpening}`} data-tone="coming" data-testid="script-opening">
       <h2 className={styles.cardTitle}>
         <MessageSquareQuote size={20} aria-hidden="true" />
         <span className={styles.grow}>{STATION_COPY.firstSayThis}</span>
-        <SpeakButton line={line} label={STATION_COPY.readLineAloud} readAloud={readAloud} testId="script-opening-say" />
+        <SpeakButton line={line.spoken} label={STATION_COPY.readLineAloud} readAloud={readAloud} testId="script-opening-say" />
       </h2>
-      <p className={styles.scriptOpeningLine} data-testid="script-opening-line">“{line}”</p>
+      <p className={styles.scriptOpeningLine} data-testid="script-opening-line">“<ScriptLineText line={line} />”</p>
     </section>
   );
 }
@@ -47,7 +64,7 @@ export function ScriptOpeningCard({ line, readAloud }: { line: string; readAloud
   device's speech can reach the customer through the agent's microphone (Read aloud is kept to
   before the call connects and to What happened?).
 */
-export function ScriptStepsCard({ steps }: { steps: readonly string[] }) {
+export function ScriptStepsCard({ steps }: { steps: readonly FilledLine[] }) {
   const [done, setDone] = useState(0);
   const count = Math.min(done, steps.length);
   return (
@@ -71,7 +88,7 @@ export function ScriptStepsCard({ steps }: { steps: readonly string[] }) {
                 onClick={() => setDone(i + 1)}
               >
                 <span className={styles.scriptNumber} aria-hidden="true">{isDone ? <Check size={16} strokeWidth={3} /> : i + 1}</span>
-                <span className={styles.scriptText}>{line}</span>
+                <span className={styles.scriptText}><ScriptLineText line={line} /></span>
               </button>
             </li>
           );
