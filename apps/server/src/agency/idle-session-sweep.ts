@@ -9,21 +9,32 @@ const log = createChildLogger({ component: 'agency-idle-session-sweep' });
 /*
  * OS9: a session forgotten offline is ended.
  *
- * A session stays open until the agent presses Leave (or joins in another tenant, OS7). An agent
- * who closes the laptop, kills the tab or loses the network goes `offline` (the station's close),
- * and nothing else ever ended the session: Live floor showed them as a red "Connection lost" card
- * with a clock counting up for days. This sweep ends a session that has been `offline` for
- * {@link IDLE_SESSION_END_AFTER_MS} with nothing in it, exactly as Leave ends it.
+ * Before OS9 a session stayed open until the agent pressed Leave (or joined in another tenant,
+ * OS7). An agent who closed the laptop, killed the tab or lost the network went `offline` (the
+ * station's close), and nothing else ended the session: Live floor showed them as a red "Connection
+ * lost" card with a clock counting up for days. This sweep ends a session that has been `offline`
+ * for {@link IDLE_SESSION_END_AFTER_MS} with nothing in it, as Leave ends it.
  *
- * What counts as "nothing in it" is OS7's rule (`endIdleSessionElsewhere`): no station attached in
- * any process (`stationPresence` is `absent`; `unknown` keeps the session), a lease that is
- * `offline` or gone (a `break` with `ring` is Mode B's away-ring, ended by its own reconcile), and
- * no live attempt, redial being set up, soft-phone call or inbound call. The row's own guard
- * (`leaveIdle`: still `offline`, for long enough, under the row lock) runs last, so an agent who
- * rejoined or whose station came back since the read keeps the session.
+ * ── What keeps a session ─────────────────────────────────────────────────────
+ * The row (`findIdleOffline`, then `leaveIdle`'s own guard under the row lock): `offline` for the
+ * cutoff, untouched for as long, and not on Mode B's away-ring (its reconcile ends that absence and
+ * tells the phone). Then OS7's rule (`endIdleSessionElsewhere`): no station attached in any process
+ * (`stationPresence`, the Redis ownership key every process writes; `unknown` keeps the session), a
+ * lease `offline` or gone (never `ring`), and no live attempt, redial being set up, soft-phone call
+ * or inbound call.
  *
- * Once per deployment, in the primary (`bootstrap/agency.ts`), as OS7 runs there: the station
- * presence is the Redis ownership key, which every process writes.
+ * With media workers the sweep runs in the primary, whose dialer and soft phone hold nothing, so
+ * those last checks answer "none" there and only matter in one process. What protects a working
+ * session is the rest: a station's close never writes `offline` while its process holds a live
+ * attempt or call (`releaseStationOnClose`), the ownership key, and the two hours.
+ *
+ * ── The one race it shares with Leave and OS7 ────────────────────────────────
+ * A station attaching in the instant between the presence read and the row's end (the attach checks
+ * `left_at`, then claims the key, then rehydrates) can lose the session: the station is detached or
+ * closed (4404 on its next ping with media workers) and the client says the session ended, as it
+ * does after a Leave from another device. A rejoin cannot: the join upsert takes the same row lock.
+ *
+ * Once per deployment, in the primary (`bootstrap/agency.ts`), as OS7 runs there.
  */
 
 /** How long a session must have been offline, with nothing in it, before the sweep ends it (OS9). */
@@ -139,7 +150,7 @@ export class IdleSessionSweep {
       try {
         if (await this.endIfIdle(session)) ended += 1;
       } catch (err) {
-        log.warn({ err, sessionId: session.id }, 'Idle-session sweep could not end a session; the next pass will retry');
+        log.warn({ err, sessionId: session.id }, 'Idle-session sweep could not end a session; the next pass will try again');
       }
     }
     if (ended > 0) log.info({ ended, candidates: candidates.length }, 'Idle-session sweep ended sessions forgotten offline (OS9)');
@@ -157,12 +168,23 @@ export class IdleSessionSweep {
     // The row first, under its own guard: a session that came back since the read is not touched,
     // its lease included (Leave clears the lease first because the agent asked; nobody asked here).
     if (!(await this.repo.leaveIdle(id, this.idleMs))) return false;
-    await runtime.agents.clear(id);
-    await afterSessionLeft(runtime, id);
+    // The session has ended, and no later pass will find it again: each step from here runs on its
+    // own, so a Redis that fails the lease's clear still detaches the station. What one leaves
+    // behind lapses on its own (the lease's TTL, the Need help expiry, the detach time's bound).
+    await this.step('clear the lease', id, () => runtime.agents.clear(id));
+    await this.step('finish the end', id, () => afterSessionLeft(runtime, id));
     log.info({
       sessionId: id, tenantId: session.tenant_id, accountId: session.account_id,
       agentUserId: session.agent_user_id, offlineSince: session.offline_since,
     }, 'Ended a session forgotten offline (OS9)');
     return true;
+  }
+
+  private async step(what: string, sessionId: string, run: () => Promise<unknown>): Promise<void> {
+    try {
+      await run();
+    } catch (err) {
+      log.warn({ err, sessionId }, `Idle-session sweep ended a session but could not ${what}; it lapses on its own`);
+    }
   }
 }

@@ -1325,17 +1325,23 @@ export class AgencyAgentSessionRepository {
 
   /**
    * OS9: the idle-session sweep's candidates. Open sessions that have been `offline` for at least
-   * `idleMs` (on the database's clock, {@link offlineSinceSql}), oldest first, at most `limit`.
-   * Live sessions only (`left_at IS NULL`, a few hundred rows at most); each one's last `→ offline`
-   * event is one probe on `idx_agency_session_events_offline`.
+   * `idleMs` (on the database's clock, {@link offlineSinceSql}) AND whose row nothing has written for
+   * as long (`updated_at`: every write bumps it, and nothing writes an idle row periodically), oldest
+   * first, at most `limit`. The second clause only ever delays an end: it holds when the `→ offline`
+   * event of a restart's `markAllOffline` could not be written (`recordTransitions` logs and goes on),
+   * which would otherwise date an agent working a minute before the restart by a stale `state_since`.
+   * Never a session on Mode B's away-ring (`away_ring_since` set): its reconcile ends that absence,
+   * with the phone's `ring_off`. Live sessions only (`left_at IS NULL`, a few hundred rows at most);
+   * each one's last `→ offline` event is one probe on `idx_agency_session_events_offline`.
    */
   async findIdleOffline(idleMs: number, limit: number): Promise<AgencyIdleOfflineSession[]> {
     const { rows } = await getPool().query<AgencyIdleOfflineSession>(
       `SELECT s.id, s.tenant_id, s.account_id, s.agent_user_id, went.offline_since
          FROM agency_agent_sessions s
          CROSS JOIN LATERAL (SELECT ${offlineSinceSql('s')} AS offline_since) went
-        WHERE s.left_at IS NULL AND s.state = 'offline'
+        WHERE s.left_at IS NULL AND s.state = 'offline' AND s.away_ring_since IS NULL
           AND went.offline_since <= now() - $1::double precision * interval '1 millisecond'
+          AND s.updated_at <= now() - $1::double precision * interval '1 millisecond'
         ORDER BY went.offline_since, s.id
         LIMIT $2`,
       [idleMs, limit],
@@ -1344,10 +1350,10 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
-   * OS9: end an idle session as {@link leave} does, but only if it is STILL `offline` and has been
-   * for at least `idleMs`: the check runs in the UPDATE under the row lock, so a rejoin or a station
-   * that came back (both move the row out of `offline`) since the sweep's read wins, and nothing
-   * is written. `left_at` is when the session went offline, not now: the agent left then, so the
+   * OS9: end an idle session as {@link leave} does, but only if it is STILL what
+   * {@link findIdleOffline} found (`offline`, for at least `idleMs`, untouched as long, not on
+   * away-ring): the check runs in the UPDATE under the row lock, so a rejoin since the sweep's read
+   * (the join upsert moves the row to `break` under the same lock) wins, and nothing is written. `left_at` is when the session went offline, not now: the agent left then, so the
    * floor reads "Not signed in today" for a session forgotten yesterday, never "Left at" the sweep's
    * minute. The state does not move (`offline` → `offline`), so no transition is logged, as for a
    * leave from `offline`; a suspended break it ends is recorded as {@link leave} records it.
@@ -1358,9 +1364,10 @@ export class AgencyAgentSessionRepository {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
       sessionTransitionSql({
         prevWhere: 'id = $1',
-        set: `left_at = ${offlineSinceSql('prev')}, updated_at = now(), away_ring_since = NULL`,
-        where: `s.left_at IS NULL AND s.state = 'offline'
-                AND ${offlineSinceSql('prev')} <= now() - $2::double precision * interval '1 millisecond'`,
+        set: `left_at = ${offlineSinceSql('prev')}, updated_at = now()`,
+        where: `s.left_at IS NULL AND s.state = 'offline' AND s.away_ring_since IS NULL
+                AND ${offlineSinceSql('prev')} <= now() - $2::double precision * interval '1 millisecond'
+                AND s.updated_at <= now() - $2::double precision * interval '1 millisecond'`,
       }),
       [id, idleMs],
     );

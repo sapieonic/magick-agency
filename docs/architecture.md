@@ -245,7 +245,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   `agency.supervise` (the public layer reads it from the membership and sends `supervise`).
   Re-bootstrapping the agent's own live session on that campaign is not refused: unassigning closes
   the staffing row and touches no live session, so an agent unassigned mid-shift keeps that session
-  (a reload, an app resume) until they leave it. Staffing narrows where a session may start; it
+  (a reload, an app resume) until they leave it, or until it has been offline for 2 h (OS9).
+  Staffing narrows where a session may start; it
   grants nothing.
 - **One station per agent: the device that holds it** (OS3–OS8, contracts
   `agency/station-device.ts`). The join, the soft-phone open and the token mint carry the client's
@@ -261,7 +262,9 @@ every account the caller belongs to (CH2) where every internal handler is single
   socket supersedes the old (4409) on attach. A join with no `device_id` (an older client) is
   allowed and clears the holder; a mint with none is refused while a device holds it (OS6). A join
   refused by the agent's session in another tenant ends that session first when nothing is there
-  (no station attached, nothing in flight: `endIdleSessionElsewhere`, OS7) and tries again.
+  (no station attached, nothing in flight: `endIdleSessionElsewhere`, OS7) and tries again. A
+  session `offline` for 2 h with nothing in it is ended by the idle-session sweep, by the same rule
+  (`agency/idle-session-sweep.ts`, OS9), dated to when it went offline.
 - **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`,
   `station-upgrade.ts`). The browser console or the agent mobile app opens a WebSocket at
   `/proxy/agency/station/:sessionId` (`station_ws_url`, a path relative to the API origin) with a

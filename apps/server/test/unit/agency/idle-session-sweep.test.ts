@@ -93,6 +93,13 @@ describe('IdleSessionSweep (OS9)', () => {
     expect(calls).toEqual(['leave:s1']);
   });
 
+  it('a step that fails after the end does not stop the rest of it, and the session counts as ended', async () => {
+    const { runtime, repo, calls } = world();
+    runtime.agents.clear = async () => { throw new Error('redis down'); };
+    expect(await new IdleSessionSweep(runtime, repo).sweep()).toBe(1);
+    expect(calls).toEqual(['leave:s1', 'help:s1', 'detach:s1', 'ended:s1', 'forget:s1']);
+  });
+
   it('one session that fails does not stop the rest, and a failed read ends the pass quietly', async () => {
     const { runtime, repo } = world({ ids: ['s1', 's2'] });
     repo.leaveIdle = vi.fn(async (id: string) => {
