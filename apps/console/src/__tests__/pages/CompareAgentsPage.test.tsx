@@ -230,6 +230,13 @@ describe('what it shows', () => {
     expect(screen.getByText(/9 agents on this campaign · as of 9:30 AM/)).toBeTruthy();
   });
 
+  it('counts the campaign’s agents with the house plural: “1 agent”, never “1 agents”', async () => {
+    const base = compareResponse();
+    mocks.queryCompare.mockResolvedValue({ ...base, cohort: { ...base.cohort, agents: 1 } });
+    renderView('?campaign=camp-1&agents=u-lak');
+    expect(await screen.findByText(/^1 agent on this campaign · as of/)).toBeTruthy();
+  });
+
   it('writes the read time as the console writes a time (AS15)', () => {
     expect(asOfTime('2026-11-21T15:05:00.000Z')).toBe('3:05 PM');
     expect(asOfTime('2026-11-21T00:07:00.000Z')).toBe('12:07 AM');
@@ -254,7 +261,7 @@ describe('what it shows', () => {
     renderView('?campaign=camp-1&agents=u-priya&when=today');
     const unclear = await screen.findByTestId('compare-not-clear');
     expect(unclear.textContent).toContain('Not clear yet (1)');
-    expect(unclear.textContent).toContain('Priya M: will pay 17% on 29 calls');
+    expect(unclear.textContent).toContain('Priya M: Will pay 17% on 29 calls');
     fireEvent.click(screen.getByTestId('compare-longer-window'));
     expect(where().get('when')).toBeNull();
     expect(where().get('campaign')).toBe('camp-1');
@@ -395,7 +402,7 @@ describe('refusals', () => {
 
   it('holds a custom window to the reports’ rule before asking', async () => {
     renderView('?campaign=camp-1&when=custom&from=2026-09-01&to=2026-11-14');
-    expect(await screen.findByText('Choose up to 31 days, or one calendar month, ending no later than today.')).toBeTruthy();
+    expect(await screen.findByText('Choose at most 30 days, or exactly one calendar month, ending no later than today.')).toBeTruthy();
     expect(mocks.getCompareOptions).not.toHaveBeenCalled();
   });
 });
@@ -419,13 +426,43 @@ describe('saved views', () => {
     await waitFor(() => expect((screen.getByTestId('compare-view-select') as HTMLSelectElement).disabled).toBe(false));
     fireEvent.change(screen.getByTestId('compare-view-select'), { target: { value: 'view-2' } });
     expect(screen.getByTestId('compare-note').textContent).toBe(
-      'Paid in full was left out: this campaign no longer has its outcomes. The per-day trend was left out for the same reason.',
+      'Paid in full was left out: this campaign doesn’t have its outcomes. The per-day trend was left out for the same reason.',
     );
     expect(where().get('view')).toBe('view-2');
     await waitFor(() => expect(lastQuery().metrics.map(compareMetricId)).toEqual([compareMetricId(WILL_PAY)]));
     // Another supervisor's shared view is read-only.
     expect(screen.getByText(/Shared by Ravi S · read-only/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('says so when none of a link’s metrics can be shown, and shows the lens’s metrics', async () => {
+    renderView('?campaign=camp-1&agents=u-lak&lens=sales&m=outcomes:higher:paid_in_full&trend=calls_handled');
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
+    expect(lastQuery().metrics.map(compareMetricId)[0]).toBe('calls_handled');
+    expect(lastQuery().trend).toBeNull();
+    expect(screen.getByTestId('compare-note').textContent).toBe(
+      'paid_in_full was left out: this campaign doesn’t have its outcomes. Calls handled can’t be counted per day, so no per-day trend is shown. Choose an outcome set or promises for it. None of the metrics in the link can be shown on this campaign, so the Sales lens’s metrics are shown instead.',
+    );
+  });
+
+  it('says so when none of the campaign default view’s metrics can be shown', async () => {
+    const gone = { kind: 'outcomes' as const, codes: ['paid_in_full'], better: 'higher' as const, label: 'Paid in full' };
+    const view = compareView({ name: 'Old default', shared: true, is_campaign_default: true, metrics: [gone], trend: null });
+    mocks.getCompareOptions.mockResolvedValue(compareOptions({ default_view: view }));
+    renderView('?campaign=camp-1&agents=u-lak');
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
+    expect(screen.getByTestId('compare-note').textContent).toBe(
+      'Paid in full was left out: this campaign doesn’t have its outcomes. None of the metrics in the campaign’s default view, “Old default”, can be shown on this campaign, so the Collections lens’s metrics are shown instead.',
+    );
+  });
+
+  it('says so when a link’s trend can’t be counted per day', async () => {
+    renderView('?campaign=camp-1&agents=u-lak&m=avg_call&trend=calls_handled');
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalled());
+    expect(lastQuery().trend).toBeNull();
+    expect(screen.getByTestId('compare-note').textContent).toBe(
+      'Calls handled can’t be counted per day, so no per-day trend is shown. Choose an outcome set or promises for it.',
+    );
   });
 
   it('saves the page as a new view, shared and as the campaign default', async () => {

@@ -12,6 +12,7 @@ import {
   buildOutcomeSet,
   canAddMetric,
   droppedNote,
+  fallbackNote,
   formatMetricValue,
   inCatalogOrder,
   metricLabel,
@@ -159,14 +160,38 @@ describe('a view applied to a campaign', () => {
     expect(applied.metrics.map(compareMetricId)).toEqual(['calls_handled', compareMetricId(WILL_PAY)]);
     expect(applied.dropped).toEqual(['Paid']);
     expect(applied.trend).toBeNull();
-    expect(applied.trendDropped).toBe(true);
-    expect(droppedNote(applied)).toBe('Paid was left out: this campaign no longer has its outcomes. The per-day trend was left out for the same reason.');
+    expect(applied.trendDropped).toEqual({ label: 'Paid', reason: 'catalog' });
+    expect(droppedNote(applied)).toBe('Paid was left out: this campaign doesn’t have its outcomes. The per-day trend was left out for the same reason.');
+  });
+
+  it('gives a trend left out on its own its own reason', () => {
+    const gone = { kind: 'outcomes' as const, codes: ['paid_in_full'], better: 'higher' as const, label: 'Paid' };
+    const alone = applyToCatalog([builtin('avg_call')], gone, CODES);
+    expect(alone.metrics.map(compareMetricId)).toEqual(['avg_call']);
+    expect(droppedNote(alone)).toBe('The per-day trend, Paid, was left out: this campaign doesn’t have its outcomes.');
+    // A trend that is not a count per day is not an outcome problem.
+    const notCountable = applyToCatalog([builtin('avg_call')], builtin('calls_handled'), CODES);
+    expect(notCountable.trend).toBeNull();
+    expect(notCountable.trendDropped).toEqual({ label: 'Calls handled', reason: 'not_countable' });
+    expect(droppedNote(notCountable)).toBe(
+      'Calls handled can’t be counted per day, so no per-day trend is shown. Choose an outcome set or promises for it.',
+    );
+    expect(droppedNote(notCountable)).not.toMatch(/outcomes\./);
+  });
+
+  it('says what is shown instead when none of the metrics can be shown', () => {
+    const gone = { kind: 'outcomes' as const, codes: ['paid_in_full'], better: 'higher' as const, label: 'Paid' };
+    const applied = applyToCatalog([gone], gone, CODES);
+    expect(applied.metrics).toEqual([]);
+    expect(fallbackNote(applied, 'the link', 'sales')).toBe(
+      'Paid was left out: this campaign doesn’t have its outcomes. The per-day trend was left out for the same reason. None of the metrics in the link can be shown on this campaign, so the Sales lens’s metrics are shown instead.',
+    );
   });
 
   it('drops promise metrics on a campaign that does not record promises', () => {
     const applied = applyToCatalog([builtin('promises_rate'), builtin('promised_amount'), builtin('calls_handled')], builtin('promises_rate'), SALES_CODES);
     expect(applied.metrics.map(compareMetricId)).toEqual(['calls_handled']);
-    expect(droppedNote(applied)).toBe('Promises, Amount promised were left out: this campaign no longer has their outcomes. The per-day trend was left out for the same reason.');
+    expect(droppedNote(applied)).toBe('Promises, Amount promised were left out: this campaign doesn’t have their outcomes. The per-day trend was left out for the same reason.');
   });
 
   it('says nothing when everything was kept, and puts a link’s sorted codes back in catalog order', () => {

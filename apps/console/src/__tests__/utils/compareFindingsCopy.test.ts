@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  COMPARE_BUILTIN_METRICS,
+  COMPARE_BUILTIN_METRIC_KEYS,
   COMPARE_FINDING_CODES,
   COMPARE_NEXT_STEPS,
   type AgencyCompareFinding,
@@ -16,8 +18,10 @@ import {
   findingCopy,
   firstName,
   neutralNote,
+  notClearFoot,
   notClearLine,
   possessive,
+  rangeBeside,
   type FindingContext,
 } from '../../utils/agency/compare/compareFindingsCopy';
 import { CODES, REFUSED_LOWER, WILL_PAY, compareResponse, finding, metricInfo } from '../helpers/compare';
@@ -126,12 +130,53 @@ describe('a sentence for every code and unit', () => {
 
   it('too_few_calls: the agent’s denominator and the floor, in the metric’s own words', () => {
     const { response, f } = on(builtin('success_rate'), { code: 'too_few_calls', agent_user_id: 'u-priya', value: 12, baseline: 20, interval: null, count: 12 });
-    expect(sentence(response, f)).toBe('Priya M has 12 calls here, too few to compare success rate fairly. The counts are still shown.');
+    expect(sentence(response, f)).toBe('Priya M has 12 calls here, too few to compare success rate fairly.');
     expect(findingCopy(f, ctx(response)).why).toBe(
       'A rate is compared only from 20 calls, the roster’s own floor, so a few lucky or unlucky calls never name anyone.',
     );
     const kept = on(builtin('callbacks_kept_rate'), { code: 'too_few_calls', value: 3, baseline: 8, count: 3, interval: null });
-    expect(sentence(kept.response, kept.f)).toMatch(/has 3 call-backs due here/);
+    expect(sentence(kept.response, kept.f)).toBe('Priya M has 3 call-backs due here, too few to compare call-backs kept on time fairly.');
+    expect(findingCopy(kept.f, ctx(kept.response)).why).toBe(
+      'Call-backs kept on time are compared only from 8 call-backs due. Agents book only a handful a week, so this floor is lower than the roster’s 20, and a few lucky or unlucky ones still never name anyone.',
+    );
+    const time = on(builtin('choose_time'), { code: 'too_few_calls', value: 9, baseline: 20, count: 9, interval: null });
+    expect(sentence(time.response, time.f)).toBe('Priya M has 9 wrap-ups here, too few to compare time to choose outcome fairly.');
+    expect(findingCopy(time.f, ctx(time.response)).why).toBe(
+      'A time to choose an outcome is compared only from 20 wrap-ups, so a few slow or quick ones never name anyone.',
+    );
+  });
+
+  it('too_few_calls: every flaggable metric with a floor gets its own true reason, and never claims hidden counts are shown', () => {
+    const refs: AgencyCompareMetricRef[] = [
+      ...COMPARE_BUILTIN_METRIC_KEYS.filter((k) => COMPARE_BUILTIN_METRICS[k].better !== 'neutral' && COMPARE_BUILTIN_METRICS[k].min_denominator !== null).map(builtin),
+      WILL_PAY,
+      REFUSED_LOWER,
+    ];
+    expect(refs.map((r) => (r.kind === 'builtin' ? r.key : 'set'))).toEqual(
+      expect.arrayContaining(['success_rate', 'promises_rate', 'callbacks_kept_rate', 'choose_time', 'no_outcome_rate', 'set']),
+    );
+    for (const ref of refs) {
+      const info = metricInfo(ref);
+      const floor = info.definition.min_denominator!;
+      const { response, f } = on(ref, { code: 'too_few_calls', value: 3, baseline: floor, count: 3, interval: null });
+      const c = findingCopy(f, ctx(response));
+      const name = ref.kind === 'builtin' ? ref.key : info.id;
+      expect(c.rest, name).not.toMatch(/counts are still shown/);
+      expect(c.why, name).toContain(`only from ${floor} `);
+      // "The roster's own floor" only where the floor is the roster's, and on a rate.
+      const roster = info.definition.unit === 'rate' && floor === 20;
+      expect(/roster’s own floor/.test(c.why), name).toBe(roster);
+      // A time is never called a rate.
+      if (info.definition.unit === 'seconds') expect(c.why, name).not.toMatch(/\brate\b/);
+    }
+  });
+
+  it('keeps an outcome set’s label as the supervisor wrote it inside a sentence', () => {
+    const ptp = { kind: 'outcomes' as const, codes: ['will_pay'], better: 'higher' as const, label: 'PTP' };
+    const thin = on(ptp, { code: 'too_few_calls', value: 3, baseline: 20, count: 3, interval: null });
+    expect(sentence(thin.response, thin.f)).toBe('Priya M has 3 calls here, too few to compare PTP fairly.');
+    const f = finding({ code: 'clear_gap', metric: metricInfo(ptp).id });
+    expect(notClearLine(f, { response: thin.response })).toMatch(/^Priya M: PTP 17%/);
   });
 
   it('never states a cause or a verdict, and spells the British way', () => {
@@ -151,6 +196,25 @@ describe('a sentence for every code and unit', () => {
     const all = texts.join(' ');
     expect(all).not.toMatch(/underperform|lazy|tired|poor|bad|fail|appraisal|warning/i);
     expect(all).not.toMatch(/\b(color|behavior|organization|canceled|dialed)\b/i);
+  });
+});
+
+describe('a likely range beside the rest of the team', () => {
+  it('never reads the same as the baseline it is said to sit wholly below or above', () => {
+    // 27.96% is below 28.04%, but both round to 28%.
+    const below = on(builtin('success_rate'), { code: 'clear_gap', value: 0.19, baseline: 0.2804, interval: [0.1449, 0.2796], count: 196 });
+    expect(findingCopy(below.f, ctx(below.response)).why).toBe(
+      '5 of 196. Its likely range, 14% to 27%, sits wholly below the rest of the team’s 28%, so chance does not explain it.',
+    );
+    expect(rangeBeside([0.1449, 0.2796], 0.2804, 'below')).toEqual({ range: '14% to 27%', base: '28%' });
+    // Still the same after rounding towards the agent: one decimal.
+    expect(rangeBeside([0.1, 0.273], 0.274, 'below')).toEqual({ range: '10.0% to 27.3%', base: '27.4%' });
+    // Above: the low end is rounded up, away from the baseline.
+    expect(rangeBeside([0.3204, 0.45], 0.3196, 'above')).toEqual({ range: '33% to 45%', base: '32%' });
+    expect(rangeBeside([0.327, 0.45], 0.326, 'above')).toEqual({ range: '32.7% to 45.0%', base: '32.6%' });
+    // A clear gap rounds as it always has.
+    expect(rangeBeside([0.08, 0.2], 0.28, 'below')).toEqual({ range: '8% to 20%', base: '28%' });
+    expect(rangeBeside([0.1, 0.29], 0.3, 'below')).toEqual({ range: '10% to 29%', base: '30%' });
   });
 });
 
@@ -207,13 +271,21 @@ describe('Not clear yet, and the notes', () => {
   it('words a rate gap that could still be chance, with its range', () => {
     const { response } = on(WILL_PAY, { code: 'clear_gap' });
     const f = finding({ code: 'clear_gap', metric: metricInfo(WILL_PAY).id, value: 0.17, baseline: 0.28, interval: [0.08, 0.35], count: 29 });
-    expect(notClearLine(f, { response })).toBe('Priya M: will pay 17% on 29 calls (rest of the team 28%; likely range 8% to 35%). Could still be chance.');
+    expect(notClearLine(f, { response })).toBe('Priya M: Will pay 17% on 29 calls (rest of the team 28%; likely range 8% to 35%). Could still be chance.');
+    expect(notClearFoot({ ...response, not_clear: [f] })).toBe(
+      'More calls narrow the likely range, so a longer window can show whether these gaps are real.',
+    );
   });
 
-  it('words a time gap with the median', () => {
+  it('words a time gap by its ratio to the median, not as a range or chance', () => {
     const { response } = on(builtin('choose_time'), { code: 'clear_gap' });
     const f = finding({ code: 'clear_gap', metric: 'choose_time', value: 25, baseline: 19, interval: null, ratio: 1.3 });
-    expect(notClearLine(f, { response })).toBe('Priya M: time to choose outcome 25s (team median 19s). Could still be chance.');
+    const line = notClearLine(f, { response });
+    expect(line).toBe('Priya M: takes 25s to choose an outcome, 1.3 times the team median (19s). Named only from 1.5 times the median, so not yet.');
+    expect(line).not.toMatch(/chance|likely range/);
+    const foot = notClearFoot({ ...response, not_clear: [f] });
+    expect(foot).toBe('A longer window shows whether the time stays this slow over more wrap-ups.');
+    expect(foot).not.toMatch(/range/);
   });
 
   it('lists the metrics shown for context only', () => {

@@ -123,6 +123,12 @@ describe('refusals', () => {
     expect(Object.keys(COMPARE_ERROR_MESSAGES).sort()).toEqual([...AGENCY_COMPARE_ERROR_CODES, 'feature_disabled'].sort());
   });
 
+  it('words the window rule as the reports do: 30 days or exactly one calendar month, never 31', () => {
+    expect(COMPARE_ERROR_MESSAGES.compare_window_invalid).toBe(
+      'Those dates don’t make a valid window. Choose at most 30 days, or exactly one calendar month, ending no later than today.',
+    );
+  });
+
   it('writes British spelling and no American forms', () => {
     const all = Object.values(COMPARE_ERROR_MESSAGES).join(' ');
     expect(all).not.toMatch(/\b(organization|recognized|canceled|dialed|color)\b/i);

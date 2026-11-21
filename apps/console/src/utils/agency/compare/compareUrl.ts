@@ -9,7 +9,7 @@ import {
   type AgencyCompareMetricRef,
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
-import { reportWindowDays } from '@magick-agency/contracts/api/agency/reports';
+import { REPORT_MAX_WINDOW_DAYS, reportWindowDays } from '@magick-agency/contracts/api/agency/reports';
 import { addDaysToDay } from '../insights/range';
 import { presetWindow } from '../../reports/reportWindow';
 
@@ -227,12 +227,17 @@ export function windowDates(state: Pick<CompareUrlState, 'window' | 'from' | 'to
   }
 }
 
+/**
+ * The window rule in words: the reports' rule (RP2, `reportWindowProblem`), worded as the reports'
+ * own refusal words it (`REPORT_ERROR_MESSAGES.report_window_too_long`): at most
+ * `REPORT_MAX_WINDOW_DAYS` days, or exactly one calendar month (which can be 31 days).
+ */
+export const COMPARE_WINDOW_RULE = `Choose at most ${REPORT_MAX_WINDOW_DAYS} days, or exactly one calendar month, ending no later than today.`;
+
 /** Why the window cannot be compared, in words, or null when it can (the reports' rule, RP2). */
 export function windowError(dates: { from: string; to: string } | null, today: string): string | null {
   if (dates === null) return 'Choose a start and an end date.';
-  return compareWindowProblem(dates.from, dates.to, today) === null
-    ? null
-    : 'Choose up to 31 days, or one calendar month, ending no later than today.';
+  return compareWindowProblem(dates.from, dates.to, today) === null ? null : COMPARE_WINDOW_RULE;
 }
 
 /**

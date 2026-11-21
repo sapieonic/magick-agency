@@ -45,6 +45,7 @@ import {
   applyToCatalog,
   compareLensDefaults,
   droppedNote,
+  fallbackNote,
   infoLabel,
 } from '../../utils/agency/compare/compareMetrics';
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
@@ -211,6 +212,9 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
   const resolved = useMemo<Resolved | null>(() => {
     if (!opts) return null;
     const lensDefaults = (lens: CompareLens) => compareLensDefaults(lens, codes);
+    // What a link or the default view had to leave out when none of its metrics could be shown:
+    // the page falls back to the lens's metrics and says so, never silently.
+    let fallback: string | null = null;
     if (state.metrics !== null) {
       const lens = state.lens ?? opts.starting_lens;
       const trend = state.trend === undefined ? lensDefaults(lens).trend : state.trend;
@@ -218,6 +222,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
       if (applied.metrics.length > 0) {
         return { lens, metrics: applied.metrics, trend: applied.trend, viewId: state.viewId, note: droppedNote(applied) };
       }
+      fallback = fallbackNote(applied, 'the link', lens);
     }
     const view = opts.default_view;
     if (state.metrics === null && state.lens === null && state.viewId === null && view) {
@@ -225,11 +230,16 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
       if (applied.metrics.length > 0) {
         return { lens: view.lens, metrics: applied.metrics, trend: applied.trend, viewId: view.id, note: droppedNote(applied) };
       }
+      fallback = fallbackNote(applied, `the campaign’s default view, “${view.name}”,`, opts.starting_lens);
     }
     const lens = state.lens ?? opts.starting_lens;
     const d = lensDefaults(lens);
-    const trend = state.trend === undefined ? d.trend : state.trend;
-    return { lens, metrics: d.metrics, trend: trend && applyToCatalog([], trend, codes).trend, viewId: state.viewId, note: null };
+    const wanted = state.trend === undefined ? d.trend : state.trend;
+    const trend = wanted ? applyToCatalog([], wanted, codes) : null;
+    // A link's trend the campaign cannot draw is left out and said, as its metrics would be;
+    // once the fallback note has said it, it is not said twice.
+    const note = fallback ?? (trend ? droppedNote(trend) : null);
+    return { lens, metrics: d.metrics, trend: trend?.trend ?? null, viewId: state.viewId, note };
   }, [opts, codes, state.metrics, state.lens, state.trend, state.viewId]);
 
   const appliedView =

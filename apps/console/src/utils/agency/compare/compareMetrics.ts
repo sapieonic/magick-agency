@@ -106,6 +106,15 @@ export function infoLabel(info: AgencyCompareMetricInfo): string {
   return info.label ?? info.ref.label ?? info.ref.codes.join(', ');
 }
 
+/**
+ * A metric's name inside a sentence: a built-in's label in lower case ("time to choose outcome"),
+ * an outcome set's label as the supervisor wrote it ("PTP" stays "PTP").
+ */
+export function infoLabelInSentence(info: AgencyCompareMetricInfo): string {
+  if (info.ref.kind === 'builtin') return BUILTIN_COPY[info.ref.key].label.toLowerCase();
+  return infoLabel(info);
+}
+
 /** The metric inside a sentence: "success rate", "share of calls ending in Will pay". */
 export function infoNoun(info: AgencyCompareMetricInfo): string {
   if (info.ref.kind === 'builtin') return BUILTIN_COPY[info.ref.key].noun;
@@ -282,14 +291,17 @@ export function outcomeSetProblem(
 
 export { COMPARE_LENS_LAYOUT, compareLensDefaults };
 
+/** Why a trend was left out: the campaign cannot show it, or it cannot be counted per day. */
+export type TrendDropReason = 'catalog' | 'not_countable';
+
 /** What applying a list of refs to a campaign kept, and what it had to leave out. */
 export interface AppliedMetrics {
   metrics: AgencyCompareMetricRef[];
   trend: AgencyCompareMetricRef | null;
-  /** The names of the metrics left out because the campaign no longer has their outcomes. */
+  /** The names of the metrics left out because the campaign does not have their outcomes (or does not record promises). */
   dropped: string[];
-  /** The trend was left out for the same reason. */
-  trendDropped: boolean;
+  /** The trend that was left out, with its name and why; null when it was kept or there was none. */
+  trendDropped: { label: string; reason: TrendDropReason } | null;
 }
 
 /**
@@ -316,8 +328,11 @@ export function applyToCatalog(
     }
     if (metrics.length < COMPARE_MAX_METRICS) metrics.push(ref);
   }
-  const trendOk = trend !== null && isCountable(trend) && resolveCompareMetric(trend, codes).ok;
-  return { metrics, trend: trendOk ? inCatalogOrder(trend, codes) : null, dropped, trendDropped: trend !== null && !trendOk };
+  if (trend === null) return { metrics, trend: null, dropped, trendDropped: null };
+  const label = metricLabel(trend, codes);
+  if (!resolveCompareMetric(trend, codes).ok) return { metrics, trend: null, dropped, trendDropped: { label, reason: 'catalog' } };
+  if (!isCountable(trend)) return { metrics, trend: null, dropped, trendDropped: { label, reason: 'not_countable' } };
+  return { metrics, trend: inCatalogOrder(trend, codes), dropped, trendDropped: null };
 }
 
 /**
@@ -332,17 +347,41 @@ export function inCatalogOrder(ref: AgencyCompareMetricRef, codes: readonly Agen
   return sorted.every((c, i) => c === ref.codes[i]) ? ref : { ...ref, codes: sorted };
 }
 
-/** The sentence that says what applying a view left out, or null when it kept everything. */
+/**
+ * The sentences that say what applying a view or a link left out, each with its own reason, or
+ * null when it kept everything.
+ */
 export function droppedNote(applied: Pick<AppliedMetrics, 'dropped' | 'trendDropped'>): string | null {
   const parts: string[] = [];
   if (applied.dropped.length > 0) {
     const names = applied.dropped.join(', ');
     parts.push(
       applied.dropped.length === 1
-        ? `${names} was left out: this campaign no longer has its outcomes.`
-        : `${names} were left out: this campaign no longer has their outcomes.`,
+        ? `${names} was left out: this campaign doesn’t have its outcomes.`
+        : `${names} were left out: this campaign doesn’t have their outcomes.`,
     );
   }
-  if (applied.trendDropped) parts.push('The per-day trend was left out for the same reason.');
+  const trend = applied.trendDropped;
+  if (trend?.reason === 'catalog') {
+    parts.push(
+      applied.dropped.length > 0
+        ? 'The per-day trend was left out for the same reason.'
+        : `The per-day trend, ${trend.label}, was left out: this campaign doesn’t have its outcomes.`,
+    );
+  } else if (trend?.reason === 'not_countable') {
+    parts.push(`${trend.label} can’t be counted per day, so no per-day trend is shown. Choose an outcome set or promises for it.`);
+  }
   return parts.length > 0 ? parts.join(' ') : null;
+}
+
+/**
+ * The note when none of a link's or a view's metrics can be shown on this campaign, so the page
+ * falls back to the lens's own: what was left out, and what is shown instead. `source` names
+ * where the metrics came from: "the link", "the campaign’s default view, “Weekly”," (an
+ * appositive carries its closing comma).
+ */
+export function fallbackNote(applied: Pick<AppliedMetrics, 'dropped' | 'trendDropped'>, source: string, lens: CompareLens): string {
+  const left = droppedNote(applied);
+  const instead = `None of the metrics in ${source} can be shown on this campaign, so the ${LENS_LABELS[lens]} lens’s metrics are shown instead.`;
+  return left ? `${left} ${instead}` : instead;
 }

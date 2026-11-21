@@ -2,6 +2,7 @@ import {
   COMPARE_BREAK_OVERRUNS_MIN,
   COMPARE_MIN_RATED_COHORT,
   COMPARE_TIME_RATIO_CLEAR,
+  COMPARE_TIME_RATIO_NOT_CLEAR,
   type AgencyCompareFinding,
   type AgencyCompareMetricInfo,
   type AgencyCompareOutcomeCode,
@@ -9,10 +10,11 @@ import {
   type CompareFindingCode,
   type CompareNextStep,
 } from '@magick-agency/contracts/api/agency/compare';
-import { formatCount } from '../../format/number';
+import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../../types/agency-stats';
+import { DISPLAY_LOCALE, formatCount } from '../../format/number';
 import { addDaysToDay, zoneDayStart } from '../insights/range';
 import { CALLBACKS_CAMPAIGN_PARAM } from '../accountCallbacks';
-import { formatMetricValue, formatRate, infoLabel, infoNoun, perWords } from './compareMetrics';
+import { formatMetricValue, formatRate, infoLabel, infoLabelInSentence, infoNoun, perWords } from './compareMetrics';
 
 /**
  * "What stands out" in the console's words (`docs/compare-agents.md` §6, CP4, CP12, AS15).
@@ -164,14 +166,59 @@ function lowOnOutcome(finding: AgencyCompareFinding, response: AgencyCompareResp
   });
 }
 
+function percentAt(fraction: number, digits: number, round: (x: number) => number): string {
+  const scale = 10 ** digits;
+  // The small nudge keeps 0.29 × 100 (28.999…) from flooring to 28.
+  const nudge = round === Math.floor ? 1e-9 : round === Math.ceil ? -1e-9 : 0;
+  const n = round(fraction * 100 * scale + nudge) / scale;
+  return `${n.toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+}
+
+/**
+ * A likely range that lies wholly `side` a baseline, and the baseline, as percentages that say
+ * so: the range's end nearest the baseline is rounded away from it (towards the agent's side),
+ * and when the two would still read the same, both are shown to one decimal. So the words never
+ * read "28% to 28%" for a range said to sit wholly below 28%.
+ */
+export function rangeBeside(interval: readonly [number, number], baseline: number, side: 'below' | 'above'): { range: string; base: string } {
+  let out = { range: '', base: '' };
+  for (const digits of [0, 1, 2]) {
+    const low = percentAt(interval[0], digits, side === 'above' ? Math.ceil : Math.round);
+    const high = percentAt(interval[1], digits, side === 'below' ? Math.floor : Math.round);
+    const base = percentAt(baseline, digits, Math.round);
+    out = { range: `${low} to ${high}`, base };
+    if ((side === 'below' ? high : low) !== base) break;
+  }
+  return out;
+}
+
 function rateWhy(finding: AgencyCompareFinding, response: AgencyCompareResponse, side: 'below' | 'above'): string {
   const num = formatCount(numeratorOf(response, finding));
   const den = formatCount(finding.count ?? 0);
-  const base = finding.baseline === null ? '' : formatRate(finding.baseline);
-  const range = finding.interval ? `${formatRate(finding.interval[0])} to ${formatRate(finding.interval[1])}` : null;
   const head = `${num} of ${den}.`;
-  if (!range) return head;
+  if (!finding.interval || finding.baseline === null) return head;
+  const { range, base } = rangeBeside(finding.interval, finding.baseline, side);
   return `${head} Its likely range, ${range}, sits wholly ${side} the rest of the team’s ${base}, so chance does not explain it.`;
+}
+
+/**
+ * Why a picked agent under a metric's floor is not compared on it, in that metric's own terms:
+ * the roster's floor for a rate (CP9), Compare's own for call-backs kept (§3: agents book only a
+ * handful), and a count of wrap-ups for a time, which is not a rate.
+ */
+export function tooFewWhy(info: AgencyCompareMetricInfo | null, floor: number): string {
+  if (info === null) {
+    return `A figure is compared only from ${plainCalls(floor)}, so a few lucky or unlucky calls never name anyone.`;
+  }
+  const floorWords = perWords(info, floor);
+  if (info.definition.unit === 'seconds') {
+    return `A time to choose an outcome is compared only from ${floorWords}, so a few slow or quick ones never name anyone.`;
+  }
+  if (info.ref.kind === 'builtin' && info.ref.key === 'callbacks_kept_rate') {
+    return `Call-backs kept on time are compared only from ${floorWords}. Agents book only a handful a week, so this floor is lower than the roster’s ${formatCount(AGENCY_ROSTER_MIN_RATE_DENOMINATOR)}, and a few lucky or unlucky ones still never name anyone.`;
+  }
+  const whose = floor === AGENCY_ROSTER_MIN_RATE_DENOMINATOR ? ', the roster’s own floor,' : '';
+  return `A rate is compared only from ${floorWords}${whose} so a few lucky or unlucky calls never name anyone.`;
 }
 
 /** The words for one finding of `response.findings`. */
@@ -196,12 +243,11 @@ export function findingCopy(finding: AgencyCompareFinding, ctx: FindingContext):
 
   if (finding.code === 'too_few_calls') {
     const den = info ? perWords(info, finding.count ?? finding.value) : plainCalls(finding.count ?? finding.value);
-    const floor = finding.baseline ?? 0;
-    const floorWords = info ? perWords(info, floor) : plainCalls(floor);
+    // No claim that the counts are shown: a rate under the floor is withheld, hits included (CP9).
     return {
       ...base,
-      rest: ` has ${den} here, too few to compare ${info ? infoLabel(info).toLowerCase() : 'rates'} fairly. The counts are still shown.`,
-      why: `A rate is compared only from ${floorWords}, the roster’s own floor, so a few lucky or unlucky calls never name anyone.`,
+      rest: ` has ${den} here, too few to compare ${info ? infoLabelInSentence(info) : 'this'} fairly.`,
+      why: tooFewWhy(info, finding.baseline ?? 0),
     };
   }
 
@@ -247,14 +293,31 @@ export function notClearLine(finding: AgencyCompareFinding, ctx: Pick<FindingCon
   const name = agentName(response, finding.agent_user_id);
   const info = metricOf(response, finding.metric);
   if (!info) return `${name}: a gap that could still be chance.`;
-  const label = infoLabel(info).toLowerCase();
+  const label = infoLabelInSentence(info);
   const value = formatMetricValue(info.definition.unit, finding.value);
   if (info.definition.unit === 'seconds') {
-    return `${name}: ${label} ${value} (team median ${formatMetricValue('seconds', finding.baseline)}). Could still be chance.`;
+    // A time has no likely range: it is named by how many times the median it is (§6).
+    const ratio = finding.ratio ?? (finding.baseline ? finding.value / finding.baseline : null);
+    const times = ratio === null ? '' : `, ${ratio.toFixed(1)} times the team median`;
+    return `${name}: takes ${value} to choose an outcome${times} (${formatMetricValue('seconds', finding.baseline)}). Named only from ${COMPARE_TIME_RATIO_CLEAR} times the median, so not yet.`;
   }
   const base = finding.baseline === null ? '–' : formatRate(finding.baseline);
   const range = finding.interval ? `; likely range ${formatRate(finding.interval[0])} to ${formatRate(finding.interval[1])}` : '';
   return `${name}: ${label} ${value} on ${perWords(info, finding.count ?? 0)} (rest of the team ${base}${range}). Could still be chance.`;
+}
+
+/**
+ * The line under Not clear yet: what a longer window would settle, for the kinds of gap listed. A
+ * rate's likely range narrows with more calls; a time is judged by its ratio to the median
+ * ({@link COMPARE_TIME_RATIO_NOT_CLEAR} to {@link COMPARE_TIME_RATIO_CLEAR} times is not clear yet).
+ */
+export function notClearFoot(response: Pick<AgencyCompareResponse, 'not_clear' | 'metrics' | 'trend_metric'>): string {
+  const units = response.not_clear.map((f) => metricOf(response as AgencyCompareResponse, f.metric)?.definition.unit ?? 'rate');
+  const times = units.some((u) => u === 'seconds');
+  const rates = units.some((u) => u !== 'seconds');
+  if (times && !rates) return 'A longer window shows whether the time stays this slow over more wrap-ups.';
+  if (times) return 'More calls narrow a rate’s likely range and show whether a time stays this slow, so a longer window can show whether these gaps are real.';
+  return 'More calls narrow the likely range, so a longer window can show whether these gaps are real.';
 }
 
 /** The metrics on the page shown for context only: "Shown for context, never flagged: …", or null. */

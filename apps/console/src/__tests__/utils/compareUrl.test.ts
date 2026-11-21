@@ -156,7 +156,12 @@ describe('the window', () => {
   it('holds a custom window to the reports’ rule', () => {
     expect(windowError({ from: '2026-11-01', to: '2026-11-14' }, today)).toBeNull();
     expect(windowError({ from: '2026-10-01', to: '2026-10-31' }, today)).toBeNull();
-    expect(windowError({ from: '2026-10-01', to: '2026-11-14' }, today)).toMatch(/31 days/);
+    expect(windowError({ from: '2026-10-01', to: '2026-11-14' }, today)).toBe(
+      'Choose at most 30 days, or exactly one calendar month, ending no later than today.',
+    );
+    // 31 days that are not one calendar month are refused, so the words never offer them.
+    expect(windowError({ from: '2026-10-15', to: '2026-11-14' }, today)).not.toBeNull();
+    expect(windowError({ from: '2026-10-15', to: '2026-11-14' }, today)).not.toMatch(/31/);
     expect(windowError({ from: '2026-11-20', to: '2026-11-22' }, today)).toMatch(/no later than today/);
     expect(windowError(null, today)).toBe('Choose a start and an end date.');
   });

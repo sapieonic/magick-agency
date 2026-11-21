@@ -1,6 +1,7 @@
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
 import { errorCode } from '../utils/agencyErrors';
+import { COMPARE_WINDOW_RULE } from '../utils/agency/compare/compareUrl';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   AGENCY_COMPARE_ERROR_CODES,
@@ -131,8 +132,7 @@ export const COMPARE_ERROR_MESSAGES: Record<CompareRefusalCode, string> = {
   compare_too_many_metrics: 'You can show at most 6 metrics at a time. Remove one to add another.',
   compare_metric_invalid:
     'One of the metrics can’t be shown for this campaign. Its outcomes may have changed. Choose the metrics again.',
-  compare_window_invalid:
-    'Those dates don’t make a valid window. Choose up to 31 days, or one calendar month, ending no later than today.',
+  compare_window_invalid: `Those dates don’t make a valid window. ${COMPARE_WINDOW_RULE}`,
   compare_timezone_invalid: 'Your browser’s time zone isn’t recognised, so the days can’t be worked out.',
   compare_agent_not_in_cohort:
     'One of the agents didn’t take calls on this campaign in this window. Remove them or choose a longer window.',

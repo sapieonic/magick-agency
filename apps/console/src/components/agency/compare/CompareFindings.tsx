@@ -5,6 +5,7 @@ import {
   emptyFindingsNote,
   findingCopy,
   neutralNote,
+  notClearFoot,
   notClearLine,
   type FindingAction,
 } from '../../../utils/agency/compare/compareFindingsCopy';
@@ -87,9 +88,7 @@ export function CompareFindings({ response, codes, timezone, canListen, onLonger
               <li key={`${f.agent_user_id}-${f.metric}-${i}`}>{notClearLine(f, { response })}</li>
             ))}
           </ul>
-          <p className={styles.foot}>
-            More calls narrow the likely range, so a longer window can show whether these gaps are real.
-          </p>
+          <p className={styles.foot}>{notClearFoot(response)}</p>
           {onLonger ? (
             <button type="button" className={styles.linkButton} onClick={onLonger} data-testid="compare-longer-window">
               Check a longer window
