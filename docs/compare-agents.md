@@ -6,7 +6,7 @@ kind of campaign starts from a **lens** (a set of metrics), the supervisor can c
 page draws each metric with the chart its shape calls for. Outcome metrics are the supervisor's
 choice: any set of the campaign's outcome codes (CP17). Designed 2026-11-21 and reviewed
 independently the same day; rulings CP1–CP18 below. **The contract, the rules and the saved-views
-table are built, and so are the server's read, routes and saved views; the console tab is not** (§9).
+table are built; the read, the routes and the console tab are not** (§9).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number.
@@ -227,6 +227,13 @@ reads a number other than the way the text above words it, the reason:
   own `metrics` and `trend_metric`. The caller's scope in the key is the context account: the cohort
   is the account's roster whoever in the account asks.
 - **Without `X-Account-Id`** every route answers `400 account_scope_required`, the floor routes' rule.
+- **A slot belongs to a read that runs SQL.** A cached answer, and a request that joins an identical
+  query read already in flight, take none. **A client that goes away gives its slot back at once**
+  (its connection closes before the answer, as when the console aborts a superseded read): a query
+  read is aborted once no request waits on it, the options read at once; the statement running is
+  cancelled (`pg_cancel_backend`, the report cursor's pattern), no further statement is sent, the
+  answer is not cached, and the read is timed `result="aborted"`. Without it a supervisor clicking
+  quickly would hold slots for reads nobody reads and meet `compare_busy`.
 
 **Cost, measured.** On 930,000 attempts (two campaigns of 100 agents × 31 days × 150 dials) and
 1.4M state events, `EXPLAIN ANALYZE` of each statement, a 31-day window: the roster attempt statement
@@ -274,8 +281,8 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 | Phase | Scope | Status |
 |---|---|---|
 | 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
-| 1b (server) | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total` (§7 "As built", "Cost, measured") | **Built** (2026-11-21) |
-| 1b (console) | The console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
+| 1b | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total`; the console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
+| 1b (server) | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured") | **Built** (2026-11-21) |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
