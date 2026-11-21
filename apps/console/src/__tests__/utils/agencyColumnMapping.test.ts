@@ -125,13 +125,18 @@ describe('role arity', () => {
     state = setRole(state, 'Loan Amount (₹)', 'hero');
     expect(state.heroOrder).toEqual(['Internal Score', 'Loan Amount (₹)']);
     const display = buildContextDisplay(state);
-    // Named and keyed by the default rule; no `hero` written.
+    // Named and keyed by the default rule; no `hero` written. The guessed name column is the name
+    // role (AS19 R1): with facts the heroes are the name role and the facts.
     expect(display).toEqual({
       facts: [
         { column: 'Internal Score', label: 'Internal Score', key: 'internal_score' },
         { column: 'Loan Amount (₹)', label: 'Loan Amount (₹)', key: 'loan_amount' },
       ],
+      roles: { name: 'Full Name' },
     });
+    // No column the card would guess as the name: no role.
+    const nameless = setRole(initialMapping(analysis({ columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Score')] })), 'Score', 'hero');
+    expect(buildContextDisplay(nameless)).toEqual({ facts: [{ column: 'Score', label: 'Score', key: 'score' }] });
   });
 
   it('leaves the column the card guesses as the name off the facts: the card shows it as the name', () => {

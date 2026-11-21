@@ -152,3 +152,13 @@ describe('heuristic hero selection', () => {
     expect(heroesWereConfigured(undefined)).toBe(false);
   });
 });
+
+describe('with the card\'s chosen facts (AS19)', () => {
+  it('pins the name and all four facts: the fourth fact is not dropped (R2)', () => {
+    const resolved = resolveContextFields(CONTEXT, {
+      roles: { name: 'First Name' },
+      facts: ['Policy #', 'City', 'Amount Due', 'Branch'].map((column, i) => ({ column, label: column, key: `k${i}` })),
+    });
+    expect(resolved.hero.map((f) => f.label)).toEqual(['First Name', 'Policy #', 'City', 'Amount Due', 'Branch']);
+  });
+});

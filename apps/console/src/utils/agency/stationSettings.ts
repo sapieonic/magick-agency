@@ -31,7 +31,7 @@ import {
   type AgencyCampaign,
 } from '../../types/agency-campaign';
 import { formatCount } from '../format/number';
-import { calendarDay, phoneForDisplay, rupees } from './stationFormat';
+import { factDisplay } from './stationCustomer';
 
 /**
  * The agent station's campaign settings (agent station redesign: AS6, AS9, AS19, BE-6, BE-8), as
@@ -139,11 +139,17 @@ export function placeColumnOf(facts: FactsForm, columns: readonly string[], hidd
   return facts.place.trim() !== '' ? facts.place : guessedColumn(columns, PLACE_GUESS_COLUMNS, hidden);
 }
 
+/** The old tile roles and the type each read its column as, whatever `types` said. */
+const LEGACY_ROLE_TYPES: ReadonlyArray<readonly ['amount_due' | 'due_date', AgencyContextFieldType]> = [
+  ['amount_due', 'money'],
+  ['due_date', 'date'],
+];
+
 /**
  * The card as a stored display has it. A display with `facts` gives them back; one without opens
  * with what agents see today (`legacyFactFields` over `columns`, the guessed name and line under it
- * left out), and the old amount-due and due-date columns are read as money and a date as their roles
- * read them (on the new model a fact is read by `types` alone), unless a type is already set.
+ * left out), and the old amount-due and due-date role columns are read as money and a date as
+ * their roles read them, whatever `types` stored (on the new model a fact is read by `types` alone).
  *
  * @param columns the roster's columns, or null while they are not known (the hero list as written)
  */
@@ -168,9 +174,13 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
   const list = legacyFactFields(shown, columns, { exclude });
   let form: FactsForm = { name, place, list, types };
   if (!Array.isArray(shown.facts)) {
-    for (const fact of list) {
-      const fixed: AgencyContextFieldType | null = fact.key === 'amount_due' ? 'money' : fact.key === 'due_date' ? 'date' : null;
-      if (fixed && columnNamed(Object.keys(form.types), fact.column) === undefined) form = withColumnType(form, fact.column, fixed);
+    // AS19 R10: the old role overrode `types`, so the role's column is read as money or a date
+    // whatever `types` stored; the first save then changes nothing agents see.
+    for (const [role, fixed] of LEGACY_ROLE_TYPES) {
+      const column = roles[role];
+      if (typeof column !== 'string' || column.trim() === '') continue;
+      const fact = list.find((f) => sameColumn(f.column, column));
+      if (fact) form = withColumnType(form, fact.column, fixed);
     }
   }
   return form;
@@ -492,6 +502,23 @@ function rolesPayload(facts: FactsForm): AgencyContextRoles {
   return { ...(name !== '' ? { name } : {}), ...(place !== '' ? { place } : {}) };
 }
 
+/**
+ * The name role a save of the card writes (AS19 R1): the chosen column, else, with "Guess from the
+ * column names", the column the select names as the guess over `columns` (hidden ones never), so
+ * the name stays a hero on every surface once the card has facts. No guess is written when it is
+ * already a fact or the line under the name (the server would refuse it), or when `columns` is
+ * not given.
+ */
+function nameRoleToWrite(facts: FactsForm, columns: readonly string[] | null, hidden: readonly string[]): string {
+  const chosen = facts.name.trim();
+  if (chosen !== '' || columns === null) return chosen;
+  const guess = guessedColumn(columns, NAME_GUESS_COLUMNS, hidden);
+  if (guess === undefined) return '';
+  const place = facts.place.trim();
+  if (place !== '' && sameColumn(place, guess)) return '';
+  return facts.list.some((f) => sameColumn(f.column, guess)) ? '' : guess;
+}
+
 /** The facts a save sends: each name trimmed, `highlight` only when on. */
 function factsPayload(facts: FactsForm): AgencyFactField[] {
   return facts.list.map((f) => ({ column: f.column, label: f.label.trim(), key: f.key, ...(f.highlight ? { highlight: true } : {}) }));
@@ -502,14 +529,20 @@ function factsPayload(facts: FactsForm): AgencyFactField[] {
  * where the roster is imported, and a PATCH replaces the whole object) with this card: the name
  * and line-under-name roles (the old amount-due and due-date roles dropped), the types, and the
  * facts, always written (AS19: the campaign is on the new model from its first save of the card).
- * An empty roles or types map is left out.
+ * An empty roles or types map is left out. With `columns` (the columns the card's selects offer), a
+ * name left on "Guess from the column names" is written as the column guessed (AS19 R1).
  */
-export function contextDisplayPayload(stored: AgencyContextDisplay | null | undefined, facts: FactsForm): AgencyContextDisplay {
+export function contextDisplayPayload(
+  stored: AgencyContextDisplay | null | undefined,
+  facts: FactsForm,
+  columns: readonly string[] | null = null,
+): AgencyContextDisplay {
   const { roles: _roles, types: _types, facts: _facts, ...rest } = isRecord(stored) ? stored : {};
   void _roles;
   void _types;
   void _facts;
-  const roles = rolesPayload(facts);
+  const name = nameRoleToWrite(facts, columns, hiddenColumns(stored));
+  const roles = rolesPayload({ ...facts, name });
   return {
     ...rest,
     ...(Object.keys(roles).length > 0 ? { roles } : {}),
@@ -601,29 +634,17 @@ export function sampleRaw(row: SampleRow | undefined, column: string | undefined
   return text.trim();
 }
 
-const INDIAN_NUMBER = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 20 });
-
 /**
- * A raw value as the card writes it, read as `type` by the server's one parse rule: `₹1,25,000`,
- * `20 Nov`, `1,25,000`, a phone number by the campaign's number display, `Yes` / `No`; the raw
- * text when the rule cannot read it, `''` when blank. For the editor's samples and its preview;
- * the station draws the card itself.
+ * A raw value as the station's card writes it (AS19 R12): read as `type` by the server's one parse
+ * rule, as the server does at dial time, then drawn by the station's own formatter
+ * (`factDisplay`, `stationCustomer.ts`), so Settings and the station cannot disagree (money,
+ * number, date, phone under the campaign's number display, yes / no; the raw text when the rule
+ * cannot read it). `''` when blank. For the editor's samples and its preview.
  */
 export function sampleText(raw: string, type: AgencyContextFieldType, phoneDisplay: AgencyPhoneDisplay = 'full'): string {
-  if (raw.trim() === '') return '';
-  const value = parseContextFact(raw, type);
-  if (value === null) return raw;
-  switch (type) {
-    case 'money': return rupees(value) ?? raw;
-    case 'date': return calendarDay(value);
-    case 'number': {
-      const [whole, frac] = value.split('.');
-      return `${INDIAN_NUMBER.format(whole as unknown as number)}${frac ? `.${frac}` : ''}`;
-    }
-    case 'phone': return phoneForDisplay(value, phoneDisplay);
-    case 'yes_no': return value === 'yes' ? 'Yes' : 'No';
-    default: return raw;
-  }
+  const text = raw.trim();
+  if (text === '') return '';
+  return factDisplay({ column: '', type, raw: text, value: parseContextFact(text, type) }, { phoneDisplay }).text;
 }
 
 /** The first non-blank raw value of `column` among `rows`, or `''`. */
@@ -710,12 +731,14 @@ export function stationPlan(
  * What a save sends for these settings: only those that changed since the form was loaded or
  * saved, so an untouched one is never sent back over someone else's newer edit, and the card with
  * a script that needs it ({@link stationPlan}). `storedDisplay` is the campaign's `context_display`
- * as last read, which the card is merged into.
+ * as last read, which the card is merged into; `columns`, the columns the card's selects offer,
+ * name the guessed name column the card writes ({@link contextDisplayPayload}).
  */
 export function stationPayload(
   saved: StationSettingsForm,
   now: StationSettingsForm,
   storedDisplay: AgencyContextDisplay | null | undefined,
+  columns: readonly string[] | null = null,
 ): Partial<AgencyCampaign> {
   const plan = stationPlan(saved, now, storedDisplay);
   const changed = new Set(plan.changes);
@@ -723,7 +746,7 @@ export function stationPayload(
     ...(changed.has('dailyTarget') ? { daily_target_calls: dailyTargetPayload(now.dailyTarget) } : {}),
     ...(changed.has('phoneDisplay') ? { phone_display: now.phoneDisplay } : {}),
     ...(plan.scriptSent ? { agent_script: scriptPayload(now.script) } : {}),
-    ...(plan.displaySent ? { context_display: contextDisplayPayload(storedDisplay, now.facts) } : {}),
+    ...(plan.displaySent ? { context_display: contextDisplayPayload(storedDisplay, now.facts, columns) } : {}),
   };
 }
 

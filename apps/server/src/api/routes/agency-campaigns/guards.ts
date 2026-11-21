@@ -268,7 +268,8 @@ export async function analysisProfileRejected(
  * the campaign's customer list does not have, listing the columns it does. The columns are the
  * imports' (the campaign's own, and its lineage root's for a retry); with none yet, nothing is
  * checked against a roster (the shape rules ran in `configRejected`). Read only when the body sets
- * roles, types or facts.
+ * roles, types or facts. Run on a PATCH's body and on a retry's `config_overrides` (with the
+ * parent as `campaign`: the child's contacts are the parent's).
  * Returns false only when it has already replied.
  */
 export async function contextColumnsRejected(

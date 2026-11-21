@@ -27,7 +27,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, ownedCampaign } from './guards.js';
+import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, contextColumnsRejected, ownedCampaign } from './guards.js';
 import { ACTOR_NAME_MAX, ACTOR_USER_ID_MAX } from './lifecycle.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 
@@ -338,6 +338,9 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
     // for the same reason `PATCH` guards: a request that does not mention the
     // profile must not 403 over it.
     if (configRejected(reply, overrides, parent)) return reply;
+    // BE-6, AS19: an override's roles, types and facts against the customer list, as a PATCH's
+    // are. The child's contacts are the parent's, so the parent's lineage names the columns.
+    if (await contextColumnsRejected(reply, overrides, parent)) return reply;
     if ('abandon_announcement_id' in overrides
       && await abandonAnnouncementRejected(request, reply, overrides['abandon_announcement_id'])) return reply;
     if ('analysis_profile_id' in overrides

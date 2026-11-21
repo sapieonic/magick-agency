@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { getIngestJob } from '../api/agencyCampaigns';
 import { getInsightsUploads } from '../api/agencyInsights';
@@ -75,6 +75,10 @@ export const CAMPAIGN_SAMPLE_ROWS_MAX = 3;
  * roster list, then each one's detail (the list carries no columns). Read once, by an editor, as
  * {@link useCampaignColumns}. A failure is no samples (the picker then shows none, and the preview
  * says each value is not given), never an error on the page.
+ *
+ * Cancelled when the page goes (AS19 R12), or the campaign or the scope changes: the API client
+ * takes no signal, so an abort controller stands as the read's ignore flag. Once it is aborted no
+ * contact's detail is read and nothing is written.
  */
 export function useCampaignSampleRows(
   campaignId: string | undefined,
@@ -82,22 +86,30 @@ export function useCampaignSampleRows(
   accountId: string | null | undefined,
   enabled: boolean,
 ): Array<Record<string, unknown>> {
-  const fetcher = useCallback(async (): Promise<Array<Record<string, unknown>>> => {
-    if (!campaignId || !tenantId || !accountId) return [];
-    try {
-      const page = await getCampaignContacts(campaignId, {}, { limit: CAMPAIGN_SAMPLE_ROWS_MAX }, tenantId, accountId);
-      const rows = await Promise.all(
-        page.rows.slice(0, CAMPAIGN_SAMPLE_ROWS_MAX).map((row) =>
-          getCampaignContact(campaignId, row.id, tenantId, accountId).catch(() => null)),
-      );
-      return rows.flatMap((detail) => (detail && detail.context && typeof detail.context === 'object' ? [detail.context] : []));
-    } catch {
-      return [];
+  const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
+  const on = enabled && Boolean(campaignId && tenantId && accountId);
+  useEffect(() => {
+    if (!on || !campaignId || !tenantId || !accountId) {
+      setRows((prev) => (prev.length === 0 ? prev : []));
+      return undefined;
     }
-  }, [campaignId, tenantId, accountId]);
-  const { data } = useAsyncResource(fetcher, {
-    initialData: [] as Array<Record<string, unknown>>,
-    enabled: enabled && Boolean(campaignId && tenantId && accountId),
-  });
-  return data;
+    const read = new AbortController();
+    const { signal } = read;
+    void (async () => {
+      try {
+        const page = await getCampaignContacts(campaignId, {}, { limit: CAMPAIGN_SAMPLE_ROWS_MAX }, tenantId, accountId);
+        if (signal.aborted) return;
+        const details = await Promise.all(
+          page.rows.slice(0, CAMPAIGN_SAMPLE_ROWS_MAX).map((row) =>
+            getCampaignContact(campaignId, row.id, tenantId, accountId).catch(() => null)),
+        );
+        if (signal.aborted) return;
+        setRows(details.flatMap((detail) => (detail && detail.context && typeof detail.context === 'object' ? [detail.context] : [])));
+      } catch {
+        if (!signal.aborted) setRows([]);
+      }
+    })();
+    return () => read.abort();
+  }, [on, campaignId, tenantId, accountId]);
+  return rows;
 }

@@ -14,7 +14,8 @@ import type { FastifyInstance } from 'fastify';
  *  - BE-6 `context_display.roles` / `.types`: stored and served; with no import yet only the shape
  *    is checked; once the campaign has an import, a role or type naming a column its customer list
  *    does not have is a 400 listing the columns, matched ignoring case; a hidden column is never a
- *    role; a retry campaign is checked against its lineage root's import.
+ *    role; a retry campaign is checked against its lineage root's import, and a retry's
+ *    `config_overrides.context_display` against its parent's (AS19 R4).
  *  - AS19 `context_display.facts`: stored and served, held to its rules and to the roster; the
  *    script's keys are the campaign's facts', judged against the resulting display both ways (a
  *    script key that is not a fact; a fact the stored script uses taken away) and as a pair when
@@ -41,7 +42,7 @@ import {
   insertTenant,
   insertUser,
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
-import { insertAgencyCampaign } from '../agency/agency-factories.js';
+import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
 import { buildApp } from '../../../src/app.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 
@@ -210,6 +211,33 @@ describe('PATCH /proxy/agency/campaigns/:id — context_display.roles and .types
     const refused = await patch(retry, { context_display: { roles: { due_date: 'Next Due' } } });
     expect(refused.statusCode, refused.body).toBe(400);
     expect(Object.keys(refused.json().details)).toEqual(['context_display.roles.due_date']);
+  });
+
+  it('a retry\'s config_overrides are checked against the parent\'s customer list, as a PATCH is (AS19 R4)', async () => {
+    const parent = await campaignAt('completed');
+    await importOf(parent, COLUMNS);
+    await insertAgencyContact(parent, {
+      tenant_id: w.tenant, account_id: w.account, phone_e164: '+919000000011',
+      state: 'completed', last_outcome: 'no_answer', attempt_count: 1,
+    });
+    const retry = (overrides: Record<string, unknown>) => app.inject({
+      method: 'POST', url: `/proxy/agency/campaigns/${parent}/retry`, headers: headers(),
+      payload: { selector: { last_outcome: ['no_answer'] }, config_overrides: overrides },
+    });
+    const campaigns = async () => (await getTestPool().query(
+      'SELECT count(*)::int AS n FROM agency_campaigns WHERE tenant_id = $1', [w.tenant])).rows[0].n as number;
+
+    const refused = await retry({ context_display: { facts: [{ column: 'Region', label: 'Region', key: 'region' }] } });
+    expect(refused.statusCode, refused.body).toBe(400);
+    expect(refused.json().details).toEqual({
+      'context_display.facts.0.column': `There is no column 'Region' in this campaign's customer list, so it cannot be a fact. The columns are: ${COLUMNS.join(', ')}.`,
+    });
+    expect(await campaigns()).toBe(1);
+
+    const facts = [{ column: 'loan no', label: 'Loan', key: 'loan_no' }];
+    const ok = await retry({ context_display: { facts } });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect((await stored((ok.json() as { campaign: { id: string } }).campaign.id)).context_display).toEqual({ facts });
   });
 
   it('refuses a hidden column as a role and a type that is not one of the six (the public layer\'s shape rule)', async () => {

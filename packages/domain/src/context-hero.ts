@@ -1,6 +1,6 @@
 /**
  * Which of a roster row's columns are its "hero" fields: the few that say who the row is (Name,
- * Loan No., …). A LEAF: no I/O, no imports. The ONE copy of the rule: the console's contact panel
+ * Loan No., …). A LEAF: no I/O; it imports only the contract. The ONE copy of the rule: the console's contact panel
  * (`apps/console/src/utils/agencyContext.ts`, `resolveContextFields`), customer history
  * (`apps/server/src/agency/customer-history/assemble.ts`) and the agent's own-contacts list
  * (`heroColumns`, `apps/server/src/db/repositories/agency/assignment-reads.repository.ts`) all
@@ -8,9 +8,14 @@
  *
  * Over the contract's `AgencyContextDisplay`:
  *  1. the campaign's configured heroes, in order, matched case-insensitively, at most
- *     {@link MAX_HERO_FIELDS} ({@link configuredHeroNames} is this stage without a row): when
- *     `facts` is an array (AS19, the card's chosen facts), the `name` role's column then each
- *     fact's column, so every surface matches the card; otherwise the `hero` columns;
+ *     {@link heroCapFor} ({@link configuredHeroNames} is this stage without a row): when `facts`
+ *     is an array (AS19, the card's chosen facts), the customer's name then each fact's column,
+ *     so every surface matches the card, at most the name and `AGENCY_FACT_FIELDS_MAX` facts;
+ *     otherwise the `hero` columns, at most {@link MAX_HERO_FIELDS}. The customer's name is the
+ *     `name` role's column; with no `name` role, the name heuristic's pick (the first bucket
+ *     below) that is not a fact's column: with a row, its first visible column with a value that
+ *     the heuristic matches; without one, the first `hero` entry it matches. So a campaign moved to
+ *     facts while its name was guessed keeps the name a hero (AS19 R1);
  *  2. none configured (or none present on this row): one column per heuristic bucket (a name, an
  *     amount, an identifier, a place), in bucket order, skipping empty values;
  *  3. still none: the first {@link MAX_HERO_FIELDS} columns with a value, in the file's order
@@ -22,14 +27,19 @@
  * its keys sorted by length, then bytes.
  */
 
+import { AGENCY_FACT_FIELDS_MAX } from '@magick-agency/contracts/agency';
+
 /** Hero fields are capped (the contract: "keep it to ~4; the console may cap it"). */
 export const MAX_HERO_FIELDS = 4;
 
 /** A value that is present but carries no information. */
 const PLACEHOLDER_VALUES = new Set(['-', '--', 'n/a', 'na', 'null', 'none', '']);
 
+/** The heuristic's first bucket: a column that holds the customer's name. */
+const NAME_HEURISTIC = /^(full[\s_-]?)?name$|customer|contact|first.?name|client/i;
+
 const HERO_HEURISTICS: readonly RegExp[] = [
-  /^(full[\s_-]?)?name$|customer|contact|first.?name|client/i,
+  NAME_HEURISTIC,
   /amount|balance|due|outstanding|premium|emi|total/i,
   /policy|account|loan|invoice|order|ticket|ref/i,
   /city|branch|region|zone|state/i,
@@ -70,34 +80,71 @@ const fold = (name: string): string => name.trim().toLowerCase();
 
 const isNonBlankString = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0;
 
-/**
- * The configured hero names as written, before `hidden`: with `facts` an array (AS19), the `name`
- * role's column then each fact's `column` (an entry that is not an object with a column is
- * skipped); otherwise `hero`.
- */
-function heroNamesAsConfigured(display: HeroDisplay | null | undefined): string[] {
-  const facts = display?.facts;
-  if (!Array.isArray(facts)) return names(display?.hero);
+/** The `name` role's column, when `roles.name` is a column name. */
+function nameRole(display: HeroDisplay | null | undefined): string | undefined {
   const roles = display?.roles;
   const name = roles !== null && typeof roles === 'object' ? (roles as { name?: unknown }).name : undefined;
-  const columns = facts.map((f: unknown) => (f !== null && typeof f === 'object' ? (f as { column?: unknown }).column : undefined));
-  return [name, ...columns].filter(isNonBlankString);
+  return isNonBlankString(name) ? name : undefined;
+}
+
+/** Each fact's `column` as written (an entry that is not an object with a column is skipped). */
+function factColumns(facts: readonly unknown[]): string[] {
+  return facts
+    .map((f: unknown) => (f !== null && typeof f === 'object' ? (f as { column?: unknown }).column : undefined))
+    .filter(isNonBlankString);
 }
 
 /**
- * The campaign's configured hero names, without a row: with `facts` an array (AS19), the `name`
- * role's column then each fact's column; otherwise `hero` in array order. Each name as written,
+ * The most heroes a surface shows by default: with `facts` an array (AS19), the customer's name and
+ * `AGENCY_FACT_FIELDS_MAX` facts, so no surface drops the last fact; otherwise
+ * {@link MAX_HERO_FIELDS}.
+ */
+export function heroCapFor(display: HeroDisplay | null | undefined): number {
+  return Array.isArray(display?.facts) ? 1 + AGENCY_FACT_FIELDS_MAX : MAX_HERO_FIELDS;
+}
+
+/**
+ * The configured hero names as written, before `hidden`: with `facts` an array (AS19), the
+ * customer's name then each fact's `column`; otherwise `hero`. The name is the `name` role's
+ * column, else `nameGuess` (the caller's pick by the name heuristic; none when undefined).
+ */
+function heroNamesAsConfigured(display: HeroDisplay | null | undefined, nameGuess?: string): string[] {
+  const facts = display?.facts;
+  if (!Array.isArray(facts)) return names(display?.hero);
+  return [nameRole(display) ?? nameGuess, ...factColumns(facts)].filter(isNonBlankString);
+}
+
+/**
+ * With `facts` an array and no `name` role, the first `hero` entry the name heuristic matches that
+ * is neither hidden nor a fact's column: the name a campaign showed before it moved to facts.
+ */
+function nameFromHero(display: HeroDisplay | null | undefined, hidden: ReadonlySet<string>): string | undefined {
+  const facts = display?.facts;
+  if (!Array.isArray(facts) || nameRole(display) !== undefined) return undefined;
+  const taken = new Set(factColumns(facts).map(fold));
+  return names(display?.hero).find((h) => NAME_HEURISTIC.test(h) && !hidden.has(fold(h)) && !taken.has(fold(h)));
+}
+
+/** Each name once, minus `hidden`. */
+function withoutHidden(list: readonly string[], hidden: ReadonlySet<string>): string[] {
+  return [...new Set(list.filter((name) => !hidden.has(fold(name))))];
+}
+
+/**
+ * The campaign's configured hero names, without a row: with `facts` an array (AS19), the
+ * customer's name (the `name` role's column, else the first `hero` entry the name heuristic
+ * matches, if any) then each fact's column; otherwise `hero` in array order. Each name as written,
  * blank and repeated names dropped, minus `hidden` (case-insensitive). Not capped: a caller that
  * matches them against rows caps what matched ({@link heroColumnsFor}).
  */
 export function configuredHeroNames(display: HeroDisplay | null | undefined): string[] {
   const hidden = new Set(names(display?.hidden).map(fold));
-  return [...new Set(heroNamesAsConfigured(display).filter((name) => !hidden.has(fold(name))))];
+  return withoutHidden(heroNamesAsConfigured(display, nameFromHero(display, hidden)), hidden);
 }
 
 /** How a surface applies the rule. */
 export interface HeroColumnOptions {
-  /** At most this many heroes (default {@link MAX_HERO_FIELDS}). */
+  /** At most this many heroes (default: {@link heroCapFor} the display). */
   max?: number;
   /**
    * Stage 3: with nothing configured or guessed, the first columns with a value (default true).
@@ -121,15 +168,23 @@ export function heroColumnsFor(
   columnOrder: readonly string[] | null = null,
   options: HeroColumnOptions = {},
 ): string[] {
-  const max = options.max ?? MAX_HERO_FIELDS;
+  const max = options.max ?? heroCapFor(display);
   const keys = Object.keys(context);
   const present = new Set(keys);
   const ordered = [...new Set([...(columnOrder ?? []).filter((k) => present.has(k)), ...keys])];
   const hidden = new Set(names(display?.hidden).map(fold));
   const visible = ordered.filter((k) => !hidden.has(fold(k)));
 
+  // AS19 R1: with facts and no `name` role, the row's own name column (visible, with a value, not
+  // a fact's column), so the name stays first wherever the card's facts are the heroes.
+  const facts = display?.facts;
+  let nameGuess: string | undefined;
+  if (Array.isArray(facts) && nameRole(display) === undefined) {
+    const taken = new Set(factColumns(facts).map(fold));
+    nameGuess = visible.find((k) => NAME_HEURISTIC.test(k) && !isBlankContextValue(context[k]) && !taken.has(fold(k)));
+  }
   const configured: string[] = [];
-  for (const name of configuredHeroNames(display)) {
+  for (const name of withoutHidden(heroNamesAsConfigured(display, nameGuess), hidden)) {
     const match = visible.find((k) => fold(k) === fold(name));
     if (match !== undefined && !configured.includes(match)) configured.push(match);
   }

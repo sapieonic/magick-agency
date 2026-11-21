@@ -78,6 +78,7 @@ export function ScriptEditor({
   offered,
   allowed,
   columns = [],
+  uploaded,
   hidden = [],
   samples = [],
   phoneDisplay = 'full',
@@ -98,6 +99,8 @@ export function ScriptEditor({
   allowed: readonly string[];
   /** The customer list's columns (for "Add … as a fact"). */
   columns?: readonly string[];
+  /** The latest upload's columns: "Add … as a fact" offers only these (absent: every column). */
+  uploaded?: readonly string[];
   hidden?: readonly string[];
   samples?: readonly SampleRow[];
   phoneDisplay?: AgencyPhoneDisplay;
@@ -260,6 +263,7 @@ export function ScriptEditor({
     const word = token.slice(1, -1).trim();
     const used = [nameColumn, placeColumn, ...facts.list.map((f) => f.column)].filter((c): c is string => Boolean(c));
     return shown.find((c) => !used.some((u) => sameColumn(u, c))
+      && (uploaded === undefined || uploaded.some((u) => sameColumn(u, c)))
       && (sameColumn(c, word) || factKeyFromColumn(c) === word.toLowerCase()));
   };
   const cardFull = facts.list.length >= AGENCY_FACT_FIELDS_MAX;
@@ -346,9 +350,11 @@ export function ScriptEditor({
           onKeyDown={(event) => onKeyDown(event, t)}
           aria-invalid={errors.message(field) || unknownPlaceholdersIn(text, allowed).length > 0 ? true : undefined}
           aria-describedby={errors.describedBy(field)}
+          // A combobox over its `{` list (AS19 R12): the list it controls, and whether it is open.
+          role="combobox"
           aria-autocomplete="list"
-          aria-controls={open ? listId : undefined}
-          aria-expanded={open ? true : undefined}
+          aria-controls={listId}
+          aria-expanded={open !== null}
           aria-activedescendant={activeId}
           data-testid={t === 'opening' ? 'script-opening' : `script-step-${t}`}
         />
@@ -376,7 +382,7 @@ export function ScriptEditor({
                 ))}
               </ul>
             ) : (
-              <p className={styles.hint} id={listId}>{`No key starts with “${open.query}”.`}</p>
+              <p className={styles.hint} id={listId}>{`No key matches “${open.query}”.`}</p>
             )}
           </div>
         ) : null}
