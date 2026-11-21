@@ -23,16 +23,33 @@
  *
  * With no `roles` or `types` set every tile is text, so a campaign set up before BE-6 reads as
  * before.
+ *
+ * ── The card's chosen facts (AS19, `context_display.facts`) ──────────────────
+ * When `facts` is an array (even `[]`) the tiles are exactly its entries, in order: each fact whose
+ * column the row has (exact spelling, then ignoring case) and is not hidden, at most
+ * `AGENCY_FACT_FIELDS_MAX`, each with the fact's `label` and `key`. `hero` and the `amount_due` /
+ * `due_date` roles are not read for tiles on this path; the tile keyed `amount_due` (or
+ * `due_date`) carries that `role`, so the amount chips keep working. A tile's type is
+ * `types[column]`, else text (no role override). A fact whose value is blank still has its tile
+ * (`raw: ''`). Only the first highlighted fact keeps `highlight`, and its tile is sent first. The
+ * name and the place are read as on the BE-6 path. The write's rules for `facts` are
+ * {@link contextDisplayIssues}'.
  */
 import {
   AGENCY_CONTEXT_FIELD_TYPES,
   AGENCY_CONTEXT_ROLES,
+  AGENCY_FACT_FIELDS_MAX,
+  AGENCY_FACT_KEY_MAX_CHARS,
+  AGENCY_FACT_KEY_PATTERN,
+  AGENCY_FACT_LABEL_MAX_CHARS,
+  AGENCY_SCRIPT_FIXED_PLACEHOLDERS,
   type AgencyContextDisplay,
   type AgencyContextFieldType,
   type AgencyContextRole,
   type AgencyCustomerFacts,
   type AgencyFactTile,
   type AgencyFactTileRole,
+  AGENCY_FACT_TILE_ROLES,
 } from '@magick-agency/contracts/agency';
 import { contextValueText, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
@@ -138,6 +155,9 @@ export function customerFacts(
   const placeKey = roleKey(row, roles, 'place', hidden) ?? guessKey(row, PLACE_GUESS_COLUMNS, hidden);
   const name = nameKey !== undefined ? factText(row[nameKey]) : undefined;
   const place = placeKey !== undefined ? factText(row[placeKey]) : undefined;
+  const person = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
+
+  if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown.facts, hidden, types) };
 
   const tileRoleOf = new Map<string, AgencyFactTileRole>();
   for (const role of TILE_ROLES) {
@@ -163,7 +183,54 @@ export function customerFacts(
     return { column, ...(role ? { role } : {}), type, raw, value: parseContextFact(raw, type) };
   });
 
-  return { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}), tiles };
+  return { ...person, tiles };
+}
+
+/** The tile role a fact's key gives it (AS19): the key `amount_due` or `due_date`, else none. */
+function roleOfKey(key: string | undefined): AgencyFactTileRole | undefined {
+  return key !== undefined && (AGENCY_FACT_TILE_ROLES as readonly string[]).includes(key) ? (key as AgencyFactTileRole) : undefined;
+}
+
+/**
+ * The tiles of a campaign with `context_display.facts` (AS19): one per fact whose column the row
+ * has and is not hidden, in order, at most `AGENCY_FACT_FIELDS_MAX`, the first highlighted one
+ * first. Read leniently (the list may be hand-edited JSON): an entry with no column is skipped, a
+ * label or key that is not text is left off the tile, a column listed twice is one tile.
+ */
+function chosenFactTiles(
+  row: Record<string, unknown>,
+  facts: readonly unknown[],
+  hidden: ReadonlySet<string>,
+  types: Record<string, unknown> | null,
+): AgencyFactTile[] {
+  const tiles: AgencyFactTile[] = [];
+  for (const entry of facts) {
+    if (tiles.length >= AGENCY_FACT_FIELDS_MAX) break;
+    const fact = asRecord(entry);
+    if (!fact) continue;
+    const column = rowKey(row, fact['column'], hidden);
+    if (column === undefined || tiles.some((t) => t.column === column)) continue;
+    const label = typeof fact['label'] === 'string' && fact['label'].trim().length > 0 ? fact['label'].trim() : undefined;
+    const key = typeof fact['key'] === 'string' && fact['key'].length > 0 ? fact['key'] : undefined;
+    // One tile per role, as on the BE-6 path (a repeated key is refused at the write).
+    const role = tiles.some((t) => t.role === roleOfKey(key)) ? undefined : roleOfKey(key);
+    const type = columnType(column, undefined, types);
+    const raw = contextValueText(row[column]) ?? '';
+    tiles.push({
+      column,
+      ...(label !== undefined ? { label } : {}),
+      ...(key !== undefined ? { key } : {}),
+      ...(fact['highlight'] === true ? { highlight: true } : {}),
+      ...(role ? { role } : {}),
+      type,
+      raw,
+      value: parseContextFact(raw, type),
+    });
+  }
+  const first = tiles.findIndex((t) => t.highlight === true);
+  for (let i = first + 1; first >= 0 && i < tiles.length; i++) delete tiles[i]!.highlight;
+  if (first > 0) tiles.unshift(...tiles.splice(first, 1));
+  return tiles;
 }
 
 // ── The write ────────────────────────────────────────────────────────────────
@@ -194,17 +261,35 @@ function isColumnName(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= CONTEXT_COLUMN_NAME_MAX;
 }
 
+/** How a refusal lists the column types, in `AGENCY_CONTEXT_FIELD_TYPES` order. */
+const TYPE_WORDS = 'as text, money, a number, a date, a phone number or yes / no';
+
+/** The keys a fact may carry (`AgencyFactField`). */
+const FACT_FIELD_KEYS: ReadonlySet<string> = new Set(['column', 'label', 'key', 'highlight']);
+
+const FIXED_PLACEHOLDERS: ReadonlySet<string> = new Set(AGENCY_SCRIPT_FIXED_PLACEHOLDERS);
+
+/** Length in Unicode code points, as the contract counts a fact's name. */
+const codePoints = (text: string): number => [...text].length;
+
 /**
- * `context_display.roles` and `.types` at the campaign-config write, or nothing when the body
- * does not carry `context_display` (or carries one that is not an object: the older keys keep
- * their own rules). Every issue, not the first.
+ * `context_display.roles`, `.types` and `.facts` at the campaign-config write, or nothing when
+ * the body does not carry `context_display` (or carries one that is not an object: the older keys
+ * keep their own rules). Every issue, not the first.
  *
  *  - `roles`: an object keyed by `AGENCY_CONTEXT_ROLES` only, each a column name (1 to
  *    {@link CONTEXT_COLUMN_NAME_MAX} characters); one column plays one role; a column in
  *    `hidden` is never a role.
- *  - `types`: an object of column name to one of `AGENCY_CONTEXT_FIELD_TYPES`.
+ *  - `types`: an object of column name to one of `AGENCY_CONTEXT_FIELD_TYPES` (the six).
+ *  - `facts` (AS19): a list of at most `AGENCY_FACT_FIELDS_MAX` objects `{ column, label, key,
+ *    highlight? }` and nothing else. Column: 1 to {@link CONTEXT_COLUMN_NAME_MAX} characters, not
+ *    hidden, not the `name` or `place` role's column, each once (ignoring case). Label: 1 to
+ *    `AGENCY_FACT_LABEL_MAX_CHARS` code points after trimming, each once (ignoring case). Key:
+ *    `AGENCY_FACT_KEY_PATTERN`, at most `AGENCY_FACT_KEY_MAX_CHARS`, each once, never one of
+ *    `AGENCY_SCRIPT_FIXED_PLACEHOLDERS`. `highlight` a boolean, `true` on one fact at most. Each
+ *    refusal is keyed by its path, `context_display.facts.2.label`.
  *  - With `knownColumns` (the roster's columns, `agency_ingest_jobs.context_columns`, when the
- *    campaign has an import), every role and type must name one of them, matched ignoring
+ *    campaign has an import), every role, type and fact must name one of them, matched ignoring
  *    case; the refusal lists them. Without (no import yet, or the public layer, which holds
  *    no campaign) the names are not checked against a roster.
  */
@@ -264,7 +349,7 @@ export function contextDisplayIssues(
   if (display['types'] !== undefined) {
     const types = asRecord(display['types']);
     if (!types) {
-      issues.push({ field: 'context_display.types', message: 'Choose how to read each column: as text, money or a date.' });
+      issues.push({ field: 'context_display.types', message: `Choose how to read each column: ${TYPE_WORDS}.` });
     } else {
       for (const [column, type] of Object.entries(types)) {
         const field = `context_display.types.${column}`;
@@ -273,18 +358,115 @@ export function contextDisplayIssues(
           continue;
         }
         if (!(AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(type)) {
-          issues.push({ field, message: `Choose how to read '${column}': as text, money or a date.` });
+          issues.push({ field, message: `Choose how to read '${column}': ${TYPE_WORDS}.` });
           continue;
         }
         notOnRoster(column, field, 'given a type');
       }
     }
   }
+
+  if (display['facts'] !== undefined) factFieldIssues(display, hidden, notOnRoster, issues);
   return issues;
 }
 
-/** Whether the body sets roles or types, so the write needs the roster's columns to check them. */
+/** `context_display.facts` (AS19), each issue added to `issues` in order. See {@link contextDisplayIssues}. */
+function factFieldIssues(
+  display: Record<string, unknown>,
+  hidden: ReadonlySet<string>,
+  notOnRoster: (column: string, field: string, what: string) => void,
+  issues: ContextDisplayIssue[],
+): void {
+  const facts = display['facts'];
+  if (!Array.isArray(facts)) {
+    issues.push({ field: 'context_display.facts', message: 'The facts on the card must be a list, one fact after another.' });
+    return;
+  }
+  if (facts.length > AGENCY_FACT_FIELDS_MAX) {
+    issues.push({
+      field: 'context_display.facts',
+      message: `You can show ${AGENCY_FACT_FIELDS_MAX} facts at most. Remove one to add another.`,
+    });
+  }
+  const roles = asRecord(display['roles']);
+  const roleColumns = new Map<string, AgencyContextRole>();
+  for (const role of ['name', 'place'] as const) {
+    const column = roles?.[role];
+    if (typeof column === 'string' && column.trim().length > 0) roleColumns.set(fold(column), role);
+  }
+  const columns = new Set<string>();
+  const labels = new Set<string>();
+  const keys = new Set<string>();
+  let highlighted = false;
+
+  facts.forEach((entry, i) => {
+    const at = `context_display.facts.${i}`;
+    const fact = asRecord(entry);
+    if (!fact) {
+      issues.push({ field: at, message: 'Each fact needs a column, a name and a key.' });
+      return;
+    }
+    for (const extra of Object.keys(fact).filter((k) => !FACT_FIELD_KEYS.has(k))) {
+      issues.push({ field: `${at}.${extra}`, message: 'A fact has only a column, a name, a key and a highlight.' });
+    }
+
+    const column = fact['column'];
+    const columnField = `${at}.column`;
+    if (!isColumnName(column)) {
+      issues.push({ field: columnField, message: `Choose the column for this fact: a column name of 1 to ${CONTEXT_COLUMN_NAME_MAX} characters.` });
+    } else if (hidden.has(fold(column))) {
+      issues.push({ field: columnField, message: `'${column}' is hidden from agents, so it cannot be a fact. Show the column first.` });
+    } else if (roleColumns.has(fold(column))) {
+      issues.push({ field: columnField, message: `'${column}' is already ${ROLE_WORDS[roleColumns.get(fold(column))!]}, so it cannot be a fact too.` });
+    } else if (columns.has(fold(column))) {
+      issues.push({ field: columnField, message: 'Two facts cannot show the same column.' });
+    } else {
+      columns.add(fold(column));
+      notOnRoster(column, columnField, 'a fact');
+    }
+
+    const label = fact['label'];
+    const labelField = `${at}.label`;
+    const trimmed = typeof label === 'string' ? label.trim() : '';
+    if (trimmed.length === 0) {
+      issues.push({ field: labelField, message: 'Give each fact a name.' });
+    } else if (codePoints(trimmed) > AGENCY_FACT_LABEL_MAX_CHARS) {
+      issues.push({ field: labelField, message: `A fact's name can be ${AGENCY_FACT_LABEL_MAX_CHARS} letters at most.` });
+    } else if (labels.has(fold(trimmed))) {
+      issues.push({ field: labelField, message: 'Two facts cannot have the same name.' });
+    } else {
+      labels.add(fold(trimmed));
+    }
+
+    const key = fact['key'];
+    const keyField = `${at}.key`;
+    if (typeof key !== 'string' || !AGENCY_FACT_KEY_PATTERN.test(key)) {
+      issues.push({ field: keyField, message: 'A fact\'s key must start with a small letter and have only small letters, numbers and underscores.' });
+    } else if (key.length > AGENCY_FACT_KEY_MAX_CHARS) {
+      issues.push({ field: keyField, message: `A fact's key can be ${AGENCY_FACT_KEY_MAX_CHARS} characters at most.` });
+    } else if (FIXED_PLACEHOLDERS.has(key)) {
+      issues.push({ field: keyField, message: `The script always has {${key}}, so a fact cannot use it as its key. Choose another key.` });
+    } else if (keys.has(key)) {
+      issues.push({ field: keyField, message: 'Two facts cannot have the same key.' });
+    } else {
+      keys.add(key);
+    }
+
+    const highlight = fact['highlight'];
+    if (highlight !== undefined && typeof highlight !== 'boolean') {
+      issues.push({ field: `${at}.highlight`, message: 'A fact is either highlighted or not.' });
+    } else if (highlight === true) {
+      if (highlighted) issues.push({ field: `${at}.highlight`, message: 'Only one fact can be highlighted.' });
+      highlighted = true;
+    }
+  });
+}
+
+/**
+ * Whether the body sets roles, types or facts, so the write needs the roster's columns to check
+ * them.
+ */
 export function namesContextColumns(record: Record<string, unknown>): boolean {
   const display = asRecord(record['context_display']);
-  return !!display && (display['roles'] !== undefined || display['types'] !== undefined);
+  return !!display && (display['roles'] !== undefined || display['types'] !== undefined || display['facts'] !== undefined);
 }

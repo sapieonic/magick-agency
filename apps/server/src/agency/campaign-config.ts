@@ -240,6 +240,13 @@ export interface CampaignConfigBase {
    */
   disposition_catalog?: unknown;
   outcome_dispositions?: unknown;
+  /**
+   * AS19: the stored display and script, so a body that changes one is checked against the other
+   * (`agentScriptIssues`): the script's `{key}`s against the campaign's resulting facts. Absent on
+   * a create: no facts (the legacy keys) and no script.
+   */
+  context_display?: unknown;
+  agent_script?: unknown;
 }
 
 /** Normalise `HH:MM` and `HH:MM:SS` to a comparable `HH:MM:SS`. */
@@ -799,8 +806,9 @@ export function validateAgencyCampaignConfig(
   // Agent station (BE-6): `context_display.roles` / `.types`, their shape. The roster's columns
   // are checked by the PATCH route, which reads them (`contextColumnsRejected`).
   issues.push(...contextDisplayIssues(record));
-  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
-  issues.push(...agentScriptIssues(record));
+  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`); AS19:
+  // its keys against the campaign's resulting facts, both ways (`base` is the stored row).
+  issues.push(...agentScriptIssues(record, base));
   // Agent station (BE-13, AS9): the outcomes' and break reasons' icons, and `phone_display`.
   issues.push(...stationTileIssues(record));
   return issues;

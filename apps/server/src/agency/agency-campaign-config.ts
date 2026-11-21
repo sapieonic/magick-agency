@@ -693,8 +693,10 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   // Agent station (BE-6): `context_display.roles` / `.types`, the internal handler's shape rule
   // (this layer holds no roster, so the columns are the internal handler's to check).
   issues.push(...contextDisplayIssues(record));
-  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
-  issues.push(...agentScriptIssues(record));
+  // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`). This
+  // layer holds no stored campaign (`null`), so the keys (AS19, per campaign) are checked here only
+  // when the body carries `context_display`; the internal handler checks every body against the row.
+  issues.push(...agentScriptIssues(record, null));
   // Agent station (BE-13, AS9): the outcomes' and break reasons' icons, and `phone_display`: the
   // internal handler's rules, imported (`station-tiles.ts`).
   issues.push(...stationTileIssues(record));

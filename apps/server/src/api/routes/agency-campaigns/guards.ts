@@ -264,10 +264,11 @@ export async function analysisProfileRejected(
 }
 
 /**
- * Agent station (BE-6): refuse `context_display.roles` / `.types` naming a column the campaign's
- * customer list does not have, listing the columns it does. The columns are the imports' (the
- * campaign's own, and its lineage root's for a retry); with none yet, nothing is checked against a
- * roster (the shape rules ran in `configRejected`). Read only when the body sets roles or types.
+ * Agent station (BE-6, AS19): refuse `context_display.roles` / `.types` / `.facts` naming a column
+ * the campaign's customer list does not have, listing the columns it does. The columns are the
+ * imports' (the campaign's own, and its lineage root's for a retry); with none yet, nothing is
+ * checked against a roster (the shape rules ran in `configRejected`). Read only when the body sets
+ * roles, types or facts.
  * Returns false only when it has already replied.
  */
 export async function contextColumnsRejected(
