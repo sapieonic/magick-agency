@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { SlidersHorizontal, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import {
-  COMPARE_LENSES,
   COMPARE_PAGE_MAX_AGENTS,
-  type AgencyCompareMetricRef,
   type AgencyCompareQuery,
   type AgencyCompareView,
   type CompareLens,
@@ -16,20 +14,15 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { COMPARE_SETTLE_MS, useCompareRead, useSettledKey } from '../../hooks/useCompareRead';
+import { useRefetchOnReturn } from '../../hooks/useRefetchOnReturn';
+import { useVisibleInterval } from '../../hooks/useVisibleInterval';
 import { hasPermission } from '../../utils/permissions';
 import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
 import { pickerCampaignName } from '../../utils/agencyCampaignArchive';
-import {
-  compareErrorMessage,
-  getCompareOptions,
-  isRetryableCompareError,
-  listCompareViews,
-  queryCompare,
-} from '../../api/compare';
+import { getCompareOptions, listCompareViews, queryCompare } from '../../api/compare';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { COMPARE_FLAG } from '../../utils/agency/compare/compareFlag';
 import {
-  COMPARE_WINDOW_PRESETS,
   EMPTY_SLOTS,
   compareStateFromParams,
   compareStateToParams,
@@ -42,33 +35,19 @@ import {
   type CompareUrlState,
   type CompareWindowPreset,
 } from '../../utils/agency/compare/compareUrl';
-import {
-  LENS_LABELS,
-  applyToCatalog,
-  compareLensDefaults,
-  droppedNote,
-  fallbackNote,
-  infoLabel,
-} from '../../utils/agency/compare/compareMetrics';
+import { applyToCatalog, droppedNote } from '../../utils/agency/compare/compareMetrics';
+import { resolveShape, type CompareShape } from '../../utils/agency/compare/compareShape';
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
-import { dateFormatter } from '../../utils/format/date';
-import { formatReportDay } from '../../utils/reports/reportCopy';
-import { plural } from '../../utils/format/number';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
 import { agentName } from '../../utils/agency/compare/compareFindingsCopy';
+import { CompareBoard } from '../../components/agency/compare/CompareBoard';
+import { CompareCard } from '../../components/agency/compare/CompareCard';
+import { CompareFilters } from '../../components/agency/compare/CompareFilters';
 import { CompareMetricPicker } from '../../components/agency/compare/CompareMetricPicker';
-import { CompareFindings } from '../../components/agency/compare/CompareFindings';
-import { CompareNumbers } from '../../components/agency/compare/CompareNumbers';
+import { CompareReadError } from '../../components/agency/compare/CompareReadError';
 import { CompareViews } from '../../components/agency/compare/CompareViews';
-import {
-  DaySplitBars,
-  DaySplitLegend,
-  MetricBars,
-  TrendChart,
-  agentColour,
-  type ChartAgent,
-} from '../../components/agency/compare/CompareCharts';
+import type { ChartAgent } from '../../components/agency/compare/CompareCharts';
 import styles from '../../components/agency/compare/Compare.module.css';
 
 /**
@@ -127,17 +106,8 @@ export interface CompareAgentsViewProps {
   settleMs?: number;
 }
 
-type Campaign = Awaited<ReturnType<typeof listAgencyCampaigns>>[number];
-
-/** The lens, metrics and trend the page shows, and where they came from. */
-interface Resolved {
-  lens: CompareLens;
-  metrics: AgencyCompareMetricRef[];
-  trend: AgencyCompareMetricRef | null;
-  viewId: string | null;
-  /** What applying a view or a link had to leave out, in words. */
-  note: string | null;
-}
+/** A lens, metrics, trend and view, as the URL holds them. */
+type PinnedShape = Pick<CompareShape, 'lens' | 'metrics' | 'trend' | 'viewId'>;
 
 export function CompareAgentsView({ tenantId, accountId, userId, canListen, now, settleMs = COMPARE_SETTLE_MS }: CompareAgentsViewProps) {
   const [params, setParams] = useSearchParams();
@@ -149,29 +119,18 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   );
   const [zone] = useState(browserZone);
   const today = useToday(zone, now);
-  const ids = useId();
+  const pickerId = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [viewNote, setViewNote] = useState<string | null>(null);
   // Views deleted on this page: a campaign default among them is never applied again from options
   // read before the delete.
   const [deletedViews, setDeletedViews] = useState<ReadonlySet<string>>(() => new Set());
+  const scope = `${tenantId}/${accountId}`;
 
   // ── Campaigns ──
-  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
-  const [campaignsFailed, setCampaignsFailed] = useState(false);
-  useEffect(() => {
-    let live = true;
-    listAgencyCampaigns(tenantId, accountId)
-      .then((list) => live && setCampaigns(list))
-      .catch(() => {
-        if (!live) return;
-        setCampaigns([]);
-        setCampaignsFailed(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, [tenantId, accountId]);
+  const campaignsRead = useCompareRead(scope, () => listAgencyCampaigns(tenantId, accountId));
+  const campaignsFailed = campaignsRead.status === 'error';
+  const campaigns = campaignsFailed ? [] : campaignsRead.data;
   useEffect(() => {
     if (state.campaignId || !campaigns || campaigns.length === 0) return;
     const first = defaultRosterCampaign(campaigns);
@@ -180,19 +139,9 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   const campaign = campaigns?.find((c) => c.id === state.campaignId) ?? null;
   // A campaign the URL holds that the list leaves out may be archived since: it is named
   // "(archived)", as every other picker names one, rather than by its name alone.
-  const [archived, setArchived] = useState<Campaign[] | null>(null);
   const heldMissing = campaigns !== null && state.campaignId !== null && campaign === null;
-  useEffect(() => {
-    if (!heldMissing || archived !== null) return;
-    let live = true;
-    listArchivedAgencyCampaigns(tenantId, accountId)
-      .then((list) => live && setArchived(list))
-      .catch(() => live && setArchived([]));
-    return () => {
-      live = false;
-    };
-  }, [heldMissing, archived, tenantId, accountId]);
-  const heldArchived = heldMissing ? (archived?.find((c) => c.id === state.campaignId) ?? null) : null;
+  const archived = useCompareRead(heldMissing ? scope : null, () => listArchivedAgencyCampaigns(tenantId, accountId));
+  const heldArchived = heldMissing ? (archived.data?.find((c) => c.id === state.campaignId) ?? null) : null;
 
   // ── The window ──
   const dates = windowDates(state, today);
@@ -216,58 +165,21 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   const codes = useMemo(() => opts?.outcome_codes ?? [], [opts]);
 
   // ── Saved views ──
-  const [views, setViews] = useState<AgencyCompareView[] | null>(null);
-  const [viewsFailed, setViewsFailed] = useState(false);
-  const [viewsVersion, setViewsVersion] = useState(0);
   // Another campaign's list is not this one's; a re-read after a save keeps the list (and the
-  // applied view's buttons) on screen until the new one comes.
-  useEffect(() => setViews(null), [state.campaignId]);
-  useEffect(() => {
-    if (!state.campaignId) return;
-    let live = true;
-    setViewsFailed(false);
-    listCompareViews({ campaign_id: state.campaignId }, tenantId, accountId)
-      .then((list) => live && setViews(list.views))
-      // A failed read is said, with a way to read again: never "No saved views yet".
-      .catch(() => live && setViewsFailed(true));
-    return () => {
-      live = false;
-    };
-  }, [state.campaignId, tenantId, accountId, viewsVersion]);
+  // applied view's buttons) on screen until the new one comes. A failed read is said, with a way
+  // to read again: never "No saved views yet".
+  const viewsKey = state.campaignId ? `${scope}/${state.campaignId}` : null;
+  const viewsRead = useCompareRead(viewsKey, () =>
+    listCompareViews({ campaign_id: state.campaignId! }, tenantId, accountId).then((list) => list.views),
+  );
+  const views = viewsRead.dataKey === viewsKey ? viewsRead.data : null;
+  const viewsFailed = viewsRead.status === 'error' && viewsRead.doneKey === viewsKey;
 
   // ── The lens, metrics and trend: the URL's, else the campaign's default view, else the lens's ──
-  const resolved = useMemo<Resolved | null>(() => {
-    if (!opts) return null;
-    const lensDefaults = (lens: CompareLens) => compareLensDefaults(lens, codes);
-    // What a link or the default view had to leave out when none of its metrics could be shown:
-    // the page falls back to the lens's metrics and says so, never silently.
-    let fallback: string | null = null;
-    if (state.metrics !== null) {
-      const lens = state.lens ?? opts.starting_lens;
-      const trend = state.trend === undefined ? lensDefaults(lens).trend : state.trend;
-      const applied = applyToCatalog(state.metrics, trend, codes);
-      if (applied.metrics.length > 0) {
-        return { lens, metrics: applied.metrics, trend: applied.trend, viewId: state.viewId, note: droppedNote(applied) };
-      }
-      fallback = fallbackNote(applied, 'the link', lens);
-    }
-    const view = opts.default_view && !deletedViews.has(opts.default_view.id) ? opts.default_view : null;
-    if (state.metrics === null && state.lens === null && state.viewId === null && view) {
-      const applied = applyToCatalog(view.metrics, view.trend, codes);
-      if (applied.metrics.length > 0) {
-        return { lens: view.lens, metrics: applied.metrics, trend: applied.trend, viewId: view.id, note: droppedNote(applied) };
-      }
-      fallback = fallbackNote(applied, `the campaign’s default view, “${view.name}”,`, opts.starting_lens);
-    }
-    const lens = state.lens ?? opts.starting_lens;
-    const d = lensDefaults(lens);
-    const wanted = state.trend === undefined ? d.trend : state.trend;
-    const trend = wanted ? applyToCatalog([], wanted, codes) : null;
-    // A link's trend the campaign cannot draw is left out and said, as its metrics would be;
-    // once the fallback note has said it, it is not said twice.
-    const note = fallback ?? (trend ? droppedNote(trend) : null);
-    return { lens, metrics: d.metrics, trend: trend?.trend ?? null, viewId: state.viewId, note };
-  }, [opts, codes, state.metrics, state.lens, state.trend, state.viewId, deletedViews]);
+  const resolved = useMemo(
+    () => (opts ? resolveShape({ lens: state.lens, metrics: state.metrics, trend: state.trend, viewId: state.viewId }, opts, codes, deletedViews) : null),
+    [opts, codes, state.metrics, state.lens, state.trend, state.viewId, deletedViews],
+  );
 
   const appliedView =
     resolved?.viewId ? ((views ?? []).find((v) => v.id === resolved.viewId) ?? (opts?.default_view?.id === resolved.viewId ? opts.default_view : null)) : null;
@@ -321,44 +233,39 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
         return [{ id, name: agent ? cohortAgentName(agent) : agentName(response, id), slot }];
       })
     : [];
+  // The answer on screen, when it has an agent to draw.
+  const board = chartAgents.length > 0 ? response : null;
 
   // ── Changes ──
-  const setCampaign = (campaignId: string) => {
-    setViewNote(null);
-    update({ campaignId, slots: [...EMPTY_SLOTS], lens: null, metrics: null, trend: undefined, viewId: null });
-  };
-  const setWindow = (preset: CompareWindowPreset) =>
-    update(preset === 'custom' ? { window: preset, from: dates?.from ?? today, to: dates?.to ?? today } : { window: preset, from: null, to: null });
-  const setLens = (lens: CompareLens) => {
-    setViewNote(null);
-    update({ lens, metrics: null, trend: undefined, viewId: null });
-  };
   // A note about what applying a view left out is about that moment: an edit, a save, a delete or
   // another campaign ends it, so it never outranks the note of what is on screen now.
-  const setMetrics = (metrics: AgencyCompareMetricRef[]) => {
-    if (!resolved) return;
-    setViewNote(null);
-    update({ lens: resolved.lens, metrics, trend: resolved.trend, viewId: resolved.viewId });
+  const edit = (patch: Partial<CompareUrlState>, note: string | null = null) => {
+    setViewNote(note);
+    update(patch);
   };
-  const setTrend = (trend: AgencyCompareMetricRef | null) => {
-    if (!resolved) return;
-    setViewNote(null);
-    update({ lens: resolved.lens, metrics: resolved.metrics, trend, viewId: resolved.viewId });
-  };
+  // A lens, metrics, trend and view into the URL, so a link opens what is on screen.
+  const pin = (shape: PinnedShape, note: string | null = null) =>
+    edit({ lens: shape.lens, metrics: shape.metrics, trend: shape.trend, viewId: shape.viewId }, note);
+  const setCampaign = (campaignId: string) =>
+    edit({ campaignId, slots: [...EMPTY_SLOTS], lens: null, metrics: null, trend: undefined, viewId: null });
+  const setWindow = (preset: CompareWindowPreset) =>
+    update(preset === 'custom' ? { window: preset, from: dates?.from ?? today, to: dates?.to ?? today } : { window: preset, from: null, to: null });
+  const setLens = (lens: CompareLens) => edit({ lens, metrics: null, trend: undefined, viewId: null });
   const applyView = (view: AgencyCompareView) => {
     const applied = applyToCatalog(view.metrics, view.trend, codes);
     if (applied.metrics.length === 0) {
       setViewNote(`“${view.name}” uses only outcomes this campaign doesn’t have, so it can’t be applied here.`);
       return;
     }
-    setViewNote(droppedNote(applied));
-    update({ lens: view.lens, metrics: applied.metrics, trend: applied.trend ?? null, viewId: view.id });
+    pin({ lens: view.lens, metrics: applied.metrics, trend: applied.trend, viewId: view.id }, droppedNote(applied));
   };
   const longer = window ? longerWindow(state, today) : null;
   const checkLonger = longer ? () => update(longer) : undefined;
 
   const note = viewNote ?? resolved?.note ?? null;
-  const flaggable = response?.metrics.filter((m) => m.flaggable).length ?? 0;
+  const queryError = queryFailed ? (
+    <CompareReadError error={result.error} onRetry={result.retry} fallback="The comparison couldn’t be worked out." />
+  ) : null;
 
   return (
     <div className={styles.page}>
@@ -375,139 +282,55 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
               campaignName={opts?.campaign_name ?? campaign?.name ?? null}
               views={views}
               viewsFailed={viewsFailed}
-              onRetryViews={() => {
-                setViewsFailed(false);
-                setViewsVersion((n) => n + 1);
-              }}
+              onRetryViews={viewsRead.retry}
               applied={appliedView}
               current={{ lens: resolved.lens, metrics: resolved.metrics, trend: resolved.trend }}
               onApply={applyView}
               onSaved={(view) => {
-                setViewNote(null);
-                setViewsVersion((n) => n + 1);
-                update({ lens: view.lens, metrics: view.metrics, trend: view.trend ?? null, viewId: view.id });
+                viewsRead.retry();
+                pin({ lens: view.lens, metrics: view.metrics, trend: view.trend, viewId: view.id });
               }}
-              onChanged={() => setViewsVersion((n) => n + 1)}
+              onChanged={viewsRead.retry}
               onDeleted={(viewId) => {
-                setViewNote(null);
-                setViewsVersion((n) => n + 1);
+                viewsRead.retry();
                 setDeletedViews((prev) => new Set(prev).add(viewId));
                 // "The page stays as it is": what the deleted view put on screen goes into the URL,
                 // so a campaign default the page opened on (no metrics in the link) stays applied
                 // as plain metrics rather than as a view that no longer exists.
-                update({ lens: resolved.lens, metrics: resolved.metrics, trend: resolved.trend, viewId: null });
+                pin({ ...resolved, viewId: null });
               }}
             />
           ) : null
         }
       />
 
-      <div className={styles.filters}>
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${ids}-campaign`}>
-            Campaign
-          </label>
-          <select
-            id={`${ids}-campaign`}
-            className={styles.campaignSelect}
-            value={state.campaignId ?? ''}
-            disabled={campaigns === null}
-            onChange={(e) => e.target.value && setCampaign(e.target.value)}
-            data-testid="compare-campaign"
-          >
-            {campaigns === null ? <option value="">Loading campaigns…</option> : null}
-            {campaigns !== null && !state.campaignId ? <option value="">Choose a campaign</option> : null}
-            {state.campaignId && campaigns !== null && !campaign ? (
-              <option value={state.campaignId}>
-                {heldArchived ? pickerCampaignName(heldArchived) : (opts?.campaign_name ?? 'This campaign')}
-              </option>
-            ) : null}
-            {(campaigns ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${ids}-when`}>
-            When
-          </label>
-          <select id={`${ids}-when`} value={state.window} onChange={(e) => setWindow(e.target.value as CompareWindowPreset)} data-testid="compare-when">
-            {COMPARE_WINDOW_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        {state.window === 'custom' ? (
-          <div className={styles.dates}>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor={`${ids}-from`}>
-                From
-              </label>
-              <input id={`${ids}-from`} type="date" value={state.from ?? ''} max={today} onChange={(e) => update({ from: e.target.value || null })} />
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor={`${ids}-to`}>
-                To
-              </label>
-              <input id={`${ids}-to`} type="date" value={state.to ?? ''} max={today} onChange={(e) => update({ to: e.target.value || null })} />
-            </div>
-          </div>
-        ) : null}
-        {resolved ? (
-          <>
-            <div className={styles.field}>
-              <span className={styles.fieldLabel} id={`${ids}-lens`}>
-                Lens
-              </span>
-              {/* Toggle buttons, not tabs: a lens resets the metrics in place and opens no panel of its own. */}
-              <div className={styles.lensTabs} role="group" aria-labelledby={`${ids}-lens`}>
-                {COMPARE_LENSES.map((lens) => (
-                  <button
-                    key={lens}
-                    type="button"
-                    aria-pressed={resolved.lens === lens}
-                    className={styles.lensTab}
-                    onClick={() => setLens(lens)}
-                    data-testid={`compare-lens-${lens}`}
-                  >
-                    {LENS_LABELS[lens]}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`btn-secondary ${styles.metricsButton}`}
-              aria-expanded={pickerOpen}
-              aria-controls={pickerOpen ? `${ids}-picker` : undefined}
-              onClick={() => setPickerOpen((o) => !o)}
-              data-testid="compare-metrics-button"
-            >
-              <SlidersHorizontal size={14} aria-hidden="true" />
-              {`Metrics · ${resolved.metrics.length}`}
-            </button>
-          </>
-        ) : null}
-      </div>
-      {dateError && state.window === 'custom' ? (
-        <p className={styles.inlineError} role="alert">
-          {dateError}
-        </p>
-      ) : null}
-      <p className={styles.hint}>Like for like: only calls on this campaign count, for everyone.</p>
+      <CompareFilters
+        campaigns={campaigns}
+        campaignId={state.campaignId}
+        heldName={heldArchived ? pickerCampaignName(heldArchived) : (opts?.campaign_name ?? 'This campaign')}
+        onCampaign={setCampaign}
+        when={state.window}
+        from={state.from}
+        to={state.to}
+        today={today}
+        onWindow={setWindow}
+        onDates={update}
+        dateError={dateError}
+        shape={resolved ? { lens: resolved.lens, metricCount: resolved.metrics.length } : null}
+        onLens={setLens}
+        pickerOpen={pickerOpen}
+        pickerId={pickerId}
+        onTogglePicker={() => setPickerOpen((o) => !o)}
+      />
 
       {resolved && pickerOpen ? (
         <CompareMetricPicker
-          id={`${ids}-picker`}
+          id={pickerId}
           metrics={resolved.metrics}
           trend={resolved.trend}
           codes={codes}
-          onMetrics={setMetrics}
-          onTrend={setTrend}
+          onMetrics={(metrics) => pin({ ...resolved, metrics })}
+          onTrend={(trend) => pin({ ...resolved, trend })}
         />
       ) : null}
 
@@ -526,18 +349,16 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
       ) : null}
 
       {optionsFailed ? (
-        <ReadError error={options.error} onRetry={options.retry} fallback="The campaign’s agents couldn’t be loaded." />
+        <CompareReadError error={options.error} onRetry={options.retry} fallback="The campaign’s agents couldn’t be loaded." />
       ) : null}
       {options.status === 'loading' && !opts ? <LoadingSpinner /> : null}
 
       {opts ? (
-        <section className={styles.card} aria-labelledby={`${ids}-agents`}>
-          <div className={styles.pickHead}>
-            <h2 className={styles.cardTitle} id={`${ids}-agents`}>
-              {`Pick up to ${COMPARE_PAGE_MAX_AGENTS} agents`}
-            </h2>
-            <span className={styles.cardSub}>{`${opts.agents.length} took calls on ${opts.campaign_name} in this window`}</span>
-          </div>
+        <CompareCard
+          title={`Pick up to ${COMPARE_PAGE_MAX_AGENTS} agents`}
+          sub={`${opts.agents.length} took calls on ${opts.campaign_name} in this window`}
+          headClassName={styles.pickHead}
+        >
           <CompareAgentChips
             agents={opts.agents}
             slots={state.slots}
@@ -550,116 +371,27 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
                 : `${outOfCohort} picked agents didn’t take calls on this campaign in this window, so they are left out.`}
             </p>
           ) : null}
-        </section>
+        </CompareCard>
       ) : null}
 
-      {response && chartAgents.length > 0 ? (
-        <ul className={styles.legend} aria-label="Legend">
-          {chartAgents.map((a) => (
-            <li key={a.id}>
-              <span className={styles.swatch} style={{ background: agentColour(a.slot) }} aria-hidden="true" />
-              {a.name}
-            </li>
-          ))}
-          <li>
-            <span className={styles.swatchLine} aria-hidden="true" />
-            Team median
-          </li>
-          <li>
-            <span className={styles.swatchBand} aria-hidden="true" />
-            Middle half of the team
-          </li>
-        </ul>
-      ) : null}
-
-      {queryFailed ? (
-        <ReadError error={result.error} onRetry={result.retry} fallback="The comparison couldn’t be worked out." />
-      ) : null}
-      {updating && pickedShown.length > 0 && (!response || chartAgents.length === 0) ? <LoadingSpinner /> : null}
-
-      {response && chartAgents.length > 0 ? (
+      {board ? (
+        <CompareBoard
+          response={board}
+          agents={chartAgents}
+          codes={codes}
+          timezone={zone}
+          canListen={canListen}
+          onLonger={checkLonger}
+          updating={updating}
+          stale={stale}
+          error={queryError}
+        />
+      ) : (
         <>
-          {updating ? (
-            <p className={styles.updating} role="status">
-              Updating…
-            </p>
-          ) : null}
-          {stale ? (
-            <p className={styles.note} role="status" data-testid="compare-stale">
-              {`These are the last figures that loaded, for ${windowWords(response.from, response.to)}, not for the choices above.`}
-            </p>
-          ) : null}
-          <div className={styles.board}>
-            <section className={styles.card} aria-labelledby={`${ids}-sbs`}>
-              <div className={styles.cardHead}>
-                <h2 className={styles.cardTitle} id={`${ids}-sbs`}>
-                  Side by side
-                </h2>
-                <span className={styles.cardSub}>{`${plural(response.cohort.agents, 'agent')} on this campaign · as of ${asOfTime(response.as_of)}`}</span>
-              </div>
-              <div className={styles.bars}>
-                {response.metrics.map((info) => (
-                  <MetricBars key={info.id} info={info} agents={chartAgents} columns={response.agents} cohort={response.cohort.per_metric[info.id]} />
-                ))}
-              </div>
-              <p className={styles.foot}>
-                Grey band: the middle half of the team. Line: the team median. Whisker on a rate: its likely range (95%), wide when calls are few.
-                Agents under the floor are left out of the band.
-              </p>
-            </section>
-            <section className={styles.card} aria-labelledby={`${ids}-finds`}>
-              <div className={styles.cardHead}>
-                <h2 className={styles.cardTitle} id={`${ids}-finds`}>
-                  What stands out
-                </h2>
-                {flaggable > 0 ? <span className={styles.cardSub}>for coaching</span> : null}
-              </div>
-              <CompareFindings response={response} codes={codes} timezone={zone} canListen={canListen} onLonger={checkLonger} />
-            </section>
-          </div>
-          <div className={styles.boardEven}>
-            <section className={styles.card} aria-labelledby={`${ids}-trend`}>
-              <div className={styles.cardHead}>
-                <h2 className={styles.cardTitle} id={`${ids}-trend`}>
-                  {response.trend_metric ? `${infoLabel(response.trend_metric)} per day` : 'Per day'}
-                </h2>
-                {response.trend ? (
-                  <span className={styles.cardSub}>{`${plural(response.trend.dates.length, 'day')} · dashed: team median`}</span>
-                ) : null}
-              </div>
-              {response.trend && response.trend_metric && response.trend.dates.length > 1 ? (
-                <TrendChart trend={response.trend} agents={chartAgents} label={infoLabel(response.trend_metric)} />
-              ) : (
-                <p className={styles.hint}>
-                  {response.trend
-                    ? 'A per-day line needs at least two days. Choose a longer window.'
-                    : 'No per-day trend chosen. Choose one under Metrics: an outcome set or promises.'}
-                </p>
-              )}
-            </section>
-            <section className={styles.card} aria-labelledby={`${ids}-day`}>
-              <div className={styles.cardHead}>
-                <h2 className={styles.cardTitle} id={`${ids}-day`}>
-                  Where their day went
-                </h2>
-                <span className={styles.cardSub}>share of logged-in time, breaks included</span>
-              </div>
-              <DaySplitLegend />
-              <DaySplitBars agents={chartAgents} columns={response.agents} />
-              <p className={styles.foot}>Waiting for a call depends on the dialler and the list, not the agent, so it is shown but never flagged.</p>
-            </section>
-          </div>
-          <section className={styles.card} aria-labelledby={`${ids}-numbers`}>
-            <div className={styles.cardHead}>
-              <h2 className={styles.cardTitle} id={`${ids}-numbers`}>
-                The numbers
-              </h2>
-              <span className={styles.cardSub}>the table behind every chart</span>
-            </div>
-            <CompareNumbers response={response} agents={chartAgents} />
-          </section>
+          {queryError}
+          {updating && pickedShown.length > 0 ? <LoadingSpinner /> : null}
         </>
-      ) : null}
+      )}
 
       {opts && opts.agents.length > 0 && pickedShown.length === 0 ? (
         <EmptyState
@@ -672,56 +404,18 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   );
 }
 
-/** A window in words: "15 Nov to 21 Nov", or "21 Nov" for one day. */
-export function windowWords(from: string, to: string): string {
-  return from === to ? formatReportDay(from, false) : `${formatReportDay(from, false)} to ${formatReportDay(to, false)}`;
-}
-
 /**
  * Today in `zone`, kept current: read on every render, and the page re-renders when the day
- * turns (checked each minute, and when the tab is shown or focused again), so a page left open
- * past midnight moves Today, the presets and the date pickers' latest day with it. `now` (tests)
- * fixes the clock.
+ * turns (checked each minute while the tab is shown, and when it is shown or focused again), so a
+ * page left open past midnight moves Today, the presets and the date pickers' latest day with
+ * it. `now` (tests) fixes the clock.
  */
 function useToday(zone: string, now: Date | undefined): string {
   const [, setDay] = useState(() => todayIn(zone, now ?? new Date()));
-  useEffect(() => {
-    if (now) return;
-    const check = () => setDay(todayIn(zone, new Date()));
-    const timer = setInterval(check, 60_000);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') check();
-    };
-    window.addEventListener('focus', check);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('focus', check);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [zone, now]);
+  const check = () => {
+    if (!now) setDay(todayIn(zone, new Date()));
+  };
+  useVisibleInterval(check, 60_000, !now);
+  useRefetchOnReturn(check);
   return todayIn(zone, now ?? new Date());
-}
-
-/** When the figures were read, as the console writes a time: "3:05 PM" (AS15). */
-export function asOfTime(iso: string): string {
-  return dateFormatter({ hour: 'numeric', minute: '2-digit', hour12: true })
-    .format(new Date(iso))
-    .replace(/\s*(am|pm)$/i, (_m, half: string) => ` ${half.toUpperCase()}`);
-}
-
-function ReadError({ error, onRetry, fallback }: { error: unknown; onRetry: () => void; fallback: string }) {
-  // Only a failure that can clear by itself is offered again (`isRetryableCompareError`); any
-  // other refusal needs the reader to change something first.
-  const canRetry = isRetryableCompareError(error);
-  return (
-    <div className={`${styles.note} ${styles.errorBox}`} role="alert" data-testid="compare-error">
-      <p className={styles.emptyNote}>{compareErrorMessage(error, fallback)}</p>
-      {canRetry ? (
-        <button type="button" className={styles.linkButton} onClick={onRetry}>
-          Try again
-        </button>
-      ) : null}
-    </div>
-  );
 }

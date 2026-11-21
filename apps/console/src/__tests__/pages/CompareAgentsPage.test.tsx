@@ -56,7 +56,7 @@ vi.mock('../../api/compare', async () => {
   };
 });
 
-import CompareAgentsPage, { CompareAgentsView, asOfTime } from '../../pages/agency/CompareAgentsPage';
+import CompareAgentsPage, { CompareAgentsView } from '../../pages/agency/CompareAgentsPage';
 
 const NOW = new Date('2026-11-21T09:00:00.000Z');
 
@@ -271,9 +271,10 @@ describe('what it shows', () => {
     expect(screen.getAllByTestId('compare-metric').every((m) => m.querySelector('h3') !== null)).toBe(true);
   });
 
-  it('writes the read time as the console writes a time (AS15)', () => {
-    expect(asOfTime('2026-11-21T15:05:00.000Z')).toBe('3:05 PM');
-    expect(asOfTime('2026-11-21T00:07:00.000Z')).toBe('12:07 AM');
+  it('writes the read time as the console writes a time (AS15)', async () => {
+    mocks.queryCompare.mockImplementation(async (q: AgencyCompareQuery) => ({ ...compareAnswer(q), as_of: '2026-11-21T15:05:00.000Z' }));
+    renderView('?campaign=camp-1&agents=u-lak');
+    expect(await screen.findByText('9 agents on this campaign · as of 3:05 PM')).toBeTruthy();
   });
 
   it('explains why nothing is judged when fewer than six agents clear the floor (§6)', async () => {
@@ -740,6 +741,9 @@ describe('review fixes', () => {
       );
       const from = (await screen.findByLabelText('From')) as HTMLInputElement;
       expect(from.max).toBe('2026-11-21');
+      // Every read in, so nothing but the day turning renders the page again.
+      await screen.findByTestId('compare-metrics-button');
+      await waitFor(() => expect((screen.getByTestId('compare-view-select') as HTMLSelectElement).disabled).toBe(false));
       vi.setSystemTime(new Date('2026-11-22T00:03:00.000Z'));
       fireEvent.focus(window);
       await waitFor(() => expect((screen.getByLabelText('From') as HTMLInputElement).max).toBe('2026-11-22'));
