@@ -453,7 +453,12 @@ export function AgencyCampaignSettingsPage() {
     const sendBreakReasons = breakReasons !== null
       && saved?.breakReasons !== undefined
       && !sameBreakLimits(saved.breakReasons, breakReasons);
-    const stationSent = station && saved?.station ? stationPayload(saved.station, station, campaign?.context_display) : {};
+    // The card's columns as its selects offer them: a name left on "Guess from the column names" is
+    // saved as the column the select names (AS19 R1), so it stays a hero once the card has facts.
+    const stationSent = station && saved?.station
+      ? stationPayload(saved.station, station, campaign?.context_display,
+        campaignColumns(imported.columns, campaign?.context_display, station.facts))
+      : {};
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -575,7 +580,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons, station, factsContext,
+    breakReasons, station, factsContext, imported.columns,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -1050,6 +1055,7 @@ export function AgencyCampaignSettingsPage() {
                 value={station.facts}
                 onChange={(facts) => setStation({ ...station, facts })}
                 columns={columns}
+                uploaded={imported.columns}
                 hidden={hidden}
                 loading={imported.loading}
                 errors={stationErrorsView}
@@ -1075,6 +1081,7 @@ export function AgencyCampaignSettingsPage() {
                 offered={plan?.offered ?? []}
                 allowed={plan?.allowed ?? []}
                 columns={columns}
+                uploaded={imported.columns}
                 hidden={hidden}
                 samples={samples}
                 phoneDisplay={station.phoneDisplay}

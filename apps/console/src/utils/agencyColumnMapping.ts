@@ -558,10 +558,17 @@ export function cardFactsFromMapping(state: MappingState): AgencyFactField[] {
 /**
  * The `context_display` a new campaign is saved with: the card's facts picked on this screen
  * ({@link cardFactsFromMapping}), or nothing when none was picked (the card then shows what the
- * server guesses, and Settings opens with it).
+ * server guesses, and Settings opens with it). With facts, the column the card guesses as the
+ * customer's name is written as the `name` role, as campaign Settings writes it (AS19 R1): with
+ * facts the heroes are the name role and the facts, so the name stays one on every surface.
  */
 export function buildContextDisplay(state: MappingState): AgencyContextDisplay {
   const display: AgencyContextDisplay = {};
-  if (state.heroOrder.length > 0) display.facts = cardFactsFromMapping(state);
+  if (state.heroOrder.length > 0) {
+    display.facts = cardFactsFromMapping(state);
+    const kept = Object.keys(state.roles).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+    const name = guessedColumn(kept, NAME_GUESS_COLUMNS, []);
+    if (name !== undefined) display.roles = { name };
+  }
   return display;
 }

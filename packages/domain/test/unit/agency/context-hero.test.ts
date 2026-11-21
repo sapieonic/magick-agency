@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { AGENCY_FACT_FIELDS_MAX } from '@magick-agency/contracts/agency';
 import {
-  configuredHeroNames, contextValueText, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS,
+  configuredHeroNames, contextValueText, heroCapFor, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS,
 } from '../../../src/context-hero';
 
 /**
@@ -107,5 +108,59 @@ describe('the configured heroes with the card\'s chosen facts (AS19)', () => {
     for (const facts of [undefined, null, {}, 'Balance']) {
       expect(configuredHeroNames({ ...display, facts })).toEqual(['Loan No', 'City']);
     }
+  });
+});
+
+describe('the name stays a hero after the move to facts (AS19 R1)', () => {
+  // A campaign set up before AS19 whose name was guessed, saved with facts and no `name` role.
+  const moved = {
+    hero: ['Customer Name', 'Amount Due'],
+    facts: [{ column: 'Amount Due', label: 'Amount Due', key: 'amount_due' }],
+  };
+  const row = { 'Customer Name': 'Asha Rao', 'Amount Due': '5000', City: 'Pune', 'Loan No': 'LN-1' };
+
+  it('without a row: the first `hero` entry the name heuristic matches, then the facts', () => {
+    expect(configuredHeroNames(moved)).toEqual(['Customer Name', 'Amount Due']);
+    // not a hidden one, nor a fact's column; a `name` role wins over it
+    expect(configuredHeroNames({ ...moved, hidden: ['customer name'] })).toEqual(['Amount Due']);
+    expect(configuredHeroNames({ ...moved, hero: ['Client', 'Customer Name'], facts: [{ column: 'client' }] }))
+      .toEqual(['Customer Name', 'client']);
+    expect(configuredHeroNames({ ...moved, roles: { name: 'Full Name' } })).toEqual(['Full Name', 'Amount Due']);
+    // no `hero` entry it matches: no name
+    expect(configuredHeroNames({ ...moved, hero: ['Loan No'] })).toEqual(['Amount Due']);
+  });
+
+  it('with a row: its first visible name column with a value, not a fact\'s column, first', () => {
+    expect(heroColumnsFor(row, moved)).toEqual(['Customer Name', 'Amount Due']);
+    // read from the row, not `hero`
+    expect(heroColumnsFor(row, { facts: moved.facts })).toEqual(['Customer Name', 'Amount Due']);
+    expect(heroColumnsFor({ ...row, 'Customer Name': '-', Contact: 'Ravi' }, { facts: moved.facts })).toEqual(['Contact', 'Amount Due']);
+    expect(heroColumnsFor(row, { facts: moved.facts, hidden: ['Customer Name'] })).toEqual(['Amount Due']);
+    expect(heroColumnsFor(row, { facts: [{ column: 'Customer Name' }] })).toEqual(['Customer Name']);
+    expect(heroColumnsFor(row, { ...moved, roles: { name: 'Loan No' } })).toEqual(['Loan No', 'Amount Due']);
+  });
+
+  it('without facts nothing changes: `hero` as configured', () => {
+    expect(configuredHeroNames({ hero: ['Amount Due', 'Customer Name'] })).toEqual(['Amount Due', 'Customer Name']);
+    expect(heroColumnsFor(row, { hero: ['Amount Due'] })).toEqual(['Amount Due']);
+  });
+});
+
+describe('the hero cap with facts (AS19 R2)', () => {
+  const four = ['A', 'B', 'C', 'D'].map((column) => ({ column }));
+  const row = { Name: 'Asha', A: '1', B: '2', C: '3', D: '4', E: '5' };
+
+  it('is the name and every fact: no surface drops the fourth fact', () => {
+    expect(heroCapFor({ facts: four })).toBe(1 + AGENCY_FACT_FIELDS_MAX);
+    expect(heroCapFor({ facts: [] })).toBe(1 + AGENCY_FACT_FIELDS_MAX);
+    expect(heroColumnsFor(row, { roles: { name: 'Name' }, facts: four })).toEqual(['Name', 'A', 'B', 'C', 'D']);
+    expect(heroColumnsFor(row, { facts: four })).toEqual(['Name', 'A', 'B', 'C', 'D']);
+  });
+
+  it('without facts it stays MAX_HERO_FIELDS, and a caller\'s own cap still wins', () => {
+    expect(heroCapFor({ hero: ['A'] })).toBe(MAX_HERO_FIELDS);
+    expect(heroCapFor(null)).toBe(MAX_HERO_FIELDS);
+    expect(heroColumnsFor(row, { hero: ['Name', 'A', 'B', 'C', 'D'] })).toHaveLength(MAX_HERO_FIELDS);
+    expect(heroColumnsFor(row, { roles: { name: 'Name' }, facts: four }, null, { max: 2 })).toEqual(['Name', 'A']);
   });
 });

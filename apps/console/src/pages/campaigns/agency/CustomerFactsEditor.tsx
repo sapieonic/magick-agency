@@ -51,8 +51,10 @@ type FocusTarget = { key: string; part: 'grip' | 'up' | 'down' | 'label' } | { k
  * grip, and each move is said in a live region. Last, how each column is read (six types).
  *
  * The columns are the customer list's (`useCampaignColumns`); a column hidden from agents is never
- * offered. A fact whose column the latest upload does not have is said on its row, with a select
- * to choose another. A saved fact the script still uses that was taken off the card is offered
+ * offered, and a fact is added from the latest upload's columns only (`uploaded`), never from a
+ * column only the stored settings name. A sample is drawn as the station draws it, and a phone
+ * number only so, never as its digits beside it. A fact whose column the latest upload does not
+ * have is said on its row, with a select to choose another. A saved fact the script still uses that was taken off the card is offered
  * back ("Put it back"); the page holds Save until the script no longer uses it. Errors come keyed
  * as the server keys them (`context_display.roles.<role>`, `context_display.facts.<i>.<part>`,
  * `context_display.types.<column>`), so the server's refusal lands on the field it is about.
@@ -64,6 +66,7 @@ export function CustomerFactsEditor({
   value,
   onChange,
   columns,
+  uploaded,
   hidden,
   loading,
   errors,
@@ -77,6 +80,11 @@ export function CustomerFactsEditor({
   onChange: (next: FactsForm) => void;
   /** The customer list's columns, hidden ones included. */
   columns: readonly string[];
+  /**
+   * The latest upload's columns (AS19 R12): the only ones a fact may be added from or moved to, so
+   * a column only the stored settings name is never offered. Absent: every column of `columns`.
+   */
+  uploaded?: readonly string[];
   /** The columns hidden from agents (`context_display.hidden`). */
   hidden: readonly string[];
   loading: boolean;
@@ -125,7 +133,8 @@ export function CustomerFactsEditor({
   const nameColumn = nameColumnOf(value, shown, hidden);
   const placeColumn = placeColumnOf(value, shown, hidden);
   const usedColumns = [nameColumn, placeColumn, ...list.map((f) => f.column)].filter((c): c is string => Boolean(c));
-  const free = shown.filter((c) => !usedColumns.some((u) => sameColumn(u, c)));
+  const offerable = uploaded === undefined ? shown : shown.filter((c) => uploaded.some((u) => sameColumn(u, c)));
+  const free = offerable.filter((c) => !usedColumns.some((u) => sameColumn(u, c)));
   const typeOf = (column: string): AgencyContextFieldType => columnType(value, column);
   const sampleOf = (column: string): string => sampleText(firstSample(samples, column), typeOf(column), phoneDisplay);
   const nameOf = (fact: AgencyFactField): string => fact.label.trim() || fact.column;
@@ -443,9 +452,11 @@ export function CustomerFactsEditor({
                     <span className={styles.fromText}>
                       From <b>{fact.column}</b>
                       {raw !== '' ? (
-                        <span className={styles.sample}>
-                          {` · ${raw}`}
-                          {sampleOf(fact.column) !== raw ? ` → ${sampleOf(fact.column)}` : ''}
+                        <span className={styles.sample} data-testid={`fact-sample-${index}`}>
+                          {/* A phone number only as agents see it (AS19 R12): its digits never beside it. */}
+                          {type === 'phone' || sampleOf(fact.column) === raw
+                            ? ` · ${sampleOf(fact.column)}`
+                            : ` · ${raw} → ${sampleOf(fact.column)}`}
                         </span>
                       ) : null}
                     </span>
@@ -543,7 +554,11 @@ export function CustomerFactsEditor({
             >
               <h4 className={styles.minorHead} id={`${id}-picker-head`}>Columns of the customer list not on the card</h4>
               {free.length === 0 ? (
-                <p className={styles.hint}>Every column agents may see is already on the card.</p>
+                <p className={styles.hint} data-testid="fact-picker-none">
+                  {offerable.length === 0
+                    ? 'Upload a customer list to this campaign first.'
+                    : 'Every column agents may see is already on the card.'}
+                </p>
               ) : (
                 <ul className={styles.pickList} aria-labelledby={`${id}-picker-head`}>
                   {free.map((column, i) => {

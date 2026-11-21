@@ -27,7 +27,9 @@ function Harness({
   onAddFact,
   samples = [],
   onChange,
+  uploaded,
 }: {
+  uploaded?: string[];
   initial: ScriptForm;
   onAddFact?: (column: string, token: string) => void;
   samples?: Array<Record<string, unknown>>;
@@ -48,6 +50,7 @@ function Harness({
       offered={keys}
       allowed={keys}
       columns={['Name', 'City', 'Loan Amount', 'Loan ID', 'Branch']}
+      uploaded={uploaded}
       samples={samples}
       campaignName="Diwali collections"
       onAddFact={onAddFact}
@@ -107,6 +110,22 @@ describe('the { list', () => {
     expect(screen.queryByTestId('script-key-list')).toBeNull();
   });
 
+  it('is a combobox over its list, and says when no key matches (AS19 R12)', () => {
+    render(<Harness initial={{ opening: '', steps: [] }} />);
+    const field = opening();
+    expect(field.getAttribute('role')).toBe('combobox');
+    expect(field.getAttribute('aria-autocomplete')).toBe('list');
+    expect(field.getAttribute('aria-expanded')).toBe('false');
+    const controls = field.getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    type(field, 'Hi {');
+    expect(screen.getByTestId('script-key-list').id).toBe(controls);
+    expect(field.getAttribute('aria-expanded')).toBe('true');
+    // Filtered by key or name, anywhere in them: none matches.
+    fireEvent.change(field, { target: { value: 'Hi {zz' } });
+    expect(screen.getByText('No key matches “zz”.')).toBeTruthy();
+  });
+
   it('closes with Esc and leaves the text as typed', () => {
     render(<Harness initial={{ opening: '', steps: [] }} />);
     type(opening(), 'Pay by {');
@@ -142,6 +161,12 @@ describe('a word the card has no fact for', () => {
     render(<Harness initial={{ opening: 'From {branch}', steps: [] }} onAddFact={onAddFact} />);
     fireEvent.click(screen.getByTestId('script-fix-opening-branch-add'));
     expect(onAddFact).toHaveBeenCalledWith('Branch', '{branch}');
+  });
+
+  it('offers to add it only from the latest upload’s columns', () => {
+    render(<Harness initial={{ opening: 'From {branch}', steps: [] }} onAddFact={vi.fn()} uploaded={['Name', 'City', 'Loan ID']} />);
+    expect(screen.getByTestId('script-fix-opening-branch')).toBeTruthy();
+    expect(screen.queryByTestId('script-fix-opening-branch-add')).toBeNull();
   });
 
   it('puts another key in its place, or takes it out', () => {

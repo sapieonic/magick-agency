@@ -312,6 +312,26 @@ describe('with facts (AS19), the other readers of the heroes match the card', ()
     const { facts: _facts, ...legacy } = CHOSEN;
     expect(heroColumns({ context_display: legacy })).toEqual(['Loan No']);
   });
+
+  it('a campaign moved to facts while its name was guessed keeps the name a hero (AS19 R1)', () => {
+    // `{ hero: ['Customer Name', 'Amount Due'] }` saved with facts and no `name` role.
+    const moved: AgencyContextDisplay = {
+      hero: ['Customer Name', 'Amount Due'],
+      facts: [{ column: 'Amount Due', label: 'Amount Due', key: 'amount_due' }],
+    };
+    expect(contactFields(FACTS_ROW, { context_display: moved } as CustomerHistoryCampaignRow).map((f) => f.column))
+      .toEqual(['Customer Name', 'Amount Due']);
+    expect(heroColumns({ context_display: moved })).toEqual(['Customer Name', 'Amount Due']);
+  });
+
+  it('the name and four facts: customer history drops none of them (AS19 R2)', () => {
+    const four: AgencyContextDisplay = {
+      roles: { name: 'Customer Name' },
+      facts: ['City', 'Loan No', 'Amount Due', 'Due Date'].map((column, i) => ({ column, label: column, key: `k${i}` })),
+    };
+    expect(contactFields(FACTS_ROW, { context_display: four } as CustomerHistoryCampaignRow).map((f) => f.column))
+      .toEqual(['Customer Name', 'City', 'Loan No', 'Amount Due', 'Due Date']);
+  });
 });
 
 describe('the write: context_display.facts (AS19)', () => {

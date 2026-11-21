@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { AgencyFactField } from '@magick-agency/contracts/agency';
+import type { AgencyContextFieldType, AgencyFactField } from '@magick-agency/contracts/agency';
+import { parseContextFact } from '@magick-agency/domain/context-facts';
+import { configuredHeroNames } from '@magick-agency/domain/context-hero';
+import { factDisplay } from '../../utils/agency/stationCustomer';
 import {
   FACTS_LIMIT_MESSAGE,
   FACT_COLUMN_MISSING_MESSAGE,
@@ -117,8 +120,8 @@ describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
       fact('Loan ID', 'loan_id'),
       fact('Amount', 'amount_due'),
     ]);
-    // A type already set is kept.
-    expect(card.types).toEqual({ Amount: 'number' });
+    // The role overrode `types` before, so its column is money whatever was stored (AS19 R10).
+    expect(card.types).toEqual({ Amount: 'money' });
     expect(card.place).toBe('City');
   });
 
@@ -295,13 +298,25 @@ describe('the card’s facts (AS19)', () => {
 
   it('reads a value as the card writes it for each type, and the raw text when it cannot be read', () => {
     expect(sampleText('125000', 'money')).toBe('₹1,25,000');
-    expect(sampleText('20/11/2026', 'date')).toBe('20 Nov');
     expect(sampleText('1,25,000.5', 'number')).toBe('1,25,000.5');
-    expect(sampleText('98765 43321', 'phone')).toBe('9876543321');
-    expect(sampleText('+919876543321', 'phone', 'masked')).toBe('98••• ••321');
     expect(sampleText('haan', 'yes_no')).toBe('Yes');
     expect(sampleText('maybe', 'yes_no')).toBe('maybe');
     expect(sampleText('  ', 'money')).toBe('');
+  });
+
+  it('draws every value with the station’s own formatter, so Settings and the station agree (AS19 R12)', () => {
+    const station = (raw: string, type: AgencyContextFieldType, phoneDisplay: 'full' | 'masked' = 'full') =>
+      factDisplay({ column: 'X', type, raw, value: parseContextFact(raw, type) }, { phoneDisplay }).text;
+    const cases: Array<[string, AgencyContextFieldType]> = [
+      ['125000.50', 'money'], ['12.00', 'number'], ['1,25,000', 'number'], ['20/11/2026', 'date'], ['20/11/2031', 'date'],
+      ['98765 43321', 'phone'], ['+14155550123', 'phone'], ['12345', 'phone'], ['no', 'yes_no'], [' Pune ', 'text'],
+    ];
+    for (const [raw, type] of cases) {
+      expect(sampleText(raw, type), `${type} ${raw}`).toBe(station(raw, type));
+      expect(sampleText(raw, type, 'masked'), `${type} ${raw} masked`).toBe(station(raw, type, 'masked'));
+    }
+    // A hidden number never shows its digits, whatever the phone rule draws.
+    expect(sampleText('+919876543321', 'phone', 'masked')).not.toContain('9876543321');
   });
 });
 
@@ -345,9 +360,43 @@ describe('the card’s save (AS19)', () => {
         ],
       },
     });
-    // A type already set is the supervisor's, and is kept.
-    const typed = { ...stored, types: { Amount: 'number' as const } };
-    expect(stationSettingsOf(campaign({ context_display: typed }), ['Loan ID', 'Amount', 'Due On']).facts.types).toEqual({ Amount: 'number', 'Due On': 'date' });
+  });
+
+  it('reads the old role columns as money and a date whatever `types` stored, so the first save changes nothing agents see (AS19 R10)', () => {
+    // The role overrode the stored type on today's card: `Amount` showed as money, `due on` as a date.
+    const stored = {
+      hero: ['Loan ID'],
+      roles: { amount_due: 'Amount', due_date: 'due on' },
+      types: { amount: 'number' as const, 'Due On': 'text' as const, 'Loan ID': 'number' as const },
+    };
+    const loaded = stationSettingsOf(campaign({ context_display: stored }), ['Loan ID', 'Amount', 'Due On']);
+    // One entry per column, in the stored spelling; a column that plays no role keeps its type.
+    expect(loaded.facts.types).toEqual({ amount: 'money', 'Due On': 'date', 'Loan ID': 'number' });
+    const sent = stationPayload(loaded, { ...loaded, facts: { ...loaded.facts, name: 'Name' } }, stored).context_display;
+    expect(sent?.types).toEqual({ amount: 'money', 'Due On': 'date', 'Loan ID': 'number' });
+    // A column that is not the role's is not retyped, even keyed `amount_due` by its header.
+    expect(factsFormOf({ hero: ['Amount Due'], types: { 'Amount Due': 'text' } }, ['Amount Due']).types).toEqual({ 'Amount Due': 'text' });
+  });
+
+  it('writes a guessed name as the name role, so the name stays a hero once the card has facts (AS19 R1)', () => {
+    const stored = { hero: ['Customer Name', 'Amount Due'] };
+    const columns = ['Customer Name', 'Amount Due', 'City'];
+    const loaded = stationSettingsOf(campaign({ context_display: stored }), columns);
+    // The select is on "Guess from the column names (Customer Name)"; the card has the amount.
+    expect(loaded.facts.name).toBe('');
+    expect(loaded.facts.list.map((f) => f.column)).toEqual(['Amount Due']);
+    const renamed = { ...loaded, facts: { ...loaded.facts, list: [{ ...loaded.facts.list[0]!, label: 'Amount' }] } };
+    const display = stationPayload(loaded, renamed, stored, columns).context_display!;
+    expect(display.roles).toEqual({ name: 'Customer Name' });
+    // …and so every surface that reads the heroes keeps it: the own-contacts list, customer history.
+    expect(configuredHeroNames(display)).toEqual(['Customer Name', 'Amount Due']);
+    // A name chosen in the select is written as chosen; no guess, nothing written.
+    expect(contextDisplayPayload(stored, { ...renamed.facts, name: 'City' }, columns).roles).toEqual({ name: 'City' });
+    expect(contextDisplayPayload(stored, renamed.facts, ['Amount Due']).roles).toBeUndefined();
+    // Never a hidden column, nor one that is already a fact or the line under it (the server would refuse it).
+    expect(contextDisplayPayload({ ...stored, hidden: ['customer name'] }, renamed.facts, columns).roles).toBeUndefined();
+    expect(contextDisplayPayload(stored, { ...renamed.facts, list: [fact('Customer Name', 'cn')] }, columns).roles).toBeUndefined();
+    expect(contextDisplayPayload(stored, { ...renamed.facts, place: 'customer name' }, columns).roles).toEqual({ place: 'customer name' });
   });
 
   it('reads Text as no entry: absent is text', () => {

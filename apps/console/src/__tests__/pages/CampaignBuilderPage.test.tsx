@@ -286,7 +286,8 @@ describe('the page composes the mapper', () => {
     await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign).toHaveBeenCalledWith(
       'camp-1',
-      { context_display: { facts: [{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }] } },
+      // The guessed name column goes as the name role, so it stays a hero (AS19 R1).
+      { context_display: { facts: [{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }], roles: { name: 'Full Name' } } },
       't1',
       'a1',
     );

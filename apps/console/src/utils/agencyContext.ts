@@ -1,5 +1,6 @@
 import {
   contextValueText,
+  heroCapFor,
   heroColumnsFor,
   isBlankContextValue,
   MAX_HERO_FIELDS,
@@ -95,7 +96,8 @@ export function resolveContextFields(
 
   // Rule 4 applies at every stage, so a column in both `hero` and `hidden` is hidden.
   const heroKeys = heroColumnsFor(context, display, null, {
-    max: options.maxHero ?? MAX_HERO_FIELDS,
+    // With facts (AS19 R2) the name and every fact; else MAX_HERO_FIELDS.
+    max: options.maxHero ?? heroCapFor(display),
     fallbackToFirstColumns: false,
   });
 

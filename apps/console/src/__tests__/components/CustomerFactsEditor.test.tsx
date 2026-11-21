@@ -20,7 +20,7 @@ const card = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '
 function Harness({
   initial,
   columns,
-  uploaded = [],
+  uploaded,
   hidden = [],
   serverErrors = {},
   onChange,
@@ -28,6 +28,7 @@ function Harness({
   samples = [],
   removedInUse = [],
   onPutBack,
+  phoneDisplay,
 }: {
   initial: FactsForm;
   columns: string[];
@@ -39,10 +40,11 @@ function Harness({
   samples?: Array<Record<string, unknown>>;
   removedInUse?: AgencyFactField[];
   onPutBack?: (key: string) => void;
+  phoneDisplay?: 'full' | 'masked';
 }) {
   const [value, setValue] = useState(initial);
   // As the page does: the card's own findings, then the server's.
-  const view = useConfigFieldErrors({ ...serverErrors, ...factsErrors(value, { hidden, uploaded }) });
+  const view = useConfigFieldErrors({ ...serverErrors, ...factsErrors(value, { hidden, uploaded: uploaded ?? [] }) });
   return (
     <CustomerFactsEditor
       value={value}
@@ -51,8 +53,10 @@ function Harness({
         onChange?.(next);
       }}
       columns={columns}
+      uploaded={uploaded}
       hidden={hidden}
       loading={false}
+      phoneDisplay={phoneDisplay}
       errors={view}
       readOnly={readOnly}
       samples={samples}
@@ -119,6 +123,42 @@ describe('adding facts', () => {
     expect(document.activeElement).toBe(screen.getByTestId('fact-label-1'));
     expect(screen.getByTestId('facts-announce').textContent).toBe('Outstanding prin added to the card.');
     expect(screen.getByTestId('facts-count').textContent).toBe('2 of 4 used');
+  });
+
+  it('offers only the latest upload’s columns, never one only the stored settings name (AS19 R12)', () => {
+    render(
+      <Harness
+        initial={card({ list: [fact('Loan ID', 'loan_id')] })}
+        columns={['Name', 'Loan ID', 'Branch', 'Old Branch']}
+        uploaded={['Name', 'Loan ID', 'Branch']}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('fact-add'));
+    const picker = screen.getByTestId('fact-picker');
+    expect(within(picker).getAllByRole('button').map((b) => b.querySelector('b')!.textContent)).toEqual(['Branch']);
+  });
+
+  it('with no upload, offers no column and says to upload one', () => {
+    render(<Harness initial={card({ list: [fact('Loan ID', 'loan_id')] })} columns={['Loan ID', 'Branch']} uploaded={[]} />);
+    fireEvent.click(screen.getByTestId('fact-add'));
+    expect(within(screen.getByTestId('fact-picker')).queryAllByRole('button')).toEqual([]);
+    expect(screen.getByTestId('fact-picker-none').textContent).toBe('Upload a customer list to this campaign first.');
+  });
+
+  it('shows a phone fact’s sample only as agents see it, never its digits beside it (AS19 R12)', () => {
+    render(
+      <Harness
+        initial={card({ list: [fact('Mobile', 'mobile'), fact('Due', 'due')], types: { Mobile: 'phone', Due: 'money' } })}
+        columns={['Mobile', 'Due']}
+        samples={[{ Mobile: '+91 98765 43321', Due: '125000' }]}
+        phoneDisplay="masked"
+      />,
+    );
+    const phone = screen.getByTestId('fact-sample-0').textContent!;
+    expect(phone.replace(/\D/g, '')).not.toContain('9876543321');
+    expect(phone).not.toContain('→');
+    // Other types still show what was uploaded and how it reads.
+    expect(screen.getByTestId('fact-sample-1').textContent).toBe(' · 125000 → ₹1,25,000');
   });
 
   it('stops at 4: a fifth add says why instead', () => {
