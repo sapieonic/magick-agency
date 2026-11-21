@@ -28,7 +28,6 @@
  * sentiment column (RP5).
  */
 import {
-  AGENCY_DEFAULT_DISPOSITION_CATALOG,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
   type AgencyDisposition,
 } from '@magick-agency/contracts/agency';
@@ -53,6 +52,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { parseAgentStatsQuery } from '../../agent-record.js';
 import { agentNamesOrNone } from '../../agency-agent-identity.js';
+import { effectiveCatalog } from '../../disposition-policy.js';
 import { campaignZone } from '../../insights/range.js';
 import { buildTimeline, dailyRows, foldPresence } from './agent-presence.js';
 import { agentDefinitions } from './definitions.js';
@@ -201,9 +201,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
 
   const rosterRow = roster.rows.find((r) => r.agent_user_id.toLowerCase() === agentUserId.toLowerCase()) ?? null;
   const record = stats.totals;
-  const softphoneCatalog = softphoneSettings.disposition_catalog.length > 0
-    ? softphoneSettings.disposition_catalog
-    : [...AGENCY_DEFAULT_DISPOSITION_CATALOG];
+  const softphoneCatalog = effectiveCatalog(softphoneSettings.disposition_catalog);
 
   const campaignRefs: ReportCampaignRef[] = campaignIds
     .filter((id) => campaigns.has(id))

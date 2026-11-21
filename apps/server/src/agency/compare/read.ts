@@ -85,9 +85,9 @@ import {
   type CompareCohortScope,
   type RosterAttemptTotalsRow,
 } from '../../db/repositories/agency.repository.js';
-import { foldOccupancy } from '../agent-record.js';
+import { foldOccupancy, rosterParams } from '../agent-record.js';
 import { agentNamesOrNone, filterRowsByMembership, type RosterMembershipRef } from '../agency-agent-identity.js';
-import { localDates, rosterParams } from '../reports/datasets/shared.js';
+import { localDates } from '../reports/datasets/shared.js';
 import {
   assembleCompareResponse,
   COMPARE_SOURCES,

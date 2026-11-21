@@ -225,6 +225,25 @@ export function parseRosterQuery(query: Record<string, unknown>): FilterParse<Ag
 }
 
 /**
+ * The roster read's parameters for a window (and optionally one campaign), through
+ * {@link parseRosterQuery} with the report's query: `sort=attempts`, `order=desc`, `limit=200`.
+ * Report exports (`readAccountRoster`) and Compare agents' cohort read (`agency/compare/read.ts`) read
+ * the roster the screen reads through it.
+ */
+export function rosterParams(q: { from: Date; to: Date; campaignId?: string }): AgentRosterParams {
+  const parsed = parseRosterQuery({
+    from: q.from.toISOString(),
+    to: q.to.toISOString(),
+    ...(q.campaignId ? { campaign_id: q.campaignId } : {}),
+    sort: 'attempts',
+    order: 'desc',
+    limit: String(ROSTER_MAX_LIMIT),
+  });
+  if (!parsed.ok) throw new Error(`report roster window refused: ${parsed.issues.map((i) => `${i.param} ${i.message}`).join('; ')}`);
+  return parsed.filters;
+}
+
+/**
  * p25 / median / p75 over an already-filtered set of values.
  *
  * ── The filtering is the CALLER's job, and that is the interesting half ──────

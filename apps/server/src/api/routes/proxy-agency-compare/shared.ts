@@ -23,7 +23,7 @@ import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { CompareReads } from '../../../agency/compare/read.js';
 import { COMPARE_ERROR_MESSAGES, uuidOf } from '../../../agency/compare/validate.js';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { effectiveCatalog } from '../../../agency/my-day.js';
+import { effectiveCatalog } from '../../../agency/disposition-policy.js';
 import { localDateOf } from '../../../agency/reports/schedule.js';
 import { postgresZoneName } from '../../../agency/zone.js';
 import { sendRefusal } from '../helpers/refusal.js';
