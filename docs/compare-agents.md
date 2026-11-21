@@ -36,7 +36,7 @@ recommended (the convention of `agent-station.md` §1).
 | CP14 | **No free-form formulas.** A supervisor never types a ratio or an expression. An outcome set (CP17) is not one: it is a fixed definition (share of conversations ending in any of the chosen codes) over a chosen list of the campaign's own codes | Decided (as recommended) |
 | CP15 | **Exports through the existing report pipeline** (a report kind `agent_compare`, the renderer Lambda), not a new process | Decided (as recommended) |
 | CP16 | **No Inbound lens** until inbound calls are in the rollup | Decided (as recommended) |
-| CP17 | **Outcome metrics are the supervisor's choice.** Beside the built-ins, a metric can be an **outcome set**: 1 to 5 outcome codes of the campaign's current catalog, giving the share of the agent's conversations on the campaign ending in any of them (dialler conversations, from `agency_insights_rollup_codes`, as Insights counts them). The supervisor names it (default: the codes' labels, "A, B or C") and says which way is better: higher, lower or neither. A set of neither direction is shown and never named; a directional one is judged by the same interval rule as every rate (§6). A set can be the per-day trend (its count per local day) and is kept in saved views. Will-pay is one such set; `promises_rate` (CP2) stays a built-in beside them | **Decided** (Manas, 2026-11-21) |
+| CP17 | **Outcome metrics are the supervisor's choice.** Beside the built-ins, a metric can be an **outcome set**: 1 to 5 outcome codes of the campaign's current catalog, giving the share of the agent's conversations on the campaign ending in any of them (dialler conversations, from `agency_insights_rollup_codes`, as Insights counts them). The supervisor names it (default: the codes' labels, "A, B or C") and says which way is better: higher, lower or neither. A set of neither direction is shown and never named; a directional one is judged by the same interval rule as every rate (§6). A set can be the per-day trend (its count per local day) and is kept in saved views. A supervisor can build any such set, a "Will pay" set of the promise codes among them; the Collections lens starts on the built-in Promises (`promises_rate`, CP2: every call type), not on a set | **Decided** (Manas, 2026-11-21) |
 | CP18 | **Direction comes from the supervisor.** The catalog has no refusal category (`AgencyDisposition` has `is_success`, no refusal flag), so a set's direction is never inferred, except that a set of success codes only starts as "higher is better"; any other set starts as "shown, never flagged" until the supervisor chooses. No lens starts with a lower-is-better set | **Decided** (Manas, 2026-11-21) |
 
 ## 2. The screen
@@ -94,8 +94,8 @@ agent books a handful a week; the interval still keeps a thin rate from being na
 | Outcomes | Call-backs booked (`callbacks_booked`) · kept on time (`callbacks_kept_rate`) | neutral · higher | · 12 points | `agentCallbackTiming` scoped to the campaign (IN4 classes) |
 | Handling | Average call (`avg_call`) | neutral | | roster `talk_seconds` ÷ `connected` |
 | Handling | Time to choose outcome (`choose_time`) | lower | 1.5 × median | roster `wrapup_seconds` ÷ the count of the same measured wrap-ups |
-| Handling | No outcome chosen (`no_outcome_rate`) | lower | 4 points | rollup `no_outcome` facet, by agent |
-| Time use | On a call · choosing outcome · break · waiting | composition | | the agent review's presence fold (`reports/datasets/agent-presence.ts`), share of the shift (CP5); reserved is folded into waiting |
+| Handling | No outcome chosen (`no_outcome_rate`) | lower | 4 points | rollup codes by agent (`agency_insights_rollup_codes`): a NULL code or `no_disposition`, the conversations the `no_outcome` facet counts (the facet carries no agent; §7 "As built") |
+| Time use | On a call · choosing outcome · break · waiting | composition | | the roster's occupancy fold for the campaign (`foldOccupancy`, the roster's own `shift_seconds`; §7 "As built"), share of the shift (CP5); reserved is folded into waiting |
 | Time use | Breaks over their limit (`breaks_over_limit`) | lower, against the limit | 2 breaks | `break_overrun_seconds` (0060, AS12) |
 | Analysis | Each custom analysis question (yes/no → share, choice → mix, number → average); upset customer | shown only (CP13) | | completed analyses; the agent review's `quality` block for sentiment (phase 4) |
 
@@ -174,7 +174,9 @@ Next steps (`next_step`), each a filtered view that exists: the call log for the
 calls only, RC1; hidden without listening rights) for a low success, promise or higher-is-better set;
 the call log for the agent and the set's codes for a lower-is-better set; their recorded calls ending
 in the outcome to share (`stands_out`); the agent record's breaks; Call-backs filtered to the agent
-(call-backs kept); a supervisor message (no outcome chosen, slow to choose).
+(call-backs kept); a supervisor message (no outcome chosen, slow to choose). Where that view does
+not exist yet the console opens the nearest one that does (§9, phase 1c; `CompareNextStep` in the
+contract); the code's meaning stays.
 
 ## 7. Where it runs
 
@@ -213,7 +215,10 @@ reads a number other than the way the text above words it, the reason:
 - **The cohort** is the roster's own attempt statement (`rosterAttemptTotals`, the one
   `GET /agents/stats?campaign_id=` runs) on the read's client, with the roster route's membership
   filter (`filterRowsByMembership`, a departed agent kept, CP8). It is every row, not the roster
-  page's first 200. The statement also counts the measured wrap-ups `choose_time` divides by.
+  page's first 200. The statement also counts the measured wrap-ups `choose_time` divides by. So the
+  cohort is who **dialled the campaign** in the window: an agent whose only work on it was soft-phone
+  or inbound calls is in no cohort, and their promises are in nobody's baseline (the rest's pooled
+  figure and band are over dialling agents only).
 - **No outcome chosen** is read from `agency_insights_rollup_codes` (a NULL code or `no_disposition`),
   not the `no_outcome` facet: the facet carries no agent. Insights reconciles the two
   (`no_outcome_vs_unclassified_codes`), so it is the same number by agent.
@@ -232,7 +237,11 @@ reads a number other than the way the text above words it, the reason:
   (`offline → break`, `joined_at` unchanged). So the spans come from the session's start and its
   offline boundaries only (events whose `to_state` or `from_state` is `offline`), on
   `idx_agency_session_events_offline` (0065, `(session_id, at)` partial), never the day's state
-  changes the roster's occupancy statement walks.
+  changes the roster's occupancy statement walks. A day with a count that is not zero is a worked
+  day too (`trendOf`), session or not: a promise taken on the soft phone (its session has no
+  campaign) or on an inbound call matched to the campaign but answered from a station on another one
+  is in the series and in that day's median. A server test plans the statement with its
+  `OFFLINE_BOUNDARY_EVENT_SQL` and finds 0065's index in the plan.
 - **Outcome codes** are the campaign's current catalog, or the default catalog when it stores none
   (My day's `effectiveCatalog`). `success_rate` keeps the roster's rule (the stored catalog).
 - **The caches** (30 s each): the query's answer, and the options' cohort on its own key (tenant,
@@ -254,22 +263,54 @@ reads a number other than the way the text above words it, the reason:
 - **Slots.** At most 2 reads per tenant and a sixth of the pool in the process
   (`compareGlobalReadLimit`, 5 of the default 30), so compare can never take the connections the
   dialler needs; past either `429 compare_busy` with `Retry-After` and `retry_after_seconds`
-  (`COMPARE_BUSY_RETRY_AFTER_SECONDS`). A slot belongs to a read that runs SQL: a cached answer, and a
-  request that joins an identical query read already in flight, take none.
-- **Stopping a read.** The whole read has the 3 s deadline as well as each statement (a read sends up
-  to nine). When the deadline passes (`503 compare_timed_out`) or the client goes away (its connection
-  closes before the answer, or was already closed when the handler started, as when the console
-  aborts a superseded read; a query read is aborted once no request waits on it), the statement
-  running is cancelled on a connection of its own (`cancelBackend`, `packages/db`, never through the
-  shared pool, where it would queue behind every borrower), the cancel is awaited, no further
-  statement is sent, and the connection is destroyed rather than returned to the pool, so a cancel
-  that lands late can never stop another borrower's statement. A statement still running a second
-  after its cancel is abandoned with its connection. The slot comes back once the statement has
-  ended. The report cursor sends its cancel the same way.
+  (`COMPARE_BUSY_RETRY_AFTER_SECONDS`), whose message ("Too many comparisons are running right now")
+  is true of both limits. A slot belongs to a read that runs SQL: a cached answer, and a request that
+  joins an identical query read already in flight, take none. A request never holds two pooled
+  connections: the options route reads the campaign's default view only after the cohort's snapshot
+  has ended, and memberships and names are read after it too.
+- **Database CPU.** The read sets `max_parallel_workers_per_gather` to 1 for its own transaction
+  (`COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER`; Postgres's default is 2), so five reads at once take at
+  most ten processes, not fifteen. Only the cohort's attempt statement runs in parallel: on the seed
+  below, 1.30 s with no worker, 1.00 s with one, 0.90 s with two (7 days: 0.39, 0.28, 0.30 s); the
+  whole cohort's occupancy statement never does.
+- **The budget.** The whole read has 3 s (`COMPARE_READ_TIMEOUT_MS`), counted from before it takes a
+  connection; a read sends one statement per source it needs. Its settings statement sets
+  `statement_timeout` to what is left of the budget less 200 ms (`COMPARE_STATEMENT_TIMEOUT_MARGIN_MS`,
+  or the session's own ceiling when lower), and before a later statement it is lowered again to what
+  is left by then when that is lower by more than 50 ms. So Postgres ends a slow statement just before
+  the deadline: `57014`, `503 compare_timed_out`, the transaction rolled back and the connection back
+  in the pool to be reused, no cancel sent. The integration test holds that path: the read's backend
+  lives on idle after the 503, and no cancel was recorded.
+- **Stopping a read.** The deadline itself is the backstop (and stops a read between statements);
+  the client going away is the other stop (its connection closes before the answer, or was already
+  closed when the handler started, as when the console aborts a superseded read; a query read is
+  aborted once no request waits on it). Either way the statement running is cancelled on a
+  connection of its own (`cancelBackend`, `packages/db`, never through the shared pool, where it
+  would queue behind every borrower), by the backend's own pid: `pg_backend_pid()`, read in the
+  settings statement, never `client.processID`, which behind the Supabase session pooler (the
+  deployment default) is the pooler's own number, so a cancel by it signalled nothing or, by chance,
+  another backend of the same role. (The protocol's CancelRequest, `processID` and the secret key, is
+  not used: it depends on the pooler forwarding it, and `pg` sends it without TLS.) The cancel never
+  throws (the pool's options are read inside it, its connection built and ended inside it, and a
+  rejection counts as not sent), it is awaited, no further statement is sent, and the connection is
+  destroyed rather than returned to the pool, so a cancel that lands late can never stop another
+  borrower's statement. A signalled statement still running a second after its cancel is abandoned
+  with its connection. A cancel that could not be sent (no connection for it, the server refusing
+  it) leaves the statement running until its own `statement_timeout`, so the slot is held until that
+  bound has passed, plus the second, before the read gives up. The slot comes back once the
+  statement has ended or that bound has passed. The report cursor reads its pid and sends its cancel
+  the same way (its bound is the report's deadline). The cancel's connection and a destroyed
+  connection's backend that is still finishing are counted in the Postgres connection budget
+  (`operations.md`, "Sizing the media workers", *Postgres connections*).
+- **Saved views' default.** An edit that does not send `is_campaign_default` keeps the view's value
+  as read under the row's lock in the edit's own transaction (after the campaign's lock), never the
+  value the route read before it: a rename cannot take the default back from another supervisor who
+  set a new one meanwhile.
 
 **Cost, measured.** On 930,000 attempts (two campaigns of 100 agents × 31 days × 150 dials) and
-1.4M state events, `EXPLAIN ANALYZE` of each statement, a 31-day window: the roster attempt statement
-1.3–1.5 s (a parallel scan of the window; `idx_agency_attempts_campaign_dialed` on a 7-day window,
+1.4M state events, `EXPLAIN ANALYZE` of each statement, a 31-day window, at Postgres's default two
+parallel workers (the read now allows one: about 0.1 s more on the attempt statement, "Database CPU"
+above): the roster attempt statement 1.3–1.5 s (a parallel scan of the window; `idx_agency_attempts_campaign_dialed` on a 7-day window,
 0.5 s), the roster occupancy statement for the whole cohort **4.3 s** (every event of the window, its
 window sort spilling to disk; 0.9 s on 7 days), the same for three picked agents 0.1 s, rollup codes
 0.1 s, promises 0.03 s, call-backs 0.03 s, breaks over the limit 0.08 s, the trend's days 0.03 s (an
@@ -317,8 +358,8 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 | Phase | Scope | Status |
 |---|---|---|
 | 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0064) | **Built** (2026-11-21) |
-| 1b | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured"); figures held to the roster by the integration oracle. Review fixes: trend days from online spans (0065), a safe cancel and a whole-read deadline, a process-wide limit, the options' cohort cached, impossible counts withheld, legacy zone names, `Retry-After` on `compare_busy`, the saved views' lock order | **Built** (2026-11-21) |
-| 1b | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Run end to end against the real routes on a seeded database (every figure matched the seed; the review and end-to-end fixes are in). Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
+| 1b | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured"); figures held to the roster by the integration oracle. Review fixes: trend days from online spans (0065), a safe cancel and a whole-read deadline, a process-wide limit, the options' cohort cached, impossible counts withheld, legacy zone names, `Retry-After` on `compare_busy`, the saved views' lock order. Final review fixes: cancels by `pg_backend_pid()`, Postgres's timeout ending a slow read first (the connection reused), the slot held while an unsent cancel's statement runs, one parallel worker, one connection per request, worked trend days with a count, a rename keeping another supervisor's new default | **Built** (2026-11-21) |
+| 1c | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Run end to end against the real routes on a seeded database (every figure matched the seed; the review and end-to-end fixes are in). Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
@@ -348,7 +389,9 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   creates; a view's codes checked against its campaign's catalog
   (`apps/server/test/integration/agency/compare-view-repository.test.ts`, the views block of
   `compare-agents.test.ts`); the lock order: an edit of the default view while another save holds
-  the campaign's lock and clears that row waits rather than deadlocks. Built, mutation-checked.
+  the campaign's lock and clears that row waits rather than deadlocks; a rename that does not send the default keeps the
+  row's value as it stands under its lock, also when the new default commits while it waits. Built,
+  mutation-checked.
 - An integration oracle: every value the read returns equals the roster's and
   `/agents/:userId/stats`' for the same campaign and window (as `report-datasets-oracle.test.ts`
   does for reports). Built: `apps/server/test/integration/api/compare-agents.test.ts` holds every
@@ -362,10 +405,17 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   cache; the outcome set is held to the seed's count by code (the rollup Insights reads). Also there:
   a session that never leaves, offline overnight and off a day (null that day); calls at 23:50 and
   00:10 local and just outside the window; the promises trend; a dropped client's statement cancelled
-  and its connection destroyed; `Retry-After`; a legacy zone answering as its current name. The
-  guards' rules without a database (the deadline, the awaited cancel, the abandon, the slot held
-  until the statement ends, the process-wide limit, an already-gone socket):
-  `apps/server/test/unit/agency/compare/compare-read-cancel.test.ts`; the shared cancel with the pool
-  exhausted: `packages/db/test/integration/cancel-backend.test.ts`. Mutation-checked.
-- Console: a withheld rate renders as words, never a bar; colour follows the person when one is
-  removed; finding codes render the right words.
+  by its backend's own pid (every pooled connection's `processID` set to a pooler's number) and its
+  connection destroyed, asserted by the cancels recorded, not by time; the statement timeout's 503
+  with its connection reused and no cancel; a promise on a day with no session on the campaign;
+  `Retry-After`; a legacy zone answering as its current name. The guards' rules without a database
+  (the deadline, the budgeted `statement_timeout` and its lowering, the cancel by
+  `pg_backend_pid()`, the awaited cancel, the abandon, the slot held until the statement ends or,
+  when the cancel was not sent, until its timeout bound, a throwing cancel, the process-wide limit,
+  a shared read's joiner and last waiter, an already-gone socket):
+  `apps/server/test/unit/agency/compare/compare-read-cancel.test.ts`; the day statements given
+  Postgres's zone name, not the request's: `compare-read-zone.test.ts`; the options route's order and
+  a PATCH's unsent default: `test/unit/api/routes/proxy-agency-compare.routes.test.ts`; the trend
+  days' plan on 0065: `test/integration/agency/compare-offline-index.test.ts`; the shared cancel with
+  the pool exhausted, and never throwing: `packages/db/test/integration/cancel-backend.test.ts`; the
+  report cursor's cancel by its backend's pid: `report-assembler-deadline.test.ts`. Mutation-checked.
