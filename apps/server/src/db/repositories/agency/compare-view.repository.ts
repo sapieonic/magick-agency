@@ -16,6 +16,12 @@
  *    once serialise instead of one failing on the unique index. The cleared view's `updated_at` is
  *    left alone: its owner did not edit it.
  *
+ * **Lock order** (every transaction here takes them in this order, so two can never wait on each
+ * other): the campaign's default lock FIRST, whenever the write may set a default; then the
+ * owner's lock (create); then rows. An edit that locked its row and then waited for the campaign's
+ * lock deadlocked (`40P01`) against a create or edit holding that lock and clearing the old default,
+ * which is a write to the very row the first one held.
+ *
  * Only the owner edits or deletes a view: `update` and `delete` match on the owner and answer
  * "not found" otherwise, the same answer as for a view that does not exist (the route's uniform
  * `404 compare_view_not_found`).
@@ -83,16 +89,16 @@ export const COMPARE_VIEW_LIST_SQL = `
             v.updated_at DESC, v.id`;
 
 /** The lock key of an owner's views in an account (the per-owner limit). */
-const ownerLockSql = `SELECT pg_advisory_xact_lock(hashtextextended('agency_compare_views:owner:' || $1::text || ':' || $2::text || ':' || $3::text, 0))`;
-/** The lock key of a campaign's default view. */
-const campaignLockSql = `SELECT pg_advisory_xact_lock(hashtextextended('agency_compare_views:default:' || $1::text, 0))`;
+export const COMPARE_VIEW_OWNER_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('agency_compare_views:owner:' || $1::text || ':' || $2::text || ':' || $3::text, 0))`;
+/** The lock key of a campaign's default view: taken before any other lock or row (see the lock order). */
+export const COMPARE_VIEW_DEFAULT_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('agency_compare_views:default:' || $1::text, 0))`;
 
 function json(value: unknown): string | null {
   return value === null ? null : JSON.stringify(value);
 }
 
+/** Clear the campaign's default but `keepId`. The caller already holds the campaign's default lock. */
 async function clearOtherDefault(client: PoolClient, scope: CompareViewScope, campaignId: string, keepId: string | null): Promise<void> {
-  await client.query(campaignLockSql, [campaignId]);
   await client.query(
     `UPDATE agency_compare_views
         SET is_campaign_default = false
@@ -147,15 +153,18 @@ export class AgencyCompareViewRepository {
    * (`{ ok: false, reason: 'limit' }`). A default clears the campaign's other default first.
    */
   async create(scope: CompareViewScope & { ownerUserId: string; maxPerOwner: number }, content: CompareViewContent): Promise<CompareViewCreateResult> {
+    const defaultFor = content.is_campaign_default ? content.campaign_id : null;
     return withTransaction(async (client) => {
-      await client.query(ownerLockSql, [scope.tenantId, scope.accountId, scope.ownerUserId]);
+      // The lock order: the campaign's default lock, then the owner's, then rows.
+      if (defaultFor !== null) await client.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [defaultFor]);
+      await client.query(COMPARE_VIEW_OWNER_LOCK_SQL, [scope.tenantId, scope.accountId, scope.ownerUserId]);
       const { rows: counted } = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM agency_compare_views
           WHERE tenant_id = $1::uuid AND account_id = $2::uuid AND owner_user_id = $3::uuid`,
         [scope.tenantId, scope.accountId, scope.ownerUserId],
       );
       if ((counted[0]?.n ?? 0) >= scope.maxPerOwner) return { ok: false, reason: 'limit' } as const;
-      if (content.is_campaign_default && content.campaign_id !== null) await clearOtherDefault(client, scope, content.campaign_id, null);
+      if (defaultFor !== null) await clearOtherDefault(client, scope, defaultFor, null);
       const { rows } = await client.query<CompareViewRecord>(
         `INSERT INTO agency_compare_views
            (tenant_id, account_id, owner_user_id, name, lens, metrics, trend, campaign_id, shared, is_campaign_default)
@@ -175,7 +184,10 @@ export class AgencyCompareViewRepository {
    * `updated_at`. Null when there is no such view of theirs (another supervisor's included).
    */
   async update(scope: CompareViewScope & { ownerUserId: string }, id: string, content: CompareViewContent): Promise<CompareViewRecord | null> {
+    const defaultFor = content.is_campaign_default ? content.campaign_id : null;
     return withTransaction(async (client) => {
+      // The lock order: the campaign's default lock BEFORE the row's lock (module note).
+      if (defaultFor !== null) await client.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [defaultFor]);
       const { rows: mine } = await client.query<{ id: string }>(
         `SELECT id FROM agency_compare_views
           WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND owner_user_id = $4::uuid
@@ -183,7 +195,7 @@ export class AgencyCompareViewRepository {
         [id, scope.tenantId, scope.accountId, scope.ownerUserId],
       );
       if (mine.length === 0) return null;
-      if (content.is_campaign_default && content.campaign_id !== null) await clearOtherDefault(client, scope, content.campaign_id, id);
+      if (defaultFor !== null) await clearOtherDefault(client, scope, defaultFor, id);
       const { rows } = await client.query<CompareViewRecord>(
         `UPDATE agency_compare_views
             SET name = $2, lens = $3, metrics = $4::jsonb, trend = $5::jsonb, campaign_id = $6::uuid,
