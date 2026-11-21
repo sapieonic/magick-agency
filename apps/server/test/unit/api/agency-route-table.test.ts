@@ -119,15 +119,6 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
   ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
-  // Compare agents (docs/compare-agents.md §8, `proxy-agency-compare.routes.ts`): served ahead of
-  // the console's Reports tab (phase 1b, built in parallel against the contract). When the
-  // console's client calls them, they move to `console-paths.json` as served and leave this list.
-  ['POST /proxy/agency/compare/query', 'Compare agents: the comparison (console tab pending, docs/compare-agents.md §9)'],
-  ['GET /proxy/agency/compare/options', 'Compare agents: the cohort, outcome codes and default view (console tab pending)'],
-  ['GET /proxy/agency/compare/views', 'Compare agents: saved views list (console tab pending)'],
-  ['POST /proxy/agency/compare/views', 'Compare agents: save a view (console tab pending)'],
-  ['PATCH /proxy/agency/compare/views/:_', 'Compare agents: edit an own view (console tab pending)'],
-  ['DELETE /proxy/agency/compare/views/:_', 'Compare agents: delete an own view (console tab pending)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */
