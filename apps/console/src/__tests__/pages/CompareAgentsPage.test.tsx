@@ -768,8 +768,8 @@ describe('review fixes', () => {
                 ...c,
                 values: {
                   ...c.values,
-                  [promises]: { value: null, numerator: 52, denominator: 45, reportable: false, interval: null },
-                  [perHour]: { value: null, numerator: 60, denominator: 5400, reportable: false, interval: null },
+                  [promises]: { value: null, numerator: 52, denominator: 45, reportable: false, interval: null, withheld: 'counts_disagree' },
+                  [perHour]: { value: null, numerator: 60, denominator: 5400, reportable: false, interval: null, withheld: 'counts_disagree' },
                 },
               }
             : c,

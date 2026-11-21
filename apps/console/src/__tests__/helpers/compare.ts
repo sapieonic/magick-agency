@@ -66,7 +66,9 @@ export function metricInfo(ref: AgencyCompareMetricRef, label: string | null = n
 }
 
 export function value(over: Partial<AgencyCompareValue> = {}): AgencyCompareValue {
-  return { value: 0.31, numerator: 16, denominator: 51, reportable: true, interval: [0.2, 0.45], ...over };
+  // A figure under the floor is withheld as too few, as the server words it, unless a test says otherwise.
+  const withheld = over.withheld !== undefined ? over.withheld : over.reportable === false ? 'too_few' : null;
+  return { value: 0.31, numerator: 16, denominator: 51, reportable: true, interval: [0.2, 0.45], ...over, withheld };
 }
 
 export function finding(over: Partial<AgencyCompareFinding> & Pick<AgencyCompareFinding, 'code' | 'metric'>): AgencyCompareFinding {

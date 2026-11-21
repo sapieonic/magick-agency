@@ -51,7 +51,7 @@ function on(ref: AgencyCompareMetricRef, f: Partial<AgencyCompareFinding> & Pick
       trend: null,
       findings: [fnd],
       cohort: { agents: 9, per_metric: { [info.id]: { p25: 0.2, median: 0.28, p75: 0.3, pooled: 0.28, agents_rated: 8 } } },
-      agents: base.agents.map((a) => ({ ...a, values: { [info.id]: { value: 0.17, numerator: 5, denominator: 29, reportable: true, interval: [0.08, 0.35] } } })),
+      agents: base.agents.map((a) => ({ ...a, values: { [info.id]: { value: 0.17, numerator: 5, denominator: 29, reportable: true, interval: [0.08, 0.35], withheld: null } } })),
     },
     f: fnd,
   };

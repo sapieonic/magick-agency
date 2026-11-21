@@ -555,10 +555,9 @@ export interface AgencyCompareValue {
   /**
    * Why the figure is not `reportable` ({@link AgencyCompareWithheld}); null when it is. Set by the
    * shared rule (`compareValue` in `@magick-agency/domain/agent-compare`) and the server's
-   * counts-disagree step. Additive: this server always sends it; an answer recorded before it has
-   * none, and the console then words the figure from its counts.
+   * counts-disagree step.
    */
-  withheld?: AgencyCompareWithheld | null;
+  withheld: AgencyCompareWithheld | null;
 }
 
 /**

@@ -30,6 +30,7 @@ import {
   withheldShort,
   withheldSpoken,
   withheldWords,
+  type WithheldKind,
 } from '../../utils/agency/compare/compareMetrics';
 import { CODES, REFUSED_LOWER, SALES_CODES, WILL_PAY, metricInfo } from '../helpers/compare';
 
@@ -114,14 +115,14 @@ describe('units', () => {
 });
 
 describe('a withheld figure (contract AgencyCompareValue)', () => {
-  /** A value recorded before the server sent `withheld`: its reason is read from the counts. */
-  const v = (value: number | null, denominator: number | null) => ({ value, denominator });
+  /** A withheld value as the server sends it: no figure, its counts, and the server's reason. */
+  const v = (value: number | null, denominator: number | null, withheld: WithheldKind) => ({ value, denominator, withheld });
 
   it('takes the server\'s reason as it is, whatever the counts look like', () => {
     const promises = metricInfo(builtin('promises_rate'));
     // Counts under the floor that the server still says disagree: the server decides.
-    expect(withheldKind(promises, { value: null, denominator: 12, withheld: 'counts_disagree' })).toBe('counts_disagree');
-    expect(withheldKind(promises, { value: null, denominator: 45, withheld: 'too_few' })).toBe('too_few');
+    expect(withheldKind(promises, { withheld: 'counts_disagree' })).toBe('counts_disagree');
+    expect(withheldKind(promises, { withheld: 'too_few' })).toBe('too_few');
     for (const kind of ['too_few', 'none_due', 'counts_disagree', 'no_logged_in_time'] as const) {
       const value = { value: null, denominator: 30, withheld: kind };
       expect(withheldKind(promises, value)).toBe(kind);
@@ -136,33 +137,33 @@ describe('a withheld figure (contract AgencyCompareValue)', () => {
     expect(words).toEqual(['Too few to compare (30 calls; needs 20)', 'None due yet', 'Not shown: its counts don’t agree', 'No logged-in time']);
   });
 
-  it('says its counts don’t agree when it clears the floor and still has no figure, never "too few"', () => {
-    // 52 promises on 45 conversations: 45 clears the floor of 20.
+  it('words counts that don’t agree as such, never "too few"', () => {
+    // 52 promises on 45 conversations: the server withholds it and says why.
     const promises = metricInfo(builtin('promises_rate'));
-    expect(withheldKind(promises, v(null, 45))).toBe('counts_disagree');
-    expect(withheldWords(promises, v(null, 45))).toBe('Not shown: its counts don’t agree');
-    expect(withheldShort(promises, v(null, 45))).toBe('Counts don’t agree');
-    expect(withheldSpoken(promises, v(null, 45))).toBe('not shown, its counts don’t agree');
-    // At the floor exactly, too.
-    expect(withheldKind(promises, v(null, 20))).toBe('counts_disagree');
-    // Under the floor it is too few, figure or not.
-    expect(withheldWords(promises, v(0.3, 12))).toBe('Too few to compare (12 calls; needs 20)');
-    expect(withheldWords(promises, v(null, 0))).toBe('Too few to compare (0 calls; needs 20)');
+    expect(withheldWords(promises, v(null, 45, 'counts_disagree'))).toBe('Not shown: its counts don’t agree');
+    expect(withheldShort(promises, v(null, 45, 'counts_disagree'))).toBe('Counts don’t agree');
+    expect(withheldSpoken(promises, v(null, 45, 'counts_disagree'))).toBe('not shown, its counts don’t agree');
+    // Too few states its counts, figure or not.
+    expect(withheldWords(promises, v(0.3, 12, 'too_few'))).toBe('Too few to compare (12 calls; needs 20)');
+    expect(withheldWords(promises, v(null, 0, 'too_few'))).toBe('Too few to compare (0 calls; needs 20)');
   });
 
   it('never words calls per hour’s logged-in seconds as a count of hours', () => {
     const perHour = metricInfo(builtin('calls_per_hour'));
-    expect(withheldWords(perHour, v(null, 5400))).toBe('Not shown: its counts don’t agree');
-    expect(withheldShort(perHour, v(null, 5400))).toBe('Counts don’t agree');
-    expect(withheldWords(perHour, v(null, 0))).toBe('No logged-in time');
-    expect(withheldWords(perHour, v(null, null))).toBe('No logged-in time');
-    expect(withheldWords(perHour, { value: null, denominator: 0, withheld: 'no_logged_in_time' })).toBe('No logged-in time');
+    expect(withheldWords(perHour, v(null, 5400, 'counts_disagree'))).toBe('Not shown: its counts don’t agree');
+    expect(withheldShort(perHour, v(null, 5400, 'counts_disagree'))).toBe('Counts don’t agree');
+    expect(withheldWords(perHour, v(null, 0, 'no_logged_in_time'))).toBe('No logged-in time');
+    expect(withheldWords(perHour, v(null, null, 'no_logged_in_time'))).toBe('No logged-in time');
   });
 
   it('keeps "None due yet" for call-backs kept with none due', () => {
     const kept = metricInfo(builtin('callbacks_kept_rate'));
-    expect(withheldWords(kept, v(null, 0))).toBe('None due yet');
-    expect(withheldKind(kept, v(null, 9))).toBe('counts_disagree');
+    expect(withheldWords(kept, v(null, 0, 'none_due'))).toBe('None due yet');
+  });
+
+  it('treats a withheld figure with no reason as too few (an answer that breaks the contract)', () => {
+    const promises = metricInfo(builtin('promises_rate'));
+    expect(withheldKind(promises, { withheld: null })).toBe('too_few');
   });
 });
 

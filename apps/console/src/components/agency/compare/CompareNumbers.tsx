@@ -46,7 +46,7 @@ export function CompareNumbers({ response, agents }: { response: AgencyCompareRe
   return (
     <div className={styles.tableWrap}>
       <table className={styles.numbers} data-testid="compare-numbers">
-        <caption className={styles.srOnly}>Every figure on this page, by agent, with the team median</caption>
+        <caption className="sr-only">Every figure on this page, by agent, with the team median</caption>
         <thead>
           <tr>
             <th scope="col">Metric</th>

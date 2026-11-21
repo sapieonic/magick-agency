@@ -181,23 +181,14 @@ export type WithheldKind = AgencyCompareWithheld;
 
 /**
  * Why a figure that is not reportable is withheld: the server's `withheld`, decided once by the
- * shared rule (`compareValue`) and the server's counts-disagree step. An answer recorded before the
- * server sent it has none: then the reason is read from the counts as the server decides it.
+ * shared rule (`compareValue`) and the server's counts-disagree step. A figure the server marks
+ * not reportable always carries one; `too_few` only guards an answer that breaks that rule.
  */
 export function withheldKind(
-  info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>,
-  v: Pick<AgencyCompareValue, 'value' | 'denominator' | 'withheld'>,
+  _info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>,
+  v: Pick<AgencyCompareValue, 'withheld'>,
 ): WithheldKind {
-  return v.withheld ?? inferredWithheld(info, v);
-}
-
-/** {@link withheldKind} for an answer without `withheld` (recorded before the server sent it). */
-function inferredWithheld(info: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, v: Pick<AgencyCompareValue, 'value' | 'denominator'>): WithheldKind {
-  if (isNoneDue(info, v.denominator)) return 'none_due';
-  if (info.definition.unit === 'per_hour') return v.denominator !== null && v.denominator > 0 ? 'counts_disagree' : 'no_logged_in_time';
-  if (v.value !== null || v.denominator === null) return 'too_few';
-  const floor = info.definition.min_denominator;
-  return (floor === null ? v.denominator > 0 : v.denominator >= floor) ? 'counts_disagree' : 'too_few';
+  return v.withheld ?? 'too_few';
 }
 
 /** The words for a figure whose counts don't agree ({@link WithheldKind}), in the chart and the table. */
