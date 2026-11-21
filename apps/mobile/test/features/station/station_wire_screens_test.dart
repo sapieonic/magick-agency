@@ -57,11 +57,10 @@ void main() {
       expect(factText(const FactTileView(label: 'Dues', raw: 'Rs twelve', kind: FactKind.money)), 'Rs twelve');
     });
 
-    test('script placeholders by the contract\'s rule: unknown ones stay, a missing customer value is "not given"', () {
+    test('script placeholders by the contract\'s rule: unknown ones stay, missing values drop out', () {
       const v = ScriptValues(name: 'Sunita', agentName: 'Ravi', campaignName: 'EMI', facts: {'amount_due': ScriptFact(label: 'Amount Due', value: '₹12,500')});
       final runs = fillScriptRuns('Namaste {name}, {agent_name} here. {amount_due} by {due_date}. {loan}', legacyScriptPlaceholders, v);
-      expect(shownScript(runs), 'Namaste Sunita, Ravi here. ₹12,500 by Due date not given. {loan}');
-      expect(spokenScript(runs), 'Namaste Sunita, Ravi here. ₹12,500 by. {loan}');
+      expect(shownScript(runs), 'Namaste Sunita, Ravi here. ₹12,500 by . {loan}');
     });
   });
 

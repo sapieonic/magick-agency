@@ -13,8 +13,10 @@ import 'station_harness.dart';
 
 /// AS19 on the phone: the campaign's chosen facts on the customer card (a 2 × 2 grid, the
 /// highlight first and the full row, a lone last tile the full width, values by type, "—" when
-/// empty, press and hold for the full value), and the script filled from the facts' keys with
-/// "`<name> not given`" for a missing value, which read aloud skips.
+/// empty, press and hold for the full value, no Last call tile, "Customer" when the server has no
+/// name), one phone rule everywhere a phone fact shows, and the script filled from the facts' keys
+/// with "`<name> not given`" for a missing value, which read aloud skips; a campaign without chosen
+/// facts leaves a missing value out, as before.
 void main() {
   FactTileView fact(
     String label,
@@ -35,7 +37,6 @@ void main() {
         key: key ?? label.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_'),
         highlight: highlight,
         amountDue: amountDue,
-        chosen: true,
       );
 
   final amount = fact('Amount due', '₹1,25,000.00', kind: FactKind.money, parsed: '125000.00', column: 'Amount Due', key: 'amount_due', highlight: true, amountDue: true);
@@ -43,7 +44,8 @@ void main() {
   final alt = fact('Other number', '098765 43210', kind: FactKind.phone, parsed: '09876543210', column: 'Alt Phone', key: 'alt_phone');
   final debit = fact('Auto debit on', 'Haan', kind: FactKind.yesNo, parsed: 'yes', column: 'Auto Debit', key: 'auto_debit');
 
-  FactsView facts(List<FactTileView> tiles) => FactsView(name: 'Sunita Patil', place: 'Nashik', tiles: tiles);
+  FactsView facts(List<FactTileView> tiles, {String? name = 'Sunita Patil'}) =>
+      FactsView(name: name, place: 'Nashik', tiles: tiles, chosen: true);
 
   group('values by type (AS19, as the console)', () {
     test('money: ₹ with Indian grouping, paise only when not zero', () {
@@ -69,10 +71,7 @@ void main() {
     });
 
     test('phone: formatted; hidden as the customer\'s number is when the campaign hides numbers', () {
-      expect(factText(alt), '098765 43210');
-      expect(formatFactPhone('9876543210'), '98765 43210');
-      expect(formatFactPhone('+919876543210'), '+91 98765 43210');
-      expect(formatFactPhone('+447700900123'), '+447700900123');
+      expect(factText(alt), '+91 98765 43210');
       expect(factText(alt, masked: true), '98••• ••210');
       // A value the server could not read is shown as uploaded, but a hidden number never shows a digit.
       final odd = fact('Other number', '98765-4321 ext 2', kind: FactKind.phone);
@@ -90,9 +89,65 @@ void main() {
       expect(factText(fact('Dues', '', kind: FactKind.money)), '—');
     });
 
+    test('a value as uploaded is shown without the spaces around it, as the console shows it', () {
+      expect(factText(fact('Branch', '  Pune  ')), 'Pune');
+      expect(factText(fact('Dues', ' Rs twelve ', kind: FactKind.money)), 'Rs twelve');
+      expect(factText(fact('Auto debit', ' maybe\t', kind: FactKind.yesNo)), 'maybe');
+      expect(factText(fact('Other number', ' 98765-4321 ext 2 ', kind: FactKind.phone)), '98765-4321 ext 2');
+    });
+
     test('the highlighted fact is drawn first, whatever its place in the list', () {
       final h = fact('Branch', 'Pune', highlight: true);
       expect(cardFactTiles(facts([tenure, h, debit])).map((t) => t.label), ['Branch', 'Tenure', 'Auto debit on']);
+    });
+  });
+
+  group('the one phone rule (AS19 R6, the console tests the same table)', () {
+    const table = <(String, String, String)>[
+      ('9876543210', '+91 98765 43210', '98••• ••210'),
+      ('919876543210', '+91 98765 43210', '98••• ••210'),
+      ('+919876543210', '+91 98765 43210', '98••• ••210'),
+      ('09876543210', '+91 98765 43210', '98••• ••210'),
+      ('1234567890', '1234567890', '12••• ••890'),
+      ('+14155550123', '+14155550123', '14••• ••123'),
+    ];
+    for (final (parsed, full, masked) in table) {
+      test('$parsed → $full / $masked', () {
+        expect(formatFactPhone(parsed), full);
+        expect(maskFactPhone(parsed), masked);
+        final f = fact('Other number', parsed, kind: FactKind.phone, parsed: parsed);
+        expect(factText(f), full);
+        expect(factText(f, masked: true), masked);
+      });
+    }
+
+    test('a number the server could not read is hidden the same way, on its digits; a short one shows none', () {
+      expect(factText(fact('Other number', '98765-4321 ext 2', kind: FactKind.phone), masked: true), '98••• ••212');
+      expect(factText(fact('Other number', 'ext 12', kind: FactKind.phone), masked: true), '•••');
+    });
+
+    testWidgets('the tile, its sheet and a screen reader say the number by the rule', (tester) async {
+      final handle = tester.ensureSemantics();
+      final plain = fact('Other number', '9876543210', kind: FactKind.phone, parsed: '9876543210', column: 'Alt Phone', key: 'alt_phone');
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([tenure, plain]), priorAttempts: const [])));
+      final tile = find.byKey(const Key('fact-tile-1'));
+      expect(find.descendant(of: tile, matching: find.text('+91 98765 43210')), findsOneWidget);
+      expect(tester.getSemantics(tile).label, 'Other number: +91 98765 43210');
+      await tester.longPress(tile);
+      await settle(tester);
+      expect(tester.widget<Text>(find.byKey(const Key('fact-sheet-value'))).data, '+91 98765 43210');
+      await tester.tap(find.byKey(const Key('fact-sheet-ok')));
+      await settle(tester);
+
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([tenure, plain]), priorAttempts: const []), maskPhone: true));
+      expect(tester.getSemantics(find.byKey(const Key('fact-tile-1'))).label, 'Other number: 98••• ••210');
+      handle.dispose();
+    });
+
+    test('the script says the number by the rule', () {
+      final plain = fact('Other number', '919876543210', kind: FactKind.phone, parsed: '919876543210', key: 'alt_phone');
+      final v = scriptValuesFor(call(facts: facts([plain])), agentName: null, campaignName: '');
+      expect(shownScript(fillScriptRuns('Call {alt_phone}', const ['alt_phone'], v)), 'Call +91 98765 43210');
     });
   });
 
@@ -130,13 +185,39 @@ void main() {
       expect(rect(tester, 'fact-tile-2').width, moreOrLessEquals(grid.width));
     });
 
-    testWidgets('the last call takes a cell the facts leave free, and none when there are four', (tester) async {
+    testWidgets('no Last call tile beside chosen facts, even with a cell free (Last calls has its own card)', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([amount, tenure, alt]))));
-      expect(find.byKey(const Key('last-call-tile')), findsOneWidget);
-      expect(find.text('28 Oct'), findsOneWidget);
-      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([amount, tenure, alt, debit]))));
+      expect(find.byKey(const Key('fact-tile-2')), findsOneWidget);
       expect(find.byKey(const Key('last-call-tile')), findsNothing);
-      expect(find.text('Yes'), findsOneWidget);
+      expect(find.text(StationCopy.lastCall), findsNothing);
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([amount]))));
+      expect(find.byKey(const Key('last-call-tile')), findsNothing);
+    });
+
+    testWidgets('an empty choice shows no tiles, not the BE-6 card', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts(const []))));
+      expect(find.byKey(const Key('fact-grid')), findsNothing);
+      expect(find.byKey(const Key('last-call-tile')), findsNothing);
+      // The BE-6 card would draw the last call's date in a tile.
+      expect(find.text(StationCopy.lastCall), findsNothing);
+    });
+
+    testWidgets('the heading is the server\'s name, else "Customer", with the number under it; never the guess', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(name: 'Priya Raman', facts: facts([tenure], name: null))));
+      expect(tester.widget<Text>(find.byKey(const Key('call-headline'))).data, StationCopy.customer);
+      expect(find.text('Priya Raman'), findsNothing);
+      expect(find.descendant(of: find.byKey(const Key('customer-phone')), matching: find.text('+91 98400 12345')), findsOneWidget);
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(name: 'Priya Raman', facts: facts([tenure]))));
+      expect(tester.widget<Text>(find.byKey(const Key('call-headline'))).data, 'Sunita Patil');
+      expect(find.byKey(const Key('customer-phone')), findsOneWidget);
+    });
+
+    testWidgets('a campaign without chosen facts is headed as before: the guessed name, else the number', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(name: 'Priya Raman', facts: const FactsView())));
+      expect(tester.widget<Text>(find.byKey(const Key('call-headline'))).data, 'Priya Raman');
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(name: null, facts: const FactsView())));
+      expect(tester.widget<Text>(find.byKey(const Key('call-headline'))).data, '+91 98400 12345');
+      expect(find.byKey(const Key('customer-phone')), findsNothing);
     });
 
     testWidgets('an empty value shows "—", muted, and keeps its tile', (tester) async {
@@ -258,20 +339,43 @@ void main() {
         ]),
       );
       final v = scriptValuesFor(c, agentName: 'Ravi Kumar', campaignName: 'EMI', factLabels: const {'alt_phone': 'Other number'});
+      expect(v.chosen, isTrue);
       final runs = fillScriptRuns('{name}: {amount_due}, then {emi_2}. Branch {branch}. Call {alt_phone}. {unknown_1}', placeholders, v);
       expect(shownScript(runs), 'Sunita Patil: ₹1,25,000, then ₹2,500. Branch Branch not given. Call Other number not given. {unknown_1}');
       expect(runs.whereType<NotGivenRun>().map((r) => r.label), ['Branch', 'Other number']);
       expect(spokenScript(runs), 'Sunita Patil: ₹1,25,000, then ₹2,500. Branch. Call. {unknown_1}');
     });
 
-    test('name and place say "Name not given" and "Place not given"; the agent\'s own name drops out', () {
-      final runs = fillScriptRuns('Hi {name} from {place}, {agent_name} here.', placeholders, const ScriptValues());
-      expect(shownScript(runs), 'Hi Name not given from Place not given,  here.');
-      expect(spokenScript(runs), 'Hi from, here.');
+    test('name and place say "Name not given" and "Place not given"; the agent\'s and the work\'s names drop out', () {
+      final runs = fillScriptRuns('Hi {name} from {place}, {agent_name} here for {campaign_name}.', placeholders, const ScriptValues(chosen: true));
+      expect(shownScript(runs), 'Hi Name not given from Place not given,  here for .');
+      expect(runs.whereType<NotGivenRun>().map((r) => r.label), ['Name', 'Place']);
+      expect(spokenScript(runs), 'Hi from, here for.');
+    });
+
+    test('{name} is the server\'s name only: the guess from the hero fields never fills it', () {
+      final v = scriptValuesFor(call(name: 'Priya Raman', facts: facts([tenure], name: null)), agentName: null, campaignName: '');
+      expect(shownScript(fillScriptRuns('Hi {name}.', placeholders, v)), 'Hi Name not given.');
+    });
+
+    test('a campaign without chosen facts leaves a missing value out, as before, never "not given"', () {
+      const legacy = FactsView(
+        tiles: [FactTileView(label: 'Amount Due', raw: '₹12,500.00', kind: FactKind.money, parsed: '12500.00', amountDue: true)],
+      );
+      final v = scriptValuesFor(call(name: null, facts: legacy), agentName: null, campaignName: '');
+      expect(v.chosen, isFalse);
+      final runs = fillScriptRuns('Hi {name} from {place}, {agent_name} here. {amount_due} by {due_date}.', legacyScriptPlaceholders, v);
+      expect(runs.whereType<NotGivenRun>(), isEmpty);
+      expect(shownScript(runs), 'Hi  from ,  here. ₹12,500 by .');
+    });
+
+    test('read aloud is cleaned up as the console does it: line breaks and runs of spaces one space, none before a mark', () {
+      const runs = [SaidRun('Namaste \n Sunita ,  your EMI\t\tis due  !'), NotGivenRun('Branch'), SaidRun(' \nThank you .')];
+      expect(spokenScript(runs), 'Namaste Sunita, your EMI is due! Thank you.');
     });
 
     test('a key the campaign does not have, or written with spaces, stays as written', () {
-      final runs = fillScriptRuns('{emi_3} and { name }', placeholders, const ScriptValues(name: 'Asha'));
+      final runs = fillScriptRuns('{emi_3} and { name }', placeholders, const ScriptValues(name: 'Asha', chosen: true));
       expect(shownScript(runs), '{emi_3} and { name }');
     });
 

@@ -14,14 +14,13 @@ import 'sheets.dart' show StationModalGuard, thisCallNow;
 /// full row, in the call colour; a lone last tile the full width. Text stays on one line and ends
 /// in "…"; money, numbers, dates and phone numbers shrink to fit (to 65 % at most) before they are
 /// ever cut. An empty value is "—". Press and hold a fact for its full value ([showFactSheet]).
-/// [lastCall] ("28 Oct") takes a cell when the facts leave one free (four tiles at most). At large
-/// text the tiles stack one under the other.
+/// Only the facts: no Last call tile (Last calls has its own card). At large text the tiles stack
+/// one under the other.
 class FactGrid extends ConsumerWidget {
-  const FactGrid({super.key, required this.tiles, this.lastCall});
+  const FactGrid({super.key, required this.tiles});
 
   /// In the card's order ([cardFactTiles]).
   final List<FactTileView> tiles;
-  final String? lastCall;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,8 +38,6 @@ class FactGrid extends ConsumerWidget {
           highlight: i == 0 && highlight,
           column: f.column,
         ),
-      if (lastCall != null && tiles.length < maxCardTiles)
-        FactCell(key: const Key('last-call-tile'), label: StationCopy.lastCall, value: lastCall!, figure: true),
     ];
     if (cells.isEmpty) return const SizedBox.shrink();
 

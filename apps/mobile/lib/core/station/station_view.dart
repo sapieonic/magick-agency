@@ -270,6 +270,17 @@ class CallView {
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
+  /// The campaign chose the card's facts (AS19, [FactsView.chosen]).
+  bool get factsChosen => facts?.chosen ?? false;
+
+  /// The customer's name as the station says it, trimmed; null when there is none. With chosen
+  /// facts (AS19) the server's `facts.name` only (it already guessed); else the facts' name, then
+  /// the guess from the hero fields ([displayName]), as before.
+  String? get customerName {
+    final name = (factsChosen ? facts!.name : facts?.name ?? displayName)?.trim();
+    return name == null || name.isEmpty ? null : name;
+  }
+
   static const _eq = ListEquality<Object>();
 
   @override
@@ -322,9 +333,9 @@ enum FactKind { text, money, date, number, phone, yesNo }
 /// the parsed value (money and number a decimal string, a date `YYYY-MM-DD`, a phone its digits,
 /// yes / no `yes` or `no`).
 ///
-/// With the campaign's chosen facts (AS19, [chosen]) the name is the supervisor's ([label]), the
-/// tile carries its script [key], and one may be the [highlight]; without them (BE-6) [label] is
-/// the column's header and [column] the same.
+/// With the campaign's chosen facts (AS19, [FactsView.chosen]) the name is the supervisor's
+/// ([label]), the tile carries its script [key], and one may be the [highlight]; without them
+/// (BE-6) [label] is the column's header and [column] the same.
 @immutable
 class FactTileView {
   const FactTileView({
@@ -337,7 +348,6 @@ class FactTileView {
     String? column,
     this.key,
     this.highlight = false,
-    this.chosen = false,
   }) : column = column ?? label;
 
   /// The tile's name: the fact's label, else its column (the wire's `label ?? column`).
@@ -361,10 +371,6 @@ class FactTileView {
   /// AS19: the campaign's highlighted fact: first, the full row, in the call colour.
   final bool highlight;
 
-  /// AS19: a fact the supervisor chose (the server sent its label or key): the card draws it in
-  /// the 2 × 2 grid, empty values included. False: the BE-6 tile, drawn as before.
-  final bool chosen;
-
   @override
   bool operator ==(Object other) =>
       other is FactTileView &&
@@ -376,16 +382,15 @@ class FactTileView {
       other.amountDue == amountDue &&
       other.dueDate == dueDate &&
       other.key == key &&
-      other.highlight == highlight &&
-      other.chosen == chosen;
+      other.highlight == highlight;
   @override
-  int get hashCode => Object.hash(label, column, raw, kind, parsed, amountDue, dueDate, key, highlight, chosen);
+  int get hashCode => Object.hash(label, column, raw, kind, parsed, amountDue, dueDate, key, highlight);
 }
 
 /// The customer's name, place and fact tiles, as the server read them (BE-6).
 @immutable
 class FactsView {
-  const FactsView({this.name, this.place, this.tiles = const []});
+  const FactsView({this.name, this.place, this.tiles = const [], this.chosen = false});
 
   final String? name;
   final String? place;
@@ -393,15 +398,19 @@ class FactsView {
   /// In hero order, at most four (with chosen facts, AS19: the list's order, the highlight first).
   final List<FactTileView> tiles;
 
-  /// AS19: the campaign chose the card's facts; the card draws them in its 2 × 2 grid.
-  bool get chosen => tiles.any((t) => t.chosen);
+  /// AS19: the campaign chose the card's facts (the bootstrap's `context_display.facts` is a list,
+  /// even an empty one): the card draws exactly [tiles] in its 2 × 2 grid (none for an empty
+  /// list), its heading is [name] or "Customer", and the script says "`<name> not given`" for a
+  /// missing value. False: the BE-6 card and script, as before.
+  final bool chosen;
 
   static const _eq = ListEquality<FactTileView>();
 
   @override
-  bool operator ==(Object other) => other is FactsView && other.name == name && other.place == place && _eq.equals(other.tiles, tiles);
+  bool operator ==(Object other) =>
+      other is FactsView && other.name == name && other.place == place && other.chosen == chosen && _eq.equals(other.tiles, tiles);
   @override
-  int get hashCode => Object.hash(name, place, tiles.length);
+  int get hashCode => Object.hash(name, place, tiles.length, chosen);
 }
 
 /// The `{placeholders}` a campaign without chosen facts may use (the contract's

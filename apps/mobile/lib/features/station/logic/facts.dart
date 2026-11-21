@@ -4,7 +4,8 @@ library;
 import '../../../core/station/station_view.dart';
 import 'format.dart';
 
-/// At most this many tiles on the card, the last call's included (AS19: four facts at most).
+/// At most this many fact tiles on the card (AS19: four facts at most; no Last call tile beside
+/// them, Last calls has its own card).
 const maxCardTiles = 4;
 
 /// The BE-6 tiles in the order the card shows them: amount due and due date first, then the rest
@@ -53,11 +54,13 @@ bool factIsFigure(FactTileView f) =>
 /// empty one as "—".
 String factText(FactTileView f, {bool masked = false, DateTime? now}) {
   if (factIsEmpty(f)) return emptyFactText;
+  // As uploaded, without the spaces around it (as the console shows it).
+  final raw = f.raw.trim();
   final parsed = f.parsed;
   if (f.kind == FactKind.phone && masked) {
-    return maskFactPhone(parsed ?? f.raw);
+    return maskFactPhone(parsed ?? raw);
   }
-  if (parsed == null) return f.raw;
+  if (parsed == null) return raw;
   return switch (f.kind) {
     FactKind.money => formatRupees(parsed),
     FactKind.number => formatIndianNumber(parsed),
@@ -66,8 +69,8 @@ String factText(FactTileView f, {bool masked = false, DateTime? now}) {
     FactKind.yesNo => switch (parsed) {
         'yes' => 'Yes',
         'no' => 'No',
-        _ => f.raw,
+        _ => raw,
       },
-    FactKind.text => f.raw,
+    FactKind.text => raw,
   };
 }

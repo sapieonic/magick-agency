@@ -145,9 +145,10 @@ class RedialTag extends StatelessWidget {
 
 /// The customer card (03, 04; it does not move between them): initials, the name (the number
 /// leads when there is none), the place and the number (masked where the campaign says so, AS9),
-/// the contact's promise to pay, and the tiles. With the campaign's chosen facts (AS19): its 2 × 2
-/// [FactGrid], the highlight first and the full row, press and hold for a full value, the last
-/// call's date in a cell the facts leave free. Else three number tiles in a row: with the server's
+/// the contact's promise to pay, and the tiles. With the campaign's chosen facts (AS19): the
+/// heading is the server's name, else "Customer", always with the number under it; its 2 × 2
+/// [FactGrid] (none for an empty choice), the highlight first and the full row, press and hold for
+/// a full value; no Last call tile. Else three number tiles in a row: with the server's
 /// facts (BE-6) its name, place and fact tiles, amount due and due date first, money as ₹ with
 /// Indian grouping and dates as "20 Nov" where the campaign typed the column; without them, the
 /// campaign's first hero fields; the last call's date takes the third tile when there was a call
@@ -169,14 +170,16 @@ class CustomerCard extends ConsumerWidget {
     final c = context.stateTokens.coming;
     final text = Theme.of(context).textTheme;
     final facts = call.facts;
-    final name = (facts?.name ?? call.displayName)?.trim();
-    final hasName = name != null && name.isNotEmpty;
+    final chosen = facts != null && facts.chosen;
+    final name = call.customerName;
+    final hasName = name != null;
+    // AS19: a chosen campaign's card is headed "Customer" when the server has no name.
+    final heading = hasName ? name : (chosen ? StationCopy.customer : null);
     final place = facts?.place?.trim();
     final phone = stationPhone(call.phoneE164, masked: masked);
     final ordered = orderPriorAttempts(call.priorAttempts);
     final last = ordered.firstOrNull;
     final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
-    final chosen = facts != null && facts.chosen;
     final room = last == null ? 3 : 2;
     // BE-6 and older servers: three tiles in a row, as before AS19.
     final tiles = chosen
@@ -234,7 +237,7 @@ class CustomerCard extends ConsumerWidget {
                         children: [
                           Semantics(
                             header: true,
-                            child: Text(hasName ? name : phone, key: const Key('call-headline'), style: text.headlineMedium),
+                            child: Text(heading ?? phone, key: const Key('call-headline'), style: text.headlineMedium),
                           ),
                           Wrap(
                             spacing: Space.md,
@@ -242,7 +245,7 @@ class CustomerCard extends ConsumerWidget {
                             children: [
                               if (place != null && place.isNotEmpty)
                                 _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
-                              if (hasName) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                              if (heading != null) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
                             ],
                           ),
                         ],
@@ -252,8 +255,8 @@ class CustomerCard extends ConsumerWidget {
                 ),
                 if (call.promise != null) ...[const SizedBox(height: Space.sm), PromiseLine(promise: call.promise!)],
                 if (chosen) ...[
-                  const SizedBox(height: Space.md),
-                  FactGrid(tiles: cardFactTiles(facts), lastCall: last == null ? null : formatDay(last.at)),
+                  if (facts.tiles.isNotEmpty) const SizedBox(height: Space.md),
+                  FactGrid(tiles: cardFactTiles(facts)),
                 ] else if (tiles.isNotEmpty) ...[
                   const SizedBox(height: Space.md),
                   TileRow(children: tiles),
