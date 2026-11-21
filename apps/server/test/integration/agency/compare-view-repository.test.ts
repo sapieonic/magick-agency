@@ -51,9 +51,9 @@ describe('ownership', () => {
     expect(await repo.update({ ...scope, ownerUserId: sup2 }, id, content({ name: 'Hijacked' }))).toBeNull();
     expect(await repo.delete({ ...scope, ownerUserId: sup2 }, id)).toBe(false);
     expect(await repo.findOwned({ ...scope, userId: sup2 }, id)).toBeNull();
-    expect(await repo.findVisible({ ...scope, userId: sup2 }, id)).toMatchObject({ name: 'Mine' });
-    // Another account of the tenant sees nothing.
-    expect(await repo.findVisible({ tenantId: tenant, accountId: otherAccount, userId: sup1 }, id)).toBeNull();
+    // They still see it in the list (it is shared); another account of the tenant sees nothing.
+    expect((await repo.list({ ...scope, userId: sup2, campaignId: null })).map((v) => v.id)).toContain(id);
+    expect(await repo.list({ tenantId: tenant, accountId: otherAccount, userId: sup1, campaignId: null })).toEqual([]);
     const updated = await repo.update({ ...scope, ownerUserId: sup1 }, id, content({ name: 'Renamed' }));
     expect(updated).toMatchObject({ name: 'Renamed', owner_user_id: sup1 });
     expect(updated!.updated_at.getTime()).toBeGreaterThanOrEqual(created.view.updated_at.getTime());

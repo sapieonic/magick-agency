@@ -28,6 +28,7 @@ import {
 import { REPORT_MAX_WINDOW_DAYS } from '@magick-agency/contracts/api/agency/reports';
 import { resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
 import { UUID_RE } from '../../utils/uuid.js';
+import type { CompareViewContent } from '../../db/repositories/agency.repository.js';
 import { isRequestZone } from '../zone.js';
 
 /** English fallback copy per code (AS15). The console shows its own words for a known code. */
@@ -172,26 +173,17 @@ export interface CompareViewDraft {
   is_campaign_default: boolean;
 }
 
-/** A view's content as stored, once {@link checkCompareView} accepts it. */
-export interface CheckedCompareView {
-  name: string;
-  lens: CompareLens;
-  metrics: AgencyCompareMetricRef[];
-  trend: AgencyCompareMetricRef | null;
-  campaign_id: string | null;
-  shared: boolean;
-  is_campaign_default: boolean;
-}
 
 /**
- * A view's content (`compare_view_invalid` on any failure): the name (1 to
+ * A view's content as stored (`CompareViewContent`, the repository's), or null: `compare_view_invalid`
+ * on any failure: the name (1 to
  * `COMPARE_VIEW_NAME_MAX` after trimming; stored trimmed), the lens, 1 to `COMPARE_MAX_METRICS` refs
  * with distinct ids each passing `compareMetricRefProblem`, a `countable` trend or none; with a
  * campaign (`codes` its current catalog), every code in it and no promise metric on a catalog
  * without promises; a default needs the campaign and `shared`. Without a campaign (`codes`
  * null) the codes are checked when a query applies the view.
  */
-export function checkCompareView(draft: CompareViewDraft, codes: readonly AgencyCompareOutcomeCode[] | null): CheckedCompareView | null {
+export function checkCompareView(draft: CompareViewDraft, codes: readonly AgencyCompareOutcomeCode[] | null): CompareViewContent | null {
   if (typeof draft.name !== 'string') return null;
   const name = draft.name.trim();
   if (name.length === 0 || name.length > COMPARE_VIEW_NAME_MAX) return null;

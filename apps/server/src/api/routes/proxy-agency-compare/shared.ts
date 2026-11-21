@@ -1,14 +1,13 @@
 /*
- * What the Compare agents routes share: their dependencies (injectable for tests), the flag gate,
- * the refusal body, the campaign probe and the saved view's wire shape. Part of
+ * What the Compare agents routes share: their dependencies (injectable for tests), the guards (RBAC
+ * then the flag), the refusal body, the campaign probe and the saved view's wire shape. Part of
  * `proxy-agency-compare.routes.ts`.
  */
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import {
   AGENCY_COMPARE_ERROR_STATUS,
   COMPARE_BUSY_RETRY_AFTER_SECONDS,
   type AgencyCompareErrorCode,
-  type AgencyCompareErrorResponse,
   type AgencyCompareOutcomeCode,
   type AgencyCompareView,
 } from '@magick-agency/contracts/api/agency/compare';
@@ -22,7 +21,8 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { CompareReads } from '../../../agency/compare/read.js';
-import { COMPARE_ERROR_MESSAGES } from '../../../agency/compare/validate.js';
+import { COMPARE_ERROR_MESSAGES, uuidOf } from '../../../agency/compare/validate.js';
+import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { effectiveCatalog } from '../../../agency/my-day.js';
 import { localDateOf } from '../../../agency/reports/schedule.js';
 import { postgresZoneName } from '../../../agency/zone.js';
@@ -44,7 +44,7 @@ export interface CompareCampaign {
 /** Everything the compare routes read or write, injectable for tests. */
 export interface CompareRouteDeps {
   reads: CompareReads;
-  views: Pick<AgencyCompareViewRepository, 'list' | 'findVisible' | 'findOwned' | 'findCampaignDefault' | 'create' | 'update' | 'delete'>;
+  views: Pick<AgencyCompareViewRepository, 'list' | 'findOwned' | 'findCampaignDefault' | 'create' | 'update' | 'delete'>;
   /** `agency_compare_enabled` for the request's tenant and account. A throw propagates (fails closed). */
   compareEnabled(request: FastifyRequest): Promise<boolean>;
   /** The campaign if it is the tenant's AND the account's, else null. `campaignId` is a lower-cased UUID. */
@@ -57,7 +57,6 @@ export interface CompareRouteDeps {
   databaseZone(zone: string): Promise<string | null>;
   /** Today's local date in `zone`. */
   today(zone: string): string;
-  now(): Date;
 }
 
 /** The production dependencies; `reads` is one per registration (closed with the app). */
@@ -77,48 +76,42 @@ export function defaultCompareRouteDeps(): CompareRouteDeps {
     names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'compare views'),
     databaseZone: postgresZoneName,
     today: (zone) => localDateOf(new Date(), zone),
-    now: () => new Date(),
   };
 }
 
 /**
- * `{ error, code, message }` with the code's status (`AGENCY_COMPARE_ERROR_STATUS`). `compare_busy`
- * also carries when to try again, as the error mask's policy asks of an authored 429: the
- * `Retry-After` header and `retry_after_seconds` (`COMPARE_BUSY_RETRY_AFTER_SECONDS`).
+ * `{ error, code, message }` with the code's status (`AGENCY_COMPARE_ERROR_STATUS`), through
+ * `sendRefusal`. `compare_busy` also carries when to try again, as the error mask's policy asks of an
+ * authored 429 (`COMPARE_BUSY_RETRY_AFTER_SECONDS`). `compare_timed_out` (503) is a fixed, reviewed
+ * body, sent through the error mask's reviewed opt-out (`preserveReviewedUpstreamError`) so it is not
+ * masked as "contact support" (the contract's rule).
  */
 export function sendCompareRefusal(reply: FastifyReply, code: AgencyCompareErrorCode, message?: string): FastifyReply {
-  if (code === 'compare_busy') {
-    const body: AgencyCompareErrorResponse = {
-      error: 'Too Many Requests',
-      code,
-      message: message ?? COMPARE_ERROR_MESSAGES[code],
-      retry_after_seconds: COMPARE_BUSY_RETRY_AFTER_SECONDS,
-    };
-    return reply
-      .code(AGENCY_COMPARE_ERROR_STATUS[code])
-      .header('Retry-After', String(COMPARE_BUSY_RETRY_AFTER_SECONDS))
-      .send(body);
-  }
+  const status = AGENCY_COMPARE_ERROR_STATUS[code];
+  if (status >= 500) reply.request.preserveReviewedUpstreamError = true;
   return sendRefusal<AgencyCompareErrorCode>(
-    reply,
-    AGENCY_COMPARE_ERROR_STATUS[code],
-    code,
-    message ?? COMPARE_ERROR_MESSAGES[code],
+    reply, status, code, message ?? COMPARE_ERROR_MESSAGES[code],
+    code === 'compare_busy' ? { retryAfterSeconds: COMPARE_BUSY_RETRY_AFTER_SECONDS } : {},
   );
 }
 
-/**
- * `503 compare_timed_out`: a fixed, reviewed body, sent through the error mask's reviewed opt-out
- * (`preserveReviewedUpstreamError`) so it is not masked as "contact support" (the contract's rule).
- */
-export function sendCompareTimedOut(request: FastifyRequest, reply: FastifyReply): FastifyReply {
-  request.preserveReviewedUpstreamError = true;
-  const body: AgencyCompareErrorResponse = {
-    error: 'Service Unavailable',
-    code: 'compare_timed_out',
-    message: COMPARE_ERROR_MESSAGES.compare_timed_out,
-  };
-  return reply.code(AGENCY_COMPARE_ERROR_STATUS.compare_timed_out).send(body);
+/** The campaign (`compare_campaign_required`, `compare_campaign_not_found`). Null once it has replied. */
+export async function resolveCompareCampaign(
+  deps: CompareRouteDeps,
+  reply: FastifyReply,
+  q: { tenantId: string; accountId: string; campaignId: unknown },
+): Promise<CompareCampaign | null> {
+  if (q.campaignId === undefined || q.campaignId === null || q.campaignId === '') {
+    sendCompareRefusal(reply, 'compare_campaign_required');
+    return null;
+  }
+  const campaignId = uuidOf(q.campaignId);
+  const campaign = campaignId === null ? null : await deps.campaign(q.tenantId, q.accountId, campaignId);
+  if (campaign === null) {
+    sendCompareRefusal(reply, 'compare_campaign_not_found');
+    return null;
+  }
+  return campaign;
 }
 
 /**
@@ -146,11 +139,15 @@ export function clientGoneSignal(reply: FastifyReply): AbortSignal {
 /** The status of an answer nobody waits for any more (the client closed the request first). */
 export const CLIENT_CLOSED_STATUS = 499;
 
-/** The flag, else `403 feature_disabled`. False once it has replied. */
-export async function compareGate(deps: CompareRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-  if (await deps.compareEnabled(request)) return true;
-  await reply.code(403).send(COMPARE_DISABLED_BODY);
-  return false;
+/**
+ * The route-level guard every compare route runs after `requirePermission('agency.supervise')` (RBAC,
+ * then the flag): the flag, else `403 feature_disabled` before any body is read.
+ */
+export function compareGuards(deps: CompareRouteDeps): { preHandler: preHandlerAsyncHookHandler[] } {
+  const compareGate: preHandlerAsyncHookHandler = async (request, reply) => {
+    if (!(await deps.compareEnabled(request))) return reply.code(403).send(COMPARE_DISABLED_BODY);
+  };
+  return { preHandler: [requirePermission('agency.supervise'), compareGate] };
 }
 
 /** A stored view on the wire, its owner named. */

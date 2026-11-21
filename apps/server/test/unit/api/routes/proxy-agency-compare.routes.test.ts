@@ -10,6 +10,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
  *    once the cohort's snapshot has ended (the snapshot holds one connection until then, and the
  *    process-wide limit counts one per read).
  *  - A zone is looked up in Postgres only once it passes the cheap rules (`isRequestZone`).
+ *  - The guards' refusals (`compare_busy`, `compare_timed_out`) go through `sendRefusal` with the
+ *    bodies they always had, byte for byte; the flag gate runs after RBAC, before the body.
  *  - An edit of a saved view that does not send `is_campaign_default` asks the repository to keep
  *    the row's value as it stands in the update's transaction (null), never the value the route
  *    read before it: another supervisor's new default, made meanwhile, is not undone by a rename
@@ -21,6 +23,9 @@ vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({ 
 
 import { proxyAgencyCompareRoutes } from '../../../../src/api/routes/proxy-agency-compare.routes.js';
 import type { CompareRouteDeps } from '../../../../src/api/routes/proxy-agency-compare/shared.js';
+import { CompareRefusal } from '../../../../src/agency/compare/read.js';
+import { COMPARE_ERROR_MESSAGES } from '../../../../src/agency/compare/validate.js';
+import { COMPARE_BUSY_RETRY_AFTER_SECONDS } from '@magick-agency/contracts/api/agency/compare';
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
 const ACCOUNT = '44444444-4444-4444-8444-444444444444';
@@ -31,6 +36,9 @@ const VIEW = '66666666-6666-4666-8666-666666666666';
 let app: FastifyInstance;
 let log: string[];
 let finishCohort: () => void;
+let queryRefusal: Error | null;
+/** `preserveReviewedUpstreamError` as the last response left it (the error mask's opt-out). */
+let preserved: unknown;
 let updates: Array<Record<string, unknown>>;
 let databaseZone: ReturnType<typeof vi.fn<(zone: string) => Promise<string | null>>>;
 
@@ -46,6 +54,8 @@ beforeEach(async () => {
   log = [];
   updates = [];
   databaseZone = vi.fn(async (zone: string) => zone);
+  queryRefusal = null;
+  preserved = undefined;
   let release: () => void = () => undefined;
   const cohortDone = new Promise<void>((res) => { release = res; });
   finishCohort = release;
@@ -57,6 +67,7 @@ beforeEach(async () => {
         log.push('cohort snapshot ends');
         return { agents: [] };
       }),
+      query: vi.fn(async () => { throw queryRefusal ?? new Error('no query in this test'); }),
       clear: () => undefined,
     } as never,
     views: {
@@ -73,7 +84,6 @@ beforeEach(async () => {
     names: async () => new Map(),
     databaseZone,
     today: () => '2026-11-20',
-    now: () => new Date('2026-11-20T06:00:00Z'),
   };
   app = Fastify({ logger: false });
   app.addHook('onRequest', async (request) => {
@@ -83,6 +93,7 @@ beforeEach(async () => {
     r['user'] = { id: ME };
     r['membership'] = { role: 'account_admin', account_id: ACCOUNT, status: 'active' };
   });
+  app.addHook('onSend', async (request) => { preserved = request.preserveReviewedUpstreamError; });
   await app.register(proxyAgencyCompareRoutes, { prefix: '/proxy/agency', deps });
   await app.ready();
 });
@@ -126,6 +137,39 @@ describe('the zone', () => {
     const res = await options('Asia/Kolkata');
     expect(res.json()).toMatchObject({ code: 'compare_timezone_invalid' });
     expect(databaseZone).toHaveBeenCalledWith('Asia/Kolkata');
+  });
+});
+
+describe('the guards\' refusals', () => {
+  const query = () => app.inject({
+    method: 'POST',
+    url: '/proxy/agency/compare/query',
+    payload: { campaign_id: CAMPAIGN, agent_ids: [ME], metrics: [{ kind: 'builtin', key: 'calls_handled' }], from: '2026-11-18', to: '2026-11-19', timezone: 'Asia/Kolkata' },
+  });
+
+  it('compare_busy: 429, Retry-After, the same bytes as before', async () => {
+    queryRefusal = new CompareRefusal('compare_busy');
+    const res = await query();
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe(String(COMPARE_BUSY_RETRY_AFTER_SECONDS));
+    expect(res.body).toBe(JSON.stringify({
+      error: 'Too Many Requests', code: 'compare_busy', message: COMPARE_ERROR_MESSAGES.compare_busy, retry_after_seconds: COMPARE_BUSY_RETRY_AFTER_SECONDS,
+    }));
+  });
+
+  it('compare_timed_out: 503 through the reviewed opt-out, the same bytes as before, no Retry-After', async () => {
+    queryRefusal = new CompareRefusal('compare_timed_out');
+    const res = await query();
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['retry-after']).toBeUndefined();
+    expect(res.body).toBe(JSON.stringify({ error: 'Service Unavailable', code: 'compare_timed_out', message: COMPARE_ERROR_MESSAGES.compare_timed_out }));
+    expect(preserved).toBe(true);
+  });
+
+  it('a 4xx refusal is not marked reviewed for the error mask', async () => {
+    queryRefusal = new CompareRefusal('compare_busy');
+    await query();
+    expect(preserved).toBeUndefined();
   });
 });
 
