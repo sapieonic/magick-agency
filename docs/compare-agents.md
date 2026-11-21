@@ -42,8 +42,8 @@ CP18 is the build's own, pending him.
 
 Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom:
 
-1. **Filters in one row:** Lens, Campaign (one), When (a window of local dates, at most 31 days,
-   the reports rule `reportWindowProblem`), and **Metrics · N**, which opens the picker (at most 6,
+1. **Filters in one row:** Lens, Campaign (one), When (a window of local dates, at most 30 days or
+   exactly one calendar month, the reports rule `reportWindowProblem`), and **Metrics · N**, which opens the picker (at most 6,
    grouped as in §3, each marked "higher is better", "lower is better" or "shown, never flagged").
    The picker's Outcomes group adds **an outcome set**: tick up to 5 of the campaign's outcome
    buttons, name it, choose the direction (CP17, CP18).
@@ -60,7 +60,17 @@ Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom
 
 Copy follows AS15. The state of the page (lens, campaign, window, agents, metrics by their ids,
 `compareMetricId`) is in the URL, so a link opens the same comparison; a saved view (§4) holds the
-lens, metrics and trend, never agents or a window.
+lens, metrics and trend, never agents or a window. A link or view whose metrics a campaign cannot
+show is applied without them, and the page says what was left out and why; when none can be
+shown, it shows the lens's metrics and says so.
+
+The console asks the query only with the options of the current campaign, window and zone (the
+cohort changes with the window), holding it while a new window's options load, and only once the
+picks have stayed still for 300 ms, so a burst of clicks is one read and a page never has the
+options read and a query in flight together (the per-tenant limit is 2, §7). The charts draw the
+picked agents the answer on screen has; a pick still loading is not drawn until its figures come.
+Try again is offered only for a failure that can clear by itself (busy, timed out, 429, 5xx, the
+network).
 
 ## 3. Metric catalog
 
@@ -251,7 +261,9 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   the page (`modules.md`, `components/agency/compare/`), mutation-checked: the six-metric, five-code
   and three-agent limits, the colour slot, the nav gate and flag, the listening steps without
   listening rights, the dropped view metrics, the cohort-under-six note and the retry rule each
-  turn them red. Built.
+  turn them red; so do the query held for a new window's options, the 300 ms settle, a pick drawn
+  before its figures come, a flag-only view change keeping unsaved edits, a likely range rounded
+  onto its baseline, each metric's too-few reason and the lens fallback note. Built.
 - Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0063). Built. The
   routes still need: only the owner edits or deletes; a new default clears the campaign's old one in
   one transaction; the 50-view limit; a view's codes checked against its campaign's catalog.
