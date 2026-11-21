@@ -1002,3 +1002,12 @@ light by default, Indian English, supervisor alerts on every page, scope, old ap
 [`agent-station.md`](agent-station.md) §1, with the build plan beside them. Decided by Manas
 on 2026-11-20.
 
+## Compare agents (CP)
+
+The rulings CP1–CP16 (three agents at most, will-pay as promises made on every call type, no agent
+view yet, coaching now and appraisal later, logged-in time with breaks, no worker process to start
+with, no list filter, one campaign per comparison, one definition per number, neutral metrics never
+flagged, findings only past chance, no language model, analysis metrics with coverage, no custom
+ratios, exports through the report pipeline, no Inbound lens yet) are in
+[`compare-agents.md`](compare-agents.md) §1. CP1–CP7 decided by Manas on 2026-11-21; CP8–CP16
+stand as recommended.
