@@ -5,8 +5,8 @@ the rest of the campaign's agents, and is told what stands out. The metrics are 
 kind of campaign starts from a **lens** (a set of metrics), the supervisor can change it, and the
 page draws each metric with the chart its shape calls for. Outcome metrics are the supervisor's
 choice: any set of the campaign's outcome codes (CP17). Designed 2026-11-21 and reviewed
-independently the same day; rulings CP1–CP18 below. **The contract, the rules and the saved-views
-table are built; the read, the routes and the console tab are not** (§9).
+independently the same day; rulings CP1–CP18 below. **The contract, the rules, the saved-views
+table and the console tab are built; the read and the routes are not** (§9).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number.
@@ -229,7 +229,8 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 | Phase | Scope | Status |
 |---|---|---|
 | 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
-| 1b | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total`; the console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
+| 1b | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total` | Not started |
+| 1b | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Built against the contract; not yet run against the routes. Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
@@ -245,6 +246,12 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   per-agent cap each turn them red. Built.
 - Contract: `packages/contracts/test/compare.test.ts` (the catalog's directions, gaps and floors,
   metric ids, the ref rule) and the compare codes' snapshot in `errors.test.ts`. Built.
+- Console: the client, the URL state, the picker's limits (6 metrics, 5 codes, 3 agents), every
+  finding code's words on every unit, every refusal's words, the chart geometry, the nav gate and
+  the page (`modules.md`, `components/agency/compare/`), mutation-checked: the six-metric, five-code
+  and three-agent limits, the colour slot, the nav gate and flag, the listening steps without
+  listening rights, the dropped view metrics, the cohort-under-six note and the retry rule each
+  turn them red. Built.
 - Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0063). Built. The
   routes still need: only the owner edits or deletes; a new default clears the campaign's old one in
   one transaction; the 50-view limit; a view's codes checked against its campaign's catalog.
