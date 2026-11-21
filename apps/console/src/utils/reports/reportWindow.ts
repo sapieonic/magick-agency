@@ -29,7 +29,7 @@ export interface ReportWindowDates {
 }
 
 /** ISO weekday of a calendar date, Monday 1 … Sunday 7. Pure date arithmetic. */
-function isoWeekday(day: string): number {
+export function isoWeekday(day: string): number {
   const [y, m, d] = day.split('-').map(Number) as [number, number, number];
   const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   return weekday === 0 ? 7 : weekday;

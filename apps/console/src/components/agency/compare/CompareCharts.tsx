@@ -15,13 +15,13 @@ import {
   daySplitSegments,
   distinctNames,
   formatMedian,
-  shortDate,
   trendGeometry,
   type DaySplitKey,
 } from '../../../utils/agency/compare/compareCharts';
 import { formatMetricValue, formatRate, infoLabel, metricSubtitle, withheldShort, withheldSpoken, withheldWords } from '../../../utils/agency/compare/compareMetrics';
 import { durationWords } from '../../../utils/format/duration';
 import { formatCount } from '../../../utils/format/number';
+import { formatReportDay } from '../../../utils/reports/reportCopy';
 import styles from './Compare.module.css';
 
 /**
@@ -141,7 +141,7 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
                 )}
                 <rect className={styles.hit} x={0} y={row.y - 6} width={g.width} height={28}>
                   <title>
-                    {`${r.agent.name} · ${label}: ${row.kind === 'bar' ? row.valueText : (row as { text: string }).text}${counts}${band.median !== null ? ` · team median ${median}` : ''}`}
+                    {`${r.agent.name} · ${label}: ${row.kind === 'bar' ? row.valueText : row.text}${counts}${band.median !== null ? ` · team median ${median}` : ''}`}
                   </title>
                 </rect>
               </g>
@@ -171,6 +171,17 @@ export interface TrendChartProps {
   label: string;
 }
 
+/** A day's figure in a trend series: null for a day off (or no median), never undefined. */
+function dayValue(values: ReadonlyArray<number | null>, i: number): number | null {
+  return values[i] ?? null;
+}
+
+/** A day's team median as the hover and the table write it: "–" when the team has none. */
+function medianText(median: ReadonlyArray<number | null>, i: number): string {
+  const value = dayValue(median, i);
+  return value === null ? '–' : formatMedian(value);
+}
+
 /** The trend metric's count per working day: a line per agent, broken on days off; the team median dashed. */
 export function TrendChart({ trend, agents, label }: TrendChartProps) {
   const [ref, width] = useChartWidth(520);
@@ -187,7 +198,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
     median: trend.cohort_median,
   });
   const slotOf = new Map(agents.map((a) => [a.id, a.slot] as const));
-  const summary = `${label} per day, ${shortDate(trend.dates[0] ?? '')} to ${shortDate(trend.dates[trend.dates.length - 1] ?? '')}, for ${series
+  const summary = `${label} per day, ${formatReportDay(trend.dates[0] ?? '', false)} to ${formatReportDay(trend.dates[trend.dates.length - 1] ?? '', false)}, for ${series
     .map((s) => s.agent.name)
     .join(', ')} and the team median. The table below has every day's figures.`;
 
@@ -237,9 +248,9 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
             >
               <title>
                 {[
-                  shortDate(trend.dates[i]!),
-                  ...series.map((s) => `${s.agent.name}: ${s.counts[i] === null || s.counts[i] === undefined ? 'not logged in' : s.counts[i]}`),
-                  `Team median: ${trend.cohort_median[i] === null || trend.cohort_median[i] === undefined ? '–' : formatMedian(trend.cohort_median[i]!)}`,
+                  formatReportDay(trend.dates[i]!, false),
+                  ...series.map((s) => `${s.agent.name}: ${dayValue(s.counts, i) ?? 'not logged in'}`),
+                  `Team median: ${medianText(trend.cohort_median, i)}`,
                 ].join('\n')}
               </title>
             </rect>
@@ -250,7 +261,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
         <summary>Show each day’s figures</summary>
         <div className={styles.tableWrap}>
           <table className={styles.numbers}>
-            <caption className={styles.srOnly}>{`${label} per day`}</caption>
+            <caption className="sr-only">{`${label} per day`}</caption>
             <thead>
               <tr>
                 <th scope="col">Day</th>
@@ -267,15 +278,16 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
             <tbody>
               {trend.dates.map((date, i) => (
                 <tr key={date}>
-                  <td className={styles.day}>{shortDate(date)}</td>
-                  {series.map((s) => (
-                    <td key={s.agent.id} className={styles.num}>
-                      {s.counts[i] === null || s.counts[i] === undefined ? <span className={styles.muted}>not logged in</span> : formatCount(s.counts[i]!)}
-                    </td>
-                  ))}
-                  <td className={`${styles.num} ${styles.muted}`}>
-                    {trend.cohort_median[i] === null || trend.cohort_median[i] === undefined ? '–' : formatMedian(trend.cohort_median[i]!)}
-                  </td>
+                  <td className={styles.day}>{formatReportDay(date, false)}</td>
+                  {series.map((s) => {
+                    const count = dayValue(s.counts, i);
+                    return (
+                      <td key={s.agent.id} className={styles.num}>
+                        {count === null ? <span className={styles.muted}>not logged in</span> : formatCount(count)}
+                      </td>
+                    );
+                  })}
+                  <td className={`${styles.num} ${styles.muted}`}>{medianText(trend.cohort_median, i)}</td>
                 </tr>
               ))}
             </tbody>

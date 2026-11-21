@@ -12,11 +12,11 @@ import {
   labelledDateIndexes,
   niceCountMax,
   overlappingGroups,
-  shortDate,
   spreadLabels,
   trendGeometry,
   wholePercents,
 } from '../../utils/agency/compare/compareCharts';
+import { formatReportDay } from '../../utils/reports/reportCopy';
 import { THREE_DAYS_COLLECTIONS } from '../helpers/compareRecorded';
 
 /**
@@ -123,7 +123,7 @@ describe('side by side', () => {
       cohort: { p25: 0.12, median: 0.14, p75: 0.17 },
       isRate: true,
     });
-    expect(g.spans).toEqual([{ top: g.plotTop, bottom: 6 + 2 * 28 - 4 }]);
+    expect(g.spans).toEqual([{ top: 6 - 2, bottom: 6 + 2 * 28 - 4 }]);
     const words = g.rows[2]!;
     expect(words.kind).toBe('withheld');
     // The words' row starts below every stretch the line is drawn over.
@@ -252,8 +252,8 @@ describe('the trend', () => {
     expect(overlappingGroups([{ x: 40, text: 'agent 0.7 · 1' }, { x: 80, text: 'Ravi · 3' }])).toEqual([[0, 1]]);
   });
 
-  it('says dates as "20 Nov", whatever the reader’s zone', () => {
-    expect(shortDate('2026-11-20')).toBe('20 Nov');
+  it('says dates as "20 Nov", whatever the reader’s zone (the reports’ day words)', () => {
+    expect(formatReportDay('2026-11-20', false)).toBe('20 Nov');
   });
 
   it('lays out a series, the dashed median and end labels at the measured width', () => {

@@ -53,7 +53,7 @@ import {
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
 import { dateFormatter } from '../../utils/format/date';
-import { shortDate } from '../../utils/agency/compare/compareCharts';
+import { formatReportDay } from '../../utils/reports/reportCopy';
 import { plural } from '../../utils/format/number';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
 import { agentName } from '../../utils/agency/compare/compareFindingsCopy';
@@ -674,7 +674,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
 
 /** A window in words: "15 Nov to 21 Nov", or "21 Nov" for one day. */
 export function windowWords(from: string, to: string): string {
-  return from === to ? shortDate(from) : `${shortDate(from)} to ${shortDate(to)}`;
+  return from === to ? formatReportDay(from, false) : `${formatReportDay(from, false)} to ${formatReportDay(to, false)}`;
 }
 
 /**

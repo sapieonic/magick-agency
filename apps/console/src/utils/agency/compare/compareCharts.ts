@@ -1,5 +1,5 @@
 import type { AgencyCompareDaySplit } from '@magick-agency/contracts/api/agency/compare';
-import { dateFormatter } from '../../format/date';
+import { formatReportDay } from '../../reports/reportCopy';
 
 /**
  * Compare agents' chart geometry (`docs/compare-agents.md` §5): pure functions from figures and
@@ -76,9 +76,6 @@ export interface BarChartGeometry {
   band: { x: number; width: number } | null;
   /** The team median's line; null when no agent clears the floor. */
   median: { x: number } | null;
-  /** The plot's vertical extent. */
-  plotTop: number;
-  plotBottom: number;
   /**
    * The stretches the band and median line are drawn over: each run of rows with a bar. A row of
    * words ("Too few to compare …") is left clear, so the line never runs through its text; with
@@ -120,8 +117,6 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
   const plotW = Math.max(40, width - left - BAR_RIGHT);
   const max = barScaleMax(input);
   const x = (v: number) => left + plotW * Math.min(1, Math.max(0, v / max));
-  const plotTop = BAR_TOP - 2;
-  const plotBottom = BAR_TOP + input.rows.length * BAR_ROW_HEIGHT - 4;
   const { p25, median, p75 } = input.cohort;
   const band = p25 !== null && p75 !== null && x(p75) - x(p25) >= 1 ? { x: x(p25), width: x(p75) - x(p25) } : null;
   const medianX = median !== null ? x(median) : null;
@@ -160,8 +155,6 @@ export function barChartGeometry(input: BarChartInput): BarChartGeometry {
     max,
     band,
     median: medianX !== null ? { x: medianX } : null,
-    plotTop,
-    plotBottom,
     spans,
     rows,
   };
@@ -301,12 +294,6 @@ function round(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-/** "20 Nov" for a `YYYY-MM-DD` date, read from its own parts (no zone can move it a day). */
-export function shortDate(day: string): string {
-  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
-  return dateFormatter({ day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d)));
-}
-
 /** Which dates get a label: every k-th so labels stay {@link MIN_LABEL_GAP} apart, and always the last. */
 export function labelledDateIndexes(count: number, plotWidth: number): number[] {
   if (count <= 0) return [];
@@ -382,10 +369,8 @@ export function trendGeometry(input: TrendInput): TrendGeometry {
     input.series.map((s) => s.name),
     TREND_NAME_WIDTH,
   );
-  const texts = input.series.map((s, i) => {
-    const last = lastPoint(s.counts);
-    return last ? `${names[i]} · ${last.value}` : null;
-  });
+  const lasts = input.series.map((s) => lastPoint(s.counts));
+  const texts = lasts.map((last, i) => (last ? `${names[i]} · ${last.value}` : null));
   const medianLast = lastPoint(input.median);
   const teamText = medianLast ? `Team · ${formatMedian(medianLast.value)}` : null;
   // Room right of the plot for the longest label of a line that runs to the last day.
@@ -403,10 +388,10 @@ export function trendGeometry(input: TrendInput): TrendGeometry {
   const y = (v: number) => plotBottom - ((plotBottom - plotTop) * v) / yMax;
   const ticks = [0, 1, 2, 3, 4].map((k) => ({ value: (yMax * k) / 4, y: round(y((yMax * k) / 4)) }));
   const xs = input.dates.map((_, i) => round(x(i)));
-  const xLabels = labelledDateIndexes(n, plotRight - plotLeft).map((i) => ({ index: i, x: xs[i]!, text: shortDate(input.dates[i]!) }));
-  const series = input.series.map((s) => {
+  const xLabels = labelledDateIndexes(n, plotRight - plotLeft).map((i) => ({ index: i, x: xs[i]!, text: formatReportDay(input.dates[i]!, false) }));
+  const series = input.series.map((s, i) => {
     const line = brokenLinePath(s.counts, x, y);
-    const last = lastPoint(s.counts);
+    const last = lasts[i];
     return { id: s.id, path: line.path, dots: line.dots, last: last ? { x: round(x(last.index)), y: round(y(last.value)) } : null };
   });
   const medianPath = brokenLinePath(input.median, x, y).path;

@@ -27,7 +27,6 @@ import {
   COMPARE_NETWORK_MESSAGE,
   compareErrorCode,
   compareErrorMessage,
-  compareOptionsQueryString,
   createCompareView,
   deleteCompareView,
   getCompareOptions,
@@ -94,8 +93,9 @@ describe('routes', () => {
     });
   });
 
-  it('builds the options query string in a fixed order', () => {
-    expect(compareOptionsQueryString({ campaign_id: 'c', from: 'f', to: 'g', timezone: 'UTC' })).toBe('?campaign_id=c&from=f&to=g&timezone=UTC');
+  it('builds the options query string in a fixed order, whatever the order of the query’s keys', async () => {
+    await getCompareOptions({ timezone: 'UTC', to: 'g', from: 'f', campaign_id: 'c' }, 't', 'a');
+    expect(call().url).toBe('/proxy/agency/compare/options?campaign_id=c&from=f&to=g&timezone=UTC');
   });
 
   it('lists views, narrowed to a campaign only when one is given', async () => {

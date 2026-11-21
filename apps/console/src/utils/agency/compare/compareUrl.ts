@@ -11,7 +11,7 @@ import {
 } from '@magick-agency/contracts/api/agency/compare';
 import { REPORT_MAX_WINDOW_DAYS, reportWindowDays } from '@magick-agency/contracts/api/agency/reports';
 import { addDaysToDay } from '../insights/range';
-import { presetWindow } from '../../reports/reportWindow';
+import { isoWeekday, presetWindow } from '../../reports/reportWindow';
 
 /**
  * Compare agents' state in the URL (`docs/compare-agents.md` §2): the campaign, the window, the
@@ -203,13 +203,6 @@ export function keepAgents(slots: readonly (string | null)[], keep: ReadonlySet<
 }
 
 // ─── The window ────────────────────────────────────────────────────────────
-
-/** ISO weekday of a calendar date, Monday 1 … Sunday 7. */
-function isoWeekday(day: string): number {
-  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
-  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  return weekday === 0 ? 7 : weekday;
-}
 
 /** The window's local dates given today in the zone; null for a custom window not yet complete. */
 export function windowDates(state: Pick<CompareUrlState, 'window' | 'from' | 'to'>, today: string): { from: string; to: string } | null {

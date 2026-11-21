@@ -1,5 +1,6 @@
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
+import { toQuery } from './agencySpine';
 import { errorCode } from '../utils/agencyErrors';
 import { COMPARE_WINDOW_RULE } from '../utils/agency/compare/compareUrl';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -57,17 +58,7 @@ export function queryCompare(
   );
 }
 
-/** `?campaign_id=&from=&to=&timezone=`, in that order. */
-export function compareOptionsQueryString(query: AgencyCompareOptionsQuery): string {
-  const qs = new URLSearchParams();
-  qs.set('campaign_id', query.campaign_id);
-  qs.set('from', query.from);
-  qs.set('to', query.to);
-  qs.set('timezone', query.timezone);
-  return `?${qs.toString()}`;
-}
-
-/** What the filters and the agent chips need for one campaign and window. */
+/** What the filters and the agent chips need for one campaign and window: `?campaign_id=&from=&to=&timezone=`. */
 export function getCompareOptions(
   query: AgencyCompareOptionsQuery,
   tenantId?: string,
@@ -75,7 +66,7 @@ export function getCompareOptions(
   signal?: AbortSignal,
 ): Promise<AgencyCompareOptions> {
   return apiFetch<AgencyCompareOptions>(
-    `${COMPARE}/options${compareOptionsQueryString(query)}`,
+    `${COMPARE}/options${toQuery({ campaign_id: query.campaign_id, from: query.from, to: query.to, timezone: query.timezone })}`,
     signal ? { signal } : {},
     tenantId,
     accountId,

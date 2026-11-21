@@ -30,7 +30,7 @@ export interface CompareViewShape {
 }
 
 /** Whether the page differs from the view: lens, metrics (ids, labels and order) or trend. */
-export function viewDiffers(view: Pick<AgencyCompareView, 'lens' | 'metrics' | 'trend'>, shape: CompareViewShape): boolean {
+function viewDiffers(view: Pick<AgencyCompareView, 'lens' | 'metrics' | 'trend'>, shape: CompareViewShape): boolean {
   if (view.lens !== shape.lens) return true;
   const a = view.metrics.map(metricParam).join('|');
   const b = shape.metrics.map(metricParam).join('|');
@@ -49,8 +49,8 @@ export interface CompareViewsProps {
   /** Null while the list loads (or has never loaded). */
   views: readonly AgencyCompareView[] | null;
   /** The list couldn't be read: said, with a way to read it again, never as "No saved views yet". */
-  viewsFailed?: boolean;
-  onRetryViews?: () => void;
+  viewsFailed: boolean;
+  onRetryViews: () => void;
   applied: AgencyCompareView | null;
   current: CompareViewShape;
   onApply: (view: AgencyCompareView) => void;
@@ -65,7 +65,7 @@ export interface CompareViewsProps {
 }
 
 export function CompareViews(props: CompareViewsProps) {
-  const { tenantId, accountId, userId, campaignId, campaignName, views, viewsFailed = false, onRetryViews, applied, current, onApply, onSaved, onChanged, onDeleted } = props;
+  const { tenantId, accountId, userId, campaignId, campaignName, views, viewsFailed, onRetryViews, applied, current, onApply, onSaved, onChanged, onDeleted } = props;
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -111,7 +111,7 @@ export function CompareViews(props: CompareViewsProps) {
 
   return (
     <div className={styles.views} data-testid="compare-views">
-      <label className={styles.srOnly} htmlFor={selectId}>
+      <label className="sr-only" htmlFor={selectId}>
         Saved views
       </label>
       <select
@@ -159,14 +159,12 @@ export function CompareViews(props: CompareViewsProps) {
           <span className={styles.hint} role="alert" data-testid="compare-views-error">
             Saved views couldn’t be loaded.
           </span>
-          {onRetryViews ? (
-            <button type="button" className="btn-secondary" onClick={onRetryViews}>
-              Load saved views again
-            </button>
-          ) : null}
+          <button type="button" className="btn-secondary" onClick={onRetryViews}>
+            Load saved views again
+          </button>
         </>
       ) : null}
-      {applied && mine ? (
+      {mine ? (
         <>
           {dirty ? (
             <button
@@ -250,7 +248,7 @@ export function CompareViews(props: CompareViewsProps) {
 }
 
 /** The delete confirmation's words: who else loses the view only when someone else has it. */
-export function deleteMessage(view: Pick<AgencyCompareView, 'name' | 'shared'>): string {
+function deleteMessage(view: Pick<AgencyCompareView, 'name' | 'shared'>): string {
   return view.shared
     ? `“${view.name}” will be deleted for you and every supervisor it is shared with. The page stays as it is.`
     : `“${view.name}” will be deleted. The page stays as it is.`;

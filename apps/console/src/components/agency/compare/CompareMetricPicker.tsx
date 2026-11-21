@@ -128,7 +128,7 @@ export function CompareMetricPicker({ id, metrics, trend, codes, onMetrics, onTr
   );
 }
 
-export interface OutcomeSetBuilderProps {
+interface OutcomeSetBuilderProps {
   codes: readonly AgencyCompareOutcomeCode[];
   metrics: readonly AgencyCompareMetricRef[];
   onAdd: (ref: AgencyCompareMetricRef) => void;
@@ -140,7 +140,7 @@ export interface OutcomeSetBuilderProps {
  * `defaultOutcomeSetBetter` (higher only for success codes, CP18) and follows the codes until the
  * supervisor chooses one.
  */
-export function OutcomeSetBuilder({ codes, metrics, onAdd }: OutcomeSetBuilderProps) {
+function OutcomeSetBuilder({ codes, metrics, onAdd }: OutcomeSetBuilderProps) {
   const [picked, setPicked] = useState<string[]>([]);
   const [name, setName] = useState('');
   const [chosenBetter, setChosenBetter] = useState<CompareMetricBetter | null>(null);
