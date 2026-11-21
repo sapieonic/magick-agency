@@ -27,6 +27,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // parent it came from, and which selector the supervisor chose. Without this row the parent's trail
   // says nothing happened on the day someone re-dialled 812 of its contacts.
   'agency_campaign.retry_created',
+  // Archived campaigns (AR1–AR7): a draft or stopped campaign taken off the Campaigns page, and
+  // put back. Written by the public archive and unarchive routes on success only; `details` carry
+  // `{ campaign_id, status }`. Only here, not in `audit_logs`: the public layer alone knows who.
+  'agency_campaign.archived',
+  'agency_campaign.restored',
   // Contact assignment (CA10): the campaign's `assignment_mode` changed (only while draft
   // or paused). Written by the public PATCH route on success only; `details` carry
   // `{ campaign_id, from, to }`. Sending the stored mode again is not a change.

@@ -5,7 +5,8 @@ import type { SearchCampaign } from '../utils/consoleSearch';
 /**
  * The account's campaigns as search (`GlobalSearch`) finds them: ids and names, read through
  * the full campaign list (every status, every page: the first, then the rest a few at a time,
- * {@link readAllCampaigns}), so it is read as rarely as it can be.
+ * {@link readAllCampaigns}), so it is read as rarely as it can be. Archived campaigns are not in
+ * it, as the list leaves them out (AR3): they are found on Archived campaigns.
  *
  * Kept for the session per tenant and account, stale-while-revalidate: an open shows the list
  * it has at once, and reads it again in the background only when that list is older than

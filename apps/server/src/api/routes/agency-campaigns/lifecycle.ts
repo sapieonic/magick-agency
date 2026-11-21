@@ -9,6 +9,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
+import type { AgencyCampaignLifecycleErrorCode } from '@magick-agency/contracts/errors';
 // The two `last_transition_by_*` columns folded into the one wire object. Every
 // route here that serves a campaign row goes through it, so the fold has one
 // definition — see its header for why it is derived from the record rather than
@@ -35,6 +36,21 @@ const log = createChildLogger({ component: 'agency-campaign-routes' });
  */
 export const ACTOR_USER_ID_MAX = 100;
 export const ACTOR_NAME_MAX = 255;
+
+/** Start of an archived draft (AR2): 409 `campaign_archived`, restore it first. */
+function replyStartArchived(
+  reply: FastifyReply,
+  campaign: Pick<AgencyCampaignRecord, 'status' | 'archived_at'>,
+): FastifyReply {
+  const code: AgencyCampaignLifecycleErrorCode = 'campaign_archived';
+  return reply.code(409).send({
+    error: 'Invalid Transition',
+    code,
+    message: 'This campaign is archived. Restore it before starting it.',
+    current_status: campaign.status,
+    archived_at: campaign.archived_at,
+  });
+}
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
 export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Promise<void> {
@@ -147,6 +163,13 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     // Gate (or not) and ownership are each route's `ownedCampaign` preHandler.
     const campaign = campaignOf(request);
 
+    // An archived campaign moves nowhere until it is restored (AR2). A move that would otherwise
+    // be valid (its status is one this route moves from) is told what to do, restore it, rather
+    // than that the move is invalid; today that is only Start on an archived draft. Any other move
+    // gets the ordinary transition refusal below. `transitionStatus` refuses an archived campaign
+    // too, against the row as it is written.
+    if (campaign.archived_at && from.includes(campaign.status)) return replyStartArchived(reply, campaign);
+
     if (!from.includes(campaign.status)) {
       return reply.code(409).send({
         error: 'Invalid Transition',
@@ -186,8 +209,9 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     const updated = await agencyCampaignRepository.transitionStatus(campaign.id, from, to, patch);
     if (!updated) {
       // The guard matched on read but not on write — something moved underneath
-      // us (most likely the pacing leader finalizing). Re-read and report.
+      // us (most likely the pacing leader finalizing, or an archive of this draft). Re-read and report.
       const fresh = await agencyCampaignRepository.findById(campaign.id);
+      if (fresh?.archived_at && from.includes(fresh.status)) return replyStartArchived(reply, fresh);
       return reply.code(409).send({
         error: 'Invalid Transition',
         code: 'invalid_campaign_transition',

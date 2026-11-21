@@ -250,7 +250,9 @@ describe('a row read again (sameFloorRow)', () => {
   it('is the same when every field and the call’s fields are, whatever the objects', () => {
     const row = floorRow('a', { state: 'on_call', call: CALL() });
     expect(sameFloorRow(row, structuredClone(row))).toBe(true);
-    expect(sameFloorRow(floorRow('a'), structuredClone(floorRow('a')))).toBe(true);
+    // One row and its clone: two `floorRow` calls can stamp `state_since` a millisecond apart.
+    const idle = floorRow('a');
+    expect(sameFloorRow(idle, structuredClone(idle))).toBe(true);
     expect(sameFloorRow(row, { ...row, calls_today: row.calls_today + 1 })).toBe(false);
     expect(sameFloorRow(row, { ...row, call: { ...row.call!, listenable: false } })).toBe(false);
     expect(sameFloorRow(row, { ...row, call: null })).toBe(false);

@@ -18,7 +18,8 @@ import {
   listInboundNumbers,
   updateInboundRoute,
 } from '../../api/inbound';
-import { listAgencyCampaigns } from '../../api/agencyCampaigns';
+import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
+import { withHeldArchived } from '../../utils/agencyCampaignArchive';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { DispositionCatalogEditor } from '../campaigns/agency/DispositionCatalogEditor';
 import { useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
@@ -119,6 +120,13 @@ export default function InboundRouteEditorPage() {
         // The pool's choices; a failure here only empties them (the route itself still loads).
         listAgencyCampaigns(tenantId, accountId).catch(() => [] as AgencyCampaign[]),
       ]);
+      // A campaign archived since it was put in the pool (AR1–AR7) is not in that list: it is
+      // added back, marked, so it stays visible and can be unticked. Read only when the pool
+      // holds a campaign the list lacks, which is rare.
+      const listed = new Set(campaignList.map((c) => c.id));
+      const archivedList = route?.pool_campaign_ids.some((id) => !listed.has(id))
+        ? await listArchivedAgencyCampaigns(tenantId, accountId).catch(() => [] as AgencyCampaign[])
+        : [];
       if (route) {
         setSaved(route);
         setDraft(draftFromRoute(route));
@@ -127,7 +135,7 @@ export default function InboundRouteEditorPage() {
       setClips(clipList.clips);
       setUploadAvailable(clipList.upload_available);
       setConnectsAgents(clipList.connects_agents);
-      setCampaigns(campaignList);
+      setCampaigns(withHeldArchived(campaignList, archivedList, route?.pool_campaign_ids ?? []));
     } catch (err) {
       setLoadError(getErrorMessage(err, 'We couldn’t load this inbound route.'));
     } finally {

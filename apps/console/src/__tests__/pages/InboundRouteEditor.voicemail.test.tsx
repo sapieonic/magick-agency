@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   listInboundNumbers: vi.fn(),
   listInboundClips: vi.fn(),
   listAgencyCampaigns: vi.fn(),
+  listArchivedAgencyCampaigns: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -25,7 +26,10 @@ vi.mock('../../hooks/useFeatureFlagEnabled', () => ({ useFeatureFlagEnabled: () 
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }) }));
 vi.mock('../../components/common/PageDescription', () => ({ PageDescription: () => null }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({ useCallAnalysisProfiles: () => ({ profiles: [], loading: false }) }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
+}));
 vi.mock('../../api/inbound', async () => {
   const actual = await vi.importActual<typeof import('../../api/inbound')>('../../api/inbound');
   return {
@@ -53,6 +57,7 @@ const ROUTE: AgencyInboundRoute = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
   mocks.useTenant.mockReturnValue({ role: 'account_admin', tenantId: 'tenant-1', accountId: 'account-1' });
   mocks.getInboundRoute.mockResolvedValue(ROUTE);
   mocks.listInboundNumbers.mockResolvedValue({

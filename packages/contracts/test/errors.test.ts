@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENCY_ACTION_ERROR_CODES,
+  AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_FLOOR_ASSIST_ERROR_CODES,
   AGENCY_INBOUND_ERROR_CODES,
@@ -10,6 +11,7 @@ import {
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
+  type AgencyCampaignArchiveErrorCode,
   type AgencyCampaignLifecycleErrorCode,
   type AgencyFloorAssistErrorCode,
   type AgencyInboundErrorCode,
@@ -93,6 +95,8 @@ const _lifecycleExact: Equals<
   (typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES)[number],
   AgencyCampaignLifecycleErrorCode
 > = true;
+const _archiveExact: Equals<(typeof AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES)[number], AgencyCampaignArchiveErrorCode> = true;
+void _archiveExact;
 // The errors module re-exports the dialer runtime's unions rather than re-declaring them.
 const _actionIsCore: Equals<AgencyActionErrorCode, Core.AgencyActionErrorCode> = true;
 const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode> = true;
@@ -140,7 +144,7 @@ describe('roster refusal codes', () => {
 });
 
 describe('campaign-lifecycle codes', () => {
-  it('are the ten campaign-lifecycle names, distinct', () => {
+  it('are the eleven campaign-lifecycle names, distinct', () => {
     // `another_campaign_running` is retired (decisions MC6): several campaigns may run per account.
     expect([...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES]).toEqual([
       'invalid_campaign_transition',
@@ -153,6 +157,8 @@ describe('campaign-lifecycle codes', () => {
       'telephony_credential_not_active',
       'campaign_caller_ids_unavailable',
       'carrier_capacity_unallocated',
+      // Start on an archived draft (AR2).
+      'campaign_archived',
     ]);
     expectUnique(AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES);
   });
@@ -161,6 +167,26 @@ describe('campaign-lifecycle codes', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     for (const code of AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES) expect(action.has(code)).toBe(false);
     for (const code of AGENCY_ROSTER_REFUSAL_CODES) expect(action.has(code)).toBe(false);
+  });
+});
+
+describe('campaign archive codes (AR1–AR7)', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES]).toEqual([
+      'campaign_not_archivable',
+      'campaign_archived',
+      'campaign_not_archived',
+    ]);
+    expectUnique(AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES);
+  });
+
+  it('share only `campaign_archived` with the lifecycle codes, the refusal of Start on an archived draft', () => {
+    const lifecycle = new Set<string>(AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES);
+    expect(AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES.filter((c) => lifecycle.has(c))).toEqual(['campaign_archived']);
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES).toBe(AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES);
   });
 });
 

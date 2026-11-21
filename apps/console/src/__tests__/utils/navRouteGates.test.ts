@@ -88,6 +88,7 @@ const ROUTES: RouteRule[] = [
   [/^\/agency\/callbacks$/, (r) => dialer(r) && can(r, 'agency.supervise')],
   [/^\/agency\/campaigns$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [/^\/agency\/campaigns\/new$/, (r) => dialer(r) && can(r, 'agency.campaigns.write')],
+  [/^\/agency\/campaigns\/archived$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/(overview|calls|callbacks|health|contacts|attempts|settings)$`), (r) => dialer(r) && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}/agents$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/activity$`), (r) => dialer(r) && can(r, 'audit.read')],
@@ -202,7 +203,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
-      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/softphone', '/agency/inbound/missed',
+      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/softphone', '/agency/inbound/missed',
       '/agency/inbound/summary', '/agency/analytics', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/manual-calls',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',

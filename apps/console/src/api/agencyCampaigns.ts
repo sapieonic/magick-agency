@@ -235,10 +235,13 @@ async function fetchCampaignPage(
   tenantId?: string,
   accountId?: string,
   statuses?: readonly string[],
+  archived = false,
 ): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
   const filter = statuses && statuses.length > 0 ? `&status=${encodeURIComponent(statuses.join(','))}` : '';
+  // Absent is "not archived" on the server (AR3), so only the archived read says anything.
+  const archivedFilter = archived ? '&archived=true' : '';
   const body = await apiFetch<AgencyCampaign[] | { campaigns?: AgencyCampaign[]; total?: number }>(
-    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}`,
+    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}${archivedFilter}`,
     {},
     tenantId,
     accountId,
@@ -256,10 +259,12 @@ async function fetchCampaignPage(
 const MAX_LIST_PAGES = 50;
 
 /**
- * Every campaign in the account, newest first, read a page at a time.
+ * Every campaign in the account that is not archived, newest first, read a page at a time.
+ * Archived campaigns (AR1–AR7) are left out by the server; a picker whose saved value may name
+ * one adds it back from {@link listArchivedAgencyCampaigns}.
  *
- * For callers that need the whole set: name lookups, and pages that summarise
- * every campaign. A page that only shows the latest few should use
+ * For callers that need the whole set: pickers, and pages that summarise the account's
+ * campaigns. A page that only shows the latest few should use
  * {@link listAgencyCampaignsPage} and load older ones on request instead.
  *
  * `statuses` reads only campaigns in those states (the server filters, and
@@ -271,10 +276,31 @@ export async function listAgencyCampaigns(
   accountId?: string,
   statuses?: readonly string[],
 ): Promise<AgencyCampaign[]> {
+  return readEveryPage(tenantId, accountId, statuses, false);
+}
+
+/**
+ * Every ARCHIVED campaign in the account (AR3), newest archived first, read a page at a time:
+ * for a picker whose saved value may name a campaign archived since (an inbound route's team, a
+ * report subscription, the Do Not Call filter), to show it as "(archived)" rather than lose it.
+ */
+export async function listArchivedAgencyCampaigns(
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCampaign[]> {
+  return readEveryPage(tenantId, accountId, undefined, true);
+}
+
+async function readEveryPage(
+  tenantId: string | undefined,
+  accountId: string | undefined,
+  statuses: readonly string[] | undefined,
+  archived: boolean,
+): Promise<AgencyCampaign[]> {
   const all: AgencyCampaign[] = [];
   for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
     const { campaigns, total } = await fetchCampaignPage(
-      all.length, LIST_PAGE_SIZE, tenantId, accountId, statuses,
+      all.length, LIST_PAGE_SIZE, tenantId, accountId, statuses, archived,
     );
     all.push(...campaigns);
     if (campaigns.length === 0 || all.length >= total) break;
@@ -282,7 +308,10 @@ export async function listAgencyCampaigns(
   return all;
 }
 
-/** One page of the campaign list, newest first, with the account's total. */
+/**
+ * One page of the campaign list, newest first, with the account's total. Archived campaigns are
+ * not in it (AR3): the server leaves them out of every list unless asked.
+ */
 export async function listAgencyCampaignsPage(
   tenantId: string | undefined,
   accountId: string,
@@ -290,6 +319,19 @@ export async function listAgencyCampaignsPage(
   limit = LIST_PAGE_SIZE,
 ): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
   return fetchCampaignPage(offset, limit, tenantId, accountId);
+}
+
+/**
+ * One page of the account's ARCHIVED campaigns (AR3), newest archived first, with how many there
+ * are. `limit = 1` is the Campaigns page's count for its link to them.
+ */
+export async function listArchivedAgencyCampaignsPage(
+  tenantId: string | undefined,
+  accountId: string,
+  offset: number,
+  limit = LIST_PAGE_SIZE,
+): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  return fetchCampaignPage(offset, limit, tenantId, accountId, undefined, true);
 }
 
 export async function getAgencyCampaign(
@@ -377,6 +419,27 @@ export async function getAgencyCampaignStats(
 export async function transitionAgencyCampaign(
   id: string,
   action: 'start' | 'pause' | 'resume' | 'stop',
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCampaign> {
+  return apiFetch<AgencyCampaign>(
+    `${AGENCY_BASE}/campaigns/${id}/${action}`,
+    { method: 'POST' },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Archive a draft or stopped campaign, or restore an archived one (decisions AR1–AR7). Answers
+ * the campaign as it now is. Archiving keeps its status; an archived campaign is off the
+ * Campaigns page and every picker, and an archived draft cannot be started until restored.
+ * `agency.campaigns.write`. A 409 carries `campaign_not_archivable`, `campaign_archived` or
+ * `campaign_not_archived` with the campaign's `current_status`.
+ */
+export async function setAgencyCampaignArchived(
+  id: string,
+  action: 'archive' | 'unarchive',
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyCampaign> {

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaignStats: vi.fn(),
   campaignLineage: vi.fn(),
   transitionAgencyCampaign: vi.fn(),
+  setAgencyCampaignArchived: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -36,6 +37,7 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaignStats: mocks.getAgencyCampaignStats,
   campaignLineage: mocks.campaignLineage,
   transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  setAgencyCampaignArchived: mocks.setAgencyCampaignArchived,
 }));
 
 import { CampaignWorkspace } from '../../pages/agency/campaign-detail/CampaignWorkspace';
@@ -248,5 +250,52 @@ describe('campaign workspace — the header and strip stay current', () => {
       await vi.advanceTimersByTimeAsync(WORKSPACE_REFRESH_MS * 2);
     });
     expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad);
+  });
+});
+
+describe('campaign workspace — archiving (AR1–AR7)', () => {
+  it('archives a stopped campaign from its header, after the confirm, and shows it archived with Restore', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => campaign(id, { status: 'stopped' }));
+    mocks.setAgencyCampaignArchived.mockImplementation(async (id: string) =>
+      campaign(id, { status: 'stopped', archived_at: '2026-11-20T06:00:00Z', archived_by: { user_id: 'u-1', name: 'Asha' } }));
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId('campaign-archive-action'));
+    expect(mocks.setAgencyCampaignArchived).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive campaign' }));
+    expect((await screen.findByTestId('campaign-archived-note')).textContent).toContain('Archived on 20 Nov 2026 by Asha');
+    expect(mocks.setAgencyCampaignArchived).toHaveBeenCalledWith('camp-1', 'archive', 'tenant-1', 'account-1');
+    expect(screen.getByTestId('campaign-restore-action')).toBeTruthy();
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+  });
+
+  it('offers Archive only to a role with agency.campaigns.write', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => campaign(id, { status: 'stopped' }));
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'operator' });
+    renderWorkspace();
+    await screen.findByRole('heading', { level: 1, name: 'Collections' });
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+  });
+
+  it('does not send Start for a draft archived elsewhere since it was read, and shows it archived', async () => {
+    mocks.getAgencyCampaign.mockImplementationOnce(async (id: string) => campaign(id, { status: 'draft' }));
+    renderWorkspace();
+    const start = await screen.findByRole('button', { name: 'Start dialling' });
+    // The Start preflight re-reads the row, which has been archived in another window.
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) =>
+      campaign(id, { status: 'draft', archived_at: '2026-11-20T06:00:00Z' }));
+    fireEvent.click(start);
+    expect(await screen.findByTestId('campaign-archived-note')).toBeTruthy();
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('does not carry an Archive confirmation over to the next campaign', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => campaign(id, { status: 'stopped' }));
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId('campaign-archive-action'));
+    expect(screen.getByText('Archive this campaign?')).toBeTruthy();
+    act(() => go('/agency/campaigns/camp-2/contacts'));
+    await screen.findByRole('heading', { level: 1, name: 'Renewals' });
+    expect(screen.queryByText('Archive this campaign?')).toBeNull();
+    expect(mocks.setAgencyCampaignArchived).not.toHaveBeenCalled();
   });
 });

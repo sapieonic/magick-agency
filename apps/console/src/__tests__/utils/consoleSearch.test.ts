@@ -43,7 +43,7 @@ const ALL_ON = (role: Role | undefined, extra: Partial<GateInput> = {}): GateInp
 const titles = (rs: { title: string }[]) => rs.map((r) => r.title);
 
 describe('the pages', () => {
-  it('are the sidebar’s tabs, read from consoleNav, plus New campaign', () => {
+  it('are the sidebar’s tabs, read from consoleNav, plus New campaign and Archived campaigns', () => {
     const tos = searchPages().map((p) => p.to);
     for (const section of CONSOLE_SECTIONS) for (const tab of section.tabs) expect(tos).toContain(tab.to);
     expect(tos).toContain('/agency/campaigns/new');
@@ -51,6 +51,7 @@ describe('the pages', () => {
       'Live floor',
       'Campaigns',
       'New campaign',
+      'Archived campaigns',
       'Soft-phone calls',
       'Live calls',
       'Listening history',
@@ -66,7 +67,7 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(13);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(14);
   });
 
   it('finds Live floor by its old name, and Callbacks however people spell it (LF1)', () => {
@@ -86,7 +87,7 @@ describe('the pages', () => {
   });
 
   it('gates each page as its tab: a viewer reads campaigns, analytics, reports, DNC and missed calls only', () => {
-    expect(titles(pageResults([], ALL_ON('viewer')))).toEqual(['Campaigns', 'Missed calls', 'Analytics', 'Exports', 'Do Not Call', 'Take calls', 'Customer history']);
+    expect(titles(pageResults([], ALL_ON('viewer')))).toEqual(['Campaigns', 'Archived campaigns', 'Missed calls', 'Analytics', 'Exports', 'Do Not Call', 'Take calls', 'Customer history']);
   });
 
   it('hides Soft-phone calls without its flag, Reports without its flag, and Inbound without the missed rule', () => {
@@ -120,6 +121,13 @@ describe('the pages', () => {
     }
     const history = pageResults(searchTokens('listening history'), ALL_ON('account_admin')).find((r) => r.title === 'Listening history');
     expect(history?.target).toEqual({ type: 'path', to: '/agency/listening-history' });
+  });
+
+  it('finds Archived campaigns by "archive" and "restore", for whoever reads campaigns (AR1–AR7)', () => {
+    for (const q of ['archived', 'archive', 'restore campaign', 'old campaigns']) {
+      const hit = pageResults(searchTokens(q), ALL_ON('viewer')).find((r) => r.title === 'Archived campaigns');
+      expect(hit?.target, q).toEqual({ type: 'path', to: '/agency/campaigns/archived' });
+    }
   });
 
   it('offers New campaign only with agency.campaigns.write', () => {

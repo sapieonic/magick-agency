@@ -31,7 +31,8 @@ before writing a repository or a migration.
   call-later, 0058 its index and CHECK validation, 0059 the state Need help was raised in, 0060 a
   break over its limit on the event that ended it, 0061 its limit's column comment corrected: the
   limit as the catalog stood when the break ended, 0062 the start of a break a station drop
-  suspended). node-pg-migrate,
+  suspended, 0063 archived campaigns: `archived_at` and who archived it, and the CHECK that only a
+  draft or stopped campaign is archived). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

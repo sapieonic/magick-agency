@@ -2360,6 +2360,10 @@ describe('every campaign route carries its RBAC permission', () => {
     ['post', '/campaigns/:id/pause', 'agency.supervise'],
     ['post', '/campaigns/:id/resume', 'agency.supervise'],
     ['post', '/campaigns/:id/stop', 'agency.supervise'],
+    // Archived campaigns (AR6): the PATCH's permission. Archiving tidies the list; it dials
+    // and stops nothing, so it is not `agency.supervise`.
+    ['post', '/campaigns/:id/archive', 'agency.campaigns.write'],
+    ['post', '/campaigns/:id/unarchive', 'agency.campaigns.write'],
     // Retry campaigns. Three
     // routes on three different floors, which is the whole reason they are worth
     // a comment here rather than three quiet rows:

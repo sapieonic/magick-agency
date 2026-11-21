@@ -778,7 +778,40 @@ export interface AgencyCampaign {
    * narrowing it here would invite a consumer to trust the shape.
    */
   retry_selector?: unknown | null;
+
+  // ── Archived campaigns (decisions AR1–AR7) ──────────────────────────────────
+  //
+  // Archiving is NOT a status. A draft or stopped campaign is archived to take it off the
+  // Campaigns page (`GET /proxy/agency/campaigns` leaves it out unless `archived=true`), and it
+  // keeps its status, so every reader of `status` is unchanged and a restore puts it back as it
+  // was. Optional for the reason every field here is: `undefined` is "not carried".
+
+  /** ISO-8601 instant it was archived, or `null` when it is not archived. */
+  archived_at?: string | null;
+  /**
+   * Who archived it, folded like {@link last_transition_by}. `null` on a campaign that is not
+   * archived, and on one archived by a caller with no user id.
+   */
+  archived_by?: AgencyCampaignActor | null;
 }
+
+/**
+ * The statuses a campaign may be archived in (AR2): a draft nobody started, or a campaign a
+ * supervisor stopped. Not `completed`, by ruling: only what was asked for. A started campaign
+ * that has not finished is never archived, and an archived draft is not started until restored.
+ */
+export const AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES = ['draft', 'stopped'] as const satisfies readonly AgencyCampaignStatus[];
+
+/** Whether a campaign in `status` may be archived: the one spelling of AR2's rule for the server and the console. */
+export function isAgencyCampaignArchivableStatus(status: string): boolean {
+  return (AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * The 409 codes of `POST /proxy/agency/campaigns/:id/{archive,unarchive}`, declared with the
+ * other error unions in `src/errors.ts` (union, list and guard there) and re-exported here.
+ */
+export { AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES, type AgencyCampaignArchiveErrorCode } from '../../errors';
 
 // ── Carriers a campaign may dial on ───────────────────────────
 

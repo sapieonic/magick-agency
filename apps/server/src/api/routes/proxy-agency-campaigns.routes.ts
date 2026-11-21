@@ -7,6 +7,7 @@ import { registerCampaignStatsRoutes } from './proxy-agency-campaigns/stats.js';
 import { registerCampaignActivityRoutes } from './proxy-agency-campaigns/activity.js';
 import { registerCampaignSpineRoutes } from './proxy-agency-campaigns/spine.js';
 import { registerCampaignLifecycleRoutes } from './proxy-agency-campaigns/lifecycle.js';
+import { registerCampaignArchiveRoutes } from './proxy-agency-campaigns/archive.js';
 import { registerCampaignRetryRoutes } from './proxy-agency-campaigns/retry.js';
 import { registerCampaignIngestRoutes } from './proxy-agency-campaigns/ingest.js';
 import { registerCarrierRoutes } from './proxy-agency-campaigns/carriers.js';
@@ -111,6 +112,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   await registerCampaignActivityRoutes(app);
   await registerCampaignSpineRoutes(app);
   await registerCampaignLifecycleRoutes(app);
+  await registerCampaignArchiveRoutes(app);
   await registerCampaignRetryRoutes(app);
   await registerCampaignIngestRoutes(app);
   await registerCarrierRoutes(app);

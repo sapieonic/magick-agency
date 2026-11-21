@@ -114,8 +114,8 @@ const LIVE_STATUSES: ReadonlySet<string> = new Set(['running', 'paused', 'stoppi
 /**
  * How many campaigns get their numbers read at once.
  *
- * The list holds every campaign in the account (`listAgencyCampaigns` reads every
- * page), but each campaign shown costs its own `/stats` request, so an account
+ * The list holds every campaign in the account that is not archived (`listAgencyCampaigns`
+ * reads every page; archived campaigns are under Archived campaigns, AR3), but each campaign shown costs its own `/stats` request, so an account
  * with three hundred lifetime campaigns would pay three hundred to open the
  * page. Fifty, newest first, is what the page showed before the list was read in
  * full, so opening it costs what it always did; older ones load on request.

@@ -1806,6 +1806,19 @@ the row a transition locks). Catalog-only on a small table after `SET LOCAL lock
 **Down** drops the column. **Tests**: `test/integration/db/agent-station-migrations.test.ts` and the
 down → up inventory suite.
 
+### 0063 — `migrations/0063_campaign_archive.sql`
+
+Archived campaigns (AR1–AR7). **`agency_campaigns.archived_at`** `TIMESTAMPTZ NULL` (NULL = not
+archived), **`archived_by_user_id`** `UUID NULL` and **`archived_by_name`** `VARCHAR(255) NULL` (who
+archived it, the same snapshot pair as `last_transition_by_*`), written together by the archive route
+and cleared together by restore. Archiving is not a status: the campaign stays `draft` or `stopped`.
+**`ck_agency_campaign_archived_status`** `CHECK (archived_at IS NULL OR status IN ('draft','stopped'))`,
+added validated (the table is small and every row is NULL), backs the routes' refusals and
+`transitionStatus`'s `archived_at IS NULL`: an archived campaign cannot be started. No index: the
+Campaigns list reads an account's few campaigns. Catalog-only after `SET LOCAL lock_timeout = '10s'`.
+**Down** drops the CHECK and the columns. **Tests**: `test/integration/db/campaign-archive-migration.test.ts`
+and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

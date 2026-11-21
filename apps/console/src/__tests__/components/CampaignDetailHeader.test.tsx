@@ -132,3 +132,112 @@ describe('campaign header: the clocks', () => {
     expect(screen.getByText(/^Updated .* · status and agents auto-refresh$/)).toBeTruthy();
   });
 });
+
+describe('campaign header: archiving (AR1–AR7)', () => {
+  const archive = () => ({ busy: null, onArchive: vi.fn(), onRestore: vi.fn() });
+
+  it('offers Archive on a draft and on a stopped campaign, to a role given it', () => {
+    for (const status of ['draft', 'stopped']) {
+      const a = archive();
+      show({ status }, { archive: a });
+      screen.getByTestId('campaign-archive-action').click();
+      expect(a.onArchive, status).toHaveBeenCalledTimes(1);
+      cleanup();
+    }
+  });
+
+  it('never offers Archive on a campaign that has started and not been stopped, or one that completed', () => {
+    for (const status of ['running', 'paused', 'stopping', 'completed']) {
+      show({ status }, { archive: archive() });
+      expect(screen.queryByTestId('campaign-archive-action'), status).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('offers nothing to a role not given it', () => {
+    show({ status: 'draft' });
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+  });
+
+  it('says an archived draft is archived, by whom, refuses Start beside why, and offers Restore', () => {
+    const a = archive();
+    show(
+      { status: 'draft', archived_at: '2026-11-20T06:00:00Z', archived_by: { user_id: 'u-1', name: 'Ravi Kumar' } },
+      { archive: a },
+    );
+    const note = screen.getByTestId('campaign-archived-note');
+    expect(note.textContent).toContain('Archived on 20 Nov 2026 by Ravi Kumar. It is not on the Campaigns page.');
+    // A static notice, not a live region: the toast is what announces the change.
+    expect(note.getAttribute('role')).toBeNull();
+    expect(screen.queryByTestId('campaign-archive-action')).toBeNull();
+    const start = within(screen.getByTestId('campaign-actions')).getByRole('button', { name: 'Start dialling' });
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('control-reason-start').textContent).toContain('Restore it before starting it.');
+    // No Stop on an archived draft, and no new work on it until it is restored (AR7).
+    expect(within(screen.getByTestId('campaign-actions')).queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Add contacts/ })).toBeNull();
+    expect(screen.queryByTestId('campaign-retry-action')).toBeNull();
+    screen.getByTestId('campaign-restore-action').click();
+    expect(a.onRestore).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps New campaign on an archived stopped campaign, but not Retry contacts (AR7)', () => {
+    show({ status: 'stopped', archived_at: '2026-11-20T06:00:00Z' }, { archive: archive() });
+    expect(screen.getByRole('link', { name: /New campaign/ }).getAttribute('href')).toBe('/agency/campaigns/new');
+    expect(screen.queryByTestId('campaign-retry-action')).toBeNull();
+    cleanup();
+    show({ status: 'stopped' }, { archive: archive() });
+    expect(screen.getByTestId('campaign-retry-action')).toBeTruthy();
+  });
+
+  it('moves focus to Restore once archived, and back to Archive once restored, when it had fallen to the page', () => {
+    const a = archive();
+    const props = (archived_at: string | null) => ({
+      campaign: { id: 'camp-1', name: NAME, status: 'draft', archived_at } as AgencyCampaign,
+      lastUpdatedAt: null, tenantId: 'tenant-1', accountId: 'account-1', canControl: true, canAddContacts: true,
+      busy: null, onAction: vi.fn(), canJoinStation: false, role: 'tenant_owner' as const, onRefresh: vi.fn(), archive: a,
+    });
+    const { rerender } = render(<MemoryRouter><CampaignDetailHeader {...props(null)} /></MemoryRouter>);
+    expect(document.activeElement).toBe(document.body);
+    rerender(<MemoryRouter><CampaignDetailHeader {...props('2026-11-20T06:00:00Z')} /></MemoryRouter>);
+    expect(document.activeElement).toBe(screen.getByTestId('campaign-restore-action'));
+    (document.activeElement as HTMLElement).blur();
+    rerender(<MemoryRouter><CampaignDetailHeader {...props(null)} /></MemoryRouter>);
+    expect(document.activeElement).toBe(screen.getByTestId('campaign-archive-action'));
+  });
+
+  it('leaves focus alone when it is somewhere on purpose', () => {
+    const a = archive();
+    const outside = document.createElement('input');
+    document.body.appendChild(outside);
+    outside.focus();
+    const base = { id: 'camp-1', name: NAME, status: 'draft' };
+    const { rerender } = show(base, { archive: a });
+    rerender(
+      <MemoryRouter>
+        <CampaignDetailHeader
+          campaign={{ ...base, archived_at: '2026-11-20T06:00:00Z' } as AgencyCampaign}
+          lastUpdatedAt={null} tenantId="tenant-1" accountId="account-1" canControl canAddContacts busy={null}
+          onAction={vi.fn()} canJoinStation={false} role="tenant_owner" onRefresh={vi.fn()} archive={a}
+        />
+      </MemoryRouter>,
+    );
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it('tells a reader who may not restore that it is archived, with no button', () => {
+    show({ status: 'stopped', archived_at: '2026-11-20T06:00:00Z', archived_by: null });
+    expect(screen.getByTestId('campaign-archived-note').textContent).toContain('Archived on 20 Nov 2026. It is not on the Campaigns page.');
+    expect(screen.queryByTestId('campaign-restore-action')).toBeNull();
+  });
+
+  it('disables Archive and Restore while either is in flight, or a lifecycle action is', () => {
+    show({ status: 'draft' }, { archive: { ...archive(), busy: 'archive' } });
+    expect((screen.getByTestId('campaign-archive-action') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('campaign-archive-action').textContent).toContain('Archiving…');
+    cleanup();
+    show({ status: 'draft' }, { busy: 'start', archive: archive() });
+    expect((screen.getByTestId('campaign-archive-action') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
