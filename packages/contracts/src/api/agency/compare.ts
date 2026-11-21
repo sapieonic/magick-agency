@@ -512,6 +512,11 @@ export interface AgencyCompareValue {
   /**
    * The figure in the metric's unit (a rate as a fraction). Null when the denominator is zero
    * (never 0, `ratePct`'s rule). Served under the floor too: `reportable` says whether to draw it.
+   * Also null (and not `reportable`, no `interval`) when the counts cannot both be right, the
+   * roster's `occupancy_pct` rule: a rate whose `numerator` exceeds its `denominator` (promises are
+   * counted when recorded, conversations when dialled), or `calls_per_hour` over a shift shorter
+   * than the calls' own talk and wrap-up. Such an agent is left out of the metric's cohort figures
+   * and findings; `numerator` and `denominator` are still served.
    */
   value: number | null;
   /** `count` / `amount`: the figure itself; `rate`: the hits; `seconds`: total seconds; `per_hour`: calls. */
