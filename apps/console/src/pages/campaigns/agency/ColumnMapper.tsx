@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import {
   MAPPING_BLOCK_COPY,
+  MAX_HERO_FIELDS,
   ROLE_LABELS,
   addDedupeKey,
   canAddDedupeKey,
@@ -81,6 +82,11 @@ export interface ColumnMapperProps {
   onChange: (next: MappingState) => void;
   fileName: string;
   disabled?: boolean;
+  /**
+   * Offer "On the card" (AS19): a new campaign's first card facts. Only where the picks are saved
+   * (New campaign); a list added to a campaign leaves the card to its Settings.
+   */
+  cardChoice?: boolean;
 }
 
 export function ColumnMapper({
@@ -89,6 +95,7 @@ export function ColumnMapper({
   onChange,
   fileName,
   disabled = false,
+  cardChoice = false,
 }: ColumnMapperProps) {
   const phone = phoneColumn(state);
   const block = mappingBlockReason(state);
@@ -175,7 +182,7 @@ export function ColumnMapper({
                       onChange(setRole(state, column.name, event.target.value as ColumnRole))
                     }
                   >
-                    {ROLES.map((option) => (
+                    {ROLES.filter((option) => option !== 'hero' || cardChoice || role === 'hero').map((option) => (
                       <option
                         key={option}
                         value={option}
@@ -195,6 +202,12 @@ export function ColumnMapper({
           })}
         </tbody>
       </table>
+
+      <p className={styles.timezoneNote} data-testid="card-choice-note">
+        {cardChoice
+          ? `Columns set to On the card are what agents see on the customer card, in the order you pick them (${MAX_HERO_FIELDS} at most). Change their names and order later in the campaign’s Settings.`
+          : 'What agents see on the customer card is chosen in the campaign’s Settings.'}
+      </p>
 
       {block ? (
         <p className={styles.block} data-testid="mapping-block">

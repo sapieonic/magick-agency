@@ -5,11 +5,13 @@ import { ApiError } from '../../api/client';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
- * The agent station's settings on a campaign's Settings page (AS6, AS9, BE-6, BE-8, BE-13): What
- * agents see (the daily target, the number display, the customer facts), Script, and the pictures
- * on outcomes and break reasons. What each sends (only what changed, `null` to clear the target,
- * the facts merged into the stored display), what holds Save as it is typed, and each server
- * refusal on the field it names.
+ * The agent station's settings on a campaign's Settings page (AS6, AS9, AS19, BE-6, BE-8, BE-13):
+ * What agents see (the daily target, the number display, the customer card), Script, and the
+ * pictures on outcomes and break reasons. What each sends (only what changed, `null` to clear the
+ * target, the card merged into the stored display with `facts` and without the old amount-due and
+ * due-date roles, the card with a script that needs it), what holds Save as it is typed (a script
+ * key the card does not have, a fact the stored script uses), and each server refusal on the field
+ * it names.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   getInsightsUploads: vi.fn(),
   showToast: vi.fn(),
   flag: vi.fn(),
+  getCampaignContacts: vi.fn(),
+  getCampaignContact: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -56,6 +60,11 @@ vi.mock('../../api/agencyCampaigns', () => ({
   transitionAgencyCampaign: mocks.transitionAgencyCampaign,
   getIngestJob: mocks.getIngestJob,
   campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
+}));
+vi.mock('../../api/agencySpine', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencySpine')>()),
+  getCampaignContacts: mocks.getCampaignContacts,
+  getCampaignContact: mocks.getCampaignContact,
 }));
 vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
@@ -117,6 +126,13 @@ beforeEach(() => {
   mocks.getIngestJob.mockImplementation(async (id: string) => ({
     id,
     context_columns: id === 'job-new' ? ['Borrower', 'City', 'Due Amount', 'PAN'] : ['Borrower', 'Due Date'],
+  }));
+  mocks.getCampaignContacts.mockResolvedValue({ rows: [{ id: 'ct-1' }, { id: 'ct-2' }], next_cursor: null, limit: 3 });
+  mocks.getCampaignContact.mockImplementation(async (_campaign: string, contactId: string) => ({
+    id: contactId,
+    context: contactId === 'ct-1'
+      ? { Borrower: 'Lakshmi Narayana', City: 'Pune', 'Due Amount': '125000', 'Due Date': '20/11/2026' }
+      : { Borrower: 'Ravi', City: 'Nashik', 'Due Amount': '', 'Due Date': '' },
   }));
 });
 
@@ -198,10 +214,22 @@ describe('Settings › What agents see: the customer’s number (AS9)', () => {
   });
 });
 
-describe('Settings › Script (BE-8)', () => {
-  it('adds steps, inserts a placeholder at the caret of the field last typed in, counts, and sends it trimmed', async () => {
+/** The card's rows, once the roster's columns have opened it. */
+const factRows = () => within(screen.getByTestId('fact-rows')).queryAllByRole('listitem');
+const factKeys = () => factRows().map((row) => row.querySelector('code')!.textContent);
+/** Waits for the columns' read to open the card (an old-model campaign's pre-fill needs them). */
+async function cardReady() {
+  const name = await screen.findByTestId('fact-role-name');
+  await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
+  return name as HTMLSelectElement;
+}
+
+describe('Settings › Script (BE-8, AS19)', () => {
+  it('adds steps, inserts a key at the caret of the field last typed in, counts, and sends it trimmed', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ context_display: { facts: [{ column: 'Due Amount', label: 'Amount due', key: 'amount_due' }], hidden: ['PAN'] } }));
     renderPage();
-    const opening = await screen.findByTestId('script-opening') as HTMLTextAreaElement;
+    await cardReady();
+    const opening = screen.getByTestId('script-opening') as HTMLTextAreaElement;
     fireEvent.focus(opening);
     fireEvent.change(opening, { target: { value: 'Hello' } });
     fireEvent.click(screen.getByTestId('script-chip-name'));
@@ -217,6 +245,9 @@ describe('Settings › Script (BE-8)', () => {
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody().agent_script).toEqual({ opening: 'Hello {name}', steps: [{ text: 'You owe {amount_due} today' }] });
+    // The card did not change and the stored one allows every key: it is not sent.
+    expect(sentBody()).not.toHaveProperty('context_display');
+    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this from their next call.', 'success');
   });
 
   it('stops at twelve steps', async () => {
@@ -227,13 +258,43 @@ describe('Settings › Script (BE-8)', () => {
     expect(screen.getByText('A script can have at most 12 steps.')).toBeTruthy();
   });
 
-  it('holds Save on a word the station cannot fill, said on its step', async () => {
+  it('holds Save on a key the card has no fact for, said on its step as the server says it', async () => {
     renderPage();
-    fireEvent.click(await screen.findByTestId('script-add-step'));
-    fireEvent.change(screen.getByTestId('script-step-0'), { target: { value: 'Hi {Name}' } });
-    expect(await screen.findByText(/\{Name\} is not a word the script can fill in/)).toBeTruthy();
+    await cardReady();
+    fireEvent.click(screen.getByTestId('script-add-step'));
+    fireEvent.change(screen.getByTestId('script-step-0'), { target: { value: 'Hi {Name} from {branch_office}' } });
+    expect(await screen.findByText('The script uses {Name} and {branch_office}, which are not facts on the card. Add them as facts or take them out.')).toBeTruthy();
     save();
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('“Add as a fact” puts the column on the card, and the script and the card go in one save', async () => {
+    renderPage();
+    await cardReady();
+    const opening = screen.getByTestId('script-opening') as HTMLTextAreaElement;
+    fireEvent.change(opening, { target: { value: 'Calling from {Borrower}' } });
+    fireEvent.click(await screen.findByTestId('script-fix-opening-Borrower-add'));
+    // `Borrower` cannot be a key as written: the fact gets the default key, and the script follows it.
+    expect(opening.value).toBe('Calling from {borrower}');
+    expect(factKeys()).toEqual(['{due_amount}', '{borrower}']);
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody().agent_script).toEqual({ opening: 'Calling from {borrower}' });
+    expect((sentBody().context_display as Record<string, unknown>).facts).toEqual([
+      { column: 'Due Amount', label: 'Due Amount', key: 'due_amount' },
+      { column: 'Borrower', label: 'Borrower', key: 'borrower' },
+    ]);
+  });
+
+  it('reads the script with a sample customer, a missing value as “not given”', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      agent_script: { opening: 'Namaste {name}, {due_amount} is due.' },
+      context_display: { roles: { name: 'Borrower' }, facts: [{ column: 'Due Amount', label: 'Amount due', key: 'due_amount' }], types: { 'Due Amount': 'money' } },
+    }));
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId('script-preview-opening').textContent).toBe('Namaste Lakshmi Narayana, ₹1,25,000 is due.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next sample customer' }));
+    expect(screen.getByTestId('script-preview-opening').textContent).toBe('Namaste Ravi, Amount due not given is due.');
   });
 
   it('shows the server’s refusal on the opening line and on the step it names', async () => {
@@ -253,36 +314,109 @@ describe('Settings › Script (BE-8)', () => {
   });
 });
 
-describe('Settings › What agents see: the customer facts (BE-6)', () => {
-  it('offers the newest completed imports’ columns, hidden ones left out, and sends the facts merged into the display', async () => {
+describe('Settings › What agents see: the customer card (AS19)', () => {
+  it('offers the newest completed imports’ columns, hidden ones left out', async () => {
     renderPage();
-    const name = await screen.findByTestId('fact-role-name') as HTMLSelectElement;
-    await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
+    const name = await cardReady();
     const offered = within(name).getAllByRole('option').map((o) => o.textContent);
-    expect(offered).toEqual(['Not set', 'Borrower', 'City', 'Due Amount', 'Due Date']);
+    expect(offered).toEqual(['Guess from the column names', 'Borrower', 'City', 'Due Amount', 'Due Date']);
     expect(mocks.getIngestJob).toHaveBeenCalledTimes(2);
     expect(mocks.getIngestJob.mock.calls.map((c) => c[0])).toEqual(['job-new', 'job-old']);
+    // The add-fact picker: not the guessed line under the name, not a fact already on the card; a sample beside each.
+    fireEvent.click(screen.getByTestId('fact-add'));
+    const picker = screen.getByTestId('fact-picker');
+    expect(within(picker).getAllByRole('button').map((b) => b.querySelector('b')!.textContent)).toEqual(['Borrower', 'Due Date']);
+    await waitFor(() => expect(within(screen.getByTestId('fact-pick-Borrower')).getByText('e.g. Lakshmi Narayana')).toBeTruthy());
+  });
 
-    fireEvent.change(name, { target: { value: 'Borrower' } });
-    fireEvent.change(screen.getByTestId('fact-role-amount_due'), { target: { value: 'Due Amount' } });
-    // The amount due is read as money whatever its type: shown fixed.
-    expect((screen.getByTestId('fact-type-Due Amount') as HTMLSelectElement).disabled).toBe(true);
-    fireEvent.change(screen.getByTestId('fact-type-Due Date'), { target: { value: 'date' } });
+  it('opens a campaign saved before AS19 with what its agents see today, and sends nothing until the card changes', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      context_display: { hero: ['Due Amount'], hidden: ['PAN'], roles: { name: 'Borrower', amount_due: 'Due Amount', due_date: 'Due Date' } },
+    }));
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}', '{due_date}']));
+    expect(factRows().map((r) => (within(r).getByRole('textbox') as HTMLInputElement).value)).toEqual(['Due Amount', 'Due Date']);
+    // The pre-fill is not a change: the bar stays away, and a save of something else sends no card.
+    expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
+    fireEvent.change(target(), { target: { value: '25' } });
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody()).not.toHaveProperty('context_display');
+  });
+
+  it('opens the old-model card again once the columns arrive, leaving out the column the card guesses as the line under the name', async () => {
+    // Before the columns are read, `City` is just a hero; with them, it is the line under the name.
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ context_display: { hero: ['City', 'Due Amount'], hidden: ['PAN'] } }));
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{due_amount}']));
+    // Still no change to save.
+    expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
+  });
+
+  it('saves the card as facts, the old amount and due-date roles dropped and their columns read as money and a date', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      context_display: { hero: ['Due Amount'], hidden: ['PAN'], roles: { name: 'Borrower', amount_due: 'Due Amount', due_date: 'Due Date' } },
+    }));
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}', '{due_date}']));
+    fireEvent.change(screen.getByTestId('fact-label-0'), { target: { value: 'Amount due' } });
+    fireEvent.click(screen.getByTestId('fact-highlight-1'));
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody().context_display).toEqual({
-      hero: ['Due Amount'], hidden: ['PAN'],
-      roles: { name: 'Borrower', amount_due: 'Due Amount' },
-      types: { 'Due Date': 'date' },
+      hero: ['Due Amount'],
+      hidden: ['PAN'],
+      roles: { name: 'Borrower' },
+      types: { 'Due Amount': 'money', 'Due Date': 'date' },
+      facts: [
+        { column: 'Due Date', label: 'Due Date', key: 'due_date', highlight: true },
+        { column: 'Due Amount', label: 'Amount due', key: 'amount_due' },
+      ],
     });
+    expect(mocks.showToast).toHaveBeenCalledWith('Saved. Agents see this from their next call.', 'success');
+  });
+
+  it('holds Save while a fact the script uses is off the card, and “Put it back” restores it', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      agent_script: { opening: 'Pay by {due_date}' },
+      context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }, { column: 'Due Date', label: 'Due date', key: 'due_date' }] },
+    }));
+    renderPage();
+    await cardReady();
+    fireEvent.click(screen.getByTestId('fact-remove-1'));
+    const held = await screen.findAllByText('The script uses {due_date}. Take it out of the script first, or keep the fact.');
+    expect(held.length).toBeGreaterThan(0);
+    save();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByTestId('fact-put-back-due_date')).getByRole('button', { name: 'Put ‘Due date’ back' }));
+    expect(factKeys()).toEqual(['{amount_due}', '{due_date}']);
+    expect(screen.queryByText(/Take it out of the script first/)).toBeNull();
+  });
+
+  it('removes a fact and its key from the script in one save, which the server checks as a pair', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      agent_script: { opening: 'Pay by {due_date}' },
+      context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }, { column: 'Due Date', label: 'Due date', key: 'due_date' }] },
+    }));
+    renderPage();
+    await cardReady();
+    fireEvent.click(screen.getByTestId('fact-remove-1'));
+    fireEvent.click(await screen.findByTestId('script-fix-opening-due_date-remove'));
+    expect((screen.getByTestId('script-opening') as HTMLTextAreaElement).value).toBe('Pay by');
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody().agent_script).toEqual({ opening: 'Pay by' });
+    expect((sentBody().context_display as Record<string, unknown>).facts).toEqual([{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }]);
   });
 
   it('reads the columns once, after the campaign loads, and a retry campaign’s one read names its root', async () => {
     /** The columns' reads of the upload history (the page's history section reads it too, for camp-1). */
     const uploadReads = (campaignId: string) => mocks.getInsightsUploads.mock.calls.filter((c) => c[0] === campaignId).length;
     const settle = async () => {
-      const name = await screen.findByTestId('fact-role-name');
-      await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
+      await cardReady();
       await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
     };
 
@@ -291,6 +425,7 @@ describe('Settings › What agents see: the customer facts (BE-6)', () => {
     const history = 1;
     expect(uploadReads('camp-1')).toBe(1 + history);
     expect(mocks.getIngestJob).toHaveBeenCalledTimes(2);
+    expect(mocks.getCampaignContacts).toHaveBeenCalledTimes(1);
 
     cleanup();
     vi.clearAllMocks();
@@ -314,20 +449,20 @@ describe('Settings › What agents see: the customer facts (BE-6)', () => {
     expect(within(screen.getByTestId('fact-role-name')).queryByRole('option', { name: 'Branch' })).not.toBeNull();
   });
 
-  it('holds Save on one column in two roles', async () => {
+  it('holds Save on one column as both the name and the line under it', async () => {
     renderPage();
-    const name = await screen.findByTestId('fact-role-name');
-    await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
+    const name = await cardReady();
     fireEvent.change(name, { target: { value: 'City' } });
     fireEvent.change(screen.getByTestId('fact-role-place'), { target: { value: 'City' } });
-    expect(await screen.findByText(/‘City’ is already the customer name/)).toBeTruthy();
+    expect(await screen.findByText('‘City’ is already the customer’s name. Choose another column.')).toBeTruthy();
     save();
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
-  it('shows the server’s refusal on the role and on the column it names', async () => {
+  it('shows the server’s refusal on the role, on the fact and on the column it names', async () => {
     mocks.updateAgencyCampaign.mockRejectedValue(refusal({
       'context_display.roles.place': 'There is no column here.',
+      'context_display.facts.0.label': 'A fact’s name is refused here.',
       'context_display.types.Due Date': 'Not this type.',
     }));
     renderPage();
@@ -337,6 +472,8 @@ describe('Settings › What agents see: the customer facts (BE-6)', () => {
     save();
     const roleMessage = await screen.findByText('There is no column here.');
     expect(place.getAttribute('aria-describedby')).toContain(roleMessage.closest('p')!.id);
+    const labelMessage = screen.getByText('A fact’s name is refused here.');
+    expect(screen.getByTestId('fact-label-0').getAttribute('aria-describedby')).toContain(labelMessage.closest('p')!.id);
     const typeMessage = screen.getByText('Not this type.');
     expect(screen.getByTestId('fact-type-Due Date').getAttribute('aria-describedby')).toContain(typeMessage.closest('p')!.id);
   });
