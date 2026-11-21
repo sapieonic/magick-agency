@@ -5,8 +5,9 @@ the rest of the campaign's agents, and is told what stands out. The metrics are 
 kind of campaign starts from a **lens** (a set of metrics), the supervisor can change it, and the
 page draws each metric with the chart its shape calls for. Outcome metrics are the supervisor's
 choice: any set of the campaign's outcome codes (CP17). Designed 2026-11-21 and reviewed
-independently the same day; rulings CP1–CP18 below. **The contract, the rules, the saved-views
-table and the console tab are built; the read and the routes are not** (§9).
+independently the same day; rulings CP1–CP18 below. **Phase 1 is built: the contract, the
+rules, the saved-views table, the read, the routes and the console tab**, behind the flag
+`agency_compare_enabled` (§9).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number.
@@ -314,7 +315,7 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 |---|---|---|
 | 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
 | 1b | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured"); figures held to the roster by the integration oracle. Review fixes: trend days from online spans (0064), a safe cancel and a whole-read deadline, a process-wide limit, the options' cohort cached, impossible counts withheld, legacy zone names, `Retry-After` on `compare_busy`, the saved views' lock order | **Built** (2026-11-21) |
-| 1b | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Built against the contract; not yet run against the routes. Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
+| 1b | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Run end to end against the real routes on a seeded database (every figure matched the seed; the review and end-to-end fixes are in). Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
