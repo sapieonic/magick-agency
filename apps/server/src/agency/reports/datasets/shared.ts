@@ -174,8 +174,6 @@ export async function readAccountRoster(q: {
   from: Date;
   to: Date;
   includeInactive: boolean;
-  /** `?campaign_id=`: the roster scoped to one campaign (Compare agents' cohort, CP8). */
-  campaignId?: string;
 }): Promise<ReportRoster> {
   const page = wire(await agencyAgentStatsRepository.roster({ tenantId: q.tenantId, accountId: q.accountId }, rosterParams(q)));
   const scoped = await scopeRowsToMembers(q.tenantId, {

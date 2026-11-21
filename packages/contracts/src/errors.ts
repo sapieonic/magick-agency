@@ -864,7 +864,11 @@ export type AgencyCompareErrorCode =
   | 'compare_timezone_invalid'
   /** 404. A picked agent has no row in the campaign's cohort for the window (did not dial it, or is not of this account). */
   | 'compare_agent_not_in_cohort'
-  /** 429. The tenant already runs `COMPARE_TENANT_CONCURRENT_READS` compare reads. Retry in a moment. */
+  /**
+   * 429. No compare read could start: the tenant already runs `COMPARE_TENANT_CONCURRENT_READS`, or
+   * the server already runs its process-wide limit (a share of its database pool, across tenants).
+   * Carries `Retry-After` and `retry_after_seconds`. Retry in a moment.
+   */
   | 'compare_busy'
   /**
    * 503. The read ran past `COMPARE_READ_TIMEOUT_MS` and was cancelled. Try a shorter window. A

@@ -355,17 +355,7 @@ export { AgencyRosterPresenceRepository, agencyRosterPresenceRepository } from '
 // the cohort's other sources (one statement each for the whole cohort), and the saved views.
 export { rosterAttemptTotals, rosterOccupancyTotals } from './agency/agent-roster-stats.js';
 export type { RosterAttemptTotalsRow, RosterQueryable } from './agency/agent-roster-stats.js';
-export {
-  AgencyCompareReadRepository,
-  agencyCompareReadRepository,
-  COMPARE_BREAK_OVERRUNS_SQL,
-  COMPARE_CALLBACKS_SQL,
-  COMPARE_LOGGED_IN_DAYS_SQL,
-  COMPARE_PROMISE_DAYS_SQL,
-  COMPARE_PROMISES_SQL,
-  COMPARE_ROLLUP_CODE_DAYS_SQL,
-  COMPARE_ROLLUP_CODES_SQL,
-} from './agency/compare-reads.js';
+export { AgencyCompareReadRepository, agencyCompareReadRepository } from './agency/compare-reads.js';
 export type { CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
-export { AgencyCompareViewRepository, agencyCompareViewRepository, COMPARE_VIEW_LIST_SQL } from './agency/compare-view.repository.js';
+export { AgencyCompareViewRepository, agencyCompareViewRepository } from './agency/compare-view.repository.js';
 export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';

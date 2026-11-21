@@ -1,5 +1,5 @@
 -- 0064_compare_views.sql — Compare agents' saved views (docs/compare-agents.md, rulings CP1–CP18;
--- wire shape `AgencyCompareView`, packages/contracts/src/api/agency/compare.ts). 0062 is applied and
+-- wire shape `AgencyCompareView`, packages/contracts/src/api/agency/compare.ts). 0063 is applied and
 -- is not edited.
 --
 -- ── agency_compare_views ────────────────────────────────────────────────────

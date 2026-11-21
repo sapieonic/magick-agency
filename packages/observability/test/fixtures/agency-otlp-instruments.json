@@ -207,7 +207,7 @@
   {
     "name": "agency_compare_reads_refused_total",
     "kind": "Counter",
-    "description": "Compare agents reads refused by their guards, by reason: busy (the tenant already runs its limit of reads) or timed_out (the statement timeout cancelled it)",
+    "description": "Compare agents reads refused by their guards, by reason: busy (the tenant, or the whole process, already runs its limit of reads) or timed_out (the read passed its 3 s budget: Postgres's statement_timeout ended a statement, or the whole-read deadline cancelled it)",
     "attributes": [
       "reason"
     ]
