@@ -6,13 +6,30 @@
  * ── The write ({@link agentScriptIssues}) ───────────────────────────────────
  * An object with at most `opening` (1 to `AGENCY_SCRIPT_OPENING_MAX_CHARS` characters after
  * trimming) and `steps` (0 to `AGENCY_SCRIPT_STEPS_MAX` objects `{ text }`, each 1 to
- * `AGENCY_SCRIPT_STEP_MAX_CHARS` characters after trimming); any other key is refused. A `{word}`
- * in braces must be one of `AGENCY_SCRIPT_PLACEHOLDERS` (`{name}`, `{amount_due}`, …), spelled
- * exactly: an unknown one would reach the agent as the literal braces, so it is refused at the
- * write, naming it. `{}`
- * is the empty script and clears it. Characters are Unicode code points, so a script in Hindi or
- * Telugu has the same room as one in English. The PATCH stores the texts trimmed
+ * `AGENCY_SCRIPT_STEP_MAX_CHARS` characters after trimming); any other key is refused. `{}` is the
+ * empty script and clears it. Characters are Unicode code points, so a script in Hindi or Telugu
+ * has the same room as one in English. The PATCH stores the texts trimmed
  * ({@link normalizeAgentScript}).
+ *
+ * ── Its keys, per campaign (AS19) ───────────────────────────────────────────
+ * A `{word}` in braces (the domain's one reading, `@magick-agency/domain/fact-fields`) must be one
+ * of the campaign's keys, spelled exactly: an unknown one would reach the agent as the literal
+ * braces. The keys are `scriptPlaceholdersFor` the campaign's RESULTING `context_display` (the
+ * body's when it carries one, since a write replaces the whole column, else the stored one): with
+ * `facts`, `AGENCY_SCRIPT_FIXED_PLACEHOLDERS` and every fact's key; without, the legacy six
+ * `AGENCY_SCRIPT_PLACEHOLDERS`. Both ways ({@link agentScriptIssues}):
+ *  - a body that carries `agent_script` is refused for an unknown key, naming it, on the text's
+ *    own field (with `facts`: "The script uses {branch}, which is not a fact on the card. …";
+ *    without, the BE-8 wording, listing the six);
+ *  - a body that carries `context_display` and not `agent_script` is refused, on
+ *    `context_display.facts`, when it takes away a key the STORED script uses ("The script uses
+ *    {due_date}. Take it out of the script first, or keep the fact."). Only a key the stored
+ *    display allowed counts: a stored script that already named an unknown key does not block an
+ *    edit of the card;
+ *  - a body carrying both is checked as the pair: the new script against the new display.
+ * The public layer holds no stored campaign, so it checks the keys only when the body carries
+ * `context_display` (base `null`); the internal handler checks every body against the stored row.
+ * A key with no value for a customer is shown by the clients as "<label> not given".
  *
  * ── The read ({@link agentScriptForBootstrap}) ──────────────────────────────
  * The stored script as the station gets it, or `undefined` when the campaign has none (`{}`, or no
@@ -29,6 +46,7 @@ import {
   type AgencyAgentScript,
   type AgencyAgentScriptStep,
 } from '@magick-agency/contracts/agency';
+import { placeholdersIn, scriptPlaceholdersFor, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
 
 /** One refusal, keyed by the body's field path (the campaign-config validators' shape). */
 export interface AgentScriptIssue {
@@ -39,14 +57,20 @@ export interface AgentScriptIssue {
 const FIELD = 'agent_script';
 
 /**
- * Every `{word}` in a text: one word of letters, digits and underscores in braces, spaces allowed
- * inside them. The clients fill `{name}` exactly (the app's `fillScriptPlaceholders` reads
- * `{[a-z_]+}`) and show anything else as typed, so `{Name}` or `{ name }` would reach the agent with
- * its braces: refused here as unknown. Braces round anything that is not one word are plain text.
+ * What the keys are judged against: the stored campaign's display and script (a PATCH, a retry's
+ * parent), `{}` on a create (no display: the legacy six; no script), or `null` where the stored
+ * campaign is not known (the public layer).
  */
-const BRACED = /\{\s*([A-Za-z0-9_]+)\s*\}/g;
+export interface AgentScriptBase {
+  context_display?: unknown;
+  agent_script?: unknown;
+}
 
-const PLACEHOLDERS: ReadonlySet<string> = new Set(AGENCY_SCRIPT_PLACEHOLDERS);
+/** The keys a write is judged against, and whether they are a `facts` campaign's (AS19). */
+interface ScriptKeys {
+  keys: readonly string[];
+  facts: boolean;
+}
 
 /** Length in Unicode code points, as the contract counts. */
 const codePoints = (text: string): number => [...text].length;
@@ -55,40 +79,111 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-/** The unknown `{word}`s a text names, braces included, each once, in order. */
-export function unknownScriptPlaceholders(text: string): string[] {
-  const unknown: string[] = [];
-  for (const match of text.matchAll(BRACED)) {
-    const word = match[0]!;
-    if (!PLACEHOLDERS.has(word.slice(1, -1)) && !unknown.includes(word)) unknown.push(word);
-  }
-  return unknown;
+/**
+ * The unknown `{word}`s a text names, braces included, each once, in order, against `allowed`
+ * (default: the legacy six, a campaign without `facts`).
+ */
+export function unknownScriptPlaceholders(text: string, allowed: Iterable<string> = AGENCY_SCRIPT_PLACEHOLDERS): string[] {
+  return unknownPlaceholdersIn(text, allowed);
 }
 
-function placeholderIssue(text: string, field: string): AgentScriptIssue[] {
-  const unknown = unknownScriptPlaceholders(text);
-  if (unknown.length === 0) return [];
-  const named = unknown.join(', ');
-  return [{
-    field,
-    message: `${named} ${unknown.length === 1 ? 'is not a word' : 'are not words'} the script can fill in. Use only: ${AGENCY_SCRIPT_PLACEHOLDERS.map((p) => `{${p}}`).join(', ')}.`,
-  }];
+/** `a`, `a and b`, `a, b and c`. */
+function listed(words: readonly string[]): string {
+  return words.length <= 1 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`;
 }
 
-/** One text (the opening or a step) against its bound and the placeholders. */
-function textIssues(value: unknown, field: string, max: number, what: string): AgentScriptIssue[] {
-  if (typeof value !== 'string') return [{ field, message: `${what} must be text.` }];
-  const length = codePoints(value.trim());
-  if (length < 1 || length > max) return [{ field, message: `${what} must be 1 to ${max} characters.` }];
-  return placeholderIssue(value, field);
+/** The keys a display allows (`scriptPlaceholdersFor`), and whether it is a `facts` display. */
+function keysOf(display: unknown): ScriptKeys {
+  const shown = asRecord(display);
+  return { keys: scriptPlaceholdersFor(shown), facts: Array.isArray(shown?.['facts']) };
 }
 
 /**
- * `agent_script` at the campaign-config write, or nothing when the body does not carry it. Every
- * issue, not the first. See the module header.
+ * The keys a write is judged against: the campaign's resulting display's, or `null` when it is
+ * not known (the public layer, with no `context_display` in the body).
  */
-export function agentScriptIssues(record: Record<string, unknown>): AgentScriptIssue[] {
-  if (record[FIELD] === undefined) return [];
+function resultingKeys(record: Record<string, unknown>, base: AgentScriptBase | null): ScriptKeys | null {
+  if (record['context_display'] !== undefined) return keysOf(record['context_display']);
+  return base === null ? null : keysOf(base.context_display);
+}
+
+function placeholderIssue(text: string, field: string, allowed: ScriptKeys | null): AgentScriptIssue[] {
+  if (allowed === null) return [];
+  const unknown = unknownScriptPlaceholders(text, allowed.keys);
+  if (unknown.length === 0) return [];
+  if (allowed.facts) {
+    return [{
+      field,
+      message: unknown.length === 1
+        ? `The script uses ${unknown[0]}, which is not a fact on the card. Add it as a fact or take it out.`
+        : `The script uses ${listed(unknown)}, which are not facts on the card. Add them as facts or take them out.`,
+    }];
+  }
+  return [{
+    field,
+    message: `${unknown.join(', ')} ${unknown.length === 1 ? 'is not a word' : 'are not words'} the script can fill in. Use only: ${AGENCY_SCRIPT_PLACEHOLDERS.map((p) => `{${p}}`).join(', ')}.`,
+  }];
+}
+
+/** One text (the opening or a step) against its bound and the campaign's keys. */
+function textIssues(value: unknown, field: string, max: number, what: string, allowed: ScriptKeys | null): AgentScriptIssue[] {
+  if (typeof value !== 'string') return [{ field, message: `${what} must be text.` }];
+  const length = codePoints(value.trim());
+  if (length < 1 || length > max) return [{ field, message: `${what} must be 1 to ${max} characters.` }];
+  return placeholderIssue(value, field, allowed);
+}
+
+/** Every text of a stored script, read leniently: the opening, then each step's. */
+function scriptTexts(stored: unknown): string[] {
+  const script = asRecord(stored);
+  if (!script) return [];
+  const texts: string[] = [];
+  if (typeof script['opening'] === 'string') texts.push(script['opening']);
+  if (Array.isArray(script['steps'])) {
+    for (const step of script['steps']) {
+      const text = asRecord(step)?.['text'];
+      if (typeof text === 'string') texts.push(text);
+    }
+  }
+  return texts;
+}
+
+/**
+ * A `context_display` write that takes away a key the stored script uses (AS19): refused on
+ * `context_display.facts`, naming the keys. Only when the body does not carry the script too (the
+ * pair is then judged as the script), and only keys the stored display allowed.
+ */
+function lostKeyIssues(record: Record<string, unknown>, base: AgentScriptBase | null): AgentScriptIssue[] {
+  if (base === null || record['context_display'] === undefined || record[FIELD] !== undefined) return [];
+  const before = new Set(keysOf(base.context_display).keys);
+  const after = new Set(keysOf(record['context_display']).keys);
+  const lost: string[] = [];
+  for (const text of scriptTexts(base.agent_script)) {
+    for (const token of placeholdersIn(text)) {
+      const key = token.slice(1, -1);
+      if (before.has(key) && !after.has(key) && !lost.includes(token)) lost.push(token);
+    }
+  }
+  if (lost.length === 0) return [];
+  return [{
+    field: 'context_display.facts',
+    message: lost.length === 1
+      ? `The script uses ${lost[0]}. Take it out of the script first, or keep the fact.`
+      : `The script uses ${listed(lost)}. Take them out of the script first, or keep the facts.`,
+  }];
+}
+
+/**
+ * `agent_script` at the campaign-config write, and the script's keys against the campaign's
+ * resulting `context_display` both ways; nothing when the body carries neither. Every issue, not
+ * the first. See the module header.
+ *
+ * @param base the stored campaign's `context_display` and `agent_script` (`{}` on a create), or
+ *             `null` where the stored campaign is not known (the public layer)
+ */
+export function agentScriptIssues(record: Record<string, unknown>, base: AgentScriptBase | null = {}): AgentScriptIssue[] {
+  if (record[FIELD] === undefined) return lostKeyIssues(record, base);
+  const allowed = resultingKeys(record, base);
   const script = asRecord(record[FIELD]);
   if (!script) {
     return [{ field: FIELD, message: 'The script must have an opening line and steps. Leave both empty for no script.' }];
@@ -100,7 +195,7 @@ export function agentScriptIssues(record: Record<string, unknown>): AgentScriptI
     }
   }
   if (script['opening'] !== undefined) {
-    issues.push(...textIssues(script['opening'], `${FIELD}.opening`, AGENCY_SCRIPT_OPENING_MAX_CHARS, 'The opening line'));
+    issues.push(...textIssues(script['opening'], `${FIELD}.opening`, AGENCY_SCRIPT_OPENING_MAX_CHARS, 'The opening line', allowed));
   }
   const steps = script['steps'];
   if (steps !== undefined) {
@@ -120,7 +215,7 @@ export function agentScriptIssues(record: Record<string, unknown>): AgentScriptI
         for (const key of Object.keys(step)) {
           if (key !== 'text') issues.push({ field: `${at}.${key}`, message: `Step ${i + 1} can have only its words.` });
         }
-        issues.push(...textIssues(step['text'], `${at}.text`, AGENCY_SCRIPT_STEP_MAX_CHARS, `Step ${i + 1}`));
+        issues.push(...textIssues(step['text'], `${at}.text`, AGENCY_SCRIPT_STEP_MAX_CHARS, `Step ${i + 1}`, allowed));
       });
     }
   }

@@ -92,9 +92,110 @@ describe('agentScriptIssues: the write', () => {
   it('both campaign-config validators refuse what the rule refuses, keyed on the field', () => {
     for (const validate of [validateInternal, validatePublic]) {
       expect(validate({ agent_script: SCRIPT })).toEqual([]);
-      expect(validate({ agent_script: { steps: [{ text: 'Hi {customer_name}' }] } }).map((i) => i.field))
-        .toEqual(['agent_script.steps[0].text']);
+      expect(validate({ agent_script: { steps: [{ text: 'Hi', extra: 1 }] } }).map((i) => i.field))
+        .toEqual(['agent_script.steps[0].extra']);
     }
+    // The keys need the campaign's display (AS19): the internal validator has the stored row (here
+    // a create's, no display); the public one only the body's, so it judges keys when the body
+    // carries `context_display`, and leaves the rest to the internal handler.
+    const unknownKey = { agent_script: { steps: [{ text: 'Hi {customer_name}' }] } };
+    expect(validateInternal(unknownKey).map((i) => i.field)).toEqual(['agent_script.steps[0].text']);
+    expect(validatePublic(unknownKey)).toEqual([]);
+    expect(validatePublic({ ...unknownKey, context_display: {} }).map((i) => i.field)).toEqual(['agent_script.steps[0].text']);
+  });
+});
+
+describe('the script\'s keys per campaign (AS19): against the resulting context_display, both ways', () => {
+  const FACTS = {
+    roles: { name: 'Customer Name' },
+    facts: [
+      { column: 'Amount Due', label: 'Amount', key: 'amount_due' },
+      { column: 'Due Date', label: 'Due on', key: 'due_date' },
+      { column: 'Branch', label: 'Branch', key: 'branch' },
+    ],
+  };
+  const LEGACY = { hero: ['Loan No'] };
+  const said = (record: Record<string, unknown>, base: Parameters<typeof agentScriptIssues>[1] = {}) =>
+    agentScriptIssues(record, base).map((i) => `${i.field}: ${i.message}`);
+
+  it('with facts: the fixed keys and each fact\'s key; a legacy-only key is unknown', () => {
+    const ok = { opening: '{name} {place} {agent_name} {campaign_name} {amount_due} {due_date} {branch}' };
+    expect(said({ agent_script: ok }, { context_display: FACTS })).toEqual([]);
+    expect(said({ agent_script: { opening: 'Hi {name} from {branch}.' } }, { context_display: { facts: [] } })).toEqual([
+      'agent_script.opening: The script uses {branch}, which is not a fact on the card. Add it as a fact or take it out.',
+    ]);
+    expect(said({ agent_script: { steps: [{ text: '{emi} and {Branch} and {emi}' }] } }, { context_display: FACTS })).toEqual([
+      'agent_script.steps[0].text: The script uses {emi} and {Branch}, which are not facts on the card. Add them as facts or take them out.',
+    ]);
+    // `facts: []`: only the fixed four.
+    expect(said({ agent_script: { opening: '{amount_due}' } }, { context_display: { facts: [] } })).toHaveLength(1);
+  });
+
+  it('without facts: the legacy six and the BE-8 wording, exactly as before', () => {
+    expect(said({ agent_script: { opening: '{amount_due} {due_date}' } }, { context_display: LEGACY })).toEqual([]);
+    expect(said({ agent_script: { opening: 'From {branch}' } }, { context_display: LEGACY })).toEqual([
+      'agent_script.opening: {branch} is not a word the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.',
+    ]);
+  });
+
+  it('a script in the body is judged against the body\'s display when it carries one (the pair), else the stored one', () => {
+    const script = { opening: 'From {branch}' };
+    // Stored legacy, the body brings facts with {branch}: accepted as a pair.
+    expect(said({ agent_script: script, context_display: FACTS }, { context_display: LEGACY })).toEqual([]);
+    // Stored facts with {branch}, the body takes it away and keeps the script: refused on the script.
+    expect(said({ agent_script: script, context_display: { facts: [] } }, { context_display: FACTS })).toEqual([
+      'agent_script.opening: The script uses {branch}, which is not a fact on the card. Add it as a fact or take it out.',
+    ]);
+    // Only the script in the body: the stored facts allow it.
+    expect(said({ agent_script: script }, { context_display: FACTS })).toEqual([]);
+  });
+
+  it('a display write that takes away a key the stored script uses is refused on context_display.facts', () => {
+    const stored = { context_display: FACTS, agent_script: { opening: 'Hi {name}.', steps: [{ text: '{amount_due} by {due_date}, {branch}.' }] } };
+    const without = (...keys: string[]) => ({ ...FACTS, facts: FACTS.facts.filter((f) => !keys.includes(f.key)) });
+    expect(said({ context_display: without('due_date') }, stored)).toEqual([
+      'context_display.facts: The script uses {due_date}. Take it out of the script first, or keep the fact.',
+    ]);
+    expect(said({ context_display: without('due_date', 'branch') }, stored)).toEqual([
+      'context_display.facts: The script uses {due_date} and {branch}. Take them out of the script first, or keep the facts.',
+    ]);
+    // Back to the legacy model: {branch} goes, {amount_due} and {due_date} stay.
+    expect(said({ context_display: LEGACY }, stored)).toEqual([
+      'context_display.facts: The script uses {branch}. Take it out of the script first, or keep the fact.',
+    ]);
+    // A key the script does not use may go; a reorder or rename keeps every key.
+    expect(said({ context_display: { ...FACTS, facts: [...FACTS.facts].reverse() } }, stored)).toEqual([]);
+    expect(said({ context_display: FACTS }, { ...stored, agent_script: { opening: 'Hi {name}.' } })).toEqual([]);
+    expect(said({ context_display: without('branch') }, { ...stored, agent_script: { opening: '{amount_due}' } })).toEqual([]);
+    // A legacy campaign moving to facts: its {amount_due} must come along as a fact.
+    expect(said({ context_display: { facts: [] } }, { context_display: LEGACY, agent_script: { opening: 'Pay {amount_due}' } })).toEqual([
+      'context_display.facts: The script uses {amount_due}. Take it out of the script first, or keep the fact.',
+    ]);
+    // With the script in the same body, the pair is judged as the script instead.
+    expect(said({ context_display: without('branch'), agent_script: { opening: 'Hi.' } }, stored)).toEqual([]);
+  });
+
+  it('a key the stored script already could not fill does not block an edit of the card', () => {
+    const stored = { context_display: FACTS, agent_script: { opening: 'Hi {Name} at {emi}' } };
+    expect(said({ context_display: { facts: [] } }, stored)).toEqual([]);
+  });
+
+  it('where the stored campaign is unknown (the public layer): keys only when the body carries the display', () => {
+    expect(said({ agent_script: { opening: 'From {branch}' } }, null)).toEqual([]);
+    expect(said({ agent_script: { opening: 'From {branch}' }, context_display: { facts: [] } }, null)).toHaveLength(1);
+    expect(said({ context_display: { facts: [] } }, null)).toEqual([]);
+    // The shape rules still hold.
+    expect(said({ agent_script: { opening: '' } }, null)).toEqual(['agent_script.opening: The opening line must be 1 to 300 characters.']);
+  });
+
+  it('the internal validator judges the body against the stored row; the public one cannot', () => {
+    const body = { agent_script: { opening: 'From {branch}' } };
+    expect(validateInternal(body, { context_display: FACTS })).toEqual([]);
+    expect(validateInternal(body, { context_display: LEGACY }).map((i) => i.field)).toEqual(['agent_script.opening']);
+    expect(validateInternal({ context_display: { facts: [] } }, { context_display: FACTS, agent_script: body.agent_script }).map((i) => i.field))
+      .toEqual(['context_display.facts']);
+    expect(validatePublic(body)).toEqual([]);
+    expect(validatePublic({ ...body, context_display: { facts: [] } }).map((i) => i.field)).toEqual(['agent_script.opening']);
   });
 });
 
