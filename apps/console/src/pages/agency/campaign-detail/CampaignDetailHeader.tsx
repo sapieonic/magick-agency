@@ -1,6 +1,9 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
+  Archive,
+  ArchiveRestore,
   Headphones,
   Pause,
   Play,
@@ -24,6 +27,8 @@ import {
 import { campaignTimeline } from '../../../utils/agency/overview/lifecycle';
 import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
+import { archivedLine, canArchiveCampaign, isArchivedCampaign } from '../../../utils/agencyCampaignArchive';
+import type { CampaignArchive } from './useCampaignArchive';
 import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
 import styles from '../AgencyCampaignDetailPage.module.css';
 
@@ -70,6 +75,11 @@ interface CampaignDetailHeaderProps {
   onRefresh: () => void;
   /** On History itself (`CampaignWorkspace` with `active="activity"`): its button is marked as where you are. */
   historyCurrent?: boolean;
+  /**
+   * Archive and Restore (AR1–AR7), given only to a role with `agency.campaigns.write`. Without it
+   * an archived campaign still says it is archived, with no button.
+   */
+  archive?: Pick<CampaignArchive, 'busy' | 'onArchive' | 'onRestore'>;
 }
 
 /**
@@ -97,9 +107,30 @@ export function CampaignDetailHeader({
   role,
   onRefresh,
   historyCurrent = false,
+  archive,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
-  const controls = agencyCampaignControls(campaign.status);
+  const archived = isArchivedCampaign(campaign);
+  // An archived draft's Start is refused beside its reason (restore it first); see the controls.
+  const controls = agencyCampaignControls(campaign.status, { archived });
+  const archivedText = archivedLine(campaign);
+  const anyBusy = busy !== null || (archive?.busy ?? null) !== null;
+  /*
+    Archive and Restore each take their own button away (the notice comes and goes). Focus that
+    was on one (or fell to the page when it went) moves to the other, so a keyboard or screen
+    reader user is not left at the top of the document. Only on a change of the flag, and only
+    when focus has nowhere better to be.
+  */
+  const archiveButton = useRef<HTMLButtonElement>(null);
+  const restoreButton = useRef<HTMLButtonElement>(null);
+  const wasArchived = useRef(archived);
+  useEffect(() => {
+    if (wasArchived.current === archived) return;
+    wasArchived.current = archived;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    (archived ? restoreButton : archiveButton).current?.focus();
+  }, [archived]);
   /*
     HOW it ended, not merely THAT it did. `stopped` and `completed` are different
     events — a supervisor ended one, the other ran out of list — and the badge
@@ -203,7 +234,7 @@ export function CampaignDetailHeader({
                   type="button"
                   className={`${styles.actionButton} ${meta.danger ? 'btn-danger' : 'btn-primary'}`}
                   onClick={() => onAction(action)}
-                  disabled={busy !== null || disabledReason !== null}
+                  disabled={anyBusy || disabledReason !== null}
                   title={disabledReason ?? undefined}
                 >
                   <meta.icon size={16} aria-hidden="true" />
@@ -217,7 +248,30 @@ export function CampaignDetailHeader({
               </span>
             );
           })}
-        {canAddContacts && (
+        {/*
+          Archive (AR1–AR7): a draft or a stopped campaign leaves the Campaigns page for Archived
+          campaigns. A secondary action, after the lifecycle controls: it tidies the list, it
+          changes nothing about the calls. Restore is in the archived notice below the header.
+        */}
+        {archive && canArchiveCampaign(campaign) && (
+          <button
+            ref={archiveButton}
+            type="button"
+            className={`${styles.actionButton} ${styles.secondaryAction}`}
+            onClick={archive.onArchive}
+            disabled={anyBusy}
+            data-testid="campaign-archive-action"
+            title="Archive this campaign: it leaves the Campaigns page and can be restored"
+          >
+            <Archive size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>{archive.busy === 'archive' ? 'Archiving…' : 'Archive'}</span>
+          </button>
+        )}
+        {/*
+          New campaign on an ended campaign, archived or not; Add contacts only on one that is not
+          archived: an archived draft is out of the way until it is restored (AR7).
+        */}
+        {canAddContacts && (terminal || !archived) && (
           <>
             {terminal ? (
               <Link
@@ -252,7 +306,8 @@ export function CampaignDetailHeader({
           campaign is a perfectly ordinary thing to retry part of, and a
           running one's child can run beside it (the dialog says how).
         */}
-        {onRetry && (
+        {/* Not on an archived campaign: no new work starts from one until it is restored (AR7). */}
+        {onRetry && !archived && (
           <button
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}
@@ -305,6 +360,29 @@ export function CampaignDetailHeader({
       moving: pause stops NEW calls only. A supervisor who believes they cut
       off live conversations may say so to a customer who is still on one.
     */}
+    {/*
+      An archived campaign says so on every tab, with when and by whom, and Restore for whoever
+      may archive: it is off the Campaigns page, and an archived draft cannot be started.
+    */}
+    {archivedText && (
+      <div className={styles.archivedNote} data-testid="campaign-archived-note">
+        <Archive size={15} aria-hidden="true" />
+        <span>{archivedText}. It is not on the Campaigns page.</span>
+        {archive && (
+          <button
+            ref={restoreButton}
+            type="button"
+            className="btn-secondary"
+            onClick={archive.onRestore}
+            disabled={anyBusy}
+            data-testid="campaign-restore-action"
+          >
+            <ArchiveRestore size={15} aria-hidden="true" />
+            {archive.busy === 'unarchive' ? 'Restoring…' : 'Restore'}
+          </button>
+        )}
+      </div>
+    )}
     {canControl && showsPauseInFlightNote(campaign.status) && (
       <p className={styles.pauseNote}>
         <Activity size={15} aria-hidden="true" />

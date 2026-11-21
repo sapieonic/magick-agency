@@ -479,7 +479,14 @@ describe('the counts read\'s plan, on seeded call tables', () => {
     // 3,000 other agents' sessions of the day, 20,000 of their dialled attempts, and 20,000
     // soft-phone and 20,000 inbound calls of the account written up today without a promise.
     const pool = getTestPool();
-    const contact = await insertAgencyContact(c['P']!, { ...scope(), state: 'completed', attempt_count: 1 });
+    // The attempts are spread over 200 contacts: each dialled attempt's insert trigger bumps its
+    // contact's `dials_placed`, and 20,000 updates of ONE row in one statement walk an ever longer
+    // chain of dead versions (most of this hook's time, and past its limit on CI).
+    const { rows: contacts } = await pool.query<{ id: string }>(
+      `INSERT INTO agency_contacts (id, campaign_id, tenant_id, account_id, phone_e164, context, state, attempt_count)
+       SELECT gen_random_uuid(), $1, $2, $3, '+9197' || lpad(g::text, 8, '0'), '{"name":"Test Person"}', 'completed', 1
+         FROM generate_series(1, 200) g
+       RETURNING id`, [c['P'], w.tenant, w.account]);
     await pool.query(
       `INSERT INTO agency_agent_sessions (id, tenant_id, account_id, campaign_id, agent_user_id, state, joined_at, left_at)
        SELECT gen_random_uuid(), $1, $2, $3, gen_random_uuid(), 'offline', $4::timestamptz, $4::timestamptz + interval '1 minute'
@@ -487,11 +494,15 @@ describe('the counts read\'s plan, on seeded call tables', () => {
     await pool.query(
       `INSERT INTO agency_call_attempts (id, campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state,
                                          reserved_agent_id, dialed_at, created_at, ended_at, outcome)
-       SELECT gen_random_uuid(), $1, $2, $3, $4, g + 10, '+919000000001', 'ended', s.id, $5::timestamptz, $5::timestamptz,
+       SELECT gen_random_uuid(), $1, ($2::uuid[])[g % 200 + 1], $3, $4, g + 10, '+919000000001', 'ended', s.id, $5::timestamptz, $5::timestamptz,
               $5::timestamptz + interval '20 seconds', 'no_answer'
          FROM generate_series(1, 20000) g
-         JOIN LATERAL (SELECT id FROM agency_agent_sessions WHERE agent_user_id <> $6 ORDER BY id OFFSET (g % 3000) LIMIT 1) s ON true`,
-      [c['P'], contact.id, w.tenant, w.account, at(-290), w.me]);
+         -- Each attempt on session number g % 3000, the sessions numbered once: a LATERAL
+         -- ORDER BY ... OFFSET per row sorted the 3,000 sessions 20,000 times and ran this hook
+         -- past its limit on CI.
+         JOIN (SELECT id, row_number() OVER (ORDER BY id) - 1 AS n
+                 FROM agency_agent_sessions WHERE agent_user_id <> $6) s ON s.n = g % 3000`,
+      [c['P'], contacts.map((k) => k.id), w.tenant, w.account, at(-290), w.me]);
     const phone = await insertSoftphoneSession({ ...scope(), agent_user_id: randomUUID(), state: 'offline', joined_at: at(-300), left_at: at(-200) });
     await pool.query(
       `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id, state, ended_at,

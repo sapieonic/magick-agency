@@ -1,5 +1,5 @@
 /**
- * `AgencyCompareViewRepository`: Compare agents' saved views (`agency_compare_views`, 0063; the
+ * `AgencyCompareViewRepository`: Compare agents' saved views (`agency_compare_views`, 0064; the
  * wire is `AgencyCompareView`, `packages/contracts/src/api/agency/compare.ts`; docs/compare-agents.md
  * §4). A small table: a few views per supervisor.
  *

@@ -1,6 +1,6 @@
--- 0064_session_events_offline_index.sql — the events where a session goes offline or comes back from
+-- 0065_session_events_offline_index.sql — the events where a session goes offline or comes back from
 -- it, by session (docs/compare-agents.md §7; apps/server/src/db/repositories/agency/compare-reads.ts
--- COMPARE_LOGGED_IN_DAYS_SQL). 0063 is applied and is not edited.
+-- COMPARE_LOGGED_IN_DAYS_SQL). Its own migration, apart from 0064 (the saved views).
 --
 -- Compare agents' trend needs each agent's local days with logged-in time on a campaign. A session
 -- row is not one stretch of it: a live session goes `offline` without `left_at` (the station closed

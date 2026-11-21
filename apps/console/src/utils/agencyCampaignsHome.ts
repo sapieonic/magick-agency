@@ -189,6 +189,9 @@ export function sortCampaigns(campaigns: readonly AgencyCampaign[]): AgencyCampa
   });
 }
 
+/** Below this many campaigns a search box is clutter (the Campaigns page's tabs are enough; Archived campaigns'). */
+export const SEARCH_THRESHOLD = 6;
+
 export function filterCampaigns(
   campaigns: readonly AgencyCampaign[],
   filter: CampaignFilter,

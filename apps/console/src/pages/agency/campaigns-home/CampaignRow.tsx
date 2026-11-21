@@ -21,11 +21,12 @@ function rowTiming(campaign: AgencyCampaign): string | null {
   return null;
 }
 
-export function CampaignRow({ campaign }: { campaign: AgencyCampaign }) {
+/** `lead` goes first in the row's meta line: the Archived campaigns screen's "Archived on …". */
+export function CampaignRow({ campaign, lead }: { campaign: AgencyCampaign; lead?: string | null }) {
   const schedule = scheduleLabel(campaign);
   const callerIds = campaign.caller_ids?.length ?? 0;
   const generation = campaign.retry_generation ?? 0;
-  const meta = [rowTiming(campaign), generation > 0 ? lineagePositionLabel(generation) : null]
+  const meta = [lead ?? null, rowTiming(campaign), generation > 0 ? lineagePositionLabel(generation) : null]
     .filter(Boolean)
     .join(' · ');
 

@@ -275,6 +275,20 @@
       "reason": "agency route, served by the public API layer at the console path (decision B16) (`${action}` = stop)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/archive",
+      "source": "apps/console/src/api/agencyCampaigns.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); archived campaigns, AR1-AR6 (`${action}` = archive)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/unarchive",
+      "source": "apps/console/src/api/agencyCampaigns.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); archived campaigns, AR1-AR6 (`${action}` = unarchive)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/campaigns/:id/retry/preview",
       "source": "apps/console/src/api/agencyCampaigns.ts",

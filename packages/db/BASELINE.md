@@ -1806,7 +1806,20 @@ the row a transition locks). Catalog-only on a small table after `SET LOCAL lock
 **Down** drops the column. **Tests**: `test/integration/db/agent-station-migrations.test.ts` and the
 down → up inventory suite.
 
-### 0063 — `migrations/0063_compare_views.sql`
+### 0063 — `migrations/0063_campaign_archive.sql`
+
+Archived campaigns (AR1–AR7). **`agency_campaigns.archived_at`** `TIMESTAMPTZ NULL` (NULL = not
+archived), **`archived_by_user_id`** `UUID NULL` and **`archived_by_name`** `VARCHAR(255) NULL` (who
+archived it, the same snapshot pair as `last_transition_by_*`), written together by the archive route
+and cleared together by restore. Archiving is not a status: the campaign stays `draft` or `stopped`.
+**`ck_agency_campaign_archived_status`** `CHECK (archived_at IS NULL OR status IN ('draft','stopped'))`,
+added validated (the table is small and every row is NULL), backs the routes' refusals and
+`transitionStatus`'s `archived_at IS NULL`: an archived campaign cannot be started. No index: the
+Campaigns list reads an account's few campaigns. Catalog-only after `SET LOCAL lock_timeout = '10s'`.
+**Down** drops the CHECK and the columns. **Tests**: `test/integration/db/campaign-archive-migration.test.ts`
+and the down → up inventory suite.
+
+### 0064 — `migrations/0064_compare_views.sql`
 
 Compare agents' saved views (docs/compare-agents.md; wire shape `AgencyCompareView`,
 `packages/contracts/src/api/agency/compare.ts`). **`agency_compare_views`** (new): `id`, `tenant_id`
@@ -1831,7 +1844,7 @@ the FK takes SHARE ROW EXCLUSIVE on `agency_campaigns`, so the Up starts with `S
 index, both cascades, the listing indexes and their plans, the lock timeout, down then up) and the down →
 up inventory suite.
 
-### 0064 — `migrations/0064_session_events_offline_index.sql`
+### 0065 — `migrations/0065_session_events_offline_index.sql`
 
 Compare agents' trend days (docs/compare-agents.md §7). **`idx_agency_session_events_offline`**
 `(session_id, at) WHERE to_state = 'offline' OR from_state = 'offline'` on

@@ -28,3 +28,16 @@ describe('campaignCrumbs', () => {
     expect(campaignCrumbs(undefined, diwali, 'settings')).toBeNull();
   });
 });
+
+describe('campaignCrumbs on an archived campaign (AR1–AR7)', () => {
+  it('goes through Archived campaigns, where the campaign is listed', () => {
+    const archived = { id: 'c-1', name: 'Diwali renewals', archived_at: '2026-11-20T06:00:00Z' };
+    expect(campaignCrumbs('c-1', archived, 'settings')?.slice(0, 2)).toEqual([
+      { label: 'Archived campaigns', to: '/agency/campaigns/archived' },
+      { label: 'Diwali renewals', to: '/agency/campaigns/c-1' },
+    ]);
+    // Not for another campaign's state, and not once restored.
+    expect(campaignCrumbs('c-2', archived, 'settings')?.[0]?.label).toBe('Campaign');
+    expect(campaignCrumbs('c-1', { ...archived, archived_at: null }, 'settings')?.[0]?.label).toBe('Diwali renewals');
+  });
+});

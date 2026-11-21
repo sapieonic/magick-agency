@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0064_session_events_offline_index.sql (docs/compare-agents.md §7): a
+// Real Postgres: migrations/0065_session_events_offline_index.sql (docs/compare-agents.md §7): a
 // session's offline boundaries by session, which Compare agents' trend days read. globalSetup has
 // applied every migration. Pins the index by its definition, that a statement repeating its predicate
 // uses it, the invalid-index refusal, and down then up. The trend's own statement on seeded data is
@@ -17,7 +17,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const FILE = '0064_session_events_offline_index.sql';
+const FILE = '0065_session_events_offline_index.sql';
 const NAME = 'idx_agency_session_events_offline';
 const DEFINITION =
   'CREATE INDEX idx_agency_session_events_offline ON public.agency_agent_session_events USING btree (session_id, at) '
@@ -29,7 +29,7 @@ async function indexDef(): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-describe('0064 — a session\'s offline boundaries, by session', () => {
+describe('0065 — a session\'s offline boundaries, by session', () => {
   it('defines the index exactly', async () => {
     expect(await indexDef()).toBe(DEFINITION);
   });

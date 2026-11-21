@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
 /**
- * `AgencyCompareViewRepository` on real Postgres (0063, docs/compare-agents.md §4): the rules it owns
+ * `AgencyCompareViewRepository` on real Postgres (0064, docs/compare-agents.md §4): the rules it owns
  * whatever the route checked first. Only the owner edits or deletes (the predicate is the
  * repository's, not just the route's); a new default clears the campaign's old one in the same
  * transaction, also when two supervisors set one at once; the per-owner limit holds under

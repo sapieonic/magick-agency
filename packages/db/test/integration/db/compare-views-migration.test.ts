@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0063_compare_views.sql (docs/compare-agents.md; wire shape
+// Real Postgres: migrations/0064_compare_views.sql (docs/compare-agents.md; wire shape
 // AgencyCompareView in packages/contracts/src/api/agency/compare.ts). globalSetup has applied every
 // migration. Pins agency_compare_views (columns, every CHECK both ways, the one-default-per-campaign
 // unique index, the cascades from tenants and campaigns), its listing indexes and the plans that read
@@ -15,7 +15,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { ACCOUNT, insertCampaign, insertRow, insertTenant } from '../fixtures.js';
 
 const pool = () => getTestPool();
-const FILE = '0063_compare_views.sql';
+const FILE = '0064_compare_views.sql';
 
 let tenantId: string;
 let campaignId: string;
@@ -84,7 +84,7 @@ function statements(file: string, part: 'up' | 'down'): string[] {
   return body.replace(/--.*$/gm, '').split(';').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
 
-describe('0063 — Compare agents saved views', () => {
+describe('0064 — Compare agents saved views', () => {
   it('Up and Down start with the lock timeout (the FK locks agency_campaigns, which the server writes)', () => {
     expect(statements(FILE, 'up')[0]).toBe("SET LOCAL lock_timeout = '10s'");
     expect(statements(FILE, 'down')[0]).toBe("SET LOCAL lock_timeout = '10s'");

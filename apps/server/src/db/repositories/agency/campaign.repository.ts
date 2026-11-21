@@ -7,6 +7,7 @@ import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { PoolClient } from 'pg';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES } from '@magick-agency/contracts/api/agency/agency-campaign';
 import {
   AGENCY_CAMPAIGN_TERMINAL_STATUSES,
   type AgencyCampaignDependent,
@@ -374,6 +375,10 @@ export class AgencyCampaignRepository {
    * `statuses` narrows both the page and the total. The console uses it to read
    * every started-and-not-finished campaign however old it is, while the rest of
    * the history stays a page at a time. Omitted (or empty) is every status.
+   *
+   * `archived` narrows both as well (AR3): `false` (the default) is the campaigns that are not
+   * archived, the Campaigns page and every picker; `true` is only the archived ones, newest
+   * archived first, the Archived campaigns screen.
    */
   async list(
     tenantId: string,
@@ -381,23 +386,68 @@ export class AgencyCampaignRepository {
     limit: number,
     offset: number,
     statuses?: readonly string[],
+    archived = false,
   ): Promise<{ rows: AgencyCampaignRecord[]; total: number }> {
     const pool = getPool();
     const only = statuses && statuses.length > 0 ? [...statuses] : null;
+    // Spelled out rather than built from `archived`: the two predicates are fixed text, never input.
+    const archivedClause = archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL';
+    const order = archived ? 'archived_at DESC, id DESC' : 'created_at DESC, id DESC';
     const [list, count] = await Promise.all([
       pool.query<AgencyCampaignRecord>(
         `SELECT * FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
           AND ($5::text[] IS NULL OR status = ANY($5::text[]))
-          ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`,
+          AND ${archivedClause}
+          ORDER BY ${order} LIMIT $3 OFFSET $4`,
         [tenantId, accountId, limit, offset, only],
       ),
       pool.query<{ n: string }>(
         `SELECT COUNT(*)::text AS n FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
-          AND ($3::text[] IS NULL OR status = ANY($3::text[]))`,
+          AND ($3::text[] IS NULL OR status = ANY($3::text[]))
+          AND ${archivedClause}`,
         [tenantId, accountId, only],
       ),
     ]);
     return { rows: list.rows, total: Number(count.rows[0]?.n ?? 0) };
+  }
+
+  /**
+   * Archive a draft or stopped campaign (AR2): stamp `archived_at` and who did it. One
+   * conditional UPDATE, so it cannot race Start: `transitionStatus` requires `archived_at IS NULL`
+   * and this requires the status, and whichever commits second re-reads the row and matches
+   * nothing. `null` when the row is not archivable as it stands now (moved, already archived, or
+   * gone); the route re-reads it to say which.
+   */
+  async archive(
+    id: string,
+    actor: AgencyCampaignActor | null,
+  ): Promise<AgencyCampaignRecord | null> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `UPDATE agency_campaigns
+          SET archived_at = now(), archived_by_user_id = $2, archived_by_name = $3, updated_at = now()
+        WHERE id = $1 AND archived_at IS NULL AND status = ANY($4::text[])
+      RETURNING *`,
+      [id, actor?.user_id ?? null, actor?.name ?? null, [...AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES]],
+    );
+    announceCampaignChanged(rows[0]);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Restore an archived campaign (AR4): clear `archived_at` and who archived it. Its status was
+   * never changed, so it returns to the Campaigns page as the draft or stopped campaign it was.
+   * `null` when it is not archived (or gone).
+   */
+  async unarchive(id: string): Promise<AgencyCampaignRecord | null> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `UPDATE agency_campaigns
+          SET archived_at = NULL, archived_by_user_id = NULL, archived_by_name = NULL, updated_at = now()
+        WHERE id = $1 AND archived_at IS NOT NULL
+      RETURNING *`,
+      [id],
+    );
+    announceCampaignChanged(rows[0]);
+    return rows[0] ?? null;
   }
 
   /**
@@ -677,7 +727,9 @@ export class AgencyCampaignRepository {
               paused_at = $7,
               pause_abandonment_rate_pct = NULL,
               updated_at = now()
-        WHERE id = $1 AND status = ANY($2::varchar[])
+        -- An archived campaign moves nowhere until it is restored (AR2): only a draft or stopped
+        -- campaign is archived, and of those only a draft has a transition (Start).
+        WHERE id = $1 AND status = ANY($2::varchar[]) AND archived_at IS NULL
       RETURNING *`,
       [
         id, from, to,
@@ -914,8 +966,8 @@ export class AgencyCampaignRepository {
     tenantId: string,
     accountId: string,
   ): Promise<AgencyCampaignDependent[]> {
-    const { rows } = await getPool().query<AgencyCampaignDependent>(
-      `SELECT id, status
+    const { rows } = await getPool().query<AgencyCampaignDependent & { is_archived: boolean }>(
+      `SELECT id, status, archived_at IS NOT NULL AS is_archived
          FROM agency_campaigns
         WHERE analysis_profile_id = $1
           AND tenant_id = $2
@@ -924,7 +976,9 @@ export class AgencyCampaignRepository {
         ORDER BY created_at ASC`,
       [profileId, tenantId, accountId, [...AGENCY_CAMPAIGN_TERMINAL_STATUSES]],
     );
-    return rows;
+    // An archived draft still depends on the profile (a restore revives it); it is marked so
+    // the refusal can say where it is (AR1–AR7). Absent on every other row, as before.
+    return rows.map(({ is_archived, ...row }) => (is_archived ? { ...row, archived: true as const } : row));
   }
 
   /**

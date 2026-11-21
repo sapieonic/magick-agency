@@ -83,7 +83,7 @@ const EXPECTED_TABLES = [
   'agency_listen_sessions',
   // the Live floor's supervisor messages (0052, LF5)
   'agency_supervisor_messages',
-  // Compare agents' saved views (0063, docs/compare-agents.md)
+  // Compare agents' saved views (0064, docs/compare-agents.md)
   'agency_compare_views',
 ].sort();
 

@@ -548,6 +548,52 @@ a.liveOpen {
   color: var(--text-muted);
 }
 
+/* ── Archived campaigns (AR1–AR6) ───────────────────────────────────────── */
+
+/* The Campaigns page's way to them, under the list (or the getting-started guide). */
+.archivedLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* One archived campaign: its row, which opens it, and Restore beside it. */
+.archivedItem {
+  display: flex;
+  align-items: center;
+}
+
+.archivedItem > a {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.restoreAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-right: 16px;
+}
+
+/* A narrow column: Restore drops under its row rather than squeezing the name. */
+@container main (max-width: 520px) {
+  .archivedItem {
+    flex-wrap: wrap;
+  }
+
+  .archivedItem > a {
+    flex-basis: 100%;
+  }
+
+  .restoreAction {
+    margin: 0 16px 12px;
+  }
+}
+
 /* ── Rail ────────────────────────────────────────────────────────────────── */
 
 .rail {

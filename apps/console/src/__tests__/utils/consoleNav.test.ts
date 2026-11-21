@@ -206,6 +206,7 @@ describe('the breadcrumb', () => {
       { label: 'Campaign' },
     ]);
     expect(breadcrumbFor('/agency/campaigns/new')[1]).toEqual({ label: 'New campaign' });
+    expect(breadcrumbFor('/agency/campaigns/archived')[1]).toEqual({ label: 'Archived campaigns' });
     expect(breadcrumbFor('/agency/live')).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
       { label: 'Live calls' },
@@ -307,6 +308,7 @@ describe('crumbs that would land on the page itself', () => {
     expect(landingPathFor('/agency/campaigns/c-1/insights?range=today', 'account_admin')).toBe('/agency/campaigns/c-1/overview');
     expect(landingPathFor('/agency/campaigns/c-1/', 'viewer')).toBe('/agency/campaigns/c-1/agents');
     expect(landingPathFor('/agency/campaigns/new', 'account_admin')).toBe('/agency/campaigns/new');
+    expect(landingPathFor('/agency/campaigns/archived', 'account_admin')).toBe('/agency/campaigns/archived');
     expect(landingPathFor('/agency/inbound', 'account_admin')).toBe('/agency/inbound/missed');
     expect(landingPathFor('/agency/reports#x', 'account_admin')).toBe('/agency/reports');
   });

@@ -14,9 +14,9 @@ this file wins; where it reuses another area's read, that area's doc defines the
 
 ## 1. Rulings
 
-CP1–CP7 and CP17 are Manas's answers of 2026-11-21. CP8–CP16 are the design's own recommendations,
-which he left without comment; they stand as recommended (the convention of `agent-station.md` §1).
-CP18 is the build's own, pending him.
+CP1–CP7, CP17 and CP18 are Manas's answers of 2026-11-21 (CP18 the build's default, which he kept).
+CP8–CP16 are the design's own recommendations, which he left without comment; they stand as
+recommended (the convention of `agent-station.md` §1).
 
 | ID | Ruling | Status |
 |---|---|---|
@@ -37,7 +37,7 @@ CP18 is the build's own, pending him.
 | CP15 | **Exports through the existing report pipeline** (a report kind `agent_compare`, the renderer Lambda), not a new process | Decided (as recommended) |
 | CP16 | **No Inbound lens** until inbound calls are in the rollup | Decided (as recommended) |
 | CP17 | **Outcome metrics are the supervisor's choice.** Beside the built-ins, a metric can be an **outcome set**: 1 to 5 outcome codes of the campaign's current catalog, giving the share of the agent's conversations on the campaign ending in any of them (dialler conversations, from `agency_insights_rollup_codes`, as Insights counts them). The supervisor names it (default: the codes' labels, "A, B or C") and says which way is better: higher, lower or neither. A set of neither direction is shown and never named; a directional one is judged by the same interval rule as every rate (§6). A set can be the per-day trend (its count per local day) and is kept in saved views. Will-pay is one such set; `promises_rate` (CP2) stays a built-in beside them | **Decided** (Manas, 2026-11-21) |
-| CP18 | **Direction comes from the supervisor.** The catalog has no refusal category (`AgencyDisposition` has `is_success`, no refusal flag), so a set's direction is never inferred, except that a set of success codes only starts as "higher is better"; any other set starts as "shown, never flagged" until the supervisor chooses. No lens starts with a lower-is-better set | Default, pending Manas |
+| CP18 | **Direction comes from the supervisor.** The catalog has no refusal category (`AgencyDisposition` has `is_success`, no refusal flag), so a set's direction is never inferred, except that a set of success codes only starts as "higher is better"; any other set starts as "shown, never flagged" until the supervisor chooses. No lens starts with a lower-is-better set | **Decided** (Manas, 2026-11-21) |
 
 ## 2. The screen
 
@@ -122,7 +122,7 @@ qualifying code: Collections falls back to Success; Sales and Verification leave
 lens starts with a lower-is-better set (CP18): a supervisor who wants "Refused" adds it.
 
 The campaign's starting lens (`compareStartingLens`): Collections when its outcome catalog has a
-`requires_promise` entry, otherwise Sales. **Saved views** (`agency_compare_views`, 0063): a lens,
+`requires_promise` entry, otherwise Sales. **Saved views** (`agency_compare_views`, 0064): a lens,
 metrics and trend, personal or shared with the account's supervisors, optionally for one campaign
 and optionally that campaign's default (shared, one per campaign); only the owner edits one; at
 most 50 per supervisor per account.
@@ -231,7 +231,7 @@ reads a number other than the way the text above words it, the reason:
   a restart's `markAllOffline`, the dialler releasing it) and the next join reuses the row
   (`offline → break`, `joined_at` unchanged). So the spans come from the session's start and its
   offline boundaries only (events whose `to_state` or `from_state` is `offline`), on
-  `idx_agency_session_events_offline` (0064, `(session_id, at)` partial), never the day's state
+  `idx_agency_session_events_offline` (0065, `(session_id, at)` partial), never the day's state
   changes the roster's occupancy statement walks.
 - **Outcome codes** are the campaign's current catalog, or the default catalog when it stores none
   (My day's `effectiveCatalog`). `success_rate` keeps the roster's rule (the stored catalog).
@@ -273,11 +273,14 @@ reads a number other than the way the text above words it, the reason:
 0.5 s), the roster occupancy statement for the whole cohort **4.3 s** (every event of the window, its
 window sort spilling to disk; 0.9 s on 7 days), the same for three picked agents 0.1 s, rollup codes
 0.1 s, promises 0.03 s, call-backs 0.03 s, breaks over the limit 0.08 s, the trend's days 0.03 s (an
-index scan of 0064 per session, 3,100 probes; walking the window's state events took 5.5 s).
+index scan of 0065 per session, 3,100 probes; walking the window's state events took 5.5 s).
 So on a campaign this busy a month with `calls_per_hour` on screen (the Sales and Verification
 lenses) answers `503 compare_timed_out`; a week answers. That is the roster screen's own statement
 and cost for the same window (it has no timeout); the trigger above is the remedy, or a narrower
 default window on the page.
+Accepted as it stands for now (Manas, 2026-11-21): no narrower window and no move to the
+analytics child yet; revisit when supervisors meet the timeout, `agency_compare_read_seconds` and
+`agency_compare_reads_refused_total{reason="timed_out"}` show it.
 
 ## 8. Contract
 
@@ -313,8 +316,8 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
-| 1b | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured"); figures held to the roster by the integration oracle. Review fixes: trend days from online spans (0064), a safe cancel and a whole-read deadline, a process-wide limit, the options' cohort cached, impossible counts withheld, legacy zone names, `Retry-After` on `compare_busy`, the saved views' lock order | **Built** (2026-11-21) |
+| 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0064) | **Built** (2026-11-21) |
+| 1b | The read, the routes and the saved views' repository, with the guards and the two metrics (§7 "As built", "Cost, measured"); figures held to the roster by the integration oracle. Review fixes: trend days from online spans (0065), a safe cancel and a whole-read deadline, a process-wide limit, the options' cohort cached, impossible counts withheld, legacy zone names, `Retry-After` on `compare_busy`, the saved views' lock order | **Built** (2026-11-21) |
 | 1b | The console tab at `/agency/compare` (Reports' Compare agents tab, `agency.supervise`, the flag): the three lenses, the picker (built-ins and outcome sets), the agent chips, Side by side, What stands out (the words, Why this?, next steps, Not clear yet, Check a longer window), the trend, Where their day went, The numbers, saved views, the whole state in the URL. Run end to end against the real routes on a seeded database (every figure matched the seed; the review and end-to-end fixes are in). Three next steps open the nearest page that exists: the call log has no recorded-only filter, so the listening steps open the agent's placed calls in the window (narrowed to the outcome's codes); the agent record is not addressable by URL, so `open_breaks` opens Analytics, By agent; Call-backs filters by campaign, not agent, so `late_callbacks` opens the campaign's. Modules and tests in `modules.md` | **Built** (2026-11-21) |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
@@ -339,7 +342,7 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
   turn them red; so do the query held for a new window's options, the 300 ms settle, a pick drawn
   before its figures come, a flag-only view change keeping unsaved edits, a likely range rounded
   onto its baseline, each metric's too-few reason and the lens fallback note. Built.
-- Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0063). Built. The
+- Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0064). Built. The
   repository and the routes: only the owner edits or deletes; a new default clears the campaign's
   old one in one transaction, also under concurrent saves; the 50-view limit, also under concurrent
   creates; a view's codes checked against its campaign's catalog

@@ -28,6 +28,8 @@ import { createChildLogger } from '@magick-agency/observability';
 export interface AgencyCampaignDependent {
   id: string;
   status: string;
+  /** `true` only on an archived campaign (AR1–AR7); absent otherwise. */
+  archived?: true;
 }
 
 /** The two reads of `agencyCampaignRepository` the reference check uses. */
@@ -270,7 +272,9 @@ export async function callAnalysisProfilesRoutes(
     // Bounded, though. See `DEPENDENT_SAMPLE_LIMIT`.
     const parts: string[] = [];
     if (named.length > 0) {
-      const byStatus = [...named.reduce((m, c) => m.set(c.status, (m.get(c.status) ?? 0) + 1), new Map<string, number>())]
+      // An archived draft is counted as "archived draft": it is not on the Campaigns page (AR1–AR7).
+      const kind = (c: { status: string; archived?: true }) => (c.archived ? `archived ${c.status}` : c.status);
+      const byStatus = [...named.reduce((m, c) => m.set(kind(c), (m.get(kind(c)) ?? 0) + 1), new Map<string, number>())]
         .map(([status, n]) => `${n} ${status}`)
         .join(', ');
       parts.push(`${named.length} agency campaign${named.length === 1 ? '' : 's'} (${byStatus}) `
@@ -289,11 +293,12 @@ export async function callAnalysisProfilesRoutes(
       ? 'Point them at another profile, or clone this one, before deleting it.'
       : 'Saving replaces this profile with a new version and would leave them pointing at '
         + 'the retired one. Clone this profile and edit the copy, or point them elsewhere first.';
+    const archivedNote = named.some((c) => c.archived) ? ' Archived campaigns are under Archived campaigns.' : '';
 
     reply.code(409).send({
       error: 'Conflict',
       code: 'profile_in_use_by_agency_campaign',
-      message: `${parts.join(', and ')}. ${remedy}`,
+      message: `${parts.join(', and ')}. ${remedy}${archivedNote}`,
       details: {
         reason: 'profile_in_use_by_agency_campaign',
         // A bounded SAMPLE, with the true count beside it. `named.length` is what

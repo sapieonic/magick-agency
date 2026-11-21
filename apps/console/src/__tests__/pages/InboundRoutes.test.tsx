@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   listInboundNumbers: vi.fn(),
   listInboundClips: vi.fn(),
   listAgencyCampaigns: vi.fn(),
+  listArchivedAgencyCampaigns: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -32,7 +33,10 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({ useToast: () => 
 vi.mock('../../components/common/CapabilityUnavailable', () => ({ CapabilityUnavailable: () => <div data-testid="capability-unavailable" /> }));
 vi.mock('../../components/common/PageDescription', () => ({ PageDescription: () => null }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({ useCallAnalysisProfiles: () => ({ profiles: [{ id: 'prof-1', name: 'Inbound summary' }], loading: false }) }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
+}));
 vi.mock('../../api/inbound', async () => {
   const actual = await vi.importActual<typeof import('../../api/inbound')>('../../api/inbound');
   return {
@@ -94,6 +98,7 @@ const choice = (id: string) => document.getElementById(`ib-number-${id}`) as HTM
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
   mocks.flags = { agency_inbound_enabled: true };
   mocks.listInboundRoutes.mockResolvedValue([ROUTE]);
   mocks.getInboundRoute.mockResolvedValue(ROUTE);
@@ -248,6 +253,33 @@ describe('the route editor', () => {
     });
     expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { max_concurrent: 30, record_calls: true, phone_number_ids: [] }, 'tenant-1', 'account-1');
     expect(mocks.showToast).toHaveBeenCalledWith('Inbound route saved.', 'success');
+  });
+
+  it('keeps a pool campaign archived since in the team, marked, so it can be unticked; other archived ones are not offered (AR1–AR7)', async () => {
+    mocks.getInboundRoute.mockResolvedValue({ ...ROUTE, pool_campaign_ids: ['camp-1', 'camp-9'] });
+    mocks.listArchivedAgencyCampaigns.mockResolvedValue([
+      { id: 'camp-9', name: 'Old leads', status: 'stopped', archived_at: '2026-11-20T06:00:00Z' },
+      { id: 'camp-8', name: 'Older leads', status: 'draft', archived_at: '2026-11-19T06:00:00Z' },
+    ]);
+    mocks.updateInboundRoute.mockImplementation(async (_id: string, patch: object) => ({ ok: true, value: { ...ROUTE, ...patch } }));
+    await renderAt('/settings/inbound/r-1');
+    const archived = screen.getByLabelText('Old leads (archived)') as HTMLInputElement;
+    expect(archived.checked).toBe(true);
+    expect(screen.queryByLabelText(/Older leads/)).toBeNull();
+    fireEvent.click(archived);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('inbound-route-save'));
+    });
+    expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { pool_campaign_ids: ['camp-1'] }, 'tenant-1', 'account-1');
+  });
+
+  it('reads no archived campaigns for a new route, nor for one whose pool is all in the list', async () => {
+    await renderAt('/settings/inbound/new');
+    expect(mocks.listArchivedAgencyCampaigns).not.toHaveBeenCalled();
+    mocks.getInboundRoute.mockResolvedValue({ ...ROUTE, pool_campaign_ids: ['camp-1'] });
+    await renderAt('/settings/inbound/r-1');
+    expect(mocks.getInboundRoute).toHaveBeenCalledWith('r-1', 'tenant-1', 'account-1');
+    expect(mocks.listArchivedAgencyCampaigns).not.toHaveBeenCalled();
   });
 
   it('the wrap-up time (IQ52): the route’s own, said as what every call gets, checked, and sent only when changed', async () => {

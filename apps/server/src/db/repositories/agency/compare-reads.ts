@@ -241,7 +241,7 @@ export const COMPARE_BREAK_OVERRUNS_SQL = `
    GROUP BY e.agent_user_id`;
 
 /**
- * The partial index's predicate, byte for byte as 0064 writes it, so the planner proves the index
+ * The partial index's predicate, byte for byte as 0065 writes it, so the planner proves the index
  * applies: the events where a session goes offline or comes back from it.
  */
 export const OFFLINE_BOUNDARY_EVENT_SQL = "(e.to_state = 'offline' OR e.from_state = 'offline')";
@@ -258,7 +258,7 @@ export const OFFLINE_BOUNDARY_EVENT_SQL = "(e.to_state = 'offline' OR e.from_sta
  * the session's start and its offline boundaries only (an event whose `to_state` or `from_state` is
  * `offline`): online from `joined_at`, off at each move to `offline`, on again at each move out of
  * it. Those boundaries are two or three a day per agent, read on
- * `idx_agency_session_events_offline` (0064: `(session_id, at)` where {@link OFFLINE_BOUNDARY_EVENT_SQL}),
+ * `idx_agency_session_events_offline` (0065: `(session_id, at)` where {@link OFFLINE_BOUNDARY_EVENT_SQL}),
  * every boundary of a session before the window's end (the state at the window's start is the last
  * boundary before it), never the state changes of a working day, which the roster's occupancy
  * statement walks (1.4M on a busy month).

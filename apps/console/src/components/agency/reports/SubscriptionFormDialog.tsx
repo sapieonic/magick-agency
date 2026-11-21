@@ -20,6 +20,7 @@ import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { useTenant } from '../../../contexts/TenantContext';
 import { createReportSubscription, reportErrorMessage, updateReportSubscription } from '../../../api/reports';
 import { hasPermission, type Permission } from '../../../utils/permissions';
+import { subscriptionCampaignOptions } from '../../../utils/agencyCampaignArchive';
 import { browserZone, reportZoneOptions } from '../../../utils/reports/reportWindow';
 import {
   CADENCE_PERIOD_NOTES,
@@ -301,7 +302,7 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
                               {a.name}
                             </option>
                           ))
-                        : (campaigns ?? []).map((c) => (
+                        : subscriptionCampaignOptions(campaigns, editing).map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
                             </option>
