@@ -12,7 +12,8 @@ import '../station_copy.dart';
 /// Every value is operator-uploaded file content and is rendered as plain
 /// text, always.
 
-/// Up to four pinned fields in a two-column grid.
+/// The pinned fields in a two-column grid, as many as the hero rule gave (it caps them,
+/// `wire.heroCapFor`: the name and four facts with chosen facts, AS19 R2; else four).
 class HeroFieldsGrid extends StatelessWidget {
   const HeroFieldsGrid({super.key, required this.fields, required this.configured});
 
@@ -23,7 +24,6 @@ class HeroFieldsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     if (fields.isEmpty) return const SizedBox.shrink();
     final text = Theme.of(context).textTheme;
-    final shown = fields.take(4).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -37,7 +37,7 @@ class HeroFieldsGrid extends StatelessWidget {
               spacing: Space.md,
               runSpacing: Space.md,
               children: [
-                for (final f in shown)
+                for (final f in fields)
                   SizedBox(
                     width: w,
                     child: MergeSemantics(

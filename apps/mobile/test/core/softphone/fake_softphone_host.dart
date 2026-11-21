@@ -51,12 +51,14 @@ SoftphoneHostView hostView({
   bool ringMuted = false,
   DateTime? reconnectDeadline,
   String? hangupFailure,
+  bool campaignMasksPhone = false,
 }) => SoftphoneHostView(
   sessionId: sessionId,
   kind: kind,
   accountId: accountId,
   campaignId: campaignId,
   campaignName: campaignName,
+  campaignMasksPhone: campaignMasksPhone,
   link: link,
   everOpened: everOpened,
   phase: phase,
@@ -71,11 +73,13 @@ SoftphoneHostView hostView({
 );
 
 /// A campaign station on this phone (SP7), switched to the soft phone unless told otherwise.
-SoftphoneHostView campaignHost({bool onSoftphone = true, String campaignId = 'camp-1', ManualCall? call}) => hostView(
+SoftphoneHostView campaignHost({bool onSoftphone = true, String campaignId = 'camp-1', ManualCall? call, bool masksPhone = false}) =>
+    hostView(
   sessionId: 'sess-1',
   kind: SessionKind.campaign,
   campaignId: campaignId,
   campaignName: 'Home Loan Renewals',
+  campaignMasksPhone: masksPhone,
   onSoftphone: onSoftphone,
   phase: onSoftphone ? AgentPhase.onBreak : AgentPhase.available,
   call: call,
@@ -100,6 +104,7 @@ SoftphoneHostView copyHost(
   accountId: v.accountId,
   campaignId: v.campaignId,
   campaignName: v.campaignName,
+  campaignMasksPhone: v.campaignMasksPhone,
   link: link ?? v.link,
   everOpened: everOpened ?? v.everOpened,
   phase: v.phase,

@@ -133,13 +133,31 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('Details closes when the call ends', (tester) async {
+    // AS19 S12: Details is about the customer, not the phase: the call ending leaves it in the
+    // agent's hand; the call leaving the station, or the next call, closes it.
+    testWidgets('Details stays open as the call ends, and closes when the call leaves', (tester) async {
       final h = await pumpStation(tester, onCall());
       await tester.tap(find.byKey(const Key('control-details')));
       await settle(tester);
       await h.endCall();
+      expect(find.byKey(const Key('details-sheet')), findsOneWidget);
+      await h.setView(station(phase: AgentPhase.available));
+      // A sheet over the old screen closes itself on the frame after the switch.
+      await settle(tester);
       expect(find.byKey(const Key('details-sheet')), findsNothing);
-      expect(find.byKey(const Key('band-wrapup')), findsOneWidget);
+    });
+
+    testWidgets('Details opened on Call coming stays open as the call connects; the next call closes it', (tester) async {
+      final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call()));
+      await tester.tap(find.byKey(const Key('control-details')));
+      await settle(tester);
+      expect(find.byKey(const Key('details-sheet')), findsOneWidget);
+      await h.setView(onCall());
+      expect(find.byKey(const Key('details-sheet')), findsOneWidget, reason: 'the same call, now connected');
+      await h.setView(onCall(attemptId: 'a2'));
+      await settle(tester);
+      expect(find.byKey(const Key('details-sheet')), findsNothing, reason: 'another customer');
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('Don\'t call again: the call ends while the sheet is open — it closes, marks nothing, and says so', (tester) async {

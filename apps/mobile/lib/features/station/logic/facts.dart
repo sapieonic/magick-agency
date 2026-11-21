@@ -74,3 +74,10 @@ String factText(FactTileView f, {bool masked = false, DateTime? now}) {
     FactKind.text => raw,
   };
 }
+
+/// The compact card's first fact (AS19 S4): "Amount due: ₹12,500", the first of the card's facts
+/// ([cardFactTiles]) with a value, as the card shows it; null when none has one.
+String? firstFactLine(FactsView facts, {bool masked = false, DateTime? now}) {
+  final f = cardFactTiles(facts).where((f) => !factIsEmpty(f)).firstOrNull;
+  return f == null ? null : '${f.label}: ${factText(f, masked: masked, now: now)}';
+}

@@ -121,17 +121,26 @@ void main() {
       });
     }
 
-    // Hidden, a value with fewer than six digits is just "•••": no digit ever shows (as the console).
-    const short = <(String, String)>[('', '•••'), ('7', '•••'), ('1234', '•••'), ('12345', '•••'), ('+1 23-45', '•••'), ('ext 12', '•••')];
+    // Hidden, a value with fewer than seven digits is just "•••", as the customer's own number
+    // (AS19 S3: the domain's `PHONE_MASK_MIN_DIGITS`): no digit ever shows (as the console).
+    const short = <(String, String)>[
+      ('', '•••'),
+      ('7', '•••'),
+      ('1234', '•••'),
+      ('12345', '•••'),
+      ('123456', '•••'),
+      ('+1 23-45', '•••'),
+      ('ext 12', '•••'),
+    ];
     for (final (value, masked) in short) {
-      test('hidden, "$value" (fewer than six digits) → $masked', () {
+      test('hidden, "$value" (fewer than seven digits) → $masked', () {
         expect(maskFactPhone(value), masked);
         if (value.trim().isNotEmpty) expect(factText(fact('Other number', value, kind: FactKind.phone), masked: true), masked);
       });
     }
 
-    test('hidden, six digits is the first two and the last three', () {
-      expect(maskFactPhone('123456'), '12••• ••456');
+    test('hidden, seven digits is the first two and the last three', () {
+      expect(maskFactPhone('1234567'), '12••• ••567');
     });
 
     test('a number the server could not read is hidden the same way, on its digits', () {
@@ -336,6 +345,82 @@ void main() {
       await tester.longPress(find.text('LN-88213'));
       await settle(tester);
       expect(find.byKey(const Key('fact-sheet')), findsNothing);
+    });
+  });
+
+  group('the second review\'s app fixes (AS19 S5, S12)', () {
+    testWidgets('press and hold: the sheet stays open as the call connects, and closes for the next call', (tester) async {
+      final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: facts([amount, tenure]), priorAttempts: const [])));
+      await tester.longPress(find.byKey(const Key('fact-tile-1')));
+      await settle(tester);
+      expect(find.byKey(const Key('fact-sheet')), findsOneWidget);
+      await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, facts: facts([amount, tenure]), priorAttempts: const [])));
+      expect(find.byKey(const Key('fact-sheet')), findsOneWidget, reason: 'the same customer, now on the line');
+      await h.endCall();
+      expect(find.byKey(const Key('fact-sheet')), findsOneWidget, reason: 'still the same customer in What happened?');
+      await h.setView(station(phase: AgentPhase.reserved, call: call(attemptId: 'a2', facts: facts([amount]))));
+      // A sheet over the old screen closes itself on the frame after the switch.
+      await settle(tester);
+      expect(find.byKey(const Key('fact-sheet')), findsNothing, reason: 'another customer');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the interruption card says the name the card heads with, never the guess', (tester) async {
+      const interrupted = AudioView(muted: true, interruption: AudioInterruption.phoneCall);
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, name: 'Priya Raman', facts: facts([tenure])), audio: interrupted),
+      );
+      expect(find.text(StationCopy.backTo('Sunita Patil')), findsOneWidget);
+      expect(find.textContaining('Priya'), findsNothing);
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.onCall, call: call(bridgedAt: t0, name: 'Priya Raman', facts: facts([tenure], name: null)), audio: interrupted),
+      );
+      expect(find.text(StationCopy.backTo(null)), findsOneWidget, reason: 'a chosen card with no name has none to say');
+    });
+
+    testWidgets('the chosen card: the number before the place, the place on one line cut with "…"', (tester) async {
+      final long = FactsView(
+        name: 'Sunita Patil',
+        place: 'Plot 14, Shivaji Nagar, near the old bus stand, Nashik Road, Nashik',
+        tiles: [tenure],
+        chosen: true,
+      );
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: long, priorAttempts: const [])), size: const Size(320, 700));
+      final phone = tester.getRect(find.byKey(const Key('customer-phone')));
+      final place = tester.getRect(find.byKey(const Key('customer-place')));
+      expect(place.top > phone.top || place.left > phone.left, isTrue, reason: 'the number first');
+      final text = tester.widget<Text>(find.descendant(of: find.byKey(const Key('customer-place')), matching: find.byType(Text)));
+      expect(text.maxLines, 1);
+      expect(text.overflow, TextOverflow.ellipsis);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Details shows every hero the rule gave: the name and four facts (R2)', (tester) async {
+      final five = CallView(
+        attemptId: 'a1',
+        phoneE164: '+919840012345',
+        attemptNumber: 1,
+        callerId: '+918047182200',
+        campaignName: 'EMI',
+        heroFields: const [
+          ContactField(key: 'n', label: 'Customer Name', value: 'Sunita Patil'),
+          ContactField(key: 'a', label: 'Amount Due', value: '12500'),
+          ContactField(key: 't', label: 'Tenure', value: '24'),
+          ContactField(key: 'p', label: 'Alt Phone', value: '98••• ••210'),
+          ContactField(key: 'd', label: 'Auto Debit', value: 'Haan'),
+        ],
+        heroesConfigured: true,
+        otherFields: const [],
+        priorAttempts: const [],
+        facts: facts([amount, tenure, alt, debit]),
+      );
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: five));
+      await tester.tap(find.byKey(const Key('control-details')));
+      await settle(tester);
+      final sheet = find.byKey(const Key('details-sheet'));
+      expect(find.descendant(of: sheet, matching: find.text('Auto Debit')), findsOneWidget, reason: 'the fifth hero is not dropped');
     });
   });
 

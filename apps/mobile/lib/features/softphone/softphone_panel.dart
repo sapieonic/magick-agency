@@ -11,6 +11,7 @@ import '../../app/theme/tokens.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
 import '../../ui/primitives.dart';
+import '../station/logic/facts.dart' show firstFactLine;
 import '../station/parts/banners.dart' show BusyLabel, ListenFirstNoticeCard, ListenInfoButton;
 import '../station/parts/need_help.dart' show NeedHelpCard;
 import '../station/parts/top_bar.dart' show NeedHelpButton;
@@ -456,17 +457,22 @@ class _MicProblem extends ConsumerWidget {
   }
 }
 
-/// Who is being called, from where, and what the line is doing.
+/// Who is being called, from where, and what the line is doing. A contact on a campaign that chose
+/// its card's facts (AS19 S4) with no name is "Customer", and the line under it is the number (as
+/// typed), then the first fact.
 class _CallingTo extends ConsumerWidget {
   const _CallingTo();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final now = ref.watch(stationClockProvider)();
     final s = ref.watch(
       softphoneViewProvider.select(
         (v) => (
           number: v.numberDisplay.isEmpty ? v.number : v.numberDisplay,
           name: v.contact?.displayName,
+          chosen: v.contact?.factsChosen ?? false,
+          firstFact: v.contact?.facts == null ? null : firstFactLine(v.contact!.facts!, masked: v.contact!.maskPhone, now: now),
           from: v.callerIds.firstWhereOrNull((c) => c.value == v.callerId)?.label ?? v.callerId,
           phase: v.phase,
         ),
@@ -474,8 +480,11 @@ class _CallingTo extends ConsumerWidget {
     );
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
-    final name = s.name?.trim();
+    final named = s.name?.trim();
+    final customer = (named == null || named.isEmpty) && s.chosen;
+    final name = customer ? StationCopy.customer : named;
     final hasName = name != null && name.isNotEmpty;
+    final line = customer && s.firstFact != null ? '${s.number} · ${s.firstFact}' : s.number;
     final status = switch (s.phase) {
       SoftphonePhase.dialing => SoftphoneCopy.statusDialing,
       SoftphonePhase.ringing => SoftphoneCopy.statusRinging,
@@ -494,7 +503,7 @@ class _CallingTo extends ConsumerWidget {
               style: hasName ? text.headlineMedium : monoStyle(context, size: 26, color: t.textPrimary),
             ),
           ),
-          if (hasName) Text(s.number, style: monoStyle(context, size: 16)),
+          if (hasName) Text(line, key: const Key('calling-to-line'), style: monoStyle(context, size: 16)),
           const SizedBox(height: Space.xs),
           Wrap(
             spacing: Space.sm,

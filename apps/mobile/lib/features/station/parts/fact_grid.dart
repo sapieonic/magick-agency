@@ -8,7 +8,7 @@ import '../../../core/station/station_view.dart';
 import '../logic/facts.dart';
 import '../station_copy.dart';
 import '../station_providers.dart' show stationClockProvider;
-import 'sheets.dart' show StationModalGuard, thisCallNow;
+import 'sheets.dart' show StationModalGuard, wholeCall;
 
 /// The card's chosen facts (AS19, the phone's form): a 2 × 2 grid; the highlighted fact first, the
 /// full row, in the call colour; a lone last tile the full width. Text stays on one line and ends
@@ -216,10 +216,11 @@ class _ValueLine extends StatelessWidget {
 }
 
 /// Press and hold a fact (AS19): its name, the full value as the card shows it (a hidden number
-/// stays hidden), "From column: X", and OK. Closes by itself when the call on screen changes.
+/// stays hidden), "From column: X", and OK. Closes by itself when the call on screen changes, not
+/// when it connects or ends ([wholeCall], AS19 S12).
 Future<void> showFactSheet(BuildContext context, {required String label, required String value, required String column}) {
   final view = ProviderScope.containerOf(context, listen: false).read(stationViewProvider);
-  final scope = thisCallNow(view);
+  final scope = wholeCall(view?.callId);
   return showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
