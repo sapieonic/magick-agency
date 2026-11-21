@@ -66,7 +66,29 @@ export function formatClockTime(date: Date): string {
 }
 
 /**
- * The reader's IANA zone, or `null` where the environment cannot say.
+ * Legacy IANA names that ICU (so Chromium and Node) still reports as a zone's
+ * canonical ID, to their current names. A browser in India says `Asia/Calcutta`;
+ * the console sends and shows `Asia/Kolkata`, the name the rest of the product
+ * stores, so the reader's zone and a campaign's read the same.
+ */
+export const LEGACY_ZONE_NAMES: Readonly<Record<string, string>> = {
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'Asia/Dacca': 'Asia/Dhaka',
+  'Asia/Thimbu': 'Asia/Thimphu',
+};
+
+/** A zone by its current IANA name: a legacy alias ({@link LEGACY_ZONE_NAMES}) mapped, any other as given. */
+export function currentZoneName(zone: string): string {
+  return LEGACY_ZONE_NAMES[zone] ?? zone;
+}
+
+/**
+ * The reader's IANA zone, by its current name ({@link currentZoneName}), or
+ * `null` where the environment cannot say.
  *
  * `resolvedOptions()` is specified to return an IANA name, but a caption must
  * not be the thing that throws in an environment with a partial `Intl`. Callers
@@ -75,7 +97,8 @@ export function formatClockTime(date: Date): string {
  */
 export function readerZone(): string | null {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone ? currentZoneName(zone) : null;
   } catch {
     return null;
   }

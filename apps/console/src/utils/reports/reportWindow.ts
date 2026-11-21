@@ -1,7 +1,7 @@
 import { reportWindowProblem } from '@magick-agency/contracts/api/agency/reports';
 import { REPORT_ERROR_MESSAGES } from '../../api/reports';
 import { addDaysToDay, zoneDay } from '../agency/insights/range';
-import { readerZone } from '../format/date';
+import { currentZoneName, readerZone } from '../format/date';
 import { zoneFormatter } from '../format/zone';
 
 /**
@@ -74,7 +74,11 @@ export function reportWindowError(from: string, to: string, today: string): stri
   return problem === null ? null : REPORT_ERROR_MESSAGES[problem];
 }
 
-/** The browser's IANA zone, the default for agent and account reports (RP3). */
+/**
+ * The browser's IANA zone by its current name (`Asia/Kolkata`, never ICU's
+ * `Asia/Calcutta`), the default for agent and account reports (RP3) and the zone
+ * Compare agents cuts its days in.
+ */
 export function browserZone(): string {
   const zone = readerZone();
   return zone && zoneFormatter(zone) ? zone : 'UTC';
@@ -92,8 +96,10 @@ const FALLBACK_ZONES = [
 ];
 
 /**
- * The zones the select offers: every IANA zone this browser knows, plus UTC and
- * the zone already chosen (so a default the list lacks is never silently swapped).
+ * The zones the select offers: every IANA zone this browser knows, by its current
+ * name (ICU lists `Asia/Calcutta`; the select offers `Asia/Kolkata`, the name
+ * {@link browserZone} defaults to), plus UTC and the zone already chosen (so a
+ * default the list lacks is never silently swapped).
  */
 export function reportZoneOptions(current: string): string[] {
   let zones: string[];
@@ -102,5 +108,5 @@ export function reportZoneOptions(current: string): string[] {
   } catch {
     zones = FALLBACK_ZONES;
   }
-  return [...new Set([...zones, 'UTC', current])].sort((a, b) => a.localeCompare(b));
+  return [...new Set([...zones.map(currentZoneName), 'UTC', current])].sort((a, b) => a.localeCompare(b));
 }
