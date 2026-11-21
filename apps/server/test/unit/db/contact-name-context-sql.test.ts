@@ -1,22 +1,37 @@
 import { describe, expect, it } from 'vitest';
+import { NAME_GUESS_COLUMNS, squashColumnName } from '@magick-agency/domain/customer-name';
 import { contactNameContextSql } from '../../../src/db/repositories/agency/sql-fragments.js';
-import { INBOUND_MATCH_NAME_COLUMNS } from '../../../src/agency/inbound/match-name.js';
+import { INBOUND_MATCH_NAME_COLUMNS, matchName } from '../../../src/agency/inbound/match-name.js';
 
 /**
- * The live calls list, the listening history and the inbound Missed list read a contact's name
- * through one SQL spelling: only the columns `matchName` reads leave the database.
+ * The live calls list, the floor, the listening history and the inbound Missed list read a
+ * contact's name through one SQL spelling (AS19 S1): only the columns `matchName` can read leave the
+ * database. What it returns on a real row is pinned in `test/integration/agency/listen-history.test.ts`.
  */
 describe('contactNameContextSql', () => {
-  it('builds the name columns of the aliased contact, NULL when the join found none', () => {
-    expect(contactNameContextSql('ct')).toBe(
-      "CASE WHEN ct.id IS NULL THEN NULL ELSE jsonb_build_object('name', ct.context->'name', "
-      + "'full_name', ct.context->'full_name', 'customer_name', ct.context->'customer_name', "
-      + "'first_name', ct.context->'first_name') END",
-    );
+  it('NULL when the join found no contact; the aliases as given', () => {
+    const sql = contactNameContextSql('ct', 'cam');
+    expect(sql).toMatch(/^CASE WHEN ct\.id IS NULL THEN NULL/);
+    expect(sql).toContain('jsonb_each(ct.context)');
+    expect(sql).toContain("cam.context_display #>> '{roles,name}'");
   });
 
-  it('reads exactly the columns matchName reads, in its order', () => {
-    const keys = [...contactNameContextSql('mc').matchAll(/'([a-z_]+)', mc\.context->'\1'/g)].map((m) => m[1]);
-    expect(keys).toEqual([...INBOUND_MATCH_NAME_COLUMNS]);
+  it('reads the guess\'s columns, squashed, in the domain\'s order', () => {
+    const listed = /IN \(([^)]*)\)/.exec(contactNameContextSql('mc', 'cam'))![1]!;
+    expect([...listed.matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1])).toEqual(NAME_GUESS_COLUMNS.map(squashColumnName));
+  });
+});
+
+describe('matchName: the domain\'s one name reading (AS19 S1)', () => {
+  it('the guess list is the domain\'s', () => {
+    expect(INBOUND_MATCH_NAME_COLUMNS).toBe(NAME_GUESS_COLUMNS);
+  });
+
+  it('the campaign\'s name role first; else the guess, any case and spacing; never hidden, never a fact', () => {
+    const row = { Borrower: ' Asha Rao ', 'Customer Name': 'Ravi K' };
+    expect(matchName(row, { roles: { name: 'borrower' } })).toBe('Asha Rao');
+    expect(matchName(row, null)).toBe('Ravi K');
+    expect(matchName(row, { hidden: ['customer name'] })).toBeUndefined();
+    expect(matchName(row, { facts: [{ column: 'Customer Name', label: 'Who', key: 'who' }] })).toBeUndefined();
   });
 });

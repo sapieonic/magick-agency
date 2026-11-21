@@ -38,7 +38,7 @@
  */
 import { getPool } from '@magick-agency/db';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
-import type { AgencyCallOrigin, AgencyListenEndReason } from '@magick-agency/contracts/agency';
+import type { AgencyCallOrigin, AgencyContextDisplay, AgencyListenEndReason } from '@magick-agency/contracts/agency';
 import { contactNameContextSql } from './sql-fragments.js';
 
 export interface ListenHistoryQuery {
@@ -72,7 +72,10 @@ export interface ListenHistoryVisitRow {
   agent_user_id: string;
   /** E.164; '' for a withheld caller; null when the call's row is gone. */
   customer_phone: string | null;
+  /** The roster contact's name columns (`contactNameContextSql`; `matchName` reads them), or null without a contact. */
   contact_context: Record<string, unknown> | null;
+  /** The call's campaign's `context_display`, for the name's role (AS19 S1); null without a campaign. */
+  contact_name_display: AgencyContextDisplay | null;
   started_at: Date;
   /** The keyset position of `started_at`, microseconds (`keysetAtSql`). */
   started_at_key: string;
@@ -162,7 +165,7 @@ export const LISTEN_HISTORY_SQL = `
          cam.name AS campaign_name, r.name AS inbound_route_name,
          p.listener_user_id, p.agent_user_id,
          c.destination_phone AS customer_phone,
-         ${contactNameContextSql('ct')} AS contact_context,
+         ${contactNameContextSql('ct', 'cam')} AS contact_context, cam.context_display AS contact_name_display,
          p.started_at, ${keysetAtSql('p.started_at')} AS started_at_key,
          CASE WHEN p.open THEN NULL ELSE p.last_ended_at END AS ended_at,
          CASE WHEN p.open THEN NULL ELSE p.listened_seconds::text END AS listened_seconds,

@@ -151,8 +151,9 @@ describe('PATCH /proxy/agency/campaigns/:id — agent_script (BE-8)', () => {
   it.each([
     ['an unknown placeholder', { opening: 'Namaste {customer}' }, 'agent_script.opening',
       '{customer} is not a word the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.'],
+    // AS19 S13: a key in the wrong case is told how to write it.
     ['a placeholder in the wrong case, in a step', { steps: [{ text: 'Hi {Name}' }] }, 'agent_script.steps[0].text',
-      '{Name} is not a word the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.'],
+      'The script uses {Name}. Write it as {name}.'],
     ['thirteen steps', { steps: Array.from({ length: 13 }, () => ({ text: 'Ask.' })) }, 'agent_script.steps',
       'A script can have at most 12 steps.'],
     ['a step of 201 characters', { steps: [{ text: 'a'.repeat(201) }] }, 'agent_script.steps[0].text',
@@ -200,7 +201,8 @@ describe('PATCH /proxy/agency/campaigns/:id — context_display.roles and .types
       'context_display.roles.amount_due': `There is no column 'Balance' in this campaign's customer list, so it cannot be the amount due. The columns are: ${COLUMNS.join(', ')}.`,
       'context_display.types.Opened': `There is no column 'Opened' in this campaign's customer list, so it cannot be given a type. The columns are: ${COLUMNS.join(', ')}.`,
     });
-    expect((await stored(id)).context_display).toMatchObject({ roles: { amount_due: 'amount due' } });
+    // Stored in the roster's spelling (AS19 S9).
+    expect((await stored(id)).context_display).toMatchObject({ roles: { amount_due: 'Amount Due' }, types: { LIMIT: 'money' } });
   });
 
   it('a retry campaign is checked against its lineage root\'s import', async () => {
@@ -237,7 +239,9 @@ describe('PATCH /proxy/agency/campaigns/:id — context_display.roles and .types
     const facts = [{ column: 'loan no', label: 'Loan', key: 'loan_no' }];
     const ok = await retry({ context_display: { facts } });
     expect(ok.statusCode, ok.body).toBe(201);
-    expect((await stored((ok.json() as { campaign: { id: string } }).campaign.id)).context_display).toEqual({ facts });
+    // In the parent's roster's spelling (AS19 S9).
+    expect((await stored((ok.json() as { campaign: { id: string } }).campaign.id)).context_display)
+      .toEqual({ facts: [{ column: 'Loan No', label: 'Loan', key: 'loan_no' }] });
   });
 
   it('refuses a hidden column as a role and a type that is not one of the six (the public layer\'s shape rule)', async () => {
@@ -269,7 +273,7 @@ describe('PATCH /proxy/agency/campaigns/:id — the card\'s chosen facts and the
   it('stores the facts and the six types, and serves them; checked against the roster once there is one', async () => {
     const id = await campaignAt('running');
     await importOf(id, COLUMNS);
-    const display = { ...FACTS, types: { ...FACTS.types, Branch: 'text', City: 'phone' } };
+    const display = { ...FACTS, types: { ...FACTS.types, Branch: 'phone', City: 'text' } };
     const ok = await patch(id, { context_display: display });
     expect(ok.statusCode, ok.body).toBe(200);
     expect((await stored(id)).context_display).toEqual(display);
@@ -281,6 +285,33 @@ describe('PATCH /proxy/agency/campaigns/:id — the card\'s chosen facts and the
       'context_display.facts.3.column': `There is no column 'Region' in this campaign's customer list, so it cannot be a fact. The columns are: ${COLUMNS.join(', ')}.`,
     });
     expect((await stored(id)).context_display).toEqual(display);
+  });
+
+  it('S9: a role or a fact written in another case is stored in the roster\'s spelling, so the own-contacts list\'s exact match finds it', async () => {
+    const id = await campaignAt('running');
+    await importOf(id, COLUMNS);
+    const ok = await patch(id, { context_display: {
+      ...FACTS,
+      roles: { name: 'CUSTOMER NAME', place: 'city' },
+      facts: [{ column: 'amount due', label: 'Amount due', key: 'amount_due' }, { column: 'BRANCH', label: 'Branch', key: 'branch' }],
+    } });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((await stored(id)).context_display).toMatchObject({
+      roles: { name: 'Customer Name', place: 'City' },
+      facts: [{ column: 'Amount Due', label: 'Amount due', key: 'amount_due' }, { column: 'Branch', label: 'Branch', key: 'branch' }],
+    });
+    expect((await read(id)).json().context_display.facts.map((f: { column: string }) => f.column)).toEqual(['Amount Due', 'Branch']);
+  });
+
+  it('S3(e): the name or the line under it may not be a phone-typed column, and nothing is written', async () => {
+    const id = await campaignAt('draft');
+    const res = await patch(id, { context_display: { roles: { name: 'Mobile 2', place: 'Alt' }, types: { 'Mobile 2': 'phone', alt: 'phone' }, facts: [] } });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json().details).toEqual({
+      'context_display.roles.name': "A phone number cannot be the customer's name. Add it as a fact instead.",
+      'context_display.roles.place': 'A phone number cannot be the line under the name. Add it as a fact instead.',
+    });
+    expect((await stored(id)).context_display).toEqual({});
   });
 
   it('refuses a fifth fact, a long name and a repeated name, each on its own path, and writes nothing', async () => {

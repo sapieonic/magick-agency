@@ -40,7 +40,7 @@ let pageCalls: CallbacksPageInput[];
 
 function row(contact: string, campaign: string, over: Partial<CallbacksPageRow> = {}): CallbacksPageRow {
   return {
-    contact_id: contact, campaign_id: campaign, context: { name: 'Ada Lovelace', phone: '+919811122233' },
+    contact_id: contact, campaign_id: campaign, context: { Borrower: 'Ada Lovelace', name: 'Not The Name Role', phone: '+919811122233' },
     owner_id: OWNER, owner_live: false, inbound: false,
     due_at: new Date('2026-11-19T09:00:00.000Z'), due_key: '2026-11-19T09:00:00.123456Z', ...over,
   };
@@ -52,8 +52,8 @@ beforeEach(async () => {
   pageCalls = [];
   deps = {
     activeCampaigns: vi.fn(async () => [
-      { id: C1, name: 'Renewals', assignment_mode: 'strict' as const, disposition_catalog: CATALOG as never, default_timezone: 'Asia/Kolkata' },
-      { id: C2, name: 'Winback', assignment_mode: 'pool' as const, disposition_catalog: [] as never, default_timezone: 'Not/AZone' },
+      { id: C1, name: 'Renewals', assignment_mode: 'strict' as const, disposition_catalog: CATALOG as never, default_timezone: 'Asia/Kolkata', context_display: { roles: { name: 'borrower' } } },
+      { id: C2, name: 'Winback', assignment_mode: 'pool' as const, disposition_catalog: [] as never, default_timezone: 'Not/AZone', context_display: null },
     ]),
     page: vi.fn(async (input: CallbacksPageInput) => { pageCalls.push(input); return pageRows.slice(0, input.take); }),
     names: vi.fn(async () => new Map<string, string | null>([[OWNER, 'Naveen G']])),
@@ -126,7 +126,7 @@ describe('the guards, in order', () => {
 });
 
 describe('GET /callbacks', () => {
-  it('reads the account\'s active campaigns and one page of their overdue callbacks by default, named, never a number, never cached', async () => {
+  it('reads the account\'s active campaigns and one page of their overdue callbacks by default, named (the name role first, AS19 S1), never a number, never cached', async () => {
     pageRows = [
       row(K1, C1),
       row(K2, C2, { owner_id: null, inbound: true, context: { full_name: 'Grace Hopper' } }),

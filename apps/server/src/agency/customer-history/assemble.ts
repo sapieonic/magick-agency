@@ -37,7 +37,8 @@ import type {
 } from '@magick-agency/contracts/agency';
 import type { DncSource } from '@magick-agency/contracts/api/agency/dnc';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
-import { contextValueText, heroColumnsFor } from '@magick-agency/domain/context-hero';
+import { contextValueText } from '@magick-agency/domain/context-columns';
+import { heroColumnsFor } from '@magick-agency/domain/context-hero';
 import type {
   CustomerHistoryAttemptRow,
   CustomerHistoryCallbackRow,
@@ -137,9 +138,12 @@ function columnOrderFor(campaign: CustomerHistoryCampaignRow | null, uploads: re
 }
 
 /**
- * The row's hero fields (`heroColumnsFor`, `packages/domain/src/context-hero.ts`): the campaign's
- * `context_display.hero`, else the heuristic, else its first columns in the import's order, never
- * a `hidden` column; columns with no value are left out.
+ * The row's hero fields (`heroColumnsFor`, `packages/domain/src/context-hero.ts`), never a
+ * `hidden` column, columns with no value left out. A campaign with chosen facts
+ * (`context_display.facts` an array, AS19): the customer's name (the `name` role's column, else
+ * the name guess, never a fact's column) then each fact's column, at most the name and four facts,
+ * and nothing else, so the history matches the card. Otherwise: `context_display.hero`, else the
+ * heuristic, else the first columns in the import's order.
  */
 export function contactFields(
   context: Record<string, unknown> | null,

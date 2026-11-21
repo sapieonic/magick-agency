@@ -46,8 +46,8 @@ describe('agentScriptIssues: the write', () => {
     expect(issues({ opening: 'Namaste {customer}, about {amount_due}.' })).toEqual([
       'agent_script.opening: {customer} is not a word the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.',
     ]);
-    expect(issues({ steps: [{ text: 'ok' }, { text: '{ name } owes {Amount_Due}' }] })).toEqual([
-      'agent_script.steps[1].text: { name }, {Amount_Due} are not words the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.',
+    expect(issues({ steps: [{ text: 'ok' }, { text: '{customer} owes {total}' }] })).toEqual([
+      'agent_script.steps[1].text: {customer}, {total} are not words the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.',
     ]);
     // Every placeholder of the list is accepted; a lone brace is plain text.
     expect(issues({ opening: '{name} {place} {amount_due} {due_date} {agent_name} {campaign_name}' })).toEqual([]);
@@ -124,11 +124,30 @@ describe('the script\'s keys per campaign (AS19): against the resulting context_
     expect(said({ agent_script: { opening: 'Hi {name} from {branch}.' } }, { context_display: { facts: [] } })).toEqual([
       'agent_script.opening: The script uses {branch}, which is not a fact on the card. Add it as a fact or take it out.',
     ]);
-    expect(said({ agent_script: { steps: [{ text: '{emi} and {Branch} and {emi}' }] } }, { context_display: FACTS })).toEqual([
-      'agent_script.steps[0].text: The script uses {emi} and {Branch}, which are not facts on the card. Add them as facts or take them out.',
+    expect(said({ agent_script: { steps: [{ text: '{emi} and {loan} and {emi}' }] } }, { context_display: FACTS })).toEqual([
+      'agent_script.steps[0].text: The script uses {emi} and {loan}, which are not facts on the card. Add them as facts or take them out.',
     ]);
     // `facts: []`: only the fixed four.
     expect(said({ agent_script: { opening: '{amount_due}' } }, { context_display: { facts: [] } })).toHaveLength(1);
+  });
+
+  it('a typo of a key, by case or the spaces in its braces, is told how to write it (AS19 S13)', () => {
+    expect(said({ agent_script: { opening: 'Namaste {Name}.' } }, { context_display: FACTS })).toEqual([
+      'agent_script.opening: The script uses {Name}. Write it as {name}.',
+    ]);
+    expect(said({ agent_script: { opening: '{ name } owes {Amount_Due}' } }, { context_display: FACTS })).toEqual([
+      'agent_script.opening: The script uses { name } and {Amount_Due}. Write them as {name} and {amount_due}.',
+    ]);
+    // A typo and a word that is no key: both sentences, the typo first.
+    expect(said({ agent_script: { steps: [{ text: '{emi} and {BRANCH }' }] } }, { context_display: FACTS })).toEqual([
+      'agent_script.steps[0].text: The script uses {BRANCH }. Write it as {branch}. The script uses {emi}, which is not a fact on the card. Add it as a fact or take it out.',
+    ]);
+    // Without facts too, against the legacy six.
+    expect(said({ agent_script: { opening: '{Agent_Name} for {customer}' } }, { context_display: LEGACY })).toEqual([
+      'agent_script.opening: The script uses {Agent_Name}. Write it as {agent_name}. {customer} is not a word the script can fill in. Use only: {name}, {place}, {amount_due}, {due_date}, {agent_name}, {campaign_name}.',
+    ]);
+    // Not a key once case and spaces are set aside: no fix offered.
+    expect(said({ agent_script: { opening: '{agentname} {name_}' } }, { context_display: FACTS })[0]).toMatch(/which are not facts on the card/);
   });
 
   it('without facts: the legacy six and the BE-8 wording, exactly as before', () => {

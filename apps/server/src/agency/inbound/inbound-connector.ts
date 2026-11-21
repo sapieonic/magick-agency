@@ -1895,7 +1895,7 @@ export class InboundConnector {
 
   private async waitingFrame(held: HeldCall): Promise<AgencyStationCustomerWaitingFrame> {
     const ctx = await held.panel;
-    const name = ctx.match ? matchName(ctx.match.context) : undefined;
+    const name = ctx.match ? matchName(ctx.match.context, ctx.match.context_display) : undefined;
     return {
       event: 'customer_waiting',
       inbound_call_id: held.id,

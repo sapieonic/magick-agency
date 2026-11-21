@@ -6,11 +6,14 @@
  * `buildPanel` at dial time). Pure; the one read (the roster's known columns) is the caller's.
  *
  * ── The facts ───────────────────────────────────────────────────────────────
- *  - `name`, `place`: the role's column when set, else a guess from the column names that never
- *    reads anything but a name or a place column (the domain's `guessNameColumn` /
- *    `guessPlaceColumn`, `@magick-agency/domain/customer-name`: {@link NAME_GUESS_COLUMNS},
- *    {@link PLACE_GUESS_COLUMNS}, matched ignoring case, spaces, `_`, `-` and `.`). Trimmed, at most
- *    {@link FACT_TEXT_MAX} characters; absent when blank or a placeholder (`-`, `N/A`).
+ *  - `name`, `place`: the domain's one reading (`customerNameFrom` / `customerPlaceFrom`,
+ *    `@magick-agency/domain/customer-name`, AS19 S1, S2), which every other surface that names a
+ *    customer reads too: the role's column when set (its value, or none when blank: no guess
+ *    then); else a guess from the column names that never reads anything but a name or a place
+ *    column ({@link NAME_GUESS_COLUMNS}, {@link PLACE_GUESS_COLUMNS}, matched ignoring case,
+ *    spaces, `_`, `-` and `.`), never a fact's column; with `facts`, the place is the role's or
+ *    none (no guess). Trimmed, at most {@link FACT_TEXT_MAX} characters; absent when blank or a
+ *    placeholder (`-`, `N/A`).
  *  - `tiles`: the hero columns (`heroColumnsFor`: `context_display.hero`, else its guess; never
  *    the first columns nobody chose, as the contact panel reads it), minus the columns already
  *    shown as the name and the place, then the `amount_due` and `due_date` role columns when the
@@ -31,8 +34,10 @@
  * and the agent app share: each fact whose column the row has and is not hidden, in order, the
  * first highlighted one first, at most `AGENCY_FACT_FIELDS_MAX`, each with the fact's `label` and
  * `key`; `hero` and the `amount_due` / `due_date` roles are not read for tiles on this path, and the
- * tile keyed `amount_due` (or `due_date`) carries that `role`. The name and the place are read as
- * on the BE-6 path. The write's rules for `facts` are {@link contextDisplayIssues}'.
+ * tile keyed `amount_due` (or `due_date`) carries that `role`. The name never comes from a fact's
+ * column and the place is never guessed (S2, above). The write's rules for `facts` are
+ * {@link contextDisplayIssues}'; {@link canonicalContextColumns} spells the columns as the roster
+ * does once the write knows it (S9).
  */
 import {
   AGENCY_CONTEXT_FIELD_TYPES,
@@ -54,9 +59,9 @@ import { heroColumnsFor, MAX_HERO_FIELDS } from '@magick-agency/domain/context-h
 import { parseContextFact } from '@magick-agency/domain/context-facts';
 import {
   CUSTOMER_TEXT_MAX,
+  customerNameColumn,
+  customerPlaceColumn,
   customerText,
-  guessNameColumn,
-  guessPlaceColumn,
   NAME_GUESS_COLUMNS,
   PLACE_GUESS_COLUMNS,
 } from '@magick-agency/domain/customer-name';
@@ -108,8 +113,8 @@ export function customerFacts(
   const roles = asRecord(shown.roles);
   const types = asRecord(shown.types);
 
-  const nameKey = roleKey(row, roles, 'name', hidden) ?? guessNameColumn(row, { hidden });
-  const placeKey = roleKey(row, roles, 'place', hidden) ?? guessPlaceColumn(row, { hidden });
+  const nameKey = customerNameColumn(row, shown);
+  const placeKey = customerPlaceColumn(row, shown);
   const name = nameKey !== undefined ? customerText(row[nameKey]) : undefined;
   const place = placeKey !== undefined ? customerText(row[placeKey]) : undefined;
   const person = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
@@ -159,6 +164,15 @@ const ROLE_WORDS: Readonly<Record<AgencyContextRole, string>> = {
   due_date: 'the due date',
 };
 
+/**
+ * AS19 S3(e): the roles shown unmasked under the customer's name, and the refusal when one names a
+ * `phone`-typed column.
+ */
+const PHONE_ROLE_REFUSALS: Readonly<Partial<Record<string, string>>> = {
+  name: 'A phone number cannot be the customer\'s name. Add it as a fact instead.',
+  place: 'A phone number cannot be the line under the name. Add it as a fact instead.',
+};
+
 /** The most column names a refusal lists. */
 const KNOWN_COLUMNS_LISTED_MAX = 40;
 
@@ -171,7 +185,11 @@ function isColumnName(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= CONTEXT_COLUMN_NAME_MAX;
 }
 
-/** How a refusal lists the column types, in `AGENCY_CONTEXT_FIELD_TYPES` order. */
+/**
+ * How a refusal lists the column types: all six of `AGENCY_CONTEXT_FIELD_TYPES`, but in the order a
+ * sentence reads them (a number beside money), not the list's (`text`, `money`, `date`, `number`,
+ * `phone`, `yes_no`).
+ */
 const TYPE_WORDS = 'as text, money, a number, a date, a phone number or yes / no';
 
 /** The keys a fact may carry (`AgencyFactField`). */
@@ -189,7 +207,8 @@ const codePoints = (text: string): number => [...text].length;
  *
  *  - `roles`: an object keyed by `AGENCY_CONTEXT_ROLES` only, each a column name (1 to
  *    {@link CONTEXT_COLUMN_NAME_MAX} characters); one column plays one role; a column in
- *    `hidden` is never a role.
+ *    `hidden` is never a role; the `name` and `place` roles never name a column `types` reads as
+ *    a phone number (AS19 S3(e): they are shown unmasked).
  *  - `types`: an object of column name to one of `AGENCY_CONTEXT_FIELD_TYPES` (the six).
  *  - `facts` (AS19): a list of at most `AGENCY_FACT_FIELDS_MAX` objects `{ column, label, key,
  *    highlight? }` and nothing else. Column: 1 to {@link CONTEXT_COLUMN_NAME_MAX} characters, not
@@ -242,6 +261,13 @@ export function contextDisplayIssues(
         }
         if (hidden.has(fold(column))) {
           issues.push({ field, message: `'${column}' is hidden from agents, so it cannot be ${words}. Show the column first.` });
+          continue;
+        }
+        // AS19 S3(e): the name and the line under it are never masked, so a phone number there
+        // would escape the campaign's hidden-number setting. Typed by the same body's `types`.
+        const phoneRefusal = PHONE_ROLE_REFUSALS[role];
+        if (phoneRefusal !== undefined && factTypeOf(column, display['types']) === 'phone') {
+          issues.push({ field, message: phoneRefusal });
           continue;
         }
         const other = used.get(fold(column));
@@ -378,4 +404,50 @@ function factFieldIssues(
 export function namesContextColumns(record: Record<string, unknown>): boolean {
   const display = asRecord(record['context_display']);
   return !!display && (display['roles'] !== undefined || display['types'] !== undefined || display['facts'] !== undefined);
+}
+
+/**
+ * The body's `context_display` with every role's column and every fact's column spelled as the
+ * roster spells it (AS19 S9), or the display unchanged when nothing needs it. The own-contacts list
+ * matches its hero columns to each row in SQL by exact key (`heroColumns`), so a fact written
+ * `amount due` for the roster's `Amount Due` would show nothing there. A name matches the roster's
+ * exact spelling first, else the first column equal to it ignoring case (the order `knownColumns`
+ * gives: oldest import first); a name the roster does not have is left as written (the write has
+ * refused it already, or there is no roster yet). `hero`, `hidden` and `types` are read ignoring
+ * case everywhere, so they are left as written.
+ *
+ * @param display      the body's `context_display`, after {@link contextDisplayIssues} accepted it
+ * @param knownColumns the roster's columns (`agency_ingest_jobs.context_columns`), or null
+ */
+export function canonicalContextColumns(display: unknown, knownColumns: readonly string[] | null): unknown {
+  const shown = asRecord(display);
+  if (!shown || !knownColumns || knownColumns.length === 0) return display;
+  const spelled = (name: unknown): unknown => {
+    if (typeof name !== 'string' || knownColumns.includes(name)) return name;
+    return knownColumns.find((c) => fold(c) === fold(name)) ?? name;
+  };
+  let changed = false;
+  const out: Record<string, unknown> = { ...shown };
+  const roles = asRecord(shown['roles']);
+  if (roles) {
+    const next = Object.fromEntries(Object.entries(roles).map(([role, column]) => [role, spelled(column)]));
+    if (Object.entries(next).some(([role, column]) => column !== roles[role])) {
+      out['roles'] = next;
+      changed = true;
+    }
+  }
+  const facts = shown['facts'];
+  if (Array.isArray(facts)) {
+    const next = facts.map((entry: unknown) => {
+      const fact = asRecord(entry);
+      if (!fact) return entry;
+      const column = spelled(fact['column']);
+      return column === fact['column'] ? entry : { ...fact, column };
+    });
+    if (next.some((f, i) => f !== facts[i])) {
+      out['facts'] = next;
+      changed = true;
+    }
+  }
+  return changed ? out : display;
 }

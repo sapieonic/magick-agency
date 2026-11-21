@@ -108,12 +108,22 @@ describe('GET /live-calls: the campaigns\' AHT cache', () => {
   const liveRow = (campaignId: string) => ({
     call_id: '55555555-5555-4555-8555-555555555555', origin: 'campaign', correlation_id: campaignId, campaign_id: campaignId,
     campaign_name: 'C', inbound_route_name: null, agent_user_id: BODY.agent_user_id, agent_session_id: SESSION, client_kind: 'web',
-    customer_phone: '+919812345678', contact_context: null, connected_at: new Date('2026-11-16T10:00:00Z'), recording: true,
+    customer_phone: '+919812345678', contact_context: null, contact_name_display: null, connected_at: new Date('2026-11-16T10:00:00Z'), recording: true,
   });
   const listLive = agencyLiveCallRepository.listLive as unknown as ReturnType<typeof vi.fn>;
   const ahtRead = agencyLiveCallRepository.campaignAhtSeconds as unknown as ReturnType<typeof vi.fn>;
   const list = (app: Awaited<ReturnType<typeof build>>) => app.inject({
     method: 'GET', url: '/api/v1/agency/live-calls', headers: { 'x-mgkvc-tenant': TENANT, 'x-mgkvc-account': ACCOUNT },
+  });
+
+  it('AS19 S1: each call names its customer as the card does, the campaign\'s name role first', async () => {
+    listLive.mockResolvedValueOnce([
+      { ...liveRow(campaign(9)), contact_context: { Borrower: ' Asha Rao ', name: 'Not The Role' }, contact_name_display: { roles: { name: 'borrower' } } },
+      { ...liveRow(campaign(9)), call_id: BODY.call_id, contact_context: { 'Customer Name': 'Ravi K' }, contact_name_display: null },
+    ]);
+    const app = await build(runtime());
+    const res = await list(app);
+    expect(res.json().calls.map((c: { customer_name: string | null }) => c.customer_name)).toEqual(['Asha Rao', 'Ravi K']);
   });
 
   it('each call carries its own open sessions, earliest first, read for the account', async () => {

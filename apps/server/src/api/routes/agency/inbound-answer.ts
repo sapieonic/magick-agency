@@ -299,7 +299,7 @@ export function inboundMissedToWire(
     outcome: row.outcome!,
     caller_dnc: row.caller_dnc,
     // IQ54: the matched contact's name; none for an unmatched or withheld caller.
-    match_name: row.from_e164 !== null && row.matched_contact_id !== null ? (matchName(row.match_context) ?? null) : null,
+    match_name: row.from_e164 !== null && row.matched_contact_id !== null ? (matchName(row.match_context, row.match_display) ?? null) : null,
     matched_contact_id: row.matched_contact_id,
     matched_campaign_id: row.matched_campaign_id,
     matched_campaign_name: row.matched_campaign_name,

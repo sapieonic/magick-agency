@@ -19,8 +19,11 @@
  * `facts`, `AGENCY_SCRIPT_FIXED_PLACEHOLDERS` and every fact's key; without, the legacy six
  * `AGENCY_SCRIPT_PLACEHOLDERS`. Both ways ({@link agentScriptIssues}):
  *  - a body that carries `agent_script` is refused for an unknown key, naming it, on the text's
- *    own field (with `facts`: "The script uses {branch}, which is not a fact on the card. …";
- *    without, the BE-8 wording, listing the six);
+ *    own field. A `{word}` that is one of the keys but for case or the spaces inside its braces
+ *    (`{Name}`, `{ name }`) is a typo, and the refusal says how to write it ("The script uses
+ *    {Name}. Write it as {name}.", AS19 S13); any other is not a key at all (with `facts`: "The
+ *    script uses {branch}, which is not a fact on the card. …"; without, the BE-8 wording,
+ *    listing the six). A text with both gets both sentences, the typos first;
  *  - a body that carries `context_display` and not `agent_script` is refused, on
  *    `context_display.facts`, when it takes away a key the STORED script uses ("The script uses
  *    {due_date}. Take it out of the script first, or keep the fact."). Only a key the stored
@@ -28,8 +31,14 @@
  *    edit of the card;
  *  - a body carrying both is checked as the pair: the new script against the new display.
  * The public layer holds no stored campaign, so it checks the keys only when the body carries
- * `context_display` (base `null`); the internal handler checks every body against the stored row.
- * A key with no value for a customer is shown by the clients as "<label> not given".
+ * `context_display` (base `null`); the internal handler checks every body against the stored row
+ * (a retry's `config_overrides` against its parent's: an override that drops a fact the parent's
+ * script uses is refused as a PATCH would be).
+ *
+ * How the clients fill a key is theirs (AS19 R5): on a campaign with `facts`, a `{name}`,
+ * `{place}` or fact key with no value for this customer is shown as "<label> not given" in the
+ * muted style; `{agent_name}` and `{campaign_name}` with no value, and every key of a campaign
+ * without `facts`, are left out.
  *
  * ── The read ({@link agentScriptForBootstrap}) ──────────────────────────────
  * The stored script as the station gets it, or `undefined` when the campaign has none (`{}`, or no
@@ -46,6 +55,7 @@ import {
   type AgencyAgentScript,
   type AgencyAgentScriptStep,
 } from '@magick-agency/contracts/agency';
+import { asRecord } from '@magick-agency/domain/context-columns';
 import { placeholdersIn, scriptPlaceholdersFor, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
 
 /** One refusal, keyed by the body's field path (the campaign-config validators' shape). */
@@ -75,10 +85,6 @@ interface ScriptKeys {
 /** Length in Unicode code points, as the contract counts. */
 const codePoints = (text: string): number => [...text].length;
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
 /**
  * The unknown `{word}`s a text names, braces included, each once, in order, against `allowed`
  * (default: the legacy six, a campaign without `facts`).
@@ -107,22 +113,46 @@ function resultingKeys(record: Record<string, unknown>, base: AgentScriptBase | 
   return base === null ? null : keysOf(base.context_display);
 }
 
+/**
+ * The key a `{word}` misspells (AS19 S13): the one allowed key equal to the word inside its braces
+ * once case and spaces are ignored (`{Name}`, `{ name }`, `{AGENT_NAME}`), or undefined.
+ */
+export function misspeltKey(token: string, allowed: readonly string[]): string | undefined {
+  const word = token.slice(1, -1).replace(/\s+/g, '').toLowerCase();
+  return allowed.find((key) => key.toLowerCase() === word);
+}
+
+/** The sentence for the `{word}`s that are keys but for case or spaces: how to write each. */
+function typoSentence(typos: ReadonlyArray<{ token: string; key: string }>): string {
+  const written = listed(typos.map((t) => t.token));
+  const right = listed(typos.map((t) => `{${t.key}}`));
+  return typos.length === 1 ? `The script uses ${written}. Write it as ${right}.` : `The script uses ${written}. Write them as ${right}.`;
+}
+
+/** The sentence for the `{word}`s that are no key at all. */
+function unknownSentence(unknown: readonly string[], facts: boolean): string {
+  if (facts) {
+    return unknown.length === 1
+      ? `The script uses ${unknown[0]}, which is not a fact on the card. Add it as a fact or take it out.`
+      : `The script uses ${listed(unknown)}, which are not facts on the card. Add them as facts or take them out.`;
+  }
+  return `${unknown.join(', ')} ${unknown.length === 1 ? 'is not a word' : 'are not words'} the script can fill in. Use only: ${AGENCY_SCRIPT_PLACEHOLDERS.map((p) => `{${p}}`).join(', ')}.`;
+}
+
 function placeholderIssue(text: string, field: string, allowed: ScriptKeys | null): AgentScriptIssue[] {
   if (allowed === null) return [];
-  const unknown = unknownScriptPlaceholders(text, allowed.keys);
-  if (unknown.length === 0) return [];
-  if (allowed.facts) {
-    return [{
-      field,
-      message: unknown.length === 1
-        ? `The script uses ${unknown[0]}, which is not a fact on the card. Add it as a fact or take it out.`
-        : `The script uses ${listed(unknown)}, which are not facts on the card. Add them as facts or take them out.`,
-    }];
+  const typos: Array<{ token: string; key: string }> = [];
+  const unknown: string[] = [];
+  for (const token of unknownScriptPlaceholders(text, allowed.keys)) {
+    const key = misspeltKey(token, allowed.keys);
+    if (key !== undefined) typos.push({ token, key });
+    else unknown.push(token);
   }
-  return [{
-    field,
-    message: `${unknown.join(', ')} ${unknown.length === 1 ? 'is not a word' : 'are not words'} the script can fill in. Use only: ${AGENCY_SCRIPT_PLACEHOLDERS.map((p) => `{${p}}`).join(', ')}.`,
-  }];
+  const sentences = [
+    ...(typos.length > 0 ? [typoSentence(typos)] : []),
+    ...(unknown.length > 0 ? [unknownSentence(unknown, allowed.facts)] : []),
+  ];
+  return sentences.length === 0 ? [] : [{ field, message: sentences.join(' ') }];
 }
 
 /** One text (the opening or a step) against its bound and the campaign's keys. */

@@ -16,7 +16,7 @@
  * public layer's mask, never in the list it answers.
  */
 import { getPool } from '@magick-agency/db';
-import type { AgencyCallOrigin, AgencyClientKind } from '@magick-agency/contracts/agency';
+import type { AgencyCallOrigin, AgencyClientKind, AgencyContextDisplay } from '@magick-agency/contracts/agency';
 import { VOICEMAIL_DISPOSITION_CODE, ahtSecondsSql, contactNameContextSql } from './sql-fragments.js';
 
 /** One live call, as the internal handler answers it (full number; no names but the contact's). */
@@ -33,8 +33,10 @@ export interface AgencyLiveCallRow {
   client_kind: AgencyClientKind;
   /** E.164; empty for an inbound caller who withheld their number. */
   customer_phone: string;
-  /** The roster contact's name columns (`matchName` reads them), or null without a contact. */
+  /** The roster contact's name columns (`contactNameContextSql`; `matchName` reads them), or null without a contact. */
   contact_context: Record<string, unknown> | null;
+  /** The call's campaign's `context_display`, for the name's role (AS19 S1); null without a campaign. */
+  contact_name_display: AgencyContextDisplay | null;
   connected_at: Date;
   /** `agency_calls.recording_requested` (RC1). */
   recording: boolean;
@@ -77,7 +79,7 @@ export const LIVE_CALLS_SQL = `
   )
   SELECT l.call_id, l.origin, l.correlation_id, l.campaign_id, cam.name AS campaign_name, r.name AS inbound_route_name,
          s.id AS agent_session_id, s.agent_user_id, s.client_kind, c.destination_phone AS customer_phone,
-         ${contactNameContextSql('ct')} AS contact_context,
+         ${contactNameContextSql('ct', 'cam')} AS contact_context, cam.context_display AS contact_name_display,
          COALESCE(l.connected_at, c.answered_at, c.created_at) AS connected_at,
          c.recording_requested AS recording
     FROM live l
