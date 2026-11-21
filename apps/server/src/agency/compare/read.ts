@@ -3,11 +3,19 @@
  * against the live database, so it is bounded on every side.
  *
  *  - **One snapshot, one deadline.** Every statement of one read runs on one connection in a
- *    read-only REPEATABLE READ transaction (so the figures agree with each other), whose second
- *    statement sets `statement_timeout` to `COMPARE_READ_TIMEOUT_MS` for that transaction only (or a
- *    lower ceiling the session already has: the pool's `DB_STATEMENT_TIMEOUT_MS` or the role's). A
- *    read sends up to nine statements, so the WHOLE read also has that deadline: past it, the
- *    statement running is cancelled and no further one is sent. Either is `503 compare_timed_out`.
+ *    read-only REPEATABLE READ transaction (so the figures agree with each other). The WHOLE read
+ *    has `COMPARE_READ_TIMEOUT_MS`, counted from before the connection is taken (a read sends one
+ *    statement per source it needs, several in all). Its second statement sets, for that
+ *    transaction only, `statement_timeout` to what is left of that budget less
+ *    {@link COMPARE_STATEMENT_TIMEOUT_MARGIN_MS} (or a lower ceiling the session already has: the
+ *    pool's `DB_STATEMENT_TIMEOUT_MS` or the role's), and before a later statement it is lowered
+ *    again to what is left by then, when that is lower by more than
+ *    {@link COMPARE_STATEMENT_TIMEOUT_SLACK_MS}. So Postgres ends a slow statement just before the
+ *    whole read's deadline: the transaction is rolled back and the connection goes back to the pool
+ *    to be reused. The deadline itself is the client's backstop (and stops a read between
+ *    statements): past it the statement running is cancelled and no further one is sent. Either is
+ *    `503 compare_timed_out`. The same statement caps `max_parallel_workers_per_gather` at
+ *    {@link COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER}, so five reads at once cannot take every core.
  *  - **Slots.** At most `COMPARE_TENANT_CONCURRENT_READS` reads per tenant, and at most
  *    {@link compareGlobalReadLimit} in the process (a share of the pool, so compare reads can never
  *    take the connections the dialler needs), the query and the options together; past either,
@@ -19,10 +27,15 @@
  *    before the answer, as when the console aborts a superseded read): a query read is aborted once
  *    no request waits on it, the options read at once. The statement running is cancelled on a
  *    connection of its own (`cancelBackend`, never through the shared pool, where it would queue
- *    behind every borrower), the cancel is AWAITED, and a connection that was sent a cancel is
- *    destroyed rather than returned to the pool, so a late cancel can never stop another borrower's
- *    statement. A cancelled statement that has not ended `COMPARE_CANCEL_GRACE_MS` after the cancel
- *    is abandoned with its connection. Then the slot comes back.
+ *    behind every borrower), by the backend's own pid (`pg_backend_pid()`, read by the second
+ *    statement: `processID` is a pooler's number behind the session pooler), the cancel is
+ *    AWAITED, and a connection that was sent a cancel is destroyed rather than returned to the
+ *    pool, so a late cancel can never stop another borrower's statement. A cancelled statement
+ *    that has not ended `COMPARE_CANCEL_GRACE_MS` after the cancel is abandoned with its
+ *    connection; when the cancel could not be sent at all (no connection for it, the server
+ *    refusing it), the statement runs on until its own `statement_timeout`, so the read waits for
+ *    it until that bound has passed (plus the grace) before it abandons it. Then the slot comes
+ *    back.
  *  - **30 s caches** (`COMPARE_CACHE_TTL_MS`): the query's answer keyed by the tenant, the caller's
  *    scope (the context account: the cohort is the account's roster), the campaign, the window, the
  *    zone, the agents in order and the metric ids in order plus the trend's (the ids do not carry an
@@ -137,7 +150,11 @@ export interface CompareReadDeps {
   pool: TransactionPool;
   memberships(userIds: readonly string[], tenantId: string): Promise<RosterMembershipRef[]>;
   names(userIds: readonly string[], tenantId: string): Promise<Map<string, string | null>>;
-  /** Cancel the statement running on backend `pid`, on a connection of its own; awaited before the read's connection is given up. */
+  /**
+   * Cancel the statement running on backend `pid` (`pg_backend_pid()`), on a connection of its own;
+   * awaited before the read's connection is given up. True when the backend was signalled. Never
+   * throws: the read treats a throw or a rejection as `false`.
+   */
   cancelBackend(pid: number): Promise<boolean>;
   /** The pool's size, which the process-wide limit is a share of. */
   poolMax(): number;
@@ -146,7 +163,8 @@ export interface CompareReadDeps {
 
 export const defaultCompareReadDeps = (): CompareReadDeps => ({
   pool: { connect: () => getPool().connect() },
-  cancelBackend: (pid) => cancelBackend(pid, getPool().options),
+  // The pool's options are read inside the cancel, which never throws: no throw in an abort listener.
+  cancelBackend: (pid) => cancelBackend(pid, () => getPool().options),
   poolMax: () => getPool().options.max ?? DEFAULT_DB_POOL_MAX,
   memberships: (ids, tenantId) => membershipRepository.findAnyByUsersAndTenant(ids, tenantId),
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'compare agents'),
@@ -173,17 +191,56 @@ export function compareGlobalReadLimit(poolMax: number): number {
 
 /**
  * How long a cancelled statement may take to end before its connection is abandoned (destroyed,
- * the read failed) so the slot can come back. The cancel is awaited first.
+ * the read failed) so the slot can come back. The cancel is awaited first. When the cancel could
+ * not be sent, the statement's own `statement_timeout` bound is waited for as well (module note).
  */
 export const COMPARE_CANCEL_GRACE_MS = 1_000;
 
 /**
- * The transaction's `statement_timeout`: `$1` milliseconds, or the session's own when it is set and
- * lower (`pg_settings.setting` is in milliseconds for this one). `is_local`: this transaction only.
+ * How much earlier than the whole read's deadline Postgres's `statement_timeout` ends a statement:
+ * room for the error to come back and the deadline's timer to be late, so the server's timeout
+ * (the transaction rolled back, the connection reused) wins over the client's cancel (the
+ * connection destroyed).
  */
-export const COMPARE_STATEMENT_TIMEOUT_SQL = `SELECT set_config('statement_timeout',
-         (CASE WHEN setting::bigint > 0 THEN LEAST(setting::bigint, $1::bigint) ELSE $1::bigint END)::text, true)
+export const COMPARE_STATEMENT_TIMEOUT_MARGIN_MS = 200;
+
+/**
+ * Before a statement, `statement_timeout` is lowered to what is left of the budget only when that is
+ * lower than the value set by more than this: a fast read sends no extra statement, and a statement
+ * still ends at least `COMPARE_STATEMENT_TIMEOUT_MARGIN_MS - COMPARE_STATEMENT_TIMEOUT_SLACK_MS`
+ * before the deadline.
+ */
+export const COMPARE_STATEMENT_TIMEOUT_SLACK_MS = 50;
+
+/**
+ * `max_parallel_workers_per_gather` inside a compare read's transaction (Postgres's default is 2),
+ * so the five reads the process allows at once ({@link compareGlobalReadLimit}) take at most ten
+ * processes (each read's backend and one worker), not fifteen, on an instance that may have two
+ * cores. One, not none: only the cohort's attempt statement runs in parallel (a Gather Merge over
+ * the campaign's window), and `EXPLAIN ANALYZE` of it on 930,000 attempts (100 agents, 31 days)
+ * took 1.30 s with no worker, 1.00 s with one and 0.90 s with two (a 7-day window: 0.39, 0.28 and
+ * 0.30 s); the whole cohort's occupancy statement does not run in parallel at any setting
+ * (docs/compare-agents.md §7 "Cost, measured"). One worker keeps most of the gain for half the cores.
+ */
+export const COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER = 1;
+
+/**
+ * The transaction's settings, one round trip: `statement_timeout` to `$1` milliseconds, or the
+ * session's own when it is set and lower (`pg_settings.setting` is in milliseconds for this one, read
+ * before the `set_config` in the same row); `max_parallel_workers_per_gather` to `$2`; and the
+ * backend's own pid, the one a cancel must name (never `processID`, see `cancelBackend`).
+ * `is_local`: this transaction only.
+ */
+export const COMPARE_TRANSACTION_SETTINGS_SQL = `SELECT pg_backend_pid() AS pid,
+         setting::bigint AS session_ms,
+         (CASE WHEN setting::bigint > 0 THEN LEAST(setting::bigint, $1::bigint) ELSE $1::bigint END) AS applied_ms,
+         set_config('statement_timeout',
+           (CASE WHEN setting::bigint > 0 THEN LEAST(setting::bigint, $1::bigint) ELSE $1::bigint END)::text, true) AS statement_timeout,
+         set_config('max_parallel_workers_per_gather', $2::text, true) AS parallel_workers
     FROM pg_settings WHERE name = 'statement_timeout'`;
+
+/** Lower this transaction's `statement_timeout` to `$1` milliseconds. */
+export const COMPARE_LOWER_STATEMENT_TIMEOUT_SQL = `SELECT set_config('statement_timeout', $1::text, true)`;
 
 /** `57014 query_canceled`: what a statement past its `statement_timeout` raises. */
 function isStatementTimeout(err: unknown): boolean {
@@ -256,10 +313,21 @@ export function compareCohortCacheKey(q: CompareWindowScope): string {
   return JSON.stringify([q.tenantId, q.accountId, q.campaignId, q.from, q.to, q.timezone]);
 }
 
+/** The whole read's deadline: its signal, and when it fires (`performance.now()` time). */
+interface ReadDeadline {
+  signal: AbortSignal;
+  at: number;
+}
+
+/** The deadline of a read that starts now and may take `ms`. */
+function readDeadline(ms: number): ReadDeadline {
+  return { signal: AbortSignal.timeout(ms), at: performance.now() + ms };
+}
+
 /** Why a snapshot stops early: the client went away, or the whole read's deadline passed. */
 interface SnapshotStops {
   gone?: AbortSignal | undefined;
-  deadline: AbortSignal;
+  deadline: ReadDeadline;
 }
 
 /**
@@ -427,10 +495,10 @@ export class CompareReads {
   private async snapshot<T>(read: CompareReadKind, fn: (db: PoolClient) => Promise<T>, stops: SnapshotStops): Promise<T> {
     const started = performance.now();
     let result: CompareReadResult = 'failed';
-    const signal = stops.gone ? AbortSignal.any([stops.gone, stops.deadline]) : stops.deadline;
+    const signal = stops.gone ? AbortSignal.any([stops.gone, stops.deadline.signal]) : stops.deadline.signal;
     try {
       signal.throwIfAborted();
-      const out = await this.inSnapshot(fn, signal);
+      const out = await this.inSnapshot(fn, signal, stops.deadline.at);
       result = 'ok';
       return out;
     } catch (err) {
@@ -438,7 +506,7 @@ export class CompareReads {
         result = 'aborted';
         throw new CompareAborted();
       }
-      if (stops.deadline.aborted || isStatementTimeout(err)) {
+      if (stops.deadline.signal.aborted || isStatementTimeout(err)) {
         result = 'timed_out';
         agencyCompareReadsRefusedTotal.inc({ reason: 'timed_out' });
         throw new CompareRefusal('compare_timed_out');
@@ -450,63 +518,110 @@ export class CompareReads {
   }
 
   /**
-   * The transaction itself, on a connection of its own from the pool. When `signal` aborts while
-   * one of its statements runs, the statement is cancelled on a separate connection
-   * (`deps.cancelBackend`) and the cancel awaited; no further statement is sent; a statement still
-   * running `COMPARE_CANCEL_GRACE_MS` after the cancel is abandoned. A connection that was sent a
-   * cancel is destroyed, never returned to the pool, so a cancel processed late cannot reach the
-   * next borrower. Otherwise the read-only transaction is rolled back and the connection released.
+   * The transaction itself, on a connection of its own from the pool, under `statement_timeout`s
+   * that end each statement before `deadlineAt` (module note). When `signal` aborts while one of its
+   * statements runs, the statement is cancelled on a separate connection (`deps.cancelBackend`, by
+   * the backend's own pid) and the cancel awaited; no further statement is sent; a statement still
+   * running `COMPARE_CANCEL_GRACE_MS` after the cancel (or, when the cancel was not sent, after its
+   * own `statement_timeout` bound) is abandoned. A connection that was sent a cancel is destroyed,
+   * never returned to the pool, so a cancel processed late cannot reach the next borrower.
+   * Otherwise the read-only transaction is rolled back and the connection released, to be reused.
    */
-  private async inSnapshot<T>(fn: (db: PoolClient) => Promise<T>, signal: AbortSignal): Promise<T> {
+  private async inSnapshot<T>(fn: (db: PoolClient) => Promise<T>, signal: AbortSignal, deadlineAt: number): Promise<T> {
     const client = await this.deps.pool.connect();
-    const pid = (client as unknown as { processID?: number | null }).processID;
+    /** The backend's pid, from `pg_backend_pid()`; null until the settings statement has answered. */
+    let pid: number | null = null;
+    /** The session's own `statement_timeout` ceiling in ms (none: infinite), and the one set now. */
+    let ceilingMs = Number.POSITIVE_INFINITY;
+    let appliedMs: number | null = null;
+    /** When the statement running was sent (`performance.now()`), and the `statement_timeout` it runs under. */
+    let runningSince = 0;
+    let runningBoundMs: number | null = null;
     let running = false;
-    let cancelling: Promise<unknown> | null = null;
+    let cancelling: Promise<boolean> | null = null;
     let abandon: () => void = noop;
     const abandoned = new Promise<never>((_, reject) => {
       abandon = () => reject(new CompareAborted());
     });
     abandoned.catch(noop);
     const onAbort = (): void => {
-      if (!running || pid == null || cancelling !== null) return;
-      cancelling = this.deps.cancelBackend(pid).then(() => {
-        setTimeout(abandon, COMPARE_CANCEL_GRACE_MS).unref();
+      if (!running || pid === null || cancelling !== null) return;
+      const target = pid;
+      const since = runningSince;
+      const bound = runningBoundMs;
+      // Never rejects: a cancel that throws or rejects is one that was not sent.
+      const sent: Promise<boolean> = Promise.resolve()
+        .then(() => this.deps.cancelBackend(target))
+        .then((ok) => ok === true, () => false);
+      cancelling = sent;
+      void sent.then((ok) => {
+        // Signalled: the statement ends at its next interrupt check. Not signalled: it runs on until
+        // its own statement_timeout, so the slot is held until that bound has passed.
+        const waitMs = ok || bound === null
+          ? COMPARE_CANCEL_GRACE_MS
+          : Math.max(COMPARE_CANCEL_GRACE_MS, since + bound - performance.now() + COMPARE_CANCEL_GRACE_MS);
+        setTimeout(abandon, waitMs).unref();
       });
     };
     signal.addEventListener('abort', onAbort, { once: true });
-    // Every statement of the read goes through here: none is sent once the read has stopped.
-    const query = async (text: string, values?: unknown[]): Promise<unknown> => {
+    /** What is left of the budget for the next statement, never 0 (0 would be no limit at all). */
+    const budgetMs = (): number =>
+      Math.max(1, Math.min(ceilingMs, Math.floor(deadlineAt - performance.now() - COMPARE_STATEMENT_TIMEOUT_MARGIN_MS)));
+    const send = async (text: string, values?: unknown[]): Promise<{ rows: unknown[] }> => {
       signal.throwIfAborted();
-      const sent = client.query(text, values);
+      const sent = client.query(text, values) as unknown as Promise<{ rows: unknown[] }>;
       sent.catch(noop);
       running = true;
+      runningSince = performance.now();
+      runningBoundMs = appliedMs;
       try {
         return await Promise.race([sent, abandoned]);
       } finally {
         running = false;
       }
     };
+    // Every statement of the read goes through here: none is sent once the read has stopped, and
+    // each runs under a statement_timeout that ends it before the whole read's deadline.
+    const query = async (text: string, values?: unknown[]): Promise<unknown> => {
+      if (appliedMs !== null) {
+        const wanted = budgetMs();
+        if (appliedMs - wanted > COMPARE_STATEMENT_TIMEOUT_SLACK_MS) {
+          await send(COMPARE_LOWER_STATEMENT_TIMEOUT_SQL, [wanted]);
+          appliedMs = wanted;
+        }
+      }
+      return send(text, values);
+    };
     const guarded = new Proxy(client, {
       get: (target, prop, receiver) => (prop === 'query' ? query : Reflect.get(target, prop, receiver)),
     });
     let destroy = false;
     try {
-      await query(beginStatement({ isolation: 'REPEATABLE READ', readOnly: true }));
-      await query(COMPARE_STATEMENT_TIMEOUT_SQL, [this.timeoutMs]);
+      await send(beginStatement({ isolation: 'REPEATABLE READ', readOnly: true }));
+      const { rows } = await send(COMPARE_TRANSACTION_SETTINGS_SQL, [budgetMs(), COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER]);
+      const settings = rows[0] as { pid: number; session_ms: string | number; applied_ms: string | number } | undefined;
+      if (settings === undefined) throw new Error('compare read: the transaction settings answered no row');
+      pid = Number(settings.pid);
+      const sessionMs = Number(settings.session_ms);
+      if (sessionMs > 0) ceilingMs = sessionMs;
+      appliedMs = Number(settings.applied_ms);
       return await fn(guarded);
     } finally {
       signal.removeEventListener('abort', onAbort);
-      if (cancelling !== null) {
-        await cancelling;
-        destroy = true;
-      } else {
-        try {
-          await client.query('ROLLBACK');
-        } catch {
+      try {
+        if (cancelling !== null) {
+          await cancelling;
           destroy = true;
+        } else {
+          try {
+            await client.query('ROLLBACK');
+          } catch {
+            destroy = true;
+          }
         }
+      } finally {
+        client.release(destroy ? true : undefined);
       }
-      client.release(destroy ? true : undefined);
     }
   }
 
@@ -514,7 +629,7 @@ export class CompareReads {
   private async readCohort(q: CompareWindowScope, gone?: AbortSignal): Promise<CompareCohortList> {
     const params = rosterParams({ from: q.start, to: q.end, campaignId: q.campaignId });
     const scope = { tenantId: q.tenantId, accountId: q.accountId };
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    const deadline = readDeadline(this.timeoutMs);
     const rows = await this.snapshot('options', (db) => rosterAttemptTotals(scope, params, db), { gone, deadline });
     if (gone?.aborted) throw new CompareAborted();
     // After the snapshot, on the pool: a read never holds two connections.
@@ -538,7 +653,7 @@ export class CompareReads {
 
   /** The comparison's read (module note). */
   private async readQuery(q: CompareQueryRead, signal: AbortSignal): Promise<CompareQueryOutcome> {
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    const deadline = readDeadline(this.timeoutMs);
     const params = rosterParams({ from: q.start, to: q.end, campaignId: q.campaignId });
     const scope = { tenantId: q.tenantId, accountId: q.accountId };
     const needs = new Set<CompareSource>(q.metrics.flatMap((m) => metricSources(m)));

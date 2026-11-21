@@ -1,8 +1,10 @@
 // Real Postgres: migrations/0065_session_events_offline_index.sql (docs/compare-agents.md §7): a
 // session's offline boundaries by session, which Compare agents' trend days read. globalSetup has
 // applied every migration. Pins the index by its definition, that a statement repeating its predicate
-// uses it, the invalid-index refusal, and down then up. The trend's own statement on seeded data is
-// held in apps/server/test/integration/api/compare-agents.test.ts.
+// uses it, the invalid-index refusal, and down then up. That the read's own statement, with the
+// server's `OFFLINE_BOUNDARY_EVENT_SQL`, is planned on the index (this package cannot import the
+// server) is held in apps/server/test/integration/agency/compare-offline-index.test.ts; its figures on
+// seeded data in apps/server/test/integration/api/compare-agents.test.ts.
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';

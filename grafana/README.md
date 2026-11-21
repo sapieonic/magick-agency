@@ -182,6 +182,10 @@ and `service_name=~"$service_name"`. The rows:
 - **Reports**: runs finished by kind and status, pending runs by status and the
   oldest one's age, assembly and render duration p95 by kind, and render callbacks,
   report-ready emails and subscription runs by result.
+- **Compare agents**: a read's duration p95 by read (query, options) and result
+  (`agency_compare_read_seconds`), and reads refused per minute by reason, busy or timed_out
+  (`agency_compare_reads_refused_total`). No rule: they are the trigger in
+  `docs/compare-agents.md` §7 for moving the read off the primary, not a service fault.
 - **Live call listening**: sessions open and grants by result, sessions ended by reason, session
   length, the tap's errors by stage with the listener sockets' back-pressure, the media relay's
   per-frame dwell by direction (p50 / p99, sampled one frame in 50), and listener socket handoffs to

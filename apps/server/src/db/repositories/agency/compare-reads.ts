@@ -241,8 +241,10 @@ export const COMPARE_BREAK_OVERRUNS_SQL = `
    GROUP BY e.agent_user_id`;
 
 /**
- * The partial index's predicate, byte for byte as 0065 writes it, so the planner proves the index
- * applies: the events where a session goes offline or comes back from it.
+ * The partial index's predicate as 0065 writes it, so the planner proves the index applies: the
+ * events where a session goes offline or comes back from it. Held by
+ * `test/integration/agency/compare-offline-index.test.ts`, which plans {@link COMPARE_LOGGED_IN_DAYS_SQL}
+ * itself and finds `idx_agency_session_events_offline` in the plan.
  */
 export const OFFLINE_BOUNDARY_EVENT_SQL = "(e.to_state = 'offline' OR e.from_state = 'offline')";
 

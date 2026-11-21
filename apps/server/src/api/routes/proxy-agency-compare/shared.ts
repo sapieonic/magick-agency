@@ -50,7 +50,6 @@ export interface CompareRouteDeps {
   /** The campaign if it is the tenant's AND the account's, else null. `campaignId` is a lower-cased UUID. */
   campaign(tenantId: string, accountId: string, campaignId: string): Promise<CompareCampaign | null>;
   names(userIds: readonly string[], tenantId: string): Promise<Map<string, string | null>>;
-  /** Is the zone in Postgres's zone database (the reads cut days with `AT TIME ZONE`)? */
   /**
    * The name Postgres cuts the zone's days in (`postgresZoneName`: its own spelling, or a legacy
    * name's current one), or null when it knows neither.

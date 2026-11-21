@@ -15,7 +15,9 @@ describe('cancelBackend', () => {
     const pool = new pg.Pool({ connectionString: url, max: 1 });
     try {
       const client = await pool.connect();
-      const pid = (client as unknown as { processID: number }).processID;
+      // The backend's own pid, as the readers read it (never `processID`: a pooler's number).
+      const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const pid = rows[0]!.pid;
       const sleeping = client.query('SELECT pg_sleep(30)').then(() => 'finished', (err: { code?: string }) => err.code);
       // The pool is exhausted: a cancel through it would wait for this very statement.
       await new Promise((r) => setTimeout(r, 100));
@@ -33,6 +35,13 @@ describe('cancelBackend', () => {
 
   it('answers false, never throws, when it cannot reach the server', async () => {
     expect(await cancelBackend(123, { connectionString: 'postgresql://nobody:nothing@127.0.0.1:1/none' }, 500)).toBe(false);
+  });
+
+  it('answers false, never throws or rejects, when its connection cannot even be built', async () => {
+    // A malformed connection string throws in `new pg.Client`; a pool that is not there throws in
+    // the options function. Both are inside the cancel, so the caller's release always runs.
+    expect(await cancelBackend(123, { connectionString: 'not a url %%' }, 500)).toBe(false);
+    expect(await cancelBackend(123, () => { throw new Error('no pool'); }, 500)).toBe(false);
   });
 
   it('answers false for a backend that does not exist', async () => {

@@ -62,8 +62,8 @@ kind: `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options` an
 (`GET|POST /compare/views`, `PATCH|DELETE /compare/views/:id`), its hooks the session, the tenant
 context and `Cache-Control: no-store`, `agency.supervise` then the `agency_compare_enabled` flag,
 served from SQL by `agency/compare/` (no `callCore`), its ids validated by its own routes (no wrapper
-id guard). It owns one `CompareReads` per registration (the read's cache and per-tenant limiter),
-cleared when the app closes. No config key, bootstrap or seam is added.
+id guard). It owns one `CompareReads` per registration (the read's caches and its limiter: per
+tenant and process-wide), cleared when the app closes. No config key, bootstrap or seam is added.
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:

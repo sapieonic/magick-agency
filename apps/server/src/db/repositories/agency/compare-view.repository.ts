@@ -25,6 +25,11 @@
  * Only the owner edits or deletes a view: `update` and `delete` match on the owner and answer
  * "not found" otherwise, the same answer as for a view that does not exist (the route's uniform
  * `404 compare_view_not_found`).
+ *
+ * **An edit that does not name the default keeps the row's value as it stands in the edit's own
+ * transaction** (`is_campaign_default: null`), never a value the route read before it: another
+ * supervisor may have made a new default meanwhile, clearing this row's, and an edit that only
+ * renames the view must not take the default back from them.
  */
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
@@ -58,6 +63,12 @@ export interface CompareViewContent {
   shared: boolean;
   is_campaign_default: boolean;
 }
+
+/**
+ * An edit's content: `is_campaign_default` null keeps the row's value as it stands under the edit's
+ * row lock (the edit did not name it; module note).
+ */
+export type CompareViewUpdate = Omit<CompareViewContent, 'is_campaign_default'> & { is_campaign_default: boolean | null };
 
 /** The scope every statement names. */
 export interface CompareViewScope {
@@ -182,20 +193,26 @@ export class AgencyCompareViewRepository {
   /**
    * Replace the content of the caller's own view (the route merged and validated it), stamping
    * `updated_at`. Null when there is no such view of theirs (another supervisor's included).
+   * `is_campaign_default: null` keeps the row's value as read under its lock here (module note); a
+   * kept default stays only while the view keeps a campaign.
    */
-  async update(scope: CompareViewScope & { ownerUserId: string }, id: string, content: CompareViewContent): Promise<CompareViewRecord | null> {
-    const defaultFor = content.is_campaign_default ? content.campaign_id : null;
+  async update(scope: CompareViewScope & { ownerUserId: string }, id: string, content: CompareViewUpdate): Promise<CompareViewRecord | null> {
+    // Whether this edit may leave the view its campaign's default: then the campaign's lock first.
+    const mayDefault = content.campaign_id !== null && content.is_campaign_default !== false;
     return withTransaction(async (client) => {
       // The lock order: the campaign's default lock BEFORE the row's lock (module note).
-      if (defaultFor !== null) await client.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [defaultFor]);
-      const { rows: mine } = await client.query<{ id: string }>(
-        `SELECT id FROM agency_compare_views
+      if (mayDefault) await client.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [content.campaign_id]);
+      const { rows: mine } = await client.query<{ id: string; is_campaign_default: boolean }>(
+        `SELECT id, is_campaign_default FROM agency_compare_views
           WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND owner_user_id = $4::uuid
           FOR UPDATE`,
         [id, scope.tenantId, scope.accountId, scope.ownerUserId],
       );
-      if (mine.length === 0) return null;
-      if (defaultFor !== null) await clearOtherDefault(client, scope, defaultFor, id);
+      const row = mine[0];
+      if (row === undefined) return null;
+      // Read under the lock: another supervisor's new default, committed before it, has cleared it.
+      const isDefault = content.is_campaign_default ?? (row.is_campaign_default && content.campaign_id !== null);
+      if (isDefault && content.campaign_id !== null) await clearOtherDefault(client, scope, content.campaign_id, id);
       const { rows } = await client.query<CompareViewRecord>(
         `UPDATE agency_compare_views
             SET name = $2, lens = $3, metrics = $4::jsonb, trend = $5::jsonb, campaign_id = $6::uuid,
@@ -204,7 +221,7 @@ export class AgencyCompareViewRepository {
           RETURNING ${COLUMNS}`,
         [
           id, content.name, content.lens, json(content.metrics), json(content.trend), content.campaign_id,
-          content.shared, content.is_campaign_default,
+          content.shared, isDefault,
         ],
       );
       return rows[0] ?? null;

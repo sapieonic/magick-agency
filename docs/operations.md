@@ -367,7 +367,17 @@ One process saturates at 200 calls, and at 500 it cannot bridge more than about 
 `DB_POOL_MAX` + `MEDIA_WORKERS × MEDIA_WORKER_DB_POOL_MAX` + `ANALYSIS_WORKERS × min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`
 
 The database must allow that plus about 5 (a migration run, the super-admin CLI, an operator)
-for the server's role: `max_connections − superuser_reserved_connections`. With the defaults
+for the server's role: `max_connections − superuser_reserved_connections`. Two kinds of
+connection sit outside the pools, both short-lived, both from the primary: a **cancel**
+(`cancelBackend`, `packages/db`) opens a connection of its own for up to about 6 s to stop a
+Compare agents read whose client went away or passed its deadline, or a report detail cursor past
+its deadline; and the connection the cancel was for is **destroyed**, so the pool may open a new
+one while the old backend still finishes its statement (at once when the cancel landed; within the
+read's own `statement_timeout`, 3 s at most, when it could not be sent). Compare reads are at most
+a sixth of `DB_POOL_MAX` at once (5 of 30) and the report assembler builds one run at a time, so
+at worst that is 6 cancel connections and 6 finishing backends beside the pools, for seconds: inside
+the headroom of 5 only when few happen at once. On a database or pooler sized to the sum, add 10
+for them. With the defaults
 the 500-call layout (`MEDIA_WORKERS=3`, `ANALYSIS_WORKERS=2`) is 30 + 3 × 10 + 2 × 10 = 80, plus
 5 = 85, which fits a stock Postgres (100, 3 reserved). On Supabase (`DEPLOYMENT.md` 3.3) the
 compute size sets `max_connections` (`show max_connections;` in the SQL editor), and the small
@@ -790,6 +800,31 @@ reminder). While it is off both answer `403 floor_assist_disabled`, the floor re
 
 To turn it off: Off for the tenant or account. Open requests stay in their rows and expire on their
 own; the floor stops showing them at once, and new ones are refused.
+
+## Enabling Compare agents for a tenant
+
+`agency_compare_enabled` (off by default; global, tenant, account; client-exposed) gates Reports'
+Compare agents tab and its routes (`/proxy/agency/compare/*`, [`compare-agents.md`](compare-agents.md)
+§8): while it is off they answer `403 feature_disabled` and the console hides the tab. It reads the
+live database from the primary (CP6), so each read is bounded: a 3 s budget (Postgres's
+`statement_timeout` ends a slow statement; past it `503 compare_timed_out`), two reads at a time per
+tenant and a sixth of the pool in the process (past either `429 compare_busy`), a 30 s cache.
+An ordinary flag: no handling policy. `FF_AGENCY_COMPARE=true` turns it on for every tenant (dev and
+staging). Turn it on in Super-admin console → the tenant → Feature flags → `agency_compare_enabled`
+→ On, at tenant scope or for one account.
+
+**What to watch** (the *Compare agents* panels of the overview dashboard):
+
+- `agency_compare_read_seconds{read,result}`: p95 by read (`query`, `options`) and result. Above
+  1.5 s for a day, or `db_pool_acquire_seconds` rising while compare reads run, is the trigger to
+  move the read off the primary (`compare-agents.md` §7).
+- `agency_compare_reads_refused_total{reason}`: `timed_out` means supervisors are asking for windows
+  too heavy for the budget (a busy month with Calls per hour on screen); `busy` means more
+  comparisons at once than the limits allow. Neither pages anyone; both are the evidence §7's
+  "Accepted as it stands" ruling is revisited on.
+
+To turn it off: Off for the tenant or account. Saved views stay in `agency_compare_views` and come
+back when it is turned on again.
 
 ## Recordings
 

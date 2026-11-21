@@ -101,7 +101,11 @@ export const COMPARE_VIEW_NAME_MAX = 80;
 /** The most saved views one supervisor may own in one account (`409 compare_view_limit`). */
 export const COMPARE_VIEWS_PER_USER_MAX = 50;
 
-/** Compare reads (query and options) one tenant may run at once; past it `429 compare_busy` (§7). */
+/**
+ * Compare reads (query and options) one tenant may run at once; past it `429 compare_busy` (§7). The
+ * server also has a process-wide limit across tenants (a share of its database pool); past that the
+ * answer is the same `compare_busy`.
+ */
 export const COMPARE_TENANT_CONCURRENT_READS = 2;
 
 /**
@@ -112,8 +116,10 @@ export const COMPARE_TENANT_CONCURRENT_READS = 2;
 export const COMPARE_BUSY_RETRY_AFTER_SECONDS = 2;
 
 /**
- * The read's `SET LOCAL statement_timeout`, and the deadline of the whole read (a read sends several
- * statements); past either `503 compare_timed_out` (§7).
+ * The whole read's budget, counted from before it takes a database connection (a read sends several
+ * statements). Each statement runs under a `statement_timeout` of what is left of it, less a small
+ * margin, so the database normally ends a slow read; the whole read's deadline is the server's
+ * backstop. Past either `503 compare_timed_out` (§7).
  */
 export const COMPARE_READ_TIMEOUT_MS = 3_000;
 
@@ -206,15 +212,16 @@ export type CompareFindingCode = 'clear_gap' | 'stands_out' | 'over_break_limit'
 export const COMPARE_FINDING_CODES = ['clear_gap', 'stands_out', 'over_break_limit', 'too_few_calls'] as const satisfies readonly CompareFindingCode[];
 
 /**
- * The next step a finding offers, each a filtered view that exists (§6):
- * - `listen_recent`: the call log for the agent, recorded calls only (RC1); hidden without
- *   listening rights;
- * - `listen_outcome`: the call log for the agent and the finding's outcome codes (the outcome
- *   set's codes; for `success_rate` the catalog's success codes);
- * - `share_best_call`: the agent's recorded calls ending in the outcome, to pick one to share;
- * - `open_breaks`: the agent record's breaks;
- * - `message_outcome_tip`: a supervisor message to the agent (floor assist's Talk to agent);
- * - `late_callbacks`: Call-backs filtered to the agent, late and missed first.
+ * The next step a finding offers (§6). The code says what the supervisor should do; the console
+ * opens the nearest page that exists today (the code's meaning stays when a closer page is built):
+ * - `listen_recent`: listen to the agent's calls: the campaign's call attempts for the agent in the
+ *   window (the call log has no recorded-only filter yet); hidden without listening rights;
+ * - `listen_outcome`: the same, narrowed to the finding's outcome codes (the outcome set's codes;
+ *   for `success_rate` the catalog's success codes, for `promises_rate` its promise codes);
+ * - `share_best_call`: the same list, to pick a call to share with the team;
+ * - `open_breaks`: the agent's breaks: Analytics, By agent (the agent record has no URL of its own);
+ * - `message_outcome_tip`: a word with the agent: Live floor, where floor assist's Talk to agent is;
+ * - `late_callbacks`: the campaign's late call-backs (Call-backs filters by campaign, not agent).
  */
 export type CompareNextStep =
   | 'listen_recent'
@@ -283,7 +290,7 @@ export interface CompareMetricDefinition {
  * | `callbacks_kept_rate` | kept on time / call-backs whose time has passed (on time + late + missed) | the same (IN4 classes) |
  * | `avg_call` | talk seconds / conversations | roster `talk_seconds`, `connected` |
  * | `choose_time` | measured wrap-up seconds / measured wrap-ups | roster `wrapup_seconds` over the count of the same attempts (`MEASURED_WRAPUP_ATTEMPT_SQL`; the read adds that count) |
- * | `no_outcome_rate` | conversations closed with no outcome / conversations (dialler) | rollup `no_outcome` facet by agent |
+ * | `no_outcome_rate` | conversations closed with no outcome / conversations (dialler) | rollup codes by agent (`agency_insights_rollup_codes`): a NULL code or `no_disposition`, the conversations the rollup's `no_outcome` facet counts (the facet carries no agent) |
  * | `breaks_over_limit` | breaks that ended over their reason's limit | `break_overrun_seconds` (0060, AS12), reserved breaks never |
  */
 export const COMPARE_BUILTIN_METRICS: Readonly<Record<CompareBuiltinMetricKey, CompareMetricDefinition>> = Object.freeze({
@@ -602,8 +609,9 @@ export interface AgencyCompareMetricInfo {
 
 /**
  * Where a picked agent's logged-in time went (CP5: the shift includes breaks), in whole seconds,
- * from the agent review's presence fold (`reports/datasets/agent-presence.ts`) scoped to the
- * campaign. `waiting` is available plus reserved (drawn grey, never flagged).
+ * from the roster's occupancy fold for the campaign (the same intervals and clips as the roster's
+ * `shift_seconds`), rounded so the four parts sum to it. `waiting` is available plus reserved (drawn
+ * grey, never flagged).
  */
 export interface AgencyCompareDaySplit {
   on_call: number;
@@ -636,11 +644,13 @@ export interface AgencyCompareTrend {
   dates: string[];
   /**
    * One series per picked agent, in `agent_ids` order, each `dates.length` long: the count on a
-   * local day the agent had logged-in time on the campaign (0 is a real zero), null on any other
-   * day (before their first session, and days off), so the line breaks rather than dips.
+   * local day the agent worked the campaign (logged-in time on it that day, or a count that is not
+   * zero: a promise on the soft phone or on an inbound call answered from another campaign's
+   * station counts), 0 a real zero; null on any other day (before their first session, and days
+   * off), so the line breaks rather than dips.
    */
   agents: Array<{ agent_user_id: string; counts: Array<number | null> }>;
-  /** Per date, the median count over the cohort agents with logged-in time on the campaign that day; null when none. */
+  /** Per date, the median count over the cohort agents who worked the campaign that day (as above); null when none. */
   cohort_median: Array<number | null>;
 }
 
@@ -806,7 +816,9 @@ export interface AgencyCreateCompareViewRequest {
 /**
  * `PATCH /proxy/agency/compare/views/:id`: any subset of the create fields, validated as the
  * resulting view; 200 with the view. `DELETE` on the same path: 204. Refusals as create, plus
- * `compare_view_not_found` (no such view in the account, or not the caller's).
+ * `compare_view_not_found` (no such view in the account, or not the caller's). An edit that does not
+ * send `is_campaign_default` keeps the view's value as it stands when the edit is written: if another
+ * supervisor has made a new default meanwhile, this view is no longer the default and stays so.
  */
 export type AgencyUpdateCompareViewRequest = Partial<AgencyCreateCompareViewRequest>;
 

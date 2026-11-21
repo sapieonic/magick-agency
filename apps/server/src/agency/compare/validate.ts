@@ -40,7 +40,7 @@ export const COMPARE_ERROR_MESSAGES: Readonly<Record<AgencyCompareErrorCode, str
   compare_window_invalid: `Choose dates ending today or earlier, at most ${REPORT_MAX_WINDOW_DAYS} days or one calendar month.`,
   compare_timezone_invalid: 'The time zone is missing or not recognised.',
   compare_agent_not_in_cohort: 'An agent you picked made no calls on this campaign in these dates.',
-  compare_busy: 'Too many comparisons are running for your organisation. Try again in a moment.',
+  compare_busy: 'Too many comparisons are running right now. Try again in a moment.',
   compare_timed_out: 'The comparison took too long. Try a shorter date range.',
   compare_view_not_found: 'Saved view not found.',
   compare_view_invalid: 'The saved view is not valid.',
@@ -144,8 +144,9 @@ export function checkCompareMetrics(
 
 /**
  * The zone and the window, in that order (`compare_timezone_invalid`, `compare_window_invalid`).
- * `zoneKnownToDatabase` is whether Postgres resolves the zone too (`postgresKnowsZone`), since the
- * reads cut days with `AT TIME ZONE`; `today` is the local date of now in that zone.
+ * `zoneKnownToDatabase` is whether Postgres can cut the zone's days (`AT TIME ZONE`): it knows the
+ * zone, or the current name of a legacy one (the route passes whether `postgresZoneName` found a
+ * name); `today` is the local date of now in that zone.
  */
 export function checkCompareWindow(
   q: { from: string; to: string; timezone: string | undefined },

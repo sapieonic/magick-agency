@@ -27,11 +27,24 @@ import type { AddressInfo } from 'node:net';
 
 const mocks = vi.hoisted(() => {
   process.env['SUPER_ADMIN_JWT_SECRET'] = 'compare-agents-secret-0123456789abcd';
-  return { verifyIdToken: vi.fn() };
+  return { verifyIdToken: vi.fn(), cancels: [] as Array<{ pid: number; ok: boolean }> };
 });
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
+// The real cancel, recorded: which pid each cancel named and whether Postgres signalled it.
+vi.mock('@magick-agency/db/utils/cancel-backend', async (orig) => {
+  const real = await orig<typeof import('@magick-agency/db/utils/cancel-backend')>();
+  return {
+    ...real,
+    cancelBackend: async (...args: Parameters<typeof real.cancelBackend>) => {
+      const ok = await real.cancelBackend(...args);
+      mocks.cancels.push({ pid: args[0], ok });
+      return ok;
+    },
+  };
+});
 
 import type pg from 'pg';
+import { getPool } from '@magick-agency/db';
 import {
   AGENCY_COMPARE_ERROR_STATUS,
   COMPARE_BUSY_RETRY_AFTER_SECONDS,
@@ -274,6 +287,18 @@ function seedOtherCallTypes(): void {
   for (const [from, to, at] of [[null, 'available', L(offDay, '09:00')], ['available', 'offline', L(offDay, '17:00')]] as const) {
     events.push({ id: randomUUID(), session_id: elsewhere, tenant_id: floor.tenant, account_id: floor.account, campaign_id: c1, agent_user_id: agent(1).id, from_state: from, to_state: to, at, break_reason: null, break_limit_minutes: null, break_overrun_seconds: null });
   }
+  // That day, from the other campaign's station, agent 1 answers an inbound call matched to THIS
+  // campaign and records a promise: a day with no session on the campaign that still has a promise.
+  inbound.push({
+    id: randomUUID(), tenant_id: floor.tenant, account_id: floor.account, provider_call_id: `pc-${randomUUID()}`,
+    to_e164: '+919000000001', from_e164: '+919833330000', state: 'ended', outcome: 'answered',
+    arrived_at: L(offDay, '11:00'), bridged_at: L(offDay, '11:00:15'), ended_at: L(offDay, '11:04'), answered_by_user_id: agent(1).id,
+    matched_campaign_id: c0, disposition_code: 'will_pay', disposition_source: 'campaign', dispositioned_at: L(offDay, '11:05'),
+    promise_date: offDay, promise_amount: 800,
+  });
+  truth[1]!.promises += 1;
+  truth[1]!.amount += 800;
+  truth[1]!.otherConversations += 1;
   seedWindowEdges();
 }
 
@@ -551,24 +576,33 @@ describe('the trend and the findings', () => {
     expect(res.trend_metric!.id).toBe(WILL_PAY_ID);
   });
 
-  it('the promises trend: by the local day the promise was recorded (23:50 and 00:10 on their own days, none from outside the window); a day off on a session that never left is null', async () => {
-    const r = await ok(body({ agent_ids: [agent(6).id, agent(2).id], metrics: [builtin('promises_rate')], trend: builtin('promises_rate') }));
-    /** Promises per local day: the dialler's (one per will-pay conversation) and agent 0's soft-phone and inbound ones on the middle day. */
-    const promisesOn = (i: number, d: string): number => (truth[i]!.willPayByDay.get(d) ?? 0) + (i === 0 && d === DAYS[1] ? 2 : 0);
-    const series = (i: number) => DAYS.map((d) => (truth[i]!.days.has(d) ? promisesOn(i, d) : null));
+  it('the promises trend: by the local day the promise was recorded (23:50 and 00:10 on their own days, none from outside the window); a day off on a session that never left is null; a promise on a day with no campaign session counts', async () => {
+    const r = await ok(body({ agent_ids: [agent(6).id, agent(2).id, agent(1).id], metrics: [builtin('promises_rate')], trend: builtin('promises_rate') }));
+    /**
+     * Promises per local day: the dialler's (one per will-pay conversation), agent 0's soft-phone and
+     * inbound ones on the middle day, and agent 1's inbound one on the last day (worked on the other campaign).
+     */
+    const promisesOn = (i: number, d: string): number =>
+      (truth[i]!.willPayByDay.get(d) ?? 0) + (i === 0 && d === DAYS[1] ? 2 : 0) + (i === 1 && d === DAYS[2] ? 1 : 0);
+    /** A day counts when the agent worked the campaign that day or recorded a promise on it. */
+    const series = (i: number) => DAYS.map((d) => (truth[i]!.days.has(d) || promisesOn(i, d) > 0 ? promisesOn(i, d) : null));
     expect(r.trend!.agents).toEqual([
       { agent_user_id: agent(6).id, counts: series(6) },
       { agent_user_id: agent(2).id, counts: series(2) },
+      { agent_user_id: agent(1).id, counts: series(1) },
     ]);
     // Agent 6's open session went offline on the first evening and came back on the last morning.
     expect(r.trend!.agents[0]!.counts[1]).toBeNull();
     expect(r.trend!.agents[1]!.counts).toEqual([3, 3, 2]);
+    // Agent 1 had no session on this campaign on the last day, and one promise on it.
+    expect(truth[1]!.days.has(DAYS[2]!)).toBe(false);
+    expect(r.trend!.agents[2]!.counts).toEqual([2, 2, 1]);
     const median = (xs: number[]): number => {
       const v = [...xs].sort((x, y) => x - y);
       const pos = (v.length - 1) / 2;
       return v[Math.floor(pos)]! + (v[Math.ceil(pos)]! - v[Math.floor(pos)]!) * (pos - Math.floor(pos));
     };
-    expect(r.trend!.cohort_median).toEqual(DAYS.map((d) => median(truth.map((t, i) => (t.days.has(d) ? promisesOn(i, d) : null)).filter((x): x is number => x !== null))));
+    expect(r.trend!.cohort_median).toEqual(DAYS.map((d) => median(truth.map((t, i) => (t.days.has(d) || promisesOn(i, d) > 0 ? promisesOn(i, d) : null)).filter((x): x is number => x !== null))));
   });
 
   it('names the seeded clear gap, and the thin agent only as too few calls', () => {
@@ -777,6 +811,11 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
     }
     await loaded.app.listen({ port: 0, host: '127.0.0.1' });
 
+    // Every connection the server's pool hands out carries a pooler's number as `processID` (as
+    // behind the Supabase session pooler): a cancel must name the backend's own pid.
+    const poolerNumber = (client: object) => { (client as { processID?: number }).processID = 2_147_483_000; };
+    getPool().on('acquire', poolerNumber);
+    mocks.cancels.length = 0;
     const lock = await holdAttempts();
     try {
       // A query, joined by an identical one (which takes no slot), and the options read.
@@ -800,11 +839,17 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
       joiner.drop();
       opts.drop();
       await Promise.all([joiner.done, opts.done]);
-      await lockWaitersAre(0);
+      // The cancel path, however slow the runner: each read's cancel named its backend's own pid
+      // (never the pooler's number) and Postgres signalled it. A statement the timeout ended instead
+      // would show no cancel here.
+      const pids = (waiting as Array<{ pid: number }>).map((r) => r.pid);
+      await vi.waitFor(() => expect(mocks.cancels).toHaveLength(2), { timeout: 5_000 });
+      expect(mocks.cancels.map((c) => c.pid).sort()).toEqual([...pids].sort());
+      expect(mocks.cancels.every((c) => c.ok)).toBe(true);
+      await lockWaitersAre(0, 5_000);
       // A connection that was sent a cancel is destroyed, never handed to the next borrower: both
       // backends end (a released connection would sit idle in the pool with its pid).
-      const pids = (waiting as Array<{ pid: number }>).map((r) => r.pid);
-      const deadline = Date.now() + 2000;
+      const deadline = Date.now() + 5000;
       let alive: unknown[] = [];
       do {
         ({ rows: alive } = await q(`SELECT pid FROM pg_stat_activity WHERE pid = ANY($1::int[])`, [pids]));
@@ -823,17 +868,30 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
       // The dropped read left nothing in the cache: asked again, it is read afresh and answers.
       expect((await query(K)).statusCode).toBe(200);
     } finally {
+      getPool().off('acquire', poolerNumber);
       await lock.query('ROLLBACK').catch(() => undefined);
       lock.release();
     }
   });
 
-  it('a read past the statement timeout is 503 compare_timed_out, a reviewed body through the mask', async () => {
+  it('a read past the statement timeout is 503 compare_timed_out, a reviewed body through the mask; Postgres ends it and the connection is reused', async () => {
+    mocks.cancels.length = 0;
     const lock = await holdAttempts();
     try {
-      const res = await query(body({ agent_ids: [agent(0).id], to: DAYS[1]!, trend: null }));
+      const pending = query(body({ agent_ids: [agent(0).id], to: DAYS[1]!, trend: null }));
+      await waitersOnLock(1);
+      const { rows: waiting } = await q(`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+      expect(waiting).toHaveLength(1);
+      const pid = (waiting[0] as { pid: number }).pid;
+      const res = await pending;
       expect(res.statusCode).toBe(503);
       expect(res.json()).toEqual({ error: 'Service Unavailable', code: 'compare_timed_out', message: expect.stringContaining('took too long') });
+      // The statement_timeout (the budget less its margin) ended it before the whole read's deadline:
+      // no cancel was sent, the transaction was rolled back, and the connection went back to the
+      // pool to be reused (its backend lives on, idle), not destroyed.
+      expect(mocks.cancels).toEqual([]);
+      const { rows: after } = await q(`SELECT state FROM pg_stat_activity WHERE pid = $1`, [pid]);
+      expect(after).toEqual([{ state: 'idle' }]);
     } finally {
       await lock.query('ROLLBACK');
       lock.release();
