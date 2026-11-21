@@ -249,6 +249,40 @@ describe('the agent\'s own contacts', () => {
     expect(badBucket.statusCode).toBe(400);
   });
 
+  it('AS19 S3(d): a phone-typed hero is masked on a masked campaign, server-side; q still searches the stored value', async () => {
+    const { rows } = await getTestPool().query<{ id: string; context: Record<string, unknown> }>(
+      `SELECT id, context FROM agency_contacts WHERE campaign_id = $1 AND assigned_user_id = $2 ORDER BY csv_line_number LIMIT 1`,
+      [A(), agent(0).id]);
+    const before = (await getTestPool().query<{ context_display: unknown }>('SELECT context_display FROM agency_campaigns WHERE id = $1', [A()])).rows[0];
+    const mine = rows[0]!;
+    await getTestPool().query(`UPDATE agency_contacts SET context = context || '{"Alt Mobile": "+91 98765-43210"}'::jsonb WHERE id = $1`, [mine.id]);
+    await getTestPool().query(
+      `UPDATE agency_campaigns SET phone_display = 'masked',
+              context_display = '{"hero": ["Name", "Alt Mobile"], "types": {"alt mobile": "phone"}}'::jsonb WHERE id = $1`, [A()]);
+    const search = (q: string) => call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${A()}&q=${encodeURIComponent(q)}`, agent(0), floor);
+    try {
+      // The search reads the stored value: digits the agent typed find the row.
+      const masked = await search('98765-432');
+      expect(masked.statusCode, masked.body).toBe(200);
+      expect(masked.json().rows.map((r: { id: string }) => r.id)).toEqual([mine.id]);
+      expect(masked.json().rows[0].hero).toEqual([
+        { name: 'Name', value: mine.context['Name'] },
+        { name: 'Alt Mobile', value: '98••• ••210' },
+      ]);
+      expect(masked.body).not.toContain('43210');
+      // A campaign that shows numbers in full: as stored.
+      await getTestPool().query(`UPDATE agency_campaigns SET phone_display = 'full' WHERE id = $1`, [A()]);
+      const full = await search('98765-432');
+      expect(full.json().rows[0].hero).toEqual([
+        { name: 'Name', value: mine.context['Name'] },
+        { name: 'Alt Mobile', value: '+91 98765-43210' },
+      ]);
+    } finally {
+      await getTestPool().query(`UPDATE agency_campaigns SET phone_display = 'full', context_display = $2::jsonb WHERE id = $1`, [A(), JSON.stringify(before!.context_display)]);
+      await getTestPool().query(`UPDATE agency_contacts SET context = context - 'Alt Mobile' WHERE id = $1`, [mine.id]);
+    }
+  });
+
   it('the summary counts the caller\'s own contacts; unstaffed and another tenant\'s campaign are the same 403 not_staffed', async () => {
     const res = await call(app(), 'GET', `/proxy/agency/my-contacts/summary?campaign_id=${A()}`, agent(0), floor);
     expect(res.statusCode, res.body).toBe(200);

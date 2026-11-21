@@ -690,8 +690,10 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   // Agent station (BE-2): the daily target, or null to clear it; the internal handler's rule, imported.
   issues.push(...validateDailyTargetCalls(record));
   issues.push(...validateCallingWindow(record));
-  // Agent station (BE-6): `context_display.roles` / `.types`, the internal handler's shape rule
-  // (this layer holds no roster, so the columns are the internal handler's to check).
+  // Agent station (BE-6, AS19): `context_display.roles`, `.types` and `.facts`, the internal
+  // handler's shape rule (a phone-typed column is never the name or the line under it, S3(e)).
+  // This layer holds no roster, so the columns against it, and their roster spelling (S9), are
+  // the internal handler's, on a PATCH and on a retry's overrides.
   issues.push(...contextDisplayIssues(record));
   // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`). This
   // layer holds no stored campaign (`null`), so the keys (AS19, per campaign) are checked here only

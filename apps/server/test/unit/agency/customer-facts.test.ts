@@ -1,12 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AgencyContextDisplay } from '@magick-agency/contracts/agency';
-import { contextDisplayIssues, customerFacts, NAME_GUESS_COLUMNS, namesContextColumns } from '../../../src/agency/customer-facts.js';
+import { AGENCY_FACT_FIELDS_MAX } from '@magick-agency/contracts/agency';
+import { MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
+import {
+  canonicalContextColumns,
+  contextDisplayIssues,
+  customerFacts,
+  NAME_GUESS_COLUMNS,
+  namesContextColumns,
+} from '../../../src/agency/customer-facts.js';
 import { INBOUND_MATCH_NAME_COLUMNS } from '../../../src/agency/inbound/match-name.js';
 import { agentScriptIssues } from '../../../src/agency/agent-script.js';
 import { contactFields } from '../../../src/agency/customer-history/assemble.js';
 import type { CustomerHistoryCampaignRow } from '../../../src/db/repositories/agency/customer-history.repository.js';
-import { heroColumns } from '../../../src/db/repositories/agency/assignment-reads.repository.js';
+import { heroColumns, ownContactHero } from '../../../src/db/repositories/agency/assignment-reads.repository.js';
 import { validateAgencyCampaignConfig as validateInternal } from '../../../src/agency/campaign-config.js';
 import { validateAgencyCampaignConfig as validatePublic } from '../../../src/agency/agency-campaign-config.js';
 import { buildPanel } from '../../../src/agency/dialer/live-attempt.js';
@@ -208,6 +216,18 @@ describe('the write: context_display.roles and .types', () => {
     }
   });
 
+  it('AS19 S3(e): the name and the line under it may not be a phone-typed column (they are never masked)', () => {
+    expect(issues({ roles: { name: 'Mobile 2', place: 'Alt Phone', amount_due: 'Amt' }, types: { 'mobile 2': 'phone', 'Alt Phone': 'phone', Amt: 'phone' } })).toEqual([
+      "context_display.roles.name: A phone number cannot be the customer's name. Add it as a fact instead.",
+      'context_display.roles.place: A phone number cannot be the line under the name. Add it as a fact instead.',
+    ]);
+    // As a fact it is fine, and any other type is fine as the name.
+    expect(issues({ roles: { name: 'Customer Name' }, types: { 'Mobile 2': 'phone', 'Customer Name': 'text' }, facts: [{ column: 'Mobile 2', label: 'Alt no', key: 'alt' }] })).toEqual([]);
+    for (const validate of [validateInternal, validatePublic]) {
+      expect(validate({ context_display: { roles: { place: 'Alt' }, types: { Alt: 'phone' } } }).map((i) => i.field)).toEqual(['context_display.roles.place']);
+    }
+  });
+
   it('namesContextColumns: only a body that sets roles, types or facts needs the roster read', () => {
     expect(namesContextColumns({ context_display: { roles: {} } })).toBe(true);
     expect(namesContextColumns({ context_display: { types: {} } })).toBe(true);
@@ -278,6 +298,24 @@ describe('customerFacts with facts (AS19): the tiles are the chosen facts', () =
       ],
     }).tiles;
     expect(tiles.map((t) => [t.column, t.highlight ?? false])).toEqual([['B', true], ['A', false], ['C', false], ['D', false]]);
+  });
+
+  it('S2: no place guess, and the name is never a fact\'s column; a role still names them', () => {
+    const row = { Name: 'Branch Name', 'Full Name': 'Ramesh Goud', City: 'Hyderabad', Loan: 'LN-1' };
+    const facts = [{ column: 'name', label: 'Branch', key: 'branch' }, { column: 'Loan', label: 'Loan', key: 'loan' }];
+    expect(customerFacts(row, { facts })).toEqual({
+      name: 'Ramesh Goud',
+      tiles: [
+        { column: 'Name', label: 'Branch', key: 'branch', type: 'text', raw: 'Branch Name', value: null },
+        { column: 'Loan', label: 'Loan', key: 'loan', type: 'text', raw: 'LN-1', value: null },
+      ],
+    });
+    // The same row without facts guesses both, from the first name column.
+    expect(customerFacts(row, {})).toMatchObject({ name: 'Branch Name', place: 'Hyderabad' });
+    // Roles still name them on the facts path.
+    expect(customerFacts(row, { roles: { name: 'Full Name', place: 'city' }, facts: [] })).toEqual({ name: 'Ramesh Goud', place: 'Hyderabad', tiles: [] });
+    // A name role blank on this row is no name, never a guess (S1, S16).
+    expect(customerFacts({ ...row, 'Full Name': ' ' }, { roles: { name: 'Full Name' }, facts: [] })).toEqual({ tiles: [] });
   });
 
   it('`facts: []` means no tiles at all, whatever `hero` and the roles say', () => {
@@ -434,5 +472,66 @@ describe('the write: context_display.facts (AS19)', () => {
       expect(validate({ context_display: { facts: [fact('A', 'x'.repeat(17))] } }).map((i) => i.field)).toEqual(['context_display.facts.0.label']);
       expect(validate({ context_display: CHOSEN })).toEqual([]);
     }
+  });
+});
+
+describe('canonicalContextColumns: the roster\'s spelling on write (AS19 S9)', () => {
+  const known = ['Customer Name', 'City', 'Amount Due', 'Due Date', 'amount due'];
+
+  it('every role and every fact column as the roster spells it, exact first, else the first equal ignoring case', () => {
+    const display = {
+      hero: ['amount due'],
+      roles: { name: 'CUSTOMER NAME', place: 'City' },
+      types: { 'due date': 'date' },
+      facts: [{ column: ' due date ', label: 'Due on', key: 'due_date' }, { column: 'amount due', label: 'Amount', key: 'amount_due', highlight: true }],
+    };
+    expect(canonicalContextColumns(display, known)).toEqual({
+      ...display,
+      roles: { name: 'Customer Name', place: 'City' },
+      facts: [{ column: 'Due Date', label: 'Due on', key: 'due_date' }, { column: 'amount due', label: 'Amount', key: 'amount_due', highlight: true }],
+    });
+    expect(canonicalContextColumns({ facts: [{ column: 'AMOUNT DUE', label: 'A', key: 'a' }] }, known)).toEqual({ facts: [{ column: 'Amount Due', label: 'A', key: 'a' }] });
+  });
+
+  it('unchanged (the same object) when already spelled so, with no roster, or for a name the roster lacks', () => {
+    const display = { roles: { name: 'Customer Name' }, facts: [{ column: 'City', label: 'City', key: 'city' }, { column: 'Branch', label: 'B', key: 'b' }] };
+    expect(canonicalContextColumns(display, known)).toBe(display);
+    const cased = { facts: [{ column: 'city', label: 'City', key: 'city' }] };
+    expect(canonicalContextColumns(cased, null)).toBe(cased);
+    expect(canonicalContextColumns(cased, [])).toBe(cased);
+    expect(canonicalContextColumns(null, known)).toBeNull();
+  });
+
+  it('a differently cased fact then matches the row by exact key, as the own-contacts list\'s SQL does', () => {
+    const row = { 'Amount Due': '₹5,000' };
+    const stored = canonicalContextColumns({ facts: [{ column: 'AMOUNT DUE', label: 'Due', key: 'due' }] }, ['Amount Due']) as AgencyContextDisplay;
+    const heroes = heroColumns({ context_display: stored });
+    expect(heroes).toEqual(['Amount Due']);
+    expect(heroes.map((h) => (row as Record<string, string>)[h])).toEqual(['₹5,000']);
+  });
+});
+
+describe('the own-contacts list\'s hero values (AS19 S3(d))', () => {
+  const display: AgencyContextDisplay = { types: { 'alt mobile': 'phone', Amount: 'money' }, facts: [] };
+  const hero = [{ name: 'Alt Mobile', value: '9876543210' }, { name: 'Amount', value: '5000' }, { name: 'Other', value: '+14155550123' }];
+
+  it('a phone-typed value is masked by the domain\'s rule when the campaign hides numbers', () => {
+    expect(ownContactHero(hero, { context_display: display, phone_display: 'masked' })).toEqual([
+      { name: 'Alt Mobile', value: '98••• ••210' },
+      { name: 'Amount', value: '5000' },
+      { name: 'Other', value: '+14155550123' },
+    ]);
+    expect(ownContactHero([{ name: 'Alt Mobile', value: '12345' }], { context_display: display, phone_display: 'masked' }))
+      .toEqual([{ name: 'Alt Mobile', value: '•••' }]);
+  });
+
+  it('as stored on a campaign that shows numbers in full', () => {
+    expect(ownContactHero(hero, { context_display: display, phone_display: 'full' })).toEqual(hero);
+  });
+});
+
+describe('the caps agree', () => {
+  it('a campaign\'s facts and its legacy heroes have one cap (AGENCY_FACT_FIELDS_MAX === MAX_HERO_FIELDS)', () => {
+    expect(AGENCY_FACT_FIELDS_MAX).toBe(MAX_HERO_FIELDS);
   });
 });

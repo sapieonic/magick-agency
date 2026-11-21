@@ -220,7 +220,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
             call_id: call.call_id,
             origin: call.origin,
             correlation_id: call.correlation_id,
-            customer_name: matchName(call.contact_context) ?? null,
+            customer_name: matchName(call.contact_context, call.contact_name_display) ?? null,
             connected_at: new Date(call.connected_at).toISOString(),
             aht_seconds: call.campaign_id ? aht.get(call.campaign_id) ?? null : null,
             recording: call.recording,

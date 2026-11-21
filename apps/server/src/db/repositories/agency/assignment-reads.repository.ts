@@ -11,6 +11,8 @@
  */
 import { getPool } from '@magick-agency/db';
 import { configuredHeroNames } from '@magick-agency/domain/context-hero';
+import { maskFactPhone } from '@magick-agency/domain/fact-phone';
+import { factTypeOf } from '@magick-agency/domain/fact-tiles';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import type { AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import {
@@ -22,6 +24,7 @@ import {
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyCampaignRecord } from '../../models/agency.model.js';
 import type { PhoneFilter } from '../../../agency/spine-filters.js';
+import { phoneDisplayOf } from '../../../agency/station-tiles.js';
 import {
   agentRetryAvailableAtSql,
   agentRetryBlockSql,
@@ -46,6 +49,23 @@ export function emptyBucketCounts(): AgencyContactBucketCounts {
  */
 export function heroColumns(campaign: Pick<AgencyCampaignRecord, 'context_display'>): string[] {
   return configuredHeroNames(campaign.context_display);
+}
+
+/**
+ * A row's hero values as the agent may see them (AS19 S3(d)): on a campaign that hides customers'
+ * numbers (`phone_display: 'masked'`, AS9), a column `context_display.types` reads as a phone
+ * number (matched ignoring case, `factTypeOf`) is masked by the domain's one phone rule
+ * (`maskFactPhone`: `98••• ••210`), here on the server, so every client and every older build shows
+ * it masked. Every other value, and every value on a `full` campaign, as stored. The list's `q`
+ * search still reads the stored value in SQL.
+ */
+export function ownContactHero(
+  hero: ReadonlyArray<{ name: string; value: string }>,
+  campaign: Pick<AgencyCampaignRecord, 'context_display' | 'phone_display'>,
+): Array<{ name: string; value: string }> {
+  if (phoneDisplayOf(campaign.phone_display) !== 'masked') return [...hero];
+  const types = campaign.context_display?.types;
+  return hero.map((h) => (factTypeOf(h.name, types) === 'phone' ? { name: h.name, value: maskFactPhone(h.value) } : h));
 }
 
 /** One owner's (or the pool's) contacts, folded. */
@@ -239,7 +259,9 @@ export class AgencyAssignmentReadRepository {
 
   /**
    * One page of the agent's own contacts, in due order (`next_attempt_at`, then id), keyset
-   * paged. `bucket`, `phone` and `q` (text in a hero column, case-insensitive) narrow it.
+   * paged. `bucket`, `phone` and `q` (text in a hero column, case-insensitive, matched on the
+   * stored value) narrow it. A phone-typed hero value is masked when the campaign hides numbers
+   * ({@link ownContactHero}).
    */
   async myContacts(input: {
     campaign: AgencyCampaignRecord;
@@ -295,7 +317,7 @@ export class AgencyAssignmentReadRepository {
         ORDER BY c.next_attempt_at ASC, c.id ASC`,
       bind.values,
     );
-    return toKeysetPage(rows, input.limit, projectMyContact);
+    return toKeysetPage(rows, input.limit, (r) => projectMyContact({ ...r, hero: ownContactHero(r.hero, campaign) }));
   }
 }
 

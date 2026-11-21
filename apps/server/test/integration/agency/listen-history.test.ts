@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertWebrtcCall } from '../setup/factories.js';
 import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
+import { matchName } from '../../../src/agency/inbound/match-name.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -217,6 +218,27 @@ describe('the listening history statement', () => {
       customer_phone: '+919812345678', contact_context: expect.objectContaining({ name: 'Asha Rao' }),
     });
     expect(rows[0]).toMatchObject({ customer_phone: null, contact_context: null, campaign_name: null });
+  });
+
+  it('AS19 S1: the contact\'s name columns and its campaign\'s display leave the database, nothing else; the name role first', async () => {
+    const named = await insertAgencyCampaign({ name: 'Named', context_display: { roles: { name: 'borrower' }, hidden: ['Full-Name'] } });
+    const guessed = await insertAgencyCampaign({ name: 'Guessed' });
+    const row = { Borrower: 'Asha Rao', 'Customer Name': 'Not The Role', 'Full-Name': 'Hidden Name', Aadhaar: '1234 5678 9012', City: 'Pune' };
+    const L = randomUUID();
+    for (const [at, campaign] of [[0, named], [100, guessed]] as const) {
+      const contact = await insertAgencyContact(campaign.id, { context: row });
+      const callRow = await insertWebrtcCall({ destination_phone: '+919812345678', campaign_id: campaign.id });
+      const attempt = await insertAgencyAttempt(campaign.id, contact.id, { webrtc_call_id: callRow.id });
+      await session({ listener: L, call: callRow.id, start: at, end: at + 10, origin: 'campaign', campaign: campaign.id, correlation: attempt.id });
+    }
+    const { rows } = await list();
+    const [g, n] = rows;
+    // Only the columns a name can be read from: the guess's names (any case and spacing) and the role's.
+    expect(n!.contact_context).toEqual({ Borrower: 'Asha Rao', 'Customer Name': 'Not The Role', 'Full-Name': 'Hidden Name' });
+    expect(n!.contact_name_display).toEqual({ roles: { name: 'borrower' }, hidden: ['Full-Name'] });
+    expect(matchName(n!.contact_context, n!.contact_name_display)).toBe('Asha Rao');
+    expect(g!.contact_context).toEqual({ 'Customer Name': 'Not The Role', 'Full-Name': 'Hidden Name' });
+    expect(matchName(g!.contact_context, g!.contact_name_display)).toBe('Hidden Name');
   });
 });
 

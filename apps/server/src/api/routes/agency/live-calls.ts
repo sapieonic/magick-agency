@@ -128,7 +128,7 @@ export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: Agen
         agent_user_id: r.agent_user_id,
         agent_session_id: r.agent_session_id,
         client_kind: r.client_kind,
-        customer_name: matchName(r.contact_context) ?? null,
+        customer_name: matchName(r.contact_context, r.contact_name_display) ?? null,
         customer_phone: r.customer_phone,
         connected_at: new Date(r.connected_at).toISOString(),
         recording: r.recording,

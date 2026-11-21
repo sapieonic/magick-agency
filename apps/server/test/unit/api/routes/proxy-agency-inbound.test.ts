@@ -112,7 +112,7 @@ describe('a Missed row on the wire', () => {
     follow_up_reason: 'overflow', follow_up_assignee_user_id: 'u-1', handled_by_user_id: 'u-2',
     handled_at: new Date('2026-11-08T10:00:00Z'), created_at: new Date(), updated_at: new Date(),
     route_name: 'Main line', matched_campaign_name: null, handled_reason: 'reached', closed_cause: null,
-    match_context: null,
+    match_context: null, match_display: null,
   } as AgencyInboundMissedRow;
 
   it('carries the follow-up, ISO times and the names it is given', () => {
@@ -146,8 +146,12 @@ describe('a Missed row on the wire', () => {
     expect(inboundMissedToWire({ ...matched, match_context: ctx({ full_name: 'R. Iyer', first_name: 'Ravi' }) }).match_name).toBe('R. Iyer');
     expect(inboundMissedToWire({ ...matched, match_context: ctx({ first_name: 'Ravi' }) }).match_name).toBe('Ravi');
     expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: 'x'.repeat(150) }) }).match_name).toBe('x'.repeat(100));
-    // Not text, blank, or no name column: null.
-    expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: 42 }) }).match_name).toBeNull();
+    // The card's one reading (AS19 S1): a number is read as text; the campaign's name role first.
+    expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: 42 }) }).match_name).toBe('42');
+    expect(inboundMissedToWire({ ...matched, match_context: ctx({ Borrower: 'Meena S', name: 'Asha' }), match_display: { roles: { name: 'borrower' } } })
+      .match_name).toBe('Meena S');
+    // Blank, a placeholder, or no name column: null.
+    expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: 'N/A' }) }).match_name).toBeNull();
     expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: '   ' }) }).match_name).toBeNull();
     expect(inboundMissedToWire({ ...matched, match_context: ctx({}) }).match_name).toBeNull();
     // The contact row gone: null.

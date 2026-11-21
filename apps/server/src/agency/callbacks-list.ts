@@ -10,6 +10,7 @@ import {
   type AgencyAccountCallback,
   type AgencyCallbacksDue,
 } from '@magick-agency/contracts/api/agency/callbacks';
+import type { AgencyContextDisplay } from '@magick-agency/contracts/agency';
 import { decodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import type { CallbacksPageRow } from '../db/repositories/agency.repository.js';
 import { isUuid } from '../utils/uuid.js';
@@ -74,12 +75,16 @@ export type CallbacksListSourceRow = Omit<CallbacksPageRow, 'due_key'>;
 
 /**
  * One wire row: the campaign's name and mode from the active campaigns read, the customer's name
- * from the roster's columns as the floor names a customer (`matchName`), never the number, the
- * owner's name from `names`.
+ * from the roster's columns as the floor names a customer (`matchName`: the campaign's `name` role,
+ * else the guess, AS19 S1), never the number, the owner's name from `names`.
  */
 export function callbacksRow(
   row: CallbacksListSourceRow,
-  campaign: { name: string; assignment_mode: AgencyAccountCallback['assignment_mode'] },
+  campaign: {
+    name: string;
+    assignment_mode: AgencyAccountCallback['assignment_mode'];
+    context_display?: AgencyContextDisplay | null;
+  },
   names: ReadonlyMap<string, string | null>,
 ): AgencyAccountCallback {
   return {
@@ -87,7 +92,7 @@ export function callbacksRow(
     campaign_id: row.campaign_id,
     campaign_name: campaign.name,
     assignment_mode: campaign.assignment_mode,
-    customer_name: matchName(row.context) ?? null,
+    customer_name: matchName(row.context, campaign.context_display) ?? null,
     due_at: new Date(row.due_at).toISOString(),
     owner: row.owner_id ? { user_id: row.owner_id, name: names.get(row.owner_id) ?? null, live: row.owner_live } : null,
     source: row.inbound ? 'inbound' : 'outcome',
