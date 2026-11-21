@@ -1004,10 +1004,11 @@ on 2026-11-20.
 
 ## Compare agents (CP)
 
-The rulings CP1–CP16 (three agents at most, will-pay as promises made on every call type, no agent
+The rulings CP1–CP18 (three agents at most, will-pay as promises made on every call type, no agent
 view yet, coaching now and appraisal later, logged-in time with breaks, no worker process to start
 with, no list filter, one campaign per comparison, one definition per number, neutral metrics never
-flagged, findings only past chance, no language model, analysis metrics with coverage, no custom
-ratios, exports through the report pipeline, no Inbound lens yet) are in
-[`compare-agents.md`](compare-agents.md) §1. CP1–CP7 decided by Manas on 2026-11-21; CP8–CP16
-stand as recommended.
+flagged, findings only past chance, no language model, analysis metrics with coverage, no free-form
+formulas, exports through the report pipeline, no Inbound lens yet, outcome metrics chosen by the
+supervisor as sets of outcome codes, direction from the supervisor) are in
+[`compare-agents.md`](compare-agents.md) §1. CP1–CP7 and CP17 decided by Manas on 2026-11-21;
+CP8–CP16 stand as recommended; CP18 is a default pending him.

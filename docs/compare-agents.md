@@ -3,16 +3,19 @@
 A tab of Reports where a supervisor puts up to three agents of one campaign side by side, against
 the rest of the campaign's agents, and is told what stands out. The metrics are not fixed: each
 kind of campaign starts from a **lens** (a set of metrics), the supervisor can change it, and the
-page draws each metric with the chart its shape calls for. Designed 2026-11-21 and reviewed
-independently the same day; rulings CP1–CP16 below. **Not built yet** (§9).
+page draws each metric with the chart its shape calls for. Outcome metrics are the supervisor's
+choice: any set of the campaign's outcome codes (CP17). Designed 2026-11-21 and reviewed
+independently the same day; rulings CP1–CP18 below. **The contract, the rules and the saved-views
+table are built; the read, the routes and the console tab are not** (§9).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number.
 
 ## 1. Rulings
 
-CP1–CP7 are Manas's answers of 2026-11-21. CP8–CP16 are the design's own recommendations, which
-he left without comment; they stand as recommended (the convention of `agent-station.md` §1).
+CP1–CP7 and CP17 are Manas's answers of 2026-11-21. CP8–CP16 are the design's own recommendations,
+which he left without comment; they stand as recommended (the convention of `agent-station.md` §1).
+CP18 is the build's own, pending him.
 
 | ID | Ruling | Status |
 |---|---|---|
@@ -29,9 +32,11 @@ he left without comment; they stand as recommended (the convention of `agent-sta
 | CP11 | **A finding names an agent only when chance cannot explain it** (§6): rates by a 95% Wilson interval against the rest of the cohort's pooled rate; times from 1.5 times the median; breaks against the campaign's own limits | Decided (as recommended) |
 | CP12 | **No language model in the findings.** The server returns codes and numbers; the console writes the words (AS15) | Decided (as recommended) |
 | CP13 | **Call-analysis metrics are shown with their coverage and never flagged** in v1: "*n* analysed of *N* calls" on each, keyed by profile version | Decided (as recommended) |
-| CP14 | **No custom ratios** typed in by supervisors | Decided (as recommended) |
+| CP14 | **No free-form formulas.** A supervisor never types a ratio or an expression. An outcome set (CP17) is not one: it is a fixed definition (share of conversations ending in any of the chosen codes) over a chosen list of the campaign's own codes | Decided (as recommended) |
 | CP15 | **Exports through the existing report pipeline** (a report kind `agent_compare`, the renderer Lambda), not a new process | Decided (as recommended) |
 | CP16 | **No Inbound lens** until inbound calls are in the rollup | Decided (as recommended) |
+| CP17 | **Outcome metrics are the supervisor's choice.** Beside the built-ins, a metric can be an **outcome set**: 1 to 5 outcome codes of the campaign's current catalog, giving the share of the agent's conversations on the campaign ending in any of them (dialler conversations, from `agency_insights_rollup_codes`, as Insights counts them). The supervisor names it (default: the codes' labels, "A, B or C") and says which way is better: higher, lower or neither. A set of neither direction is shown and never named; a directional one is judged by the same interval rule as every rate (§6). A set can be the per-day trend (its count per local day) and is kept in saved views. Will-pay is one such set; `promises_rate` (CP2) stays a built-in beside them | **Decided** (Manas, 2026-11-21) |
+| CP18 | **Direction comes from the supervisor.** The catalog has no refusal category (`AgencyDisposition` has `is_success`, no refusal flag), so a set's direction is never inferred, except that a set of success codes only starts as "higher is better"; any other set starts as "shown, never flagged" until the supervisor chooses. No lens starts with a lower-is-better set | Default, pending Manas |
 
 ## 2. The screen
 
@@ -40,6 +45,8 @@ Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom
 1. **Filters in one row:** Lens, Campaign (one), When (a window of local dates, at most 31 days,
    the reports rule `reportWindowProblem`), and **Metrics · N**, which opens the picker (at most 6,
    grouped as in §3, each marked "higher is better", "lower is better" or "shown, never flagged").
+   The picker's Outcomes group adds **an outcome set**: tick up to 5 of the campaign's outcome
+   buttons, name it, choose the direction (CP17, CP18).
 2. **Pick up to 3 agents:** a chip per agent of the campaign; an agent under the floor carries
    "few calls". A colour follows the person: removing one agent never repaints the others.
 3. **Side by side:** a small bar chart per metric (§5) with the team median, the middle half of the
@@ -47,49 +54,67 @@ Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom
 4. **What stands out:** at most 5 findings (§6), each with **Why this?** and a next step; under them
    **Not clear yet (N)**, gaps that could still be chance, with **Check a longer window**; and the
    list of metrics on screen that are shown for context and never flagged.
-5. **The lens's main outcome per working day** (phase 2) and **Where their day went** (on a call,
-   choosing outcome, break, waiting; waiting in grey and never flagged).
+5. **The lens's main outcome per working day** (the trend: an outcome set or promises) and **Where
+   their day went** (on a call, choosing outcome, break, waiting; waiting in grey and never flagged).
 6. **The numbers:** the table behind every chart.
 
-Copy follows AS15. The state of the page (lens, campaign, window, agents, metrics) is in the URL,
-so a link opens the same comparison.
+Copy follows AS15. The state of the page (lens, campaign, window, agents, metrics by their ids,
+`compareMetricId`) is in the URL, so a link opens the same comparison; a saved view (§4) holds the
+lens, metrics and trend, never agents or a window.
 
 ## 3. Metric catalog
 
-v1 uses only metrics a read serves today. "Later" rows wait for the phase named.
+Every metric is a built-in (`COMPARE_BUILTIN_METRICS`) or an outcome set
+(`COMPARE_OUTCOME_SET_DEFINITION`), both in `packages/contracts/src/api/agency/compare.ts`, which
+holds each one's unit, direction, smallest gap, floor and read. Rates are fractions on the wire.
+Floors: the roster's 20 on each rate's own denominator (`AGENCY_ROSTER_MIN_RATE_DENOMINATOR`;
+`success_rate` is exactly `success_rate_reportable`), 8 settled call-backs for call-backs kept (an
+agent books a handful a week; the interval still keeps a thin rate from being named).
 
-| Group | Metric | Better is | Read | When |
+| Group | Metric (key) | Better is | Smallest gap | Read |
 |---|---|---|---|---|
-| Volume | Calls handled (conversations) | neutral | roster row | v1 |
-| Volume | Calls per hour logged in | neutral | roster row ÷ `shift_seconds` | v1 |
-| Volume | Connect rate | neutral | roster row (`rosterFlag` already refuses it) | v1 |
-| Outcomes | Success rate (the lens names it: sale, verified) | higher | roster row `success_rate_pct`, gated by `success_rate_reportable` | v1 |
-| Outcomes | Call-backs booked · kept on time | neutral · higher | agent record's follow-through (`agentCallbackTiming`, IN4 classes) | v1 |
-| Handling | Average call | neutral | roster `talk_seconds` ÷ calls | v1 |
-| Handling | Time to choose outcome | lower | roster `wrapup_seconds` ÷ measured wrap-ups | v1 |
-| Handling | No outcome chosen | lower | rollup `no_outcome` facet, by agent | v1 |
-| Time use | On a call · choosing outcome · break · waiting | composition | the agent review's presence fold (`reports/datasets/agent-presence.ts`), share of the shift (CP5); reserved is folded into waiting | v1 |
-| Time use | Breaks over their limit | lower, against the limit | `break_overrun_seconds` (0060, AS12) | v1 |
-| Outcomes | Share of calls ending *X*, one per outcome button | set by the campaign's catalog: success higher, a refusal-type code lower, any other neutral | `agency_insights_rollup_codes` by agent | phase 3 |
-| Outcomes | Will-pay rate (promises ÷ calls) | higher | promise columns on the three call tables (CP2) | phase 3 |
-| Outcomes | Amount promised | neutral | the same; no currency (PT5) | phase 3 |
-| Analysis | Each custom analysis question (yes/no → share, choice → mix, number → average); upset customer | shown only (CP13) | completed analyses; the agent review's `quality` block for sentiment | phase 4 |
+| Volume | Calls handled (`calls_handled`) | neutral | | roster row `connected` |
+| Volume | Calls per hour logged in (`calls_per_hour`) | neutral | | roster `connected` ÷ `shift_seconds` (breaks inside, CP5) |
+| Volume | Connect rate (`connect_rate`) | neutral | | roster row (`rosterFlag` already refuses it) |
+| Outcomes | Success rate (`success_rate`) | higher | 5 points | roster `successes` ÷ `connected`, gated by `success_rate_reportable` |
+| Outcomes | **An outcome set** (`outcomes:<better>:<codes>`) | the supervisor's (CP17, CP18) | 5 points | `agency_insights_rollup_codes` by agent: conversations ending in the set ÷ conversations |
+| Outcomes | Promises (`promises_rate`), when the catalog has a `requires_promise` entry | higher | 5 points | promise columns on the three call tables ÷ their conversations (CP2) |
+| Outcomes | Amount promised (`promised_amount`), the same condition | neutral | | the same; no currency (PT5) |
+| Outcomes | Call-backs booked (`callbacks_booked`) · kept on time (`callbacks_kept_rate`) | neutral · higher | · 12 points | `agentCallbackTiming` scoped to the campaign (IN4 classes) |
+| Handling | Average call (`avg_call`) | neutral | | roster `talk_seconds` ÷ `connected` |
+| Handling | Time to choose outcome (`choose_time`) | lower | 1.5 × median | roster `wrapup_seconds` ÷ the count of the same measured wrap-ups |
+| Handling | No outcome chosen (`no_outcome_rate`) | lower | 4 points | rollup `no_outcome` facet, by agent |
+| Time use | On a call · choosing outcome · break · waiting | composition | | the agent review's presence fold (`reports/datasets/agent-presence.ts`), share of the shift (CP5); reserved is folded into waiting |
+| Time use | Breaks over their limit (`breaks_over_limit`) | lower, against the limit | 2 breaks | `break_overrun_seconds` (0060, AS12) |
+| Analysis | Each custom analysis question (yes/no → share, choice → mix, number → average); upset customer | shown only (CP13) | | completed analyses; the agent review's `quality` block for sentiment (phase 4) |
 
-A lens's success-rate metric and the share-of-outcome metrics follow the campaign's **current**
-outcome catalog, as Insights does.
+Outcome sets and `success_rate` follow the campaign's **current** outcome catalog, as Insights
+does. A set names codes, so a code later removed from the catalog makes the set unusable on that
+campaign (`compare_metric_invalid`); the console drops it from a saved view it applies, and says so.
 
 ## 4. Lenses
 
-| Lens | Metrics | Main outcome per day |
-|---|---|---|
-| Collections | calls handled, will-pay rate, time to choose outcome, Refused share, average call, breaks over limit (until phase 3: success rate in place of will-pay and Refused) | will pay |
-| Sales | calls handled, sale rate, call-backs booked, call-backs kept on time, average call, calls per hour | sales |
-| Verification and surveys | calls handled, calls per hour, verified rate, no outcome chosen, average call, time to choose outcome | verified |
-| New joiner (phase 2) | one agent against their own previous four weeks and the team median | the lens's success outcome |
+A lens is a starting set: fixed built-ins plus one slot for the campaign's **main outcome**, an
+outcome set built from its current catalog, which is also the per-day trend
+(`compareLensDefaults`, `packages/domain/src/agent-compare/lens.ts`).
 
-The campaign's starting lens: Collections when its outcome catalog has a `requires_promise` entry,
-otherwise Sales. Phase 2 adds saved views (personal or shared with the account) and a default view
-per campaign.
+| Lens | Metrics | Main outcome (and trend) |
+|---|---|---|
+| Collections | calls handled, main, time to choose outcome, no outcome chosen, average call, breaks over limit | "Will pay": the `requires_promise` codes, higher is better |
+| Sales | calls handled, main, call-backs booked, call-backs kept on time, average call, calls per hour | "Success": the `is_success` codes, higher is better |
+| Verification and surveys | calls handled, calls per hour, main, no outcome chosen, average call, time to choose outcome | "Success", as Sales |
+| New joiner (phase 2) | one agent against their own previous four weeks and the team median | the lens's main outcome |
+
+More qualifying codes than a set holds (5): the built-in that counts all of them, `promises_rate`
+for Will pay (still the trend) or `success_rate` for Success (no trend), never a cut list. No
+qualifying code: Collections falls back to Success; Sales and Verification leave the slot out. No
+lens starts with a lower-is-better set (CP18): a supervisor who wants "Refused" adds it.
+
+The campaign's starting lens (`compareStartingLens`): Collections when its outcome catalog has a
+`requires_promise` entry, otherwise Sales. **Saved views** (`agency_compare_views`, 0063): a lens,
+metrics and trend, personal or shared with the account's supervisors, optionally for one campaign
+and optionally that campaign's default (shared, one per campaign); only the owner edits one; at
+most 50 per supervisor per account.
 
 ## 5. Charts
 
@@ -97,37 +122,48 @@ per campaign.
 |---|---|
 | One value per agent | Horizontal bar per agent; the median as a line under the bars; the middle half (p25–p75) as a band; on rates a whisker for the 95% Wilson interval; value labels at the bar ends |
 | Under the floor | No bar: "Too few to compare (12 calls; needs 20)" |
-| Per working day | A line per agent, the team median dashed, end labels (phase 2) |
+| Per working day (the trend) | A line per agent, broken on days they did not log in; the team median dashed; end labels |
 | A split of the shift | 100% stacked bar per agent; waiting in grey |
 
 Drawn in SVG in the console, as `AgentBucketChart` is; no chart library. Agent colours are the
 first three categorical slots; activity colours are a separate set, so a colour never means both a
-person and an activity. The band and median are the roster's benchmark for the campaign, not a
-second percentile implementation.
+person and an activity. The band and median are the roster benchmark's method
+(`cohortPercentiles`, `percentile_cont`, which the roster's `rosterPercentiles` now calls), over the
+campaign's agents who clear the metric's floor, not a second percentile implementation.
 
 ## 6. Findings
 
-A pure function, `packages/domain/src/agent-compare/findings.ts`, over the read's values. It names
-an agent only when:
+A pure function, `compareFindings` in `packages/domain/src/agent-compare/findings.ts`, over the
+read's figures for every cohort agent on each metric on screen. It names an agent only when:
 
 | Code | Rule |
 |---|---|
-| `clear_gap` (rate) | the agent's rate passes the floor; the rest of the cohort's pooled rate is computed with the agent left out; the agent's 95% Wilson interval lies wholly on the worse side of it; and the gap is at least the metric's smallest gap (5 points for success-type rates, 6 for refusal shares, 4 for no outcome, 12 for call-backs kept) |
-| `clear_gap` (time) | time to choose outcome at least 1.5 times the cohort median, with at least 20 calls |
+| `clear_gap` (rate) | the agent's rate passes the floor; the rest of the cohort's pooled rate is computed with the agent left out (every other agent, thin ones included); the agent's 95% Wilson interval lies wholly on the worse side of it; and the gap is at least the metric's smallest gap (5 points for success, promises and outcome sets, 4 for no outcome, 12 for call-backs kept) |
+| `clear_gap` (time) | time to choose outcome at least 1.5 times the cohort median (agent included), with at least 20 measured wrap-ups |
 | `over_break_limit` | two or more breaks over their reason's limit in the window |
-| `stands_out` | the higher-is-better outcome rate whose interval lies wholly above the rest of the cohort's pooled rate by at least the smallest gap; offers "Share their best call" |
-| `too_few_calls` | a picked agent under the floor on a flaggable metric; once per agent |
+| `stands_out` | a higher-is-better outcome rate (success, promises, a "higher" outcome set) whose interval lies wholly above the rest of the cohort's pooled rate by at least the smallest gap; offers "Share their best call" |
+| `too_few_calls` | a picked agent under the floor on a flaggable metric on screen; once per agent, the first such metric |
 
-Guards: no finding until at least 6 agents of the cohort pass the floor; at most 3 findings per
-agent and 5 in all, rates first; neutral and analysis metrics are never named. A gap on the worse
+Guards: neutral metrics and neutral outcome sets are never named; a metric whose rated cohort (agents
+over its floor, picked ones included) is under 6 yields nothing at all, `too_few_calls` and
+`not_clear` included; at most 3 findings per agent and 5 in all, taken as clear rate gaps, then
+times, then breaks, then `stands_out`, then `too_few_calls`, the larger gap first within each; what
+does not fit is dropped, never moved to `not_clear`. A gap of at least the smallest gap on the worse
 side that fails the interval (or a time from 1.25 to 1.5 times the median) goes to `not_clear`, which
-the console lists under **Not clear yet**. When the agent is low on an outcome rate and slow to
+the console lists under **Not clear yet**; a smaller gap goes nowhere. Only metrics on screen are
+judged. Analysis metrics are never named. When the agent is low on an outcome rate and slow to
 choose an outcome, the time finding says it is worth asking whether the outcome buttons are clear to
 them; it never states a cause.
 
+Worked example: Priya at 5 of 29 against the rest's 86 of 308 (17% against 28%) is not clear yet
+(her interval, 8% to 35%, reaches 28%); over a longer window, 38 of 196 against 561 of 2005 (19%
+against 28%) is a clear gap (interval 14% to 25%).
+
 Next steps (`next_step`), each a filtered view that exists: the call log for the agent (recorded
-calls only, RC1; hidden without listening rights), the call log for the agent and one outcome, the
-agent record's breaks, Call-backs filtered to the agent, a supervisor message.
+calls only, RC1; hidden without listening rights) for a low success, promise or higher-is-better set;
+the call log for the agent and the set's codes for a lower-is-better set; their recorded calls ending
+in the outcome to share (`stands_out`); the agent record's breaks; Call-backs filtered to the agent
+(call-backs kept); a supervisor message (no outcome chosen, slow to choose).
 
 ## 7. Where it runs
 
@@ -135,14 +171,20 @@ The read runs in the primary (CP6). It composes reads that already serve screens
 agents and the campaign's cohort:
 
 - `readAccountRoster` (`reports/datasets/shared.ts`) scoped to the campaign: the rows, the
-  benchmark, the floor;
-- the presence fold for the picked agents (`agent-presence.ts`);
-- from phase 2, the agent's day rows (`agentAttemptDays`).
+  benchmark, the floor (plus the count of measured wrap-ups for `choose_time`);
+- the Insights rollup by agent for the campaign: `agency_insights_rollup_codes` (outcome sets) and
+  the `no_outcome` facet;
+- the promise columns of the three call tables (`promises_rate`, `promised_amount`) and
+  `agentCallbackTiming` scoped to the campaign (call-backs), only when those metrics are on screen;
+- the presence fold for the picked agents (`agent-presence.ts`), and the break overruns;
+- for the trend, the set's or the promises' count per local day per agent, and each agent's
+  logged-in days on the campaign.
 
 Guards: `SET LOCAL statement_timeout` of 3 s inside the read's transaction (the pool sets none by
 default, `db-hygiene.md`); at most 2 compare reads at a time per tenant (429 past it); a 30 s
-in-process cache keyed by tenant, the caller's membership scope, campaign, window, agents and
-metrics. Metrics: `agency_compare_read_seconds` (histogram), `agency_compare_reads_refused_total`.
+in-process cache keyed by tenant, the caller's membership scope, campaign, window, zone, agents,
+metric ids and trend id (`COMPARE_TENANT_CONCURRENT_READS`, `COMPARE_READ_TIMEOUT_MS`,
+`COMPARE_CACHE_TTL_MS`). The options read counts against the same limit. Metrics: `agency_compare_read_seconds` (histogram), `agency_compare_reads_refused_total`.
 
 **Trigger for the analytics child:** the read's p95 above 1.5 s for a day, or `db_pool_acquire_seconds`
 rising while compare reads run. Then the read moves to a child forked by the primary with its own
@@ -152,86 +194,67 @@ The interactive read is never a Lambda: the renderer has no database access by d
 Exports (phase 4) are a report kind `agent_compare` whose dataset is the same read's response; the
 renderer Lambda draws the same charts.
 
-## 8. Contract (sketch)
+## 8. Contract
 
-`packages/contracts/src/api/agency/compare.ts`; not a mobile vocabulary, so `literals.json` does
-not change.
+`packages/contracts/src/api/agency/compare.ts` (in the `AgencyApi` namespace), the build contract;
+its doc comments are the field-level rules. Not a mobile vocabulary, so `literals.json` does not
+change. Flag `agency_compare_enabled` (off by default; global, tenant, account; client-exposed).
+Access: `agency.supervise` (CP3); flag off answers `403 feature_disabled`.
 
-```ts
-export const COMPARE_PAGE_MAX_AGENTS = 3;        // CP1
-export const COMPARE_MAX_METRICS = 6;
-export const COMPARE_MIN_RATED_COHORT = 6;
+| Route | Body / query | Answer |
+|---|---|---|
+| `POST /proxy/agency/compare/query` | `AgencyCompareQuery`: `campaign_id`, `agent_ids` (1–3), `metrics` (1–6 `AgencyCompareMetricRef`), `trend?`, `from`, `to`, `timezone` | `AgencyCompareResponse`: resolved `metrics`, each picked agent's `values` keyed by metric id (value, numerator, denominator, reportable, Wilson `interval`) and `day_split`, the cohort's `per_metric` (p25, median, p75, pooled, agents rated), `findings`, `not_clear`, `trend`, `as_of` |
+| `GET /proxy/agency/compare/options` | `campaign_id`, `from`, `to`, `timezone` | `AgencyCompareOptions`: the cohort's agents, the outcome codes, `records_promises`, `starting_lens`, `default_view` |
+| `GET /proxy/agency/compare/views` | `campaign_id?` | `AgencyCompareViewList` |
+| `POST /proxy/agency/compare/views` | `AgencyCreateCompareViewRequest` | 201 `AgencyCompareView` |
+| `PATCH`, `DELETE /proxy/agency/compare/views/:id` | `AgencyUpdateCompareViewRequest` | 200 `AgencyCompareView`, 204 |
 
-/** GET /proxy/agency/agents/compare — agency.supervise, flag agency_compare_enabled. */
-export interface AgencyCompareQuery {
-  campaign_id: string;                           // CP8
-  agent_ids: string[];                           // 1..COMPARE_PAGE_MAX_AGENTS
-  metrics: AgencyCompareMetricKey[];             // 1..COMPARE_MAX_METRICS
-  from: string; to: string; timezone: string;    // local dates, both inclusive, as reports
-}
+A metric is named by its id (`compareMetricId`): the built-in key, or
+`outcomes:<better>:<sorted codes>` for a set; `parseCompareMetricId` reverses it for the URL.
+Refusals are `{ error, code, message }` with the codes of `src/errors.ts` §9
+(`AGENCY_COMPARE_ERROR_CODES`, statuses in `AGENCY_COMPARE_ERROR_STATUS`): `compare_campaign_required`
+400, `compare_campaign_not_found` 404, `compare_too_many_agents` 400, `compare_too_many_metrics` 400,
+`compare_metric_invalid` 400, `compare_window_invalid` 400, `compare_timezone_invalid` 400,
+`compare_agent_not_in_cohort` 404, `compare_busy` 429, `compare_timed_out` 503 (a reviewed body
+through the error mask), `compare_view_not_found` 404, `compare_view_invalid` 400,
+`compare_view_limit` 409.
 
-export interface AgencyCompareValue {
-  value: number | null;                          // null when withheld
-  numerator: number;
-  denominator: number | null;
-  reportable: boolean;                           // the roster's floor
-  interval: [number, number] | null;             // Wilson 95%, rates only
-}
-
-export type AgencyCompareFindingCode =
-  'clear_gap' | 'stands_out' | 'over_break_limit' | 'too_few_calls';
-export type AgencyCompareNextStep =
-  'listen_recent' | 'listen_outcome' | 'share_best_call' |
-  'open_breaks' | 'message_outcome_tip' | 'late_callbacks';
-
-export interface AgencyCompareFinding {
-  code: AgencyCompareFindingCode;
-  agent_user_id: string;
-  metric: AgencyCompareMetricKey;
-  value: number; baseline: number;
-  interval: [number, number] | null;
-  next_step: AgencyCompareNextStep | null;
-}
-
-export interface AgencyCompareResponse {
-  campaign_id: string; from: string; to: string; as_of: string;
-  agents: {
-    agent_user_id: string; agent_name: string | null;
-    values: Record<AgencyCompareMetricKey, AgencyCompareValue>;
-    day_split: { on_call: number; choosing: number; break: number; waiting: number }; // seconds
-  }[];
-  cohort: {
-    agents_rated: number;
-    per_metric: Record<AgencyCompareMetricKey,
-      { p25: number | null; median: number | null; p75: number | null; pooled: number | null }>;
-  };
-  findings: AgencyCompareFinding[];              // at most 5
-  not_clear: AgencyCompareFinding[];
-}
-```
-
-Error codes go in `src/errors.ts` with the two-sided guard: `compare_campaign_required` 400,
-`compare_too_many_agents` 400, `compare_too_many_metrics` 400, `compare_metric_unknown` 400,
-`compare_window_invalid` 400, `compare_agent_not_in_campaign` 404, `compare_busy` 429.
+The rules both sides share are in `@magick-agency/domain/agent-compare`: `resolveCompareMetrics`
+(a request's or view's refs against the catalog), `compareValue`, `compareCohortMetric`
+(`cohortPercentiles`, the roster benchmark's `percentile_cont`; the roster's `rosterPercentiles`
+delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`, `compareFindings`.
 
 ## 9. Build plan and status
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Contract; `packages/domain/src/agent-compare/` (catalog, Wilson, findings); the read and route (`proxy-agency-compare.routes.ts`, agency area, flag `agency_compare_enabled`); the console tab with the three lenses, the picker over the v1 rows, Side by side, What stands out, Where their day went, The numbers | Not started |
-| 2 | Per-day series; saved and shared views and a default per campaign (`agency_compare_views`); the New joiner lens | Not started |
-| 3 | A metric per outcome button; will-pay and amount promised (CP2) | Not started |
+| 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
+| 1b | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total`; the console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
+| 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
 
+Phase 3 (a metric per outcome button, will-pay and amount promised) is folded into 1: outcome sets
+(CP17), `promises_rate` and `promised_amount` are in the contract.
+
 ## 10. Tests
 
-- Findings: table tests per code and guard in `packages/domain`, mutation-checked (break the
-  interval test, watch them go red, restore).
+- Findings: table tests per code and guard in `packages/domain` (`test/unit/agent-compare/`),
+  mutation-checked: the interval test (point estimate instead, wrong end), the six-agent guard
+  (removed, off by one), the leave-one-out, the smallest gap, praise without the interval and the
+  per-agent cap each turn them red. Built.
+- Contract: `packages/contracts/test/compare.test.ts` (the catalog's directions, gaps and floors,
+  metric ids, the ref rule) and the compare codes' snapshot in `errors.test.ts`. Built.
+- Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0063). Built. The
+  routes still need: only the owner edits or deletes; a new default clears the campaign's old one in
+  one transaction; the 50-view limit; a view's codes checked against its campaign's catalog.
 - An integration oracle: every value the read returns equals the roster's and
   `/agents/:userId/stats`' for the same campaign and window (as `report-datasets-oracle.test.ts`
   does for reports).
 - Route: the `agent` role gets 403 (CP3); another account's agent is refused and never enters the
-  cohort; the per-tenant limit returns 429; the flag off returns `403 feature_disabled`.
+  cohort; the per-tenant limit returns 429; the flag off returns `403 feature_disabled`; an
+  outcome code not in the campaign's current catalog, or `promises_rate` on a catalog without
+  promises, is `compare_metric_invalid`; an outcome set's value equals Insights' count by code for
+  the same agent and window.
 - Console: a withheld rate renders as words, never a bar; colour follows the person when one is
   removed; finding codes render the right words.
