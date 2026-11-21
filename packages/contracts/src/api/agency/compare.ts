@@ -104,7 +104,17 @@ export const COMPARE_VIEWS_PER_USER_MAX = 50;
 /** Compare reads (query and options) one tenant may run at once; past it `429 compare_busy` (§7). */
 export const COMPARE_TENANT_CONCURRENT_READS = 2;
 
-/** The read's `SET LOCAL statement_timeout`; past it `503 compare_timed_out` (§7). */
+/**
+ * How long a `429 compare_busy` asks the client to wait before it tries again, in whole seconds:
+ * its `Retry-After` header and the body's `retry_after_seconds`. A read takes at most
+ * {@link COMPARE_READ_TIMEOUT_MS}; most take well under a second.
+ */
+export const COMPARE_BUSY_RETRY_AFTER_SECONDS = 2;
+
+/**
+ * The read's `SET LOCAL statement_timeout`, and the deadline of the whole read (a read sends several
+ * statements); past either `503 compare_timed_out` (§7).
+ */
 export const COMPARE_READ_TIMEOUT_MS = 3_000;
 
 /**
@@ -804,6 +814,11 @@ export interface AgencyCompareErrorResponse {
   error: string;
   code: AgencyCompareErrorCode;
   message: string;
+  /**
+   * `compare_busy` only: seconds to wait before trying again ({@link COMPARE_BUSY_RETRY_AFTER_SECONDS}),
+   * the same as the `Retry-After` header. Absent on every other refusal.
+   */
+  retry_after_seconds?: number;
 }
 
 const _lensesListed: AllListed<CompareLens, typeof COMPARE_LENSES> = true;

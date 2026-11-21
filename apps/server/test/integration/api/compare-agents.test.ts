@@ -34,6 +34,7 @@ vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyI
 import type pg from 'pg';
 import {
   AGENCY_COMPARE_ERROR_STATUS,
+  COMPARE_BUSY_RETRY_AFTER_SECONDS,
   COMPARE_VIEWS_PER_USER_MAX,
   compareMetricId,
   type AgencyCompareMetricRef,
@@ -619,11 +620,16 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
     const lock = await holdAttempts();
     try {
       const first = query(body({ agent_ids: [agent(0).id], from: DAYS[1]!, trend: null }));
-      const second = call(loaded.app, 'GET', `/proxy/agency/compare/options?campaign_id=${c0}&from=${FROM}&to=${TO}&timezone=${encodeURIComponent(ZONE)}`, sup(), floor);
+      const second = call(loaded.app, 'GET', `/proxy/agency/compare/options?campaign_id=${c0}&from=${DAYS[2]}&to=${TO}&timezone=${encodeURIComponent(ZONE)}`, sup(), floor);
       await waitersOnLock(2);
       const third = await query(body({ agent_ids: [agent(0).id], from: DAYS[2]!, trend: null }));
       expectRefusal(third, 'compare_busy');
-      // Both slots are held, and the cached answer is still served.
+      // An authored 429 says when to try again (the error mask's policy).
+      expect(third.headers['retry-after']).toBe(String(COMPARE_BUSY_RETRY_AFTER_SECONDS));
+      expect(third.json()).toMatchObject({ retry_after_seconds: COMPARE_BUSY_RETRY_AFTER_SECONDS });
+      // Both slots are held, and the cached answers are still served: the query's and the options' cohort.
+      const optionsHit = await call(loaded.app, 'GET', `/proxy/agency/compare/options?campaign_id=${c0}&from=${FROM}&to=${TO}&timezone=${encodeURIComponent(ZONE)}`, sup(), floor);
+      expect(optionsHit.statusCode).toBe(200);
       const hit = await query(cachedBody);
       expect(hit.statusCode).toBe(200);
       expect((hit.json() as AgencyCompareResponse).as_of).toBe(cached.as_of);
@@ -686,10 +692,23 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
       await new Promise((r) => setTimeout(r, 100));
       await lockWaitersAre(2);
       // The joiner and the options reader go: both statements are cancelled, both slots come back.
+      const { rows: waiting } = await q(`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+      expect(waiting).toHaveLength(2);
       joiner.drop();
       opts.drop();
       await Promise.all([joiner.done, opts.done]);
       await lockWaitersAre(0);
+      // A connection that was sent a cancel is destroyed, never handed to the next borrower: both
+      // backends end (a released connection would sit idle in the pool with its pid).
+      const pids = (waiting as Array<{ pid: number }>).map((r) => r.pid);
+      const deadline = Date.now() + 2000;
+      let alive: unknown[] = [];
+      do {
+        ({ rows: alive } = await q(`SELECT pid FROM pg_stat_activity WHERE pid = ANY($1::int[])`, [pids]));
+        if (alive.length === 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      } while (Date.now() < deadline);
+      expect(alive).toEqual([]);
       // Still under the lock: two fresh reads both get a slot and wait; a third is refused.
       const fresh1 = query(body({ agent_ids: [agent(2).id], from: DAYS[2]!, trend: null }));
       const fresh2 = query(body({ agent_ids: [agent(3).id], from: DAYS[2]!, trend: null }));

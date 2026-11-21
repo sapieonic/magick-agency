@@ -909,7 +909,9 @@ export type CompareReadRefusal = 'busy' | 'timed_out';
 export const agencyCompareReadSeconds = histogram<'read' | 'result'>(meter, 'agency_compare_read_seconds', {
   description: 'Seconds one Compare agents read took against the database, by read (query or options) and result (ok, timed_out, aborted (the client went away) or failed); cached answers are not timed',
   unit: 's',
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5],
+  // To 8 s: the whole-read deadline (3 s), the cancel's own connection (up to 2 s) and the grace a
+  // cancelled statement gets (1 s) end every read by about 6 s.
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8],
 });
 
 export const agencyCompareReadsRefusedTotal = counter<'reason'>(meter, 'agency_compare_reads_refused_total', {
