@@ -62,8 +62,11 @@ export function myDayWindow(timezone: string, now: Date): MyDayWindow {
   return { timezone: 'UTC', start: localDayStart('UTC', now)!, end: localDayEnd('UTC', now)! };
 }
 
-/** The catalog a campaign's outcomes are drawn from: its own, or the default when it stores none. */
-function effectiveCatalog(catalog: readonly AgencyDisposition[] | null | undefined): readonly AgencyDisposition[] {
+/**
+ * The catalog a campaign's outcomes are drawn from: its own, or the default when it stores none.
+ * Compare agents reads a campaign's outcome codes through it too (`api/routes/proxy-agency-compare/`).
+ */
+export function effectiveCatalog(catalog: readonly AgencyDisposition[] | null | undefined): readonly AgencyDisposition[] {
   return Array.isArray(catalog) && catalog.length > 0 ? catalog : AGENCY_DEFAULT_DISPOSITION_CATALOG;
 }
 
