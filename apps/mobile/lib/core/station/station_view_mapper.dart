@@ -1,5 +1,6 @@
 import 'package:agency_wire/agency_wire.dart' as wire;
 
+import '../../features/station/logic/format.dart' show maskFactPhone;
 import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
 import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
@@ -35,6 +36,7 @@ class StationViewMapper {
   List<wire.Disposition>? _callCatalog;
   wire.ContextDisplay? _callDisplay;
   bool _callRecording = false;
+  bool _callMasked = false;
   CallView? _call;
 
   // lists
@@ -178,30 +180,37 @@ class StationViewMapper {
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
       help: help,
-      script: _scriptFor(bootstrap?.script),
+      script: _scriptFor(bootstrap?.script, bootstrap?.contextDisplay),
       maskPhone: bootstrap?.masksPhone ?? false,
       readyCount: readyCount,
     );
   }
 
   wire.AgentScript? _scriptSource;
+  wire.ContextDisplay? _scriptDisplay;
   ScriptView? _script;
 
-  /// The campaign's script (BE-8), as plain lines; null without one.
-  ScriptView? _scriptFor(wire.AgentScript? script) {
-    if (identical(script, _scriptSource)) return _script;
+  /// The campaign's script (BE-8), as plain lines, with the `{key}`s it may use (AS19, from the
+  /// campaign's `context_display`); null without one.
+  ScriptView? _scriptFor(wire.AgentScript? script, wire.ContextDisplay? display) {
+    if (identical(script, _scriptSource) && identical(display, _scriptDisplay)) return _script;
     _scriptSource = script;
+    _scriptDisplay = display;
     if (script == null) return _script = null;
     return _script = ScriptView(
       opening: script.opening?.trim(),
       steps: List.unmodifiable([for (final s in script.steps) s.text.trim()]),
+      placeholders: display == null ? legacyScriptPlaceholders : List.unmodifiable(display.scriptPlaceholders),
+      factLabels: Map.unmodifiable({for (final f in display?.facts ?? const <wire.FactField>[]) f.key: f.label}),
     );
   }
 
   /// A supervisor's tile picture (BE-13) by its name; null for none.
   static TilePicture? pictureOf(wire.TileIcon? icon) => icon == null ? null : TilePicture.values.asNameMap()[icon.name];
 
-  /// The panel's typed facts (BE-6) as the card shows them; null when the server sent none.
+  /// The panel's typed facts (BE-6) as the card shows them; null when the server sent none. A
+  /// tile's name is the fact's label, else its column (AS19); a type this build does not know is
+  /// text.
   static FactsView? factsOf(wire.CustomerFacts? facts) {
     if (facts == null) return null;
     String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
@@ -211,16 +220,23 @@ class StationViewMapper {
       tiles: List.unmodifiable([
         for (final t in facts.tiles)
           FactTileView(
-            label: t.column,
+            label: t.name,
+            column: t.column,
             raw: t.raw,
             kind: switch (t.type) {
               wire.ContextFieldType.money => FactKind.money,
               wire.ContextFieldType.date => FactKind.date,
-              _ => FactKind.text,
+              wire.ContextFieldType.number => FactKind.number,
+              wire.ContextFieldType.phone => FactKind.phone,
+              wire.ContextFieldType.yesNo => FactKind.yesNo,
+              wire.ContextFieldType.text || wire.ContextFieldType.unknown => FactKind.text,
             },
             parsed: t.value,
             amountDue: t.role == wire.FactTileRole.amountDue,
             dueDate: t.role == wire.FactTileRole.dueDate,
+            key: t.key,
+            highlight: t.highlight,
+            chosen: t.label != null || t.key != null,
           ),
       ]),
     );
@@ -457,6 +473,7 @@ class StationViewMapper {
         : null;
     final display = bootstrap?.contextDisplay;
     final recording = bootstrap?.recordCalls ?? false;
+    final masked = bootstrap?.masksPhone ?? false;
     if (_call != null &&
         identical(attempt, _callAttempt) &&
         bridgedAt == _callBridgedAt &&
@@ -464,16 +481,19 @@ class StationViewMapper {
         _offset == _callOffset &&
         identical(catalog, _callCatalog) &&
         identical(display, _callDisplay) &&
-        recording == _callRecording) {
+        recording == _callRecording &&
+        masked == _callMasked) {
       return _call;
     }
-    final sameAttempt = identical(attempt, _callAttempt) && identical(display, _callDisplay) && _call != null;
+    final sameAttempt =
+        identical(attempt, _callAttempt) && identical(display, _callDisplay) && masked == _callMasked && _call != null;
     _callAttempt = attempt;
     _callBridgedAt = bridgedAt;
     _callCountdown = seconds;
     _callCatalog = catalog;
     _callDisplay = display;
     _callRecording = recording;
+    _callMasked = masked;
 
     // Only the timer-ish fields moved: keep the resolved contact as it is.
     final previous = _call;
@@ -502,7 +522,19 @@ class StationViewMapper {
     _callOffset = _offset;
 
     final resolved = resolveContextFields(attempt.context, display);
-    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: f.isEmpty ? '' : f.value);
+    // A column the campaign reads as a phone number follows its number setting (AS9, AS19): hidden
+    // in Details too, never only on the card.
+    final phoneColumns = {
+      for (final e in display?.types?.entries ?? const <MapEntry<String, wire.ContextFieldType>>[])
+        if (e.value == wire.ContextFieldType.phone) e.key.trim().toLowerCase(),
+    };
+    String shown(ResolvedField f) {
+      if (f.isEmpty) return '';
+      if (masked && phoneColumns.contains(f.label.trim().toLowerCase())) return maskFactPhone(f.value);
+      return f.value;
+    }
+
+    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: shown(f));
     return _call = CallView(
       attemptId: attempt.attemptId,
       phoneE164: attempt.phoneE164,

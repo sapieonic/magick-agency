@@ -314,16 +314,37 @@ class CallLaterTag {
   int get hashCode => Object.hash(dueAt, bookedByMe);
 }
 
-/// How a fact's value reads (the campaign's column type, BE-6).
-enum FactKind { text, money, date }
+/// How a fact's value reads (the campaign's column type, BE-6; number, phone and yes / no are
+/// AS19's). A type this build does not know reads as [text].
+enum FactKind { text, money, date, number, phone, yesNo }
 
-/// One fact tile: the column's name as the label, the value as uploaded, and, for a typed column
-/// the server could read, the parsed value (money a decimal string, a date `YYYY-MM-DD`).
+/// One fact tile: its name, the value as uploaded, and, for a typed column the server could read,
+/// the parsed value (money and number a decimal string, a date `YYYY-MM-DD`, a phone its digits,
+/// yes / no `yes` or `no`).
+///
+/// With the campaign's chosen facts (AS19, [chosen]) the name is the supervisor's ([label]), the
+/// tile carries its script [key], and one may be the [highlight]; without them (BE-6) [label] is
+/// the column's header and [column] the same.
 @immutable
 class FactTileView {
-  const FactTileView({required this.label, required this.raw, required this.kind, this.parsed, this.amountDue = false, this.dueDate = false});
+  const FactTileView({
+    required this.label,
+    required this.raw,
+    required this.kind,
+    this.parsed,
+    this.amountDue = false,
+    this.dueDate = false,
+    String? column,
+    this.key,
+    this.highlight = false,
+    this.chosen = false,
+  }) : column = column ?? label;
 
+  /// The tile's name: the fact's label, else its column (the wire's `label ?? column`).
   final String label;
+
+  /// The roster column the value comes from, as in its header.
+  final String column;
   final String raw;
   final FactKind kind;
   final String? parsed;
@@ -334,17 +355,31 @@ class FactTileView {
   /// The tile plays the due-date role (`{due_date}`).
   final bool dueDate;
 
+  /// AS19: the fact's script key (`{key}`); null on the BE-6 path.
+  final String? key;
+
+  /// AS19: the campaign's highlighted fact: first, the full row, in the call colour.
+  final bool highlight;
+
+  /// AS19: a fact the supervisor chose (the server sent its label or key): the card draws it in
+  /// the 2 × 2 grid, empty values included. False: the BE-6 tile, drawn as before.
+  final bool chosen;
+
   @override
   bool operator ==(Object other) =>
       other is FactTileView &&
       other.label == label &&
+      other.column == column &&
       other.raw == raw &&
       other.kind == kind &&
       other.parsed == parsed &&
       other.amountDue == amountDue &&
-      other.dueDate == dueDate;
+      other.dueDate == dueDate &&
+      other.key == key &&
+      other.highlight == highlight &&
+      other.chosen == chosen;
   @override
-  int get hashCode => Object.hash(label, raw, kind, parsed, amountDue, dueDate);
+  int get hashCode => Object.hash(label, column, raw, kind, parsed, amountDue, dueDate, key, highlight, chosen);
 }
 
 /// The customer's name, place and fact tiles, as the server read them (BE-6).
@@ -355,8 +390,11 @@ class FactsView {
   final String? name;
   final String? place;
 
-  /// In hero order, at most four.
+  /// In hero order, at most four (with chosen facts, AS19: the list's order, the highlight first).
   final List<FactTileView> tiles;
+
+  /// AS19: the campaign chose the card's facts; the card draws them in its 2 × 2 grid.
+  bool get chosen => tiles.any((t) => t.chosen);
 
   static const _eq = ListEquality<FactTileView>();
 
@@ -366,21 +404,39 @@ class FactsView {
   int get hashCode => Object.hash(name, place, tiles.length);
 }
 
+/// The `{placeholders}` a campaign without chosen facts may use (the contract's
+/// `AGENCY_SCRIPT_PLACEHOLDERS`).
+const legacyScriptPlaceholders = <String>['name', 'place', 'amount_due', 'due_date', 'agent_name', 'campaign_name'];
+
 /// The campaign's script (BE-8): the opening line ("First, say this") and the numbered steps
 /// ("What to say"), placeholders still in braces; the screen fills them for the call on screen.
 @immutable
 class ScriptView {
-  const ScriptView({this.opening, this.steps = const []});
+  const ScriptView({this.opening, this.steps = const [], this.placeholders = legacyScriptPlaceholders, this.factLabels = const {}});
 
   final String? opening;
   final List<String> steps;
 
+  /// The `{key}`s this campaign's script may use (AS19: the fixed four and the chosen facts' keys;
+  /// else [legacyScriptPlaceholders]). Any other `{word}` is shown as written.
+  final List<String> placeholders;
+
+  /// AS19: each chosen fact's name by its key, for "`<name> not given`" when the customer has no
+  /// tile for it.
+  final Map<String, String> factLabels;
+
   static const _eq = ListEquality<String>();
+  static const _eqMap = MapEquality<String, String>();
 
   @override
-  bool operator ==(Object other) => other is ScriptView && other.opening == opening && _eq.equals(other.steps, steps);
+  bool operator ==(Object other) =>
+      other is ScriptView &&
+      other.opening == opening &&
+      _eq.equals(other.steps, steps) &&
+      _eq.equals(other.placeholders, placeholders) &&
+      _eqMap.equals(other.factLabels, factLabels);
   @override
-  int get hashCode => Object.hash(opening, steps.length);
+  int get hashCode => Object.hash(opening, steps.length, placeholders.length);
 }
 
 /// Why the last call ended, in the station's words (as the console's `stationCopy.ts`).

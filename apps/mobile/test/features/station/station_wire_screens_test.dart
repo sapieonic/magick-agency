@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/script_fill.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/logic/facts.dart' show factText, factTilesInOrder;
 import 'package:magick_agency_agent/features/station/logic/format.dart';
-import 'package:magick_agency_agent/features/station/parts/ringing_view.dart' show factText, factTilesInOrder;
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 
 import 'station_harness.dart';
@@ -57,10 +57,11 @@ void main() {
       expect(factText(const FactTileView(label: 'Dues', raw: 'Rs twelve', kind: FactKind.money)), 'Rs twelve');
     });
 
-    test('script placeholders by the contract\'s rule: unknown ones stay, missing values drop out', () {
-      const v = (name: 'Sunita', place: null, amountDue: '₹12,500', dueDate: null, agentName: 'Ravi', campaignName: 'EMI');
-      expect(fillScript('Namaste {name}, {agent_name} here. {amount_due} by {due_date}. {loan}', v),
-          'Namaste Sunita, Ravi here. ₹12,500 by . {loan}');
+    test('script placeholders by the contract\'s rule: unknown ones stay, a missing customer value is "not given"', () {
+      const v = ScriptValues(name: 'Sunita', agentName: 'Ravi', campaignName: 'EMI', facts: {'amount_due': ScriptFact(label: 'Amount Due', value: '₹12,500')});
+      final runs = fillScriptRuns('Namaste {name}, {agent_name} here. {amount_due} by {due_date}. {loan}', legacyScriptPlaceholders, v);
+      expect(shownScript(runs), 'Namaste Sunita, Ravi here. ₹12,500 by Due date not given. {loan}');
+      expect(spokenScript(runs), 'Namaste Sunita, Ravi here. ₹12,500 by. {loan}');
     });
   });
 
