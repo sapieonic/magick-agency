@@ -1806,6 +1806,75 @@ the row a transition locks). Catalog-only on a small table after `SET LOCAL lock
 **Down** drops the column. **Tests**: `test/integration/db/agent-station-migrations.test.ts` and the
 down → up inventory suite.
 
+### 0063 — `migrations/0063_campaign_archive.sql`
+
+Archived campaigns (AR1–AR7). **`agency_campaigns.archived_at`** `TIMESTAMPTZ NULL` (NULL = not
+archived), **`archived_by_user_id`** `UUID NULL` and **`archived_by_name`** `VARCHAR(255) NULL` (who
+archived it, the same snapshot pair as `last_transition_by_*`), written together by the archive route
+and cleared together by restore. Archiving is not a status: the campaign stays `draft` or `stopped`.
+**`ck_agency_campaign_archived_status`** `CHECK (archived_at IS NULL OR status IN ('draft','stopped'))`,
+added validated (the table is small and every row is NULL), backs the routes' refusals and
+`transitionStatus`'s `archived_at IS NULL`: an archived campaign cannot be started. No index: the
+Campaigns list reads an account's few campaigns. Catalog-only after `SET LOCAL lock_timeout = '10s'`.
+**Down** drops the CHECK and the columns. **Tests**: `test/integration/db/campaign-archive-migration.test.ts`
+and the down → up inventory suite.
+
+### 0064 — `migrations/0064_compare_views.sql`
+
+Compare agents' saved views (docs/compare-agents.md; wire shape `AgencyCompareView`,
+`packages/contracts/src/api/agency/compare.ts`). **`agency_compare_views`** (new): `id`, `tenant_id`
+(FK `tenants` ON DELETE CASCADE), `account_id` (no FK, the context account), `owner_user_id` (no FK,
+as the actor columns: only the owner edits or deletes), `name` (CHECK **`ck_agency_compare_views_name`**:
+trimmed, 1–80 characters), `lens` (CHECK **`ck_agency_compare_views_lens`**: `collections`, `sales`,
+`verification`), `metrics` JSONB (CHECK **`ck_agency_compare_views_metrics`**: an array of 1–6 objects,
+the metric refs; the server validates each against the contract and the campaign's catalog), `trend`
+JSONB NULL (CHECK **`ck_agency_compare_views_trend`**: an object or NULL), `campaign_id` NULL (FK
+`agency_campaigns` ON DELETE CASCADE, the house rule for a campaign's satellite rows: a view's outcome
+sets name that campaign's codes), `shared` (default false), `is_campaign_default` (default false; CHECK
+**`ck_agency_compare_views_default`**: needs `campaign_id` and `shared`), `created_at`, `updated_at` (no
+trigger; the repository sets it). **`uq_agency_compare_views_campaign_default`** `(campaign_id) WHERE
+is_campaign_default`: at most one default per campaign (the server clears the old one in the same
+transaction). **`idx_agency_compare_views_owner`** `(tenant_id, account_id, owner_user_id, updated_at
+DESC)` (the caller's own, and the 50-per-owner limit's count), **`idx_agency_compare_views_shared`**
+`(tenant_id, account_id, updated_at DESC) WHERE shared`, **`idx_agency_compare_views_campaign`**
+`(campaign_id) WHERE campaign_id IS NOT NULL` (the list by campaign, the cascade). A new, empty table;
+the FK takes SHARE ROW EXCLUSIVE on `agency_campaigns`, so the Up starts with `SET LOCAL lock_timeout =
+'10s'`. **Down** drops the table (every saved view is lost). **Tests**:
+`test/integration/db/compare-views-migration.test.ts` (the columns, every CHECK both ways, the unique
+index, both cascades, the listing indexes and their plans, the lock timeout, down then up) and the down →
+up inventory suite.
+
+### 0065 — `migrations/0065_session_events_offline_index.sql`
+
+Compare agents' trend days (docs/compare-agents.md §7). **`idx_agency_session_events_offline`**
+`(session_id, at) WHERE to_state = 'offline' OR from_state = 'offline'` on
+`agency_agent_session_events`: a session's offline boundaries, by session. A live session goes
+`offline` without `left_at` and the agent's next join reuses the row, so a session row is not one
+stretch of logged-in time; the trend's `COMPARE_LOGGED_IN_DAYS_SQL` finds the online spans from the
+session's start and these boundaries (two or three a session a day) instead of every state change.
+Its predicate repeats the index's (`OFFLINE_BOUNDARY_EVENT_SQL`). `CREATE INDEX IF NOT EXISTS` after
+`SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first on a large table;
+an invalid index left under the name by a failed concurrent build fails the migration. **Down** drops
+it. **Tests**: `test/integration/db/session-events-offline-index-migration.test.ts` (the definition,
+a statement repeating the predicate uses it, the invalid-index refusal, down then up), the server's
+`test/integration/api/compare-agents.test.ts` (the days, open sessions with offline gaps) and the
+down → up inventory suite.
+
+### 0066 — `migrations/0066_session_events_break_overrun_index.sql`
+
+Compare agents' breaks over their limit (docs/compare-agents.md §7).
+**`idx_agency_session_events_break_overrun`** `(campaign_id, at) WHERE break_overrun_seconds IS NOT
+NULL` on `agency_agent_session_events`: the events that ended a break over its limit (0060's column,
+at most one per break), by campaign and time. `COMPARE_BREAK_OVERRUNS_SQL` read them through
+`idx_agency_session_events_campaign_at`, every state change of the window (on a month of 100 agents,
+1.4M events: 86 ms and 28,000 buffers; on this index 1.8 ms and 3,100). `CREATE INDEX IF NOT EXISTS`
+after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first on a large
+table; an invalid index left under the name by a failed concurrent build fails the migration.
+**Down** drops it. **Tests**: `test/integration/db/session-events-break-overrun-index-migration.test.ts`
+(the definition and comment, a statement repeating the predicate uses it, the invalid-index refusal,
+down then up), the server's `test/integration/agency/compare-break-overrun-index.test.ts` (the read's
+own statement is planned on it) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

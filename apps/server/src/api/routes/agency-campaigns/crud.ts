@@ -59,6 +59,18 @@ export function parseStatusFilter(raw: unknown): AgencyCampaignStatus[] | undefi
   return parts;
 }
 
+/**
+ * The list route's `archived` filter (AR3): `false` when absent or blank (the campaigns that are
+ * not archived), `true` for `true` (only the archived ones), `'invalid'` otherwise. A typo is a
+ * 400, never the other list.
+ */
+export function parseArchivedFilter(raw: unknown): boolean | 'invalid' {
+  if (raw === undefined || raw === '') return false;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return 'invalid';
+}
+
 /** The statuses in which `assignment_mode` may change (CA10): before the first dial, or paused. */
 const ASSIGNMENT_MODE_EDITABLE: ReadonlySet<AgencyCampaignStatus> = new Set(['draft', 'paused']);
 
@@ -239,17 +251,24 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
   // It narrows `total` too, so a caller can page through just those. An unknown
   // value is a 400 rather than an empty list: a typo must not read as "nothing
   // is running".
+  //
+  // `archived` (AR3): absent or `false` lists the campaigns that are not archived, `true` only the
+  // archived ones (newest archived first). It narrows `total` as `status` does.
   app.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await gate(request, reply))) return reply;
-    const q = request.query as { limit?: string; offset?: string; status?: string };
+    const q = request.query as { limit?: string; offset?: string; status?: string; archived?: string };
     const limit = Math.min(Math.max(Number(q?.limit ?? 50) || 50, 1), 100);
     const offset = Math.max(Number(q?.offset ?? 0) || 0, 0);
     const statuses = parseStatusFilter(q?.status);
     if (statuses === 'invalid') {
       return replyValidationFailed(reply, { status: `must be a comma-separated list of: ${Object.keys(CAMPAIGN_STATUSES).join(', ')}` });
     }
+    const archived = parseArchivedFilter(q?.archived);
+    if (archived === 'invalid') {
+      return replyValidationFailed(reply, { archived: 'must be true or false' });
+    }
     const { rows, total } = await agencyCampaignRepository.list(
-      getTenantId(request), getAccountId(request), limit, offset, statuses,
+      getTenantId(request), getAccountId(request), limit, offset, statuses, archived,
     );
     return reply.send({
       campaigns: rows.map(formatAgencyCampaignResponse),

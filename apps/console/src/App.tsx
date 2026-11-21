@@ -67,6 +67,7 @@ const NotificationSettingsPage = lazy(() => import('./pages/settings/Notificatio
 const AnalysisProfilesPage = lazy(() => import('./pages/settings/AnalysisProfilesPage'));
 const AgencyCampaignBuilderPage = lazy(() => import('./pages/campaigns/agency/CampaignBuilderPage'));
 const AgencyCampaignsPage = lazy(() => import('./pages/agency/AgencyCampaignsPage'));
+const AgencyArchivedCampaignsPage = lazy(() => import('./pages/agency/AgencyArchivedCampaignsPage'));
 const AgencyAnalyticsPage = lazy(() => import('./pages/agency/AgencyAnalyticsPage'));
 const AgentHomePage = lazy(() => import('./pages/agency/AgentHomePage'));
 const AgentPerformancePage = lazy(() => import('./pages/agency/AgentPerformancePage'));
@@ -98,6 +99,7 @@ const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
 );
 const ReportsPage = lazy(() => import('./pages/agency/ReportsPage'));
+const CompareAgentsPage = lazy(() => import('./pages/agency/CompareAgentsPage'));
 const ReportRunPage = lazy(() => import('./pages/agency/ReportRunPage'));
 const AgentReportsPage = lazy(() =>
   import('./pages/agency/ReportsPage').then((m) => ({ default: m.AgentReportsPage })),
@@ -571,6 +573,8 @@ export default function App() {
                   <Route path="callbacks" element={<CallbacksPage />} />
                   <Route path="campaigns" element={<AgencyCampaignsPage />} />
                   <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
+                  {/* Archived campaigns (AR1–AR7): a static segment, so it outranks `campaigns/:id`. */}
+                  <Route path="campaigns/archived" element={<AgencyArchivedCampaignsPage />} />
                   {/*
                     The detail page's five panels (Overview, Calls, Agents,
                     Callbacks, Health), each its own URL so a section survives a
@@ -588,8 +592,8 @@ export default function App() {
                     (`CampaignLandingRedirect`), so no old link lands on a tab that
                     403s.
 
-                    `campaigns/new` is declared above and wins on rank (a static
-                    segment outranks `:id`), so nothing here shadows it.
+                    `campaigns/new` and `campaigns/archived` are declared above and win on rank
+                    (a static segment outranks `:id`), so nothing here shadows them.
                   */}
                   <Route path="campaigns/:id" element={<CampaignLandingRedirect />} />
                   <Route path="campaigns/:id/performance" element={<CampaignLandingRedirect />} />
@@ -688,6 +692,15 @@ export default function App() {
                   <Route
                     path="reports/:runId"
                     element={<RequireFlag flag="agency_reports_enabled"><ReportRunPage /></RequireFlag>}
+                  />
+                  {/*
+                    Compare agents (`docs/compare-agents.md`): Reports' tab for supervisors, behind
+                    `agency_compare_enabled` on top of the subtree's gates. The page checks
+                    `agency.supervise` (CP3), the floor of every compare route.
+                  */}
+                  <Route
+                    path="compare"
+                    element={<RequireFlag flag="agency_compare_enabled"><CompareAgentsPage /></RequireFlag>}
                   />
                   {/*
                     The soft phone's supervisor surfaces (`docs/softphone.md` §7):

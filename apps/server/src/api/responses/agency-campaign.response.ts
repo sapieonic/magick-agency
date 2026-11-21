@@ -63,9 +63,11 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 export type AgencyCampaignResponse =
   Omit<
     AgencyCampaignRecord,
-    'last_transition_by_user_id' | 'last_transition_by_name' | 'retry_idempotency_key'
+    | 'last_transition_by_user_id' | 'last_transition_by_name' | 'retry_idempotency_key'
+    | 'archived_by_user_id' | 'archived_by_name'
   >
-  & { last_transition_by: AgencyCampaignActor | null };
+  // `archived_by` is folded the same way and for the same reason (0063, AR5): who archived it.
+  & { last_transition_by: AgencyCampaignActor | null; archived_by: AgencyCampaignActor | null };
 
 /**
  * Fold one campaign row into its wire shape.
@@ -85,10 +87,13 @@ export function formatAgencyCampaignResponse(row: AgencyCampaignRecord): AgencyC
     // Dropped, not renamed. See the type's header — an opaque replay token is
     // not a campaign field, and `SELECT *` puts it on this object.
     retry_idempotency_key: _retryIdempotencyKey,
+    archived_by_user_id: archivedById,
+    archived_by_name: archivedByName,
     ...rest
   } = row;
   return {
     ...rest,
     last_transition_by: userId ? { user_id: userId, name: name ?? null } : null,
+    archived_by: archivedById ? { user_id: archivedById, name: archivedByName ?? null } : null,
   };
 }

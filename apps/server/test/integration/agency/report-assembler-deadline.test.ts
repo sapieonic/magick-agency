@@ -153,6 +153,24 @@ describe('the assembler deadline stops the detail streaming and releases the cur
     await vi.waitFor(async () => { expect(await held()).toEqual({ checkedOut: 0, inTransaction: 0, cursorStatements: 0 }); }, { timeout: 2_000 });
   });
 
+  it('the cancel names the backend\'s own pid (pg_backend_pid), never processID: a pooler\'s number reaches nothing', async () => {
+    // Behind the Supabase session pooler `processID` is the pooler's own integer, not a Postgres pid.
+    // Every client the pool hands out says so here; the cancel must still stop the statement.
+    const bogus = (client: object) => { (client as { processID?: number }).processID = 2_147_483_000; };
+    pool().on('acquire', bogus);
+    try {
+      const run = await queued();
+      const started = Date.now();
+      const outcomes = await assembler(cursorBuilder(`SELECT 1 AS n, pg_sleep(30)::text AS pad`), drainingStorage(), 500).drain(() => false);
+      expect(outcomes).toEqual([{ runId: run.id, outcome: 'failed', code: 'assembly_failed' }]);
+      // Cancelled by the real pid: well short of the statement's 30 s.
+      expect(Date.now() - started).toBeLessThan(5_000);
+      await vi.waitFor(async () => { expect(await held()).toEqual({ checkedOut: 0, inTransaction: 0, cursorStatements: 0 }); }, { timeout: 2_000 });
+    } finally {
+      pool().off('acquire', bogus);
+    }
+  });
+
   it('a claim taken over during the stalled upload: the deadline\'s failure is refused by the fence', async () => {
     const run = await queued();
     const draining = assembler(cursorBuilder(BIG), stalledStorage(), 1_000).drain(() => false);

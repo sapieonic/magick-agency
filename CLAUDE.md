@@ -17,6 +17,7 @@ only; never cite another system, repo or external design doc.
 | `docs/seams.md` | you move a file, add config, a route plugin, a bootstrap or touch a seam |
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
 | `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
+| `docs/compare-agents.md` | you work on the Compare agents tab of Reports (lenses, the metric catalog, the findings rules, its read) |
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns) |
 | `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/listening.md` | you work on live call listening (the live calls list, the listener tap and socket, listen sessions) |

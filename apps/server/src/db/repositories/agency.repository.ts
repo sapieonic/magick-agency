@@ -351,3 +351,11 @@ export {
 export type { InboundSummaryAgentRow, InboundSummaryTotalsRow } from './agency/inbound-report.repository.js';
 // What a roster import finds already in its campaign (IM3, src/agency/agency-ingest-screen.ts).
 export { AgencyRosterPresenceRepository, agencyRosterPresenceRepository } from './agency/roster-presence.repository.js';
+// Compare agents (docs/compare-agents.md): the roster's two statements run on the read's own client,
+// the cohort's other sources (one statement each for the whole cohort), and the saved views.
+export { rosterAttemptTotals, rosterOccupancyTotals } from './agency/agent-roster-stats.js';
+export type { RosterAttemptTotalsRow, RosterQueryable } from './agency/agent-roster-stats.js';
+export { AgencyCompareReadRepository, agencyCompareReadRepository, ZERO_CALLBACKS } from './agency/compare-reads.js';
+export type { CompareCallbackClasses, CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
+export { AgencyCompareViewRepository, agencyCompareViewRepository } from './agency/compare-view.repository.js';
+export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';

@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closePool, initDbPool } from '@magick-agency/db';
 import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js';
-import { postgresKnowsZone, postgresZoneName, resetKnownZonesForTests } from '../../../src/agency/reports/zone.js';
+import { postgresKnowsZone, postgresZoneName, resetKnownZonesForTests } from '../../../src/agency/zone.js';
 
 /**
- * The report zone lookup (`agency/reports/zone.ts`: the routes' second zone check and the dataset
+ * The report zone lookup (`agency/zone.ts`: the routes' second zone check and the dataset
  * builders' `resolveReportZone`) against the real `pg_timezone_names`: a zone Postgres knows
  * (matched as `AT TIME ZONE` matches, ignoring case) and its name for it, and names it does not
  * hold.

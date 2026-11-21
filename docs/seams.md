@@ -57,6 +57,14 @@ with media workers the station directory's (`station.send` over IPC), both typed
 Beside it, `api/routes/proxy-agency-callbacks.routes.ts`
 (decisions LF1, LF22): the account's `GET /proxy/agency/callbacks`, with the same hooks and gate,
 served by the public layer from SQL (no `callCore`), its query validated with its own 400.
+`api/routes/proxy-agency-compare.routes.ts` (Compare agents, docs/compare-agents.md §8) is the same
+kind: `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options` and the saved views
+(`GET|POST /compare/views`, `PATCH|DELETE /compare/views/:id`), its hooks the session, the tenant
+context and `Cache-Control: no-store`, `agency.supervise` then the `agency_compare_enabled` flag
+(each route's own preHandlers, `compareGuards` in `proxy-agency-compare/shared.ts`, before any body is
+read), served from SQL by `agency/compare/` (no `callCore`), its ids validated by its own routes (no wrapper
+id guard). It owns one `CompareReads` per registration (the read's caches and its limiter: per
+tenant and process-wide), cleared when the app closes. No config key, bootstrap or seam is added.
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:

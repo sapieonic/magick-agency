@@ -351,9 +351,28 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency floor assist: agents ask for help from their station, and supervisors send them messages (Talk to agent, Send reminder)',
   },
+
+  // ── Compare agents (docs/compare-agents.md) ──────────────────────────────────
+  //
+  // Gates every `/proxy/agency/compare/*` route (`403 feature_disabled` when off): the read, the
+  // options and the saved views, and the console's Compare agents tab on Reports. Separate from
+  // `agency_reports_enabled` because it runs in the primary against the live database (CP6), with
+  // its own guards, and a tenant gets it on its own once those are watched. Off by default: a
+  // super-admin turns it on per tenant or account with an override row. Client-exposed: the
+  // console shows or hides the tab.
+  agency_compare_enabled: {
+    key: 'agency_compare_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_COMPARE', // staging: FF_AGENCY_COMPARE=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides Reports' Compare agents tab
+    owner: 'voice',
+    description: 'Agency compare agents: supervisors compare up to three agents of a campaign against its other agents, with findings',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The twelve agency flag keys. */
+/** The thirteen agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -369,6 +388,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_live_listen_enabled',
   'agency_live_listen_unrecorded',
   'agency_floor_assist_enabled',
+  'agency_compare_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

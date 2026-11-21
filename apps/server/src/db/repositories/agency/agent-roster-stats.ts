@@ -18,22 +18,51 @@ import {
 // each of the five call sites below — see the module for why a `0` on an empty
 // denominator is the failure this exists to prevent.
 import { ratePct, ratio } from '@magick-agency/domain/rates';
-// The roster read adds its own three: the ranking rule (nulls last both ways,
-// `agent_user_id` as the tiebreaker), the percentile rule, and the parsed params.
-// All three are pure and live there so they can be exercised without a pool — see
-// `roster()` for why the ranking cannot happen in SQL at all.
+// The roster read adds its own two: the ranking rule (nulls last both ways,
+// `agent_user_id` as the tiebreaker) and the parsed params. Both are pure and live
+// there so they can be exercised without a pool — see `roster()` for why the ranking
+// cannot happen in SQL at all. The percentile rule is the domain's `cohortPercentiles`
+// (`percentile_cont`), the one Compare agents draws its band with, so the two cannot drift.
+import { cohortPercentiles } from '@magick-agency/domain/agent-compare/percentiles';
 import {
   foldOccupancy,
-  rosterPercentiles,
   sortRosterRows,
   zeroOccupancy,
   type AgentRosterParams,
 } from '../../../agency/agent-record.js';
-import { AGENCY_ATTEMPT_METRICS_SQL, occupancyIntervalsCtes, readAttemptMetrics, readConnectCounts } from './sql-fragments.js';
+import {
+  AGENCY_ATTEMPT_METRICS_SQL,
+  MEASURED_WRAPUP_ATTEMPT_SQL,
+  occupancyIntervalsCtes,
+  readAttemptMetrics,
+  readConnectCounts,
+} from './sql-fragments.js';
 import { params } from './query-builders.js';
 import { hasRateDenominator } from './projections.js';
 
 const log = createChildLogger({ component: 'agency-repository' });
+
+/**
+ * What the roster's two statements run on: the pool by default, or a client already in a
+ * transaction (Compare agents, `agency/compare/read.ts`, runs both inside its read-only snapshot
+ * under its own `statement_timeout`). Anything with pg's `query`.
+ */
+export type RosterQueryable = Pick<ReturnType<typeof getPool>, 'query'>;
+
+/** One {@link rosterAttemptTotals} row: an agent who dialled in the window. */
+export interface RosterAttemptTotalsRow {
+  agent_user_id: string;
+  attempts: number; connected: number; successes: number;
+  talk_seconds: number; wrapup_seconds: number;
+  human_connects: number; first_dials: number;
+  /**
+   * The attempts `wrapup_seconds` is summed over (`MEASURED_WRAPUP_ATTEMPT_SQL`, the same filter):
+   * the denominator of an average wrap-up. Not on the roster's wire row; Compare agents'
+   * `choose_time` divides by it (docs/compare-agents.md §3).
+   */
+  measured_wrapups: number;
+  campaigns: number; last_dialed_at: string | null;
+}
 
 /**
  * ── THE ROSTER: every agent's performance in ONE read ─────────────────────
@@ -285,31 +314,30 @@ export async function agentRoster(
  * So the roster's attempt aggregate needs no new index, and `idx_agency_attempts_agent_dialed` stays the single-agent read's index,
  * not this one's.
  */
-async function rosterAttemptTotals(
+export async function rosterAttemptTotals(
   scope: { tenantId: string; accountId: string },
   p: AgentRosterParams,
-): Promise<{
-  agent_user_id: string;
-  attempts: number; connected: number; successes: number;
-  talk_seconds: number; wrapup_seconds: number;
-  human_connects: number; first_dials: number;
-  campaigns: number; last_dialed_at: string | null;
-}[]> {
+  db: RosterQueryable = getPool(),
+): Promise<RosterAttemptTotalsRow[]> {
   const bind = params();
   for (const value of [p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
   const campaignFilter = p.campaignId
     ? `\n          AND a.campaign_id = ${bind.add(p.campaignId)}::uuid`
     : '';
 
-  const { rows } = await getPool().query<{
+  const { rows } = await db.query<{
     agent_user_id: string;
     attempts: string; connected: string; successes: string;
     talk_seconds: string; wrapup_seconds: string;
     human_connects: string; first_dials: string;
+    measured_wrapups: string;
     campaigns: string; last_dialed_at: string | null;
   }>(
     `SELECT s.agent_user_id,
               ${AGENCY_ATTEMPT_METRICS_SQL},
+              -- The count behind wrapup_seconds: the same MEASURED filter, so their
+              -- quotient is an average over exactly the wrap-ups summed.
+              COUNT(*) FILTER (WHERE ${MEASURED_WRAPUP_ATTEMPT_SQL})::text AS measured_wrapups,
               -- Distinct CAMPAIGNS dialled, not sessions joined: a session is per
               -- shift, so an agent who worked one campaign across three days would
               -- otherwise read as three campaigns.
@@ -337,6 +365,7 @@ async function rosterAttemptTotals(
     agent_user_id: r.agent_user_id,
     ...readAttemptMetrics(r),
     ...readConnectCounts(r),
+    measured_wrapups: Number(r.measured_wrapups),
     campaigns: Number(r.campaigns),
     last_dialed_at: r.last_dialed_at,
   }));
@@ -381,10 +410,11 @@ async function rosterAttemptTotals(
  * `agent_user_id` is opaque to the dialer tables and could legitimately collide across
  * tenants.
  */
-async function rosterOccupancyTotals(
+export async function rosterOccupancyTotals(
   scope: { tenantId: string; accountId: string },
   p: AgentRosterParams,
   agentUserIds: readonly string[],
+  db: RosterQueryable = getPool(),
 ): Promise<{ agent_user_id: string; state: string; seconds: number }[]> {
   // Bound in the SAME ORDER as `occupancyBuckets`: the agent selector first,
   // then from, to, tenant, account. The two statements are ~90% identical text
@@ -399,7 +429,7 @@ async function rosterOccupancyTotals(
     ? `\n            AND s.campaign_id = ${bind.add(p.campaignId)}::uuid`
     : '';
 
-  const { rows } = await getPool().query<{
+  const { rows } = await db.query<{
     agent_user_id: string; state: string; seconds: string;
   }>(
     `${occupancyIntervalsCtes('roster', campaignFilter)}       SELECT i.agent_user_id,
@@ -466,7 +496,7 @@ async function rosterOccupancyTotals(
  *     read produces, so a failed events-table read empties this pool rather than
  *     filling it with zeros.
  *
- * A `null` rate is never passed through in any pool. `rosterPercentiles` ranks
+ * A `null` rate is never passed through in any pool. `cohortPercentiles` ranks
  * numbers, and JavaScript sorts `null` as 0 — one agent who connected nobody would
  * otherwise sit at the bottom of the distribution as a hard 0% and drag p25 down
  * with them, which is the exact false reading the null exists to prevent.
@@ -514,17 +544,17 @@ function rosterBenchmark(rows: readonly AgencyRosterAgentRow[], connect: { human
     aht_seconds: ratio(pooled.talk + pooled.wrapup, pooled.connected),
     // `rates_reportable` IS `first_dials >= threshold`, so the pool needs no further
     // predicate: connect_rate's denominator is exactly the one the flag gates.
-    connect_rate: rosterPercentiles(pool(() => true, (row) => row.connect_rate_pct)),
+    connect_rate: cohortPercentiles(pool(() => true, (row) => row.connect_rate_pct)),
     // `hasRateDenominator`, the SAME function object both of these are handed and
     // the same one that sets the row's `success_rate_reportable` — not two copies
     // of one comparison that happen to agree today. `aht_seconds` divides by
     // `connected` exactly as `success_rate_pct` does, so the two pools take the
     // same floor, and passing the predicate rather than restating it is what makes
     // them unable to drift when the threshold is next argued about.
-    success_rate: rosterPercentiles(pool(hasRateDenominator, (row) => row.success_rate_pct)),
-    occupancy_pct: rosterPercentiles(pool(() => true, (row) => row.occupancy_pct)),
+    success_rate: cohortPercentiles(pool(hasRateDenominator, (row) => row.success_rate_pct)),
+    occupancy_pct: cohortPercentiles(pool(() => true, (row) => row.occupancy_pct)),
     shift_seconds: pooled.shift,
     break_seconds: pooled.break_,
-    aht: rosterPercentiles(pool(hasRateDenominator, (row) => row.aht_seconds)),
+    aht: cohortPercentiles(pool(hasRateDenominator, (row) => row.aht_seconds)),
   };
 }

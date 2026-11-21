@@ -49,8 +49,8 @@ export interface InsightsContactsFilter {
 
 export interface InsightsAttemptsFilter {
   outcome?: AgencyAttemptOutcome | AgencyAttemptOutcome[];
-  /** A write-up code; sent as the list's `disposition_code`. */
-  disposition?: string;
+  /** A write-up code, or several; sent as the list's `disposition_code`. */
+  disposition?: string | string[];
   agent_user_id?: string;
   caller_id?: string;
   /** `true`: wrap-up redials only (`redial=1`); `false`: none (`redial=0`, what `connected` counts). */
@@ -92,7 +92,8 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   const params = new URLSearchParams();
   const outcomes = filter.outcome === undefined ? [] : Array.isArray(filter.outcome) ? filter.outcome : [filter.outcome];
   for (const outcome of outcomes) params.append('outcome', outcome);
-  if (filter.disposition) params.set('disposition_code', filter.disposition);
+  const dispositions = filter.disposition === undefined ? [] : Array.isArray(filter.disposition) ? filter.disposition : [filter.disposition];
+  for (const code of dispositions) if (code) params.append('disposition_code', code);
   if (filter.agent_user_id) params.set('agent_user_id', filter.agent_user_id);
   if (filter.caller_id) params.set('caller_id', filter.caller_id);
   if (filter.redial !== undefined) params.set('redial', filter.redial ? '1' : '0');

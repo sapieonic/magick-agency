@@ -1,5 +1,7 @@
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
+import { currentZoneName as legacyZoneTarget } from '@magick-agency/domain/zone-clock';
 import { DISPLAY_LOCALE } from './number';
+import { zoneFormatter } from './zone';
 
 /**
  * Dates and times for the console's analytics surfaces: one locale, cached
@@ -66,7 +68,22 @@ export function formatClockTime(date: Date): string {
 }
 
 /**
- * The reader's IANA zone, or `null` where the environment cannot say.
+ * A zone by its current IANA name: a legacy name ICU (so Chromium and Node) still reports as a
+ * zone's canonical ID mapped to its current one (`currentZoneName` of
+ * `@magick-agency/domain/zone-clock`, the table the server cuts days by too) when this browser knows
+ * the current name (`zoneFormatter`), any other as given. A browser in India says `Asia/Calcutta`;
+ * the console sends and shows `Asia/Kolkata`, the name the rest of the product stores, so the
+ * reader's zone and a campaign's read the same. A browser whose ICU predates the rename keeps the
+ * legacy name, which it can still format in, rather than one it would refuse.
+ */
+export function currentZoneName(zone: string): string {
+  const current = legacyZoneTarget(zone);
+  return current !== null && zoneFormatter(current) !== null ? current : zone;
+}
+
+/**
+ * The reader's IANA zone, by its current name ({@link currentZoneName}), or
+ * `null` where the environment cannot say.
  *
  * `resolvedOptions()` is specified to return an IANA name, but a caption must
  * not be the thing that throws in an environment with a partial `Intl`. Callers
@@ -75,7 +92,8 @@ export function formatClockTime(date: Date): string {
  */
 export function readerZone(): string | null {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone ? currentZoneName(zone) : null;
   } catch {
     return null;
   }

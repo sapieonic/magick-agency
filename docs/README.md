@@ -103,6 +103,10 @@ Callbacks section. Phase 3 (Need help, messages to agents, break limits, giving 
 free agents) and Phase 4 (Join call, whisper) are Coming soon controls only
 ([`status.md`](status.md)).
 
+Archived campaigns (2026-11-21, AR1–AR7, defaults pending Manas): a draft or stopped campaign can
+be archived off the Campaigns page onto its own Archived campaigns screen and restored; archiving
+is a flag beside the status, so nothing that reads the status changes ([`status.md`](status.md)).
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
@@ -115,7 +119,7 @@ production data.
 now in the production compose file) and the 5 s wait for in-flight pacing ticks; the tidy-up
 defaults (including the `en-IN` display locale) and the 25 vs 20 rate floors; B15 roster supersede; vendor setup; the gated checks (real
 VoiceLink call, real recording analysed, Playwright happy path, parity check, dark pilot); launch
-decisions. For inbound: a Plivo account for P0, the fix pass's defaults (IQ25–IQ45), a listening
+decisions. Archived campaigns: AR1–AR7. For inbound: a Plivo account for P0, the fix pass's defaults (IQ25–IQ45), a listening
 and licence sign-off of the standard recordings, and the voicemail and call retention for a UK
 pilot.
 
@@ -138,6 +142,7 @@ Details and next steps: [`status.md`](status.md).
 | [`inbound.md`](inbound.md) | Inbound calls (2026-11-09; P1 and P2 built and reviewed, P3's mobile app frames built 2026-11-10, Mode B (ringing an away agent's phone) built on the server and Android 2026-11-12, P0's live Plivo checks open, the rest of P3 and P4 not built): answering customers who ring back on Plivo numbers linked to inbound, the sticky agent and its fallbacks, the queue and pacing priority, off hours, follow-ups (Missed inbound list, inbound callbacks), mobile stations, ringing an away phone (§6.1), who configures what, decisions IB1–IB8 (the build's rulings, the fix pass's, the mobile app's, the pilot's and Mode B's, IQ1–IQ74 and N1–N5, are in `decisions.md`), the phased build plan and its status |
 | [`listening.md`](listening.md) | Live call listening (2026-11-16/17; all six phases built, the load check run, its reviews fixed, every decision ratified; not yet run in a real browser, on a real carrier or a phone): supervisors see an account's calls in progress and listen in silently from the console; decisions LS1–LS22, the architecture (a tap on our own bridge in the process that owns the call), the listener socket's wire format and close codes, the session lifecycle, revocation, the tap's error handling, the session table and its retention, permission, flags, config, metrics and alerts, the console and the agent's line, the phase status and what is not verified, the Listening history and the consent gate's guard rails (§12) |
 | [`agent-station.md`](agent-station.md) | The agent station redesign (2026-11-20; phases 0 to 2 built and reviewed; not yet run on a real phone, carrier or with real agents): one state per screen with a coloured band, picture tiles and one main button, on the console and the app; rulings AS1–AS19 (AS19, 2026-11-21: supervisors choose up to 4 facts for the customer card, with its review rulings R1–R13 and S1–S16), the build plan by stream and its status. The design spec, the backend plan and the mock-ups are in [`agent-station/`](agent-station/) |
+| [`compare-agents.md`](compare-agents.md) | Compare agents (designed and phase 1 built 2026-11-21, behind `agency_compare_enabled`): up to three agents of one campaign side by side against the campaign's agents, metrics chosen through lenses and outcome sets the supervisor picks, findings that name an agent only when chance cannot explain the gap; rulings CP1–CP18, the metric catalog, the findings rules, where the read runs and its guards, the contract, the build plan |
 | [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |

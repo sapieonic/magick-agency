@@ -898,9 +898,9 @@ describe('AgencyCampaignRepository.findLiveDependentsOnAnalysisProfile', () => {
     await new AgencyCampaignRepository()
       .findLiveDependentsOnAnalysisProfile('prof-1', 't1', 'a1');
 
-    // The method body is `return rows;`, so the SELECT list IS the wire shape of
-    // `details.campaigns` — there is no mapping step in between to narrow
-    // anything. `SELECT *` would therefore ship `caller_ids`, `retry_policy`,
+    // The SELECT list IS the wire shape of `details.campaigns`: the only step in
+    // between turns `is_archived` into the `archived` mark (AR3), and narrows
+    // nothing. `SELECT *` would therefore ship `caller_ids`, `retry_policy`,
     // `disposition_catalog`, `sip_connection_id` and `created_by` into a browser
     // error body, on a surface gated on `calls.dialer.analytics` alone whose reader
     // may hold no agency entitlement at all.
@@ -913,7 +913,7 @@ describe('AgencyCampaignRepository.findLiveDependentsOnAnalysisProfile', () => {
     // (campaign names are the agency product's vocabulary, and this body crosses
     // to a caller who is not entitled to that product).
     const sql = String(pool.query.mock.calls[0]![0]);
-    expect(sql).toMatch(/SELECT\s+id,\s*status\s+FROM\s+agency_campaigns/);
+    expect(sql).toMatch(/SELECT\s+id,\s*status,\s*archived_at IS NOT NULL AS is_archived\s+FROM\s+agency_campaigns/);
     expect(sql).not.toContain('SELECT *');
     expect(sql).not.toContain('name');
   });

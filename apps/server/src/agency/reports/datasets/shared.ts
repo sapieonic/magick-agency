@@ -21,12 +21,12 @@ import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
 import { agencyAgentStatsRepository } from '../../../db/repositories/agency.repository.js';
 import { getPool } from '@magick-agency/db';
-import { parseRosterQuery, ROSTER_MAX_LIMIT } from '../../agent-record.js';
+import { rosterParams } from '../../agent-record.js';
 import { enrichAttemptAgentNames } from '../../agency-spine.js';
 import { agentNamesOrNone, resolveAgentNames, scopeRowsToMembers } from '../../agency-agent-identity.js';
 import { parseInsightsRange, type ServedInsightsRange } from '../../insights/range.js';
 import { localDayBounds } from '../schedule.js';
-import { postgresZoneName } from '../zone.js';
+import { postgresZoneName } from '../../zone.js';
 import { ReportSubjectUnavailableError } from './types.js';
 
 const log = createChildLogger({ component: 'report-datasets' });
@@ -87,7 +87,7 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
 }
 
 /**
- * The run's zone as Postgres names it (`postgresZoneName`, `../zone.ts`: the routes' own lookup,
+ * The run's zone as Postgres names it (`postgresZoneName`, `agency/zone.ts`: the routes' own lookup,
  * remembered per process). A zone Postgres does not know fails the build (`assembly_failed`) with
  * a clear message: the shared reads would otherwise cut the account's days in UTC without saying
  * so (`resolvedZoneCte`) or fail with a bare SQL error.
@@ -156,15 +156,7 @@ export async function readAccountRoster(q: {
   to: Date;
   includeInactive: boolean;
 }): Promise<ReportRoster> {
-  const parsed = parseRosterQuery({
-    from: q.from.toISOString(),
-    to: q.to.toISOString(),
-    sort: 'attempts',
-    order: 'desc',
-    limit: String(ROSTER_MAX_LIMIT),
-  });
-  if (!parsed.ok) throw new Error(`report roster window refused: ${parsed.issues.map((i) => `${i.param} ${i.message}`).join('; ')}`);
-  const page = wire(await agencyAgentStatsRepository.roster({ tenantId: q.tenantId, accountId: q.accountId }, parsed.filters));
+  const page = wire(await agencyAgentStatsRepository.roster({ tenantId: q.tenantId, accountId: q.accountId }, rosterParams(q)));
   const scoped = await scopeRowsToMembers(q.tenantId, {
     body: page as unknown as Record<string, unknown>,
     rows: page.rows,

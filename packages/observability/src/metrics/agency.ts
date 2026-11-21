@@ -892,6 +892,36 @@ export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agen
   description: 'Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)',
 });
 
+// ─── Compare agents (docs/compare-agents.md §7) ───────────────────────────────
+//
+// The read runs in the primary against the live database (CP6), under a statement timeout and a
+// whole-read deadline, a per-tenant and a process-wide limit, and a 30 s cache
+// (`apps/server/src/agency/compare/read.ts`). These two are the
+// trigger §7 names for moving it to an analytics child (its p95 above 1.5 s for a day). Only reads
+// that ran are timed: an answer from the cache is not. Labels are closed vocabularies.
+
+/** Which compare read ran. */
+export type CompareReadKind = 'query' | 'options';
+/** How a compare read that ran ended. */
+export type CompareReadResult = 'ok' | 'timed_out' | 'aborted' | 'failed';
+/** Why a compare read was refused by its guards. */
+export type CompareReadRefusal = 'busy' | 'timed_out';
+
+export const agencyCompareReadSeconds = histogram<'read' | 'result'>(meter, 'agency_compare_read_seconds', {
+  description: 'Seconds one Compare agents read took against the database, by read (query or options) and result (ok, timed_out, aborted (the client went away) or failed); cached answers are not timed',
+  unit: 's',
+  // To 8 s. A read normally ends by its 3 s budget (Postgres's statement_timeout, set to what is left
+  // of it). The client's cancel path adds the cancel's own connection (bounded by 2 s for the
+  // connect and 2 s for the statement) and the grace a cancelled statement gets (1 s); a cancel that
+  // could not be sent waits out the statement's own timeout as well. So a read that has to be
+  // cancelled can pass 8 s and land in +Inf: rare, and the count of such reads is the point.
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8],
+});
+
+export const agencyCompareReadsRefusedTotal = counter<'reason'>(meter, 'agency_compare_reads_refused_total', {
+  description: 'Compare agents reads refused by their guards, by reason: busy (the tenant, or the whole process, already runs its limit of reads) or timed_out (the read passed its 3 s budget: Postgres\'s statement_timeout ended a statement, or the whole-read deadline cancelled it)',
+});
+
 // ─── Inbound calls (docs/inbound.md; apps/server/src/agency/inbound/) ──────────────────────
 
 /** What the inbound answer webhook answered: the router's decision, or why it never decided. */

@@ -2483,6 +2483,47 @@ reviewed twice and fixed (rulings R1–R13 and S1–S16, with what was accepted 
 [`agent-station.md`](agent-station.md) §1), then a third round; per-stream status in §3, the test
 counts in the PR. Not verified: nothing has run on a real phone or with real agents.
 
+### Archived campaigns 2026-11-21 (AR1–AR7, [`decisions.md`](decisions.md) "Archived campaigns (AR)")
+
+A supervisor archives a draft or a stopped campaign to take it off the Campaigns page; it is
+listed on its own Archived campaigns screen (`/agency/campaigns/archived`) and can be restored.
+Archiving is a flag beside the status (`archived_at`, `0063_campaign_archive.sql`), not a status, so reports,
+Insights and pacing are unchanged. Built on the server, the contracts and the console the same
+day, reviewed by three fresh-context reviewers (server, console, docs and repo rules) and fixed;
+the test counts are in the PR.
+
+| Part | What |
+|---|---|
+| Wire | `0063_campaign_archive.sql` (the three columns and the CHECK that only a draft or stopped campaign is archived); `archived_at` and `archived_by` on the campaign; `AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES`; the archive codes in `errors.ts`, `campaign_archived` also a lifecycle code |
+| Server | `POST /proxy/agency/campaigns/:id/archive` and `/unarchive` (`agency.campaigns.write`, the session's user as who archived it, audited); `GET /campaigns` leaves archived campaigns out unless `archived=true`; Start refused on an archived draft, in the route and in `transitionStatus` |
+| Console | Archive (with a confirm) and Restore on every campaign screen's header and an archived notice; the Archived campaigns screen; its link under the Campaigns list, its breadcrumb and search entry; pickers keep an archived campaign they already hold, marked |
+
+Not built: archiving a completed campaign (AR2: only what was asked for); the mobile app shows no
+archived state (it lists no campaigns, and an agent's staffed archived draft reads as not started).
+Not verified: the screens have not been looked at in a browser.
+
+### Compare agents 2026-11-21 (CP1–CP18, [`compare-agents.md`](compare-agents.md))
+
+A tab of Reports (`/agency/compare`) where a supervisor puts up to three agents of one campaign side
+by side against the rest of the campaign's agents, on metrics chosen from a lens (Collections, Sales,
+Verification) and any set of the campaign's outcome codes, and is told what stands out. Phase 1 is
+built on the contracts, the domain, the database, the server and the console, behind the flag
+`agency_compare_enabled` (off by default; global, tenant, account), run end to end on a seeded
+database, reviewed by fresh-context reviewers and fixed; the test counts are in the PR.
+
+| Part | What |
+|---|---|
+| Wire | `api/agency/compare.ts` (the metric catalog, lenses, metric ids, the query, options, response and saved views), the compare codes in `errors.ts`, the flag |
+| Rules | `packages/domain/src/agent-compare/`: Wilson intervals, the roster's percentiles, metric resolution and values, lenses, findings |
+| Database | `0064_compare_views.sql` (saved views), `0065_session_events_offline_index.sql` (a session's offline boundaries, for the trend's days), `0066_session_events_break_overrun_index.sql` (the events that ended a break over its limit, for breaks over their limit) |
+| Server | `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options`, the saved views' routes; the read in the primary in one read-only snapshot under a 3 s budget, two reads per tenant and a sixth of the pool per process, a 30 s cache; metrics `agency_compare_read_seconds`, `agency_compare_reads_refused_total` |
+| Console | The tab: lenses, the metric picker, agent chips, Side by side, What stands out, the trend, Where their day went, The numbers, saved views, the state in the URL |
+
+Not built: phase 2 (the New joiner lens) and phase 4 (analysis questions as metrics, the
+`agent_compare` report kind and a weekly subscription to a saved view); phase 5 only if asked
+(`compare-agents.md` §9). Turning it on and what to watch: [`operations.md`](operations.md),
+"Compare agents".
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
@@ -2599,6 +2640,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 | Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
+| Archived campaigns (2026-11-21) | Ratify AR1–AR7: a flag beside the status; draft and stopped only, not completed; archived campaigns out of every list, picker and search (a picker keeps one it holds); `agency.campaigns.write`; only Start refused on an archived campaign, the console offering no new work on it |
 | Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 
 ## Deployment invariants

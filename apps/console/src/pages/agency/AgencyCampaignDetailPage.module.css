@@ -176,6 +176,35 @@ a.actionButton {
   color: var(--info);
 }
 
+/* An archived campaign's notice (AR1–AR6): what it is, and Restore. Wraps on a phone. */
+.archivedNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-tertiary, var(--info-subtle));
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.archivedNote > svg {
+  flex-shrink: 0;
+}
+
+.archivedNote > span {
+  flex: 1 1 220px;
+}
+
+.archivedNote button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ── The Agents panel ────────────────────────────────────────────────────── */
 
 .agentPanel {

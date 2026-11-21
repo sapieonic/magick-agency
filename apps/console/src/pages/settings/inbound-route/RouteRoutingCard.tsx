@@ -1,6 +1,7 @@
 import { STICKY_MODE_LABELS, STICKY_WAIT_FIELD } from '../../../utils/inbound/inboundCopy';
 import { AGENCY_INBOUND_STICKY_MODES } from '../../../types/inbound';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
+import { pickerCampaignName } from '../../../utils/agencyCampaignArchive';
 import styles from '../../../components/agency/inbound/Inbound.module.css';
 import { NumberField, type RouteSectionProps } from './fields';
 
@@ -64,7 +65,7 @@ export function RouteRoutingCard({ draft, update, errors, campaigns }: RouteSect
             return (
               <li key={c.id} className={styles.choice}>
                 <input type="checkbox" id={id} checked={draft.poolCampaignIds.includes(c.id)} onChange={() => togglePool(c.id)} />
-                <label htmlFor={id}>{c.name}</label>
+                <label htmlFor={id}>{pickerCampaignName(c)}</label>
               </li>
             );
           })}

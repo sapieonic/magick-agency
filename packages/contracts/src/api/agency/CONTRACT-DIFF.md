@@ -289,6 +289,14 @@ station registry's detach time, held in memory) are the floor's, console-side li
 review dataset's `presence.break_overruns?` (`AgentReviewBreakOverruns`, BE-12, `../../reports/agent.ts`)
 reads 0060's event columns.
 
+Archived campaigns (decisions AR1–AR7, `0063_campaign_archive.sql`) add two fields to the campaign object with no
+dialer twin: `archived_at?: string | null` and `archived_by?: AgencyCampaignActor | null` (the
+`archived_by_*` columns folded by `formatAgencyCampaignResponse`, like `last_transition_by`), and
+`AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES` (`draft`, `stopped`, typed by the dialer contract's
+`AgencyCampaignStatus`). `AgencyCampaignArchiveErrorCode` / `AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES`
+are declared in `../../errors.ts` and re-exported from `agency-campaign.ts`; `campaign_archived` is
+also an `AgencyCampaignLifecycleErrorCode` (Start on an archived draft).
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.
@@ -296,6 +304,15 @@ subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 re-exported, like the soft-phone codes. The report DATASET (`../../reports/`, its own subpath)
 embeds console wire types from this directory (the Insights objects, `AgencyAgentStatsTotals`,
 the roster row with its name and `AgencyRosterBenchmark`), never their dialer twins.
+
+Compare agents (`compare.ts`, docs/compare-agents.md) is console-side only too: the read
+(`AgencyCompareQuery`, `AgencyCompareResponse` and its parts), the options
+(`AgencyCompareOptions`), the saved views (`AgencyCompareView` and its requests), the metric refs and
+ids, the catalog (`COMPARE_BUILTIN_METRICS`, `COMPARE_OUTCOME_SET_DEFINITION`) and the limits are served
+by the public API layer itself and have no dialer counterpart. `AgencyCompareErrorCode` /
+`AGENCY_COMPARE_ERROR_CODES` / `AGENCY_COMPARE_ERROR_STATUS` are declared in `../../errors.ts` (§9) and
+re-exported. It reads one dialer-contract name unchanged, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, the
+floor of its rates.
 
 Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live list
 (`AgencyLiveCall`, `AgencyLiveCallsResponse`, `AgencyLiveCallsQuery`, the listeners), the number

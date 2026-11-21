@@ -77,15 +77,26 @@ describe('GET /api/v1/agency-campaigns — status filter', () => {
       headers: HEADERS,
     });
     expect(res.statusCode).toBe(200);
-    expect(campaigns.list).toHaveBeenCalledWith('t1', 'a1', 100, 0, ['running', 'stopping', 'paused']);
+    expect(campaigns.list).toHaveBeenCalledWith('t1', 'a1', 100, 0, ['running', 'stopping', 'paused'], false);
     expect(res.json()).toEqual({ campaigns: [], total: 0, limit: 100, offset: 0 });
   });
 
-  it('reads every status when the filter is absent', async () => {
+  it('reads every status when the filter is absent, and only campaigns that are not archived (AR3)', async () => {
     const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns', headers: HEADERS });
     expect(res.statusCode).toBe(200);
-    expect(campaigns.list).toHaveBeenCalledWith('t1', 'a1', 50, 0, undefined);
+    expect(campaigns.list).toHaveBeenCalledWith('t1', 'a1', 50, 0, undefined, false);
+  });
+
+  it('reads only the archived campaigns with archived=true, and refuses any other value (AR3)', async () => {
+    const app = await makeApp();
+    const ok = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns?archived=true', headers: HEADERS });
+    expect(ok.statusCode).toBe(200);
+    expect(campaigns.list).toHaveBeenCalledWith('t1', 'a1', 50, 0, undefined, true);
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns?archived=1', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().details.archived).toBe('must be true or false');
+    expect(campaigns.list).toHaveBeenCalledTimes(1);
   });
 
   it('answers 400 for an unknown status, and never reads the list', async () => {

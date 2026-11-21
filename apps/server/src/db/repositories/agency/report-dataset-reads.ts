@@ -24,6 +24,8 @@
  * of its own, released in `finally` however the consumer stops.
  */
 import { getPool } from '@magick-agency/db';
+import { cancelBackend } from '@magick-agency/db/utils/cancel-backend';
+import { openCancellableRead } from '@magick-agency/db/utils/cancellable-read';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
 import { hasRecordingSql } from '@magick-agency/db/utils/recording-request';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
@@ -151,72 +153,42 @@ export interface ReportCursorOptions {
  * of its own. Nothing is acquired until the first row is asked for. The client is released in
  * `finally`, so a consumer that stops early (the assembler's row cap calls `return()`) or throws
  * gives it back; a client that failed is destroyed rather than reused. `signal`: see
- * {@link ReportCursorOptions}.
+ * {@link ReportCursorOptions}; the cancel and the release are `openCancellableRead`'s
+ * (`@magick-agency/db/utils/cancellable-read`).
  */
 export async function* reportCursorRows<T>(text: string, values: unknown[], opts: ReportCursorOptions = {}): AsyncGenerator<T> {
   const { batch = REPORT_CURSOR_BATCH, signal, timeoutMs = REPORT_BUILD_TIMEOUT_MS } = opts;
-  const boundMs = Math.max(REPORT_CURSOR_MIN_TIMEOUT_MS, Math.ceil(timeoutMs));
-  signal?.throwIfAborted();
-  const client = await getPool().connect();
-  let broken: Error | undefined;
-  // A cancel is sent only while one of this cursor's statements runs: the backend serves this
-  // client alone, and an idle one (the consumer holding a row) has nothing to cancel.
-  let running = false;
-  const pid = (client as unknown as { processID?: number | null }).processID;
-  const cancel = () => {
-    if (!running || pid == null) return;
-    getPool().query('SELECT pg_cancel_backend($1::int)', [pid]).catch(() => undefined);
-  };
-  const query = async (sql: string, params?: unknown[]) => {
-    signal?.throwIfAborted();
-    running = true;
-    try {
-      return await client.query(sql, params);
-    } catch (err) {
-      // A statement cancelled for the deadline reports the deadline, not `57014`.
-      signal?.throwIfAborted();
-      throw err;
-    } finally {
-      running = false;
-    }
-  };
-  signal?.addEventListener('abort', cancel, { once: true });
+  // Out from under the pool's session timeouts (DB_STATEMENT_TIMEOUT_MS,
+  // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "5. Timeouts"), for this transaction only:
+  // between FETCHes it sits idle while the consumer waits on the upload's backpressure, and a
+  // FETCH over a 30-day window can run long. Never unbounded: both become the report's deadline,
+  // so a legitimately slow upload or FETCH fits (the deadline stops it first), while a consumer
+  // that stalls and never pulls again (where the signal has no statement to cancel) has its
+  // transaction, snapshot and connection ended by Postgres. A lower limit from the role or the
+  // database is kept (`ceiling: 'role'`): the exemption is from the pool's own timeouts only.
+  // No grace: a cancelled FETCH is waited for (the report's deadline already bounds the build),
+  // and a cursor that failed is never reused.
+  const tx = await openCancellableRead(getPool(), {
+    signal,
+    cancel: (pid) => cancelBackend(pid, () => getPool().options),
+    timeout: { boundMs: Math.max(REPORT_CURSOR_MIN_TIMEOUT_MS, Math.ceil(timeoutMs)) },
+    ceiling: 'role',
+    idleInTransaction: true,
+    destroyAfterFailure: true,
+  });
+  let failed = false;
   try {
-    await query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    // Out from under the pool's session timeouts (DB_STATEMENT_TIMEOUT_MS,
-    // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "5. Timeouts"), for this transaction only:
-    // between FETCHes it sits idle while the consumer waits on the upload's backpressure, and a
-    // FETCH over a 30-day window can run long. Never unbounded: both become `boundMs`, the
-    // report's deadline, so a legitimately slow upload or FETCH fits (the deadline stops it
-    // first), while a consumer that stalls and never pulls again (where the signal has no
-    // statement to cancel) has its transaction, snapshot and connection ended by Postgres.
-    // A lower limit from the role or database (`reset_val`: what the session has before the
-    // pool's own SET) is kept: the exemption is from the server's own timeouts only, never from
-    // a ceiling the operator put on every session, which a report has always run under.
-    await query(
-      `SELECT set_config(name, (CASE WHEN reset_val::bigint > 0 THEN LEAST(reset_val::bigint, $1::bigint)
-                                     ELSE $1::bigint END)::text, true)
-         FROM pg_settings
-        WHERE name IN ('idle_in_transaction_session_timeout', 'statement_timeout')`,
-      [boundMs],
-    );
-    await query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
+    await tx.query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
     for (;;) {
-      const { rows } = await query(`FETCH ${batch} FROM report_rows`);
+      const { rows } = await tx.query(`FETCH ${batch} FROM report_rows`);
       for (const row of rows) yield row as T;
       if (rows.length < batch) break;
     }
   } catch (err) {
-    broken = err instanceof Error ? err : new Error(String(err));
+    failed = true;
     throw err;
   } finally {
-    signal?.removeEventListener('abort', cancel);
-    try {
-      await client.query('ROLLBACK');
-    } catch (err) {
-      broken ??= err instanceof Error ? err : new Error(String(err));
-    }
-    client.release(broken);
+    await tx.close(failed);
   }
 }
 

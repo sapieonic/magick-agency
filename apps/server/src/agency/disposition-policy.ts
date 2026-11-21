@@ -5,6 +5,15 @@ import {
 import type { RetryDecision } from './retry-policy.js';
 
 /**
+ * The catalog outcomes are drawn from: the stored one, or the default when none is stored (null or
+ * empty). My day, Compare agents' outcome codes and the agent review's soft-phone outcomes read a
+ * catalog through it.
+ */
+export function effectiveCatalog(catalog: readonly AgencyDisposition[] | null | undefined): readonly AgencyDisposition[] {
+  return Array.isArray(catalog) && catalog.length > 0 ? catalog : AGENCY_DEFAULT_DISPOSITION_CATALOG;
+}
+
+/**
  * ─── AGENCY DIALER — DISPOSITION SEMANTICS ──────────────────────────────────
  *
  * `disposition.ts` is disposition *capture*; this is the half that decides what a
