@@ -434,7 +434,8 @@
   box-shadow: var(--shadow-lg, 0 10px 30px -8px rgba(0, 0, 0, 0.45));
   pointer-events: none;
 }
-.factPop[data-align='end'] { left: auto; right: 0; }
+/* Shifted inside the card's column and flipped above near the window's bottom by FactTile (S11). */
+.factPop[data-side='top'] { top: auto; bottom: calc(100% + 8px); }
 .factPop small { display: block; font-size: 12px; font-weight: 600; opacity: 0.8; }
 .factPop b { display: block; font-family: var(--font-display); font-size: 17px; line-height: 1.35; overflow-wrap: anywhere; margin: 2px 0 4px; }
 .factPop span { display: block; font-size: 13px; opacity: 0.8; overflow-wrap: anywhere; }
@@ -730,8 +731,13 @@
 .scriptStep[data-state='current'] .scriptNumber { background: var(--st); color: var(--st-ink-c); }
 .scriptStep[data-state='done'] .scriptNumber { background: var(--st-go); color: #fff; }
 .scriptText { padding-top: 3px; min-width: 0; overflow-wrap: anywhere; }
-/* AS19: a key this customer has no value for, "Due date not given": muted, never a blank. */
-.scriptMissing { display: inline; padding: 1px 6px; border-radius: 6px; -webkit-box-decoration-break: clone; box-decoration-break: clone; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; font-size: 0.9em; }
+/*
+  AS19: a key this customer has no value for, "Due date not given": set apart on its own grey
+  pill, never a blank. S10: --text-secondary on --bg-tertiary is 6.70:1 light and 8.44:1 dark
+  (--text-muted there was 4.18:1 in light, under AA's 4.5:1 for small text). The pill is opaque,
+  so the step or opening card under it does not change the ratio.
+*/
+.scriptMissing { display: inline; padding: 1px 6px; border-radius: 6px; -webkit-box-decoration-break: clone; box-decoration-break: clone; background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 600; font-size: 0.9em; }
 .scriptStep .scriptSay { margin-top: 6px; }
 
 /* ── Before work opens: the join screens ── */

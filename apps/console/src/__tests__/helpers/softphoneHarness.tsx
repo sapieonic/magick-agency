@@ -41,6 +41,8 @@ export interface HarnessProps {
   audioState?: SoftphoneAudio;
   startAllowed?: boolean;
   fromCampaign?: boolean;
+  /** The station's `phone_display` the frame carries (AS9). */
+  phoneDisplay?: 'full' | 'masked';
 }
 
 export function Harness({
@@ -52,6 +54,7 @@ export function Harness({
   audioState = audio,
   startAllowed = true,
   fromCampaign = false,
+  phoneDisplay = 'full',
 }: HarnessProps) {
   const sp = useSoftphone({
     tenantId: 't-1',
@@ -84,7 +87,7 @@ export function Harness({
           menu: () => null,
           banners: null,
           cueFlash: null,
-          phoneDisplay: 'full',
+          phoneDisplay,
           readAloud: { available: false, say: () => {} },
         }}
         wayOut={{ button: null, reason: null }}

@@ -1,10 +1,13 @@
-import { parseContextFact } from '@magick-agency/domain/context-facts';
-import { contextValueText, isBlankContextValue } from '@magick-agency/domain/context-hero';
 import {
-  AGENCY_CONTEXT_FIELD_TYPES,
+  customerNameColumn,
+  customerNameFrom,
+  customerPlaceColumn,
+  customerPlaceFrom,
+} from '@magick-agency/domain/customer-name';
+import { chosenFactTiles, factTypeOf } from '@magick-agency/domain/fact-tiles';
+import {
   AGENCY_FACT_FIELDS_MAX,
   type AgencyContextDisplay,
-  type AgencyContextFieldType,
   type AgencyCustomerFacts,
   type AgencyDisposition,
   type AgencyFactTile,
@@ -43,9 +46,17 @@ import {
  * the name, the place and each tile, and parsed the money and dates: the card shows those and
  * guesses nothing. ₹ with Indian grouping goes only on a `money` fact the server could read, "20
  * Nov" only on a read `date`; any other value shows exactly as uploaded. Tiles go amount due, due
- * date, then the rest (the app's order, `factTilesInOrder`). From an older server without
- * `facts`, the card keeps phase 0's reading: name and place guessed from the column names, "20
- * Nov" when the text plainly is a date, and an amount shown as written (no ₹ on a guess).
+ * date, then the rest (the app's order, `factTilesInOrder`). A `phone`-typed tile is written and
+ * masked by the one phone rule (S3), as on the chosen card. From an older server without `facts`
+ * (and on a side view of a campaign without chosen facts), the card keeps phase 0's reading of the
+ * tiles, "20 Nov" when the text plainly is a date and an amount shown as written (no ₹ on a
+ * guess), with the name and place by the server's rule (the domain's `customerNameFrom` /
+ * `customerPlaceFrom`, S1).
+ *
+ * ── A phone number never escapes `phone_display: masked` (S3) ────────────────
+ * Every `phone`-typed value on the card is masked under masked: a chosen tile, a typed tile, a
+ * phase 0 tile whose column `types` says is a phone, and the name or the line under it when their
+ * column is one (the server refuses that since S3(e); a stored older display is the only way in).
  */
 export interface CustomerFact {
   /** Stable key for React and tests. */
@@ -104,20 +115,24 @@ export interface CustomerCard {
   redial: { number: number; of: number } | null;
 }
 
-const NAME = /^(full[\s_-]?)?name$|customer[\s_-]?name|^customer$|contact[\s_-]?name|first[\s_-]?name|client[\s_-]?name|borrower|^naam$/i;
-const PLACE = /city|town|district|village|branch|region|zone|state|place|location|area/i;
 const MONEY_LABEL = /amount|balance|due(?!.*date)|outstanding|premium|emi|total|overdue|arrear/i;
 const DATE_LABEL = /date|due.?on|due.?by|day/i;
 
 /** What an empty fact shows (AS19): the tile stays, so each fact is always in the same place. */
 export const EMPTY_FACT = '—';
 
+type PhoneDisplay = 'full' | 'masked';
+
 /**
  * Phase 0's reading of an untyped hero column (an older server without `facts`). An amount is only
  * recognised, for the Full / Half chips, and shown exactly as uploaded: ₹ goes only on a fact the
- * server typed `money` (Manas, 2026-11-20), never on a guess. A plain date reads as "20 Nov".
+ * server typed `money` (Manas, 2026-11-20), never on a guess. A plain date reads as "20 Nov". A
+ * column `types` says is a phone is written by the one phone rule, masked under masked (S3).
  */
-function factFrom(label: string, value: string, index: number): CustomerFact {
+function factFrom(label: string, value: string, index: number, display: AgencyContextDisplay | undefined, phoneDisplay: PhoneDisplay): CustomerFact {
+  if (factTypeOf(label, display?.types) === 'phone') {
+    return { key: `hero-${index}`, label, value: factPhone(value.trim(), phoneDisplay), kind: 'phone' };
+  }
   if (MONEY_LABEL.test(label) && promisedAmount(value) !== null) {
     return { key: `hero-${index}`, label, value: value.trim(), kind: 'money' };
   }
@@ -158,18 +173,27 @@ export function factTilesInOrder(facts: AgencyCustomerFacts): AgencyFactTile[] {
   ];
 }
 
-/** A typed fact as today's card writes it: `₹12,500` for read money, `20 Nov` for a read date, else as uploaded. */
-export function factText(tile: AgencyFactTile): string {
+/**
+ * A typed fact as today's card writes it: `₹12,500` for read money, `20 Nov` for a read date, a
+ * phone by the one phone rule (masked under masked, an unread one masked on its digits), else as
+ * uploaded.
+ */
+export function factText(tile: AgencyFactTile, phoneDisplay: PhoneDisplay = 'full'): string {
+  if (tile.type === 'phone') {
+    if (tile.value !== null) return factPhone(tile.value, phoneDisplay);
+    return phoneDisplay === 'masked' ? factPhone(tile.raw.trim(), 'masked') : tile.raw;
+  }
   if (tile.value === null) return tile.raw;
   if (tile.type === 'money') return rupees(tile.value) ?? tile.raw;
   if (tile.type === 'date') return calendarDay(tile.value);
   return tile.raw;
 }
 
-function typedFact(tile: AgencyFactTile, index: number): CustomerFact {
-  // Today's card: only read money and dates are formatted; every other value as uploaded.
-  const kind: CustomerFact['kind'] = tile.value !== null && (tile.type === 'money' || tile.type === 'date') ? tile.type : 'text';
-  return { key: `fact-${index}`, label: tile.column, value: factText(tile), kind };
+function typedFact(tile: AgencyFactTile, index: number, phoneDisplay: PhoneDisplay): CustomerFact {
+  // Today's card: read money, dates and phones are formatted; every other value as uploaded.
+  const kind: CustomerFact['kind'] =
+    tile.value !== null && (tile.type === 'money' || tile.type === 'date' || tile.type === 'phone') ? tile.type : 'text';
+  return { key: `fact-${index}`, label: tile.column, value: factText(tile, phoneDisplay), kind };
 }
 
 // ── AS19: the campaign's chosen facts ────────────────────────────────────────
@@ -234,13 +258,15 @@ export function tileName(tile: Pick<AgencyFactTile, 'label' | 'column'>): string
  * `[]` (no tiles then, never today's card). The display decides alone, on both clients: tiles that
  * carry a `label` or `key` under a display without `facts` still get today's card.
  */
-export function factsChosen(_facts: AgencyCustomerFacts | undefined, display: AgencyContextDisplay | undefined): boolean {
+export function factsChosen(display: AgencyContextDisplay | undefined): boolean {
   return Array.isArray(display?.facts);
 }
 
 /**
  * The chosen tiles in the order the card draws them: the server's order, with the first
- * highlighted tile moved first (a second highlight is ignored), at most four.
+ * highlighted tile moved first (a second highlight is ignored), at most four. The domain's
+ * `chosenFactTiles` already builds them so; this keeps the card's layout sound whatever a panel
+ * carries.
  */
 export function chosenTilesInOrder(tiles: readonly AgencyFactTile[]): AgencyFactTile[] {
   const lead = tiles.findIndex((t) => t.highlight === true);
@@ -263,6 +289,33 @@ export function fitFontSize(base: number, clientWidth: number, scrollWidth: numb
   if (!(base > 0) || !(clientWidth > 0) || scrollWidth <= clientWidth + 1) return null;
   const floor = Math.ceil(base * FIT_MIN_SCALE * 2) / 2;
   return Math.max(floor, Math.floor(base * (clientWidth / scrollWidth) * 0.98 * 2) / 2);
+}
+
+/** The gap between a tile and its hover card, and the widest the card grows (`Station.module.css` `.factPop`). */
+const FACT_POP_GAP = 8;
+const FACT_POP_MAX_WIDTH = 300;
+export const FACT_POP_MIN_WIDTH = 180;
+
+/**
+ * Where a tile's hover card sits (S11): under the tile, its left edge on the tile's, shifted left
+ * as far as it must to end inside the card's column (the facts' row), never past its start; no
+ * wider than that column. Above the tile instead when it would leave the window at the bottom and
+ * there is room above. Px offsets from the tile; null when the column cannot be measured.
+ */
+export function factPopPlacement(
+  tile: { left: number; top: number; bottom: number },
+  column: { left: number; right: number },
+  pop: { width: number; height: number },
+  windowHeight: number,
+): { shift: number; maxWidth: number; above: boolean } | null {
+  const room = column.right - column.left;
+  if (!(room > 0)) return null;
+  const width = Math.min(pop.width, room);
+  let shift = 0;
+  if (tile.left + width > column.right) shift = column.right - width - tile.left;
+  if (tile.left + shift < column.left) shift = column.left - tile.left;
+  const above = tile.bottom + FACT_POP_GAP + pop.height > windowHeight && tile.top - FACT_POP_GAP - pop.height >= 0;
+  return { shift: Math.round(shift), maxWidth: Math.min(FACT_POP_MAX_WIDTH, Math.floor(room)), above };
 }
 
 /** Tracks in the chosen facts' row: four tiles across, three tracks each. */
@@ -321,63 +374,22 @@ function chosenFacts(
   });
 }
 
-const fold = (name: string): string => name.trim().toLowerCase();
-
-/** The row's key a display names (exact spelling first, then ignoring case), unless hidden. */
-function rowKey(context: Record<string, unknown>, name: unknown, hidden: ReadonlySet<string>): string | undefined {
-  if (typeof name !== 'string' || name.trim() === '' || hidden.has(fold(name))) return undefined;
-  if (Object.hasOwn(context, name)) return name;
-  return Object.keys(context).find((k) => fold(k) === fold(name) && !hidden.has(fold(k)));
-}
-
 /**
  * A side view's facts (an inbound caller's matched contact, a soft-phone call's roster contact),
- * which carry no typed facts, built from the contact's row by the server's AS19 rule when the
- * work's `context_display` has `facts`: one tile per fact whose column the row has and is not
- * hidden, in order, typed by `types` and read by the domain's parse; the name and place from
- * `roles.name` / `roles.place` (absent when not set: the card then guesses from the column names,
- * as today). Null when the display has no `facts` (today's reading applies).
+ * which carry no typed facts, built from the contact's row by the server's own rule when the
+ * work's `context_display` has `facts`: the tiles by the domain's `chosenFactTiles` (S6), the
+ * name and the line under it by `customerNameFrom` / `customerPlaceFrom` (S1). Null when the
+ * display has no `facts` (today's reading applies).
  */
 export function chosenFactsFromContext(
   context: Record<string, unknown>,
   display: AgencyContextDisplay | undefined,
+  now?: Date | number,
 ): AgencyCustomerFacts | null {
   if (!display || !Array.isArray(display.facts)) return null;
-  const hidden = new Set((display.hidden ?? []).filter((h): h is string => typeof h === 'string').map(fold));
-  const types = display.types ?? {};
-  const typeOf = (column: string): AgencyContextFieldType => {
-    const declared = Object.hasOwn(types, column) ? types[column] : Object.entries(types).find(([k]) => fold(k) === fold(column))?.[1];
-    return (AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(declared) ? (declared as AgencyContextFieldType) : 'text';
-  };
-  const text = (key: string | undefined): string | undefined => {
-    if (key === undefined || isBlankContextValue(context[key])) return undefined;
-    return contextValueText(context[key])?.trim() || undefined;
-  };
-  const name = text(rowKey(context, display.roles?.name, hidden));
-  const place = text(rowKey(context, display.roles?.place, hidden));
-  let highlighted = false;
-  const tiles: AgencyFactTile[] = [];
-  for (const fact of display.facts) {
-    if (tiles.length >= AGENCY_FACT_FIELDS_MAX) break;
-    if (!fact || typeof fact !== 'object') continue;
-    const column = rowKey(context, fact.column, hidden);
-    if (column === undefined) continue;
-    const type = typeOf(column);
-    const raw = contextValueText(context[column]) ?? '';
-    const highlight: boolean = fact.highlight === true && !highlighted;
-    highlighted ||= highlight;
-    const role = fact.key === 'amount_due' ? 'amount_due' : fact.key === 'due_date' ? 'due_date' : undefined;
-    tiles.push({
-      column,
-      label: fact.label,
-      key: fact.key,
-      ...(highlight ? { highlight: true } : {}),
-      ...(role ? { role } : {}),
-      type,
-      raw,
-      value: raw.trim() === '' ? null : parseContextFact(raw, type),
-    });
-  }
+  const name = customerNameFrom(context, display);
+  const place = customerPlaceFrom(context, display);
+  const tiles = chosenFactTiles(context, display, now === undefined ? undefined : new Date(now));
   return { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}), tiles };
 }
 
@@ -399,58 +411,58 @@ export function callLaterTagFor(callback: AgencyReservedAttempt['callback']): st
 export type CustomerSource = Pick<AgencyReservedAttempt, 'phone_e164' | 'context' | 'prior_attempts'>
   & Partial<Pick<AgencyReservedAttempt, 'facts' | 'callback' | 'redial'>>;
 
-/** The name and place guessed from the columns' names (phase 0's reading). */
-function guessedNamePlace(
-  attempt: CustomerSource,
+/**
+ * The name or the line under it as the card shows it: from a column `types` says is a phone, it
+ * is masked under masked by the one phone rule (S3); anything else as read.
+ */
+function personText(
+  text: string | null,
+  column: string | undefined,
   display: AgencyContextDisplay | undefined,
-): { nameField: { label: string; value: string } | null; placeField: { label: string; value: string } | null; resolved: ReturnType<typeof resolveContextFields> } {
-  const resolved = resolveContextFields(attempt.context, display);
-  // Every non-empty column, heroes first, for the name and place guesses.
-  const columns = [...resolved.hero, ...resolved.fields].filter((f) => !f.isEmpty);
-  const nameField = columns.find((f) => NAME.test(f.label)) ?? null;
-  const placeField = columns.find((f) => PLACE.test(f.label) && f !== nameField) ?? null;
-  return { nameField, placeField, resolved };
+  phoneDisplay: PhoneDisplay,
+): string | null {
+  if (text === null || column === undefined || phoneDisplay !== 'masked') return text;
+  return factTypeOf(column, display?.types) === 'phone' ? factPhone(text, 'masked') : text;
 }
 
-/** Name, place, hero facts and the Full / Half amount: typed facts when sent, else phase 0's guesses. */
+/** Name, place, hero facts and the Full / Half amount: typed facts when sent, else phase 0's reading. */
 function customerFacts(
   attempt: CustomerSource,
   display: AgencyContextDisplay | undefined,
-  options: { phoneDisplay?: 'full' | 'masked'; now?: Date | number },
+  options: { phoneDisplay?: PhoneDisplay; now?: Date | number },
 ): { name: string | null; place: string | null; heroFacts: CustomerFact[]; amountDue: string | null; chosen: boolean } {
-  const facts = attempt.facts ?? chosenFactsFromContext(attempt.context, display) ?? undefined;
-  if (facts && factsChosen(facts, display)) {
+  const phoneDisplay = options.phoneDisplay ?? 'full';
+  const facts = attempt.facts ?? chosenFactsFromContext(attempt.context, display, options.now) ?? undefined;
+  const nameColumn = customerNameColumn(attempt.context, display);
+  const placeColumn = customerPlaceColumn(attempt.context, display);
+  const person = (name: string | null | undefined, place: string | null | undefined) => ({
+    name: personText(name?.trim() || null, nameColumn, display, phoneDisplay),
+    place: personText(place?.trim() || null, placeColumn, display, phoneDisplay),
+  });
+  if (facts && factsChosen(display)) {
     const due = facts.tiles.find((t) => t.role === 'amount_due' && t.type === 'money');
-    let name = facts.name?.trim() || null;
-    let place = facts.place?.trim() || null;
-    if (!attempt.facts && (name === null || place === null)) {
-      // A side view's contact with no name or place role: today's guess from the column names.
-      const guess = guessedNamePlace(attempt, display);
-      name ??= guess.nameField?.value.trim() || null;
-      place ??= guess.placeField?.value.trim() || null;
-    }
-    return { name, place, heroFacts: chosenFacts(facts.tiles, options), amountDue: due?.value ?? null, chosen: true };
+    return { ...person(facts.name, facts.place), heroFacts: chosenFacts(facts.tiles, options), amountDue: due?.value ?? null, chosen: true };
   }
   if (facts) {
     const tiles = factTilesInOrder(facts);
     const due = facts.tiles.find((t) => t.role === 'amount_due' && t.type === 'money');
     return {
-      name: facts.name?.trim() || null,
-      place: facts.place?.trim() || null,
-      heroFacts: tiles.map(typedFact),
+      ...person(facts.name, facts.place),
+      heroFacts: tiles.map((t, i) => typedFact(t, i, phoneDisplay)),
       amountDue: due?.value ?? null,
       chosen: false,
     };
   }
-  const { nameField, placeField, resolved } = guessedNamePlace(attempt, display);
+  // Phase 0 (an older server, or a side view of a campaign without chosen facts): the name and
+  // place by the server's rule, the other heroes read from their column names.
+  const resolved = resolveContextFields(attempt.context, display);
   const heroFacts = resolved.hero
-    .filter((f) => !f.isEmpty && f.label !== nameField?.label && f.label !== placeField?.label)
-    .map((f, i) => factFrom(f.label, f.value, i));
+    .filter((f) => !f.isEmpty && f.label !== nameColumn && f.label !== placeColumn)
+    .map((f, i) => factFrom(f.label, f.value, i, display, phoneDisplay));
   const money = heroFacts.find((f) => f.kind === 'money');
   const rawDue = money ? resolved.hero.find((f) => f.label === money.label)?.value.trim() ?? null : null;
   return {
-    name: nameField?.value.trim() || null,
-    place: placeField?.value.trim() || null,
+    ...person(customerNameFrom(attempt.context, display), customerPlaceFrom(attempt.context, display)),
     heroFacts,
     amountDue: rawDue,
     chosen: false,

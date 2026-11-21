@@ -45,18 +45,6 @@ export interface ScriptFill {
   labelOf: (key: string) => string | null;
 }
 
-/**
- * `text` with its known placeholders filled from `valueOf` (nothing for a null), unknown ones
- * kept: the legacy fill, as the app's `fillScriptPlaceholders`.
- */
-export function fillScriptPlaceholders(
-  text: string,
-  valueOf: (placeholder: string) => string | null,
-  allowed: readonly string[] = AGENCY_SCRIPT_PLACEHOLDERS,
-): string {
-  return fillScriptLine(text, { allowed, valueOf, labelOf: () => null }).shown;
-}
-
 /** A line filled with a {@link ScriptFill}. */
 export function fillScriptLine(text: string, fill: ScriptFill): FilledLine {
   const pieces: FilledPiece[] = [];
@@ -124,7 +112,7 @@ export function scriptFillFor(
   };
   const tiles = attempt.facts?.tiles ?? [];
 
-  if (!factsChosen(attempt.facts, display)) {
+  if (!factsChosen(display)) {
     const ordered = attempt.facts ? factTilesInOrder(attempt.facts) : [];
     const role = (r: 'amount_due' | 'due_date') => {
       const tile = ordered.find((t) => t.role === r);
@@ -135,7 +123,9 @@ export function scriptFillFor(
   }
 
   const allowed = scriptPlaceholdersFor(display ?? { facts: [] });
-  // With an older panel whose tiles carry no keys, the keys the campaign's list names still fill.
+  // A key a panel tile carries that the session's list does not name (the campaign changed its
+  // facts after the agent started work, and the server built the panel from the new list) still
+  // fills from that tile.
   for (const tile of tiles) if (tile.key && !allowed.includes(tile.key)) allowed.push(tile.key);
   const tileFor = (key: string) =>
     tiles.find((t) => t.key === key)

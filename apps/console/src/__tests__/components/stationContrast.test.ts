@@ -54,3 +54,24 @@ describe('05d’s red ring on its white pill', () => {
     expect(contrast(dark, '#ffffff')).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+/** The `color` and `background` tokens a rule reads (both `var(--token)`). */
+function tokensOf(selector: string): { color: string; background: string } {
+  const at = stationCss.indexOf(`${selector} {`);
+  expect(at).toBeGreaterThan(-1);
+  const rule = stationCss.slice(at, stationCss.indexOf('}', at));
+  const color = /[^-]color:\s*var\((--[\w-]+)\)/.exec(rule)?.[1];
+  const background = /background:\s*var\((--[\w-]+)\)/.exec(rule)?.[1];
+  if (!color || !background) throw new Error(`no colour or background token on ${selector}`);
+  return { color, background };
+}
+
+describe('the script’s "not given" pill (AS19 S10)', () => {
+  it('reads at 4.5:1 or more on its own background in the light theme and in the dark one', () => {
+    const { color, background } = tokensOf('.scriptMissing');
+    const fg = tokenInBothThemes(color);
+    const bg = tokenInBothThemes(background);
+    expect(contrast(fg.light, bg.light)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(fg.dark, bg.dark)).toBeGreaterThanOrEqual(4.5);
+  });
+});
