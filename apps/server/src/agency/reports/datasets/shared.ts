@@ -26,7 +26,7 @@ import { enrichAttemptAgentNames } from '../../agency-spine.js';
 import { agentNamesOrNone, resolveAgentNames, scopeRowsToMembers } from '../../agency-agent-identity.js';
 import { parseInsightsRange, type ServedInsightsRange } from '../../insights/range.js';
 import { localDayBounds } from '../schedule.js';
-import { postgresZoneName } from '../zone.js';
+import { postgresZoneName } from '../../zone.js';
 import { ReportSubjectUnavailableError } from './types.js';
 
 const log = createChildLogger({ component: 'report-datasets' });
@@ -87,7 +87,7 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
 }
 
 /**
- * The run's zone as Postgres names it (`postgresZoneName`, `../zone.ts`: the routes' own lookup,
+ * The run's zone as Postgres names it (`postgresZoneName`, `agency/zone.ts`: the routes' own lookup,
  * remembered per process). A zone Postgres does not know fails the build (`assembly_failed`) with
  * a clear message: the shared reads would otherwise cut the account's days in UTC without saying
  * so (`resolvedZoneCte`) or fail with a bare SQL error.

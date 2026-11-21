@@ -1,7 +1,7 @@
 /**
  * Can Postgres cut days in this zone, and what does it call it? The one place a request's zone is
  * looked up in `pg_timezone_names` (reports and Compare agents). The routes check a zone with `Intl`
- * first (`isReportTimezone`, `checkCompareWindow`), but the reads cut days with `AT TIME ZONE` in
+ * first ({@link isRequestZone}), but the reads cut days with `AT TIME ZONE` in
  * SQL, and Postgres's zone database can lack a zone this process's ICU knows (a newly added zone, an
  * older server image): such a read would only fail at the database. So a request's zone must also be
  * known to Postgres, matched as `AT TIME ZONE` matches it (ignoring case), and every read cuts days
@@ -13,7 +13,8 @@
  * keeps only as a link in its `backward` file. A Postgres built on a system tzdata without the
  * legacy links (Ubuntu's `tzdata` without `tzdata-legacy`) does not know `Asia/Calcutta`, and every
  * read from an IST browser was refused. So a zone Postgres does not know, that is one of the legacy
- * names in {@link LEGACY_ZONE_ALIASES}, resolves to its current name when Postgres knows THAT. The
+ * names (`LEGACY_ZONE_ALIASES`, `@magick-agency/domain/zone-clock`: the one table, which the console
+ * maps by too), resolves to its current name when Postgres knows THAT. The
  * days are cut in the resolved name (the same rules: a link is the same zone); the request's own
  * zone is what the answers echo and what is stored on a run, so a client sees the zone it sent.
  *
@@ -21,51 +22,16 @@
  * server's database, and there are a few hundred); a zone not found is asked again next time.
  */
 import { getPool } from '@magick-agency/db';
+import { currentZoneName, isUsableTimezone } from '@magick-agency/domain/zone-clock';
 
 /**
- * Legacy zone names (the tz database's `backward` links) that browsers' ICU still reports, to the
- * current name each links to. Keys as tz spells them; matched ignoring case. Only links to a zone
- * with the same rules, so cutting days in the target is cutting them in the zone asked for.
+ * A zone as a request may name it, before Postgres is asked (reports' `timezone`, Compare agents'):
+ * a string with no surrounding space, at most 64 characters, that `isUsableTimezone` accepts (the
+ * `Area/Location` form or `UTC`, known to `Intl`). Cheap: a route checks this first and asks
+ * Postgres ({@link postgresZoneName}) only about a zone that passes it.
  */
-export const LEGACY_ZONE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
-  'Asia/Calcutta': 'Asia/Kolkata',
-  'Asia/Katmandu': 'Asia/Kathmandu',
-  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
-  'Asia/Rangoon': 'Asia/Yangon',
-  'Asia/Dacca': 'Asia/Dhaka',
-  'Asia/Thimbu': 'Asia/Thimphu',
-  'Asia/Ulan_Bator': 'Asia/Ulaanbaatar',
-  'Asia/Ujung_Pandang': 'Asia/Makassar',
-  'Asia/Macao': 'Asia/Macau',
-  'Asia/Chongqing': 'Asia/Shanghai',
-  'Asia/Chungking': 'Asia/Shanghai',
-  'Asia/Harbin': 'Asia/Shanghai',
-  'Asia/Kashgar': 'Asia/Urumqi',
-  'Asia/Tel_Aviv': 'Asia/Jerusalem',
-  'Asia/Istanbul': 'Europe/Istanbul',
-  'Europe/Kiev': 'Europe/Kyiv',
-  'Europe/Uzhgorod': 'Europe/Kyiv',
-  'Europe/Zaporozhye': 'Europe/Kyiv',
-  'Atlantic/Faeroe': 'Atlantic/Faroe',
-  'Africa/Asmera': 'Africa/Asmara',
-  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
-  'America/Catamarca': 'America/Argentina/Catamarca',
-  'America/Cordoba': 'America/Argentina/Cordoba',
-  'America/Jujuy': 'America/Argentina/Jujuy',
-  'America/Mendoza': 'America/Argentina/Mendoza',
-  'America/Indianapolis': 'America/Indiana/Indianapolis',
-  'America/Louisville': 'America/Kentucky/Louisville',
-  'America/Godthab': 'America/Nuuk',
-  'Pacific/Truk': 'Pacific/Chuuk',
-  'Pacific/Ponape': 'Pacific/Pohnpei',
-  'Pacific/Enderbury': 'Pacific/Kanton',
-});
-
-const aliasByLower = new Map(Object.entries(LEGACY_ZONE_ALIASES).map(([from, to]) => [from.toLowerCase(), to]));
-
-/** The current name of a legacy zone name, or null when `zone` is not one. */
-export function currentZoneName(zone: string): string | null {
-  return aliasByLower.get(zone.toLowerCase()) ?? null;
+export function isRequestZone(zone: unknown): zone is string {
+  return typeof zone === 'string' && zone === zone.trim() && zone.length <= 64 && isUsableTimezone(zone);
 }
 
 /**
@@ -89,7 +55,7 @@ const known = new Map<string, string>();
 
 /**
  * The name Postgres cuts the zone's days in: its own spelling of the zone, or, for a legacy name it
- * does not know, of the zone's current name ({@link LEGACY_ZONE_ALIASES}); null when it knows
+ * does not know, of the zone's current name (`currentZoneName`, the domain's table); null when it knows
  * neither.
  */
 export async function postgresZoneName(zone: string): Promise<string | null> {

@@ -25,7 +25,7 @@ import { CompareReads } from '../../../agency/compare/read.js';
 import { COMPARE_ERROR_MESSAGES } from '../../../agency/compare/validate.js';
 import { effectiveCatalog } from '../../../agency/my-day.js';
 import { localDateOf } from '../../../agency/reports/schedule.js';
-import { postgresZoneName } from '../../../agency/reports/zone.js';
+import { postgresZoneName } from '../../../agency/zone.js';
 import { sendRefusal } from '../helpers/refusal.js';
 
 /** The flag gate's refusal: the dialer gate's body shape (`helpers/dialer-gate.ts`), for this page. */

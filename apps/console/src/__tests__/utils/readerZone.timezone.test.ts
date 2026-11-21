@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { LEGACY_ZONE_NAMES, currentZoneName, readerZone } from '../../utils/format/date';
+import { LEGACY_ZONE_ALIASES } from '@magick-agency/domain/zone-clock';
+import { currentZoneName, readerZone } from '../../utils/format/date';
 import { browserZone, reportZoneOptions } from '../../utils/reports/reportWindow';
 
 /**
@@ -29,15 +30,8 @@ describe('the reader’s zone, by its current name', () => {
   });
 
   it('maps every legacy alias, and leaves a current name or an unknown one as given', () => {
-    expect(LEGACY_ZONE_NAMES).toEqual({
-      'Asia/Calcutta': 'Asia/Kolkata',
-      'Asia/Saigon': 'Asia/Ho_Chi_Minh',
-      'Asia/Katmandu': 'Asia/Kathmandu',
-      'Asia/Rangoon': 'Asia/Yangon',
-      'Europe/Kiev': 'Europe/Kyiv',
-      'Asia/Dacca': 'Asia/Dhaka',
-      'Asia/Thimbu': 'Asia/Thimphu',
-    });
+    // The domain's one table, the server's too: every alias is mapped where the browser knows its target.
+    for (const [legacy, current] of Object.entries(LEGACY_ZONE_ALIASES)) expect(currentZoneName(legacy), legacy).toBe(current);
     expect(currentZoneName('Asia/Saigon')).toBe('Asia/Ho_Chi_Minh');
     expect(currentZoneName('Asia/Tokyo')).toBe('Asia/Tokyo');
     expect(inZone('Asia/Saigon', () => readerZone())).toBe('Asia/Ho_Chi_Minh');
@@ -50,7 +44,8 @@ describe('the reader’s zone, by its current name', () => {
     expect(zones).toContain('Asia/Kolkata');
     expect(zones).not.toContain('Asia/Calcutta');
     expect(zones.filter((z) => z === 'Asia/Kolkata')).toHaveLength(1);
-    for (const legacy of Object.keys(LEGACY_ZONE_NAMES)) expect(zones).not.toContain(legacy);
+    for (const legacy of Object.keys(LEGACY_ZONE_ALIASES)) expect(zones).not.toContain(legacy);
+    expect(new Set(zones).size).toBe(zones.length);
     // A subscription saved with the old name keeps it on screen, never silently swapped.
     expect(reportZoneOptions('Asia/Calcutta')).toContain('Asia/Calcutta');
     // …in place of its current name: the one zone is never offered twice.

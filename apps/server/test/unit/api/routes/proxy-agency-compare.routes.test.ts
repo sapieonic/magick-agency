@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
  *  - The options read never holds two pooled connections: the campaign's default view is read only
  *    once the cohort's snapshot has ended (the snapshot holds one connection until then, and the
  *    process-wide limit counts one per read).
+ *  - A zone is looked up in Postgres only once it passes the cheap rules (`isRequestZone`).
  *  - An edit of a saved view that does not send `is_campaign_default` asks the repository to keep
  *    the row's value as it stands in the update's transaction (null), never the value the route
  *    read before it: another supervisor's new default, made meanwhile, is not undone by a rename
@@ -31,6 +32,7 @@ let app: FastifyInstance;
 let log: string[];
 let finishCohort: () => void;
 let updates: Array<Record<string, unknown>>;
+let databaseZone: ReturnType<typeof vi.fn<(zone: string) => Promise<string | null>>>;
 
 function storedView() {
   return {
@@ -43,6 +45,7 @@ function storedView() {
 beforeEach(async () => {
   log = [];
   updates = [];
+  databaseZone = vi.fn(async (zone: string) => zone);
   let release: () => void = () => undefined;
   const cohortDone = new Promise<void>((res) => { release = res; });
   finishCohort = release;
@@ -68,7 +71,7 @@ beforeEach(async () => {
     compareEnabled: async () => true,
     campaign: async () => ({ id: CAMPAIGN, name: 'Collections', codes: [] }),
     names: async () => new Map(),
-    databaseZone: async (zone) => zone,
+    databaseZone,
     today: () => '2026-11-20',
     now: () => new Date('2026-11-20T06:00:00Z'),
   };
@@ -100,6 +103,29 @@ describe('GET /compare/options', () => {
     const res = await pending;
     expect(res.statusCode, res.body).toBe(200);
     expect(log).toEqual(['cohort snapshot begins', 'cohort snapshot ends', 'default view read']);
+  });
+});
+
+describe('the zone', () => {
+  const options = (timezone: string | null) => app.inject({
+    method: 'GET',
+    url: `/proxy/agency/compare/options?campaign_id=${CAMPAIGN}&from=2026-11-18&to=2026-11-19${timezone === null ? '' : `&timezone=${encodeURIComponent(timezone)}`}`,
+  });
+
+  it('a zone that fails the cheap rules is refused without asking Postgres', async () => {
+    for (const zone of [null, '', ' Asia/Kolkata', 'IST', 'Mars/Olympus', `Asia/${'x'.repeat(60)}`]) {
+      const res = await options(zone);
+      expect(res.statusCode, String(zone)).toBe(400);
+      expect(res.json(), String(zone)).toMatchObject({ code: 'compare_timezone_invalid' });
+    }
+    expect(databaseZone).not.toHaveBeenCalled();
+  });
+
+  it('a zone that passes them is looked up, and refused when Postgres knows no name for it', async () => {
+    databaseZone.mockResolvedValueOnce(null);
+    const res = await options('Asia/Kolkata');
+    expect(res.json()).toMatchObject({ code: 'compare_timezone_invalid' });
+    expect(databaseZone).toHaveBeenCalledWith('Asia/Kolkata');
   });
 });
 

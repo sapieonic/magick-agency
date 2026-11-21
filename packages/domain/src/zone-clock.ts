@@ -6,7 +6,60 @@
  *
  * A LEAF module: no imports, no I/O. Total: nothing here throws on a bad zone or a bad instant;
  * each answers null (or false) and the caller decides what an unreadable clock means.
+ *
+ * Also the one table of legacy zone names ({@link LEGACY_ZONE_ALIASES}, {@link currentZoneName}):
+ * the server cuts days in a legacy name's current one when Postgres lacks the legacy one
+ * (`apps/server/src/agency/zone.ts`), and the console shows and sends the current name when the
+ * browser knows it (`apps/console/src/utils/format/date.ts`).
  */
+
+/**
+ * Legacy zone names (the tz database's `backward` links) that browsers' ICU still reports as a
+ * zone's canonical ID, to the current name each links to. Chromium reports India as
+ * `Asia/Calcutta`, which tz renamed `Asia/Kolkata` long ago and keeps only as a link. Keys as tz
+ * spells them; matched ignoring case. Only links to a zone with the same rules, so a day cut or a
+ * clock read in the target is the zone asked for.
+ */
+export const LEGACY_ZONE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Dacca': 'Asia/Dhaka',
+  'Asia/Thimbu': 'Asia/Thimphu',
+  'Asia/Ulan_Bator': 'Asia/Ulaanbaatar',
+  'Asia/Ujung_Pandang': 'Asia/Makassar',
+  'Asia/Macao': 'Asia/Macau',
+  'Asia/Chongqing': 'Asia/Shanghai',
+  'Asia/Chungking': 'Asia/Shanghai',
+  'Asia/Harbin': 'Asia/Shanghai',
+  'Asia/Kashgar': 'Asia/Urumqi',
+  'Asia/Tel_Aviv': 'Asia/Jerusalem',
+  'Asia/Istanbul': 'Europe/Istanbul',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'Europe/Uzhgorod': 'Europe/Kyiv',
+  'Europe/Zaporozhye': 'Europe/Kyiv',
+  'Atlantic/Faeroe': 'Atlantic/Faroe',
+  'Africa/Asmera': 'Africa/Asmara',
+  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+  'America/Catamarca': 'America/Argentina/Catamarca',
+  'America/Cordoba': 'America/Argentina/Cordoba',
+  'America/Jujuy': 'America/Argentina/Jujuy',
+  'America/Mendoza': 'America/Argentina/Mendoza',
+  'America/Indianapolis': 'America/Indiana/Indianapolis',
+  'America/Louisville': 'America/Kentucky/Louisville',
+  'America/Godthab': 'America/Nuuk',
+  'Pacific/Truk': 'Pacific/Chuuk',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+  'Pacific/Enderbury': 'Pacific/Kanton',
+});
+
+const LEGACY_BY_LOWER = new Map(Object.entries(LEGACY_ZONE_ALIASES).map(([from, to]) => [from.toLowerCase(), to]));
+
+/** The current name of a legacy zone name ({@link LEGACY_ZONE_ALIASES}, ignoring case), or null when `name` is not one. */
+export function currentZoneName(name: string): string | null {
+  return LEGACY_BY_LOWER.get(name.toLowerCase()) ?? null;
+}
 
 /**
  * `Intl.DateTimeFormat` construction is not free and callers ask per contact, so formatters are

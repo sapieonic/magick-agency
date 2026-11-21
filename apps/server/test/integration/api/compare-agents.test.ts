@@ -65,7 +65,7 @@ import { bulkInsert } from '../agency/insights-rollup-world.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
 import { localDateOf, localInstant } from '../../../src/agency/reports/schedule.js';
 import { localDates } from '../../../src/agency/reports/datasets/shared.js';
-import { setZoneLookupForTests } from '../../../src/agency/reports/zone.js';
+import { setZoneLookupForTests } from '../../../src/agency/zone.js';
 
 let loaded: LoadApp;
 let floor: TenantFloor;

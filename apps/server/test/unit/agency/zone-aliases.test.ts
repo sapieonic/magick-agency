@@ -1,17 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  LEGACY_ZONE_ALIASES,
-  currentZoneName,
-  postgresKnowsZone,
-  postgresZoneName,
-  setZoneLookupForTests,
-} from '../../../../src/agency/reports/zone.js';
-import { resolveReportZone } from '../../../../src/agency/reports/datasets/shared.js';
-import { isUsableTimezone } from '../../../../src/agency/calling-hours.js';
+import { isRequestZone, postgresKnowsZone, postgresZoneName, setZoneLookupForTests } from '../../../src/agency/zone.js';
+import { resolveReportZone } from '../../../src/agency/reports/datasets/shared.js';
 
 /**
- * A request's zone as Postgres cuts its days (`agency/reports/zone.ts`), for reports and Compare
- * agents. Chromium reports India as `Asia/Calcutta`; a Postgres on system tzdata without the legacy
+ * A request's zone as Postgres cuts its days (`agency/zone.ts`), for reports and Compare
+ * agents. The legacy names' table itself is the domain's (`zone-clock.ts`, tested there). Chromium reports India as `Asia/Calcutta`; a Postgres on system tzdata without the legacy
  * links does not know it. The lookup is replaced here, so these hold whatever zone data the Postgres
  * running the suite has.
  */
@@ -50,25 +43,11 @@ describe('a legacy zone name Postgres does not know', () => {
   });
 });
 
-describe('LEGACY_ZONE_ALIASES', () => {
-  it('maps each legacy name to a current one, never to another legacy name, and both are zones this process knows', () => {
-    for (const [from, to] of Object.entries(LEGACY_ZONE_ALIASES)) {
-      expect(currentZoneName(from), from).toBe(to);
-      expect(currentZoneName(to), `${to} is itself a legacy name`).toBeNull();
-      expect(isUsableTimezone(from), from).toBe(true);
-      expect(isUsableTimezone(to), to).toBe(true);
-    }
-    expect(currentZoneName('Asia/Kolkata')).toBeNull();
-  });
-
-  it('links only zones with the same clock: the same offset now and half a year from now', () => {
-    const offset = (zone: string, at: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'longOffset' })
-      .formatToParts(at).find((p) => p.type === 'timeZoneName')!.value;
-    const now = new Date();
-    const later = new Date(now.getTime() + 182 * 86_400_000);
-    for (const [from, to] of Object.entries(LEGACY_ZONE_ALIASES)) {
-      expect(offset(from, now), from).toBe(offset(to, now));
-      expect(offset(from, later), from).toBe(offset(to, later));
+describe('isRequestZone', () => {
+  it('the cheap rules a route checks before Postgres is asked', () => {
+    for (const zone of ['Asia/Kolkata', 'UTC', 'Asia/Calcutta']) expect(isRequestZone(zone), zone).toBe(true);
+    for (const zone of [undefined, null, 5, '', ' Asia/Kolkata', 'Asia/Kolkata ', 'IST', 'Mars/Olympus', `Asia/${'x'.repeat(60)}`]) {
+      expect(isRequestZone(zone), String(zone)).toBe(false);
     }
   });
 });

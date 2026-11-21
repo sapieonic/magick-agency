@@ -15,6 +15,7 @@ import {
   compareQueryBodySchema,
 } from '../../../agency/compare/validate.js';
 import { localDayBounds } from '../../../agency/reports/schedule.js';
+import { isRequestZone } from '../../../agency/zone.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import {
@@ -62,8 +63,9 @@ async function resolveWindow(
   reply: FastifyReply,
   q: { tenantId: string; accountId: string; campaign: CompareCampaign; from: string; to: string; timezone: string | undefined },
 ): Promise<CompareWindowScope | null> {
-  const databaseTimezone = q.timezone === undefined ? null : await deps.databaseZone(q.timezone);
-  const window = checkCompareWindow({ from: q.from, to: q.to, timezone: q.timezone }, () => databaseTimezone !== null, deps.today);
+  // The cheap rules first: Postgres is asked only about a zone that passes them.
+  const databaseTimezone = isRequestZone(q.timezone) ? await deps.databaseZone(q.timezone) : null;
+  const window = checkCompareWindow({ from: q.from, to: q.to, timezone: q.timezone }, databaseTimezone, deps.today);
   if (!window.ok) {
     sendCompareRefusal(reply, window.code);
     return null;
@@ -72,7 +74,7 @@ async function resolveWindow(
   return {
     tenantId: q.tenantId, accountId: q.accountId, campaignId: q.campaign.id,
     // The answer echoes the request's zone; the reads cut days in Postgres's name for it.
-    from: q.from, to: q.to, timezone: window.timezone, databaseTimezone: databaseTimezone!, start, end,
+    from: q.from, to: q.to, timezone: window.timezone, databaseTimezone: window.databaseTimezone, start, end,
   };
 }
 
