@@ -1831,6 +1831,22 @@ the FK takes SHARE ROW EXCLUSIVE on `agency_campaigns`, so the Up starts with `S
 index, both cascades, the listing indexes and their plans, the lock timeout, down then up) and the down →
 up inventory suite.
 
+### 0064 — `migrations/0064_session_events_offline_index.sql`
+
+Compare agents' trend days (docs/compare-agents.md §7). **`idx_agency_session_events_offline`**
+`(session_id, at) WHERE to_state = 'offline' OR from_state = 'offline'` on
+`agency_agent_session_events`: a session's offline boundaries, by session. A live session goes
+`offline` without `left_at` and the agent's next join reuses the row, so a session row is not one
+stretch of logged-in time; the trend's `COMPARE_LOGGED_IN_DAYS_SQL` finds the online spans from the
+session's start and these boundaries (two or three a session a day) instead of every state change.
+Its predicate repeats the index's (`OFFLINE_BOUNDARY_EVENT_SQL`). `CREATE INDEX IF NOT EXISTS` after
+`SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first on a large table;
+an invalid index left under the name by a failed concurrent build fails the migration. **Down** drops
+it. **Tests**: `test/integration/db/session-events-offline-index-migration.test.ts` (the definition,
+a statement repeating the predicate uses it, the invalid-index refusal, down then up), the server's
+`test/integration/api/compare-agents.test.ts` (the days, open sessions with offline gaps) and the
+down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

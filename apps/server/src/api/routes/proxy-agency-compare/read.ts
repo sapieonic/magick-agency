@@ -62,8 +62,8 @@ async function resolveWindow(
   reply: FastifyReply,
   q: { tenantId: string; accountId: string; campaign: CompareCampaign; from: string; to: string; timezone: string | undefined },
 ): Promise<CompareWindowScope | null> {
-  const zoneKnown = q.timezone !== undefined && (await deps.zoneKnownToDatabase(q.timezone));
-  const window = checkCompareWindow({ from: q.from, to: q.to, timezone: q.timezone }, () => zoneKnown, deps.today);
+  const databaseTimezone = q.timezone === undefined ? null : await deps.databaseZone(q.timezone);
+  const window = checkCompareWindow({ from: q.from, to: q.to, timezone: q.timezone }, () => databaseTimezone !== null, deps.today);
   if (!window.ok) {
     sendCompareRefusal(reply, window.code);
     return null;
@@ -71,7 +71,8 @@ async function resolveWindow(
   const { start, end } = localDayBounds(q.from, q.to, window.timezone);
   return {
     tenantId: q.tenantId, accountId: q.accountId, campaignId: q.campaign.id,
-    from: q.from, to: q.to, timezone: window.timezone, start, end,
+    // The answer echoes the request's zone; the reads cut days in Postgres's name for it.
+    from: q.from, to: q.to, timezone: window.timezone, databaseTimezone: databaseTimezone!, start, end,
   };
 }
 

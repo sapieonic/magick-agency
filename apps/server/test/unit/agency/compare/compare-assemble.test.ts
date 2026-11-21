@@ -9,6 +9,7 @@ import { resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
 import {
   assembleCompareResponse,
   daySplitOf,
+  impossibleFigure,
   metricCounts,
   metricSources,
   trendOf,
@@ -166,6 +167,39 @@ describe('assembleCompareResponse', () => {
     });
     expect(r.trend).toBeNull();
     expect(r.trend_metric).toBeNull();
+  });
+
+  it('impossible counts are withheld: null, not reportable, out of the band, the pooled figure and the findings', () => {
+    // Agent b recorded 30 promises over 25 conversations (promises by when written, calls by when dialled),
+    // and logged 600 s of shift around 2,400 s of talk and 800 s of wrap-up.
+    const odd = agent('b', { promises: { promises: 30, amount: 0, other_conversations: 0 }, roster: { connected: 25 }, occupancy: { shift_seconds: 600, by_state: { available: 600, reserved: 0, on_call: 0, wrapup: 0, break: 0, offline: 0 } } });
+    const rest = ids.filter((x) => x !== 'b').map((x) => agent(x, { promises: { promises: 4, amount: 0, other_conversations: 0 } }));
+    const m = resolve([b('promises_rate'), b('calls_per_hour')]);
+    const r = assembleCompareResponse({
+      campaignId: 'c', from: 'x', to: 'y', timezone: 'UTC', asOf: new Date(0), metrics: m.metrics, trendMetric: null,
+      picked: ['b', 'a'], cohort: [odd, ...rest], names: new Map(), trend: null,
+    });
+    expect(r.agents[0]!.values['promises_rate']).toEqual({ value: null, numerator: 30, denominator: 25, reportable: false, interval: null });
+    expect(r.agents[0]!.values['calls_per_hour']).toEqual({ value: null, numerator: 25, denominator: 600, reportable: false, interval: null });
+    expect(r.agents[1]!.values['promises_rate']).toMatchObject({ value: 4 / 40, reportable: true });
+    // Out of the band and the pooled rate: six agents at 4 of 40.
+    expect(r.cohort.per_metric['promises_rate']).toMatchObject({ agents_rated: 6, median: 4 / 40 });
+    expect(r.cohort.per_metric['promises_rate']!.pooled).toBeCloseTo(4 / 40, 12);
+    expect(r.cohort.per_metric['calls_per_hour']!.agents_rated).toBe(6);
+    // Never "too few calls", never a gap: the agent is not judged on a figure that cannot be right.
+    expect(r.findings.filter((f) => f.agent_user_id === 'b')).toEqual([]);
+  });
+
+  it('impossibleFigure: a rate over 1, a shift shorter than the calls in it; nothing else', () => {
+    const a = agent('a');
+    const rate = resolve([b('success_rate')]).metrics[0]!;
+    const perHour = resolve([b('calls_per_hour')]).metrics[0]!;
+    const count = resolve([b('calls_handled')]).metrics[0]!;
+    expect(impossibleFigure(rate, a, { numerator: 41, denominator: 40 })).toBe(true);
+    expect(impossibleFigure(rate, a, { numerator: 40, denominator: 40 })).toBe(false);
+    expect(impossibleFigure(perHour, a, { numerator: 40, denominator: 3199 })).toBe(true);
+    expect(impossibleFigure(perHour, a, { numerator: 40, denominator: 3200 })).toBe(false);
+    expect(impossibleFigure(count, a, { numerator: 1e9, denominator: null })).toBe(false);
   });
 
   it('a picked agent outside the cohort is a programming error', () => {

@@ -6,6 +6,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENCY_COMPARE_ERROR_STATUS,
+  COMPARE_BUSY_RETRY_AFTER_SECONDS,
   type AgencyCompareErrorCode,
   type AgencyCompareErrorResponse,
   type AgencyCompareOutcomeCode,
@@ -24,7 +25,7 @@ import { CompareReads } from '../../../agency/compare/read.js';
 import { COMPARE_ERROR_MESSAGES } from '../../../agency/compare/validate.js';
 import { effectiveCatalog } from '../../../agency/my-day.js';
 import { localDateOf } from '../../../agency/reports/schedule.js';
-import { postgresKnowsZone } from '../../../agency/reports/zone.js';
+import { postgresZoneName } from '../../../agency/reports/zone.js';
 import { sendRefusal } from '../helpers/refusal.js';
 
 /** The flag gate's refusal: the dialer gate's body shape (`helpers/dialer-gate.ts`), for this page. */
@@ -50,7 +51,11 @@ export interface CompareRouteDeps {
   campaign(tenantId: string, accountId: string, campaignId: string): Promise<CompareCampaign | null>;
   names(userIds: readonly string[], tenantId: string): Promise<Map<string, string | null>>;
   /** Is the zone in Postgres's zone database (the reads cut days with `AT TIME ZONE`)? */
-  zoneKnownToDatabase(zone: string): Promise<boolean>;
+  /**
+   * The name Postgres cuts the zone's days in (`postgresZoneName`: its own spelling, or a legacy
+   * name's current one), or null when it knows neither.
+   */
+  databaseZone(zone: string): Promise<string | null>;
   /** Today's local date in `zone`. */
   today(zone: string): string;
   now(): Date;
@@ -71,14 +76,30 @@ export function defaultCompareRouteDeps(): CompareRouteDeps {
       return { id: row.id, name: row.name, codes: compareOutcomeCodes(effectiveCatalog(row.disposition_catalog)) };
     },
     names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'compare views'),
-    zoneKnownToDatabase: postgresKnowsZone,
+    databaseZone: postgresZoneName,
     today: (zone) => localDateOf(new Date(), zone),
     now: () => new Date(),
   };
 }
 
-/** `{ error, code, message }` with the code's status (`AGENCY_COMPARE_ERROR_STATUS`). */
+/**
+ * `{ error, code, message }` with the code's status (`AGENCY_COMPARE_ERROR_STATUS`). `compare_busy`
+ * also carries when to try again, as the error mask's policy asks of an authored 429: the
+ * `Retry-After` header and `retry_after_seconds` (`COMPARE_BUSY_RETRY_AFTER_SECONDS`).
+ */
 export function sendCompareRefusal(reply: FastifyReply, code: AgencyCompareErrorCode, message?: string): FastifyReply {
+  if (code === 'compare_busy') {
+    const body: AgencyCompareErrorResponse = {
+      error: 'Too Many Requests',
+      code,
+      message: message ?? COMPARE_ERROR_MESSAGES[code],
+      retry_after_seconds: COMPARE_BUSY_RETRY_AFTER_SECONDS,
+    };
+    return reply
+      .code(AGENCY_COMPARE_ERROR_STATUS[code])
+      .header('Retry-After', String(COMPARE_BUSY_RETRY_AFTER_SECONDS))
+      .send(body);
+  }
   return sendRefusal<AgencyCompareErrorCode>(
     reply,
     AGENCY_COMPARE_ERROR_STATUS[code],
@@ -109,6 +130,14 @@ export function sendCompareTimedOut(request: FastifyRequest, reply: FastifyReply
  */
 export function clientGoneSignal(reply: FastifyReply): AbortSignal {
   const controller = new AbortController();
+  // Gone already (the connection closed while the hooks ran): 'close' has fired and will not again.
+  // The response and the socket only: a request whose body has been read is destroyed in current
+  // Node (auto-destroy after 'end') with its client still waiting.
+  const socket = reply.raw.socket ?? reply.request.raw.socket;
+  if (reply.raw.destroyed || socket?.destroyed === true) {
+    controller.abort();
+    return controller.signal;
+  }
   reply.raw.once('close', () => {
     if (!reply.raw.writableFinished) controller.abort();
   });

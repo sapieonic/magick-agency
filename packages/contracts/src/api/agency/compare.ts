@@ -104,7 +104,17 @@ export const COMPARE_VIEWS_PER_USER_MAX = 50;
 /** Compare reads (query and options) one tenant may run at once; past it `429 compare_busy` (§7). */
 export const COMPARE_TENANT_CONCURRENT_READS = 2;
 
-/** The read's `SET LOCAL statement_timeout`; past it `503 compare_timed_out` (§7). */
+/**
+ * How long a `429 compare_busy` asks the client to wait before it tries again, in whole seconds:
+ * its `Retry-After` header and the body's `retry_after_seconds`. A read takes at most
+ * {@link COMPARE_READ_TIMEOUT_MS}; most take well under a second.
+ */
+export const COMPARE_BUSY_RETRY_AFTER_SECONDS = 2;
+
+/**
+ * The read's `SET LOCAL statement_timeout`, and the deadline of the whole read (a read sends several
+ * statements); past either `503 compare_timed_out` (§7).
+ */
 export const COMPARE_READ_TIMEOUT_MS = 3_000;
 
 /**
@@ -502,6 +512,11 @@ export interface AgencyCompareValue {
   /**
    * The figure in the metric's unit (a rate as a fraction). Null when the denominator is zero
    * (never 0, `ratePct`'s rule). Served under the floor too: `reportable` says whether to draw it.
+   * Also null (and not `reportable`, no `interval`) when the counts cannot both be right, the
+   * roster's `occupancy_pct` rule: a rate whose `numerator` exceeds its `denominator` (promises are
+   * counted when recorded, conversations when dialled), or `calls_per_hour` over a shift shorter
+   * than the calls' own talk and wrap-up. Such an agent is left out of the metric's cohort figures
+   * and findings; `numerator` and `denominator` are still served.
    */
   value: number | null;
   /** `count` / `amount`: the figure itself; `rate`: the hits; `seconds`: total seconds; `per_hour`: calls. */
@@ -804,6 +819,11 @@ export interface AgencyCompareErrorResponse {
   error: string;
   code: AgencyCompareErrorCode;
   message: string;
+  /**
+   * `compare_busy` only: seconds to wait before trying again ({@link COMPARE_BUSY_RETRY_AFTER_SECONDS}),
+   * the same as the `Retry-After` header. Absent on every other refusal.
+   */
+  retry_after_seconds?: number;
 }
 
 const _lensesListed: AllListed<CompareLens, typeof COMPARE_LENSES> = true;

@@ -24,6 +24,7 @@
  * of its own, released in `finally` however the consumer stops.
  */
 import { getPool } from '@magick-agency/db';
+import { cancelBackend } from '@magick-agency/db/utils/cancel-backend';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
 import { hasRecordingSql } from '@magick-agency/db/utils/recording-request';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
@@ -160,12 +161,16 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
   const client = await getPool().connect();
   let broken: Error | undefined;
   // A cancel is sent only while one of this cursor's statements runs: the backend serves this
-  // client alone, and an idle one (the consumer holding a row) has nothing to cancel.
+  // client alone, and an idle one (the consumer holding a row) has nothing to cancel. It goes on a
+  // connection of its own (`cancelBackend`), never through the shared pool, where it would wait
+  // behind every borrower; and it is awaited below before this client is given up, so no cancel
+  // is still in flight when the connection is destroyed (a cancelled cursor is always `broken`).
   let running = false;
+  let cancelling: Promise<boolean> | null = null;
   const pid = (client as unknown as { processID?: number | null }).processID;
   const cancel = () => {
-    if (!running || pid == null) return;
-    getPool().query('SELECT pg_cancel_backend($1::int)', [pid]).catch(() => undefined);
+    if (!running || pid == null || cancelling) return;
+    cancelling = cancelBackend(pid, getPool().options);
   };
   const query = async (sql: string, params?: unknown[]) => {
     signal?.throwIfAborted();
@@ -211,6 +216,11 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
     throw err;
   } finally {
     signal?.removeEventListener('abort', cancel);
+    if (cancelling) {
+      // Signalled before the connection is given up, and never back to the pool after a cancel.
+      await cancelling;
+      broken ??= new Error('report cursor cancelled');
+    }
     try {
       await client.query('ROLLBACK');
     } catch (err) {

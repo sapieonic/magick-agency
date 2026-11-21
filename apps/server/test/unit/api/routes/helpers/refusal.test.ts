@@ -22,6 +22,7 @@ describe('sendRefusal', () => {
     expect(sent(403).error).toBe('Forbidden');
     expect(sent(404).error).toBe('Not Found');
     expect(sent(409).error).toBe('Conflict');
+    expect(sent(429).error).toBe('Too Many Requests');
     expect(sent(502).error).toBe('Bad Gateway');
     expect(sent(503).error).toBe('Service Unavailable');
     expect(sent(418).error).toBe('Error');

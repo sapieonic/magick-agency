@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   COMPARE_BUILTIN_METRICS,
+  COMPARE_BUSY_RETRY_AFTER_SECONDS,
+  COMPARE_READ_TIMEOUT_MS,
   COMPARE_BUILTIN_METRIC_KEYS,
   COMPARE_CALLBACKS_MIN_DENOMINATOR,
   COMPARE_FINDING_CODES,
@@ -186,5 +188,13 @@ describe('compareWindowProblem', () => {
     expect(compareWindowProblem('2026-10-02', '2026-10-01')).toBe('compare_window_invalid');
     expect(compareWindowProblem('2026-10-01', '2026-10-05', '2026-10-04')).toBe('compare_window_invalid');
     expect(compareWindowProblem('2026-13-01', '2026-13-02')).toBe('compare_window_invalid');
+  });
+});
+
+describe('the busy refusal\'s retry hint', () => {
+  it('is whole seconds, positive, and no longer than a read may take', () => {
+    expect(Number.isInteger(COMPARE_BUSY_RETRY_AFTER_SECONDS)).toBe(true);
+    expect(COMPARE_BUSY_RETRY_AFTER_SECONDS).toBeGreaterThan(0);
+    expect(COMPARE_BUSY_RETRY_AFTER_SECONDS * 1000).toBeLessThanOrEqual(COMPARE_READ_TIMEOUT_MS);
   });
 });

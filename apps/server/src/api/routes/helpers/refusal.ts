@@ -10,6 +10,7 @@ const STATUS_TITLES: Readonly<Record<number, string>> = {
   403: 'Forbidden',
   404: 'Not Found',
   409: 'Conflict',
+  429: 'Too Many Requests',
   502: 'Bad Gateway',
   503: 'Service Unavailable',
 };

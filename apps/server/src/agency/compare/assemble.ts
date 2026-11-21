@@ -183,6 +183,25 @@ export function trendOf(metricId: string, picked: readonly string[], cohort: rea
   };
 }
 
+/**
+ * The counts cannot both be right: the value is WITHHELD (null, not reportable, no interval) and the
+ * agent is left out of the metric's band, pooled figure and findings. The roster's `occupancy_pct`
+ * rule (`agent-roster-stats.ts`): its two halves come from different tables and clocks, so a
+ * numerator past what its denominator allows is an inconsistency, never a figure to rank or name.
+ *  - a rate over 1: `promises_rate` counts promises by when the outcome was written and its
+ *    conversations by when they were dialled, so a promise recorded in the window on a call dialled
+ *    before it can outnumber the window's conversations;
+ *  - `calls_per_hour` over a shift shorter than the calls' own talk and wrap-up (a dropped state
+ *    change, best-effort as the roster says, shortens the shift while the calls stay counted).
+ */
+export function impossibleFigure(metric: Pick<AgencyCompareMetricInfo, 'ref' | 'definition'>, a: CompareAgentSources, counts: { numerator: number; denominator: number | null }): boolean {
+  if (metric.definition.unit === 'rate') return counts.denominator !== null && counts.numerator > counts.denominator;
+  if (metric.ref.kind === 'builtin' && metric.ref.key === 'calls_per_hour') {
+    return a.roster.talk_seconds + a.roster.wrapup_seconds > (counts.denominator ?? 0);
+  }
+  return false;
+}
+
 /** Everything {@link assembleCompareResponse} needs. */
 export interface CompareAssembleInput {
   campaignId: string;
@@ -208,18 +227,29 @@ export function assembleCompareResponse(input: CompareAssembleInput): AgencyComp
   // Every cohort agent's value on every metric: the band, the pooled figure and the findings
   // need the whole cohort, the picked agents' columns only theirs.
   const values = new Map<string, Map<string, AgencyCompareValue>>();
+  /** Per metric, the agents whose counts are impossible ({@link impossibleFigure}): out of the band and the findings. */
+  const withheld = new Map<string, Set<string>>();
   for (const metric of input.metrics) {
     const perAgent = new Map<string, AgencyCompareValue>();
+    const out = new Set<string>();
     for (const a of input.cohort) {
-      const { numerator, denominator } = metricCounts(metric, a);
-      perAgent.set(a.agent_user_id, compareValue(metric.definition, numerator, denominator));
+      const counts = metricCounts(metric, a);
+      const value = compareValue(metric.definition, counts.numerator, counts.denominator);
+      if (impossibleFigure(metric, a, counts)) {
+        out.add(a.agent_user_id);
+        perAgent.set(a.agent_user_id, { ...value, value: null, reportable: false, interval: null });
+      } else {
+        perAgent.set(a.agent_user_id, value);
+      }
     }
     values.set(metric.id, perAgent);
+    withheld.set(metric.id, out);
   }
+  const counted = (metricId: string): string[] => cohortIds.filter((agent) => !withheld.get(metricId)!.has(agent));
 
   const perMetric: Record<string, AgencyCompareCohortMetric> = {};
   for (const metric of input.metrics) {
-    perMetric[metric.id] = compareCohortMetric(metric.definition, [...values.get(metric.id)!.values()]);
+    perMetric[metric.id] = compareCohortMetric(metric.definition, counted(metric.id).map((agent) => values.get(metric.id)!.get(agent)!));
   }
 
   const agents: AgencyCompareAgent[] = input.picked.map((agent) => {
@@ -236,7 +266,7 @@ export function assembleCompareResponse(input: CompareAssembleInput): AgencyComp
   const { findings, not_clear } = compareFindings({
     metrics: input.metrics.map((metric) => ({
       metric,
-      cohort: cohortIds.map((agent) => ({ agent_user_id: agent, ...values.get(metric.id)!.get(agent)! })),
+      cohort: counted(metric.id).map((agent) => ({ agent_user_id: agent, ...values.get(metric.id)!.get(agent)! })),
     })),
     picked: input.picked,
   });

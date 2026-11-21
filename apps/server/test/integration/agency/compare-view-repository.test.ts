@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { closePool, getPool, initDbPool } from '@magick-agency/db';
 import { closeTestPool, getTestPool, TEST_DB_URL, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import { agencyCompareViewRepository as repo, type CompareViewContent } from '../../../src/db/repositories/agency.repository.js';
+import { COMPARE_VIEW_DEFAULT_LOCK_SQL } from '../../../src/db/repositories/agency/compare-view.repository.js';
 
 const tenant = randomUUID();
 const account = randomUUID();
@@ -82,6 +83,46 @@ describe('one default per campaign', () => {
     const { rows } = await getTestPool().query(`SELECT count(*)::int AS n FROM agency_compare_views WHERE campaign_id = $1 AND is_campaign_default`, [campaign]);
     expect(rows[0]).toEqual({ n: 1 });
   });
+});
+
+describe('lock order: the campaign\'s default lock before any row', () => {
+  it('an edit of the default view while another save holds the lock and clears that row waits, never deadlocks (40P01)', async () => {
+    const owner = randomUUID();
+    const made = await repo.create({ ...scope, ownerUserId: owner, maxPerOwner: 50 }, content({ name: 'The default', is_campaign_default: true }));
+    if (!made.ok) throw new Error('limit');
+    const id = made.view.id;
+
+    // Another save in its clearing phase: it holds the campaign's default lock...
+    const other = await getTestPool().connect();
+    try {
+      await other.query('BEGIN');
+      await other.query(COMPARE_VIEW_DEFAULT_LOCK_SQL, [campaign]);
+      // ...while the owner re-saves the default (a rename keeps it the default).
+      const edit = repo.update({ ...scope, ownerUserId: owner }, id, content({ name: 'Renamed default', is_campaign_default: true }))
+        .then((v) => ({ ok: true as const, v }), (err: { code?: string }) => ({ ok: false as const, code: err.code }));
+      // The edit is now waiting on the advisory lock.
+      for (let i = 0; ; i++) {
+        const { rows } = await getTestPool().query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE a.datname = current_database() AND l.locktype = 'advisory' AND NOT l.granted`);
+        if (rows[0]!.n > 0) break;
+        if (i > 200) throw new Error('the edit never waited on the default lock');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // The other save clears the campaign's default: a write to the edited row. An edit that had
+      // locked its row before waiting for the default lock deadlocks here.
+      const cleared = await other.query(
+        `UPDATE agency_compare_views SET is_campaign_default = false WHERE campaign_id = $1::uuid AND is_campaign_default`, [campaign],
+      ).then(() => 'ok', (err: { code?: string }) => err.code);
+      await other.query(cleared === 'ok' ? 'COMMIT' : 'ROLLBACK');
+      expect(cleared).toBe('ok');
+      const result = await edit;
+      expect(result).toMatchObject({ ok: true, v: { id, name: 'Renamed default', is_campaign_default: true } });
+    } finally {
+      other.release();
+    }
+    expect((await repo.findCampaignDefault(scope, campaign))!.id).toBe(id);
+  }, 15_000);
 });
 
 describe('the per-owner limit', () => {
