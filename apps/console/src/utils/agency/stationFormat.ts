@@ -5,6 +5,7 @@
  * the reader's own clock: the station has no customer time zone (spec 8, the timezone caveat).
  */
 
+import { formatFactPhone, maskFactPhone } from '@magick-agency/domain/fact-phone';
 import { formatPhone } from '@magick-agency/web-ui/format';
 
 const INDIAN_GROUPING = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
@@ -62,36 +63,18 @@ export function factDay(day: string, now: Date | number = Date.now()): string {
 }
 
 /**
- * The ten digits of an Indian mobile, from a phone fact's digits (no `+`), or null (AS19's one
- * phone rule, both clients). The national form drops a leading `91` from twelve digits or a
- * leading `0` from eleven, and keeps ten as they are; it is a mobile when it is then ten digits
- * starting 6 to 9.
- */
-function indianMobile(digits: string): string | null {
-  const national = digits.length === 12 && digits.startsWith('91')
-    ? digits.slice(2)
-    : digits.length === 11 && digits.startsWith('0')
-      ? digits.slice(1)
-      : digits;
-  return /^[6-9]\d{9}$/.test(national) ? national : null;
-}
-
-/**
- * A phone fact (the domain's parse: digits, `+` kept when written) by AS19's one phone rule, which
- * the tile, the hover card, the script and the agent app all follow. An Indian mobile
- * (`9876543210`, `919876543210`, `+919876543210`, `09876543210`) is `+91 98765 43210`, masked
- * `98••• ••210` (the first two and last three of its ten digits). Any other number is the value as
- * read, unspaced (`+14155550123`), masked on all its digits (`14••• ••123`). A value the server
- * could not read is masked the same way on its digits, and one with fewer than six shows none.
+ * A phone fact by AS19's one phone rule (R6, S3), which the tile, the hover card, the script and the
+ * agent app all follow: the domain's `formatFactPhone` / `maskFactPhone`
+ * (`@magick-agency/domain/fact-phone`). An Indian mobile (`9876543210`, `919876543210`,
+ * `+919876543210`, `09876543210`) is `+91 98765 43210`, masked `98••• ••210`; any other number is
+ * the value as read, unspaced (`+14155550123`), masked on all its digits (`14••• ••123`). A value
+ * the server could not read is masked the same way on its digits, and one with fewer than seven
+ * shows none (`•••`).
+ *
+ * @param digits the parsed value (digits, `+` kept when written), or the raw text when unread
  */
 export function factPhone(digits: string, display: 'full' | 'masked' = 'full'): string {
-  const text = digits.trim();
-  const bare = text.replace(/\D/g, '');
-  const mobile = indianMobile(bare);
-  if (display === 'full') return mobile ? `+91 ${mobile.slice(0, 5)} ${mobile.slice(5)}` : text;
-  const shown = mobile ?? bare;
-  if (shown.length < 6) return '•••';
-  return `${shown.slice(0, 2)}••• ••${shown.slice(-3)}`;
+  return display === 'full' ? formatFactPhone(digits) : maskFactPhone(digits);
 }
 
 /** Half of an amount as a plain decimal string, for the "Half" chip; null when not an amount. */

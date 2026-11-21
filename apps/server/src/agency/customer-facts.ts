@@ -7,8 +7,9 @@
  *
  * ── The facts ───────────────────────────────────────────────────────────────
  *  - `name`, `place`: the role's column when set, else a guess from the column names that never
- *    reads anything but a name or a place column ({@link NAME_GUESS_COLUMNS},
- *    {@link PLACE_GUESS_COLUMNS}, matched ignoring case, spaces and underscores). Trimmed, at most
+ *    reads anything but a name or a place column (the domain's `guessNameColumn` /
+ *    `guessPlaceColumn`, `@magick-agency/domain/customer-name`: {@link NAME_GUESS_COLUMNS},
+ *    {@link PLACE_GUESS_COLUMNS}, matched ignoring case, spaces, `_`, `-` and `.`). Trimmed, at most
  *    {@link FACT_TEXT_MAX} characters; absent when blank or a placeholder (`-`, `N/A`).
  *  - `tiles`: the hero columns (`heroColumnsFor`: `context_display.hero`, else its guess; never
  *    the first columns nobody chose, as the contact panel reads it), minus the columns already
@@ -25,15 +26,13 @@
  * before.
  *
  * ── The card's chosen facts (AS19, `context_display.facts`) ──────────────────
- * When `facts` is an array (even `[]`) the tiles are exactly its entries, in order: each fact whose
- * column the row has (exact spelling, then ignoring case) and is not hidden, at most
- * `AGENCY_FACT_FIELDS_MAX`, each with the fact's `label` and `key`. `hero` and the `amount_due` /
- * `due_date` roles are not read for tiles on this path; the tile keyed `amount_due` (or
- * `due_date`) carries that `role`, so the amount chips keep working. A tile's type is
- * `types[column]`, else text (no role override). A fact whose value is blank still has its tile
- * (`raw: ''`). Only the first highlighted fact keeps `highlight`, and its tile is sent first. The
- * name and the place are read as on the BE-6 path. The write's rules for `facts` are
- * {@link contextDisplayIssues}'.
+ * When `facts` is an array (even `[]`) the tiles are exactly its entries: the domain's one builder,
+ * `chosenFactTiles` (`@magick-agency/domain/fact-tiles`, AS19 S6), which the console's side views
+ * and the agent app share: each fact whose column the row has and is not hidden, in order, the
+ * first highlighted one first, at most `AGENCY_FACT_FIELDS_MAX`, each with the fact's `label` and
+ * `key`; `hero` and the `amount_due` / `due_date` roles are not read for tiles on this path, and the
+ * tile keyed `amount_due` (or `due_date`) carries that `role`. The name and the place are read as
+ * on the BE-6 path. The write's rules for `facts` are {@link contextDisplayIssues}'.
  */
 import {
   AGENCY_CONTEXT_FIELD_TYPES,
@@ -49,48 +48,28 @@ import {
   type AgencyCustomerFacts,
   type AgencyFactTile,
   type AgencyFactTileRole,
-  AGENCY_FACT_TILE_ROLES,
 } from '@magick-agency/contracts/agency';
-import { contextValueText, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
+import { asRecord, contextValueText, fold, hiddenSet, rowKey } from '@magick-agency/domain/context-columns';
+import { heroColumnsFor, MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
-import { INBOUND_MATCH_NAME_COLUMNS } from './inbound/match-name.js';
+import {
+  CUSTOMER_TEXT_MAX,
+  customerText,
+  guessNameColumn,
+  guessPlaceColumn,
+  NAME_GUESS_COLUMNS,
+  PLACE_GUESS_COLUMNS,
+} from '@magick-agency/domain/customer-name';
+import { chosenFactTiles, FACT_TILE_ROLE_TYPE, FACT_TILE_ROLES, factTypeOf } from '@magick-agency/domain/fact-tiles';
+
+/** The guess lists, from the domain (AS19 S1): kept here for the callers that read them from the panel's facts. */
+export { NAME_GUESS_COLUMNS, PLACE_GUESS_COLUMNS };
 
 /** The longest name or place sent; a longer value is cut (the inbound name's bound). */
-export const FACT_TEXT_MAX = 100;
-
-/** Columns read as the customer's name when no role names one: the inbound match's list. */
-export const NAME_GUESS_COLUMNS: readonly string[] = INBOUND_MATCH_NAME_COLUMNS;
-
-/** Columns read as the customer's place when no role names one. Only names that mean a place. */
-export const PLACE_GUESS_COLUMNS: readonly string[] = ['city', 'town', 'place', 'location', 'district', 'village'];
+export const FACT_TEXT_MAX = CUSTOMER_TEXT_MAX;
 
 /** The longest column name a role or a type may name (the roster's header names are shorter). */
 export const CONTEXT_COLUMN_NAME_MAX = 200;
-
-/** The tile roles in the order they are appended. */
-const TILE_ROLES: readonly AgencyFactTileRole[] = ['amount_due', 'due_date'];
-
-const ROLE_TYPE: Readonly<Record<AgencyFactTileRole, AgencyContextFieldType>> = { amount_due: 'money', due_date: 'date' };
-
-const fold = (name: string): string => name.trim().toLowerCase();
-/** A column name with case, spaces, underscores and dashes ignored: `Customer Name` is `customer_name`. */
-const squash = (name: string): string => name.toLowerCase().replace(/[\s_\-.]+/g, '');
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function hiddenSet(display: AgencyContextDisplay | null | undefined): Set<string> {
-  const hidden = Array.isArray(display?.hidden) ? display.hidden : [];
-  return new Set(hidden.filter((h): h is string => typeof h === 'string').map(fold));
-}
-
-/** The row's key a role or a type names (exact spelling first, then ignoring case), when visible. */
-function rowKey(context: Record<string, unknown>, name: unknown, hidden: ReadonlySet<string>): string | undefined {
-  if (typeof name !== 'string' || name.trim().length === 0 || hidden.has(fold(name))) return undefined;
-  if (Object.hasOwn(context, name)) return name;
-  return Object.keys(context).find((k) => fold(k) === fold(name) && !hidden.has(fold(k)));
-}
 
 /** A role's column, the row's own spelling, or undefined. */
 function roleKey(
@@ -102,35 +81,13 @@ function roleKey(
   return roles ? rowKey(context, roles[role], hidden) : undefined;
 }
 
-/** The first visible column whose squashed name is on `guesses`, in the list's order. */
-function guessKey(context: Record<string, unknown>, guesses: readonly string[], hidden: ReadonlySet<string>): string | undefined {
-  const keys = Object.keys(context).filter((k) => !hidden.has(fold(k)));
-  for (const guess of guesses) {
-    const match = keys.find((k) => squash(k) === squash(guess) && !isBlankContextValue(context[k]));
-    if (match !== undefined) return match;
-  }
-  return undefined;
-}
-
-/** A column's value as the name or place: trimmed, capped, absent when blank. */
-function factText(value: unknown): string | undefined {
-  if (isBlankContextValue(value)) return undefined;
-  const text = contextValueText(value)?.trim();
-  return text ? text.slice(0, FACT_TEXT_MAX) : undefined;
-}
-
 /** The type a column is read as: its tile role's, else `types`, else text. */
 function columnType(
   column: string,
   role: AgencyFactTileRole | undefined,
   types: Record<string, unknown> | null,
 ): AgencyContextFieldType {
-  if (role) return ROLE_TYPE[role];
-  if (!types) return 'text';
-  const declared = Object.hasOwn(types, column)
-    ? types[column]
-    : Object.entries(types).find(([k]) => fold(k) === fold(column))?.[1];
-  return (AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(declared) ? (declared as AgencyContextFieldType) : 'text';
+  return role ? FACT_TILE_ROLE_TYPE[role] : factTypeOf(column, types);
 }
 
 /**
@@ -151,16 +108,16 @@ export function customerFacts(
   const roles = asRecord(shown.roles);
   const types = asRecord(shown.types);
 
-  const nameKey = roleKey(row, roles, 'name', hidden) ?? guessKey(row, NAME_GUESS_COLUMNS, hidden);
-  const placeKey = roleKey(row, roles, 'place', hidden) ?? guessKey(row, PLACE_GUESS_COLUMNS, hidden);
-  const name = nameKey !== undefined ? factText(row[nameKey]) : undefined;
-  const place = placeKey !== undefined ? factText(row[placeKey]) : undefined;
+  const nameKey = roleKey(row, roles, 'name', hidden) ?? guessNameColumn(row, { hidden });
+  const placeKey = roleKey(row, roles, 'place', hidden) ?? guessPlaceColumn(row, { hidden });
+  const name = nameKey !== undefined ? customerText(row[nameKey]) : undefined;
+  const place = placeKey !== undefined ? customerText(row[placeKey]) : undefined;
   const person = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
 
-  if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown.facts, hidden, types) };
+  if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown) };
 
   const tileRoleOf = new Map<string, AgencyFactTileRole>();
-  for (const role of TILE_ROLES) {
+  for (const role of FACT_TILE_ROLES) {
     const key = roleKey(row, roles, role, hidden);
     if (key !== undefined && !tileRoleOf.has(key)) tileRoleOf.set(key, role);
   }
@@ -184,53 +141,6 @@ export function customerFacts(
   });
 
   return { ...person, tiles };
-}
-
-/** The tile role a fact's key gives it (AS19): the key `amount_due` or `due_date`, else none. */
-function roleOfKey(key: string | undefined): AgencyFactTileRole | undefined {
-  return key !== undefined && (AGENCY_FACT_TILE_ROLES as readonly string[]).includes(key) ? (key as AgencyFactTileRole) : undefined;
-}
-
-/**
- * The tiles of a campaign with `context_display.facts` (AS19): one per fact whose column the row
- * has and is not hidden, in order, at most `AGENCY_FACT_FIELDS_MAX`, the first highlighted one
- * first. Read leniently (the list may be hand-edited JSON): an entry with no column is skipped, a
- * label or key that is not text is left off the tile, a column listed twice is one tile.
- */
-function chosenFactTiles(
-  row: Record<string, unknown>,
-  facts: readonly unknown[],
-  hidden: ReadonlySet<string>,
-  types: Record<string, unknown> | null,
-): AgencyFactTile[] {
-  const tiles: AgencyFactTile[] = [];
-  for (const entry of facts) {
-    if (tiles.length >= AGENCY_FACT_FIELDS_MAX) break;
-    const fact = asRecord(entry);
-    if (!fact) continue;
-    const column = rowKey(row, fact['column'], hidden);
-    if (column === undefined || tiles.some((t) => t.column === column)) continue;
-    const label = typeof fact['label'] === 'string' && fact['label'].trim().length > 0 ? fact['label'].trim() : undefined;
-    const key = typeof fact['key'] === 'string' && fact['key'].length > 0 ? fact['key'] : undefined;
-    // One tile per role, as on the BE-6 path (a repeated key is refused at the write).
-    const role = tiles.some((t) => t.role === roleOfKey(key)) ? undefined : roleOfKey(key);
-    const type = columnType(column, undefined, types);
-    const raw = contextValueText(row[column]) ?? '';
-    tiles.push({
-      column,
-      ...(label !== undefined ? { label } : {}),
-      ...(key !== undefined ? { key } : {}),
-      ...(fact['highlight'] === true ? { highlight: true } : {}),
-      ...(role ? { role } : {}),
-      type,
-      raw,
-      value: parseContextFact(raw, type),
-    });
-  }
-  const first = tiles.findIndex((t) => t.highlight === true);
-  for (let i = first + 1; first >= 0 && i < tiles.length; i++) delete tiles[i]!.highlight;
-  if (first > 0) tiles.unshift(...tiles.splice(first, 1));
-  return tiles;
 }
 
 // ── The write ────────────────────────────────────────────────────────────────
@@ -302,8 +212,7 @@ export function contextDisplayIssues(
   const issues: ContextDisplayIssue[] = [];
   const known = knownColumns && knownColumns.length > 0 ? knownColumns : null;
   const knownFolded = new Set((known ?? []).map(fold));
-  const hidden = new Set((Array.isArray(display['hidden']) ? display['hidden'] : [])
-    .filter((h): h is string => typeof h === 'string').map(fold));
+  const hidden = hiddenSet(display);
   const notOnRoster = (column: string, field: string, what: string): void => {
     if (known && !knownFolded.has(fold(column))) {
       issues.push({

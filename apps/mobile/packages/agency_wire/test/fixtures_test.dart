@@ -316,7 +316,7 @@ final Map<String, Map<String, Decoder>> decoders = {
 /// suite, `literals_test.dart`), the contract's label maps (the app's
 /// `attempt_copy_test.dart`) and the search box's number table (its own
 /// suite, `customer_search_number_test.dart`).
-const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json'};
+const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json', 'fact-rules.json'};
 
 /// A register body rebuilt through the Dart request type.
 PushDevicePutRequest decodePutRequest(Map<String, Object?> j) => PushDevicePutRequest(

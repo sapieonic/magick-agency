@@ -121,6 +121,14 @@ describe('value formats on a chosen fact (AS19, spec §6)', () => {
     expect(unread('12345')).toBe('•••');
   });
 
+  it('fewer than seven digits show none when masked, as the customer\'s own number (S3)', () => {
+    expect(factPhone('123456', 'masked')).toBe('•••');
+    expect(factPhone('+123456', 'masked')).toBe('•••');
+    expect(factPhone('1234567', 'masked')).toBe('12••• ••567');
+    expect(factPhone('123456')).toBe('123456');
+    expect(factDisplay(tile({ column: 'P', type: 'phone', raw: '123456', value: '123456' }), { phoneDisplay: 'masked' }).text).toBe('•••');
+  });
+
   it('yes / no as Yes and No', () => {
     expect(factDisplay(tile({ column: 'Y', type: 'yes_no', raw: 'haan', value: 'yes' })).text).toBe('Yes');
     expect(factDisplay(tile({ column: 'Y', type: 'yes_no', raw: 'N', value: 'no' })).text).toBe('No');

@@ -87,13 +87,22 @@ export const INTEGRATION = { db: 'packages/db', server: 'apps/server' };
 
 /**
  * The mobile workflow (apps/mobile is Flutter, not a pnpm package): the app, the contracts its
- * wire types are checked against, the literal extractor, and the number rule agency_wire ports.
+ * wire types are checked against, the literal extractor, and every domain rule agency_wire ports
+ * by hand (the search box's number rule; AS19 S7: the card's rules, the parse rule, the name
+ * guess, the hero rule, the phone rule and the chosen tiles, held to `fact-rules.json`).
  */
 export const MOBILE_PREFIXES = [
   'apps/mobile/',
   'packages/contracts/',
   'tooling/contracts-literals.',
+  'packages/domain/src/context-columns.ts',
+  'packages/domain/src/context-facts.ts',
+  'packages/domain/src/context-hero.ts',
+  'packages/domain/src/customer-name.ts',
   'packages/domain/src/customer-search-number.ts',
+  'packages/domain/src/fact-fields.ts',
+  'packages/domain/src/fact-phone.ts',
+  'packages/domain/src/fact-tiles.ts',
   '.github/workflows/mobile.yml',
 ];
 

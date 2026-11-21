@@ -276,16 +276,16 @@ Map<String, ContextFieldType>? contextFieldTypesFromJson(Object? raw) {
 final class FactField {
   const FactField({required this.column, required this.label, required this.key, this.highlight = false});
 
-  /// [raw] as a fact, or null when it is not an object with string `column`,
-  /// `label` and `key` (the entry is then skipped). `highlight` is true only
-  /// when it is `true`.
+  /// [raw] as a fact, or null when it is not an object (the entry is then
+  /// skipped). Read as leniently as the domain reads it (hand-edited JSON):
+  /// a `column`, `label` or `key` that is not text is `''`, which the rules
+  /// skip (a blank column is no tile and no hero, an empty key no
+  /// placeholder, a blank label names the tile by its column). `highlight` is
+  /// true only when it is `true`.
   static FactField? tryFromJson(Object? raw) {
     if (raw is! Map<String, Object?>) return null;
-    final column = raw['column'];
-    final label = raw['label'];
-    final key = raw['key'];
-    if (column is! String || label is! String || key is! String) return null;
-    return FactField(column: column, label: label, key: key, highlight: raw['highlight'] == true);
+    String s(String k) => raw[k] is String ? raw[k]! as String : '';
+    return FactField(column: s('column'), label: s('label'), key: s('key'), highlight: raw['highlight'] == true);
   }
 
   /// The roster column, as in its header.
@@ -309,8 +309,8 @@ final class FactField {
 }
 
 /// `context_display.facts` read leniently: null when absent or not a list
-/// (the campaign keeps the BE-6 rule); an entry that is not a fact is
-/// skipped.
+/// (the campaign keeps the BE-6 rule); an entry that is not an object is
+/// skipped ([FactField.tryFromJson]).
 List<FactField>? factFieldsFromJson(Object? raw) {
   if (raw is! List<Object?>) return null;
   return List<FactField>.unmodifiable(raw.map(FactField.tryFromJson).whereType<FactField>());
@@ -440,14 +440,6 @@ final class CustomerFacts {
     return null;
   }
 
-  /// AS19: the tile carrying script key [key], or null (none on the BE-6 path).
-  FactTile? tileForKey(String key) {
-    for (final t in tiles) {
-      if (t.key == key) return t;
-    }
-    return null;
-  }
-
   /// The parsed amount due (a decimal string), or null: the "Full / Half"
   /// chips are hidden then.
   String? get amountDue => tileFor(FactTileRole.amountDue)?.value;
@@ -497,17 +489,6 @@ const scriptFixedPlaceholders = <ScriptPlaceholder>[
   ScriptPlaceholder.agentName,
   ScriptPlaceholder.campaignName,
 ];
-
-final _placeholder = RegExp(r'\{([a-z_]+)\}');
-
-/// [text] with each known `{placeholder}` replaced by [valueOf]'s answer, or
-/// by nothing when it answers null (the step still shows). A `{word}` this
-/// build does not know is left as it is.
-String fillScriptPlaceholders(String text, String? Function(ScriptPlaceholder placeholder) valueOf) =>
-    text.replaceAllMapped(_placeholder, (m) {
-      final p = ScriptPlaceholder.fromWire(m[1]);
-      return p.isUnknown ? m[0]! : (valueOf(p) ?? '');
-    });
 
 /// A run of a script line (AS19): plain text, a known `{key}`, or a `{word}`
 /// the campaign does not have.

@@ -1,13 +1,15 @@
 /**
  * The card's chosen facts and the script keys they make (AS19, `docs/agent-station.md`): the
  * rules the server's campaign-config write and the console's Settings editor both need, so the
- * two cannot disagree. A LEAF: it imports only the contract and `./context-hero`.
+ * two cannot disagree. A LEAF: it imports only the contract, `./context-columns`, `./context-hero`
+ * and `./fact-tiles`.
  *
  *  - {@link scriptPlaceholdersFor}: the `{key}`s a campaign's script may use. With
  *    `context_display.facts` (an array, even empty): `AGENCY_SCRIPT_FIXED_PLACEHOLDERS` then each
  *    fact's key. Without: the legacy `AGENCY_SCRIPT_PLACEHOLDERS`, exactly as before.
  *  - {@link factKeyFromColumn} and {@link defaultFactLabel}: a new fact's key and name from its
- *    column's header. The key never follows a later rename of the name.
+ *    column's header. The key never follows a later rename of the name. {@link uniqueFactLabels}:
+ *    several new names at once, none repeated (S9).
  *  - {@link legacyFactFields}: the list a campaign without `facts` opens with in the editor, what
  *    its agents see today.
  *  - {@link placeholdersIn}, {@link unknownPlaceholdersIn}, {@link scriptPieces}: the `{word}`s
@@ -21,7 +23,9 @@ import {
   AGENCY_SCRIPT_PLACEHOLDERS,
   type AgencyFactField,
 } from '@magick-agency/contracts/agency';
+import { asRecord, fold, hiddenSet, isNonBlankString as nonBlank } from './context-columns';
 import { configuredHeroNames, heroColumnsFor } from './context-hero';
+import { FACT_TILE_ROLES } from './fact-tiles';
 
 /** The display configuration these read (`AgencyContextDisplay`, possibly hand-edited JSON). */
 export interface FactFieldsDisplay {
@@ -32,19 +36,6 @@ export interface FactFieldsDisplay {
 }
 
 const FIXED: ReadonlySet<string> = new Set(AGENCY_SCRIPT_FIXED_PLACEHOLDERS);
-
-const fold = (name: string): string => name.trim().toLowerCase();
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-const nonBlank = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0;
-
-function hiddenSet(display: FactFieldsDisplay | null | undefined): Set<string> {
-  const hidden = Array.isArray(display?.hidden) ? display.hidden : [];
-  return new Set(hidden.filter(nonBlank).map(fold));
-}
 
 // ── The script's keys ────────────────────────────────────────────────────────
 
@@ -95,17 +86,48 @@ export function factKeyFromColumn(header: string, taken: Iterable<string> = []):
   }
 }
 
+/** `text` cut to `max` code points, then trimmed. */
+function cutLabel(text: string, max: number): string {
+  return [...text].slice(0, max).join('').trim();
+}
+
 /**
  * A new fact's default name: the column's header trimmed and cut to
  * `AGENCY_FACT_LABEL_MAX_CHARS` (16) code points, then trimmed again. Empty for a blank header
- * (the editor then asks for a name).
+ * (the editor then asks for a name). With `taken` (the other facts' names), a name equal to one of
+ * them ignoring case gets ` 2`, ` 3`, … with the base cut so the whole still fits in 16
+ * (`Outstanding Bala`, then `Outstanding Ba 2`), as the write refuses two facts with one name.
+ *
+ * @param header the column's header, as uploaded
+ * @param taken  the names already used on this card
  */
-export function defaultFactLabel(header: string): string {
-  return [...String(header).trim()].slice(0, AGENCY_FACT_LABEL_MAX_CHARS).join('').trim();
+export function defaultFactLabel(header: string, taken: Iterable<string> = []): string {
+  const base = cutLabel(String(header).trim(), AGENCY_FACT_LABEL_MAX_CHARS);
+  const used = new Set([...taken].filter((t) => typeof t === 'string').map(fold));
+  if (base === '' || !used.has(fold(base))) return base;
+  for (let n = 2; ; n++) {
+    const suffix = ` ${n}`;
+    const candidate = `${cutLabel(base, AGENCY_FACT_LABEL_MAX_CHARS - suffix.length)}${suffix}`;
+    if (!used.has(fold(candidate))) return candidate;
+  }
 }
 
-/** The two roles that were tiles before AS19, in the order they were appended, and their keys. */
-const LEGACY_TILE_ROLES = ['amount_due', 'due_date'] as const;
+/**
+ * Each header's {@link defaultFactLabel}, in order, unique ignoring case among themselves and
+ * against `taken` (AS19 S9): what New campaign, the Settings pre-fill and "Add a fact" name new
+ * facts. A blank header stays `''` (the editor asks for a name).
+ *
+ * @param headers the columns' headers, in the card's order
+ * @param taken   names already used on the card that these must not repeat
+ */
+export function uniqueFactLabels(headers: readonly string[], taken: Iterable<string> = []): string[] {
+  const used = [...taken];
+  return headers.map((header) => {
+    const label = defaultFactLabel(header, used);
+    if (label !== '') used.push(label);
+    return label;
+  });
+}
 
 /** How {@link legacyFactFields} reads a campaign. */
 export interface LegacyFactFieldsOptions {
@@ -130,7 +152,7 @@ export interface LegacyFactFieldsOptions {
  *  4. at most `AGENCY_FACT_FIELDS_MAX` (4), dropping the last column that plays no role until it
  *     fits, as today's tiles keep the role columns when the cap bites.
  *
- * Each fact's name is {@link defaultFactLabel}; its key is `amount_due` / `due_date` for the role
+ * Each fact's name is {@link defaultFactLabel}, unique on the card (S9); its key is `amount_due` / `due_date` for the role
  * columns (so a script's `{amount_due}` keeps working) and {@link factKeyFromColumn} for the
  * rest. Nothing highlighted. A campaign that already has `facts` gets them back unchanged
  * (entries that are not objects with string `column`, `label` and `key` dropped).
@@ -176,8 +198,8 @@ export function legacyFactFields(
     if (column !== undefined && !excluded.has(fold(column)) && !listed.some((c) => fold(c) === fold(column))) listed.push(column);
   };
   for (const hero of heroes) add(hero);
-  const roleOf = new Map<string, (typeof LEGACY_TILE_ROLES)[number]>();
-  for (const role of LEGACY_TILE_ROLES) {
+  const roleOf = new Map<string, (typeof FACT_TILE_ROLES)[number]>();
+  for (const role of FACT_TILE_ROLES) {
     const column = onRoster(roles[role]);
     if (column === undefined || excluded.has(fold(column))) continue;
     add(column);
@@ -191,11 +213,12 @@ export function legacyFactFields(
   }
 
   const taken = new Set<string>(listed.flatMap((c) => (roleOf.has(c) ? [roleOf.get(c)!] : [])));
-  return listed.map((column): AgencyFactField => {
+  const labels = uniqueFactLabels(listed);
+  return listed.map((column, i): AgencyFactField => {
     const role = roleOf.get(column);
     const key = role ?? factKeyFromColumn(column, taken);
     taken.add(key);
-    return { column, label: defaultFactLabel(column), key };
+    return { column, label: labels[i]!, key };
   });
 }
 

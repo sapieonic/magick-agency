@@ -27,7 +27,14 @@ on:
       - apps/mobile/**
       - packages/contracts/**
       - tooling/contracts-literals.*
+      - packages/domain/src/context-columns.ts
+      - packages/domain/src/context-facts.ts
+      - packages/domain/src/context-hero.ts
+      - packages/domain/src/customer-name.ts
       - packages/domain/src/customer-search-number.ts
+      - packages/domain/src/fact-fields.ts
+      - packages/domain/src/fact-phone.ts
+      - packages/domain/src/fact-tiles.ts
       - .github/workflows/mobile.yml
   push:
     branches: [main]

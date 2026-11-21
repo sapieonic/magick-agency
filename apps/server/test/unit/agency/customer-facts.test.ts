@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AgencyContextDisplay } from '@magick-agency/contracts/agency';
-import { contextDisplayIssues, customerFacts, namesContextColumns } from '../../../src/agency/customer-facts.js';
+import { contextDisplayIssues, customerFacts, NAME_GUESS_COLUMNS, namesContextColumns } from '../../../src/agency/customer-facts.js';
+import { INBOUND_MATCH_NAME_COLUMNS } from '../../../src/agency/inbound/match-name.js';
 import { agentScriptIssues } from '../../../src/agency/agent-script.js';
 import { contactFields } from '../../../src/agency/customer-history/assemble.js';
 import type { CustomerHistoryCampaignRow } from '../../../src/db/repositories/agency/customer-history.repository.js';
@@ -90,6 +91,10 @@ describe('customerFacts: the panel\'s facts', () => {
     expect(customerFacts({ customer_id: 'C-9', phone2: '98100' }, {})).not.toHaveProperty('name');
     expect(customerFacts({ Name: 'N/A', City: '-' }, {})).toEqual({ tiles: [] });
     expect(customerFacts(null, null)).toEqual({ tiles: [] });
+  });
+
+  it('the name guess is the domain\'s one list (AS19 S1), the one the inbound match and its SQL still read', () => {
+    expect([...NAME_GUESS_COLUMNS]).toEqual([...INBOUND_MATCH_NAME_COLUMNS]);
   });
 
   it('hidden wins over everything: never a role, a guess or a tile', () => {

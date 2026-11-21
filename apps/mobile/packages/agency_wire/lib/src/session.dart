@@ -10,6 +10,7 @@ import 'package:meta/meta.dart';
 import 'agent_station.dart';
 import 'enums.dart';
 import 'equality.dart';
+import 'fact_rules.dart' show configuredHeroNames;
 import 'json.dart';
 import 'station.dart';
 
@@ -294,18 +295,12 @@ final class ContextDisplay {
   final List<FactField>? facts;
 
   /// The heroes as configured, before matching a row: with [facts], the
-  /// `name` role's column then each fact's column (AS19); else [hero]. Minus
-  /// [hidden], each once. The domain's `configuredHeroNames`, matched exactly.
-  List<String>? get configuredHeroes {
-    final facts = this.facts;
-    final names = facts == null ? hero : [?roles?.name, for (final f in facts) f.column];
-    if (names == null) return null;
-    final hidden = this.hidden?.toSet() ?? const <String>{};
-    return [
-      for (final n in {...names})
-        if (n.trim().isNotEmpty && !hidden.contains(n)) n,
-    ];
-  }
+  /// customer's name (the `name` role's column, else the name guess over
+  /// [hero], never a fact's column: AS19 R1, S1) then each fact's column;
+  /// else [hero]. Minus [hidden] (ignoring case), each once. Null when neither
+  /// [hero] nor [facts] is set. The domain's `configuredHeroNames`
+  /// ([configuredHeroNames]).
+  List<String>? get configuredHeroes => facts == null && hero == null ? null : configuredHeroNames(this);
 
   /// The `{key}`s this campaign's script may use (AS19): with [facts], the
   /// fixed four then each fact's key; else the legacy six. The domain's

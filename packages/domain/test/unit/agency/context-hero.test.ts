@@ -134,7 +134,7 @@ describe('the name stays a hero after the move to facts (AS19 R1)', () => {
     expect(heroColumnsFor(row, moved)).toEqual(['Customer Name', 'Amount Due']);
     // read from the row, not `hero`
     expect(heroColumnsFor(row, { facts: moved.facts })).toEqual(['Customer Name', 'Amount Due']);
-    expect(heroColumnsFor({ ...row, 'Customer Name': '-', Contact: 'Ravi' }, { facts: moved.facts })).toEqual(['Contact', 'Amount Due']);
+    expect(heroColumnsFor({ ...row, 'Customer Name': '-', 'Full Name': 'Ravi' }, { facts: moved.facts })).toEqual(['Full Name', 'Amount Due']);
     expect(heroColumnsFor(row, { facts: moved.facts, hidden: ['Customer Name'] })).toEqual(['Amount Due']);
     expect(heroColumnsFor(row, { facts: [{ column: 'Customer Name' }] })).toEqual(['Customer Name']);
     expect(heroColumnsFor(row, { ...moved, roles: { name: 'Loan No' } })).toEqual(['Loan No', 'Amount Due']);
@@ -143,6 +143,38 @@ describe('the name stays a hero after the move to facts (AS19 R1)', () => {
   it('without facts nothing changes: `hero` as configured', () => {
     expect(configuredHeroNames({ hero: ['Amount Due', 'Customer Name'] })).toEqual(['Amount Due', 'Customer Name']);
     expect(heroColumnsFor(row, { hero: ['Amount Due'] })).toEqual(['Amount Due']);
+  });
+});
+
+describe('the name guess on the facts path is the one guess (AS19 S1, S2)', () => {
+  const facts = [{ column: 'Amount Due', label: 'Amount due', key: 'amount_due' }];
+
+  it('a column merely like a name (Customer ID, Contact Number, Client) is never the name', () => {
+    const row = { 'Customer ID': 'C-7', 'Contact Number': '9876543210', Client: 'Acme', 'Amount Due': '5000' };
+    expect(heroColumnsFor(row, { facts })).toEqual(['Amount Due']);
+    expect(configuredHeroNames({ hero: ['Customer ID', 'Contact Number', 'Client'], facts })).toEqual(['Amount Due']);
+    // the legacy rule's buckets are unchanged
+    expect(heroColumnsFor(row, {})[0]).toBe('Customer ID');
+  });
+
+  it('the guess follows its list\'s order, ignoring case, spaces, _, - and .', () => {
+    const row = { first_name: 'Asha', 'CUSTOMER-NAME': 'Asha Rao', 'Amount Due': '5000' };
+    expect(heroColumnsFor(row, { facts })).toEqual(['CUSTOMER-NAME', 'Amount Due']);
+    expect(configuredHeroNames({ hero: ['First.Name', 'Customer_Name'], facts })).toEqual(['Customer_Name', 'Amount Due']);
+  });
+
+  it('`facts: []` and no name role: the guessed name only, and nothing by bucket or first columns', () => {
+    const row = { Name: 'Asha', 'Loan No': 'LN-1', City: 'Pune', Balance: '5000' };
+    expect(heroColumnsFor(row, { facts: [] })).toEqual(['Name']);
+    expect(heroColumnsFor({ 'Loan No': 'LN-1', City: 'Pune' }, { facts: [] })).toEqual([]);
+    expect(heroColumnsFor({ 'Loan No': 'LN-1' }, { facts: [{ column: 'Branch' }] })).toEqual([]);
+  });
+
+  it('never a fact\'s column, nor a blank value, nor a hidden column', () => {
+    const row = { Name: 'Asha', 'Full Name': 'Asha Rao', 'Amount Due': '5000' };
+    expect(heroColumnsFor(row, { facts: [{ column: 'name' }] })).toEqual(['Full Name', 'Name']);
+    expect(heroColumnsFor({ ...row, Name: 'N/A' }, { facts })).toEqual(['Full Name', 'Amount Due']);
+    expect(heroColumnsFor(row, { facts, hidden: ['NAME'] })).toEqual(['Full Name', 'Amount Due']);
   });
 });
 

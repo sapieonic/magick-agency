@@ -96,19 +96,6 @@ void main() {
       expect(SessionBootstrap.fromJson(j).script, isNull);
     });
 
-    test('placeholders are filled, a missing value is nothing, an unknown word stays', () {
-      String? valueOf(ScriptPlaceholder p) => switch (p) {
-        ScriptPlaceholder.name => 'Sunita',
-        ScriptPlaceholder.amountDue => '₹12,500',
-        _ => null,
-      };
-      expect(
-        fillScriptPlaceholders('Namaste {name}, {amount_due} due on {due_date}. {mood}', valueOf),
-        'Namaste Sunita, ₹12,500 due on . {mood}',
-      );
-      expect(fillScriptPlaceholders('No placeholders here.', valueOf), 'No placeholders here.');
-    });
-
     test('the context display carries the roles and types, and an older one reads as none', () {
       final d = SessionBootstrap.fromJson(fixture('session.json', 'bootstrap_agent_station')).contextDisplay;
       expect(d.roles, const ContextRoles(name: 'Customer Name', place: 'City', amountDue: 'Amount Due', dueDate: 'Due Date'));
@@ -214,7 +201,9 @@ void main() {
       expect(empty.facts, isEmpty);
       expect(empty.configuredHeroes, ['Name']);
       expect(empty.resolve({'Loan No': 'LN-1', 'Name': 'Asha'}).hero.map((e) => e.key), ['Name']);
-      // A malformed entry is skipped, never a failed bootstrap.
+      // A malformed entry is never a failed bootstrap: one that is not an
+      // object is skipped, a field that is not text is '' (as the domain
+      // reads it: the key still counts, the tile is named by its column).
       final odd = ContextDisplay.fromJson({
         'facts': [
           {'column': 'EMI', 'label': 'EMI', 'key': 'emi', 'highlight': 'yes'},
@@ -222,7 +211,11 @@ void main() {
           'Branch',
         ],
       });
-      expect(odd.facts, const [FactField(column: 'EMI', label: 'EMI', key: 'emi')]);
+      expect(odd.facts, const [
+        FactField(column: 'EMI', label: 'EMI', key: 'emi'),
+        FactField(column: 'X', label: '', key: 'x'),
+      ]);
+      expect(odd.scriptPlaceholders, ['name', 'place', 'agent_name', 'campaign_name', 'emi', 'x']);
     });
 
     test('the panel sample: labelled and keyed tiles, highlighted first, one of each new type', () {
@@ -232,11 +225,12 @@ void main() {
       expect(facts.tiles.first.highlight, isTrue);
       expect(facts.tiles.skip(1).every((t) => !t.highlight), isTrue);
       expect(facts.amountDue, '12500.00');
-      expect(facts.tileForKey('tenure_months')!.type, ContextFieldType.number);
-      expect(facts.tileForKey('alt_phone')!.value, '09876543210');
-      expect(facts.tileForKey('auto_debit')!.type, ContextFieldType.yesNo);
-      expect(facts.tileForKey('auto_debit')!.display, 'yes');
-      expect(facts.tileForKey('due_date'), isNull);
+      FactTile? byKey(String key) => facts.tiles.where((t) => t.key == key).firstOrNull;
+      expect(byKey('tenure_months')!.type, ContextFieldType.number);
+      expect(byKey('alt_phone')!.value, '09876543210');
+      expect(byKey('auto_debit')!.type, ContextFieldType.yesNo);
+      expect(byKey('auto_debit')!.display, 'yes');
+      expect(byKey('due_date'), isNull);
     });
 
     test('a BE-6 tile has no label, key or highlight, and is named by its column', () {
