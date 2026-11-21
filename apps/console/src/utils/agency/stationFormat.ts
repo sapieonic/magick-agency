@@ -62,20 +62,36 @@ export function factDay(day: string, now: Date | number = Date.now()): string {
 }
 
 /**
- * A read phone fact (the domain's parse: digits, `+` kept when written) the way the card shows
- * the customer's own number (AS9, {@link phoneForDisplay}): ten digits, or twelve starting 91, are
- * an Indian mobile (`+91 98765 43321`, masked `98••• ••321`); any other number as read in full,
- * its digits masked. Masked never shows more than the first two and last three digits.
+ * The ten digits of an Indian mobile, from a phone fact's digits (no `+`), or null (AS19's one
+ * phone rule, both clients). The national form drops a leading `91` from twelve digits or a
+ * leading `0` from eleven, and keeps ten as they are; it is a mobile when it is then ten digits
+ * starting 6 to 9.
+ */
+function indianMobile(digits: string): string | null {
+  const national = digits.length === 12 && digits.startsWith('91')
+    ? digits.slice(2)
+    : digits.length === 11 && digits.startsWith('0')
+      ? digits.slice(1)
+      : digits;
+  return /^[6-9]\d{9}$/.test(national) ? national : null;
+}
+
+/**
+ * A phone fact (the domain's parse: digits, `+` kept when written) by AS19's one phone rule, which
+ * the tile, the hover card, the script and the agent app all follow. An Indian mobile
+ * (`9876543210`, `919876543210`, `+919876543210`, `09876543210`) is `+91 98765 43210`, masked
+ * `98••• ••210` (the first two and last three of its ten digits). Any other number is the value as
+ * read, unspaced (`+14155550123`), masked on all its digits (`14••• ••123`). A value the server
+ * could not read is masked the same way on its digits, and one with fewer than six shows none.
  */
 export function factPhone(digits: string, display: 'full' | 'masked' = 'full'): string {
   const text = digits.trim();
   const bare = text.replace(/\D/g, '');
-  const indian = !text.startsWith('+') && bare.length === 10
-    ? bare
-    : !text.startsWith('+') && bare.length === 12 && bare.startsWith('91')
-      ? bare.slice(2)
-      : null;
-  return phoneForDisplay(indian ? `+91${indian}` : text, display);
+  const mobile = indianMobile(bare);
+  if (display === 'full') return mobile ? `+91 ${mobile.slice(0, 5)} ${mobile.slice(5)}` : text;
+  const shown = mobile ?? bare;
+  if (shown.length < 6) return '•••';
+  return `${shown.slice(0, 2)}••• ••${shown.slice(-3)}`;
 }
 
 /** Half of an amount as a plain decimal string, for the "Half" chip; null when not an amount. */

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { parsePhoneFact } from '@magick-agency/domain/context-facts';
 import {
   chosenFactsFromContext,
   chosenSpans,
@@ -13,6 +14,7 @@ import { fillScriptLine, fillScriptPlaceholders, scriptFillFor } from '../../uti
 import { inboundCustomerCard, softphoneCustomerCard } from '../../utils/agency/sideViewCustomer';
 import type { AgencyContextDisplay, AgencyFactTile, AgencyReservedAttempt } from '../../types/agency';
 import type { AgencyInboundCall } from '../../types/inbound';
+import { PHONE_RULE_TABLE } from '../helpers/phoneRule';
 import type { AgencyManualCall } from '../../types/softphone';
 
 /**
@@ -100,6 +102,25 @@ describe('value formats on a chosen fact (AS19, spec §6)', () => {
     expect(factDisplay(unread).text).toBe('98-765 ext 1');
   });
 
+  it.each(PHONE_RULE_TABLE)('one phone rule (R6): %s is %s, masked %s', (input, full, masked) => {
+    const value = parsePhoneFact(input);
+    expect(value).not.toBeNull();
+    expect(factPhone(value!)).toBe(full);
+    expect(factPhone(value!, 'masked')).toBe(masked);
+    const phone = tile({ column: 'P', type: 'phone', raw: input, value });
+    expect(factDisplay(phone).text).toBe(full);
+    expect(factDisplay(phone, { phoneDisplay: 'masked' }).text).toBe(masked);
+  });
+
+  it('a phone the server could not read is masked the same way on its digits, and too short a one shows none', () => {
+    const unread = (raw: string) => factDisplay(tile({ column: 'P', type: 'phone', raw, value: null }), { phoneDisplay: 'masked' }).text;
+    expect(unread('98765 43210 (home)')).toBe('98••• ••210');
+    expect(unread('+91 98765 43210 (home)')).toBe('98••• ••210');
+    expect(unread('0 98765 43210 ext')).toBe('98••• ••210');
+    expect(unread('call 1234567890')).toBe('12••• ••890');
+    expect(unread('12345')).toBe('•••');
+  });
+
   it('yes / no as Yes and No', () => {
     expect(factDisplay(tile({ column: 'Y', type: 'yes_no', raw: 'haan', value: 'yes' })).text).toBe('Yes');
     expect(factDisplay(tile({ column: 'Y', type: 'yes_no', raw: 'N', value: 'no' })).text).toBe('No');
@@ -175,6 +196,33 @@ describe('the chosen facts on the card (AS19)', () => {
     expect(card.facts).toEqual([]);
   });
 
+  it('is chosen by the display’s `facts` alone (R8): labelled tiles under a display without it get today’s card', () => {
+    // Today's card: Last call tile, tiles named by column, no "Customer" title.
+    const legacy = customerCard(CHOSEN, { hero: ['Outstanding'] }, { now: NOW });
+    expect(legacy.chosen).toBe(false);
+    expect(legacy.facts.map((f) => f.label)).toEqual(['Outstanding', 'Branch', 'Last call']);
+    expect(customerCard(CHOSEN, undefined).chosen).toBe(false);
+    // And the script keeps the legacy fill: a missing value is left out.
+    const fill = scriptFillFor(CHOSEN, { name: null, place: null }, { agentName: 'Ravi', campaignName: 'EMI' }, { hero: ['Outstanding'] });
+    expect(fillScriptLine('{place}{branch}', fill).shown).toBe('{branch}');
+  });
+
+  it('`facts: []` shows no tiles and no Last call, never today’s card (R7, R8)', () => {
+    const context = { Name: 'Ramesh Goud', City: 'Siddipet', 'Amount due': '12500' };
+    const card = customerCard({ ...ATTEMPT, context }, { facts: [], hero: ['Amount due'] });
+    expect(card.chosen).toBe(true);
+    expect(card.facts).toEqual([]);
+  });
+
+  it('takes the name from `facts.name` only, else none (R9): no guess from the row on a reserved call', () => {
+    const attempt = { ...ATTEMPT, context: { Name: 'Ramesh Goud', City: 'Siddipet' }, facts: { tiles: CHOSEN.facts!.tiles } };
+    const card = customerCard(attempt, DISPLAY);
+    expect(card.name).toBeNull();
+    expect(card.place).toBeNull();
+    // Today's card still guesses.
+    expect(customerCard({ ...attempt, facts: undefined }, {}).name).toBe('Ramesh Goud');
+  });
+
   it('shrinks a value to fit, down to 65 %, then leaves it to the ellipsis', () => {
     expect(fitFontSize(28, 200, 180)).toBeNull();
     expect(fitFontSize(28, 200, 250)).toBe(21.5);
@@ -238,6 +286,27 @@ describe('the script filled from the chosen facts (AS19)', () => {
     expect(line.pieces.filter((p) => p.kind === 'missing').map((p) => p.text)).toEqual(['Place not given', 'Due date not given']);
     // Read aloud skips the "not given" runs.
     expect(line.spoken).toBe('Namaste Sunita Patil from. ₹1,25,000 is due on. Other: 98••• ••345. {Branch} {mood}');
+  });
+
+  it('leaves {agent_name} and {campaign_name} out when they have no value, never "not given" (R5)', () => {
+    const fill = scriptFillFor(CHOSEN, { name: 'Sunita Patil', place: 'Pune' }, { agentName: null, campaignName: '  ' }, DISPLAY);
+    const line = fillScriptLine('This is {agent_name} from {campaign_name}, {name}.', fill);
+    expect(line.shown).toBe('This is  from , Sunita Patil.');
+    expect(line.pieces.every((p) => p.kind === 'text')).toBe(true);
+    expect(line.spoken).toBe('This is from, Sunita Patil.');
+    // The legacy fill leaves them out too.
+    const legacy = scriptFillFor({ facts: undefined }, { name: 'Sunita', place: null }, { agentName: undefined, campaignName: null }, undefined);
+    expect(fillScriptLine('{agent_name}|{campaign_name}|{name}', legacy).shown).toBe('||Sunita');
+  });
+
+  it.each(PHONE_RULE_TABLE)('fills a phone fact by the one phone rule (R6): %s', (input, full, masked) => {
+    const attempt = {
+      facts: { tiles: [tile({ column: 'Alt phone', label: 'Other number', key: 'alt_phone', type: 'phone', raw: input, value: parsePhoneFact(input) })] },
+    };
+    const display: AgencyContextDisplay = { facts: [{ column: 'Alt phone', label: 'Other number', key: 'alt_phone' }] };
+    const card = { name: null, place: null };
+    expect(fillScriptLine('{alt_phone}', scriptFillFor(attempt, card, session, display)).shown).toBe(full);
+    expect(fillScriptLine('{alt_phone}', scriptFillFor(attempt, card, session, display, { phoneDisplay: 'masked' })).shown).toBe(masked);
   });
 
   it('fills a legacy role tile by its role when the panel’s tiles carry no keys', () => {
