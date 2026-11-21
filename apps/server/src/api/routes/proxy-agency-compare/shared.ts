@@ -25,7 +25,7 @@ import { CompareReads } from '../../../agency/compare/read.js';
 import { COMPARE_ERROR_MESSAGES } from '../../../agency/compare/validate.js';
 import { effectiveCatalog } from '../../../agency/my-day.js';
 import { localDateOf } from '../../../agency/reports/schedule.js';
-import { postgresKnowsZone } from '../../../agency/reports/zone.js';
+import { postgresZoneName } from '../../../agency/reports/zone.js';
 import { sendRefusal } from '../helpers/refusal.js';
 
 /** The flag gate's refusal: the dialer gate's body shape (`helpers/dialer-gate.ts`), for this page. */
@@ -51,7 +51,11 @@ export interface CompareRouteDeps {
   campaign(tenantId: string, accountId: string, campaignId: string): Promise<CompareCampaign | null>;
   names(userIds: readonly string[], tenantId: string): Promise<Map<string, string | null>>;
   /** Is the zone in Postgres's zone database (the reads cut days with `AT TIME ZONE`)? */
-  zoneKnownToDatabase(zone: string): Promise<boolean>;
+  /**
+   * The name Postgres cuts the zone's days in (`postgresZoneName`: its own spelling, or a legacy
+   * name's current one), or null when it knows neither.
+   */
+  databaseZone(zone: string): Promise<string | null>;
   /** Today's local date in `zone`. */
   today(zone: string): string;
   now(): Date;
@@ -72,7 +76,7 @@ export function defaultCompareRouteDeps(): CompareRouteDeps {
       return { id: row.id, name: row.name, codes: compareOutcomeCodes(effectiveCatalog(row.disposition_catalog)) };
     },
     names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'compare views'),
-    zoneKnownToDatabase: postgresKnowsZone,
+    databaseZone: postgresZoneName,
     today: (zone) => localDateOf(new Date(), zone),
     now: () => new Date(),
   };

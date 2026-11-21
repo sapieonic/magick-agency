@@ -52,6 +52,7 @@ import { bulkInsert } from '../agency/insights-rollup-world.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
 import { localDateOf, localInstant } from '../../../src/agency/reports/schedule.js';
 import { localDates } from '../../../src/agency/reports/datasets/shared.js';
+import { setZoneLookupForTests } from '../../../src/agency/reports/zone.js';
 
 let loaded: LoadApp;
 let floor: TenantFloor;
@@ -608,6 +609,31 @@ describe('options', () => {
     const res = await call(loaded.app, 'GET', `/proxy/agency/compare/options?campaign_id=${c1}&from=${FROM}&to=${TO}&timezone=${encodeURIComponent(ZONE)}`, sup(), floor);
     expect(res.json()).toMatchObject({ records_promises: false, starting_lens: 'sales', agents: [] });
     expectRefusal(await query(body({ campaign_id: c1, metrics: [builtin('promises_rate')], trend: null })), 'compare_metric_invalid');
+  });
+});
+
+describe('a legacy zone name (an IST browser reports Asia/Calcutta)', () => {
+  afterAll(() => setZoneLookupForTests(null));
+
+  it('is cut in its current name, echoed as sent, and answers exactly as the current name does', async () => {
+    // A Postgres without tz's legacy links, whatever the one running this knows.
+    setZoneLookupForTests(async (zone) => {
+      if (zone.toLowerCase() === 'asia/calcutta') return null;
+      const { rows } = await q(`SELECT name FROM pg_timezone_names WHERE lower(name) = lower($1) ORDER BY name LIMIT 1`, [zone]);
+      return (rows[0] as { name: string } | undefined)?.name ?? null;
+    });
+    const asked = { agent_ids: [agent(1).id, agent(6).id], metrics: [WILL_PAY, builtin('promises_rate')], trend: builtin('promises_rate') };
+    const legacy = await ok(body({ ...asked, timezone: 'Asia/Calcutta' }));
+    const current = await ok(body({ ...asked, timezone: 'Asia/Kolkata' }));
+    expect(legacy.timezone).toBe('Asia/Calcutta');
+    expect(current.timezone).toBe('Asia/Kolkata');
+    expect(legacy.agents).toEqual(current.agents);
+    expect(legacy.trend).toEqual(current.trend);
+    expect(legacy.cohort).toEqual(current.cohort);
+    const opts = await call(loaded.app, 'GET', `/proxy/agency/compare/options?campaign_id=${c0}&from=${FROM}&to=${TO}&timezone=Asia%2FCalcutta`, sup(), floor);
+    expect(opts.statusCode, opts.body).toBe(200);
+    // Still refused: a zone neither name of which Postgres knows.
+    expectRefusal(await query(body({ timezone: 'Mars/Olympus' })), 'compare_timezone_invalid');
   });
 });
 

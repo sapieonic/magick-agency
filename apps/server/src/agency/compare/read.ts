@@ -105,10 +105,15 @@ export interface CompareWindowScope {
   tenantId: string;
   accountId: string;
   campaignId: string;
-  /** The local dates, both inclusive, and the zone they are cut in. */
+  /** The local dates, both inclusive, and the request's zone: what the answer echoes and the caches key. */
   from: string;
   to: string;
   timezone: string;
+  /**
+   * The name Postgres cuts the days in (`postgresZoneName`): the request's zone as Postgres spells it,
+   * or the current name of a legacy one it does not know (`Asia/Calcutta` → `Asia/Kolkata`).
+   */
+  databaseTimezone: string;
   /** `[local midnight of from, local midnight after to)`. */
   start: Date;
   end: Date;
@@ -559,9 +564,9 @@ export class CompareReads {
       if (q.trend !== null) {
         const ref = q.trend.ref;
         const dayRows = ref.kind === 'outcomes'
-          ? await agencyCompareReadRepository.rollupCodeDays(db, { ...cohortScope, codes: ref.codes, timezone: q.timezone })
-          : await agencyCompareReadRepository.promiseDays(db, { ...cohortScope, timezone: q.timezone });
-        const loggedIn = await agencyCompareReadRepository.loggedInDays(db, { ...cohortScope, timezone: q.timezone });
+          ? await agencyCompareReadRepository.rollupCodeDays(db, { ...cohortScope, codes: ref.codes, timezone: q.databaseTimezone })
+          : await agencyCompareReadRepository.promiseDays(db, { ...cohortScope, timezone: q.databaseTimezone });
+        const loggedIn = await agencyCompareReadRepository.loggedInDays(db, { ...cohortScope, timezone: q.databaseTimezone });
         const counts = new Map<string, Map<string, number>>();
         for (const r of dayRows) {
           const days = counts.get(r.agent_user_id) ?? new Map<string, number>();

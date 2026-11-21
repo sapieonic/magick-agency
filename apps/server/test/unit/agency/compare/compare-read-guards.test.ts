@@ -41,7 +41,7 @@ describe('TenantReadLimiter', () => {
 describe('compareCacheKey', () => {
   const metric = (id: string) => ({ id }) as AgencyCompareMetricInfo;
   const base: CompareQueryRead = {
-    tenantId: 't', accountId: 'acc', campaignId: 'c', from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata',
+    tenantId: 't', accountId: 'acc', campaignId: 'c', from: '2026-11-01', to: '2026-11-02', timezone: 'Asia/Kolkata', databaseTimezone: 'Asia/Kolkata',
     start: new Date(0), end: new Date(1), agentIds: ['a', 'b'], metrics: [metric('success_rate'), metric('outcomes:higher:x')], trend: null,
   };
   const key = (o: Partial<CompareQueryRead>) => compareCacheKey({ ...base, ...o });

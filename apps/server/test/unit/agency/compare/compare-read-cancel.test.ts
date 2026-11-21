@@ -23,7 +23,7 @@ import { clientGoneSignal } from '../../../../src/api/routes/proxy-agency-compar
 
 const SCOPE: CompareWindowScope = {
   tenantId: 't1', accountId: 'a1', campaignId: '00000000-0000-4000-8000-0000000000c1',
-  from: '2026-11-01', to: '2026-11-02', timezone: 'UTC', start: new Date('2026-11-01T00:00:00Z'), end: new Date('2026-11-03T00:00:00Z'),
+  from: '2026-11-01', to: '2026-11-02', timezone: 'UTC', databaseTimezone: 'UTC', start: new Date('2026-11-01T00:00:00Z'), end: new Date('2026-11-03T00:00:00Z'),
 };
 
 /** A connection whose roster statement runs until cancelled (`endsOnCancel`) or forever. */
