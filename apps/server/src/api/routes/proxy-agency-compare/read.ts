@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AgencyCompareOptions } from '@magick-agency/contracts/api/agency/compare';
 import { catalogRecordsPromises, compareStartingLens } from '@magick-agency/domain/agent-compare';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { CompareRefusal, type CompareWindowScope } from '../../../agency/compare/read.js';
+import { CompareAborted, CompareRefusal, type CompareWindowScope } from '../../../agency/compare/read.js';
 import {
   uuidOf,
   checkCompareMetrics,
@@ -20,6 +20,8 @@ import { parseOr400 } from '../helpers/parse-or-400.js';
 import {
   compareGate,
   compareViewToWire,
+  CLIENT_CLOSED_STATUS,
+  clientGoneSignal,
   sendCompareRefusal,
   sendCompareTimedOut,
   type CompareCampaign,
@@ -28,6 +30,9 @@ import {
 
 /** A guard's refusal as its answer; anything else propagates. */
 function sendGuardRefusal(err: unknown, request: FastifyRequest, reply: FastifyReply): FastifyReply {
+  // The client closed the request first: its slot is back and its statement cancelled; the
+  // answer goes nowhere.
+  if (err instanceof CompareAborted) return reply.code(CLIENT_CLOSED_STATUS).send();
   if (!(err instanceof CompareRefusal)) throw err;
   return err.code === 'compare_timed_out' ? sendCompareTimedOut(request, reply) : sendCompareRefusal(reply, err.code);
 }
@@ -73,6 +78,7 @@ async function resolveWindow(
 export async function registerCompareReadRoutes(app: FastifyInstance, deps: CompareRouteDeps): Promise<void> {
   // ── POST /compare/query ─────────────────────────────────────────────────────
   app.post('/compare/query', { preHandler: [requirePermission('agency.supervise')] }, async (request, reply) => {
+    const gone = clientGoneSignal(reply);
     if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
@@ -95,7 +101,7 @@ export async function registerCompareReadRoutes(app: FastifyInstance, deps: Comp
         agentIds: checked.agentIds,
         metrics: checked.resolved.metrics,
         trend: checked.resolved.trend,
-      });
+      }, gone);
       if (outcome.kind === 'not_in_cohort') return sendCompareRefusal(reply, 'compare_agent_not_in_cohort');
       return reply.send(outcome.response);
     } catch (err) {
@@ -105,6 +111,7 @@ export async function registerCompareReadRoutes(app: FastifyInstance, deps: Comp
 
   // ── GET /compare/options ────────────────────────────────────────────────────
   app.get('/compare/options', { preHandler: [requirePermission('agency.supervise')] }, async (request, reply) => {
+    const gone = clientGoneSignal(reply);
     if (!(await compareGate(deps, request, reply))) return reply;
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
@@ -120,7 +127,7 @@ export async function registerCompareReadRoutes(app: FastifyInstance, deps: Comp
 
     try {
       const [cohort, defaultView] = await Promise.all([
-        deps.reads.cohort(scope),
+        deps.reads.cohort(scope, gone),
         deps.views.findCampaignDefault({ tenantId, accountId }, campaign.id),
       ]);
       const ownerNames = defaultView === null ? new Map<string, string | null>() : await deps.names([defaultView.owner_user_id], tenantId);

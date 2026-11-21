@@ -9,7 +9,14 @@
  *    A statement cancelled for it (`57014`) is `503 compare_timed_out`.
  *  - **At most `COMPARE_TENANT_CONCURRENT_READS` reads per tenant at once**, the query and the
  *    options together; past it `429 compare_busy`, at once, never queued (a queued read would hold
- *    the page while the earlier ones run). In-process: the server is one replica.
+ *    the page while the earlier ones run). In-process: the server is one replica. A slot belongs to
+ *    a read that runs SQL: a cached answer and a request that joins an identical read in flight take
+ *    none. **A client that goes away gives its slot back at once** (the route aborts the request's
+ *    signal when its connection closes before the answer, as the console does on a superseded
+ *    read): a query read is aborted once no request waits on it any more, the options read at
+ *    once, and the statement running is cancelled (`pg_cancel_backend`, the report cursor's
+ *    pattern) with no further statement sent. Without that, a supervisor clicking quickly would
+ *    hold slots for reads nobody reads and meet `compare_busy`.
  *  - **A 30 s cache** (`COMPARE_CACHE_TTL_MS`, `TtlCache`: single-flight, so identical reads at
  *    once share one load) keyed by the tenant, the caller's scope (the context account: the cohort
  *    is the account's roster), the campaign, the window, the zone, the agents in order and the
@@ -78,6 +85,14 @@ export class CompareRefusal extends Error {
   }
 }
 
+/** The caller went away (its `signal` aborted) before the answer: nobody is left to answer. */
+export class CompareAborted extends Error {
+  constructor() {
+    super('compare read aborted: the client went away');
+    this.name = 'CompareAborted';
+  }
+}
+
 /** One campaign's cohort over a window of local dates, as the routes resolved it. */
 export interface CompareWindowScope {
   tenantId: string;
@@ -110,11 +125,14 @@ export interface CompareReadDeps {
   pool: TransactionPool;
   memberships(userIds: readonly string[], tenantId: string): Promise<RosterMembershipRef[]>;
   names(userIds: readonly string[], tenantId: string): Promise<Map<string, string | null>>;
+  /** Cancel the statement running on backend `pid` (`pg_cancel_backend`, as the report cursor does). */
+  cancelBackend(pid: number): Promise<void>;
   now(): Date;
 }
 
 export const defaultCompareReadDeps = (): CompareReadDeps => ({
   pool: { connect: () => getPool().connect() },
+  cancelBackend: async (pid) => { await getPool().query('SELECT pg_cancel_backend($1::int)', [pid]); },
   memberships: (ids, tenantId) => membershipRepository.findAnyByUsersAndTenant(ids, tenantId),
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'compare agents'),
   now: () => new Date(),
@@ -181,9 +199,26 @@ export interface CompareCohortList {
   agents: AgencyCompareCohortAgent[];
 }
 
+/**
+ * One query read in flight, shared by every request for its key that arrives before it settles
+ * (a joiner takes no slot: it runs nothing). The load holds ONE slot, released when it settles, or
+ * at once when every request waiting on it has gone, which also aborts it (the statement running
+ * is cancelled).
+ */
+interface SharedLoad {
+  promise: Promise<CompareQueryOutcome>;
+  controller: AbortController;
+  release: () => void;
+  waiters: number;
+  settled: boolean;
+}
+
+const noop = (): void => undefined;
+
 export class CompareReads {
   private readonly cache: TtlCache<CompareQueryOutcome>;
-  readonly limiter: TenantReadLimiter;
+  private readonly loads = new Map<string, SharedLoad>();
+  private readonly limiter: TenantReadLimiter;
   private readonly timeoutMs: number;
   private readonly deps: CompareReadDeps;
 
@@ -204,19 +239,41 @@ export class CompareReads {
     this.timeoutMs = opts.timeoutMs ?? COMPARE_READ_TIMEOUT_MS;
   }
 
-  /** The comparison: from the cache, or a read under the tenant's limit. Throws {@link CompareRefusal}. */
-  async query(q: CompareQueryRead): Promise<CompareQueryOutcome> {
+  /**
+   * The comparison: from the cache (no slot), joined to the same read in flight (no slot), or a new
+   * read under the tenant's limit. Throws {@link CompareRefusal}; {@link CompareAborted} when
+   * `signal` aborts first (the client went away). When every request waiting on a read has gone,
+   * its slot is released at once and its statement cancelled.
+   */
+  async query(q: CompareQueryRead, signal?: AbortSignal): Promise<CompareQueryOutcome> {
+    if (signal?.aborted) throw new CompareAborted();
     const key = compareCacheKey(q);
-    const outcome = this.cache.get(key)
-      ?? await this.guarded(q.tenantId, () => this.cache.getOrLoad(key, () => this.readQuery(q)));
+    const outcome = this.cache.get(key) ?? await this.wait(this.loadFor(key, q), key, signal);
     if (outcome.kind !== 'ok') return outcome;
     // Same ids in the same order; the request's own refs and labels (module note).
     return { kind: 'ok', response: { ...outcome.response, metrics: [...q.metrics], trend_metric: q.trend } };
   }
 
-  /** The cohort's agents for the chips, under the tenant's limit (never cached). Throws {@link CompareRefusal}. */
-  async cohort(q: CompareWindowScope): Promise<CompareCohortList> {
-    return this.guarded(q.tenantId, () => this.readCohort(q));
+  /**
+   * The cohort's agents for the chips, under the tenant's limit (never cached). Throws
+   * {@link CompareRefusal}; {@link CompareAborted} when `signal` aborts first, which releases the
+   * slot at once and cancels the statement.
+   */
+  async cohort(q: CompareWindowScope, signal?: AbortSignal): Promise<CompareCohortList> {
+    if (signal?.aborted) throw new CompareAborted();
+    const release = this.acquire(q.tenantId);
+    signal?.addEventListener('abort', release, { once: true });
+    try {
+      return await this.readCohort(q, signal);
+    } finally {
+      signal?.removeEventListener('abort', release);
+      release();
+    }
+  }
+
+  /** Slots the tenant holds now. Test and diagnostic use. */
+  inFlight(tenantId: string): number {
+    return this.limiter.inFlight(tenantId);
   }
 
   /** Drop every cached answer. */
@@ -224,31 +281,111 @@ export class CompareReads {
     this.cache.clear();
   }
 
-  private async guarded<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  /** A slot of the tenant's, or `compare_busy`. The release is idempotent. */
+  private acquire(tenantId: string): () => void {
     const release = this.limiter.tryAcquire(tenantId);
     if (release === null) {
       agencyCompareReadsRefusedTotal.inc({ reason: 'busy' });
       throw new CompareRefusal('compare_busy');
     }
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
+    return release;
   }
 
-  /** `fn` in one read-only snapshot under the statement timeout, timed. */
-  private async snapshot<T>(read: CompareReadKind, fn: (db: PoolClient) => Promise<T>): Promise<T> {
+  /** The read in flight for `key`, or a new one holding a slot (`compare_busy` when none is free). */
+  private loadFor(key: string, q: CompareQueryRead): SharedLoad {
+    const running = this.loads.get(key);
+    if (running) return running;
+    const release = this.acquire(q.tenantId);
+    const controller = new AbortController();
+    const load: SharedLoad = {
+      controller, release, waiters: 0, settled: false,
+      promise: this.readQuery(q, controller.signal).then((out) => {
+        // An aborted read's answer is nobody's; an answer is kept for the TTL.
+        if (!controller.signal.aborted) this.cache.set(key, out);
+        return out;
+      }),
+    };
+    this.loads.set(key, load);
+    load.promise
+      .finally(() => {
+        load.settled = true;
+        release();
+        if (this.loads.get(key) === load) this.loads.delete(key);
+      })
+      .catch(noop);
+    return load;
+  }
+
+  /** Wait for `load` as one of its requests; leaving (an abort) may abort the load (see {@link SharedLoad}). */
+  private wait(load: SharedLoad, key: string, signal: AbortSignal | undefined): Promise<CompareQueryOutcome> {
+    load.waiters += 1;
+    let done = false;
+    return new Promise<CompareQueryOutcome>((resolve, reject) => {
+      const leave = (): void => {
+        if (done) return;
+        done = true;
+        load.waiters -= 1;
+        if (load.waiters === 0 && !load.settled) {
+          // Nobody is left to answer: free the slot now and stop the statement.
+          if (this.loads.get(key) === load) this.loads.delete(key);
+          load.release();
+          load.controller.abort();
+        }
+        reject(new CompareAborted());
+      };
+      signal?.addEventListener('abort', leave, { once: true });
+      load.promise.then(
+        (value) => { signal?.removeEventListener('abort', leave); if (!done) { done = true; resolve(value); } },
+        (err: unknown) => { signal?.removeEventListener('abort', leave); if (!done) { done = true; reject(err); } },
+      );
+    });
+  }
+
+  /**
+   * `fn` in one read-only snapshot under the statement timeout, timed. When `signal` aborts, the
+   * statement running is cancelled (`pg_cancel_backend` on this client's backend, sent only while
+   * one of its statements runs, as the report cursor does), no further statement is sent, and the
+   * read ends {@link CompareAborted}.
+   */
+  private async snapshot<T>(read: CompareReadKind, fn: (db: PoolClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const started = performance.now();
     let result: CompareReadResult = 'failed';
     try {
+      signal?.throwIfAborted();
       const out = await withTransaction(async (client) => {
-        await client.query(COMPARE_STATEMENT_TIMEOUT_SQL, [this.timeoutMs]);
-        return fn(client);
+        const pid = (client as unknown as { processID?: number | null }).processID;
+        let running = false;
+        const cancel = (): void => {
+          if (running && pid != null) this.deps.cancelBackend(pid).catch(noop);
+        };
+        signal?.addEventListener('abort', cancel, { once: true });
+        // Every statement of the read goes through here: none is sent once the caller has gone.
+        const query = async (text: string, values?: unknown[]): Promise<unknown> => {
+          signal?.throwIfAborted();
+          running = true;
+          try {
+            return await client.query(text, values);
+          } finally {
+            running = false;
+          }
+        };
+        const guarded = new Proxy(client, {
+          get: (target, prop, receiver) => (prop === 'query' ? query : Reflect.get(target, prop, receiver)),
+        });
+        try {
+          await query(COMPARE_STATEMENT_TIMEOUT_SQL, [this.timeoutMs]);
+          return await fn(guarded);
+        } finally {
+          signal?.removeEventListener('abort', cancel);
+        }
       }, { pool: this.deps.pool, isolation: 'REPEATABLE READ', readOnly: true });
       result = 'ok';
       return out;
     } catch (err) {
+      if (signal?.aborted) {
+        result = 'aborted';
+        throw new CompareAborted();
+      }
       if (isStatementTimeout(err)) {
         result = 'timed_out';
         agencyCompareReadsRefusedTotal.inc({ reason: 'timed_out' });
@@ -261,10 +398,11 @@ export class CompareReads {
   }
 
   /** The cohort's roster rows and their memberships, in one snapshot. */
-  private async readCohort(q: CompareWindowScope): Promise<CompareCohortList> {
+  private async readCohort(q: CompareWindowScope, signal?: AbortSignal): Promise<CompareCohortList> {
     const params = rosterParams({ from: q.start, to: q.end, campaignId: q.campaignId });
     const scope = { tenantId: q.tenantId, accountId: q.accountId };
-    const rows = await this.snapshot('options', (db) => rosterAttemptTotals(scope, params, db));
+    const rows = await this.snapshot('options', (db) => rosterAttemptTotals(scope, params, db), signal);
+    if (signal?.aborted) throw new CompareAborted();
     // After the snapshot, on the pool: a read never holds two connections.
     const memberships = await this.deps.memberships(rows.map((r) => r.agent_user_id), q.tenantId);
     const cohort = filterRowsByMembership(rows, memberships, q.accountId, true, (r) => r.agent_user_id).rows;
@@ -285,7 +423,7 @@ export class CompareReads {
   }
 
   /** The comparison's read (module note). */
-  private async readQuery(q: CompareQueryRead): Promise<CompareQueryOutcome> {
+  private async readQuery(q: CompareQueryRead, signal: AbortSignal): Promise<CompareQueryOutcome> {
     const params = rosterParams({ from: q.start, to: q.end, campaignId: q.campaignId });
     const scope = { tenantId: q.tenantId, accountId: q.accountId };
     const needs = new Set<CompareSource>(q.metrics.flatMap((m) => metricSources(m)));
@@ -324,8 +462,9 @@ export class CompareReads {
       }
 
       return { attempts, occupancyRows, rollup, promises, callbacks, breaks, trend, occupancyIds };
-    });
+    }, signal);
     if (read === null) return { kind: 'not_in_cohort' };
+    if (signal.aborted) throw new CompareAborted();
     // After the snapshot, on the pool (keyed by user): a read never holds two connections.
     const memberships = await this.deps.memberships(read.attempts.map((r) => r.agent_user_id), q.tenantId);
 

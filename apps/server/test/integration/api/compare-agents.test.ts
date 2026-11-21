@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 /**
  * ─── Compare agents on real Postgres, through the real app (docs/compare-agents.md §10) ─────
@@ -42,7 +44,7 @@ import {
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
-  call, CATALOG, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
+  call, CATALOG, headersFor, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
@@ -611,7 +613,9 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
     throw new Error(`fewer than ${n} reads waited on the lock`);
   }
 
-  it('a third read while two run is 429 compare_busy; the two then answer', async () => {
+  it('a third read while two run is 429 compare_busy; a cached answer takes no slot; the two then answer', async () => {
+    const cachedBody = body({ agent_ids: [agent(5).id], metrics: [builtin('calls_handled')], trend: null });
+    const cached = await ok(cachedBody);
     const lock = await holdAttempts();
     try {
       const first = query(body({ agent_ids: [agent(0).id], from: DAYS[1]!, trend: null }));
@@ -619,11 +623,79 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
       await waitersOnLock(2);
       const third = await query(body({ agent_ids: [agent(0).id], from: DAYS[2]!, trend: null }));
       expectRefusal(third, 'compare_busy');
+      // Both slots are held, and the cached answer is still served.
+      const hit = await query(cachedBody);
+      expect(hit.statusCode).toBe(200);
+      expect((hit.json() as AgencyCompareResponse).as_of).toBe(cached.as_of);
       await lock.query('ROLLBACK');
       expect((await first).statusCode).toBe(200);
       expect((await second).statusCode).toBe(200);
       // The slots came back.
       expect((await query(body({ agent_ids: [agent(0).id], from: DAYS[2]!, trend: null }))).statusCode).toBe(200);
+    } finally {
+      await lock.query('ROLLBACK').catch(() => undefined);
+      lock.release();
+    }
+  });
+
+  it('a client that goes away gives its slot back at once and its statement is cancelled; a read is kept while another request waits on it', async () => {
+    /** Exactly `n` of this database's backends waiting on a lock. */
+    async function lockWaitersAre(n: number): Promise<void> {
+      let seen = -1;
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await q(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+        seen = (rows[0] as { n: number }).n;
+        if (seen === n) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error(`expected ${n} lock waiters, saw ${seen}`);
+    }
+    /** A real HTTP request the test can drop mid-read, as a browser aborts a superseded fetch. */
+    function droppable(method: 'GET' | 'POST', path: string, payload?: unknown): { drop: () => void; done: Promise<void> } {
+      const { port } = loaded.app.server.address() as AddressInfo;
+      const data = payload === undefined ? undefined : JSON.stringify(payload);
+      const req = http.request({
+        host: '127.0.0.1', port, method, path,
+        headers: { ...headersFor(sup(), floor, data === undefined ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(data)) }) },
+      });
+      const done = new Promise<void>((resolve) => { req.on('error', () => resolve()); req.on('response', (res) => { res.resume(); res.on('end', () => resolve()); }); });
+      req.end(data);
+      return { drop: () => req.destroy(), done };
+    }
+    await loaded.app.listen({ port: 0, host: '127.0.0.1' });
+
+    const lock = await holdAttempts();
+    try {
+      // A query, joined by an identical one (which takes no slot), and the options read.
+      const K = body({ agent_ids: [agent(1).id], from: DAYS[1]!, trend: null });
+      const a = droppable('POST', '/proxy/agency/compare/query', K);
+      await waitersOnLock(1);
+      const joiner = droppable('POST', '/proxy/agency/compare/query', K);
+      const opts = droppable('GET', `/proxy/agency/compare/options?campaign_id=${c0}&from=${DAYS[1]}&to=${TO}&timezone=${encodeURIComponent(ZONE)}`);
+      await lockWaitersAre(2);
+      // Two slots held: one more read is refused.
+      expectRefusal(await query(body({ agent_ids: [agent(2).id], from: DAYS[2]!, trend: null })), 'compare_busy');
+
+      // The first requester goes: the joiner still waits, so the read runs on.
+      a.drop();
+      await a.done;
+      await new Promise((r) => setTimeout(r, 100));
+      await lockWaitersAre(2);
+      // The joiner and the options reader go: both statements are cancelled, both slots come back.
+      joiner.drop();
+      opts.drop();
+      await Promise.all([joiner.done, opts.done]);
+      await lockWaitersAre(0);
+      // Still under the lock: two fresh reads both get a slot and wait; a third is refused.
+      const fresh1 = query(body({ agent_ids: [agent(2).id], from: DAYS[2]!, trend: null }));
+      const fresh2 = query(body({ agent_ids: [agent(3).id], from: DAYS[2]!, trend: null }));
+      await lockWaitersAre(2);
+      expectRefusal(await query(body({ agent_ids: [agent(4).id], from: DAYS[2]!, trend: null })), 'compare_busy');
+      await lock.query('ROLLBACK');
+      expect((await fresh1).statusCode).toBe(200);
+      expect((await fresh2).statusCode).toBe(200);
+      // The dropped read left nothing in the cache: asked again, it is read afresh and answers.
+      expect((await query(K)).statusCode).toBe(200);
     } finally {
       await lock.query('ROLLBACK').catch(() => undefined);
       lock.release();

@@ -101,6 +101,23 @@ export function sendCompareTimedOut(request: FastifyRequest, reply: FastifyReply
   return reply.code(AGENCY_COMPARE_ERROR_STATUS.compare_timed_out).send(body);
 }
 
+/**
+ * A signal that aborts when the client goes away before its answer: the response's connection
+ * closes while the response is unfinished (a browser that aborts a superseded fetch, a closed tab).
+ * The compare read then gives the tenant's slot back and cancels its statement
+ * (`agency/compare/read.ts`). A response that finishes also closes; that one aborts nothing.
+ */
+export function clientGoneSignal(reply: FastifyReply): AbortSignal {
+  const controller = new AbortController();
+  reply.raw.once('close', () => {
+    if (!reply.raw.writableFinished) controller.abort();
+  });
+  return controller.signal;
+}
+
+/** The status of an answer nobody waits for any more (the client closed the request first). */
+export const CLIENT_CLOSED_STATUS = 499;
+
 /** The flag, else `403 feature_disabled`. False once it has replied. */
 export async function compareGate(deps: CompareRouteDeps, request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
   if (await deps.compareEnabled(request)) return true;

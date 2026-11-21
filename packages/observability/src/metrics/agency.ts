@@ -902,12 +902,12 @@ export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agen
 /** Which compare read ran. */
 export type CompareReadKind = 'query' | 'options';
 /** How a compare read that ran ended. */
-export type CompareReadResult = 'ok' | 'timed_out' | 'failed';
+export type CompareReadResult = 'ok' | 'timed_out' | 'aborted' | 'failed';
 /** Why a compare read was refused by its guards. */
 export type CompareReadRefusal = 'busy' | 'timed_out';
 
 export const agencyCompareReadSeconds = histogram<'read' | 'result'>(meter, 'agency_compare_read_seconds', {
-  description: 'Seconds one Compare agents read took against the database, by read (query or options) and result (ok, timed_out or failed); cached answers are not timed',
+  description: 'Seconds one Compare agents read took against the database, by read (query or options) and result (ok, timed_out, aborted (the client went away) or failed); cached answers are not timed',
   unit: 's',
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5],
 });
