@@ -462,4 +462,39 @@ describe('saved views', () => {
       { lens: 'collections', metrics: [{ kind: 'builtin', key: 'calls_handled' }, { kind: 'builtin', key: 'avg_call' }], trend: null },
     ]);
   });
+
+  it('Share and Make campaign default keep unsaved edits on the page', async () => {
+    const view = compareView({ metrics: [{ kind: 'builtin', key: 'calls_handled' }], trend: null });
+    mocks.listCompareViews.mockResolvedValue({ views: [view] });
+    mocks.updateCompareView.mockImplementation(async (_id, body) => ({ ...view, ...body }));
+    renderView(`?campaign=camp-1&agents=u-lak&lens=collections&m=calls_handled&m=avg_call&trend=none&view=${view.id}`);
+    await screen.findByRole('button', { name: 'Save changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
+    expect(mocks.updateCompareView.mock.calls[0]![1]).toEqual({ shared: true });
+    expect(where().getAll('m')).toEqual(['calls_handled', 'avg_call']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Make campaign default' }));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(2));
+    expect(mocks.updateCompareView.mock.calls[1]![1]).toEqual({ is_campaign_default: true, shared: true });
+    expect(where().getAll('m')).toEqual(['calls_handled', 'avg_call']);
+    expect(where().get('view')).toBe(view.id);
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+  });
+
+  it('offers Make campaign default only on a view made for this campaign', async () => {
+    const anyCampaign = compareView({ id: 'view-any', campaign_id: null });
+    mocks.listCompareViews.mockResolvedValue({ views: [anyCampaign] });
+    renderView(`?campaign=camp-1&agents=u-lak&view=view-any&lens=collections&m=calls_handled&m=${encodeURIComponent(compareMetricId(WILL_PAY))}`);
+    await screen.findByRole('button', { name: 'Share' });
+    expect(screen.queryByRole('button', { name: 'Make campaign default' })).toBeNull();
+  });
+
+  it('mentions sharing in the delete confirmation only for a shared view', async () => {
+    const view = compareView({ shared: false });
+    mocks.listCompareViews.mockResolvedValue({ views: [view] });
+    renderView(`?campaign=camp-1&agents=u-lak&view=${view.id}`);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(screen.getByText('“Collections weekly” will be deleted. The page stays as it is.')).toBeTruthy();
+    expect(screen.queryByText(/shared with/)).toBeNull();
+  });
 });

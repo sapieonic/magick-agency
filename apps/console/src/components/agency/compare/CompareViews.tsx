@@ -50,13 +50,18 @@ export interface CompareViewsProps {
   applied: AgencyCompareView | null;
   current: CompareViewShape;
   onApply: (view: AgencyCompareView) => void;
-  /** A view was created or changed: the page re-reads the list and keeps it applied. */
+  /** A view was created, or its lens, metrics and trend saved: the page re-reads the list and shows the view as saved. */
   onSaved: (view: AgencyCompareView) => void;
+  /**
+   * Only the view's flags changed (shared, campaign default): the page re-reads the list and
+   * leaves what is on screen alone, unsaved edits included.
+   */
+  onChanged: (view: AgencyCompareView) => void;
   onDeleted: (viewId: string) => void;
 }
 
 export function CompareViews(props: CompareViewsProps) {
-  const { tenantId, accountId, userId, campaignId, campaignName, views, applied, current, onApply, onSaved, onDeleted } = props;
+  const { tenantId, accountId, userId, campaignId, campaignName, views, applied, current, onApply, onSaved, onChanged, onDeleted } = props;
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -73,7 +78,10 @@ export function CompareViews(props: CompareViewsProps) {
     setSaving(true);
     try {
       const view = await updateCompareView(applied.id, body, tenantId, accountId);
-      onSaved(view);
+      // Saving the shape puts the saved view on screen; a flag alone must not touch the URL's
+      // metrics, or it would throw away edits not yet saved.
+      if ('lens' in body || 'metrics' in body || 'trend' in body) onSaved(view);
+      else onChanged(view);
       showToast(done, 'success');
     } catch (err) {
       showToast(compareErrorMessage(err, 'The view couldn’t be saved. Try again.'), 'error');
@@ -158,16 +166,16 @@ export function CompareViews(props: CompareViewsProps) {
           >
             {applied.shared ? 'Stop sharing' : 'Share'}
           </button>
-          {applied.campaign_id === campaignId || applied.campaign_id === null ? (
+          {/* Only a view made for this campaign can be its default: making one for any campaign
+              the default would quietly tie it to this one. */}
+          {applied.campaign_id === campaignId ? (
             <button
               type="button"
               className="btn-secondary"
               disabled={saving}
               onClick={() =>
                 patch(
-                  applied.is_campaign_default
-                    ? { is_campaign_default: false }
-                    : { is_campaign_default: true, shared: true, campaign_id: campaignId },
+                  applied.is_campaign_default ? { is_campaign_default: false } : { is_campaign_default: true, shared: true },
                   applied.is_campaign_default
                     ? `“${applied.name}” is no longer the campaign’s default.`
                     : `${campaignName ?? 'This campaign'} now opens on “${applied.name}”.`,
@@ -206,7 +214,7 @@ export function CompareViews(props: CompareViewsProps) {
       <ConfirmDialog
         open={confirmDelete}
         title="Delete this view?"
-        message={applied ? `“${applied.name}” will be deleted for everyone it is shared with. The page stays as it is.` : ''}
+        message={applied ? deleteMessage(applied) : ''}
         confirmLabel="Delete"
         danger
         onConfirm={remove}
@@ -214,6 +222,13 @@ export function CompareViews(props: CompareViewsProps) {
       />
     </div>
   );
+}
+
+/** The delete confirmation's words: who else loses the view only when someone else has it. */
+export function deleteMessage(view: Pick<AgencyCompareView, 'name' | 'shared'>): string {
+  return view.shared
+    ? `“${view.name}” will be deleted for you and every supervisor it is shared with. The page stays as it is.`
+    : `“${view.name}” will be deleted. The page stays as it is.`;
 }
 
 interface SaveViewDialogProps {

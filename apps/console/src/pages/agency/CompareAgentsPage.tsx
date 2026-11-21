@@ -323,6 +323,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
                 setViewsVersion((n) => n + 1);
                 update({ lens: view.lens, metrics: view.metrics, trend: view.trend ?? null, viewId: view.id });
               }}
+              onChanged={() => setViewsVersion((n) => n + 1)}
               onDeleted={() => {
                 setViewsVersion((n) => n + 1);
                 update({ viewId: null });
