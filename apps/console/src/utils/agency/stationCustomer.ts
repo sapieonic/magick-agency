@@ -117,7 +117,8 @@ export function factText(tile: AgencyFactTile): string {
 }
 
 function typedFact(tile: AgencyFactTile, index: number): CustomerFact {
-  const kind: CustomerFact['kind'] = tile.value === null ? 'text' : tile.type;
+  // AS19's number, phone and yes / no show as text until the card formats them.
+  const kind: CustomerFact['kind'] = tile.value !== null && (tile.type === 'money' || tile.type === 'date') ? tile.type : 'text';
   return { key: `fact-${index}`, label: tile.column, value: factText(tile), kind };
 }
 

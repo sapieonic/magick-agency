@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type * as Core from '../src/agency';
 import { AGENCY_HELP_EXPIRY_MS } from '../src/agency/floor-assist';
+import { AGENCY_SCRIPT_FIXED_PLACEHOLDERS } from '../src/agency/agent-script';
+import {
+  AGENCY_FACT_FIELDS_MAX,
+  AGENCY_FACT_KEY_MAX_CHARS,
+  AGENCY_FACT_KEY_PATTERN,
+  AGENCY_FACT_LABEL_MAX_CHARS,
+} from '../src/agency/customer-facts';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
@@ -196,6 +203,8 @@ const STATION = {
   // Agent station (docs/agent-station.md): a booked call-later coming due, with typed facts (BE-4,
   // BE-6), and Need help raised while Ready (BE-9).
   reserved_call_later: fits<Core.AgencyStationReservedFrame>()(station.reserved_call_later),
+  // AS19: the supervisor's chosen facts, labelled and keyed, one highlighted, one of each new type.
+  reserved_facts_chosen: fits<Core.AgencyStationReservedFrame>()(station.reserved_facts_chosen),
   ready_help_open_ready: fits<Core.AgencyStationReadyFrame>()(station.ready_help_open_ready),
 };
 
@@ -213,6 +222,8 @@ const SESSION = {
   bootstrap_retry_rehydrated: fits<Core.AgencySessionBootstrap>()(session.bootstrap_retry_rehydrated),
   // Agent station: icons, context roles and types, the script, the masked number, a pool queue.
   bootstrap_agent_station: fits<Core.AgencySessionBootstrap>()(session.bootstrap_agent_station),
+  // AS19: the campaign's chosen facts and a script that uses their keys.
+  bootstrap_facts_chosen: fits<Core.AgencySessionBootstrap>()(session.bootstrap_facts_chosen),
   station_token: fits<Core.AgencyStationTokenResponse>()(session.station_token),
   break_request: fits<Core.AgencySessionBreakRequest>()(session.break_request),
   session_state_available: fits<Core.AgencySessionStateResponse>()(session.session_state_available),
@@ -667,6 +678,12 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
   ...[0, 1, 2, 3, 4, 5].map((i): InboundField => ['session', 'bootstrap_agent_station', `disposition_catalog.${i}.icon`, 'tile_icons']),
   ...[0, 1].map((i): InboundField => ['session', 'bootstrap_agent_station', `break_reasons.${i}.icon`, 'tile_icons']),
   ...['Amount Due', 'Due Date', 'EMI'].map((c): InboundField => ['session', 'bootstrap_agent_station', `context_display.types.${c}`, 'context_field_types']),
+  // AS19.
+  ...[0, 1, 2, 3].map((i): InboundField => ['station', 'reserved_facts_chosen', `attempt.facts.tiles.${i}.type`, 'context_field_types']),
+  ['station', 'reserved_facts_chosen', 'attempt.facts.tiles.0.role', 'fact_tile_roles'],
+  ...['Amount Due', 'Due Date', 'Tenure (months)', 'Alt Phone', 'Auto Debit'].map(
+    (c): InboundField => ['session', 'bootstrap_facts_chosen', `context_display.types.${c}`, 'context_field_types'],
+  ),
   ...['my_day', 'my_day_pool_no_target'].map((s): InboundField => ['reads', s, 'call_later.left_today_goes_to', 'my_call_later_left_goes_to']),
   ['reads', 'my_day', 'target.metric', 'my_day_target_metrics'],
 ];
@@ -785,6 +802,48 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     expect(tiles.find((t) => t.role === 'amount_due')).toMatchObject({ type: 'money', value: '12500.00' });
     expect(tiles.find((t) => t.role === 'due_date')).toMatchObject({ type: 'date', value: '2026-11-20' });
     for (const t of tiles.filter((t) => t.type === 'text')) expect(t.value).toBeNull();
+  });
+
+  it('agent station (AS19): the chosen facts are bounded, keyed, and the tiles and the script follow them', () => {
+    const display = session.bootstrap_facts_chosen.context_display;
+    const facts = display.facts;
+    expect(facts.length).toBeLessThanOrEqual(AGENCY_FACT_FIELDS_MAX);
+    expect(facts.filter((f) => f.highlight === true)).toHaveLength(1);
+    const fixed: readonly string[] = AGENCY_SCRIPT_FIXED_PLACEHOLDERS;
+    for (const f of facts) {
+      const label = f.label.trim();
+      expect([...label].length).toBeGreaterThan(0);
+      expect([...label].length).toBeLessThanOrEqual(AGENCY_FACT_LABEL_MAX_CHARS);
+      expect(f.key).toMatch(AGENCY_FACT_KEY_PATTERN);
+      expect(f.key.length).toBeLessThanOrEqual(AGENCY_FACT_KEY_MAX_CHARS);
+      expect(fixed).not.toContain(f.key);
+      expect(display.hidden).not.toContain(f.column);
+      expect([display.roles.name, display.roles.place]).not.toContain(f.column);
+    }
+    expect(new Set(facts.map((f) => f.key)).size).toBe(facts.length);
+    expect(new Set(facts.map((f) => f.label.toLowerCase())).size).toBe(facts.length);
+    // The new path names no tile roles: only name and place.
+    expect(Object.keys(display.roles).sort()).toEqual(['name', 'place']);
+
+    // The script uses only the fixed placeholders and the facts' keys, and at least one fact key.
+    const allowed = [...fixed, ...facts.map((f) => f.key)];
+    const script = session.bootstrap_facts_chosen.script;
+    const used = [script.opening, ...script.steps.map((s) => s.text)].flatMap((t) =>
+      [...t.matchAll(/\{([a-z][a-z0-9_]*)\}/g)].map((m) => m[1]),
+    );
+    for (const key of used) expect(allowed).toContain(key);
+    expect(used.some((key) => !fixed.includes(key!))).toBe(true);
+
+    // The panel's tiles are the facts in order, highlighted first, labelled and keyed; the
+    // amount_due-keyed tile carries the role; one tile of each new type, parsed.
+    const tiles = station.reserved_facts_chosen.attempt.facts.tiles;
+    expect(tiles.map((t) => [t.column, t.label, t.key])).toEqual(facts.map((f) => [f.column, f.label, f.key]));
+    expect(tiles[0]).toMatchObject({ highlight: true, key: 'amount_due', role: 'amount_due', type: 'money', value: '12500.00' });
+    expect(tiles.slice(1).every((t) => t.highlight === undefined && t.role === undefined)).toBe(true);
+    expect(tiles.find((t) => t.type === 'number')).toMatchObject({ raw: '24', value: '24' });
+    expect(tiles.find((t) => t.type === 'phone')).toMatchObject({ value: '09876543210' });
+    expect(tiles.find((t) => t.type === 'yes_no')).toMatchObject({ raw: 'Haan', value: 'yes' });
+    for (const t of tiles) expect(t.type).toBe(display.types[t.column as keyof typeof display.types]);
   });
 
   it('keeps the client frames the server reads to ping and media', () => {

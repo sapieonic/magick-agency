@@ -73,3 +73,39 @@ describe('configuredHeroNames (the first stage, without a row)', () => {
     expect(configuredHeroNames({ hero: ['Name', 'Aadhaar', 'City'], hidden: [' aadhaar ', 'CITY'] })).toEqual(['Name']);
   });
 });
+
+describe('the configured heroes with the card\'s chosen facts (AS19)', () => {
+  const display = {
+    hero: ['Loan No', 'City'],
+    roles: { name: 'Name', place: 'City', amount_due: 'Balance' },
+    facts: [
+      { column: 'Balance', label: 'Amount due', key: 'amount_due', highlight: true },
+      { column: 'Loan No', label: 'Loan', key: 'loan_no' },
+    ],
+  };
+
+  it('are the name role then the facts\' columns, and `hero` and the tile roles are not read', () => {
+    expect(configuredHeroNames(display)).toEqual(['Name', 'Balance', 'Loan No']);
+    const row = { Name: 'Asha Rao', City: 'Pune', Balance: '5000', 'Loan No': 'LN-1', Id: '7' };
+    expect(heroColumnsFor(row, display)).toEqual(['Name', 'Balance', 'Loan No']);
+  });
+
+  it('`facts: []` is the new model too: only the name role, never `hero`', () => {
+    expect(configuredHeroNames({ ...display, facts: [] })).toEqual(['Name']);
+    expect(configuredHeroNames({ hero: ['Loan No'], facts: [] })).toEqual([]);
+  });
+
+  it('minus hidden; malformed entries skipped; no name role is fine', () => {
+    expect(configuredHeroNames({ ...display, hidden: ['balance'] })).toEqual(['Name', 'Loan No']);
+    expect(configuredHeroNames({ ...display, hidden: ['NAME'] })).toEqual(['Balance', 'Loan No']);
+    expect(configuredHeroNames({ facts: [null, 'Loan No', { column: 7 }, { column: ' ' }, { column: 'EMI' }], roles: 'Name' }))
+      .toEqual(['EMI']);
+    expect(configuredHeroNames({ facts: [{ column: 'EMI' }, { column: 'EMI' }], roles: { name: 'EMI' } })).toEqual(['EMI']);
+  });
+
+  it('a `facts` that is not an array is the old rule, unchanged', () => {
+    for (const facts of [undefined, null, {}, 'Balance']) {
+      expect(configuredHeroNames({ ...display, facts })).toEqual(['Loan No', 'City']);
+    }
+  });
+});

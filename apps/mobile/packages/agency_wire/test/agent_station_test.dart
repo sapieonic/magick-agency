@@ -185,6 +185,90 @@ void main() {
     });
   });
 
+  group('the card\'s chosen facts and their script keys (AS19)', () {
+    test('the bootstrap sample carries the facts, and its script\'s keys are the fixed four and theirs', () {
+      final d = SessionBootstrap.fromJson(fixture('session.json', 'bootstrap_facts_chosen')).contextDisplay;
+      expect(d.facts, const [
+        FactField(column: 'Amount Due', label: 'Amount due', key: 'amount_due', highlight: true),
+        FactField(column: 'Tenure (months)', label: 'Tenure (months)', key: 'tenure_months'),
+        FactField(column: 'Alt Phone', label: 'Other number', key: 'alt_phone'),
+        FactField(column: 'Auto Debit', label: 'Auto debit on', key: 'auto_debit'),
+      ]);
+      expect(d.types!['Tenure (months)'], ContextFieldType.number);
+      expect(d.types!['Alt Phone'], ContextFieldType.phone);
+      expect(d.types!['Auto Debit'], ContextFieldType.yesNo);
+      expect(d.scriptPlaceholders, [
+        'name', 'place', 'agent_name', 'campaign_name', 'amount_due', 'tenure_months', 'alt_phone', 'auto_debit',
+      ]);
+      expect(d.configuredHeroes, ['Customer Name', 'Amount Due', 'Tenure (months)', 'Alt Phone', 'Auto Debit']);
+    });
+
+    test('without facts: the legacy six and the hero list, as before', () {
+      final d = SessionBootstrap.fromJson(fixture('session.json', 'bootstrap_agent_station')).contextDisplay;
+      expect(d.facts, isNull);
+      expect(d.scriptPlaceholders, ['name', 'place', 'amount_due', 'due_date', 'agent_name', 'campaign_name']);
+      expect(d.configuredHeroes, ['Customer Name', 'Amount Due', 'Due Date', 'Loan No']);
+      expect(ContextDisplay.fromJson({'facts': 'four'}).facts, isNull);
+      // `facts: []` is the new model: only the name role is a hero, `hero` is not read.
+      final empty = ContextDisplay.fromJson({'hero': ['Loan No'], 'roles': {'name': 'Name'}, 'facts': <Object?>[]});
+      expect(empty.facts, isEmpty);
+      expect(empty.configuredHeroes, ['Name']);
+      expect(empty.resolve({'Loan No': 'LN-1', 'Name': 'Asha'}).hero.map((e) => e.key), ['Name']);
+      // A malformed entry is skipped, never a failed bootstrap.
+      final odd = ContextDisplay.fromJson({
+        'facts': [
+          {'column': 'EMI', 'label': 'EMI', 'key': 'emi', 'highlight': 'yes'},
+          {'column': 'X', 'label': 3, 'key': 'x'},
+          'Branch',
+        ],
+      });
+      expect(odd.facts, const [FactField(column: 'EMI', label: 'EMI', key: 'emi')]);
+    });
+
+    test('the panel sample: labelled and keyed tiles, highlighted first, one of each new type', () {
+      final f = StationFrame.decode(fixtureText('station.json', 'reserved_facts_chosen')) as ReservedFrame;
+      final facts = f.attempt.facts!;
+      expect(facts.tiles.map((t) => t.name), ['Amount due', 'Tenure (months)', 'Other number', 'Auto debit on']);
+      expect(facts.tiles.first.highlight, isTrue);
+      expect(facts.tiles.skip(1).every((t) => !t.highlight), isTrue);
+      expect(facts.amountDue, '12500.00');
+      expect(facts.tileForKey('tenure_months')!.type, ContextFieldType.number);
+      expect(facts.tileForKey('alt_phone')!.value, '09876543210');
+      expect(facts.tileForKey('auto_debit')!.type, ContextFieldType.yesNo);
+      expect(facts.tileForKey('auto_debit')!.display, 'yes');
+      expect(facts.tileForKey('due_date'), isNull);
+    });
+
+    test('a BE-6 tile has no label, key or highlight, and is named by its column', () {
+      final f = StationFrame.decode(fixtureText('station.json', 'reserved_call_later')) as ReservedFrame;
+      for (final t in f.attempt.facts!.tiles) {
+        expect([t.label, t.key, t.highlight], [null, null, false]);
+        expect(t.name, t.column);
+      }
+      // A label or key that is not text is read as none; the facts still decode.
+      final odd = FactTile.fromJson({'column': 'EMI', 'label': 7, 'key': null, 'highlight': 1, 'type': 'number', 'raw': '5', 'value': '5'});
+      expect([odd.label, odd.key, odd.highlight, odd.name, odd.type], [null, null, false, 'EMI', ContextFieldType.number]);
+      // A type this build does not know is unknown (shown as text).
+      expect(ContextFieldType.fromWire('percent'), ContextFieldType.unknown);
+    });
+
+    test('script pieces: known keys, unknown words as written, text joined', () {
+      final allowed = {'name', 'branch'};
+      expect(scriptPieces('Hi {name}, {branch}{ name } {due_date} {} ok', allowed), const [
+        ScriptText('Hi '),
+        ScriptKey('name'),
+        ScriptText(', '),
+        ScriptKey('branch'),
+        ScriptUnknown('{ name }'),
+        ScriptText(' '),
+        ScriptUnknown('{due_date}'),
+        ScriptText(' {} ok'),
+      ]);
+      expect(scriptPieces('', allowed), isEmpty);
+      expect(scriptPieces('{name}', allowed), const [ScriptKey('name')]);
+    });
+  });
+
   group('Need help in every state (BE-9)', () {
     test('ready and the raise answer carry the state at raise; an older one has none', () {
       final ready = StationFrame.decode(fixtureText('station.json', 'ready_help_open_ready')) as ReadyFrame;

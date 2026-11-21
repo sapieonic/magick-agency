@@ -97,7 +97,13 @@ package root.
   `AgencySessionBootstrap.phone_display`); the tile icons `AgencyTileIcon` / `AGENCY_TILE_ICONS`,
   `isAgencyTileIcon`, `agencyTileIconOrNone` (BE-13, `AgencyDisposition.icon`,
   `AgencyBreakReason.icon`). `AgencySessionHelp.state_at_raise` (BE-9) rides on the floor's `help`
-  unchanged. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
+  unchanged. For the card's chosen facts (AS19): `AgencyFactField` with its bounds
+  `AGENCY_FACT_FIELDS_MAX`, `AGENCY_FACT_LABEL_MAX_CHARS`, `AGENCY_FACT_KEY_MAX_CHARS`,
+  `AGENCY_FACT_KEY_PATTERN` / `AGENCY_FACT_KEY_PATTERN_SOURCE` (`AgencyContextDisplay.facts`), and
+  `AgencyScriptFixedPlaceholder` / `AGENCY_SCRIPT_FIXED_PLACEHOLDERS`; `AgencyFactTile.label` /
+  `.key` / `.highlight` and the three new `AgencyContextFieldType` members ride on the shapes
+  above unchanged. The campaign wire type's `context_display` is the same `AgencyContextDisplay`,
+  so it carries `facts` with no second edit. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
   the dialer type with no second edit, pinned by `console-wire-derived.test.ts`.
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,

@@ -7,8 +7,10 @@
  * read it from here.
  *
  * Over the contract's `AgencyContextDisplay`:
- *  1. the campaign's `hero` columns, in array order, matched case-insensitively, at most
- *     {@link MAX_HERO_FIELDS} ({@link configuredHeroNames} is this stage without a row);
+ *  1. the campaign's configured heroes, in order, matched case-insensitively, at most
+ *     {@link MAX_HERO_FIELDS} ({@link configuredHeroNames} is this stage without a row): when
+ *     `facts` is an array (AS19, the card's chosen facts), the `name` role's column then each
+ *     fact's column, so every surface matches the card; otherwise the `hero` columns;
  *  2. none configured (or none present on this row): one column per heuristic bucket (a name, an
  *     amount, an identifier, a place), in bucket order, skipping empty values;
  *  3. still none: the first {@link MAX_HERO_FIELDS} columns with a value, in the file's order
@@ -37,6 +39,10 @@ const HERO_HEURISTICS: readonly RegExp[] = [
 export interface HeroDisplay {
   hero?: unknown;
   hidden?: unknown;
+  /** Read for `roles.name` only, and only with `facts` (AS19). */
+  roles?: unknown;
+  /** AS19: an array means the new model; each entry's `column` is read. */
+  facts?: unknown;
 }
 
 /** A context value as display text (`null` for none): strings as they are, scalars stringified, the rest as JSON. */
@@ -62,14 +68,31 @@ const names = (raw: unknown): string[] =>
 
 const fold = (name: string): string => name.trim().toLowerCase();
 
+const isNonBlankString = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0;
+
 /**
- * The campaign's configured hero names, without a row: `hero` in array order, each name as
- * written, blank and repeated names dropped, minus `hidden` (case-insensitive). Not capped: a
- * caller that matches them against rows caps what matched ({@link heroColumnsFor}).
+ * The configured hero names as written, before `hidden`: with `facts` an array (AS19), the `name`
+ * role's column then each fact's `column` (an entry that is not an object with a column is
+ * skipped); otherwise `hero`.
+ */
+function heroNamesAsConfigured(display: HeroDisplay | null | undefined): string[] {
+  const facts = display?.facts;
+  if (!Array.isArray(facts)) return names(display?.hero);
+  const roles = display?.roles;
+  const name = roles !== null && typeof roles === 'object' ? (roles as { name?: unknown }).name : undefined;
+  const columns = facts.map((f: unknown) => (f !== null && typeof f === 'object' ? (f as { column?: unknown }).column : undefined));
+  return [name, ...columns].filter(isNonBlankString);
+}
+
+/**
+ * The campaign's configured hero names, without a row: with `facts` an array (AS19), the `name`
+ * role's column then each fact's column; otherwise `hero` in array order. Each name as written,
+ * blank and repeated names dropped, minus `hidden` (case-insensitive). Not capped: a caller that
+ * matches them against rows caps what matched ({@link heroColumnsFor}).
  */
 export function configuredHeroNames(display: HeroDisplay | null | undefined): string[] {
   const hidden = new Set(names(display?.hidden).map(fold));
-  return [...new Set(names(display?.hero).filter((name) => !hidden.has(fold(name))))];
+  return [...new Set(heroNamesAsConfigured(display).filter((name) => !hidden.has(fold(name))))];
 }
 
 /** How a surface applies the rule. */

@@ -1,8 +1,9 @@
 /// The agent station redesign's wire additions (docs/agent-station.md,
-/// rulings AS1–AS18): the tile icons (BE-13), how the number is shown (AS9),
+/// rulings AS1–AS19): the tile icons (BE-13), how the number is shown (AS9),
 /// a booked call-later on the panel (BE-4), the typed customer facts and the
-/// context roles and types (BE-6), the campaign's script (BE-8), and the
-/// agent's own day (`GET /proxy/agency/my-day`, BE-1 to BE-3).
+/// context roles and types (BE-6), the card's chosen facts and their script
+/// keys (AS19), the campaign's script (BE-8), and the agent's own day
+/// (`GET /proxy/agency/my-day`, BE-1 to BE-3).
 ///
 /// Every field these add to an existing shape is optional (AS18), and each
 /// reader here is lenient: a value this build cannot read is read as absent
@@ -178,13 +179,17 @@ enum ContextRole implements WireEnum {
   static ContextRole fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
 
-/// How a roster column's values are read.
+/// How a roster column's values are read. [number], [phone] and [yesNo] are
+/// AS19's; an older build reads them as [unknown] (shown as text).
 ///
 /// Contract: `AgencyContextFieldType` / `AGENCY_CONTEXT_FIELD_TYPES`.
 enum ContextFieldType implements WireEnum {
   text('text'),
   money('money'),
   date('date'),
+  number('number'),
+  phone('phone'),
+  yesNo('yes_no'),
   unknown('');
 
   const ContextFieldType(this.wire);
@@ -263,13 +268,65 @@ Map<String, ContextFieldType>? contextFieldTypesFromJson(Object? raw) {
   });
 }
 
-/// One fact tile: a hero column, its raw text and its parsed value.
+/// One fact the supervisor chose for the card (AS19): an entry of
+/// `context_display.facts`.
+///
+/// Contract: `AgencyFactField`.
+@immutable
+final class FactField {
+  const FactField({required this.column, required this.label, required this.key, this.highlight = false});
+
+  /// [raw] as a fact, or null when it is not an object with string `column`,
+  /// `label` and `key` (the entry is then skipped). `highlight` is true only
+  /// when it is `true`.
+  static FactField? tryFromJson(Object? raw) {
+    if (raw is! Map<String, Object?>) return null;
+    final column = raw['column'];
+    final label = raw['label'];
+    final key = raw['key'];
+    if (column is! String || label is! String || key is! String) return null;
+    return FactField(column: column, label: label, key: key, highlight: raw['highlight'] == true);
+  }
+
+  /// The roster column, as in its header.
+  final String column;
+
+  /// The tile's name the agent sees.
+  final String label;
+
+  /// The script key, `{key}`.
+  final String key;
+
+  /// The campaign's one highlighted fact: drawn first and wide.
+  final bool highlight;
+
+  @override
+  bool operator ==(Object other) =>
+      other is FactField && other.column == column && other.label == label && other.key == key && other.highlight == highlight;
+
+  @override
+  int get hashCode => Object.hash(column, label, key, highlight);
+}
+
+/// `context_display.facts` read leniently: null when absent or not a list
+/// (the campaign keeps the BE-6 rule); an entry that is not a fact is
+/// skipped.
+List<FactField>? factFieldsFromJson(Object? raw) {
+  if (raw is! List<Object?>) return null;
+  return List<FactField>.unmodifiable(raw.map(FactField.tryFromJson).whereType<FactField>());
+}
+
+/// One fact tile: a chosen fact or a hero column, its raw text and its parsed
+/// value.
 ///
 /// Contract: `AgencyFactTile`.
 @immutable
 final class FactTile {
   FactTile({
     required this.column,
+    this.label,
+    this.key,
+    this.highlight = false,
     this.role,
     String? roleRaw,
     required this.type,
@@ -282,8 +339,12 @@ final class FactTile {
   factory FactTile.fromJson(Map<String, Object?> j) {
     final role = j.strOrNull('role');
     final type = j.str('type');
+    String? s(String k) => j[k] is String ? j[k]! as String : null;
     return FactTile(
       column: j.str('column'),
+      label: s('label'),
+      key: s('key'),
+      highlight: j['highlight'] == true,
       role: role == null ? null : FactTileRole.fromWire(role),
       roleRaw: role,
       type: ContextFieldType.fromWire(type),
@@ -294,18 +355,34 @@ final class FactTile {
   }
 
   final String column;
+
+  /// AS19: the fact's name; null on the BE-6 path (name the tile by [column]).
+  /// A value that is not a string reads as null.
+  final String? label;
+
+  /// AS19: the fact's script key: the script fills `{key}` from this tile.
+  final String? key;
+
+  /// AS19: the campaign's one highlighted fact, sent first; false when absent.
+  final bool highlight;
+
   final FactTileRole? role;
   final String? roleRaw;
   final ContextFieldType type;
   final String typeRaw;
 
-  /// As uploaded. Display text, never markup.
+  /// As uploaded. Display text, never markup. `''` for a chosen fact with no
+  /// value on this row.
   final String raw;
 
-  /// Parsed: a decimal string for money (`"12500.00"`), `YYYY-MM-DD` for a
-  /// date; null for text and for a value the server could not read (show
-  /// [raw]).
+  /// Parsed: a decimal string for money and number (`"12500.00"`),
+  /// `YYYY-MM-DD` for a date, the digits with an optional leading `+` for a
+  /// phone, `yes` or `no` for yes / no; null for text and for a value the
+  /// server could not read (show [raw]).
   final String? value;
+
+  /// The tile's name: [label], else [column].
+  String get name => label ?? column;
 
   /// The text to show when the client does not format [value] itself.
   String get display => value ?? raw;
@@ -314,13 +391,16 @@ final class FactTile {
   bool operator ==(Object other) =>
       other is FactTile &&
       other.column == column &&
+      other.label == label &&
+      other.key == key &&
+      other.highlight == highlight &&
       other.roleRaw == roleRaw &&
       other.typeRaw == typeRaw &&
       other.raw == raw &&
       other.value == value;
 
   @override
-  int get hashCode => Object.hash(column, roleRaw, typeRaw, raw, value);
+  int get hashCode => Object.hash(column, label, key, highlight, roleRaw, typeRaw, raw, value);
 }
 
 /// The customer's facts on the panel, parsed by the server.
@@ -348,13 +428,22 @@ final class CustomerFacts {
   final String? name;
   final String? place;
 
-  /// In hero order, at most 4.
+  /// In hero order (with chosen facts, AS19: the list's order, the
+  /// highlighted one first), at most 4.
   final List<FactTile> tiles;
 
   /// The tile playing [role], or null.
   FactTile? tileFor(FactTileRole role) {
     for (final t in tiles) {
       if (t.role == role) return t;
+    }
+    return null;
+  }
+
+  /// AS19: the tile carrying script key [key], or null (none on the BE-6 path).
+  FactTile? tileForKey(String key) {
+    for (final t in tiles) {
+      if (t.key == key) return t;
     }
     return null;
   }
@@ -376,7 +465,9 @@ final class CustomerFacts {
 
 // ─── The script (BE-8) ──────────────────────────────────────────────────────
 
-/// A name a script's text may use in braces (`{name}`).
+/// A name a script's text may use in braces (`{name}`) on a campaign without
+/// chosen facts (the legacy set). With facts (AS19) the script may use
+/// [scriptFixedPlaceholders] and the facts' keys ([scriptPieces]).
 ///
 /// Contract: `AgencyScriptPlaceholder` / `AGENCY_SCRIPT_PLACEHOLDERS`.
 enum ScriptPlaceholder implements WireEnum {
@@ -396,6 +487,17 @@ enum ScriptPlaceholder implements WireEnum {
   static ScriptPlaceholder fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
 
+/// AS19: the placeholders every script may use whatever its facts; no fact's
+/// key may be one of them.
+///
+/// Contract: `AGENCY_SCRIPT_FIXED_PLACEHOLDERS`.
+const scriptFixedPlaceholders = <ScriptPlaceholder>[
+  ScriptPlaceholder.name,
+  ScriptPlaceholder.place,
+  ScriptPlaceholder.agentName,
+  ScriptPlaceholder.campaignName,
+];
+
 final _placeholder = RegExp(r'\{([a-z_]+)\}');
 
 /// [text] with each known `{placeholder}` replaced by [valueOf]'s answer, or
@@ -406,6 +508,86 @@ String fillScriptPlaceholders(String text, String? Function(ScriptPlaceholder pl
       final p = ScriptPlaceholder.fromWire(m[1]);
       return p.isUnknown ? m[0]! : (valueOf(p) ?? '');
     });
+
+/// A run of a script line (AS19): plain text, a known `{key}`, or a `{word}`
+/// the campaign does not have.
+///
+/// Contract: the domain's `ScriptPiece` (`packages/domain/src/fact-fields.ts`).
+sealed class ScriptPiece {
+  const ScriptPiece();
+}
+
+/// Plain text.
+final class ScriptText extends ScriptPiece {
+  const ScriptText(this.text);
+  final String text;
+
+  @override
+  bool operator ==(Object other) => other is ScriptText && other.text == text;
+  @override
+  int get hashCode => text.hashCode;
+  @override
+  String toString() => 'ScriptText($text)';
+}
+
+/// A known `{key}`: its value, or "<label> not given" in the muted style
+/// when the customer has none.
+final class ScriptKey extends ScriptPiece {
+  const ScriptKey(this.key);
+  final String key;
+
+  @override
+  bool operator ==(Object other) => other is ScriptKey && other.key == key;
+  @override
+  int get hashCode => key.hashCode;
+  @override
+  String toString() => 'ScriptKey($key)';
+}
+
+/// A `{word}` the campaign does not have: shown as written.
+final class ScriptUnknown extends ScriptPiece {
+  const ScriptUnknown(this.token);
+  final String token;
+
+  @override
+  bool operator ==(Object other) => other is ScriptUnknown && other.token == token;
+  @override
+  int get hashCode => token.hashCode;
+  @override
+  String toString() => 'ScriptUnknown($token)';
+}
+
+/// The server's one reading of braces: one word of letters, digits and
+/// underscores in braces, spaces allowed inside (`SCRIPT_BRACED_SOURCE`).
+final _braced = RegExp(r'\{\s*([A-Za-z0-9_]+)\s*\}');
+
+/// [text] cut into its runs (AS19): a `{key}` written exactly, for a key in
+/// [allowed], is a [ScriptKey]; any other `{word}` is a [ScriptUnknown];
+/// the rest is [ScriptText], adjacent text joined, no piece empty.
+/// [allowed] is the campaign's keys (`ContextDisplay.scriptPlaceholders`).
+List<ScriptPiece> scriptPieces(String text, Set<String> allowed) {
+  final pieces = <ScriptPiece>[];
+  void pushText(String t) {
+    if (t.isEmpty) return;
+    final prev = pieces.isEmpty ? null : pieces.last;
+    if (prev is ScriptText) {
+      pieces[pieces.length - 1] = ScriptText(prev.text + t);
+    } else {
+      pieces.add(ScriptText(t));
+    }
+  }
+
+  var at = 0;
+  for (final m in _braced.allMatches(text)) {
+    pushText(text.substring(at, m.start));
+    final token = m[0]!;
+    final word = token.substring(1, token.length - 1);
+    pieces.add(allowed.contains(word) ? ScriptKey(word) : ScriptUnknown(token));
+    at = m.end;
+  }
+  pushText(text.substring(at));
+  return List.unmodifiable(pieces);
+}
 
 /// One numbered step of the script.
 ///

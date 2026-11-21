@@ -476,7 +476,7 @@ Only two: **Don't call again** and **Finish work for today**. End call is one pr
 | The thin state rail with small text | Too small to read at a glance or from across the floor | The full-width band |
 | "Go available" / "End break" / "Offline" wording | Jargon | "Start work", "Start calls again" |
 | Press-and-hold to hang up | Agents asked for one press | One press (open question 2) |
-| The full contact field list with its filter (`ContactDetail`, key `/`) | Agents use three or four facts | The campaign's hero fields as big tiles. The rest is not shown on the station |
+| The full contact field list with its filter (`ContactDetail`, key `/`) | Agents use up to 4 facts, chosen per campaign (AS19) | The campaign's hero fields as big tiles. The rest is not shown on the station |
 | The list of every past attempt on every call | Only the last one is used | "Last call" + "What they said last time". The list remains in `04c` and in My calls today |
 | "Attempt 3", caller ID, "Calling from" | Not needed to do the call | Not shown |
 | Retry banner ("Retry 1 of 'Q3 Winback' — these contacts were previously…") | Supervisor language | Not shown. "Last call" tells the agent they have been called before |

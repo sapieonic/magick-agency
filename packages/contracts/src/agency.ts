@@ -73,6 +73,13 @@
  * `AgencyDisposition.icon` and `AgencyBreakReason.icon` from `AGENCY_TILE_ICONS` (BE-13,
  * `./agency/tile-icons.ts`; an unknown value reads as none); `AgencySessionHelp.state_at_raise`
  * (BE-9). The `queue` frame is also sent on `pool` campaigns (BE-5): an existing frame.
+ *
+ * **Customer facts amendment (2026-11-21, `docs/agent-station.md`, AS19).** Optional fields and
+ * widened vocabularies only: `AgencyContextDisplay.facts` (`AgencyFactField`, the card's chosen
+ * facts), `AgencyFactTile.label` / `.key` / `.highlight`, `AgencyContextFieldType` gains `number`,
+ * `phone` and `yes_no` (a client that does not know one shows the column as text), and
+ * `AGENCY_SCRIPT_FIXED_PLACEHOLDERS` (`./agency/agent-script.ts`): with `facts`, the script's
+ * placeholders are those plus the facts' keys.
  */
 
 export * from './agency/enums';

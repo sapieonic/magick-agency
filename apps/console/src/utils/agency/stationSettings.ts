@@ -234,6 +234,9 @@ export const CONTEXT_TYPE_LABELS: Readonly<Record<AgencyContextFieldType, string
   text: 'Text',
   money: 'Money',
   date: 'Date',
+  number: 'Number',
+  phone: 'Phone number',
+  yes_no: 'Yes / No',
 };
 
 /** A role's field path (the server's `details` key). */

@@ -379,5 +379,155 @@
       ]
     },
     "phone_display": "masked"
+  },
+  "bootstrap_facts_chosen": {
+    "session_id": "9b2d4e6f-1a3c-4e5f-8a7b-0c1d2e3f4a5b",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "campaign_name": "Q4 Renewals — Pune",
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "state": "offline",
+    "campaign_status": "running",
+    "station_ws_url": "/proxy/agency/station/6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12?token=9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a",
+    "station_token_expires_at": "2026-11-01T06:02:00.000Z",
+    "disposition_catalog": [
+      {
+        "code": "will_pay",
+        "label": "Will pay",
+        "is_success": true,
+        "requires_promise": true,
+        "promise_follow_up_days": 2,
+        "icon": "rupee"
+      },
+      {
+        "code": "callback",
+        "label": "Call later",
+        "requires_datetime": true,
+        "icon": "clock"
+      },
+      {
+        "code": "voicemail",
+        "label": "No one spoke",
+        "retry": {
+          "delay_minutes": 120,
+          "max_attempts": 3
+        },
+        "icon": "phone_missed"
+      },
+      {
+        "code": "refused",
+        "label": "Refused",
+        "icon": "thumbs_down"
+      },
+      {
+        "code": "wrong_number",
+        "label": "Wrong number",
+        "terminal": true,
+        "icon": "wrong_number"
+      },
+      {
+        "code": "do_not_call",
+        "label": "Don't call again",
+        "requires_note": true,
+        "suppress": true,
+        "terminal": true,
+        "icon": "stop"
+      },
+      {
+        "code": "other",
+        "label": "Other"
+      }
+    ],
+    "wrapup_seconds": 30,
+    "wrapup_auto_return": true,
+    "record_calls": true,
+    "break_reasons": [
+      {
+        "code": "tea",
+        "label": "Tea",
+        "is_paid": true,
+        "limit_minutes": 15,
+        "icon": "tea"
+      },
+      {
+        "code": "lunch",
+        "label": "Lunch",
+        "is_paid": false,
+        "limit_minutes": 30,
+        "icon": "lunch"
+      },
+      {
+        "code": "meeting",
+        "label": "Meeting"
+      }
+    ],
+    "context_display": {
+      "hidden": [
+        "Internal ID"
+      ],
+      "roles": {
+        "name": "Customer Name",
+        "place": "City"
+      },
+      "types": {
+        "Amount Due": "money",
+        "Due Date": "date",
+        "Tenure (months)": "number",
+        "Alt Phone": "phone",
+        "Auto Debit": "yes_no"
+      },
+      "facts": [
+        {
+          "column": "Amount Due",
+          "label": "Amount due",
+          "key": "amount_due",
+          "highlight": true
+        },
+        {
+          "column": "Tenure (months)",
+          "label": "Tenure (months)",
+          "key": "tenure_months"
+        },
+        {
+          "column": "Alt Phone",
+          "label": "Other number",
+          "key": "alt_phone"
+        },
+        {
+          "column": "Auto Debit",
+          "label": "Auto debit on",
+          "key": "auto_debit"
+        }
+      ]
+    },
+    "intervals": {
+      "heartbeat_ms": 10000,
+      "heartbeat_grace_ms": 10000,
+      "reservation_lease_ms": 10000,
+      "countdown_ms": 3000,
+      "deferred_hangup_ms": 8000
+    },
+    "allow_wrapup_redial": true,
+    "assignment_mode": "preferred",
+    "allow_agent_retry": true,
+    "queue": {
+      "due": false,
+      "reason": "outside_calling_hours",
+      "next_due_at": "2026-11-20T03:30:00.000Z"
+    },
+    "script": {
+      "opening": "Namaste {name}, I am {agent_name} calling from {campaign_name}.",
+      "steps": [
+        {
+          "text": "Tell them the amount due: {amount_due}."
+        },
+        {
+          "text": "Their loan runs for {tenure_months} months. Auto debit on: {auto_debit}."
+        },
+        {
+          "text": "Check their other number, {alt_phone}, and ask when they can pay."
+        }
+      ]
+    },
+    "phone_display": "masked"
   }
 }

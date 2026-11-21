@@ -255,10 +255,12 @@ final class ContextDisplay {
     List<String>? hidden,
     this.roles,
     Map<String, ContextFieldType>? types,
+    List<FactField>? facts,
   }) : hero = hero == null ? null : List.unmodifiable(hero),
        order = order == null ? null : List.unmodifiable(order),
        hidden = hidden == null ? null : List.unmodifiable(hidden),
-       types = types == null ? null : Map.unmodifiable(types);
+       types = types == null ? null : Map.unmodifiable(types),
+       facts = facts == null ? null : List.unmodifiable(facts);
 
   factory ContextDisplay.fromJson(Map<String, Object?> j) => ContextDisplay(
     hero: j.stringsOrNull('hero'),
@@ -266,6 +268,7 @@ final class ContextDisplay {
     hidden: j.stringsOrNull('hidden'),
     roles: ContextRoles.tryFromJson(j['roles']),
     types: contextFieldTypesFromJson(j['types']),
+    facts: factFieldsFromJson(j['facts']),
   );
 
   /// Pinned first, in order: what the agent reads while the phone rings.
@@ -285,10 +288,41 @@ final class ContextDisplay {
   /// How each named column is read (BE-6); a column not named is text.
   final Map<String, ContextFieldType>? types;
 
+  /// AS19: the card's chosen facts, in order. Non-null (even empty) means the
+  /// campaign uses them: the server builds the tiles from them, and they are
+  /// the heroes after the name ([resolve]). Null: the BE-6 rule.
+  final List<FactField>? facts;
+
+  /// The heroes as configured, before matching a row: with [facts], the
+  /// `name` role's column then each fact's column (AS19); else [hero]. Minus
+  /// [hidden], each once. The domain's `configuredHeroNames`, matched exactly.
+  List<String>? get configuredHeroes {
+    final facts = this.facts;
+    final names = facts == null ? hero : [?roles?.name, for (final f in facts) f.column];
+    if (names == null) return null;
+    final hidden = this.hidden?.toSet() ?? const <String>{};
+    return [
+      for (final n in {...names})
+        if (n.trim().isNotEmpty && !hidden.contains(n)) n,
+    ];
+  }
+
+  /// The `{key}`s this campaign's script may use (AS19): with [facts], the
+  /// fixed four then each fact's key; else the legacy six. The domain's
+  /// `scriptPlaceholdersFor`.
+  List<String> get scriptPlaceholders {
+    final facts = this.facts;
+    if (facts == null) {
+      return [for (final p in ScriptPlaceholder.values) if (!p.isUnknown) p.wire];
+    }
+    return [...{for (final p in scriptFixedPlaceholders) p.wire, for (final f in facts) if (f.key.isNotEmpty) f.key}];
+  }
+
   /// Orders [context] (a reserved attempt's columns, in CSV order):
-  /// 1. `hero` columns in array order; 2. then `order` columns; 3. then every
-  /// remaining column in CSV order; minus `hidden` at every stage. A column
-  /// named in `hero` but absent from [context] is skipped.
+  /// 1. the configured heroes in order ([configuredHeroes]: with [facts], the
+  /// name role's column then the facts' columns; else `hero`); 2. then
+  /// `order` columns; 3. then every remaining column in CSV order; minus
+  /// `hidden` at every stage. A hero absent from [context] is skipped.
   ResolvedContext resolve(Map<String, Object?> context) {
     final hidden = this.hidden?.toSet() ?? const <String>{};
     final placed = <String>{...hidden};
@@ -302,7 +336,7 @@ final class ContextDisplay {
       }
     }
 
-    take(hero, heroOut);
+    take(configuredHeroes, heroOut);
     take(order, rest);
     take(context.keys, rest);
     return ResolvedContext(hero: heroOut, rest: rest);
@@ -315,7 +349,8 @@ final class ContextDisplay {
       listEquals(other.order, order) &&
       listEquals(other.hidden, hidden) &&
       other.roles == roles &&
-      _sameTypes(other.types, types);
+      _sameTypes(other.types, types) &&
+      listEquals(other.facts, facts);
 
   static bool _sameTypes(Map<String, ContextFieldType>? a, Map<String, ContextFieldType>? b) {
     if (a == null || b == null) return a == b;
@@ -333,6 +368,7 @@ final class ContextDisplay {
     listHash(hidden),
     roles,
     types == null ? null : Object.hashAllUnordered(types!.entries.map((e) => Object.hash(e.key, e.value))),
+    listHash(facts),
   );
 }
 

@@ -73,6 +73,7 @@ final Map<String, Map<String, Decoder>> decoders = {
       'help_cleared_expired',
       'reserved_call_later',
       'ready_help_open_ready',
+      'reserved_facts_chosen',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -85,6 +86,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'bootstrap_first_join': SessionBootstrap.fromJson,
     'bootstrap_retry_rehydrated': SessionBootstrap.fromJson,
     'bootstrap_agent_station': SessionBootstrap.fromJson,
+    'bootstrap_facts_chosen': SessionBootstrap.fromJson,
     'station_token': StationTokenResponse.fromJson,
     'break_request': (j) => SessionBreakRequest(j['reason']! as String),
     'session_state_available': SessionStateResponse.fromJson,

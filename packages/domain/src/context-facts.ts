@@ -1,5 +1,6 @@
 /**
- * Reads a roster value as money or as a date (agent station redesign, BE-6): the ONE parse rule
+ * Reads a roster value as money, a date, a number, a phone number or a yes / no (agent station
+ * redesign, BE-6; the last three AS19): the ONE parse rule
  * behind `AgencyFactTile.value` (`@magick-agency/contracts`, `agency/customer-facts.ts`). The
  * server parses once, at dial time, and sends the answer beside the raw text, so the console and
  * the app never each write a money or date parser. A LEAF: no I/O, no imports.
@@ -27,6 +28,21 @@
  * as 25 Nov; `03/04/2026` is read as 3 Apr, day first, as the roster's own country writes it),
  * a day the calendar does not have (`31/02/2026`), a time with a zone (`…T18:30:00Z`: which day
  * it is depends on where you stand), a spreadsheet serial number (`46351`), anything else.
+ *
+ * Number ({@link parseNumberFact}, AS19): money's reading without the rupee sign or word: digits
+ * grouped the Indian or the western way or not at all, a space standing for a grouping comma only
+ * where the comma would stand, then any number of decimals. Answers a plain decimal string, no
+ * grouping and no leading zeros (`"125000"`, `"10.375"`). Refused (null): a sign, a currency, a
+ * percent, a decimal comma, a grouping that is neither form, words, an exponent.
+ *
+ * Phone ({@link parsePhoneFact}, AS19): digits with an optional leading `+`, spaces, dashes and
+ * brackets ignored. Answers the digits, the `+` kept when it was there (`"+919876543210"`,
+ * `"09876543210"`). Refused (null): fewer than 6 or more than 15 digits, a `+` anywhere but first,
+ * any other character (letters, dots, `/`, an extension). Display only: never dialled from.
+ *
+ * Yes / no ({@link parseYesNoFact}, AS19): `yes`, `y`, `true`, `1`, `haan`, `ha` answer `"yes"`;
+ * `no`, `n`, `false`, `0`, `nahi`, `nahin` answer `"no"`; case and surrounding space ignored.
+ * Anything else: null.
  */
 
 /** The longest value read at all; anything longer is not a single amount or date. */
@@ -148,15 +164,77 @@ export function parseDateFact(raw: string, now: Date = new Date()): string | nul
   return null;
 }
 
-/** The field types a value is read as (`AgencyContextFieldType`). */
-export type ContextFactType = 'text' | 'money' | 'date';
+/**
+ * A number value as a plain decimal string (`"125000"`, `"10.375"`), or `null` when it cannot be
+ * read for certain. Money's grouping rule without a currency. See the module header for the rule.
+ */
+export function parseNumberFact(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.replace(SPACES, ' ').trim();
+  if (text.length === 0 || text.length > MAX_FACT_CHARS) return null;
+  const [rawInteger, decimals, extra] = text.split('.');
+  if (extra !== undefined || rawInteger === undefined) return null;
+  if (rawInteger.includes(' ') && rawInteger.includes(',')) return null;
+  const integer = rawInteger.replace(/ /g, ',');
+  if (!MONEY_INTEGER.test(integer)) return null;
+  if (decimals !== undefined && !/^\d+$/.test(decimals)) return null;
+  const digits = integer.replace(/,/g, '').replace(/^0+(?=\d)/, '');
+  return decimals === undefined ? digits : `${digits}.${decimals}`;
+}
+
+/** The fewest and most digits a phone number may have (E.164 allows 15). */
+const PHONE_MIN_DIGITS = 6;
+const PHONE_MAX_DIGITS = 15;
+
+/**
+ * A phone number as its digits, the leading `+` kept when present (`"+919876543210"`), or `null`
+ * when it is not one. See the module header for the rule.
+ */
+export function parsePhoneFact(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.replace(SPACES, ' ').trim();
+  if (text.length === 0 || text.length > MAX_FACT_CHARS) return null;
+  const plus = text.startsWith('+');
+  const rest = plus ? text.slice(1) : text;
+  if (!/^[\d\s\-()]+$/.test(rest)) return null;
+  const digits = rest.replace(/\D/g, '');
+  if (digits.length < PHONE_MIN_DIGITS || digits.length > PHONE_MAX_DIGITS) return null;
+  return plus ? `+${digits}` : digits;
+}
+
+const YES_WORDS: ReadonlySet<string> = new Set(['yes', 'y', 'true', '1', 'haan', 'ha']);
+const NO_WORDS: ReadonlySet<string> = new Set(['no', 'n', 'false', '0', 'nahi', 'nahin']);
+
+/** A yes / no value as `"yes"` or `"no"`, or `null`. See the module header for the words. */
+export function parseYesNoFact(raw: string): 'yes' | 'no' | null {
+  if (typeof raw !== 'string') return null;
+  const word = raw.replace(SPACES, ' ').trim().toLowerCase();
+  if (YES_WORDS.has(word)) return 'yes';
+  if (NO_WORDS.has(word)) return 'no';
+  return null;
+}
+
+/** The field types a value is read as (`AgencyContextFieldType`; `context-facts.test.ts` holds them equal). */
+export type ContextFactType = 'text' | 'money' | 'date' | 'number' | 'phone' | 'yes_no';
 
 /**
  * A value read as its column's type: `parseMoneyFact` for `money`, `parseDateFact` for `date`,
- * and always `null` for `text` (the client shows `raw`).
+ * `parseNumberFact` for `number`, `parsePhoneFact` for `phone`, `parseYesNoFact` for `yes_no`, and
+ * always `null` for `text` or a type it does not know (the client shows `raw`).
  */
 export function parseContextFact(raw: string, type: ContextFactType, now: Date = new Date()): string | null {
-  if (type === 'money') return parseMoneyFact(raw);
-  if (type === 'date') return parseDateFact(raw, now);
-  return null;
+  switch (type) {
+    case 'money':
+      return parseMoneyFact(raw);
+    case 'date':
+      return parseDateFact(raw, now);
+    case 'number':
+      return parseNumberFact(raw);
+    case 'phone':
+      return parsePhoneFact(raw);
+    case 'yes_no':
+      return parseYesNoFact(raw);
+    default:
+      return null;
+  }
 }
