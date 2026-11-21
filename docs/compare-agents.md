@@ -6,7 +6,7 @@ kind of campaign starts from a **lens** (a set of metrics), the supervisor can c
 page draws each metric with the chart its shape calls for. Outcome metrics are the supervisor's
 choice: any set of the campaign's outcome codes (CP17). Designed 2026-11-21 and reviewed
 independently the same day; rulings CP1–CP18 below. **The contract, the rules and the saved-views
-table are built; the read, the routes and the console tab are not** (§9).
+table are built, and so are the server's read, routes and saved views; the console tab is not** (§9).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number.
@@ -194,6 +194,51 @@ The interactive read is never a Lambda: the renderer has no database access by d
 Exports (phase 4) are a report kind `agent_compare` whose dataset is the same read's response; the
 renderer Lambda draws the same charts.
 
+**As built (server, phase 1b).** `apps/server/src/agency/compare/` (`read.ts`, `assemble.ts`,
+`validate.ts`), its SQL `db/repositories/agency/compare-reads.ts`, the saved views
+`compare-view.repository.ts`, the routes `api/routes/proxy-agency-compare.routes.ts`. Where the build
+reads a number other than the way the text above words it, the reason:
+
+- **The cohort** is the roster's own attempt statement (`rosterAttemptTotals`, the one
+  `GET /agents/stats?campaign_id=` runs) on the read's client, with the roster route's membership
+  filter (`filterRowsByMembership`, a departed agent kept, CP8). It is every row, not the roster
+  page's first 200. The statement also counts the measured wrap-ups `choose_time` divides by.
+- **No outcome chosen** is read from `agency_insights_rollup_codes` (a NULL code or `no_disposition`),
+  not the `no_outcome` facet: the facet carries no agent. Insights reconciles the two
+  (`no_outcome_vs_unclassified_codes`), so it is the same number by agent.
+- **Promises** (CP2) divide by the roster's conversations plus the agent's soft-phone calls on the
+  campaign that connected (`SOFTPHONE_CONNECTED_SQL`, `created_at` in the window, Insights' rule) and
+  inbound calls they answered that matched the campaign (`outcome = 'answered'`, `arrived_at` in the
+  window, the inbound summary's rule). Promises are counted by `dispositioned_at`, as My day does.
+- **Where their day went** is the roster's occupancy fold for the picked agents (`foldOccupancy`
+  over the same intervals and clips), so `day_split.shift_seconds` is the roster's `shift_seconds`
+  rounded, the four parts summed to it (`roundPreservingSum`). The roster's occupancy statement is
+  read for the whole cohort only when `calls_per_hour` is on screen.
+- **The trend's days** are the local days the agent's sessions on the campaign touch, each session's
+  life clipped to the window and to now. A session's life is its logged-in time (an agent is offline
+  only once the session has ended); the event log is needed to split that time by state, never to
+  say which days had any. On a month of 100 agents (1.4M state events) the event walk took 5.5 s,
+  past the timeout; the session read takes 8 ms.
+- **Outcome codes** are the campaign's current catalog, or the default catalog when it stores none
+  (My day's `effectiveCatalog`). `success_rate` keeps the roster's rule (the stored catalog).
+- **The cache** holds the query's answer only; the options read takes a slot and is never cached
+  (its default view must show a save at once). An answer from the cache takes no slot. The cache key
+  carries no outcome set's label (the id has none), so a cached answer is served with the request's
+  own `metrics` and `trend_metric`. The caller's scope in the key is the context account: the cohort
+  is the account's roster whoever in the account asks.
+- **Without `X-Account-Id`** every route answers `400 account_scope_required`, the floor routes' rule.
+
+**Cost, measured.** On 930,000 attempts (two campaigns of 100 agents × 31 days × 150 dials) and
+1.4M state events, `EXPLAIN ANALYZE` of each statement, a 31-day window: the roster attempt statement
+1.3–1.5 s (a parallel scan of the window; `idx_agency_attempts_campaign_dialed` on a 7-day window,
+0.5 s), the roster occupancy statement for the whole cohort **4.3 s** (every event of the window, its
+window sort spilling to disk; 0.9 s on 7 days), the same for three picked agents 0.1 s, rollup codes
+0.1 s, promises 0.03 s, call-backs 0.03 s, breaks over the limit 0.08 s, the trend's days 0.008 s.
+So on a campaign this busy a month with `calls_per_hour` on screen (the Sales and Verification
+lenses) answers `503 compare_timed_out`; a week answers. That is the roster screen's own statement
+and cost for the same window (it has no timeout); the trigger above is the remedy, or a narrower
+default window on the page.
+
 ## 8. Contract
 
 `packages/contracts/src/api/agency/compare.ts` (in the `AgencyApi` namespace), the build contract;
@@ -229,7 +274,8 @@ delegates to it), `wilsonInterval`, `compareLensDefaults`, `compareStartingLens`
 | Phase | Scope | Status |
 |---|---|---|
 | 1a | Contract (`compare.ts`, the error codes, the flag); `packages/domain/src/agent-compare/` (Wilson, percentiles, metrics, lenses, findings, mutation-checked); `agency_compare_views` (0063) | **Built** (2026-11-21) |
-| 1b | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total`; the console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
+| 1b (server) | The read and the routes (`proxy-agency-compare.routes.ts`, agency area: query, options, saved views), metrics `agency_compare_read_seconds` and `agency_compare_reads_refused_total` (§7 "As built", "Cost, measured") | **Built** (2026-11-21) |
+| 1b (console) | The console tab with the three lenses, the picker (built-ins and outcome sets), Side by side, What stands out, Where their day went, the trend, The numbers, saved views | Not started |
 | 2 | The New joiner lens | Not started |
 | 4 | Analysis questions as metrics (CP13); the `agent_compare` report kind and a weekly subscription to a saved view | Not started |
 | 5 | Only if asked: a scatter of two metrics; across campaigns with expected against actual; the analytics child on its trigger | Not planned |
@@ -246,15 +292,21 @@ Phase 3 (a metric per outcome button, will-pay and amount promised) is folded in
 - Contract: `packages/contracts/test/compare.test.ts` (the catalog's directions, gaps and floors,
   metric ids, the ref rule) and the compare codes' snapshot in `errors.test.ts`. Built.
 - Saved views: `packages/db/test/integration/db/compare-views-migration.test.ts` (0063). Built. The
-  routes still need: only the owner edits or deletes; a new default clears the campaign's old one in
-  one transaction; the 50-view limit; a view's codes checked against its campaign's catalog.
+  repository and the routes: only the owner edits or deletes; a new default clears the campaign's
+  old one in one transaction, also under concurrent saves; the 50-view limit, also under concurrent
+  creates; a view's codes checked against its campaign's catalog
+  (`apps/server/test/integration/agency/compare-view-repository.test.ts`, the views block of
+  `compare-agents.test.ts`). Built, mutation-checked.
 - An integration oracle: every value the read returns equals the roster's and
   `/agents/:userId/stats`' for the same campaign and window (as `report-datasets-oracle.test.ts`
-  does for reports).
+  does for reports). Built: `apps/server/test/integration/api/compare-agents.test.ts` holds every
+  figure to the seed and, where it serves the number, to `GET /agents/stats?campaign_id=` (the
+  roster's own row for the campaign; `/agents/:userId/stats` has no campaign scope).
 - Route: the `agent` role gets 403 (CP3); another account's agent is refused and never enters the
   cohort; the per-tenant limit returns 429; the flag off returns `403 feature_disabled`; an
   outcome code not in the campaign's current catalog, or `promises_rate` on a catalog without
   promises, is `compare_metric_invalid`; an outcome set's value equals Insights' count by code for
-  the same agent and window.
+  the same agent and window. Built in the same file, with the statement timeout's 503 and the
+  cache; the outcome set is held to the seed's count by code (the rollup Insights reads).
 - Console: a withheld rate renders as words, never a bar; colour follows the person when one is
   removed; finding codes render the right words.
