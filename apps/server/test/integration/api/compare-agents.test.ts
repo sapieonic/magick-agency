@@ -639,16 +639,20 @@ describe('the guards: per-tenant limit, statement timeout, cache', () => {
   });
 
   it('a client that goes away gives its slot back at once and its statement is cancelled; a read is kept while another request waits on it', async () => {
-    /** Exactly `n` of this database's backends waiting on a lock. */
-    async function lockWaitersAre(n: number): Promise<void> {
+    /**
+     * Exactly `n` of this database's backends waiting on a lock, within `withinMs`: well inside the
+     * read's 3 s statement timeout, so a statement the timeout ends cannot pass for one cancelled.
+     */
+    async function lockWaitersAre(n: number, withinMs = 1000): Promise<void> {
+      const deadline = Date.now() + withinMs;
       let seen = -1;
-      for (let i = 0; i < 200; i++) {
+      do {
         const { rows } = await q(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
         seen = (rows[0] as { n: number }).n;
         if (seen === n) return;
         await new Promise((r) => setTimeout(r, 20));
-      }
-      throw new Error(`expected ${n} lock waiters, saw ${seen}`);
+      } while (Date.now() < deadline);
+      throw new Error(`expected ${n} lock waiters within ${withinMs} ms, saw ${seen}`);
     }
     /** A real HTTP request the test can drop mid-read, as a browser aborts a superseded fetch. */
     function droppable(method: 'GET' | 'POST', path: string, payload?: unknown): { drop: () => void; done: Promise<void> } {
