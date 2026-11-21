@@ -121,9 +121,21 @@ void main() {
       });
     }
 
-    test('a number the server could not read is hidden the same way, on its digits; a short one shows none', () {
+    // Hidden, a value with fewer than six digits is just "•••": no digit ever shows (as the console).
+    const short = <(String, String)>[('', '•••'), ('7', '•••'), ('1234', '•••'), ('12345', '•••'), ('+1 23-45', '•••'), ('ext 12', '•••')];
+    for (final (value, masked) in short) {
+      test('hidden, "$value" (fewer than six digits) → $masked', () {
+        expect(maskFactPhone(value), masked);
+        if (value.trim().isNotEmpty) expect(factText(fact('Other number', value, kind: FactKind.phone), masked: true), masked);
+      });
+    }
+
+    test('hidden, six digits is the first two and the last three', () {
+      expect(maskFactPhone('123456'), '12••• ••456');
+    });
+
+    test('a number the server could not read is hidden the same way, on its digits', () {
       expect(factText(fact('Other number', '98765-4321 ext 2', kind: FactKind.phone), masked: true), '98••• ••212');
-      expect(factText(fact('Other number', 'ext 12', kind: FactKind.phone), masked: true), '•••');
     });
 
     testWidgets('the tile, its sheet and a screen reader say the number by the rule', (tester) async {
