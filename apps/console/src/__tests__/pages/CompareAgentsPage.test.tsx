@@ -149,7 +149,7 @@ describe('the URL', () => {
       'breaks_over_limit',
     ]);
     expect(compareMetricId(lastQuery().trend!)).toBe(compareMetricId(WILL_PAY));
-    expect(screen.getByTestId('compare-lens-collections').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('compare-lens-collections').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('reproduces a linked comparison: agents in slot order, metrics, trend, window', async () => {
@@ -167,7 +167,7 @@ describe('the URL', () => {
       to: '2026-11-14',
       timezone: 'UTC',
     });
-    expect(screen.getByTestId('compare-lens-sales').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('compare-lens-sales').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('writes a pick to the URL in its colour slot', async () => {
@@ -235,6 +235,28 @@ describe('what it shows', () => {
     mocks.queryCompare.mockResolvedValue({ ...base, cohort: { ...base.cohort, agents: 1 } });
     renderView('?campaign=camp-1&agents=u-lak');
     expect(await screen.findByText(/^1 agent on this campaign · as of/)).toBeTruthy();
+  });
+
+  it('makes the lenses toggle buttons and never skips a heading level', async () => {
+    renderView('?campaign=camp-1&agents=u-lak,u-ravi');
+    await screen.findByTestId('compare-findings');
+    fireEvent.click(screen.getByTestId('compare-metrics-button'));
+    await screen.findByTestId('compare-metric-picker');
+    // Lenses: a group of toggle buttons, not tabs without panels.
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.queryByRole('tablist')).toBeNull();
+    const lens = screen.getByRole('button', { name: 'Sales' });
+    expect(lens.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Collections' }).getAttribute('aria-pressed')).toBe('true');
+    expect(lens.closest('[role="group"]')).toBeTruthy();
+    // Headings: from the page header's h1 down, each at most one level below the one before it.
+    const levels = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((h) => Number(h.tagName[1]));
+    expect(levels.length).toBeGreaterThan(5);
+    levels.reduce((prev, level, i) => {
+      expect(level - prev, `heading ${i} (h${level}) after h${prev}`).toBeLessThanOrEqual(1);
+      return level;
+    }, 1);
+    expect(screen.getAllByTestId('compare-metric').every((m) => m.querySelector('h3') !== null)).toBe(true);
   });
 
   it('writes the read time as the console writes a time (AS15)', () => {

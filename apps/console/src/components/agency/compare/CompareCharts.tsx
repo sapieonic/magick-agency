@@ -91,10 +91,11 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
 
   return (
     <div className={styles.metric} data-testid="compare-metric" data-metric={info.id}>
-      <h4 className={styles.metricTitle} id={titleId}>
+      {/* Under Side by side's h2. */}
+      <h3 className={styles.metricTitle} id={titleId}>
         {label}
         <span className={styles.metricSub}>{metricSubtitle(info)}</span>
-      </h4>
+      </h3>
       <div ref={ref} className={styles.chart}>
         <svg width={g.width} height={g.height} viewBox={`0 0 ${g.width} ${g.height}`} role="img" aria-label={summary}>
           {g.band ? <rect className={styles.band} x={g.band.x} y={g.plotTop} width={g.band.width} height={g.plotBottom - g.plotTop} rx={3} /> : null}

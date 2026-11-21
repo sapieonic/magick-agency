@@ -61,13 +61,13 @@ export function CompareMetricPicker({ id, metrics, trend, codes, onMetrics, onTr
   return (
     <section id={id} className={`${styles.card} ${styles.picker}`} aria-label="Choose metrics" data-testid="compare-metric-picker">
       <div className={styles.cardHead}>
-        <h3 className={styles.cardTitle}>Choose metrics</h3>
+        <h2 className={styles.cardTitle}>Choose metrics</h2>
         <span className={styles.cardSub}>{`Up to ${COMPARE_MAX_METRICS} in Side by side, in the order you add them. Save a view to keep the choice.`}</span>
       </div>
       <div className={styles.groups}>
         {groups.map(({ group, keys }) => (
           <div key={group}>
-            <h4 className={styles.groupTitle}>{GROUP_LABELS[group]}</h4>
+            <h3 className={styles.groupTitle}>{GROUP_LABELS[group]}</h3>
             {keys.map((key) => {
               const on = chosen.has(key);
               const disabled = (!on && full) || (on && metrics.length === 1);
@@ -165,7 +165,7 @@ export function OutcomeSetBuilder({ codes, metrics, onAdd }: OutcomeSetBuilderPr
   return (
     <div className={styles.builder} data-testid="compare-outcome-builder">
       <div>
-        <h4 className={styles.groupTitle}>Add an outcome set</h4>
+        <h3 className={styles.groupTitle}>Add an outcome set</h3>
         <p className={styles.hint}>
           {`The share of each agent’s calls ending in any of the outcomes you tick. Up to ${COMPARE_OUTCOME_SET_MAX_CODES}.`}
         </p>

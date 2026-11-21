@@ -402,13 +402,13 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
               <span className={styles.fieldLabel} id={`${ids}-lens`}>
                 Lens
               </span>
-              <div className={styles.lensTabs} role="tablist" aria-labelledby={`${ids}-lens`}>
+              {/* Toggle buttons, not tabs: a lens resets the metrics in place and opens no panel of its own. */}
+              <div className={styles.lensTabs} role="group" aria-labelledby={`${ids}-lens`}>
                 {COMPARE_LENSES.map((lens) => (
                   <button
                     key={lens}
                     type="button"
-                    role="tab"
-                    aria-selected={resolved.lens === lens}
+                    aria-pressed={resolved.lens === lens}
                     className={styles.lensTab}
                     onClick={() => setLens(lens)}
                     data-testid={`compare-lens-${lens}`}

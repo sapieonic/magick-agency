@@ -182,7 +182,7 @@
   cursor: pointer;
 }
 
-.lensTab[aria-selected='true'] {
+.lensTab[aria-pressed='true'] {
   background: var(--bg-secondary);
   color: var(--accent);
   font-weight: 600;
