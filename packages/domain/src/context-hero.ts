@@ -15,7 +15,7 @@
  *     so every surface matches the card, at most the name and `AGENCY_FACT_FIELDS_MAX` facts;
  *     otherwise the `hero` columns, at most {@link MAX_HERO_FIELDS}. The customer's name is the
  *     `name` role's column; with no `name` role, the name guess (`guessNameColumn`,
- *     `./customer-name`: only columns named like `Name` or `Customer Name`, never a fact's
+ *     `./customer-name`: only columns named like `Name` or `Customer Name`, never a fact's or a phone
  *     column): with a row, over its visible columns with a value; without one, over the `hero`
  *     entries. So a campaign moved to facts while its name was guessed keeps the name a hero
  *     (AS19 R1, S1);
@@ -59,6 +59,8 @@ export interface HeroDisplay {
   roles?: unknown;
   /** AS19: an array means the new model; each entry's `column` is read. */
   facts?: unknown;
+  /** Read by the name guess only: a column declared `phone` is never the name (`./customer-name`). */
+  types?: unknown;
 }
 
 const names = (raw: unknown): string[] =>
@@ -97,7 +99,7 @@ function heroNamesAsConfigured(display: HeroDisplay | null | undefined, nameGues
  */
 function nameFromHero(display: HeroDisplay | null | undefined, hidden: ReadonlySet<string>): string | undefined {
   if (!Array.isArray(display?.facts) || nameRole(display) !== undefined) return undefined;
-  return guessNameColumn(names(display?.hero), { hidden, exclude: factColumnsOf(display) });
+  return guessNameColumn(names(display?.hero), { hidden, exclude: factColumnsOf(display), types: display?.types });
 }
 
 /** Each name once, minus `hidden`. */
@@ -154,7 +156,10 @@ export function heroColumnsFor(
   // value, not a fact's column), so the name stays first wherever the card's facts are the heroes.
   const chosen = Array.isArray(display?.facts);
   const nameGuess = chosen && nameRole(display) === undefined
-    ? guessNameColumn(Object.fromEntries(visible.map((k) => [k, context[k]])), { exclude: factColumnsOf(display) })
+    ? guessNameColumn(Object.fromEntries(visible.map((k) => [k, context[k]])), {
+      exclude: factColumnsOf(display),
+      types: display?.types,
+    })
     : undefined;
   const configured: string[] = [];
   for (const name of withoutHidden(heroNamesAsConfigured(display, nameGuess), hidden)) {

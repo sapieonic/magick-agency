@@ -7,7 +7,8 @@
     "script_placeholders: scriptPlaceholdersFor. configured_heroes: configuredHeroNames. hero_columns: heroColumnsFor.",
     "guess_columns: guessNameColumn / guessPlaceColumn over a list of columns or a row. customer: customerNameFrom /",
     "customerNameColumn / customerPlaceFrom / customerPlaceColumn. chosen_fact_tiles: chosenFactTiles. null is none.",
-    "unique_fact_labels: uniqueFactLabels. legacy_fact_fields: legacyFactFields, the pre-fill of a card saved before AS19 (S9: amount due, due date, then the other heroes)."
+    "unique_fact_labels: uniqueFactLabels. legacy_fact_fields: legacyFactFields, the pre-fill of a card saved before AS19 (S9: amount due, due date, then the other heroes).",
+    "A guess never picks a column types declares phone (the column matched ignoring case): guess_columns' types, customer's display.types."
   ],
   "phone": [
     {
@@ -1047,6 +1048,29 @@
         "Loan No",
         "City"
       ]
+    },
+    {
+      "display": {
+        "hero": [
+          "Name",
+          "Customer Name",
+          "Loan No"
+        ],
+        "facts": [
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ],
+        "types": {
+          "Name": "phone"
+        }
+      },
+      "heroes": [
+        "Customer Name",
+        "Loan No"
+      ]
     }
   ],
   "hero_columns": [
@@ -1672,6 +1696,29 @@
         "b",
         "a"
       ]
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "Full Name": "Asha Rao",
+        "Loan No": "L-1"
+      },
+      "display": {
+        "facts": [
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ],
+        "types": {
+          "name": "phone"
+        }
+      },
+      "heroes": [
+        "Full Name",
+        "Loan No"
+      ]
     }
   ],
   "guess_columns": [
@@ -1762,6 +1809,34 @@
       },
       "name": null,
       "place": "Location"
+    },
+    {
+      "columns": [
+        "Name",
+        "Full Name",
+        "City",
+        "Town"
+      ],
+      "types": {
+        "name": "phone",
+        "CITY": "phone",
+        "Town": "text"
+      },
+      "name": "Full Name",
+      "place": "Town"
+    },
+    {
+      "row": {
+        "Customer Name": "9876543210",
+        "first_name": "Asha",
+        "Location": "9988776655"
+      },
+      "types": {
+        "Customer Name": "phone",
+        "location": "phone"
+      },
+      "name": "first_name",
+      "place": null
     }
   ],
   "customer": [
@@ -1966,6 +2041,57 @@
       "display": {},
       "name": "{\"first\":\"Asha\"}",
       "name_column": "Name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "Customer Name": "Asha Rao",
+        "City": "9988776655",
+        "Town": "Pune"
+      },
+      "display": {
+        "types": {
+          "name": "phone",
+          "City": "phone"
+        }
+      },
+      "name": "Asha Rao",
+      "name_column": "Customer Name",
+      "place": "Pune",
+      "place_column": "Town"
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "full_name": "Asha Rao",
+        "City": "Pune"
+      },
+      "display": {
+        "facts": [],
+        "types": {
+          "Name": "phone"
+        }
+      },
+      "name": "Asha Rao",
+      "name_column": "full_name",
+      "place": null,
+      "place_column": null
+    },
+    {
+      "context": {
+        "Name": "9876543210",
+        "City": "9988776655"
+      },
+      "display": {
+        "types": {
+          "Name": "phone",
+          "City": "phone"
+        }
+      },
+      "name": null,
+      "name_column": null,
       "place": null,
       "place_column": null
     }

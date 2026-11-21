@@ -113,22 +113,32 @@ function placeChosen(facts: FactsForm): string {
 
 /**
  * The name column the card shows: the chosen one, else the domain's guess over `columns` (S1),
- * never a hidden column, a fact's or the chosen line under the name (a save writes the guess).
+ * never a hidden column, a fact's, a phone-typed one or the chosen line under the name (a save
+ * writes the guess).
  */
 export function nameColumnOf(facts: FactsForm, columns: readonly string[], hidden: readonly string[]): string | undefined {
   if (facts.name.trim() !== '') return facts.name;
-  return guessNameColumn(columns, { hidden, exclude: [...facts.list.map((f) => f.column), placeChosen(facts)] });
+  return guessNameColumn(columns, {
+    hidden,
+    exclude: [...facts.list.map((f) => f.column), placeChosen(facts)],
+    types: facts.types,
+  });
 }
 
 /**
  * The line-under-the-name column the card shows: the chosen one; none when it is set to none;
- * else the domain's guess over `columns`, never a hidden column, a fact's or the name's.
+ * else the domain's guess over `columns`, never a hidden column, a fact's, a phone-typed one or
+ * the name's.
  */
 export function placeColumnOf(facts: FactsForm, columns: readonly string[], hidden: readonly string[]): string | undefined {
   if (facts.place === null) return undefined;
   if (facts.place.trim() !== '') return facts.place;
   const name = nameColumnOf(facts, columns, hidden);
-  return guessPlaceColumn(columns, { hidden, exclude: [...facts.list.map((f) => f.column), ...(name ? [name] : [])] });
+  return guessPlaceColumn(columns, {
+    hidden,
+    exclude: [...facts.list.map((f) => f.column), ...(name ? [name] : [])],
+    types: facts.types,
+  });
 }
 
 /** The old tile roles and the type each read its column as, whatever `types` said. */
@@ -163,8 +173,8 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
   const exclude = columns === null
     ? []
     : [
-      ...(name === '' ? [guessNameColumn(columns, { hidden })] : []),
-      ...(place === '' ? [guessPlaceColumn(columns, { hidden })] : []),
+      ...(name === '' ? [guessNameColumn(columns, { hidden, types })] : []),
+      ...(place === '' ? [guessPlaceColumn(columns, { hidden, types })] : []),
     ].filter((c): c is string => c !== undefined);
   // On the old model, in the old card's order (S9: the amount due, the due date, then the other heroes).
   const list = legacyFactFields(shown, columns, { exclude });
@@ -445,7 +455,8 @@ export function factsErrors(facts: FactsForm, context: FactsContext): Record<str
   } else if (place !== '' && name !== '' && fold(place) === fold(name)) {
     errors[PLACE_FIELD] = `‘${place}’ is already the customer’s name. Choose another column.`;
   }
-  // S3(e): a column read as a phone number is never the name or the line under it, chosen or guessed.
+  // S3(e): a column read as a phone number is never the name or the line under it: a chosen one is
+  // refused here, and the guess never picks one (the domain skips it).
   const shownName = context.columns ? nameColumnOf(facts, context.columns, context.hidden) : name || undefined;
   const shownPlace = context.columns ? placeColumnOf(facts, context.columns, context.hidden) : place || undefined;
   if (errors[NAME_FIELD] === undefined && shownName !== undefined && columnType(facts, shownName) === 'phone') {

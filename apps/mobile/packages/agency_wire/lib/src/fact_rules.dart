@@ -86,7 +86,13 @@ final _squashed = RegExp(r'[\s_\-.]+');
 /// is `customer_name`. The domain's `squashColumnName`.
 String squashColumnName(String name) => name.toLowerCase().replaceAll(_squashed, '');
 
-String? _guessColumn(Object source, List<String> guesses, Iterable<String> hidden, Iterable<String> exclude) {
+String? _guessColumn(
+  Object source,
+  List<String> guesses,
+  Iterable<String> hidden,
+  Iterable<String> exclude,
+  Map<String, ContextFieldType>? types,
+) {
   final left = {
     for (final c in [...hidden, ...exclude]) foldColumnName(c),
   };
@@ -106,7 +112,7 @@ String? _guessColumn(Object source, List<String> guesses, Iterable<String> hidde
   }
   for (final guess in guesses) {
     for (final c in columns) {
-      if (squashColumnName(c) == squashColumnName(guess)) return c;
+      if (squashColumnName(c) == squashColumnName(guess) && factTypeOf(c, types) != ContextFieldType.phone) return c;
     }
   }
   return null;
@@ -114,17 +120,28 @@ String? _guessColumn(Object source, List<String> guesses, Iterable<String> hidde
 
 /// The column the customer's name is guessed from: the first column whose
 /// squashed name is on [nameGuessColumns], in the list's order; never a
-/// [hidden] or [exclude]d one (compared ignoring case). [source] is a row
-/// (`Map<String, Object?>`, blank values skipped) or column names
-/// (`Iterable<String>`). `Customer ID` and `Contact Number` are never the
-/// name. The domain's `guessNameColumn`.
-String? guessNameColumn(Object source, {Iterable<String> hidden = const [], Iterable<String> exclude = const []}) =>
-    _guessColumn(source, nameGuessColumns, hidden, exclude);
+/// [hidden] or [exclude]d one (compared ignoring case), never one [types]
+/// reads as a phone number (the column matched ignoring case, as
+/// [factTypeOf] matches it). [source] is a row (`Map<String, Object?>`, blank
+/// values skipped) or column names (`Iterable<String>`). `Customer ID` and
+/// `Contact Number` are never the name. The domain's `guessNameColumn`.
+String? guessNameColumn(
+  Object source, {
+  Iterable<String> hidden = const [],
+  Iterable<String> exclude = const [],
+  Map<String, ContextFieldType>? types,
+}) =>
+    _guessColumn(source, nameGuessColumns, hidden, exclude, types);
 
 /// The column the line under the name is guessed from: as [guessNameColumn],
 /// over [placeGuessColumns]. The domain's `guessPlaceColumn`.
-String? guessPlaceColumn(Object source, {Iterable<String> hidden = const [], Iterable<String> exclude = const []}) =>
-    _guessColumn(source, placeGuessColumns, hidden, exclude);
+String? guessPlaceColumn(
+  Object source, {
+  Iterable<String> hidden = const [],
+  Iterable<String> exclude = const [],
+  Map<String, ContextFieldType>? types,
+}) =>
+    _guessColumn(source, placeGuessColumns, hidden, exclude, types);
 
 /// A column's value as the name or the place: trimmed, cut to
 /// [customerTextMax], null when blank. The domain's `customerText`.
@@ -143,7 +160,7 @@ String? customerNameColumn(Map<String, Object?> context, ContextDisplay? display
   final hidden = _hiddenOf(display);
   final role = display?.roles?.name;
   if (_nonBlank(role)) return _rowKey(context, role, hidden);
-  return guessNameColumn(context, hidden: hidden, exclude: _factColumns(display));
+  return guessNameColumn(context, hidden: hidden, exclude: _factColumns(display), types: display?.types);
 }
 
 /// The customer's name on this row, or null (S1). The domain's `customerNameFrom`.
@@ -160,7 +177,7 @@ String? customerPlaceColumn(Map<String, Object?> context, ContextDisplay? displa
   final role = display?.roles?.place;
   if (_nonBlank(role)) return _rowKey(context, role, hidden);
   if (display?.facts != null) return null;
-  return guessPlaceColumn(context, hidden: hidden);
+  return guessPlaceColumn(context, hidden: hidden, types: display?.types);
 }
 
 /// The line under the customer's name on this row, or null. The domain's `customerPlaceFrom`.
@@ -215,7 +232,7 @@ List<String> _withoutHidden(List<String> names, Set<String> hidden) => [
 List<String> configuredHeroNames(ContextDisplay? display) {
   final hidden = _hiddenOf(display);
   final nameGuess = display?.facts != null && !_nonBlank(display?.roles?.name)
-      ? guessNameColumn(_heroNames(display), hidden: hidden, exclude: _factColumns(display))
+      ? guessNameColumn(_heroNames(display), hidden: hidden, exclude: _factColumns(display), types: display?.types)
       : null;
   return _withoutHidden(_heroNamesAsConfigured(display, nameGuess), hidden);
 }
@@ -249,7 +266,7 @@ List<String> heroColumnsFor(
 
   final chosen = display?.facts != null;
   final nameGuess = chosen && !_nonBlank(display?.roles?.name)
-      ? guessNameColumn({for (final k in visible) k: context[k]}, exclude: _factColumns(display))
+      ? guessNameColumn({for (final k in visible) k: context[k]}, exclude: _factColumns(display), types: display?.types)
       : null;
   final configured = <String>[];
   for (final name in _withoutHidden(_heroNamesAsConfigured(display, nameGuess), hidden)) {

@@ -5,7 +5,8 @@ import {
   isBlankContextValue,
   MAX_HERO_FIELDS,
 } from '@magick-agency/domain/context-hero';
-import { customerNameColumn, customerText } from '@magick-agency/domain/customer-name';
+import { customerNameColumn, customerPlaceColumn, customerText } from '@magick-agency/domain/customer-name';
+import { factTypeOf } from '@magick-agency/domain/fact-tiles';
 import type { AgencyContextDisplay } from '../types/agency';
 
 /**
@@ -17,7 +18,10 @@ import type { AgencyContextDisplay } from '../types/agency';
  * agree", and a rule buried in JSX cannot be tested against that wording.
  *
  * The rules, in precedence order:
- *   1. `hero` first, pinned, in array order;
+ *   1. the heroes first, pinned, by the domain's one rule (`heroColumnsFor`): with the card's
+ *      chosen facts (`facts`, AS19) the customer's name then each fact's column; otherwise
+ *      `hero` in array order, else a guess. At most `heroCapFor` the display: the name and four
+ *      facts with `facts` (R2), else `MAX_HERO_FIELDS`;
  *   2. then any column named in `order`, in array order;
  *   3. then every remaining column, in ORIGINAL CSV header order;
  *   4. minus anything in `hidden`, at every stage.
@@ -52,14 +56,11 @@ export { MAX_HERO_FIELDS };
 
 /**
  * Which columns are heroes is the ONE rule in `@magick-agency/domain/context-hero` (customer
- * history reads it too): the configured `hero` columns, else a heuristic guess (at most one per
- * bucket: a name, an amount, an identifier, a place; skipping empty values), never a hidden one.
- * The panel turns off the rule's last stage (the first columns with a value): it lists every
- * column under the heroes, so with nothing configured or guessed it pins nothing.
- *
- * The UI must present a guess as a guess ("auto-selected"), never as configuration: showing a
- * heuristic's output as if it were the operator's choice is how an agent comes to trust the
- * wrong four fields.
+ * history reads it too): with `facts`, the name and the facts' columns; else the configured
+ * `hero` columns, else a heuristic guess (at most one per bucket: a name, an amount, an
+ * identifier, a place; skipping empty values), never a hidden one. The panel turns off the
+ * rule's last stage (the first columns with a value): it lists every column under the heroes, so
+ * with nothing configured or guessed it pins nothing.
  */
 export function resolveContextFields(
   context: Record<string, unknown>,
@@ -123,11 +124,6 @@ export function resolveContextFields(
   };
 }
 
-/** True when the operator configured heroes; false when they were guessed. */
-export function heroesWereConfigured(display: AgencyContextDisplay | undefined): boolean {
-  return Boolean(display?.hero && display.hero.length > 0);
-}
-
 /**
  * The card's own name guess from before AS19, by the column's header. Only for a campaign that has
  * not chosen its facts and names no name column (see {@link customerNameColumnOf}).
@@ -154,6 +150,41 @@ export function customerNameColumnOf(
   }
   const resolved = resolveContextFields(context, display);
   return [...resolved.hero, ...resolved.fields].find((f) => !f.isEmpty && LEGACY_NAME.test(f.label))?.label;
+}
+
+/**
+ * The card's own place guess from before AS19, by the column's header: a Branch, State, Region,
+ * Zone or Area column was the line under the name, not a tile. Only for a campaign that has not
+ * chosen its facts and names no place column (see {@link customerPlaceColumnOf}).
+ */
+const LEGACY_PLACE = /city|town|district|village|branch|region|zone|state|place|location|area/i;
+
+/**
+ * The row's column the line under the name is read from on the phase 0 card (a side view of a
+ * campaign without chosen facts, an older server): the server's one rule first (the domain's
+ * `customerPlaceColumn`, AS19 S1). On a campaign that has not chosen its facts and names no place
+ * column, when that rule finds none, the card's guess from before AS19 (the first hero, then other
+ * column, with a value whose header reads as a place, never the name's column, never one `types`
+ * reads as a phone number), so a legacy card keeps its place line and that column stays off the
+ * tiles. A campaign with chosen facts, or with a place column, is never guessed beyond the rule
+ * (S2: the role only).
+ *
+ * @param nameColumn the column the card names the customer from ({@link customerNameColumnOf})
+ */
+export function customerPlaceColumnOf(
+  context: Record<string, unknown>,
+  display: AgencyContextDisplay | undefined,
+  nameColumn: string | undefined,
+): string | undefined {
+  const ruled = customerPlaceColumn(context, display);
+  const placeRole = display?.roles?.place;
+  if (ruled !== undefined || Array.isArray(display?.facts) || (typeof placeRole === 'string' && placeRole.trim() !== '')) {
+    return ruled;
+  }
+  const resolved = resolveContextFields(context, display);
+  return [...resolved.hero, ...resolved.fields].find(
+    (f) => !f.isEmpty && f.label !== nameColumn && LEGACY_PLACE.test(f.label) && factTypeOf(f.label, display?.types) !== 'phone',
+  )?.label;
 }
 
 /** The customer's name on a row by {@link customerNameColumnOf}, as text (trimmed, cut), or undefined. */

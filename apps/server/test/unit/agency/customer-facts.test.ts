@@ -7,10 +7,8 @@ import {
   canonicalContextColumns,
   contextDisplayIssues,
   customerFacts,
-  NAME_GUESS_COLUMNS,
   namesContextColumns,
 } from '../../../src/agency/customer-facts.js';
-import { INBOUND_MATCH_NAME_COLUMNS } from '../../../src/agency/inbound/match-name.js';
 import { agentScriptIssues } from '../../../src/agency/agent-script.js';
 import { contactFields } from '../../../src/agency/customer-history/assemble.js';
 import type { CustomerHistoryCampaignRow } from '../../../src/db/repositories/agency/customer-history.repository.js';
@@ -101,8 +99,10 @@ describe('customerFacts: the panel\'s facts', () => {
     expect(customerFacts(null, null)).toEqual({ tiles: [] });
   });
 
-  it('the name guess is the domain\'s one list (AS19 S1), the one the inbound match and its SQL still read', () => {
-    expect([...NAME_GUESS_COLUMNS]).toEqual([...INBOUND_MATCH_NAME_COLUMNS]);
+  it('the name and place guess never read a column `types` calls a phone number (the domain\'s guess)', () => {
+    const row = { Name: '9876543210', 'Full Name': 'Asha Rao', City: '9988776655', Town: 'Pune' };
+    expect(customerFacts(row, { types: { name: 'phone', City: 'phone' } })).toMatchObject({ name: 'Asha Rao', place: 'Pune' });
+    expect(customerFacts(row, {})).toMatchObject({ name: '9876543210', place: '9988776655' });
   });
 
   it('hidden wins over everything: never a role, a guess or a tile', () => {

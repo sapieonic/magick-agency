@@ -163,6 +163,16 @@ describe('guessing the name and the line under it, by the domain’s one guess (
     expect(placeColumnOf(facts({ place: 'Branch' }), columns, [])).toBe('Branch');
     expect(placeColumnOf(facts({ place: null }), columns, [])).toBeUndefined();
   });
+
+  it('never guesses a column typed as a phone number, so the guess shown is the next one', () => {
+    const columns = ['Name', 'Full Name', 'City', 'Town'];
+    const typed = facts({ types: { name: 'phone', City: 'phone' } });
+    expect(nameColumnOf(typed, columns, [])).toBe('Full Name');
+    expect(placeColumnOf(typed, columns, [])).toBe('Town');
+    // The old model's pre-fill leaves out only what the card guesses: a phone column stays a fact.
+    expect(factsFormOf({ types: { Name: 'phone' } }, ['Name', 'Customer Name', 'Loan ID']).list.map((f) => f.column))
+      .toEqual(['Name', 'Loan ID']);
+  });
 });
 
 describe('the daily target (AS6)', () => {
@@ -331,9 +341,13 @@ describe('the card’s facts (AS19)', () => {
     });
     expect(NAME_PHONE_MESSAGE).toBe("A phone number cannot be the customer's name. Add it as a fact instead.");
     expect(PLACE_PHONE_MESSAGE).toBe('A phone number cannot be the line under the name. Add it as a fact instead.');
-    // On "Guess" the column a save would write is judged as a chosen one; "None" is not.
-    expect(Object.keys(factsErrors(facts({ types: phone }), { ...ctx(), columns: ['Name', 'City'] })).sort())
-      .toEqual(['context_display.roles.name', 'context_display.roles.place']);
+    // On "Guess" the guess never picks a phone column, so there is nothing to refuse: the next column
+    // on the list is the guess, or none; "None" is none.
+    const guessed = facts({ types: phone });
+    expect(factsErrors(guessed, { ...ctx(), columns: ['Name', 'City'] })).toEqual({});
+    expect([nameColumnOf(guessed, ['Name', 'City'], []), placeColumnOf(guessed, ['Name', 'City'], [])]).toEqual([undefined, undefined]);
+    expect([nameColumnOf(guessed, ['Name', 'Full Name', 'City', 'Town'], []), placeColumnOf(guessed, ['Name', 'Full Name', 'City', 'Town'], [])])
+      .toEqual(['Full Name', 'Town']);
     expect(factsErrors(facts({ place: null, types: { City: 'phone' } }), { ...ctx(), columns: ['Name', 'City'] })).toEqual({});
   });
 

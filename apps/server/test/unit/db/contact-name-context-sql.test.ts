@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NAME_GUESS_COLUMNS, squashColumnName } from '@magick-agency/domain/customer-name';
 import { contactNameContextSql } from '../../../src/db/repositories/agency/sql-fragments.js';
-import { INBOUND_MATCH_NAME_COLUMNS, matchName } from '../../../src/agency/inbound/match-name.js';
+import { matchName } from '../../../src/agency/inbound/match-name.js';
 
 /**
  * The live calls list, the floor, the listening history and the inbound Missed list read a
@@ -23,8 +23,10 @@ describe('contactNameContextSql', () => {
 });
 
 describe('matchName: the domain\'s one name reading (AS19 S1)', () => {
-  it('the guess list is the domain\'s', () => {
-    expect(INBOUND_MATCH_NAME_COLUMNS).toBe(NAME_GUESS_COLUMNS);
+  it('never guesses a column the campaign\'s `types` reads as a phone number', () => {
+    const row = { Name: '9876543210', 'Customer Name': 'Ravi K' };
+    expect(matchName(row, { types: { NAME: 'phone' } })).toBe('Ravi K');
+    expect(matchName(row, null)).toBe('9876543210');
   });
 
   it('the campaign\'s name role first; else the guess, any case and spacing; never hidden, never a fact', () => {

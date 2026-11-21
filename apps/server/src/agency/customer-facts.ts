@@ -10,10 +10,10 @@
  *    `@magick-agency/domain/customer-name`, AS19 S1, S2), which every other surface that names a
  *    customer reads too: the role's column when set (its value, or none when blank: no guess
  *    then); else a guess from the column names that never reads anything but a name or a place
- *    column ({@link NAME_GUESS_COLUMNS}, {@link PLACE_GUESS_COLUMNS}, matched ignoring case,
- *    spaces, `_`, `-` and `.`), never a fact's column; with `facts`, the place is the role's or
- *    none (no guess). Trimmed, at most {@link FACT_TEXT_MAX} characters; absent when blank or a
- *    placeholder (`-`, `N/A`).
+ *    column (the domain's `NAME_GUESS_COLUMNS`, `PLACE_GUESS_COLUMNS`, matched ignoring case,
+ *    spaces, `_`, `-` and `.`), never a fact's column nor one `types` reads as a phone number;
+ *    with `facts`, the place is the role's or none (no guess). Trimmed, at most the domain's
+ *    `CUSTOMER_TEXT_MAX` characters; absent when blank or a placeholder (`-`, `N/A`).
  *  - `tiles`: the hero columns (`heroColumnsFor`: `context_display.hero`, else its guess; never
  *    the first columns nobody chose, as the contact panel reads it), minus the columns already
  *    shown as the name and the place, then the `amount_due` and `due_date` role columns when the
@@ -57,21 +57,8 @@ import {
 import { asRecord, contextValueText, fold, hiddenSet, rowKey } from '@magick-agency/domain/context-columns';
 import { heroColumnsFor, MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
-import {
-  CUSTOMER_TEXT_MAX,
-  customerNameColumn,
-  customerPlaceColumn,
-  customerText,
-  NAME_GUESS_COLUMNS,
-  PLACE_GUESS_COLUMNS,
-} from '@magick-agency/domain/customer-name';
+import { customerNameColumn, customerPlaceColumn, customerText } from '@magick-agency/domain/customer-name';
 import { chosenFactTiles, FACT_TILE_ROLE_TYPE, FACT_TILE_ROLES, factTypeOf } from '@magick-agency/domain/fact-tiles';
-
-/** The guess lists, from the domain (AS19 S1): kept here for the callers that read them from the panel's facts. */
-export { NAME_GUESS_COLUMNS, PLACE_GUESS_COLUMNS };
-
-/** The longest name or place sent; a longer value is cut (the inbound name's bound). */
-export const FACT_TEXT_MAX = CUSTOMER_TEXT_MAX;
 
 /** The longest column name a role or a type may name (the roster's header names are shorter). */
 export const CONTEXT_COLUMN_NAME_MAX = 200;

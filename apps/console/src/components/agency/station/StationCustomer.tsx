@@ -196,8 +196,10 @@ function ChosenFacts({ facts }: { facts: CustomerFact[] }) {
 }
 
 /**
- * The customer card (spec 03/04): who, where, the number, up to three big facts and what they
- * said last time. It does not move between Call coming and On call.
+ * The customer card (spec 03/04): who, where, the number, the facts and what they said last time.
+ * A campaign that chose its facts (AS19) shows up to four, its chosen ones; a legacy card shows up
+ * to three big facts, the last of them Last call when there is one. It does not move between Call
+ * coming and On call.
  */
 export function CustomerCardView({
   card,

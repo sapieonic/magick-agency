@@ -12,6 +12,7 @@ import '../../../core/softphone/call_labels.dart';
 import '../../../core/softphone/call_state.dart';
 import '../../../core/softphone/softphone_view.dart';
 import '../../../core/station/contact_context.dart';
+import '../../../core/station/station_view_mapper.dart' show StationViewMapper;
 import '../../../ui/primitives.dart';
 import '../../performance/logic/en_in_format.dart';
 import '../../performance/performance_api.dart';
@@ -228,9 +229,15 @@ List<SoftphoneDetailSection> softphoneCallDetailSections(ManualCallDetail detail
     ];
     final context = contact.context;
     if (context != null) {
-      final resolved = resolveContextFields(context, campaign?.contextDisplay);
+      // A phone-typed column follows the tagged campaign's own number setting, as the soft
+      // phone's card does (AS9, AS19 S3(b)): hidden by the one phone rule where it hides numbers.
+      final display = campaign?.contextDisplay;
+      final masked = campaign?.masksPhone ?? false;
+      final resolved = resolveContextFields(context, display);
       for (final f in [...resolved.hero, ...resolved.fields]) {
-        if (!f.isEmpty) contactFacts.add(_fact(f.label, f.value));
+        if (f.isEmpty) continue;
+        final field = StationViewMapper.contactFieldOf(f, display, masked: masked);
+        contactFacts.add(_fact(field.label, field.value));
       }
     }
     sections.add((title: 'Roster contact', facts: contactFacts));

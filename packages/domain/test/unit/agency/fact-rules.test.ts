@@ -28,7 +28,9 @@ interface Rules {
   hero_columns: Array<{
     context: Row; display: unknown; column_order?: string[]; max?: number; fallback_to_first_columns?: boolean; heroes: string[];
   }>;
-  guess_columns: Array<{ columns?: string[]; row?: Row; hidden?: string[]; exclude?: string[]; name: string | null; place: string | null }>;
+  guess_columns: Array<{
+    columns?: string[]; row?: Row; hidden?: string[]; exclude?: string[]; types?: Row; name: string | null; place: string | null;
+  }>;
   customer: Array<{
     context: Row; display: unknown; name: string | null; name_column: string | null; place: string | null; place_column: string | null;
   }>;
@@ -107,8 +109,16 @@ describe('fact-rules.json: the name and place guess (S1)', () => {
     expect(RULES.guess_columns.some((c) => (c.columns ?? Object.keys(c.row ?? {})).includes('Customer ID') && c.name === null)).toBe(true);
     expect(NAME_GUESS_COLUMNS).toEqual(['name', 'full_name', 'customer_name', 'first_name']);
   });
+  it('the tables hold a phone-typed column the guess skips, over columns, over a row and on a customer', () => {
+    expect(RULES.guess_columns.filter((c) => c.types && Object.values(c.types).includes('phone')).length).toBeGreaterThanOrEqual(2);
+    expect(RULES.customer.some((c) => JSON.stringify(c.display).includes('"phone"') && c.name !== null)).toBe(true);
+  });
   it.each(RULES.guess_columns.map((c) => [title(c), c] as const))('%s', (_t, c) => {
-    const options = { ...(c.hidden ? { hidden: c.hidden } : {}), ...(c.exclude ? { exclude: c.exclude } : {}) };
+    const options = {
+      ...(c.hidden ? { hidden: c.hidden } : {}),
+      ...(c.exclude ? { exclude: c.exclude } : {}),
+      ...(c.types ? { types: c.types } : {}),
+    };
     const source = c.columns ?? c.row!;
     expect(none(guessNameColumn(source, options))).toBe(c.name);
     expect(none(guessPlaceColumn(source, options))).toBe(c.place);

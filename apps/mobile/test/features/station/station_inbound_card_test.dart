@@ -106,13 +106,14 @@ void main() {
     expect(find.text('98••• ••210'), findsOneWidget, reason: 'hidden by the core, as it came');
   });
 
-  testWidgets('a chosen campaign\'s nameless caller is "Customer", with the number under it and the place', (tester) async {
+  testWidgets('a chosen campaign\'s nameless caller is "Customer", with the number and the first fact under it, and the place', (tester) async {
     await pumpStation(
       tester,
       on(caller(name: null, facts: const FactsView(place: 'Nashik', tiles: [amount], chosen: true)), maskPhone: true),
     );
     expect(tester.widget<Text>(find.byKey(const Key('inbound-caller'))).data, StationCopy.customer);
-    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, '87••• ••109 · ${InboundCopy.inboundCall}');
+    // S4, the console's compact line: the number, then the first fact with a value; no "Inbound call".
+    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, '87••• ••109 · Amount due: ₹12,500');
     final place = tester.widget<Text>(find.byKey(const Key('inbound-caller-place')));
     expect(place.data, 'Nashik');
     expect(place.maxLines, 1);
@@ -120,7 +121,23 @@ void main() {
     // A campaign that did not choose leads with the number, as before.
     await pumpStation(tester, on(caller(name: null, facts: null)));
     expect(tester.widget<Text>(find.byKey(const Key('inbound-caller'))).data, '+91 87654 32109');
+    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, InboundCopy.inboundCall);
     expect(find.byKey(const Key('inbound-caller-place')), findsNothing);
+  });
+
+  testWidgets('a nameless caller\'s line skips an empty fact, a hidden number hidden; with no fact it is the number alone (S4)', (tester) async {
+    const empty = FactTileView(label: 'Due date', column: 'Due Date', raw: '', kind: FactKind.date, key: 'due_date');
+    await pumpStation(
+      tester,
+      on(caller(name: null, facts: const FactsView(tiles: [empty, alt], chosen: true)), maskPhone: true),
+    );
+    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, '87••• ••109 · Other number: 98••• ••210');
+    expect(find.textContaining('43210'), findsNothing);
+    await pumpStation(tester, on(caller(name: null, facts: const FactsView(tiles: [empty], chosen: true))));
+    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, '+91 87654 32109');
+    // A named caller keeps "<number> · Inbound call".
+    await pumpStation(tester, on(caller()));
+    expect(tester.widget<Text>(find.byKey(const Key('inbound-caller-line'))).data, '+91 87654 32109 · ${InboundCopy.inboundCall}');
   });
 
   testWidgets('on the call, the summary\'s facts are the chosen card\'s, by type, a hidden number hidden', (tester) async {

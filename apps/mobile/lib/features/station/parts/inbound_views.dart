@@ -330,7 +330,9 @@ class _InboundDontCallAgain extends StatelessWidget {
 /// "Rahul Deshpande" over "+91 87654 32109 · Inbound call"; the number leads when no contact
 /// matched, and "Number withheld" when the caller hid it. Masked when the campaign masks numbers
 /// (AS9). When the matched campaign chose its card's facts (AS19 R9, S4) a nameless caller is
-/// "Customer", with the number under it, and the place (its role only) on one line, cut with "…".
+/// "Customer", and the line under it is the console's compact line: the number, then the first
+/// fact with a value ("Amount due: ₹12,500", [firstFactLine]), with no "Inbound call"; then the
+/// place (its role only) on one line, cut with "…".
 class InboundHeadline extends ConsumerWidget {
   const InboundHeadline({super.key, required this.call});
 
@@ -340,6 +342,7 @@ class InboundHeadline extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final masked = ref.watch(stationViewProvider.select((v) => v?.maskPhone ?? false));
+    final now = ref.watch(stationClockProvider)();
     final name = call.displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
     final chosen = call.factsChosen;
@@ -347,6 +350,13 @@ class InboundHeadline extends ConsumerWidget {
     final from = call.fromE164;
     final number = from == null ? InboundCopy.numberWithheld : stationPhone(from, masked: masked);
     final place = chosen ? call.facts!.place?.trim() : null;
+    // S4: "Customer" says nothing on its own, so the line is the number, then the first fact.
+    final firstFact = chosen && !hasName ? firstFactLine(call.facts!, masked: masked, now: now) : null;
+    final line = switch ((heading, chosen && !hasName)) {
+      (null, _) => InboundCopy.inboundCall,
+      (_, true) => firstFact == null ? number : '$number · $firstFact',
+      _ => '$number · ${InboundCopy.inboundCall}',
+    };
     return MergeSemantics(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -363,7 +373,7 @@ class InboundHeadline extends ConsumerWidget {
           ),
           const SizedBox(height: Space.xs),
           Text(
-            heading != null ? '$number · ${InboundCopy.inboundCall}' : InboundCopy.inboundCall,
+            line,
             key: const Key('inbound-caller-line'),
             style: monoStyle(context, size: 14),
           ),
