@@ -120,6 +120,8 @@ export interface CompareAgentsViewProps {
   canListen: boolean;
   /** Injectable for tests: the clock "today" is read from. */
   now?: Date;
+  /** Injectable for tests: how long the picks must stay still before the query is asked. */
+  settleMs?: number;
 }
 
 type Campaign = Awaited<ReturnType<typeof listAgencyCampaigns>>[number];
@@ -134,7 +136,7 @@ interface Resolved {
   note: string | null;
 }
 
-export function CompareAgentsView({ tenantId, accountId, userId, canListen, now }: CompareAgentsViewProps) {
+export function CompareAgentsView({ tenantId, accountId, userId, canListen, now, settleMs = COMPARE_SETTLE_MS }: CompareAgentsViewProps) {
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => compareStateFromParams(params), [params]);
   const update = useCallback(
@@ -196,10 +198,12 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
   // ── Saved views ──
   const [views, setViews] = useState<AgencyCompareView[] | null>(null);
   const [viewsVersion, setViewsVersion] = useState(0);
+  // Another campaign's list is not this one's; a re-read after a save keeps the list (and the
+  // applied view's buttons) on screen until the new one comes.
+  useEffect(() => setViews(null), [state.campaignId]);
   useEffect(() => {
     if (!state.campaignId) return;
     let live = true;
-    setViews(null);
     listCompareViews({ campaign_id: state.campaignId }, tenantId, accountId)
       .then((list) => live && setViews(list.views))
       .catch(() => live && setViews([]));
@@ -267,7 +271,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
         }
       : null;
   const queryKey = query ? JSON.stringify(query) : null;
-  const askedKey = useSettledKey(queryKey, COMPARE_SETTLE_MS, optionsPending);
+  const askedKey = useSettledKey(queryKey, settleMs, optionsPending);
   const result = useCompareRead(askedKey, (signal) =>
     queryCompare(JSON.parse(askedKey!) as AgencyCompareQuery, tenantId, accountId, signal),
   );

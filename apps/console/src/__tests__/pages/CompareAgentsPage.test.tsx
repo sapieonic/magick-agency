@@ -63,12 +63,16 @@ function Where() {
 
 const where = () => new URLSearchParams(screen.getByTestId('where').textContent!.split('?')[1] ?? '');
 
-function renderView(search = '') {
+/** `settleMs`: a short settle keeps these tests' timing margin; null uses the page's own (the settle's test). */
+function renderView(search = '', settleMs: number | null = 20) {
   return render(
     <MemoryRouter initialEntries={[`/agency/compare${search}`]}>
       <Where />
       <Routes>
-        <Route path="/agency/compare" element={<CompareAgentsView tenantId="t-1" accountId="a-1" userId="sup-1" canListen now={NOW} />} />
+        <Route
+          path="/agency/compare"
+          element={<CompareAgentsView tenantId="t-1" accountId="a-1" userId="sup-1" canListen now={NOW} settleMs={settleMs ?? undefined} />}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -366,7 +370,7 @@ describe('reads', () => {
   });
 
   it('sends one read for picks made in quick succession', async () => {
-    renderView('?campaign=camp-1&agents=u-lak');
+    renderView('?campaign=camp-1&agents=u-lak', null);
     await screen.findByTestId('compare-findings');
     expect(mocks.queryCompare).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getAllByTestId('compare-agent-chip')[1]!);
@@ -374,7 +378,7 @@ describe('reads', () => {
     fireEvent.click(screen.getAllByTestId('compare-agent-chip')[2]!);
     await pause(80);
     fireEvent.click(screen.getByTestId('compare-lens-sales'));
-    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2), { timeout: 3000 });
     await pause(400);
     expect(mocks.queryCompare).toHaveBeenCalledTimes(2);
     expect(lastQuery().agent_ids).toEqual(['u-lak', 'u-ravi', 'u-priya']);
@@ -537,7 +541,7 @@ describe('saved views', () => {
     expect(mocks.updateCompareView.mock.calls[1]![1]).toEqual({ is_campaign_default: true, shared: true });
     expect(where().getAll('m')).toEqual(['calls_handled', 'avg_call']);
     expect(where().get('view')).toBe(view.id);
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save changes' })).toBeTruthy();
   });
 
   it('offers Make campaign default only on a view made for this campaign', async () => {
