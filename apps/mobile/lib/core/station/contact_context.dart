@@ -14,13 +14,16 @@ import 'station_view.dart';
 ///
 /// The resolution rules are a cross-client contract (`AgencyContextDisplay`),
 /// in precedence order:
-///   1. `hero` first, pinned, in array order (capped at [maxHeroFields]);
+///   1. the configured heroes first, pinned, in array order (capped at [maxHeroFields]): with the
+///      campaign's chosen facts (AS19) the name role's column then each fact's column
+///      (`ContextDisplay.configuredHeroes`), else `hero`;
 ///   2. then the `order` columns, in array order;
 ///   3. then every remaining column in ORIGINAL roster order;
 ///   4. minus `hidden`, at every stage.
 /// Names match case- and whitespace-insensitively. With no configured hero, a
 /// heuristic picks up to one name, money, identity and place column, and the UI
-/// says "auto-selected".
+/// says "auto-selected"; never with chosen facts, which are the operator's
+/// choice even when empty.
 
 const int maxHeroFields = 4;
 
@@ -122,9 +125,9 @@ ResolvedContextFields resolveContextFields(
     return out;
   }
 
-  var heroKeys = resolveNames(display?.hero);
+  var heroKeys = resolveNames(display?.configuredHeroes);
   if (heroKeys.length > maxHero) heroKeys = heroKeys.sublist(0, maxHero);
-  if (heroKeys.isEmpty) heroKeys = _heuristicHeroes(original, context, isHidden, maxHero);
+  if (heroKeys.isEmpty && display?.facts == null) heroKeys = _heuristicHeroes(original, context, isHidden, maxHero);
 
   final heroSet = heroKeys.toSet();
   final ordered = [
@@ -166,8 +169,10 @@ List<String> _heuristicHeroes(
   return picked;
 }
 
-/// True when the operator configured heroes; false when they were guessed.
-bool heroesWereConfigured(wire.ContextDisplay? display) => (display?.hero ?? const <String>[]).isNotEmpty;
+/// True when the operator configured heroes (or chose the card's facts, AS19); false when they
+/// were guessed.
+bool heroesWereConfigured(wire.ContextDisplay? display) =>
+    display?.facts != null || (display?.hero ?? const <String>[]).isNotEmpty;
 
 // ─── The name to lead with ──────────────────────────────────────────────────
 
