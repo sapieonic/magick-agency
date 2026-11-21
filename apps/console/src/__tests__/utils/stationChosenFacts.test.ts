@@ -301,19 +301,41 @@ describe('the side views build the chosen facts from the contact’s row (AS19)'
     const row = { 'Customer Name': 'Asha Rao', Branch: 'Kothrud', City: 'Pune', Outstanding: '12500' };
     const chosen = chosenFactsFromContext(row, { facts: [{ column: 'Outstanding', label: 'Amount due', key: 'amount_due' }] })!;
     expect([chosen.name, chosen.place]).toEqual(['Asha Rao', undefined]);
-    // Without facts (today's card on a side view): the guess, City as the place, never Branch.
+    // Without facts (today's card on a side view): the server's guess first, City as the place over Branch.
     const call = (c: Record<string, unknown>, d: AgencyContextDisplay | undefined) =>
       ({ from_e164: '+919876543321', match: { campaign_id: 'camp-1', context: c, prior_attempts: [], context_display: d } }) as unknown as AgencyInboundCall;
     const legacy = inboundCustomerCard(call(row, {}));
     expect([legacy.name, legacy.place]).toEqual(['Asha Rao', 'Pune']);
+    // Without facts, a name or place the rule cannot find falls back to the card's guess from before AS19; with facts, never.
     const noGuess = inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud' }, {}));
-    expect([noGuess.name, noGuess.place]).toEqual([null, null]);
-    // Without facts, a name the rule cannot find falls back to the card's guess from before AS19; with facts, never.
+    expect([noGuess.name, noGuess.place]).toEqual([null, 'Kothrud']);
     expect(inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, {})).name).toBe('Ramesh');
-    expect(inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, { facts: [] })).name).toBeNull();
+    const chosenNoGuess = inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, { facts: [] }));
+    expect([chosenNoGuess.name, chosenNoGuess.place]).toEqual([null, null]);
     // A role names the column, even one the guess would not read.
     const roles = inboundCustomerCard(call({ Borrower: 'Ramesh', Branch: 'Kothrud' }, { roles: { name: 'Borrower', place: 'Branch' } }));
     expect([roles.name, roles.place]).toEqual(['Ramesh', 'Kothrud']);
+  });
+
+  it('a legacy side view keeps the place line from before AS19: a Branch column is the place, not a tile', () => {
+    const row = { Name: 'Asha Rao', Branch: 'Pune', 'Amount Due': '5000', 'Loan No': 'L-1' };
+    const card = customerCard({ phone_e164: '+919876543321', context: row, prior_attempts: [] }, {});
+    expect([card.name, card.place]).toEqual(['Asha Rao', 'Pune']);
+    expect(card.facts.map((f) => f.label)).toEqual(['Amount Due', 'Loan No']);
+    // The same on the inbound and soft-phone side views.
+    const inbound = inboundCustomerCard({
+      from_e164: '+919876543321',
+      match: { campaign_id: 'camp-1', context: row, prior_attempts: [], context_display: {} },
+    } as unknown as AgencyInboundCall);
+    expect([inbound.place, inbound.facts.map((f) => f.label)]).toEqual(['Pune', ['Amount Due', 'Loan No']]);
+    const manual = { destination_e164: '+919876543321', contact: { context: row, prior_attempts: [] } } as unknown as AgencyManualCall;
+    expect(softphoneCustomerCard(manual, { context_display: {} }).place).toBe('Pune');
+    // The server's rule first (City over Branch); a place role or chosen facts are never guessed beyond (S2).
+    expect(customerCard({ phone_e164: '+919876543321', context: { ...row, City: 'Mumbai' }, prior_attempts: [] }, {}).place).toBe('Mumbai');
+    expect(customerCard({ phone_e164: '+919876543321', context: row, prior_attempts: [] }, { roles: { place: 'Town' } }).place).toBeNull();
+    // A column typed as a phone number is never the place.
+    const phoneBranch = customerCard({ phone_e164: '+919876543321', context: row, prior_attempts: [] }, { types: { Branch: 'phone' } });
+    expect(phoneBranch.place).toBeNull();
   });
 
   it('an inbound caller and a soft-phone call show the same card, the inbound number masked as the station says', () => {

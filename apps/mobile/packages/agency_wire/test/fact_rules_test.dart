@@ -110,8 +110,9 @@ void main() {
         final Object source = c['columns'] == null ? c['row']! as Map<String, Object?> : _strings(c['columns']);
         final hidden = c['hidden'] == null ? const <String>[] : _strings(c['hidden']);
         final exclude = c['exclude'] == null ? const <String>[] : _strings(c['exclude']);
-        expect(guessNameColumn(source, hidden: hidden, exclude: exclude), c['name']);
-        expect(guessPlaceColumn(source, hidden: hidden, exclude: exclude), c['place']);
+        final types = contextFieldTypesFromJson(c['types']);
+        expect(guessNameColumn(source, hidden: hidden, exclude: exclude, types: types), c['name']);
+        expect(guessPlaceColumn(source, hidden: hidden, exclude: exclude, types: types), c['place']);
       });
     }
   });

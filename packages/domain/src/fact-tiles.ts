@@ -25,7 +25,7 @@ import {
   type AgencyFactTile,
   type AgencyFactTileRole,
 } from '@magick-agency/contracts/agency';
-import { asRecord, contextValueText, fold, hiddenSet, rowKey } from './context-columns';
+import { asRecord, contextValueText, declaredColumnType, hiddenSet, rowKey } from './context-columns';
 import { parseContextFact } from './context-facts';
 
 /** The tile roles (the contract's list, in the order the legacy card appends them) and the type each reads its column as. */
@@ -47,11 +47,7 @@ export function factTileRoleOfKey(key: unknown): AgencyFactTileRole | undefined 
  * ignoring case), when it is one of `AGENCY_CONTEXT_FIELD_TYPES`; else text.
  */
 export function factTypeOf(column: string, types: unknown): AgencyContextFieldType {
-  const declaredTypes = asRecord(types);
-  if (!declaredTypes) return 'text';
-  const declared = Object.hasOwn(declaredTypes, column)
-    ? declaredTypes[column]
-    : Object.entries(declaredTypes).find(([k]) => fold(k) === fold(column))?.[1];
+  const declared = declaredColumnType(column, types);
   return (AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(declared) ? (declared as AgencyContextFieldType) : 'text';
 }
 

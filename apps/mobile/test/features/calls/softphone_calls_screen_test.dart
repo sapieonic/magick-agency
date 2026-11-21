@@ -191,6 +191,43 @@ void main() {
     expect(find.text('CALL RECORD'), findsOneWidget);
   });
 
+  // AS9, AS19 S3(b): the roster contact's phone-typed column follows the tagged campaign's own
+  // number setting, as the soft phone's card does.
+  Map<String, Object?> phoneCampaign(String? phoneDisplay) => {
+        ...campaignJson,
+        'context_display': {
+          'hero': ['Name', 'Alt phone'],
+          'types': {'Alt phone': 'phone'},
+        },
+        'phone_display': ?phoneDisplay,
+      };
+  ManualCallDetail phoneContactDetail() => softDetail(call: {
+        'id': 'mc-1',
+        'contact': {
+          'contact_id': 'k-1',
+          'state': 'completed',
+          'claimed': true,
+          'context': {'Name': 'Rahul Verma', 'Alt phone': '919876543210'},
+        },
+      });
+
+  testWidgets('the roster contact\'s phone column is hidden where the tagged campaign hides numbers', (tester) async {
+    soft.bootstrapAnswer = bootstrap({
+      'taggable_campaigns': [phoneCampaign('masked')],
+    });
+    soft.details['mc-1'] = phoneContactDetail();
+    await open(tester);
+    await showSoftphone(tester);
+    soft.answer(0, softPage([1]));
+    await flush(tester);
+    await tester.tap(find.text('+91 98204 10001'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Alt phone'), 200, scrollable: find.byType(Scrollable).last);
+    expect(find.text('98••• ••210'), findsOneWidget);
+    expect(find.textContaining('9876543210'), findsNothing);
+    expect(find.text('Rahul Verma'), findsOneWidget);
+  });
+
   testWidgets('a detail the agent may not read says so, without a retry', (tester) async {
     soft.detailError = const ApiHttpError(
       status: 404,
@@ -336,6 +373,22 @@ void main() {
       final earlier = sections.firstWhere((s) => s.title == 'Earlier calls').facts;
       expect(earlier.single.value, 'No answer');
     });
+  });
+
+  test('the roster contact\'s phone column: masked by the tagged campaign, else as stored', () {
+    Map<String, String> contactOf(Map<String, Object?> campaign) => {
+          for (final f in softphoneCallDetailSections(
+            phoneContactDetail(),
+            bootstrap({'taggable_campaigns': [campaign]}),
+          ).firstWhere((s) => s.title == 'Roster contact').facts)
+            f.label: f.value,
+        };
+    expect(contactOf(phoneCampaign('masked'))['Alt phone'], '98••• ••210');
+    expect(contactOf(phoneCampaign('full'))['Alt phone'], '919876543210');
+    expect(contactOf(phoneCampaign(null))['Alt phone'], '919876543210');
+    // No campaign to read the setting from: as stored.
+    final untagged = softphoneCallDetailSections(phoneContactDetail(), null).firstWhere((s) => s.title == 'Roster contact');
+    expect({for (final f in untagged.facts) f.label: f.value}['Alt phone'], '919876543210');
   });
 
   test('the row view: the outcome kinds and the override badges', () {

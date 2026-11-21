@@ -10,7 +10,10 @@
  *    compared ignoring case, spaces, `_`, `-` and `.` ({@link squashColumnName}: `Customer Name`
  *    is `customer_name`). Only names that mean a name or a place: `Customer ID` and
  *    `Contact Number` are never the name. Never a hidden column, never an excluded one (the facts'
- *    columns), and, guessing over a row, never a column whose value is blank.
+ *    columns), never one the display's `types` reads as a phone number (the column matched
+ *    ignoring case, as `factTypeOf` matches it: a number is never shown as a name or a place), and,
+ *    guessing over a row, never a column whose value is blank. A role set to a phone column is
+ *    refused at the write (S3(e)).
  *  - The name ({@link customerNameFrom}): the `name` role's column when the role is set (its
  *    value, or none when blank or missing on this row: no guess then, S16); else the guess,
  *    never a fact's column when the display has `facts`.
@@ -19,7 +22,9 @@
  *  - Either as text: trimmed, at most {@link CUSTOMER_TEXT_MAX} characters, absent when blank or a
  *    placeholder (`-`, `N/A`).
  */
-import { asRecord, contextValueText, fold, hiddenSet, isBlankContextValue, isNonBlankString, rowKey } from './context-columns';
+import {
+  asRecord, contextValueText, declaredColumnType, fold, hiddenSet, isBlankContextValue, isNonBlankString, rowKey,
+} from './context-columns';
 
 /** Column names read as the customer's name when no role names one, in order (the inbound match's list). */
 export const NAME_GUESS_COLUMNS = ['name', 'full_name', 'customer_name', 'first_name'] as const;
@@ -39,6 +44,8 @@ export interface ColumnGuessOptions {
   hidden?: Iterable<string>;
   /** Other columns never guessed, compared ignoring case: the facts' columns, the other role's. */
   exclude?: Iterable<string>;
+  /** The display's `types` (possibly hand-edited JSON): a column it declares `phone` is never guessed. */
+  types?: unknown;
 }
 
 /**
@@ -53,7 +60,8 @@ function guessColumn(
   const left = new Set([...(options.hidden ?? []), ...(options.exclude ?? [])].filter((c) => typeof c === 'string').map(fold));
   const row = Array.isArray(source) ? null : (source as Readonly<Record<string, unknown>>);
   const columns = (row ? Object.keys(row) : (source as readonly string[]))
-    .filter((c) => typeof c === 'string' && !left.has(fold(c)) && (row === null || !isBlankContextValue(row[c])));
+    .filter((c) => typeof c === 'string' && !left.has(fold(c)) && (row === null || !isBlankContextValue(row[c])))
+    .filter((c) => declaredColumnType(c, options.types) !== 'phone');
   for (const guess of guesses) {
     const match = columns.find((c) => squashColumnName(c) === squashColumnName(guess));
     if (match !== undefined) return match;
@@ -97,6 +105,8 @@ export interface CustomerNameDisplay {
   hidden?: unknown;
   roles?: unknown;
   facts?: unknown;
+  /** Read by the guess only: a column declared `phone` is never guessed. */
+  types?: unknown;
 }
 
 /** Each fact's `column` as written (an entry that is not an object with a non-blank column is skipped). */
@@ -125,7 +135,7 @@ export function customerNameColumn(
   const hidden = hiddenSet(display);
   const role = roleColumn(display, 'name');
   if (role !== undefined) return rowKey(row, role, hidden);
-  return guessNameColumn(row, { hidden, exclude: factColumnsOf(display) });
+  return guessNameColumn(row, { hidden, exclude: factColumnsOf(display), types: display?.types });
 }
 
 /**
@@ -155,7 +165,7 @@ export function customerPlaceColumn(
   const role = roleColumn(display, 'place');
   if (role !== undefined) return rowKey(row, role, hidden);
   if (Array.isArray(display?.facts)) return undefined;
-  return guessPlaceColumn(row, { hidden });
+  return guessPlaceColumn(row, { hidden, types: display?.types });
 }
 
 /**

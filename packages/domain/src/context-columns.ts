@@ -1,7 +1,8 @@
 /**
  * The small readings every roster-column rule shares (AS19 S13): a column name folded for
  * comparison, a JSON object or nothing, the display's hidden columns, a context value as text and
- * whether it is blank, and a row's own key for a configured column name. The hero rule
+ * whether it is blank, a row's own key for a configured column name and the type `types` declares
+ * for a column. The hero rule
  * (`./context-hero`), the name and place guess (`./customer-name`), the card's tiles
  * (`./fact-tiles`), the facts' keys (`./fact-fields`) and the server's campaign-config write all
  * read them from here, so none keeps its own copy. A LEAF: no I/O, no imports.
@@ -65,4 +66,17 @@ export function rowKey(context: Record<string, unknown>, name: unknown, hidden: 
   if (!isNonBlankString(name) || hidden.has(fold(name))) return undefined;
   if (Object.hasOwn(context, name)) return name;
   return Object.keys(context).find((k) => fold(k) === fold(name) && !hidden.has(fold(k)));
+}
+
+/**
+ * What the display's `types` declares for `column`, as stored (not checked against the contract's
+ * list): the entry of its exact spelling, else the first equal to it ignoring case
+ * ({@link fold}); undefined when `types` is not an object or has no such entry. `factTypeOf`
+ * (`./fact-tiles`) reads it, and the name and place guess (`./customer-name`) skips a column it
+ * declares `phone`.
+ */
+export function declaredColumnType(column: string, types: unknown): unknown {
+  const declared = asRecord(types);
+  if (!declared) return undefined;
+  return Object.hasOwn(declared, column) ? declared[column] : Object.entries(declared).find(([k]) => fold(k) === fold(column))?.[1];
 }
