@@ -1,6 +1,6 @@
-import { customerNameFrom } from '@magick-agency/domain/customer-name';
 import { ATTEMPT_OUTCOME_WORDS } from '../agency/stationCopy';
 import type { AgencyContextDisplay } from '../../types/agency';
+import { customerNameOf } from '../agencyContext';
 import type { AgencyManualCall, AgencyManualCallEndReason } from '../../types/softphone';
 
 /**
@@ -119,12 +119,14 @@ export function contactName(
  * `customerNameFrom`): the `name` role's column when the display sets one (none when it is blank
  * on this row), else the guess from the column names (`Name`, `Customer Name`, …), never a
  * hidden column or a chosen fact's, and never the first column of an arbitrary CSV, which is as
- * likely to be a loan number as a person. Shared by the soft phone's call and an inbound
- * caller's matched contact (`inboundMatchName`).
+ * likely to be a loan number as a person. On a campaign without chosen facts or a name column,
+ * when the rule finds none, the card's guess from before AS19 (`Borrower Name`, …;
+ * `customerNameOf`), so the band and the card name a legacy caller alike. Shared by the soft
+ * phone's call and an inbound caller's matched contact (`inboundMatchName`).
  */
 export function contextName(
   context: Record<string, unknown>,
   display: AgencyContextDisplay | undefined,
 ): string | null {
-  return customerNameFrom(context, display) ?? null;
+  return customerNameOf(context, display) ?? null;
 }

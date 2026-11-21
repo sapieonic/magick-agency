@@ -306,7 +306,9 @@ class StationViewMapper {
       fromE164: call.fromE164,
       toE164: call.toE164,
       routeName: call.route?.name,
-      displayName: same ? previous.displayName : customerNameOf(match?.context, display),
+      displayName: same
+          ? previous.displayName
+          : callerNameOf(match?.context, display, heroKeys: [for (final h in resolved?.hero ?? const <ResolvedField>[]) h.label]),
       sticky: switch (call.sticky?.reason) {
         null => null,
         wire.InboundStickyReason.owner => InboundSticky.owner,

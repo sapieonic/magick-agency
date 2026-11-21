@@ -3,6 +3,7 @@ import {
   customerNameFrom,
   customerPlaceColumn,
   customerPlaceFrom,
+  customerText,
 } from '@magick-agency/domain/customer-name';
 import { chosenFactTiles, factTypeOf } from '@magick-agency/domain/fact-tiles';
 import {
@@ -14,7 +15,7 @@ import {
   type AgencyPriorAttempt,
   type AgencyReservedAttempt,
 } from '../../types/agency';
-import { resolveContextFields } from '../agencyContext';
+import { customerNameColumnOf, resolveContextFields } from '../agencyContext';
 import { priorDispositionLabel } from '../agencyPriorAttempts';
 import { ATTEMPT_OUTCOME_WORDS } from './stationCopy';
 import {
@@ -51,7 +52,8 @@ import {
  * (and on a side view of a campaign without chosen facts), the card keeps phase 0's reading of the
  * tiles, "20 Nov" when the text plainly is a date and an amount shown as written (no ₹ on a
  * guess), with the name and place by the server's rule (the domain's `customerNameFrom` /
- * `customerPlaceFrom`, S1).
+ * `customerPlaceFrom`, S1); the name, when that rule finds none, by the card's guess from before
+ * AS19 (`customerNameColumnOf` in `../agencyContext`: `Borrower Name`, `Client Name`, …).
  *
  * ── A phone number never escapes `phone_display: masked` (S3) ────────────────
  * Every `phone`-typed value on the card is masked under masked: a chosen tile, a typed tile, a
@@ -435,8 +437,8 @@ function customerFacts(
   const facts = attempt.facts ?? chosenFactsFromContext(attempt.context, display, options.now) ?? undefined;
   const nameColumn = customerNameColumn(attempt.context, display);
   const placeColumn = customerPlaceColumn(attempt.context, display);
-  const person = (name: string | null | undefined, place: string | null | undefined) => ({
-    name: personText(name?.trim() || null, nameColumn, display, phoneDisplay),
+  const person = (name: string | null | undefined, place: string | null | undefined, nameAt = nameColumn) => ({
+    name: personText(name?.trim() || null, nameAt, display, phoneDisplay),
     place: personText(place?.trim() || null, placeColumn, display, phoneDisplay),
   });
   if (facts && factsChosen(display)) {
@@ -454,15 +456,21 @@ function customerFacts(
     };
   }
   // Phase 0 (an older server, or a side view of a campaign without chosen facts): the name and
-  // place by the server's rule, the other heroes read from their column names.
+  // place by the server's rule (the name, when the rule finds none, by the card's guess from
+  // before AS19: `customerNameColumnOf`), the other heroes read from their column names.
+  const legacyNameColumn = customerNameColumnOf(attempt.context, display);
   const resolved = resolveContextFields(attempt.context, display);
   const heroFacts = resolved.hero
-    .filter((f) => !f.isEmpty && f.label !== nameColumn && f.label !== placeColumn)
+    .filter((f) => !f.isEmpty && f.label !== legacyNameColumn && f.label !== placeColumn)
     .map((f, i) => factFrom(f.label, f.value, i, display, phoneDisplay));
   const money = heroFacts.find((f) => f.kind === 'money');
   const rawDue = money ? resolved.hero.find((f) => f.label === money.label)?.value.trim() ?? null : null;
   return {
-    ...person(customerNameFrom(attempt.context, display), customerPlaceFrom(attempt.context, display)),
+    ...person(
+      legacyNameColumn === undefined ? undefined : customerText(attempt.context[legacyNameColumn]),
+      customerPlaceFrom(attempt.context, display),
+      legacyNameColumn,
+    ),
     heroFacts,
     amountDue: rawDue,
     chosen: false,

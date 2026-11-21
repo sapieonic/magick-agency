@@ -87,8 +87,9 @@ String callEndSummary(ManualCall call) {
 /// The matched contact's name, for "On call with Rahul Verma" and CallKit: the domain's one rule
 /// (AS19 S1, [customerNameOf]) over the tag's `context_display`: the name role's column, else the
 /// name guess (never a fact's column, never the first column of an arbitrary roster, which is as
-/// likely to be a loan number as a person).
-String? contactName(ManualCall? call, ContextDisplay? display) => customerNameOf(call?.contact?.context, display);
+/// likely to be a loan number as a person); on a legacy campaign, when that finds none, the legacy
+/// card's guess ([callerNameOf]).
+String? contactName(ManualCall? call, ContextDisplay? display) => callerNameOf(call?.contact?.context, display);
 
 /// The soft phone's rail, as a pure function of the connection and the call
 /// (the console's `describeSoftphoneRail`, with "plays in your browser" as

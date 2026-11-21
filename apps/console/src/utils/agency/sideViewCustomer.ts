@@ -11,7 +11,8 @@ import { customerCard, lastCallRows, type CustomerCard, type LastCallRow } from 
  * inbound caller's matched contact, a soft-phone call's roster contact. Neither carries typed facts
  * (BE-6 rides on the reserved attempt only), so the card reads the contact's columns with the
  * matched work's `context_display`: the name and the line under it by the server's rule (the
- * domain's `customerNameFrom` / `customerPlaceFrom`, S1), and, when that work has chosen its facts
+ * domain's `customerNameFrom` / `customerPlaceFrom`, S1; on a campaign without chosen facts the
+ * name, when the rule finds none, by the card's guess from before AS19), and, when that work has chosen its facts
  * (AS19, `context_display.facts`), the tiles by the server's own builder (`chosenFactTiles`, S6,
  * through `chosenFactsFromContext`): the same tiles, names (`label ?? column`) and value formats
  * as on an outbound call. Every phone fact follows the station's `phone_display` (S3).

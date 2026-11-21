@@ -306,8 +306,11 @@ describe('the side views build the chosen facts from the contact’s row (AS19)'
       ({ from_e164: '+919876543321', match: { campaign_id: 'camp-1', context: c, prior_attempts: [], context_display: d } }) as unknown as AgencyInboundCall;
     const legacy = inboundCustomerCard(call(row, {}));
     expect([legacy.name, legacy.place]).toEqual(['Asha Rao', 'Pune']);
-    const noGuess = inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, {}));
+    const noGuess = inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud' }, {}));
     expect([noGuess.name, noGuess.place]).toEqual([null, null]);
+    // Without facts, a name the rule cannot find falls back to the card's guess from before AS19; with facts, never.
+    expect(inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, {})).name).toBe('Ramesh');
+    expect(inboundCustomerCard(call({ 'Customer ID': 'C-7', Branch: 'Kothrud', Borrower: 'Ramesh' }, { facts: [] })).name).toBeNull();
     // A role names the column, even one the guess would not read.
     const roles = inboundCustomerCard(call({ Borrower: 'Ramesh', Branch: 'Kothrud' }, { roles: { name: 'Borrower', place: 'Branch' } }));
     expect([roles.name, roles.place]).toEqual(['Ramesh', 'Kothrud']);

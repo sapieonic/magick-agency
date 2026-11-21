@@ -5,6 +5,7 @@ import {
   isBlankContextValue,
   MAX_HERO_FIELDS,
 } from '@magick-agency/domain/context-hero';
+import { customerNameColumn, customerText } from '@magick-agency/domain/customer-name';
 import type { AgencyContextDisplay } from '../types/agency';
 
 /**
@@ -125,4 +126,41 @@ export function resolveContextFields(
 /** True when the operator configured heroes; false when they were guessed. */
 export function heroesWereConfigured(display: AgencyContextDisplay | undefined): boolean {
   return Boolean(display?.hero && display.hero.length > 0);
+}
+
+/**
+ * The card's own name guess from before AS19, by the column's header. Only for a campaign that has
+ * not chosen its facts and names no name column (see {@link customerNameColumnOf}).
+ */
+const LEGACY_NAME = /^(full[\s_-]?)?name$|customer[\s_-]?name|^customer$|contact[\s_-]?name|first[\s_-]?name|client[\s_-]?name|borrower|^naam$/i;
+
+/**
+ * The row's column the customer's name is read from on the station's side views (an inbound
+ * caller's matched contact, a soft-phone call's roster contact) and the phase 0 card: the server's
+ * one rule first (the domain's `customerNameColumn`, AS19 S1). On a campaign that has not chosen
+ * its facts and names no name column, when that rule finds none, the card's guess from before
+ * AS19 (the first hero, then other column, with a value whose header reads as a name: `Borrower
+ * Name`, `Client Name`, `Contact Name`, `Naam`), so a legacy caller is named as before. A campaign
+ * with chosen facts, or with a name column, is never guessed beyond the rule.
+ */
+export function customerNameColumnOf(
+  context: Record<string, unknown>,
+  display: AgencyContextDisplay | undefined,
+): string | undefined {
+  const ruled = customerNameColumn(context, display);
+  const nameRole = display?.roles?.name;
+  if (ruled !== undefined || Array.isArray(display?.facts) || (typeof nameRole === 'string' && nameRole.trim() !== '')) {
+    return ruled;
+  }
+  const resolved = resolveContextFields(context, display);
+  return [...resolved.hero, ...resolved.fields].find((f) => !f.isEmpty && LEGACY_NAME.test(f.label))?.label;
+}
+
+/** The customer's name on a row by {@link customerNameColumnOf}, as text (trimmed, cut), or undefined. */
+export function customerNameOf(
+  context: Record<string, unknown>,
+  display: AgencyContextDisplay | undefined,
+): string | undefined {
+  const column = customerNameColumnOf(context, display);
+  return column === undefined ? undefined : customerText(context[column]);
 }

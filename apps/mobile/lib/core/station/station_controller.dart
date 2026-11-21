@@ -1416,11 +1416,12 @@ class StationController extends Notifier<StationView?>
   }
 
   /// The matched contact's name, for CallKit and telemetry-free display: the domain's one rule
-  /// over the match's columns (AS19 S1: the name role's column first, else the name guess).
+  /// over the match's columns (AS19 S1: the name role's column first, else the name guess), then
+  /// on a legacy campaign the legacy card's guess ([callerNameOf]).
   static String? _inboundName(InboundCall call) {
     final match = call.match;
     if (match == null) return null;
-    return customerNameOf(match.context, match.contextDisplay);
+    return callerNameOf(match.context, match.contextDisplay);
   }
 
   /// A campaign call's name for CallKit, as the card heads it: with the campaign's chosen facts

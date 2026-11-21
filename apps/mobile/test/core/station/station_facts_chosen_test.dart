@@ -275,6 +275,33 @@ void main() {
       expect(offered(display: {...legacyDisplay(), 'roles': {'name': 'Holder'}}).displayName, 'Sunita Patil');
     });
 
+    test('a legacy caller the rule cannot name is named by the legacy card\'s guess (Borrower Name); a chosen one is not', () {
+      ({String? card, String callKit}) named(Map<String, Object?> display) {
+        late ({String? card, String callKit}) out;
+        fakeAsync((async) {
+          final app = App(async);
+          app.routes['POST /proxy/agency/sessions'] = (_) => json(200, bootstrapJson());
+          app.start();
+          app.readyFrame('available');
+          final frame = stationFrame('inbound_call_offered');
+          final match = (frame['call']! as Map<String, Object?>)['match']! as Map<String, Object?>;
+          match['context'] = {'Loan No': 'HL-4471', 'Borrower Name': 'Sunita Patil', 'City': 'Nashik'};
+          match['context_display'] = display;
+          app.frame(frame);
+          out = (card: app.view!.inbound!.displayName, callKit: app.engine.startedCalls.last.displayName);
+          app.dispose();
+        });
+        return out;
+      }
+
+      final legacy = named({'hero': ['Loan No']});
+      expect(legacy.card, 'Sunita Patil');
+      expect(legacy.callKit, 'Sunita Patil');
+      final chosen = named({'facts': <Object?>[]});
+      expect(chosen.card, isNull);
+      expect(chosen.callKit, isNot('Sunita Patil'));
+    });
+
     test('a chosen campaign\'s caller gets the chosen card: names, types, the highlight first, the place by its role', () {
       final facts = offered(display: chosenDisplay()).facts!;
       expect(facts.chosen, isTrue);

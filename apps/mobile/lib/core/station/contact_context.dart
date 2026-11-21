@@ -139,8 +139,9 @@ final _digitsOnly = RegExp(r'^[\d\s+()-]+$');
 /// when a column says it plainly: a full-name column, else first + last. Hero columns are looked
 /// at first. Null when nothing looks like a name, and the UI leads with the number.
 ///
-/// Never for an inbound caller or a soft-phone contact, nor for a campaign with chosen facts: those
-/// read the customer's name by the domain's one rule ([customerNameOf], AS19 S1).
+/// Never for a campaign with chosen facts: that reads the customer's name by the domain's one rule
+/// ([customerNameOf], AS19 S1). An inbound caller or a soft-phone contact reads it by that rule
+/// first, and this guess only when the rule finds none on a legacy campaign ([callerNameOf]).
 String? displayNameFor(Map<String, Object?> context, wire.ContextDisplay? display, {List<String> heroKeys = const []}) {
   final hidden = {for (final k in display?.hidden ?? const <String>[]) _norm(k)};
   final keys = [...heroKeys, ...context.keys.where((k) => !heroKeys.contains(k))]
@@ -175,6 +176,20 @@ String? displayNameFor(Map<String, Object?> context, wire.ContextDisplay? displa
 /// guess, never a fact's column. Null when there is none. Inbound callers and soft-phone contacts.
 String? customerNameOf(Map<String, Object?>? context, wire.ContextDisplay? display) =>
     context == null ? null : wire.customerNameFrom(context, display);
+
+/// An inbound caller's or a soft-phone contact's name: the domain's one rule ([customerNameOf])
+/// first. On a campaign WITHOUT chosen facts that names no name column (the legacy card), when the
+/// rule finds none, the legacy card's guess ([displayNameFor], [heroKeys] looked at first), so a
+/// caller under a `Borrower Name` column is named as before AS19. A campaign with chosen facts, or
+/// with a name column, is never guessed beyond the rule.
+String? callerNameOf(Map<String, Object?>? context, wire.ContextDisplay? display, {List<String> heroKeys = const []}) {
+  if (context == null) return null;
+  final ruled = wire.customerNameFrom(context, display);
+  if (ruled != null || display?.facts != null) return ruled;
+  final role = display?.roles?.name;
+  if (role != null && role.trim().isNotEmpty) return null;
+  return displayNameFor(context, display, heroKeys: heroKeys);
+}
 
 // ─── Earlier calls ──────────────────────────────────────────────────────────
 
