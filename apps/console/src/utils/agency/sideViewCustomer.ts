@@ -9,7 +9,10 @@ import { customerCard, lastCallRows, type CustomerCard, type LastCallRow } from 
  * built by the outbound card's own rules (`stationCustomer.ts`) from what those calls carry: an
  * inbound caller's matched contact, a soft-phone call's roster contact. Neither carries typed facts
  * (BE-6 rides on the reserved attempt only), so the card reads the contact's columns with the
- * matched work's `context_display`, as phase 0 does on an outbound call.
+ * matched work's `context_display`, as phase 0 does on an outbound call. When that work has chosen
+ * its facts (AS19, `context_display.facts`), the card builds them from the contact's row by the
+ * server's rule (`chosenFactsFromContext`): the same tiles, names (`label ?? column`) and value
+ * formats as on an outbound call.
  */
 
 /**

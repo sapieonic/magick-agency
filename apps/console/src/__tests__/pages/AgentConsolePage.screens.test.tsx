@@ -572,6 +572,51 @@ describe('03 / 04 with typed facts and the campaign’s script (BE-4, BE-6, BE-8
   });
 });
 
+describe('04 On call with the campaign’s chosen facts (AS19)', () => {
+  const CHOSEN: AgencyReservedAttempt = {
+    ...ATTEMPT,
+    facts: {
+      name: 'Sunita Patil',
+      tiles: [
+        { column: 'Outstanding', label: 'Amount due', key: 'amount_due', highlight: true, role: 'amount_due', type: 'money', raw: '12,500', value: '12500' },
+        { column: 'Branch 2', label: 'Branch', key: 'branch_2', type: 'text', raw: '', value: null },
+      ],
+    },
+  };
+  const BOOT: AgencySessionBootstrap = {
+    ...BOOTSTRAP,
+    phone_display: 'masked',
+    context_display: {
+      roles: { name: 'Name' },
+      facts: [
+        { column: 'Outstanding', label: 'Amount due', key: 'amount_due', highlight: true },
+        { column: 'Branch 2', label: 'Branch', key: 'branch_2' },
+      ],
+    },
+    script: { steps: [{ text: 'Say {amount_due} is due at {branch_2}.' }] },
+  };
+
+  it('shows the chosen tiles, the card wider than the right column, and "not given" in What to say', async () => {
+    mocks.createAgencySession.mockResolvedValue(BOOT);
+    await mounted();
+    await frames(
+      { event: 'reserved', attempt: CHOSEN },
+      { event: 'agent_state', state: 'reserved', since: '2026-11-20T10:00:00.000Z' },
+      { event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-20T10:00:04.000Z' },
+    );
+    expect(band()).toBe('On call');
+    const card = screen.getByTestId('customer-card');
+    expect(within(card).getAllByTestId('customer-fact-label').map((l) => l.textContent)).toEqual(['Amount due', 'Branch']);
+    expect(within(card).getAllByTestId('customer-fact-value').map((l) => l.textContent)).toEqual(['₹12,500', '—']);
+    expect(within(card).getByTestId('customer-phone').textContent).toBe('98••• ••321');
+    expect(within(screen.getByTestId('script-steps')).getByTestId('script-missing').textContent).toBe('Branch not given');
+    expect(screen.getByTestId('script-step').textContent).toBe('1Say ₹12,500 is due at Branch not given.');
+    // The card takes the rest beside the right column (Station.module.css .bodyOnCall).
+    expect(card.closest('[class*="bodyOnCall"]')).not.toBeNull();
+    expect(screen.getByTestId('note-card')).toBeTruthy();
+  });
+});
+
 describe('the pictures a supervisor picked (BE-13), drawn as campaign Settings draws them', () => {
   const svgOf = (icon: string) => {
     const { container, unmount } = render(<TileIcon icon={icon} size={32} />);

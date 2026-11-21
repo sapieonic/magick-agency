@@ -257,6 +257,8 @@
 .body2 { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
 .bodyEven { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .bodyWideLeft { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+/* On call (AS19): the customer card takes the rest beside a right column of 36%, 320 to 420 wide. */
+.bodyOnCall { grid-template-columns: minmax(0, 1fr) clamp(320px, 36%, 420px); }
 .bodyCenter { justify-items: center; align-content: center; }
 .col { display: grid; gap: 24px; align-content: start; min-width: 0; }
 
@@ -386,6 +388,56 @@
 .factText { display: block; font-family: var(--font-display); font-size: 20px; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
 .factWide { grid-column: 1 / -1; }
 .factWide p { font-family: var(--font-display); font-size: 20px; font-weight: 700; margin: 4px 0 0; overflow-wrap: anywhere; }
+
+/*
+  AS19: the campaign's chosen facts. Four across on twelve tracks (each tile spans --span, three for
+  one tile, six for the highlight; a last row that is not full is shared, chosenSpans). Text keeps to
+  one line with an ellipsis (two on the highlight); numbers, money, dates and phones shrink to fit
+  (FitValue) before the ellipsis. Every tile is focusable and opens the hover card.
+*/
+.custText { min-width: 0; flex: 1 1 auto; }
+.custPlace { min-width: 0; max-width: 100%; }
+.custPlace > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; min-width: 0; }
+.chosenFacts { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+.tile {
+  grid-column: span var(--span, 3);
+  position: relative;
+  background: var(--bg-primary);
+  border-radius: var(--radius-xl);
+  padding: 14px 16px;
+  min-width: 0;
+  outline: none;
+  cursor: default;
+}
+.tile:hover, .tile:focus-visible { box-shadow: 0 0 0 2px var(--border-strong); }
+.tile:focus-visible { box-shadow: 0 0 0 3px var(--accent); }
+.tile > small { display: block; font-size: 14px; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tileValue { display: block; margin-top: 4px; font-family: var(--font-display); font-weight: 700; font-size: 20px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tileValue.num { font-weight: 800; font-size: 28px; line-height: 1.2; }
+.tileValue[data-empty='true'] { color: var(--text-muted); font-weight: 600; }
+.tileHl { background: var(--st-soft-c, var(--st-oncall-soft)); }
+.tileHl > small { color: var(--st-deep-c, var(--st-oncall-deep)); }
+.tileHl .tileValue { font-size: 24px; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tileHl .tileValue.num { font-size: 36px; display: block; white-space: nowrap; }
+.factPop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(300px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--text-primary);
+  color: var(--bg-secondary);
+  box-shadow: var(--shadow-lg, 0 10px 30px -8px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+.factPop[data-align='end'] { left: auto; right: 0; }
+.factPop small { display: block; font-size: 12px; font-weight: 600; opacity: 0.8; }
+.factPop b { display: block; font-family: var(--font-display); font-size: 17px; line-height: 1.35; overflow-wrap: anywhere; margin: 2px 0 4px; }
+.factPop span { display: block; font-size: 13px; opacity: 0.8; overflow-wrap: anywhere; }
 
 /* ── Device checks ── */
 .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
@@ -613,7 +665,7 @@
 /* ── The console scales down (spec §4) ── */
 @media (max-width: 1060px) {
   .top, .band, .foot, .body, .banner { padding-left: 20px; padding-right: 20px; }
-  .body2, .bodyEven, .bodyWideLeft { grid-template-columns: minmax(0, 1fr); }
+  .body2, .bodyEven, .bodyWideLeft, .bodyOnCall { grid-template-columns: minmax(0, 1fr); }
   .bandText h1 { font-size: 30px; }
   .bandText p { font-size: 17px; }
   .picks5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -624,6 +676,7 @@
   .bandClock { font-size: 34px; }
   .bandIcon { width: 52px; height: 52px; border-radius: 14px; }
   .facts, .infoRow { grid-template-columns: minmax(0, 1fr); }
+  .tile { grid-column: 1 / -1; }
   .picks, .picks5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .footRight, .footRight > * { flex: 1 1 100%; }
   .footRight .btnBig { width: 100%; }
@@ -677,6 +730,8 @@
 .scriptStep[data-state='current'] .scriptNumber { background: var(--st); color: var(--st-ink-c); }
 .scriptStep[data-state='done'] .scriptNumber { background: var(--st-go); color: #fff; }
 .scriptText { padding-top: 3px; min-width: 0; overflow-wrap: anywhere; }
+/* AS19: a key this customer has no value for, "Due date not given": muted, never a blank. */
+.scriptMissing { display: inline; padding: 1px 6px; border-radius: 6px; -webkit-box-decoration-break: clone; box-decoration-break: clone; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; font-size: 0.9em; }
 .scriptStep .scriptSay { margin-top: 6px; }
 
 /* ── Before work opens: the join screens ── */
