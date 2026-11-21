@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show ScriptPlaceholder, WireEnumUnknown;
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -413,22 +414,27 @@ class FactsView {
   int get hashCode => Object.hash(name, place, tiles.length, chosen);
 }
 
-/// The `{placeholders}` a campaign without chosen facts may use (the contract's
-/// `AGENCY_SCRIPT_PLACEHOLDERS`).
-const legacyScriptPlaceholders = <String>['name', 'place', 'amount_due', 'due_date', 'agent_name', 'campaign_name'];
+/// The `{placeholders}` a campaign without chosen facts may use: every known
+/// `ScriptPlaceholder` (the contract's `AGENCY_SCRIPT_PLACEHOLDERS`), in its order.
+final List<String> legacyScriptPlaceholders = List.unmodifiable([
+  for (final p in ScriptPlaceholder.values)
+    if (!p.isUnknown) p.wire,
+]);
 
 /// The campaign's script (BE-8): the opening line ("First, say this") and the numbered steps
 /// ("What to say"), placeholders still in braces; the screen fills them for the call on screen.
 @immutable
 class ScriptView {
-  const ScriptView({this.opening, this.steps = const [], this.placeholders = legacyScriptPlaceholders, this.factLabels = const {}});
+  const ScriptView({this.opening, this.steps = const [], this._placeholders, this.factLabels = const {}});
 
   final String? opening;
   final List<String> steps;
 
+  final List<String>? _placeholders;
+
   /// The `{key}`s this campaign's script may use (AS19: the fixed four and the chosen facts' keys;
   /// else [legacyScriptPlaceholders]). Any other `{word}` is shown as written.
-  final List<String> placeholders;
+  List<String> get placeholders => _placeholders ?? legacyScriptPlaceholders;
 
   /// AS19: each chosen fact's name by its key, for "`<name> not given`" when the customer has no
   /// tile for it.
@@ -758,6 +764,7 @@ class InboundCallView {
     this.bridgedAt,
     this.outcomeDueAt,
     this.hangupFailure,
+    this.facts,
   });
 
   final String callId;
@@ -770,7 +777,8 @@ class InboundCallView {
   final String toE164;
   final String? routeName;
 
-  /// The matched contact's name, when the roster has one.
+  /// The matched contact's name, when the roster has one: the domain's one rule (AS19 S1, the
+  /// matched campaign's name role first, else the name guess).
   final String? displayName;
 
   /// Null: the caller has no agent of their own.
@@ -812,8 +820,17 @@ class InboundCallView {
   /// A hang-up that did not go through, in words; null otherwise.
   final String? hangupFailure;
 
+  /// AS19 S3: the matched campaign chose its card's facts (its `context_display.facts` is a list):
+  /// the chosen card, built from the contact's row by the domain's rule (`wire.chosenFactTiles`):
+  /// the name, the place (its role only) and the tiles, as the campaign call's card has them.
+  /// Null for a campaign that did not choose (the hero fields then), or no match.
+  final FactsView? facts;
+
   bool get withheld => fromE164 == null;
   bool get matched => campaignName != null;
+
+  /// The matched campaign chose its card's facts (AS19).
+  bool get factsChosen => facts?.chosen ?? false;
 
   static const _eqF = ListEquality<ContactField>();
   static const _eqP = ListEquality<PriorAttempt>();
@@ -843,10 +860,11 @@ class InboundCallView {
       other.connectsAt == connectsAt &&
       other.bridgedAt == bridgedAt &&
       other.outcomeDueAt == outcomeDueAt &&
-      other.hangupFailure == hangupFailure;
+      other.hangupFailure == hangupFailure &&
+      other.facts == facts;
 
   @override
-  int get hashCode => Object.hash(callId, stage, bridgedAt, outcomeDueAt, hangupFailure, heroFields.length);
+  int get hashCode => Object.hash(callId, stage, bridgedAt, outcomeDueAt, hangupFailure, heroFields.length, facts);
 }
 
 /// "Your customer is waiting": a caller who usually speaks to this agent rang in while they

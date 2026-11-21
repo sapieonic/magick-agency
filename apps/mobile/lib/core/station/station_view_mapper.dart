@@ -5,7 +5,6 @@ import '../inbound/inbound_copy.dart';
 import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
 
 import 'contact_context.dart';
-import 'fact_phone.dart' show maskFactPhone;
 import 'server_clock.dart';
 import 'station_copy.dart';
 import 'station_signals.dart';
@@ -60,6 +59,7 @@ class StationViewMapper {
   wire.InboundCall? _inboundSource;
   int _inboundOffset = 0;
   String? _inboundFailure;
+  bool _inboundMasked = false;
   InboundCallView? _inbound;
   wire.CustomerWaitingFrame? _waitingSource;
   int _waitingOffset = 0;
@@ -176,7 +176,7 @@ class StationViewMapper {
       dialActivity: dialActivityOf(s, gapHeld: dialGapHeld),
       myContactsOffered: myContactsOfferedBy(bootstrap),
       assignsContacts: assignsContactsBy(bootstrap),
-      inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
+      inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure, masked: bootstrap?.masksPhone ?? false),
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
       help: help,
@@ -201,8 +201,31 @@ class StationViewMapper {
       opening: script.opening?.trim(),
       steps: List.unmodifiable([for (final s in script.steps) s.text.trim()]),
       placeholders: display == null ? legacyScriptPlaceholders : List.unmodifiable(display.scriptPlaceholders),
-      factLabels: Map.unmodifiable({for (final f in display?.facts ?? const <wire.FactField>[]) f.key: f.label}),
+      factLabels: factLabelsOf(display),
     );
+  }
+
+  /// Each chosen fact's name by its script key (AS19), for "`<name> not given`": its label, trimmed;
+  /// a blank one (a hand-edited config: the wire reads it as `''`) falls back to the column, as the
+  /// tile does. A fact with no key has no placeholder, so no name here.
+  static Map<String, String> factLabelsOf(wire.ContextDisplay? display) => Map.unmodifiable({
+        for (final f in display?.facts ?? const <wire.FactField>[])
+          if (f.key.isNotEmpty) f.key: f.label.trim().isEmpty ? f.column.trim() : f.label.trim(),
+      });
+
+  /// The roster value [f] as Details and the hero fields show it: empty as `''`; a column the
+  /// campaign reads as a phone number (`wire.factTypeOf`) hidden by the one phone rule when the
+  /// campaign hides numbers ([masked], AS9, AS19 S3), never only on the card.
+  static ContactField contactFieldOf(ResolvedField f, wire.ContextDisplay? display, {required bool masked}) {
+    final String value;
+    if (f.isEmpty) {
+      value = '';
+    } else if (masked && wire.factTypeOf(f.label, display?.types) == wire.ContextFieldType.phone) {
+      value = wire.maskFactPhone(f.value);
+    } else {
+      value = f.value;
+    }
+    return ContactField(key: f.label, label: f.label, value: value);
   }
 
   /// A supervisor's tile picture (BE-13) by its name; null for none.
@@ -246,15 +269,20 @@ class StationViewMapper {
 
   /// The inbound caller on the station, read once per copy of the call (a frame is a new copy;
   /// a pong is not).
-  InboundCallView? _inboundFor(wire.InboundCall? call, String? hangupFailure) {
-    if (identical(call, _inboundSource) && _offset == _inboundOffset && hangupFailure == _inboundFailure) {
+  InboundCallView? _inboundFor(wire.InboundCall? call, String? hangupFailure, {required bool masked}) {
+    if (identical(call, _inboundSource) &&
+        _offset == _inboundOffset &&
+        hangupFailure == _inboundFailure &&
+        masked == _inboundMasked) {
       return _inbound;
     }
     // The offset the copy on screen was mapped with.
     final previousOffset = _inboundOffset;
+    final previousMasked = _inboundMasked;
     _inboundSource = call;
     _inboundOffset = _offset;
     _inboundFailure = hangupFailure;
+    _inboundMasked = masked;
     if (call == null) return _inbound = null;
     final stage = switch (inboundPhase(call)) {
       InboundPhase.offered => InboundStage.offered,
@@ -264,10 +292,12 @@ class StationViewMapper {
     final match = call.match;
     final display = match?.contextDisplay;
     final resolved = match == null ? null : resolveContextFields(match.context, display);
-    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: f.isEmpty ? '' : f.value);
+    // The station's number setting (AS9), as the console's inbound card: a phone-typed column is
+    // hidden by the one phone rule in the hero fields, Details and the summary (AS19 S3).
+    ContactField field(ResolvedField f) => contactFieldOf(f, display, masked: masked);
     final previous = _inbound;
     // The contact is resolved once per call: later frames of the same call move only its state.
-    final same = previous != null && previous.callId == call.id && match != null && previous.matched;
+    final same = previous != null && previous.callId == call.id && match != null && previous.matched && previousMasked == masked;
     // The prior attempts' times are mapped with the clock offset: a new offset maps them again.
     final sameTimes = same && previousOffset == _offset;
     return _inbound = InboundCallView(
@@ -276,11 +306,7 @@ class StationViewMapper {
       fromE164: call.fromE164,
       toE164: call.toE164,
       routeName: call.route?.name,
-      displayName: same
-          ? previous.displayName
-          : (match == null
-              ? null
-              : displayNameFor(match.context, display, heroKeys: [for (final h in resolved!.hero) h.label])),
+      displayName: same ? previous.displayName : customerNameOf(match?.context, display),
       sticky: switch (call.sticky?.reason) {
         null => null,
         wire.InboundStickyReason.owner => InboundSticky.owner,
@@ -320,6 +346,24 @@ class StationViewMapper {
       bridgedAt: correctedInstant(call.bridgedAt, _offset),
       outcomeDueAt: stage == InboundStage.outcome ? correctedInstant(call.outcomeDueAt, _offset) : null,
       hangupFailure: stage == InboundStage.connected ? hangupFailure : null,
+      facts: same ? previous.facts : (match == null ? null : chosenFactsOf(match.context, display)),
+    );
+  }
+
+  /// A roster row's chosen card (AS19 S3, S6): when [display] chose its facts (a list, even an
+  /// empty one), the name ([customerNameOf]), the place (its role only, S2) and the tiles the
+  /// domain's one builder makes of the row (`wire.chosenFactTiles`), as [factsOf] reads a campaign
+  /// call's; null when the campaign did not choose. For the cards built on the phone: an inbound
+  /// caller's matched contact.
+  static FactsView? chosenFactsOf(Map<String, Object?> context, wire.ContextDisplay? display, {DateTime? now}) {
+    if (display?.facts == null) return null;
+    return factsOf(
+      wire.CustomerFacts(
+        name: customerNameOf(context, display),
+        place: wire.customerPlaceFrom(context, display),
+        tiles: wire.chosenFactTiles(context, display, now: now),
+      ),
+      chosen: true,
     );
   }
 
@@ -524,19 +568,7 @@ class StationViewMapper {
     _callOffset = _offset;
 
     final resolved = resolveContextFields(attempt.context, display);
-    // A column the campaign reads as a phone number follows its number setting (AS9, AS19): hidden
-    // in Details too, never only on the card.
-    final phoneColumns = {
-      for (final e in display?.types?.entries ?? const <MapEntry<String, wire.ContextFieldType>>[])
-        if (e.value == wire.ContextFieldType.phone) e.key.trim().toLowerCase(),
-    };
-    String shown(ResolvedField f) {
-      if (f.isEmpty) return '';
-      if (masked && phoneColumns.contains(f.label.trim().toLowerCase())) return maskFactPhone(f.value);
-      return f.value;
-    }
-
-    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: shown(f));
+    ContactField field(ResolvedField f) => contactFieldOf(f, display, masked: masked);
     return _call = CallView(
       attemptId: attempt.attemptId,
       phoneE164: attempt.phoneE164,

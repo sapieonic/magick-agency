@@ -48,6 +48,12 @@ StationModalScope sameCall(String? attemptId, Set<AgentPhase> phases) =>
 /// [sameCall] for the call and phase on screen right now.
 StationModalScope thisCallNow(StationView? view) => sameCall(view?.callId, {if (view != null) view.phase});
 
+/// About one call, whatever its phase (AS19 S12): holds while [callId] is still the call on screen
+/// (a campaign attempt or an inbound call), from Call coming through What happened?; another
+/// call, the end of this one or leaving the station closes it. For what only shows the customer
+/// (Details, a fact's full value): the call connecting must not take it from the agent's hand.
+StationModalScope wholeCall(String? callId) => (v) => v != null && callId != null && v.callId == callId;
+
 /// "After this call": holds through the rest of this call (on call, wrap-up)
 /// and the moments after it, and closes when another call reaches the agent or
 /// the station closes.
@@ -383,11 +389,12 @@ IconData routeIcon(AudioRouteKind? kind) => switch (kind) {
 
 /// Every contact field and the history: the on-call "Details". No "Attempt N" and no "Calling
 /// from" (spec §8: not needed to do the call).
-/// About [call] only: it closes when that call ends or another one arrives,
-/// so it never shows one customer's details over the next one's call.
+/// About [call] only ([wholeCall]): it stays open as the call connects and ends, and closes when
+/// the call leaves the station or another one arrives, so it never shows one customer's details
+/// over the next one's call.
 Future<void> showDetailsSheet(BuildContext context, CallView call) {
   final view = ProviderScope.containerOf(context, listen: false).read(stationViewProvider);
-  final scope = sameCall(call.attemptId, {if (view != null) view.phase});
+  final scope = wholeCall(call.attemptId);
   return showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,

@@ -181,7 +181,8 @@ class _InterruptionCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = ref.watch(stationViewProvider.select((v) => v?.call?.displayName));
+    // The name the card heads with (AS19 S12: with chosen facts the server's, never the guess).
+    final name = ref.watch(stationViewProvider.select((v) => v?.call?.customerName));
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     return Column(

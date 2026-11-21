@@ -239,6 +239,40 @@ void main() {
   });
 
   group('the call phases', () {
+    // AS19 S4: a contact on a campaign that chose its card's facts, with no name.
+    for (final masked in [false, true]) {
+      testWidgets('a chosen campaign\'s nameless contact is "Customer", then the number and the first fact${masked ? ' (hidden)' : ''}', (tester) async {
+        final view = callView(
+          SoftphonePhase.onCall,
+          contactView: SoftphoneContactView(
+            campaignName: 'EMI',
+            maskPhone: masked,
+            facts: const FactsView(
+              chosen: true,
+              tiles: [
+                FactTileView(label: 'Other number', column: 'Alt Phone', raw: '9876543210', kind: FactKind.phone, parsed: '9876543210', key: 'alt_phone'),
+                FactTileView(label: 'Amount due', column: 'Amount Due', raw: '12500', kind: FactKind.money, parsed: '12500', key: 'amount_due'),
+              ],
+            ),
+          ),
+        );
+        await pumpSoftphone(tester, view);
+        final card = find.byKey(const Key('calling-to'));
+        expect(find.descendant(of: card, matching: find.text(StationCopy.customer)), findsOneWidget);
+        expect(
+          tester.widget<Text>(find.byKey(const Key('calling-to-line'))).data,
+          '+91 98123 45678 · Other number: ${masked ? '98••• ••210' : '+91 98765 43210'}',
+          reason: 'the number as typed first, then the first fact as the card shows it',
+        );
+      });
+    }
+
+    testWidgets('a named contact, or a campaign that did not choose, keeps the name over the number', (tester) async {
+      await pumpSoftphone(tester, callView(SoftphonePhase.onCall));
+      expect(find.descendant(of: find.byKey(const Key('calling-to')), matching: find.text('Rahul Verma')), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('calling-to-line'))).data, '+91 98123 45678');
+    });
+
     testWidgets('dialing: who, from where, Hold to hang up; no outcome yet', (tester) async {
       await pumpSoftphone(tester, callView(SoftphonePhase.dialing));
       expect(find.text('Dialling +91 98123 45678'), findsOneWidget);

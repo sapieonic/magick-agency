@@ -2026,6 +2026,77 @@ void main() {
     });
   });
 
+  group('a contact on a campaign that chose its card\'s facts (AS19)', () {
+    // The tagged campaign names its customer by a role and hides an alternate number by its type.
+    Map<String, Object?> chosenBootstrap() => bootstrapJson({
+          'taggable_campaigns': [
+            {
+              ...campaignJson,
+              'context_display': {
+                'roles': {'name': 'Borrower'},
+                'facts': [
+                  {'column': 'Amount Due', 'label': 'Amount due', 'key': 'amount_due', 'highlight': true},
+                  {'column': 'Alt phone', 'label': 'Other number', 'key': 'alt_phone'},
+                ],
+                'types': {'Amount Due': 'money', 'Alt phone': 'phone'},
+              },
+            },
+          ],
+        });
+    ManualCall onTheList(Map<String, Object?> context) => bridged({
+          'tag': tag,
+          'contact': {
+            'contact_id': 'c-1',
+            'state': 'in_progress',
+            'claimed': true,
+            'context': context,
+            'prior_attempts': <Object?>[],
+          },
+        });
+    const row = {'Name': 'Not this', 'Borrower': 'Sunita Patil', 'Amount Due': '12500', 'Alt phone': '9876543210'};
+
+    softphoneTest(
+      'the name is the name role\'s (S1), and the chosen card rides along for the compact card (S4)',
+      (h) {
+        h.host.view = campaignHost(call: onTheList(row));
+        h.pump();
+        final contact = h.view.contact!;
+        expect(contact.displayName, 'Sunita Patil', reason: 'the role, not a column that looks like a name');
+        expect(h.host.displayNames['mc-1'], 'Sunita Patil');
+        expect(contact.factsChosen, isTrue);
+        expect([for (final t in contact.facts!.tiles) t.label], ['Amount due', 'Other number']);
+      },
+      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
+    );
+
+    softphoneTest(
+      'a phone-typed column is hidden when the station\'s own campaign hides numbers (S3)',
+      (h) {
+        h.host.view = campaignHost(call: onTheList(row), masksPhone: true);
+        h.pump();
+        final contact = h.view.contact!;
+        expect(contact.maskPhone, isTrue);
+        final all = [...contact.heroFields, ...contact.otherFields];
+        expect(all.firstWhere((f) => f.label == 'Alt phone').value, '98••• ••210');
+        expect(all.any((f) => f.value.contains('43210')), isFalse);
+      },
+      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
+    );
+
+    softphoneTest(
+      'shown whole when the campaign shows numbers, or when the call is tagged to a campaign whose setting is not known here',
+      (h) {
+        h.host.view = campaignHost(call: onTheList(row));
+        h.pump();
+        expect([...h.view.contact!.heroFields].firstWhere((f) => f.label == 'Alt phone').value, '9876543210');
+        h.host.view = campaignHost(call: onTheList(row), campaignId: 'camp-other', masksPhone: true);
+        h.pump();
+        expect(h.view.contact!.maskPhone, isFalse, reason: 'another campaign\'s setting is not on the soft phone');
+      },
+      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
+    );
+  });
+
   softphoneTest('the matched contact’s name reaches the host for CallKit', (h) {
     h.openWith(
       call: bridged({

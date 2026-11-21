@@ -144,7 +144,8 @@ class RedialTag extends StatelessWidget {
 }
 
 /// The customer card (03, 04; it does not move between them): initials, the name (the number
-/// leads when there is none), the place and the number (masked where the campaign says so, AS9),
+/// leads when there is none), the place and the number (masked where the campaign says so, AS9;
+/// with chosen facts the number first and the place on one line, cut with "…", AS19 S12),
 /// the contact's promise to pay, and the tiles. With the campaign's chosen facts (AS19): the
 /// heading is the server's name, else "Customer", always with the number under it; its 2 × 2
 /// [FactGrid] (none for an empty choice), the highlight first and the full row, press and hold for
@@ -239,15 +240,28 @@ class CustomerCard extends ConsumerWidget {
                             header: true,
                             child: Text(heading ?? phone, key: const Key('call-headline'), style: text.headlineMedium),
                           ),
-                          Wrap(
-                            spacing: Space.md,
-                            runSpacing: 2,
-                            children: [
-                              if (place != null && place.isNotEmpty)
-                                _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
-                              if (heading != null) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
-                            ],
-                          ),
+                          if (chosen)
+                            // AS19 S12, as the console: the number first; then the place, on one
+                            // line, cut with "…" (beside the number when it fits, else under it).
+                            Wrap(
+                              spacing: Space.md,
+                              runSpacing: 2,
+                              children: [
+                                _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                                if (place != null && place.isNotEmpty)
+                                  _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place, oneLine: true),
+                              ],
+                            )
+                          else
+                            Wrap(
+                              spacing: Space.md,
+                              runSpacing: 2,
+                              children: [
+                                if (place != null && place.isNotEmpty)
+                                  _IconText(key: const Key('customer-place'), icon: Icons.place_outlined, text: place),
+                                if (heading != null) _IconText(key: const Key('customer-phone'), icon: Icons.call_outlined, text: phone),
+                              ],
+                            ),
                         ],
                       ),
                     ),
@@ -332,10 +346,13 @@ class CallLaterTagPill extends StatelessWidget {
 }
 
 class _IconText extends StatelessWidget {
-  const _IconText({super.key, required this.icon, required this.text});
+  const _IconText({super.key, required this.icon, required this.text, this.oneLine = false});
 
   final IconData icon;
   final String text;
+
+  /// One line, cut with "…" (the chosen card's place).
+  final bool oneLine;
 
   @override
   Widget build(BuildContext context) {
@@ -345,7 +362,15 @@ class _IconText extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: t.textSecondary),
         const SizedBox(width: Space.xs),
-        Flexible(child: Text(text, style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary))),
+        Flexible(
+          child: Text(
+            text,
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: t.textSecondary),
+            maxLines: oneLine ? 1 : null,
+            softWrap: !oneLine,
+            overflow: oneLine ? TextOverflow.ellipsis : null,
+          ),
+        ),
       ],
     );
   }

@@ -5,7 +5,8 @@
 /// text in a test, on a fresh install and after a locale change).
 library;
 
-export '../../../core/station/fact_phone.dart' show formatFactPhone, maskFactPhone;
+// AS19's one phone rule, the domain's own (`fact-phone.ts`, R6, S3), as `agency_wire` ports it.
+export 'package:agency_wire/agency_wire.dart' show formatFactPhone, maskFactPhone;
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

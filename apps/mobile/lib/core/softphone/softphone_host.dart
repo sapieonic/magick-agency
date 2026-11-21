@@ -44,6 +44,7 @@ class SoftphoneHostView {
     this.ringMuted = false,
     this.reconnectDeadline,
     this.hangupFailure,
+    this.campaignMasksPhone = false,
   });
 
   /// The live session's id.
@@ -61,6 +62,11 @@ class SoftphoneHostView {
   /// The campaign of a `campaign` session (the SP7 preset tag); null for `softphone`.
   final String? campaignId;
   final String? campaignName;
+
+  /// A `campaign` session's campaign hides customers' numbers (its bootstrap's `phone_display` is
+  /// `masked`, AS9). The one campaign whose setting the soft phone can know: a tagged campaign's
+  /// soft-phone entry does not carry it. False for a `softphone` session.
+  final bool campaignMasksPhone;
 
   /// The socket. The soft phone re-reads its bootstrap when this returns to
   /// [StationLink.open] after the first open (a call that settled while the
@@ -125,6 +131,7 @@ class SoftphoneHostView {
       other.accountId == accountId &&
       other.campaignId == campaignId &&
       other.campaignName == campaignName &&
+      other.campaignMasksPhone == campaignMasksPhone &&
       other.link == link &&
       other.everOpened == everOpened &&
       other.phase == phase &&
@@ -143,6 +150,7 @@ class SoftphoneHostView {
     kind,
     accountId,
     campaignId,
+    campaignMasksPhone,
     link,
     everOpened,
     phase,
