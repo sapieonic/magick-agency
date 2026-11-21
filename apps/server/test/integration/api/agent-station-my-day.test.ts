@@ -490,7 +490,11 @@ describe('the counts read\'s plan, on seeded call tables', () => {
        SELECT gen_random_uuid(), $1, $2, $3, $4, g + 10, '+919000000001', 'ended', s.id, $5::timestamptz, $5::timestamptz,
               $5::timestamptz + interval '20 seconds', 'no_answer'
          FROM generate_series(1, 20000) g
-         JOIN LATERAL (SELECT id FROM agency_agent_sessions WHERE agent_user_id <> $6 ORDER BY id OFFSET (g % 3000) LIMIT 1) s ON true`,
+         -- Each attempt on session number g % 3000, the sessions numbered once: a LATERAL
+         -- ORDER BY ... OFFSET per row sorted the 3,000 sessions 20,000 times and ran this hook
+         -- past its limit on CI.
+         JOIN (SELECT id, row_number() OVER (ORDER BY id) - 1 AS n
+                 FROM agency_agent_sessions WHERE agent_user_id <> $6) s ON s.n = g % 3000`,
       [c['P'], contact.id, w.tenant, w.account, at(-290), w.me]);
     const phone = await insertSoftphoneSession({ ...scope(), agent_user_id: randomUUID(), state: 'offline', joined_at: at(-300), left_at: at(-200) });
     await pool.query(
