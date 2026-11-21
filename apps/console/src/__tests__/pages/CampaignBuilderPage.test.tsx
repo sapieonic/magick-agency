@@ -279,6 +279,20 @@ describe('the page composes the mapper', () => {
     });
   });
 
+  it('saves the columns picked “On the card” as the new campaign’s card facts, before the import (AS19)', async () => {
+    await reachMapping();
+    fireEvent.change(screen.getByLabelText('Use Internal Score as'), { target: { value: 'hero' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
+    await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign).toHaveBeenCalledWith(
+      'camp-1',
+      { context_display: { facts: [{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }] } },
+      't1',
+      'a1',
+    );
+    expect(mocks.updateAgencyCampaign.mock.invocationCallOrder[0]!).toBeLessThan(mocks.startRosterIngest.mock.invocationCallOrder[0]!);
+  });
+
   /**
    * The country code applied to numbers written without one.
    *

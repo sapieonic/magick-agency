@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { getIngestJob } from '../api/agencyCampaigns';
 import { getInsightsUploads } from '../api/agencyInsights';
+import { getCampaignContact, getCampaignContacts } from '../api/agencySpine';
 
 /** The most imports whose columns are read: the newest, which name what agents see now. */
 export const CAMPAIGN_COLUMNS_IMPORTS_MAX = 3;
@@ -26,7 +27,7 @@ export function useCampaignColumns(
   tenantId: string | null | undefined,
   accountId: string | null | undefined,
   enabled: boolean,
-): { columns: string[]; loading: boolean } {
+): { columns: string[]; loading: boolean; ready: boolean } {
   // One value for "no other root", whatever shape the campaign gave it: a new fetcher is a new read.
   const root = rootCampaignId && rootCampaignId !== campaignId ? rootCampaignId : null;
   const fetcher = useCallback(async (): Promise<string[]> => {
@@ -59,5 +60,44 @@ export function useCampaignColumns(
     initialData: [] as string[],
     enabled: enabled && Boolean(campaignId && tenantId && accountId),
   });
-  return { columns: data, loading };
+  const on = enabled && Boolean(campaignId && tenantId && accountId);
+  // `loading` is true from the first render the read is on, so "on and not loading" is "read".
+  return { columns: data, loading, ready: on && !loading };
+}
+
+/** The most customers campaign Settings reads as samples. */
+export const CAMPAIGN_SAMPLE_ROWS_MAX = 3;
+
+/**
+ * A few of the campaign's customers' uploaded columns (`AgencyContactDetail.context`), for campaign
+ * Settings' samples (AS19): the value beside each column in the add-fact picker, and the script's
+ * "As the agent reads it" preview. The first {@link CAMPAIGN_SAMPLE_ROWS_MAX} contacts of the
+ * roster list, then each one's detail (the list carries no columns). Read once, by an editor, as
+ * {@link useCampaignColumns}. A failure is no samples (the picker then shows none, and the preview
+ * says each value is not given), never an error on the page.
+ */
+export function useCampaignSampleRows(
+  campaignId: string | undefined,
+  tenantId: string | null | undefined,
+  accountId: string | null | undefined,
+  enabled: boolean,
+): Array<Record<string, unknown>> {
+  const fetcher = useCallback(async (): Promise<Array<Record<string, unknown>>> => {
+    if (!campaignId || !tenantId || !accountId) return [];
+    try {
+      const page = await getCampaignContacts(campaignId, {}, { limit: CAMPAIGN_SAMPLE_ROWS_MAX }, tenantId, accountId);
+      const rows = await Promise.all(
+        page.rows.slice(0, CAMPAIGN_SAMPLE_ROWS_MAX).map((row) =>
+          getCampaignContact(campaignId, row.id, tenantId, accountId).catch(() => null)),
+      );
+      return rows.flatMap((detail) => (detail && detail.context && typeof detail.context === 'object' ? [detail.context] : []));
+    } catch {
+      return [];
+    }
+  }, [campaignId, tenantId, accountId]);
+  const { data } = useAsyncResource(fetcher, {
+    initialData: [] as Array<Record<string, unknown>>,
+    enabled: enabled && Boolean(campaignId && tenantId && accountId),
+  });
+  return data;
 }

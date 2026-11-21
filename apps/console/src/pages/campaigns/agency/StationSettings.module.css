@@ -1,4 +1,4 @@
-/* Campaign Settings: What agents see and Script (agent station AS6, AS9, BE-6, BE-8). */
+/* Campaign Settings: What agents see and Script (agent station AS6, AS9, AS19, BE-6, BE-8). */
 
 .stack {
   display: flex;
@@ -282,9 +282,492 @@
   display: none;
 }
 
+/* The card's facts (AS19) */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.blockHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.count {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.count[data-full] {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.factRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.factRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.factRow[data-highlight] {
+  border-color: var(--accent);
+}
+
+.factRow[data-error] {
+  border-color: var(--danger-border);
+}
+
+.grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.grip[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.grip:focus-visible,
+.iconBtn:focus-visible,
+.pickItem:focus-visible,
+.chip:focus-visible,
+.fixBtn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.factMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.factTop {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.labelWrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.labelWrap .labelInput {
+  padding-right: 52px;
+  font-weight: 600;
+}
+
+.labelWrap .counter {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.factActions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.iconBtn[data-on] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.factFrom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.fromText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fromText b {
+  color: var(--text-primary);
+}
+
+.sample {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.typeSelect {
+  width: auto;
+  min-width: 9rem;
+  padding: 4px 8px;
+  font-size: 0.8125rem;
+}
+
+.factMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.key {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.keyBad {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.pill {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.putBack,
+.fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-subtle);
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+
+.fixBtn {
+  min-height: 28px;
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+}
+
+.fixBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fixSelect {
+  width: auto;
+  padding: 3px 8px;
+  font-size: 0.8125rem;
+}
+
+.addWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.addButton[data-full] {
+  opacity: 0.6;
+}
+
+.limit {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--danger);
+}
+
+.picker {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.pickList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pickItem {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  text-align: left;
+}
+
+.pickItem:hover {
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+}
+
+.pickItem .sample {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.types summary {
+  cursor: pointer;
+}
+
+.types[open] summary {
+  margin-bottom: 8px;
+}
+
+/* The script's keys, tinted behind the text (AS19) */
+
+.tokWrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+}
+
+.tokBack {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: transparent;
+  pointer-events: none;
+}
+
+/* Fields are 16px on a small screen (web-ui's global.css, so iOS does not zoom): the tint follows. */
+@media (max-width: 768px) {
+  .tokBack {
+    font-size: 16px;
+  }
+}
+
+.tokKey {
+  border-radius: 4px;
+  background: var(--accent-subtle);
+  box-shadow: 0 0 0 1px var(--accent-subtle);
+  color: transparent;
+}
+
+.tokBad {
+  border-radius: 4px;
+  background: var(--danger-subtle);
+  color: transparent;
+  text-decoration: underline wavy var(--danger);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.tokWrap .tokArea {
+  position: relative;
+  display: block;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tokWrap .tokArea[aria-invalid='true'] {
+  border-color: var(--danger-border);
+}
+
+.keyPick {
+  margin-top: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.keyPickHead {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.keyPick ul {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.keyOption {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.keyOption[aria-selected='true'],
+.keyOption:hover {
+  background: var(--accent-subtle);
+}
+
+.keyOption .sample {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* As the agent reads it */
+
+.hear {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-subtle);
+}
+
+.hearHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hearOpening {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.hearSteps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
+}
+
+.readValue {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.readKey {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.notGiven {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 @media (max-width: 480px) {
   .stepRow {
     flex-direction: column;
+  }
+
+  .stepRow .tokWrap {
+    align-self: stretch;
+  }
+
+  .factTop {
+    flex-wrap: wrap;
   }
 
   .typeRow {

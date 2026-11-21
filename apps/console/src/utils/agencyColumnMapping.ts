@@ -4,7 +4,9 @@ import {
   type AgencyIngestRequest,
 } from '../types/agency-campaign';
 import type { AgencyContextDisplay } from '../types/agency';
+import type { AgencyFactField } from '@magick-agency/contracts/agency';
 import { joinAnd } from './agencyCampaignConfigForm';
+import { NAME_GUESS_COLUMNS, PLACE_GUESS_COLUMNS, guessedColumn, newFact } from './agency/stationSettings';
 
 /**
  * Column mapping — the roles, their arity rules, and the request they
@@ -35,13 +37,13 @@ import { joinAnd } from './agencyCampaignConfigForm';
 
 export type ColumnRole = 'phone' | 'timezone' | 'hero' | 'detail' | 'ignore';
 
-/** Up to four fields get the agent's big-type treatment. */
+/** Up to four columns go on the customer card (AS19: `AGENCY_FACT_FIELDS_MAX`). */
 export const MAX_HERO_FIELDS = 4;
 
 export const ROLE_LABELS: Record<ColumnRole, string> = {
   phone: 'Phone number',
   timezone: 'Timezone',
-  hero: 'Show first',
+  hero: 'On the card',
   detail: 'Detail',
   ignore: 'Ignore',
 };
@@ -534,14 +536,32 @@ export function buildIngestRequest(
 }
 
 /**
- * The `context_display` the campaign is saved with — this is the `hero_fields`
- * config the Agent Console reads.
- *
- * Order is the operator's pick order, not file order: the console renders heroes
- * top-down and the first one is what an agent reads while the phone is ringing.
+ * The card's facts a new campaign is saved with (AS19): the columns picked "On the card", in the
+ * operator's pick order (the card draws them in that order), each named and keyed by the default
+ * rule (the header cut to 16 letters; `{key}` from the header). The column the card would guess
+ * as the customer's name or the line under it is left out: it is shown there already. Campaign
+ * Settings is where they are renamed, reordered and highlighted.
+ */
+export function cardFactsFromMapping(state: MappingState): AgencyFactField[] {
+  // The columns the contact keeps (not the phone, the timezone or an ignored one), in file order.
+  const kept = Object.keys(state.roles).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+  const shownElsewhere = [guessedColumn(kept, NAME_GUESS_COLUMNS, []), guessedColumn(kept, PLACE_GUESS_COLUMNS, [])];
+  const facts: AgencyFactField[] = [];
+  for (const column of state.heroOrder.slice(0, MAX_HERO_FIELDS)) {
+    if (shownElsewhere.includes(column)) continue;
+    const fact = newFact(column, facts);
+    if (fact.label !== '') facts.push(fact);
+  }
+  return facts;
+}
+
+/**
+ * The `context_display` a new campaign is saved with: the card's facts picked on this screen
+ * ({@link cardFactsFromMapping}), or nothing when none was picked (the card then shows what the
+ * server guesses, and Settings opens with it).
  */
 export function buildContextDisplay(state: MappingState): AgencyContextDisplay {
   const display: AgencyContextDisplay = {};
-  if (state.heroOrder.length > 0) display.hero = [...state.heroOrder];
+  if (state.heroOrder.length > 0) display.facts = cardFactsFromMapping(state);
   return display;
 }

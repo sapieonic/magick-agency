@@ -316,12 +316,12 @@ export default function CampaignBuilderPage() {
     // A check never creates the draft; once the draft exists (a second file), it is
     // compared with the draft's roster like any other campaign's.
     peekCampaignId: () => campaignId ?? undefined,
-    // Hero fields are campaign config, not ingest config — they are what the
-    // Agent Console reads to decide which fields get the big type.
+    // The card's facts are campaign config, not ingest config (AS19): the columns picked
+    // "On the card" are what agents see on the customer card, until Settings changes them.
     onIngestStarted: async (id, currentMapping) => {
       setImportSent(true);
       const display = buildContextDisplay(currentMapping);
-      if (display.hero) {
+      if (display.facts) {
         await updateAgencyCampaign(
           id,
           { context_display: display } as never,
@@ -757,6 +757,7 @@ export default function CampaignBuilderPage() {
                         // show one mapping and import another. "Change the column
                         // mapping" re-opens it, and the file is checked again.
                         disabled={phase !== 'mapping'}
+                        cardChoice
                       />
                       {phase === 'mapping' ? (
                         <div className={styles.ingestActions}>
