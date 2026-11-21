@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * Archived campaigns (AR1–AR6): the drafts and stopped campaigns taken off the Campaigns page.
+ * Archived campaigns (AR1–AR7): the drafts and stopped campaigns taken off the Campaigns page.
  *
  * Pinned here: the list is the archived read (`archived=true`), newest archived first, each row
  * opening its campaign with when and by whom it was archived; Restore takes the row away at once
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   setAgencyCampaignArchived: vi.fn(),
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
+  track: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -24,6 +25,7 @@ vi.mock('../../api/agencyCampaigns', () => ({
   listArchivedAgencyCampaignsPage: mocks.listArchivedAgencyCampaignsPage,
   setAgencyCampaignArchived: mocks.setAgencyCampaignArchived,
 }));
+vi.mock('../../analytics/events', () => ({ trackAgencyCampaignArchiveAction: mocks.track }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
@@ -88,6 +90,52 @@ describe('AgencyArchivedCampaignsPage', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('Campaign restored to the Campaigns page.', 'success');
     expect(screen.getByText('Spring renewals')).toBeTruthy();
     expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    // The restored row's button went with it: focus goes to the page's heading, not the body.
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 }));
+    expect(mocks.track).toHaveBeenCalledWith({ campaign_id: 'c-draft', action: 'unarchive', status: 'draft', from: 'archived_list' });
+  });
+
+  it('sends one restore for two presses in the same moment', async () => {
+    let answer: (v: unknown) => void = () => {};
+    mocks.setAgencyCampaignArchived.mockReturnValue(new Promise((r) => { answer = r; }));
+    renderPage();
+    const button = await screen.findByRole('button', { name: 'Restore Diwali leads' });
+    // Both inside one act: no render between them, as with two clicks in one frame.
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(mocks.setAgencyCampaignArchived).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Restoring Diwali leads' }).textContent).toContain('Restoring…');
+    await act(async () => answer({ ...DRAFT, archived_at: null }));
+    await waitFor(() => expect(screen.queryByText('Diwali leads')).toBeNull());
+    expect(mocks.showErrorToast).not.toHaveBeenCalled();
+  });
+
+  it('does not let a re-read that started before the restore put the row back', async () => {
+    renderPage();
+    await screen.findByText('Diwali leads');
+    // Returning to the tab starts a quiet re-read; it answers only after the restore, with the
+    // list as it was before it.
+    let staleAnswer: (v: unknown) => void = () => {};
+    mocks.listArchivedAgencyCampaignsPage.mockReturnValueOnce(new Promise((r) => { staleAnswer = r; }));
+    act(() => { window.dispatchEvent(new Event('focus')); });
+    mocks.setAgencyCampaignArchived.mockResolvedValue({ ...DRAFT, archived_at: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Diwali leads' }));
+    await waitFor(() => expect(screen.queryByText('Diwali leads')).toBeNull());
+    await act(async () => staleAnswer({ campaigns: [DRAFT, STOPPED], total: 2 }));
+    expect(screen.queryByText('Diwali leads')).toBeNull();
+  });
+
+  it('reads the list again once every loaded row is restored and older ones remain', async () => {
+    mocks.listArchivedAgencyCampaignsPage
+      .mockResolvedValueOnce({ campaigns: [DRAFT], total: 2 })
+      .mockResolvedValueOnce({ campaigns: [STOPPED], total: 1 });
+    mocks.setAgencyCampaignArchived.mockResolvedValue({ ...DRAFT, archived_at: null });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore Diwali leads' }));
+    expect(await screen.findByText('Spring renewals')).toBeTruthy();
+    expect(mocks.listArchivedAgencyCampaignsPage).toHaveBeenCalledTimes(2);
   });
 
   it('says why a restore was refused, and re-reads the list', async () => {
@@ -106,11 +154,33 @@ describe('AgencyArchivedCampaignsPage', () => {
     expect(screen.queryByRole('button', { name: /Restore/ })).toBeNull();
   });
 
-  it('says how to archive one when there are none', async () => {
+  it('says how to archive one when there are none, to a role that may', async () => {
     mocks.listArchivedAgencyCampaignsPage.mockResolvedValue({ campaigns: [], total: 0 });
     renderPage();
     expect((await screen.findByTestId('archived-empty')).textContent).toContain('Archive a draft or a stopped campaign from its page');
     expect(screen.queryByRole('list')).toBeNull();
+  });
+
+  it('tells a viewer only that there are none', async () => {
+    mocks.useTenant.mockReturnValue(tenant('viewer'));
+    mocks.listArchivedAgencyCampaignsPage.mockResolvedValue({ campaigns: [], total: 0 });
+    renderPage();
+    expect((await screen.findByTestId('archived-empty')).textContent).toBe('No archived campaigns.');
+  });
+
+  it('does not skip a campaign when one was restored elsewhere since the list was read', async () => {
+    const OLD: AgencyCampaign = { id: 'c-old', name: 'Monsoon offers', status: 'stopped', archived_at: '2026-10-01T06:00:00Z' };
+    // Held: Diwali leads of three. Restored from another window since, so the rest moved up one:
+    // the page at offset 1 now starts past Spring renewals.
+    mocks.listArchivedAgencyCampaignsPage
+      .mockResolvedValueOnce({ campaigns: [DRAFT], total: 3 })
+      .mockResolvedValueOnce({ campaigns: [OLD], total: 2 })
+      .mockResolvedValueOnce({ campaigns: [STOPPED, OLD], total: 2 });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Show older campaigns' }));
+    expect(await screen.findByText('Spring renewals')).toBeTruthy();
+    expect(screen.getByText('Monsoon offers')).toBeTruthy();
+    expect(mocks.listArchivedAgencyCampaignsPage).toHaveBeenLastCalledWith('tenant-1', 'account-1', 0, 100);
   });
 
   it('loads older archived campaigns on request, from the end of the list held', async () => {

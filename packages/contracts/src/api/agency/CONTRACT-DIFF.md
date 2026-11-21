@@ -269,6 +269,14 @@ station registry's detach time, held in memory) are the floor's, console-side li
 review dataset's `presence.break_overruns?` (`AgentReviewBreakOverruns`, BE-12, `../../reports/agent.ts`)
 reads 0060's event columns.
 
+Archived campaigns (decisions AR1–AR7, `0063_campaign_archive.sql`) add two fields to the campaign object with no
+dialer twin: `archived_at?: string | null` and `archived_by?: AgencyCampaignActor | null` (the
+`archived_by_*` columns folded by `formatAgencyCampaignResponse`, like `last_transition_by`), and
+`AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES` (`draft`, `stopped`, typed by the dialer contract's
+`AgencyCampaignStatus`). `AgencyCampaignArchiveErrorCode` / `AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES`
+are declared in `../../errors.ts` and re-exported from `agency-campaign.ts`; `campaign_archived` is
+also an `AgencyCampaignLifecycleErrorCode` (Start on an archived draft).
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.

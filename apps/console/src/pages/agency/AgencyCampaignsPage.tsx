@@ -8,6 +8,7 @@ import { CONSOLE_SECTIONS, DIALER_PATH, passesGate } from '../../utils/consoleNa
 import {
   countCampaigns,
   filterCampaigns,
+  SEARCH_THRESHOLD,
   type CampaignCounts,
   type CampaignFilter,
 } from '../../utils/agencyCampaignsHome';
@@ -65,8 +66,6 @@ import styles from './AgencyCampaignsPage.module.css';
 /** The sidebar's Take calls entry (its one tab opens `/dialer`): this page offers it to whoever the sidebar does. */
 const TAKE_CALLS_GATE = CONSOLE_SECTIONS.flatMap((s) => s.tabs).find((t) => t.to === DIALER_PATH)!.gate;
 
-/** Below this many campaigns the tabs are enough, and a search box is clutter. */
-const SEARCH_THRESHOLD = 6;
 
 const FILTERS: Array<{ key: CampaignFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -144,8 +143,16 @@ export function AgencyCampaignsPage() {
 
       {loading && !campaigns && <LoadingSpinner />}
 
-      {isEmpty && <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />}
-      {isEmpty && <ArchivedLink count={archivedCount} />}
+      {/*
+        No campaign on this page: the getting-started guide, unless every campaign the account has
+        is archived (AR1–AR7), which is not a first visit. Held until the archived count answers,
+        so the guide does not flash up first; a count that cannot be read falls back to the guide.
+      */}
+      {isEmpty && archivedCount === undefined && <LoadingSpinner />}
+      {isEmpty && archivedCount !== undefined && (archivedCount ?? 0) === 0 && (
+        <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />
+      )}
+      {isEmpty && (archivedCount ?? 0) > 0 && <AllArchived count={archivedCount!} canCreate={canCreate} />}
 
       {hasCampaigns && (
         <div className={styles.layout}>
@@ -267,11 +274,37 @@ export function AgencyCampaignsPage() {
   );
 }
 
+/** Every campaign the account has is archived: say so, and where they are, not "get started". */
+function AllArchived({ count, canCreate }: { count: number; canCreate: boolean }) {
+  return (
+    <div className={styles.idle} data-testid="campaigns-all-archived">
+      <span className={styles.idleIcon} aria-hidden="true">
+        <Archive size={18} />
+      </span>
+      <div>
+        <p className={styles.idleTitle}>
+          {count === 1 ? 'Your only campaign is archived' : `All ${formatCount(count)} campaigns are archived`}
+        </p>
+        <p className={styles.idleText}>
+          <Link to="/agency/campaigns/archived">Open Archived campaigns</Link>
+          {canCreate ? ' to restore one, or start a new campaign.' : ' to see them.'}
+        </p>
+        {canCreate && (
+          <Link to="/agency/campaigns/new" className={`btn-primary ${styles.headerAction}`}>
+            <Plus size={16} aria-hidden="true" />
+            New campaign
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
- * The way to Archived campaigns (AR1–AR6), shown once the account has archived one. Nothing while
+ * The way to Archived campaigns (AR1–AR7), shown once the account has archived one. Nothing while
  * the count is unknown or zero: an empty screen is not worth a link, and search finds it anyway.
  */
-function ArchivedLink({ count }: { count: number | null }) {
+function ArchivedLink({ count }: { count: number | null | undefined }) {
   if (!count) return null;
   return (
     <Link to="/agency/campaigns/archived" className={styles.archivedLink} data-testid="archived-campaigns-link">

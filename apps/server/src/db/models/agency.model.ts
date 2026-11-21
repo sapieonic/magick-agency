@@ -217,7 +217,7 @@ export interface AgencyCampaignRecord {
    */
   stopping_at: Date | null;
   /**
-   * When the campaign was archived (0063, decisions AR1–AR6), or NULL when it is not. Archiving is
+   * When the campaign was archived (0063, decisions AR1–AR7), or NULL when it is not. Archiving is
    * not a status: only a `draft` or `stopped` campaign is archived (the CHECK
    * `ck_agency_campaign_archived_status`), it keeps that status, and `transitionStatus` refuses it,
    * so an archived draft cannot be started until it is restored. Written and cleared only by
@@ -811,4 +811,10 @@ export const AGENCY_CAMPAIGN_TERMINAL_STATUSES: readonly AgencyCampaignStatus[] 
 export interface AgencyCampaignDependent {
   id: string;
   status: AgencyCampaignStatus;
+  /**
+   * Present, `true`, only on an archived campaign (0063, AR1–AR7): an archived draft still
+   * depends on the profile (a restore revives it), but it is not on the Campaigns page, so the
+   * refusal says so rather than naming a draft nobody can find there.
+   */
+  archived?: true;
 }

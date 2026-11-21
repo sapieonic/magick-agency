@@ -579,6 +579,21 @@ a.liveOpen {
   margin-right: 16px;
 }
 
+/* A narrow column: Restore drops under its row rather than squeezing the name. */
+@container main (max-width: 520px) {
+  .archivedItem {
+    flex-wrap: wrap;
+  }
+
+  .archivedItem > a {
+    flex-basis: 100%;
+  }
+
+  .restoreAction {
+    margin: 0 16px 12px;
+  }
+}
+
 /* ── Rail ────────────────────────────────────────────────────────────────── */
 
 .rail {

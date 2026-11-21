@@ -149,6 +149,24 @@ beforeEach(async () => {
 afterEach(async () => { await app.close(); });
 
 describe('DELETE — refused while a live agency campaign depends on the profile', () => {
+  it('counts an archived draft as one, and says where archived campaigns are (AR1–AR7)', async () => {
+    const archived = { id: 'camp-3', status: 'draft', archived: true as const };
+    mocks.campaigns.findLiveDependentsOnAnalysisProfile.mockResolvedValue([RUNNING, DRAFT, archived]);
+
+    const body = (await app.inject({ method: 'DELETE', url: URL, headers: HEADERS })).json();
+
+    expect(body.message).toContain('3 agency campaigns (1 running, 1 draft, 1 archived draft) use this profile directly');
+    expect(body.message).toMatch(/Archived campaigns are under Archived campaigns\.$/);
+    expect(body.details.campaigns).toEqual([RUNNING, DRAFT, archived]);
+    expect(mocks.profiles.softDelete).not.toHaveBeenCalled();
+  });
+
+  it('adds nothing about the archive when no dependent is archived', async () => {
+    mocks.campaigns.findLiveDependentsOnAnalysisProfile.mockResolvedValue([DRAFT]);
+    const body = (await app.inject({ method: 'DELETE', url: URL, headers: HEADERS })).json();
+    expect(body.message).not.toMatch(/Archived/);
+  });
+
   it('answers 409 with the allow-listed code and never touches the profile', async () => {
     mocks.campaigns.findLiveDependentsOnAnalysisProfile.mockResolvedValue([RUNNING]);
 

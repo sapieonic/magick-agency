@@ -94,6 +94,20 @@ describe('findLiveDependentsOnAnalysisProfile — against a real Postgres', () =
     expect(JSON.stringify(dependents)).not.toContain('Running');
   });
 
+  it('still returns an archived draft, marked archived and nothing more (AR1–AR7)', async () => {
+    const profileId = randomUUID();
+    const draft = await insertAgencyCampaign({ name: 'Draft', status: 'draft', analysis_profile_id: profileId });
+    const archived = await insertAgencyCampaign({
+      name: 'Archived', status: 'draft', analysis_profile_id: profileId, archived_at: new Date(),
+    });
+    const dependents = await agencyCampaignRepository.findLiveDependentsOnAnalysisProfile(profileId, TENANT, ACCOUNT);
+    expect(dependents).toEqual([
+      { id: draft.id, status: 'draft' },
+      { id: archived.id, status: 'draft', archived: true },
+    ]);
+    expect(JSON.stringify(dependents)).not.toContain('Archived');
+  });
+
   it('ignores completed and stopped campaigns — their reference is history', async () => {
     const profileId = randomUUID();
     await insertAgencyCampaign({

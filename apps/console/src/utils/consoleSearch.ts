@@ -154,7 +154,7 @@ const NEW_CAMPAIGN: PageEntry = {
   keywords: ['create campaign', 'add campaign', 'upload', 'roster'],
 };
 
-/** Archived campaigns (AR1–AR6): the Campaigns page's link under its list, gated as that page is. */
+/** Archived campaigns (AR1–AR7): the Campaigns page's link under its list, gated as that page is. */
 const ARCHIVED_CAMPAIGNS: PageEntry = {
   key: 'campaigns:archived',
   title: 'Archived campaigns',

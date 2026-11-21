@@ -448,6 +448,10 @@ export function trackAgencyCampaignLifecycleFailed(props: EventCatalog['agency_c
   track('agency_campaign_lifecycle_failed', props);
 }
 
+export function trackAgencyCampaignArchiveAction(props: EventCatalog['agency_campaign_archive_action']): void {
+  track('agency_campaign_archive_action', props);
+}
+
 export function trackAgencyCampaignStallSurfaced(props: EventCatalog['agency_campaign_stall_surfaced']): void {
   track('agency_campaign_stall_surfaced', props);
 }
@@ -1183,6 +1187,17 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     confirmed: boolean;
     /** The campaign tab whose header it was taken from, or `live_floor` for a Live floor card. */
     from_tab: CampaignTabId | 'live_floor';
+  };
+  /**
+   * {@link trackAgencyCampaignArchiveAction}: a campaign archived or restored (AR1–AR7), on
+   * success only. `status` is the campaign's (archiving does not change it); `from` is where it
+   * was pressed: a campaign screen's header or a row of Archived campaigns.
+   */
+  agency_campaign_archive_action: {
+    campaign_id: string;
+    action: 'archive' | 'unarchive';
+    status: AgencyCampaignStatus;
+    from: 'campaign_header' | 'archived_list';
   };
   /** {@link trackAgencyCampaignLifecycleFailed} */
   agency_campaign_lifecycle_failed: {

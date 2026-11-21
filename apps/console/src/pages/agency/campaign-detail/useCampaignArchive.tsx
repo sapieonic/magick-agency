@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { setAgencyCampaignArchived } from '../../../api/agencyCampaigns';
 import { ApiError } from '../../../api/client';
-import { ARCHIVE_CONFIRM } from '../../../utils/agencyCampaignArchive';
+import { ARCHIVE_CONFIRM, ARCHIVE_TOASTS, trackArchiveAction } from '../../../utils/agencyCampaignArchive';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 
 export type CampaignArchiveAction = 'archive' | 'unarchive';
@@ -20,7 +21,7 @@ export interface CampaignArchive {
 }
 
 /**
- * Archive and restore from the campaign header (decisions AR1–AR6). The page supplies how it
+ * Archive and restore from the campaign header (decisions AR1–AR7). The page supplies how it
  * paints the campaign; this owns the click lock, the confirmation and the refusals. A 409 (the
  * campaign moved, say it was started from another window) re-reads the campaign so the header
  * shows what it really is, and says why.
@@ -42,6 +43,7 @@ export function useCampaignArchive({
   commitCampaign: (campaign: AgencyCampaign) => void;
 }): CampaignArchive {
   const { showToast, showErrorToast } = useToast();
+  const navigate = useNavigate();
   const [busy, setBusy] = useState<CampaignArchiveAction | null>(null);
   // For the campaign it was opened on, never the next one a screen without a `key` moves to.
   const [confirmingFor, setConfirmingFor] = useState<string | null>(null);
@@ -56,21 +58,24 @@ export function useCampaignArchive({
       try {
         const updated = await setAgencyCampaignArchived(id, action, tenantId, accountId);
         commitCampaign(updated);
-        showToast(
-          action === 'archive'
-            ? 'Campaign archived. It is now under Archived campaigns.'
-            : 'Campaign restored to the Campaigns page.',
-          'success',
-        );
+        if (action === 'archive') {
+          showToast(ARCHIVE_TOASTS.archived, 'success', undefined, {
+            label: 'View archived',
+            onClick: () => navigate('/agency/campaigns/archived'),
+          });
+        } else {
+          showToast(ARCHIVE_TOASTS.restored, 'success');
+        }
+        trackArchiveAction({ id, status: updated.status }, action, 'campaign_header');
       } catch (err: unknown) {
         if (err instanceof ApiError && err.statusCode === 409) void refreshCampaign();
-        showErrorToast(err, action === 'archive' ? 'Could not archive the campaign.' : 'Could not restore the campaign.');
+        showErrorToast(err, action === 'archive' ? ARCHIVE_TOASTS.archiveFailed : ARCHIVE_TOASTS.restoreFailed);
       } finally {
         busyRef.current = false;
         setBusy(null);
       }
     },
-    [id, tenantId, accountId, commitCampaign, refreshCampaign, showToast, showErrorToast],
+    [id, tenantId, accountId, commitCampaign, refreshCampaign, showToast, showErrorToast, navigate],
   );
 
   const onArchive = useCallback(() => setConfirmingFor(id ?? null), [id]);

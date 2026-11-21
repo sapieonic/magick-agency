@@ -120,7 +120,7 @@ export function useCampaignChrome({
   });
 
   /*
-    Archive and Restore (AR1–AR6): `agency.campaigns.write`, the server's gate on both routes. It
+    Archive and Restore (AR1–AR7): `agency.campaigns.write`, the server's gate on both routes. It
     tidies the account's list, like an edit, so it is the PATCH's permission, not `agency.supervise`.
   */
   const archive = useCampaignArchive({
@@ -152,7 +152,7 @@ export function useCampaignChrome({
       role={role}
       onRefresh={onRefresh ?? (() => void load())}
       historyCurrent={active === 'activity'}
-      archive={canAddContacts ? { busy: archive.busy, onArchive: archive.onArchive, onRestore: archive.onRestore } : undefined}
+      archive={canAddContacts ? archive : undefined}
     />
   ) : null;
 

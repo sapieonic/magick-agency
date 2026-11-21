@@ -22,19 +22,45 @@ export const PAGE_SIZE = 100;
  * pushes the last row of page one onto page two, and dropping it would make a
  * campaign disappear for no reason the supervisor can see.
  *
- * That reasoning rests on campaigns never being deleted (there is no delete
- * route), so a row missing from page one has moved down, not gone. Archiving
- * (AR1–AR6) does take a row out of this list; one archived from another window
- * stays on screen until the next full load (leaving the page and coming back),
- * which is the honest cost of never dropping a row that merely moved. It is also
+ * That reasoning rests on rows leaving page one only by moving down: there is no
+ * delete route. Archiving (AR1–AR7) does take a row out of this list. With page
+ * one the whole history, the poll's page simply replaces it, so a campaign
+ * archived from another window goes on the next poll; past page one, a row
+ * archived from elsewhere stays until the next full load (leaving the page and
+ * coming back), the cost of never dropping a row that merely moved. A row
+ * archived HERE never reaches this list: archiving happens on the campaign's
+ * own page, and coming back is a full load. It is also
  * why the history's length is a safe offset for the next page: inserts only
  * push rows down, so a later page can repeat a row already held (dropped by id)
  * but never skip one.
  */
-function mergeFirstPage(prev: AgencyCampaign[] | null, page: AgencyCampaign[]): AgencyCampaign[] {
+export function mergeFirstPage(prev: AgencyCampaign[] | null, page: AgencyCampaign[]): AgencyCampaign[] {
   if (!prev || prev.length <= PAGE_SIZE) return page;
   const ids = new Set(page.map((c) => c.id));
   return [...page, ...prev.filter((c) => !ids.has(c.id))];
+}
+
+/** `rows` after `prev`, less any `prev` already holds (a later page can repeat a row). */
+export function appendNewById(prev: AgencyCampaign[] | null, rows: AgencyCampaign[]): AgencyCampaign[] {
+  const have = new Set((prev ?? []).map((c) => c.id));
+  return [...(prev ?? []), ...rows.filter((c) => !have.has(c.id))];
+}
+
+/**
+ * The page after the `held` rows already loaded, for Show older. `total` is the list's size
+ * when they were read. Fewer rows now than then means some left the list from elsewhere
+ * (archived, or restored from Archived campaigns, AR1–AR7), so every later row moved UP by as
+ * many and the page at `held` starts past them: it is read again from that much earlier, and
+ * the rows already held are dropped by id (`appendNewById`).
+ */
+export async function readPageAfter(
+  readPage: (offset: number) => Promise<{ campaigns: AgencyCampaign[]; total: number }>,
+  held: number,
+  total: number,
+): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  const page = await readPage(held);
+  const shrunk = total - page.total;
+  return shrunk > 0 && held > 0 ? readPage(Math.max(0, held - shrunk)) : page;
 }
 
 /**
@@ -143,19 +169,20 @@ export function useCampaignsHome(tenantId: string | null, accountId: string | nu
       // The history's own length, never the merged list's: active campaigns
       // added from the active read were not served by these pages, and counting
       // them would skip as many rows.
-      const page = await listAgencyCampaignsPage(tenantId, accountId, history.length, PAGE_SIZE);
+      const page = await readPageAfter(
+        (offset) => listAgencyCampaignsPage(tenantId, accountId, offset, PAGE_SIZE),
+        history.length,
+        total,
+      );
       if (!mounted.current || generation.current !== mine) return;
-      setHistory((prev) => {
-        const have = new Set((prev ?? []).map((c) => c.id));
-        return [...(prev ?? []), ...page.campaigns.filter((c) => !have.has(c.id))];
-      });
+      setHistory((prev) => appendNewById(prev, page.campaigns));
       setTotal(page.total);
     } catch (err: unknown) {
       if (mounted.current) setMoreError(err instanceof Error ? err.message : 'Could not load more campaigns.');
     } finally {
       if (mounted.current) setLoadingMore(false);
     }
-  }, [tenantId, accountId, history]);
+  }, [tenantId, accountId, history, total]);
 
   const campaigns = useMemo(() => (history ? withActive(history, live) : null), [history, live]);
   const sorted = useMemo(() => (campaigns ? sortCampaigns(campaigns) : []), [campaigns]);

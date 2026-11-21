@@ -105,84 +105,110 @@ export async function resolveActorDisplayName(
   return name;
 }
 
+/**
+ * Who pressed the control, for the internal handler's optional transition body (and
+ * archive's, `archive.ts`, which stores it as who archived the campaign).
+ *
+ * ── Why the body is sent ──────────────────────────────────────────────────
+ * The dialer runtime stores `last_transition_by: { user_id, name } | null` on
+ * the campaign row and reads it from an OPTIONAL request body. With no body it
+ * stores `null` — the same value it writes for a genuinely automatic transition
+ * (the abandonment auto-pause, the leader's finalization). So a
+ * supervisor-initiated transition must send one, or the field would mean "the
+ * caller did not say" rather than "nobody did it". The handler resolves no
+ * names itself; it stores the name it is handed.
+ *
+ * ── The identity comes from the SESSION. Never from the body. ─────────────
+ * `request.user.id`, populated by `sessionMiddleware`. There is no param, query
+ * key or body field through which a caller can name the actor, and that is the
+ * security property rather than the documentation of one: `last_transition_by`
+ * is an ATTRIBUTION field on an audit surface, so a caller-supplied actor is a
+ * forged one — a supervisor could stop a campaign in a colleague's name. The
+ * inbound body is not forwarded at all (these routes never read it), so the
+ * refusal needs no filtering step: the body the handler receives is built here
+ * from facts the session authenticated.
+ *
+ * The platform audit row for each of the four handlers below states its actor
+ * through `requestAuditActor`, like every other audited call site, so the two
+ * trails agree on who performed the transition.
+ *
+ * Note this deliberately does NOT refuse the transition when there is no
+ * actor, unlike the agency `my-*` routes' 400 `missing_actor`: refusing the off
+ * button for want of attribution is the wrong trade.
+ *
+ * ── Absent beats a placeholder, and a name is best-effort ─────────────────
+ * With no id there is no body: the handler then stores `null`. Nothing here may
+ * spell that as `'system'`, `''` or `'unknown'` — the handler reads all three
+ * as a real actor, and `''` is worse still because `readTransitionActor` trims
+ * it back to `null` after the id has already been accepted. The NAME is
+ * separate: a lookup that fails yields an id-only actor (`actor_name` omitted,
+ * which the handler stores as `name: null`) rather than failing the transition. Same rule as every other
+ * enrichment on this feature — a name is an improvement on the id, never a
+ * precondition — and it matters more here, because the alternative is losing
+ * the off button to a database blip.
+ *
+ * A lookup that HANGS is the same failure in the latency direction and needs
+ * its own answer, because a starved pool or a lock queue does not reject: the
+ * await is bounded by {@link TRANSITION_ACTOR_LOOKUP_TIMEOUT_MS} and expiry
+ * takes the identical branch — logged, id-only, transition unaffected. Without
+ * the bound the try/catch below reads as complete cover and is not.
+ *
+ * ── One name lookup for the whole repository ──────────────────────────────
+ * `resolveAgentNames`, the binding the spine reads (`spine.ts`) already use. Its
+ * docstring calls itself "the only declaration of the lookup in the
+ * repository" after a byte-identical local copy was left behind once, so a
+ * second one here would re-open exactly that. It also keeps the name this route
+ * SENDS the handler in step with the name the campaign activity trail DISPLAYS
+ * for the same person: the trail's own `resolveDisplayNames` goes through a different
+ * repository method (`findIdentitiesInTenant`, which it also needs the role
+ * from) but folds it by the same rule — trimmed `display_name`, else the email.
+ *
+ * The internal handler truncates an over-long name and drops an over-long id;
+ * this route implements neither ceiling on purpose — see
+ * {@link AgencyCampaignTransitionRequest}.
+ */
+export async function resolveTransitionActor(
+  request: FastifyRequest,
+): Promise<AgencyCampaignTransitionRequest | undefined> {
+  // `sessionMiddleware` has no API-key branch, so `request.user` is always the
+  // Firebase-verified person.
+  const userId = request.user?.id;
+  if (!userId) return undefined;
+
+  const name = await resolveActorDisplayName(request, userId);
+
+  // `actor_name` is OMITTED rather than sent empty when there is no name.
+  return { actor_user_id: userId, ...(name ? { actor_name: name } : {}) };
+}
+
+/**
+ * A lifecycle control's platform audit row (and archive's and restore's, `archive.ts`),
+ * everything but its actor and action —
+ * each route states those inline, so every audited write names its own actor
+ * derivation (`audit-actor-call-sites.test.ts`).
+ *
+ * `status` is the handler's body read defensively: on a lifecycle action the body
+ * IS the updated campaign, but this layer keeps no campaign schema, so a malformed
+ * response must never throw out of an audit call and take the request down.
+ */
+export function transitionAuditRow(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  result: { body: unknown },
+) {
+  const status = stringField(result.body, 'status');
+  return {
+    tenant_id: request.tenantId!,
+    ...(request.accountId ? { account_id: request.accountId } : {}),
+    resource_type: 'agency_campaign' as const,
+    resource_id: request.params.id,
+    campaign_id: request.params.id,
+    details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
+  };
+}
+
 /** Registered by `proxyAgencyCampaignsRoutes` on its own instance, after its hooks. */
 export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Promise<void> {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
-
-  /**
-   * Who pressed the control, for the internal handler's optional transition body.
-   *
-   * ── Why the body is sent ──────────────────────────────────────────────────
-   * The dialer runtime stores `last_transition_by: { user_id, name } | null` on
-   * the campaign row and reads it from an OPTIONAL request body. With no body it
-   * stores `null` — the same value it writes for a genuinely automatic transition
-   * (the abandonment auto-pause, the leader's finalization). So a
-   * supervisor-initiated transition must send one, or the field would mean "the
-   * caller did not say" rather than "nobody did it". The handler resolves no
-   * names itself; it stores the name it is handed.
-   *
-   * ── The identity comes from the SESSION. Never from the body. ─────────────
-   * `request.user.id`, populated by `sessionMiddleware`. There is no param, query
-   * key or body field through which a caller can name the actor, and that is the
-   * security property rather than the documentation of one: `last_transition_by`
-   * is an ATTRIBUTION field on an audit surface, so a caller-supplied actor is a
-   * forged one — a supervisor could stop a campaign in a colleague's name. The
-   * inbound body is not forwarded at all (these routes never read it), so the
-   * refusal needs no filtering step: the body the handler receives is built here
-   * from facts the session authenticated.
-   *
-   * The platform audit row for each of the four handlers below states its actor
-   * through `requestAuditActor`, like every other audited call site, so the two
-   * trails agree on who performed the transition.
-   *
-   * Note this deliberately does NOT refuse the transition when there is no
-   * actor, unlike the agency `my-*` routes' 400 `missing_actor`: refusing the off
-   * button for want of attribution is the wrong trade.
-   *
-   * ── Absent beats a placeholder, and a name is best-effort ─────────────────
-   * With no id there is no body: the handler then stores `null`. Nothing here may
-   * spell that as `'system'`, `''` or `'unknown'` — the handler reads all three
-   * as a real actor, and `''` is worse still because `readTransitionActor` trims
-   * it back to `null` after the id has already been accepted. The NAME is
-   * separate: a lookup that fails yields an id-only actor (`actor_name` omitted,
-   * which the handler stores as `name: null`) rather than failing the transition. Same rule as every other
-   * enrichment on this feature — a name is an improvement on the id, never a
-   * precondition — and it matters more here, because the alternative is losing
-   * the off button to a database blip.
-   *
-   * A lookup that HANGS is the same failure in the latency direction and needs
-   * its own answer, because a starved pool or a lock queue does not reject: the
-   * await is bounded by {@link TRANSITION_ACTOR_LOOKUP_TIMEOUT_MS} and expiry
-   * takes the identical branch — logged, id-only, transition unaffected. Without
-   * the bound the try/catch below reads as complete cover and is not.
-   *
-   * ── One name lookup for the whole repository ──────────────────────────────
-   * `resolveAgentNames`, the binding the spine reads (`spine.ts`) already use. Its
-   * docstring calls itself "the only declaration of the lookup in the
-   * repository" after a byte-identical local copy was left behind once, so a
-   * second one here would re-open exactly that. It also keeps the name this route
-   * SENDS the handler in step with the name the campaign activity trail DISPLAYS
-   * for the same person: the trail's own `resolveDisplayNames` goes through a different
-   * repository method (`findIdentitiesInTenant`, which it also needs the role
-   * from) but folds it by the same rule — trimmed `display_name`, else the email.
-   *
-   * The internal handler truncates an over-long name and drops an over-long id;
-   * this route implements neither ceiling on purpose — see
-   * {@link AgencyCampaignTransitionRequest}.
-   */
-  const resolveTransitionActor = async (
-    request: FastifyRequest,
-  ): Promise<AgencyCampaignTransitionRequest | undefined> => {
-    // `sessionMiddleware` has no API-key branch, so `request.user` is always the
-    // Firebase-verified person.
-    const userId = request.user?.id;
-    if (!userId) return undefined;
-
-    const name = await resolveActorDisplayName(request, userId);
-
-    // `actor_name` is OMITTED rather than sent empty when there is no name.
-    return { actor_user_id: userId, ...(name ? { actor_name: name } : {}) };
-  };
 
   /**
    * The body the four lifecycle controls share: resolve the actor, then run the
@@ -204,30 +230,6 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-  }
-
-  /**
-   * A lifecycle control's platform audit row, everything but its actor and action —
-   * each route states those inline, so every audited write names its own actor
-   * derivation (`audit-actor-call-sites.test.ts`).
-   *
-   * `status` is the handler's body read defensively: on a lifecycle action the body
-   * IS the updated campaign, but this layer keeps no campaign schema, so a malformed
-   * response must never throw out of an audit call and take the request down.
-   */
-  function transitionAuditRow(
-    request: FastifyRequest<{ Params: { id: string } }>,
-    result: { body: unknown },
-  ) {
-    const status = stringField(result.body, 'status');
-    return {
-      tenant_id: request.tenantId!,
-      ...(request.accountId ? { account_id: request.accountId } : {}),
-      resource_type: 'agency_campaign' as const,
-      resource_id: request.params.id,
-      campaign_id: request.params.id,
-      details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
-    };
   }
 
   // Four routes rather than a loop or a table: each internal path is a `path:`

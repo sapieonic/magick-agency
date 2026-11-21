@@ -123,7 +123,7 @@ describe('the pages', () => {
     expect(history?.target).toEqual({ type: 'path', to: '/agency/listening-history' });
   });
 
-  it('finds Archived campaigns by "archive" and "restore", for whoever reads campaigns (AR1–AR6)', () => {
+  it('finds Archived campaigns by "archive" and "restore", for whoever reads campaigns (AR1–AR7)', () => {
     for (const q of ['archived', 'archive', 'restore campaign', 'old campaigns']) {
       const hit = pageResults(searchTokens(q), ALL_ON('viewer')).find((r) => r.title === 'Archived campaigns');
       expect(hit?.target, q).toEqual({ type: 'path', to: '/agency/campaigns/archived' });

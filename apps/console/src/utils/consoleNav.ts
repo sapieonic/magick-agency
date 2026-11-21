@@ -172,9 +172,7 @@ export function dialerTwinPath(pathname: string, isFlagEnabled: (flag: string) =
 /** What the breadcrumb calls a page below a tab or a Settings entry that does not name itself. */
 export interface SubPage {
   label: string;
-  /** For the `…/new` page below it, when that has a name of its own. */
-  newLabel?: string;
-  /** Other named pages directly below it, by their last segment (`archived` → Archived campaigns). */
+  /** Pages directly below it with a name of their own, by their last segment (`new` → New campaign). */
   named?: Readonly<Record<string, string>>;
 }
 
@@ -219,7 +217,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         label: 'Campaigns',
         to: '/agency/campaigns',
         gate: agencyGate({ permission: 'agency.campaigns.read' }),
-        subPage: { label: 'Campaign', newLabel: 'New campaign', named: { archived: 'Archived campaigns' } },
+        subPage: { label: 'Campaign', named: { new: 'New campaign', archived: 'Archived campaigns' } },
       },
       /* The server scopes `GET /softphone/calls` to the whole account only for
          `agency.supervise` (`docs/softphone.md` §7); behind the soft-phone flag. */
@@ -500,7 +498,6 @@ function withPageCrumbs(trail: readonly Crumb[], supplied: readonly Crumb[]): Cr
 
 /** The crumb for a page below `parent` that does not name itself; "Details" with no `subPage`. */
 function subPageLabel(path: string, parent: string, subPage: SubPage = { label: 'Details' }): string {
-  if (subPage.newLabel && path === `${parent}/new`) return subPage.newLabel;
   const segment = path.startsWith(`${parent}/`) ? path.slice(parent.length + 1) : null;
   if (segment && subPage.named && Object.hasOwn(subPage.named, segment)) return subPage.named[segment]!;
   return subPage.label;
@@ -573,7 +570,7 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
     path: '/settings/inbound',
     scope: 'account',
     gate: settingsGate({ permission: 'agency.inbound.write', flags: [INBOUND_FLAG], capabilities: ['agency'] }),
-    subPage: { label: 'Inbound route', newLabel: 'New inbound route' },
+    subPage: { label: 'Inbound route', named: { new: 'New inbound route' } },
   },
   {
     id: 'call-summaries',

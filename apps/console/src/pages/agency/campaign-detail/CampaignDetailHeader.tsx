@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -27,7 +28,7 @@ import { campaignTimeline } from '../../../utils/agency/overview/lifecycle';
 import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
 import { archivedLine, canArchiveCampaign, isArchivedCampaign } from '../../../utils/agencyCampaignArchive';
-import type { CampaignArchiveAction } from './useCampaignArchive';
+import type { CampaignArchive } from './useCampaignArchive';
 import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
 import styles from '../AgencyCampaignDetailPage.module.css';
 
@@ -75,14 +76,10 @@ interface CampaignDetailHeaderProps {
   /** On History itself (`CampaignWorkspace` with `active="activity"`): its button is marked as where you are. */
   historyCurrent?: boolean;
   /**
-   * Archive and Restore (AR1–AR6), given only to a role with `agency.campaigns.write`. Without it
+   * Archive and Restore (AR1–AR7), given only to a role with `agency.campaigns.write`. Without it
    * an archived campaign still says it is archived, with no button.
    */
-  archive?: {
-    busy: CampaignArchiveAction | null;
-    onArchive: () => void;
-    onRestore: () => void;
-  };
+  archive?: Pick<CampaignArchive, 'busy' | 'onArchive' | 'onRestore'>;
 }
 
 /**
@@ -118,6 +115,22 @@ export function CampaignDetailHeader({
   const controls = agencyCampaignControls(campaign.status, { archived });
   const archivedText = archivedLine(campaign);
   const anyBusy = busy !== null || (archive?.busy ?? null) !== null;
+  /*
+    Archive and Restore each take their own button away (the notice comes and goes). Focus that
+    was on one (or fell to the page when it went) moves to the other, so a keyboard or screen
+    reader user is not left at the top of the document. Only on a change of the flag, and only
+    when focus has nowhere better to be.
+  */
+  const archiveButton = useRef<HTMLButtonElement>(null);
+  const restoreButton = useRef<HTMLButtonElement>(null);
+  const wasArchived = useRef(archived);
+  useEffect(() => {
+    if (wasArchived.current === archived) return;
+    wasArchived.current = archived;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    (archived ? restoreButton : archiveButton).current?.focus();
+  }, [archived]);
   /*
     HOW it ended, not merely THAT it did. `stopped` and `completed` are different
     events — a supervisor ended one, the other ran out of list — and the badge
@@ -236,12 +249,13 @@ export function CampaignDetailHeader({
             );
           })}
         {/*
-          Archive (AR1–AR6): a draft or a stopped campaign leaves the Campaigns page for Archived
+          Archive (AR1–AR7): a draft or a stopped campaign leaves the Campaigns page for Archived
           campaigns. A secondary action, after the lifecycle controls: it tidies the list, it
           changes nothing about the calls. Restore is in the archived notice below the header.
         */}
         {archive && canArchiveCampaign(campaign) && (
           <button
+            ref={archiveButton}
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}
             onClick={archive.onArchive}
@@ -253,7 +267,11 @@ export function CampaignDetailHeader({
             <span className={styles.actionLabel}>{archive.busy === 'archive' ? 'Archiving…' : 'Archive'}</span>
           </button>
         )}
-        {canAddContacts && !archived && (
+        {/*
+          New campaign on an ended campaign, archived or not; Add contacts only on one that is not
+          archived: an archived draft is out of the way until it is restored (AR7).
+        */}
+        {canAddContacts && (terminal || !archived) && (
           <>
             {terminal ? (
               <Link
@@ -288,7 +306,8 @@ export function CampaignDetailHeader({
           campaign is a perfectly ordinary thing to retry part of, and a
           running one's child can run beside it (the dialog says how).
         */}
-        {onRetry && (
+        {/* Not on an archived campaign: no new work starts from one until it is restored (AR7). */}
+        {onRetry && !archived && (
           <button
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}
@@ -346,14 +365,12 @@ export function CampaignDetailHeader({
       may archive: it is off the Campaigns page, and an archived draft cannot be started.
     */}
     {archivedText && (
-      <div className={styles.archivedNote} role="status" data-testid="campaign-archived-note">
+      <div className={styles.archivedNote} data-testid="campaign-archived-note">
         <Archive size={15} aria-hidden="true" />
-        <span>
-          {archivedText}. It is not on the Campaigns page
-          {campaign.status === 'draft' ? ' and cannot be started until it is restored.' : '.'}
-        </span>
+        <span>{archivedText}. It is not on the Campaigns page.</span>
         {archive && (
           <button
+            ref={restoreButton}
             type="button"
             className="btn-secondary"
             onClick={archive.onRestore}

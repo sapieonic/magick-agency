@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   useAuth: vi.fn(),
   listAgencyCampaigns: vi.fn(),
+  listArchivedAgencyCampaigns: vi.fn(),
   useTeam: vi.fn(),
   listDncEntries: vi.fn(),
   addDncEntries: vi.fn(),
@@ -34,7 +35,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: mocks.useAuth }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
+}));
 vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
   SOFTPHONE_FLAG: 'agency_softphone_enabled',
   useFeatureFlagEnabled: (flag: string) => mocks.flags.has(flag),
@@ -93,6 +97,7 @@ function summary(over: Partial<DncAddSummary> = {}): DncAddSummary {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1',
     accountId: 'account-1',
@@ -242,6 +247,15 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     fireEvent.change(filter, { target: { value: 'c:camp-1' } });
     await waitFor(() => expect(tableCalls().at(-1)![0]).toMatchObject({ campaign_id: 'camp-1' }));
     expect(screen.getByRole('option', { name: 'North account' })).toBeTruthy();
+  });
+
+  it('keeps an archived campaign in the filter, marked, so its entries stay findable (AR1–AR7)', async () => {
+    mocks.listArchivedAgencyCampaigns.mockResolvedValue([{ id: 'camp-9', name: 'Old leads', status: 'stopped', archived_at: '2026-11-20T06:00:00Z' }]);
+    render(<DncPage />);
+    const filter = await screen.findByLabelText('Show entries for');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Campaign: Old leads (archived)' })).toBeTruthy());
+    fireEvent.change(filter, { target: { value: 'c:camp-9' } });
+    await waitFor(() => expect(tableCalls().at(-1)![0]).toMatchObject({ campaign_id: 'camp-9' }));
   });
 
   it('does not offer the every-campaign filter to an account admin, who cannot list those entries', async () => {
@@ -439,6 +453,17 @@ describe('DNC — bulk add, at a scope the operator chose (DS1)', () => {
     const [input] = mocks.addDncEntries.mock.calls[0]!;
     expect(input).toMatchObject({ scope: 'campaign', campaign_id: 'camp-1' });
     expect(input.account_id).toBeUndefined();
+  });
+
+  it('never offers an archived campaign to add numbers to (AR1–AR7)', async () => {
+    mocks.listArchivedAgencyCampaigns.mockResolvedValue([{ id: 'camp-9', name: 'Old leads', status: 'stopped', archived_at: '2026-11-20T06:00:00Z' }]);
+    render(<DncPage />);
+    await typeNumbers();
+    fireEvent.click(screen.getByRole('radio', { name: 'One campaign' }));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Campaign: Old leads (archived)' })).toBeTruthy());
+    const picker = screen.getByLabelText('Campaign') as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toContain('camp-1');
+    expect([...picker.options].map((o) => o.value)).not.toContain('camp-9');
   });
 
   it('does not offer every campaign to an admin of one account (DS3)', async () => {

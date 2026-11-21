@@ -779,7 +779,7 @@ export interface AgencyCampaign {
    */
   retry_selector?: unknown | null;
 
-  // ── Archived campaigns (decisions AR1–AR6) ──────────────────────────────────
+  // ── Archived campaigns (decisions AR1–AR7) ──────────────────────────────────
   //
   // Archiving is NOT a status. A draft or stopped campaign is archived to take it off the
   // Campaigns page (`GET /proxy/agency/campaigns` leaves it out unless `archived=true`), and it
@@ -802,20 +802,16 @@ export interface AgencyCampaign {
  */
 export const AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES = ['draft', 'stopped'] as const satisfies readonly AgencyCampaignStatus[];
 
+/** Whether a campaign in `status` may be archived: the one spelling of AR2's rule for the server and the console. */
+export function isAgencyCampaignArchivableStatus(status: string): boolean {
+  return (AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES as readonly string[]).includes(status);
+}
+
 /**
- * The 409 codes of `POST /proxy/agency/campaigns/:id/{archive,unarchive}` and of Start on an
- * archived draft:
- *  - `campaign_not_archivable`: archive refused, the campaign is not draft or stopped;
- *  - `campaign_archived`: archive of one already archived, or Start of an archived draft;
- *  - `campaign_not_archived`: restore of one that is not archived.
- * Each 409 carries `current_status` and `archived_at` as the row stands.
+ * The 409 codes of `POST /proxy/agency/campaigns/:id/{archive,unarchive}`, declared with the
+ * other error unions in `src/errors.ts` (union, list and guard there) and re-exported here.
  */
-export const AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES = [
-  'campaign_not_archivable',
-  'campaign_archived',
-  'campaign_not_archived',
-] as const;
-export type AgencyCampaignArchiveErrorCode = (typeof AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES)[number];
+export { AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES, type AgencyCampaignArchiveErrorCode } from '../../errors';
 
 // ── Carriers a campaign may dial on ───────────────────────────
 

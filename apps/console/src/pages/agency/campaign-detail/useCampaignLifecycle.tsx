@@ -38,9 +38,12 @@ export interface CampaignLifecycleSource {
    * The campaign as of the latest write or read — current at click time, not at the last paint.
    * Only its status is read, so Live floor's cards pass the board's.
    */
-  campaignRef: { readonly current: Pick<AgencyCampaign, 'status'> | null };
-  /** Re-read the campaign row alone (the Start / Resume preflight and the 409 repair). */
-  refreshCampaign: () => Promise<Pick<AgencyCampaign, 'status'> | null>;
+  campaignRef: { readonly current: Pick<AgencyCampaign, 'status' | 'archived_at'> | null };
+  /**
+   * Re-read the campaign row alone (the Start / Resume preflight and the 409 repair). Its
+   * `archived_at`, when carried, keeps Start from being sent for a draft archived elsewhere (AR2).
+   */
+  refreshCampaign: () => Promise<Pick<AgencyCampaign, 'status' | 'archived_at'> | null>;
   /** Paint a campaign the server just answered with, and fence off every older read. */
   commitCampaign: (campaign: AgencyCampaign) => void;
   /** Re-read whatever the page shows after a transition. */
@@ -109,7 +112,7 @@ export function useCampaignLifecycle({
       // Captured before the request fires — `updated.status` below is the
       // TO side, and neither may be read off `campaign` state directly (see
       // the comment on `campaignRef`).
-      let fromStatus = campaignRef.current?.status;
+      let from = campaignRef.current;
       try {
         /**
          * Start / Resume from a stale view is a known bug: the button would
@@ -119,10 +122,9 @@ export function useCampaignLifecycle({
          * are not the ones that stayed enabled across a transition.
          */
         if (action === 'start' || action === 'resume') {
-          const latest = await refreshCampaign();
-          fromStatus = latest?.status ?? fromStatus;
+          from = (await refreshCampaign()) ?? from;
         }
-        if (fromStatus && !isLifecycleActionEnabled(fromStatus, action)) {
+        if (from && !isLifecycleActionEnabled(from.status, action, { archived: Boolean(from.archived_at) })) {
           return;
         }
         const updated = await transitionAgencyCampaign(id, action, tenantId, accountId);
@@ -134,6 +136,7 @@ export function useCampaignLifecycle({
         // would contradict the badge rendered directly beneath it. In the badge's words, never
         // the wire code.
         showToast(`Campaign status: ${agencyCampaignStatusLabel(updated.status)}.`, 'success');
+        const fromStatus = from?.status;
         if (fromStatus && isKnownCampaignStatus(fromStatus) && isKnownCampaignStatus(updated.status)) {
           trackAgencyCampaignLifecycleAction({
             campaign_id: id,
@@ -161,7 +164,9 @@ export function useCampaignLifecycle({
         let reportFailure = true;
         if (statusCode === 409) {
           const latest = await refreshCampaign();
-          const stillOffered = latest ? isLifecycleActionEnabled(latest.status, action) : true;
+          const stillOffered = latest
+            ? isLifecycleActionEnabled(latest.status, action, { archived: Boolean(latest.archived_at) })
+            : true;
           if (stillOffered) {
             reportRefusal(err);
           } else {
@@ -170,6 +175,7 @@ export function useCampaignLifecycle({
         } else {
           reportRefusal(err);
         }
+        const fromStatus = from?.status;
         if (reportFailure && fromStatus && isKnownCampaignStatus(fromStatus)) {
           trackAgencyCampaignLifecycleFailed({
             campaign_id: id,

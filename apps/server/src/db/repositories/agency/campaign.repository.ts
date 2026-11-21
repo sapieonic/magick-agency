@@ -7,6 +7,7 @@ import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { PoolClient } from 'pg';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES } from '@magick-agency/contracts/api/agency/agency-campaign';
 import {
   AGENCY_CAMPAIGN_TERMINAL_STATUSES,
   type AgencyCampaignDependent,
@@ -424,9 +425,9 @@ export class AgencyCampaignRepository {
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `UPDATE agency_campaigns
           SET archived_at = now(), archived_by_user_id = $2, archived_by_name = $3, updated_at = now()
-        WHERE id = $1 AND archived_at IS NULL AND status IN ('draft', 'stopped')
+        WHERE id = $1 AND archived_at IS NULL AND status = ANY($4::text[])
       RETURNING *`,
-      [id, actor?.user_id ?? null, actor?.name ?? null],
+      [id, actor?.user_id ?? null, actor?.name ?? null, [...AGENCY_CAMPAIGN_ARCHIVABLE_STATUSES]],
     );
     announceCampaignChanged(rows[0]);
     return rows[0] ?? null;
@@ -965,8 +966,8 @@ export class AgencyCampaignRepository {
     tenantId: string,
     accountId: string,
   ): Promise<AgencyCampaignDependent[]> {
-    const { rows } = await getPool().query<AgencyCampaignDependent>(
-      `SELECT id, status
+    const { rows } = await getPool().query<AgencyCampaignDependent & { is_archived: boolean }>(
+      `SELECT id, status, archived_at IS NOT NULL AS is_archived
          FROM agency_campaigns
         WHERE analysis_profile_id = $1
           AND tenant_id = $2
@@ -975,7 +976,9 @@ export class AgencyCampaignRepository {
         ORDER BY created_at ASC`,
       [profileId, tenantId, accountId, [...AGENCY_CAMPAIGN_TERMINAL_STATUSES]],
     );
-    return rows;
+    // An archived draft still depends on the profile (a restore revives it); it is marked so
+    // the refusal can say where it is (AR1–AR7). Absent on every other row, as before.
+    return rows.map(({ is_archived, ...row }) => (is_archived ? { ...row, archived: true as const } : row));
   }
 
   /**

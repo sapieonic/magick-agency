@@ -340,7 +340,7 @@ void _allRosterCodesListed;
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
 // members of the action union: they are the campaign routes' refusals, not an
-// agent action's. The member set is exactly the ten campaign-lifecycle codes below.
+// agent action's. The member set is exactly the eleven campaign-lifecycle codes below.
 // `another_campaign_running` is retired (decisions MC6): an account may run several
 // campaigns at once, so Start and Resume no longer refuse on another running campaign.
 
@@ -385,7 +385,13 @@ export type AgencyCampaignLifecycleErrorCode =
    * and gives the campaign's carrier no lines (decision PL14): it would run and place no
    * calls. Support adds the capacity.
    */
-  | 'carrier_capacity_unallocated';
+  | 'carrier_capacity_unallocated'
+  /**
+   * 409. `POST /:id/start` on an archived draft (decisions AR2): restore it first. Carries
+   * `current_status` and `archived_at`. Also one of the archive routes' own codes
+   * ({@link AgencyCampaignArchiveErrorCode}).
+   */
+  | 'campaign_archived';
 
 export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'invalid_campaign_transition',
@@ -398,6 +404,7 @@ export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'telephony_credential_not_active',
   'campaign_caller_ids_unavailable',
   'carrier_capacity_unallocated',
+  'campaign_archived',
 ] as const satisfies readonly AgencyCampaignLifecycleErrorCode[];
 
 const _allLifecycleCodesListed: AllListed<
@@ -405,6 +412,32 @@ const _allLifecycleCodesListed: AllListed<
   typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES
 > = true;
 void _allLifecycleCodesListed;
+
+// ─── 3a. Campaign archive codes (decisions AR1–AR7) ─────────────────────────
+//
+// The 409s of `POST /proxy/agency/campaigns/:id/{archive,unarchive}`. Each carries
+// `current_status` and `archived_at` as the row stands. `campaign_archived` is also a
+// lifecycle code (Start on an archived draft), so it is in both lists.
+
+export type AgencyCampaignArchiveErrorCode =
+  /** Archive of a campaign that is not `draft` or `stopped`. */
+  | 'campaign_not_archivable'
+  /** Archive of a campaign already archived. */
+  | 'campaign_archived'
+  /** Restore (`/unarchive`) of a campaign that is not archived. */
+  | 'campaign_not_archived';
+
+export const AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES = [
+  'campaign_not_archivable',
+  'campaign_archived',
+  'campaign_not_archived',
+] as const satisfies readonly AgencyCampaignArchiveErrorCode[];
+
+const _allArchiveCodesListed: AllListed<
+  AgencyCampaignArchiveErrorCode,
+  typeof AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES
+> = true;
+void _allArchiveCodesListed;
 
 // ─── 4. Soft-phone refusals ─────────────────────────────────────────────────
 //

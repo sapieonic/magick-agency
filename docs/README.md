@@ -103,6 +103,10 @@ Callbacks section. Phase 3 (Need help, messages to agents, break limits, giving 
 free agents) and Phase 4 (Join call, whisper) are Coming soon controls only
 ([`status.md`](status.md)).
 
+Archived campaigns (2026-11-21, AR1–AR7, defaults pending Manas): a draft or stopped campaign can
+be archived off the Campaigns page onto its own Archived campaigns screen and restored; archiving
+is a flag beside the status, so nothing that reads the status changes ([`status.md`](status.md)).
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
@@ -115,7 +119,7 @@ production data.
 now in the production compose file) and the 5 s wait for in-flight pacing ticks; the tidy-up
 defaults (including the `en-IN` display locale) and the 25 vs 20 rate floors; B15 roster supersede; vendor setup; the gated checks (real
 VoiceLink call, real recording analysed, Playwright happy path, parity check, dark pilot); launch
-decisions. For inbound: a Plivo account for P0, the fix pass's defaults (IQ25–IQ45), a listening
+decisions. Archived campaigns: AR1–AR7. For inbound: a Plivo account for P0, the fix pass's defaults (IQ25–IQ45), a listening
 and licence sign-off of the standard recordings, and the voicemail and call retention for a UK
 pilot.
 

@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0063_campaign_archive.sql (archived campaigns, AR1–AR6). globalSetup has
+// Real Postgres: migrations/0063_campaign_archive.sql (archived campaigns, AR1–AR7). globalSetup has
 // applied every migration. Pins the three columns (nullable, no default, so every row already there
 // reads as not archived), the CHECK that only a draft or stopped campaign is archived, and down then
 // up with rows in place.

@@ -3,7 +3,8 @@ import { AlertCircle, PhoneOff, Search, Trash2 } from 'lucide-react';
 import { dncSearchShortfall } from '@magick-agency/domain/dnc-search';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { listAgencyCampaigns } from '../../api/agencyCampaigns';
+import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
+import { pickerCampaignName } from '../../utils/agencyCampaignArchive';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import {
   DNC_EVERY_CAMPAIGN,
@@ -165,6 +166,12 @@ export function DncPage() {
   const [addCampaignId, setAddCampaignId] = useState('');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('');
   const [campaigns, setCampaigns] = useState<AgencyCampaign[]>([]);
+  /**
+   * The account's archived campaigns (AR1–AR7), for the list's filter only: their entries still
+   * stop dials of them (a restore revives the campaign), so they stay findable; the add's choice
+   * offers only campaigns that are not archived. A failure here only leaves them out.
+   */
+  const [archivedCampaigns, setArchivedCampaigns] = useState<AgencyCampaign[]>([]);
   const [campaignsFailed, setCampaignsFailed] = useState(false);
 
   const canManage = hasPermission(role, 'agency.dnc.manage');
@@ -181,6 +188,9 @@ export function DncPage() {
     listAgencyCampaigns(tenantId, accountId)
       .then((list) => { if (live) setCampaigns(list); })
       .catch(() => { if (live) { setCampaigns([]); setCampaignsFailed(true); } });
+    listArchivedAgencyCampaigns(tenantId, accountId)
+      .then((list) => { if (live) setArchivedCampaigns(list); })
+      .catch(() => { if (live) setArchivedCampaigns([]); });
     return () => { live = false; };
   }, [tenantId, accountId]);
 
@@ -543,8 +553,8 @@ export function DncPage() {
           {seesEverything && <option value="tenant">{DNC_EVERY_CAMPAIGN}</option>}
           <option value="account">{dncScopeWords('account', { accountName })}</option>
           <option value="campaign">Any one campaign</option>
-          {campaigns.map((c) => (
-            <option key={c.id} value={`c:${c.id}`}>{dncScopeWords('campaign', { campaignName: c.name })}</option>
+          {[...campaigns, ...archivedCampaigns].map((c) => (
+            <option key={c.id} value={`c:${c.id}`}>{dncScopeWords('campaign', { campaignName: pickerCampaignName(c) })}</option>
           ))}
         </select>
       </div>

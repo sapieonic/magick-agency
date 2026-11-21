@@ -1808,7 +1808,7 @@ down → up inventory suite.
 
 ### 0063 — `migrations/0063_campaign_archive.sql`
 
-Archived campaigns (AR1–AR6). **`agency_campaigns.archived_at`** `TIMESTAMPTZ NULL` (NULL = not
+Archived campaigns (AR1–AR7). **`agency_campaigns.archived_at`** `TIMESTAMPTZ NULL` (NULL = not
 archived), **`archived_by_user_id`** `UUID NULL` and **`archived_by_name`** `VARCHAR(255) NULL` (who
 archived it, the same snapshot pair as `last_transition_by_*`), written together by the archive route
 and cleared together by restore. Archiving is not a status: the campaign stays `draft` or `stopped`.

@@ -163,7 +163,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-agent.routes.ts',
       'api/routes/proxy-agency-assignment/my-contact-actions.ts', // the agent's dial of one of their contacts
       'api/routes/proxy-agency-calls.routes.ts',
-      'api/routes/proxy-agency-campaigns/archive.ts', // archive and restore (AR1–AR6)
+      'api/routes/proxy-agency-campaigns/archive.ts', // archive and restore (AR1–AR7)
       'api/routes/proxy-agency-campaigns/crud.ts',
       'api/routes/proxy-agency-campaigns/lifecycle.ts',
       'api/routes/proxy-agency-campaigns/retry.ts',

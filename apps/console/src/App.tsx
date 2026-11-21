@@ -572,7 +572,7 @@ export default function App() {
                   <Route path="callbacks" element={<CallbacksPage />} />
                   <Route path="campaigns" element={<AgencyCampaignsPage />} />
                   <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
-                  {/* Archived campaigns (AR1–AR6): a static segment, so it outranks `campaigns/:id`. */}
+                  {/* Archived campaigns (AR1–AR7): a static segment, so it outranks `campaigns/:id`. */}
                   <Route path="campaigns/archived" element={<AgencyArchivedCampaignsPage />} />
                   {/*
                     The detail page's five panels (Overview, Calls, Agents,

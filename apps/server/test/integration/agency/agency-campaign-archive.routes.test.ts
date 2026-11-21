@@ -6,7 +6,7 @@ import { DEFAULTS, OTHER_ACCOUNT } from '../setup/factories.js';
 import { insertAgencyCampaign } from './agency-factories.js';
 
 /**
- * ─── Archived campaigns (AR1–AR6), the internal handlers against a real Postgres ─────
+ * ─── Archived campaigns (AR1–AR7), the internal handlers against a real Postgres ─────
  *
  * `POST /:id/archive` and `/:id/unarchive`, the list's `archived` filter, and Start refused on an
  * archived draft. The rules live in SQL as much as in the routes (the archive's conditional UPDATE,
@@ -17,6 +17,9 @@ vi.mock('@magick-agency/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/db')>()),
   getPool: () => getTestPool(),
 }));
+
+// The Start route's carrier checks read through the connection module rather than the barrel.
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
@@ -129,6 +132,41 @@ describe('archived campaigns (integration)', () => {
     // Restored, Start is judged as any draft's: this one has no contacts, so the roster refusal.
     const restarted = await post(`/${draft.id}/start`);
     expect(restarted.json().code).toBe('campaign_roster_empty');
+  });
+
+  it('answers Stop, Pause and Resume on an archived campaign as before archiving: the ordinary transition refusal', async () => {
+    for (const status of ['draft', 'stopped']) {
+      const c = await insertAgencyCampaign({ status });
+      await post(`/${c.id}/archive`);
+      // Resume moves into `running` too, but from `paused`: not a move an archived campaign
+      // could make, so it is not told to restore it.
+      for (const action of ['stop', 'pause', 'resume']) {
+        const res = await post(`/${c.id}/${action}`);
+        expect(res.statusCode, `${action} ${status}`).toBe(409);
+        expect(res.json(), `${action} ${status}`).toMatchObject({ code: 'invalid_campaign_transition', current_status: status });
+      }
+    }
+  });
+
+  it('names the archive when an archive lands between Start\'s read and its write', async () => {
+    const draft = await insertAgencyCampaign({ status: 'draft' });
+    await getTestPool().query(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164) VALUES ($1, $2, $3, '+919876543210')`,
+      [draft.id, DEFAULTS.tenantId, DEFAULTS.accountId],
+    );
+    const real = agencyCampaignRepository.transitionStatus.bind(agencyCampaignRepository);
+    const spy = vi.spyOn(agencyCampaignRepository, 'transitionStatus').mockImplementationOnce(async (...args) => {
+      await agencyCampaignRepository.archive(draft.id as string, null);
+      return real(...args);
+    });
+    try {
+      const res = await post(`/${draft.id}/start`);
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'campaign_archived', current_status: 'draft' });
+      expect(res.json().archived_at).toEqual(expect.any(String));
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('transitionStatus itself moves no archived campaign, whatever the route checked', async () => {
