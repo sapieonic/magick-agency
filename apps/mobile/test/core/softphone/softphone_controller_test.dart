@@ -2069,32 +2069,47 @@ void main() {
       before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
     );
 
-    softphoneTest(
-      'a phone-typed column is hidden when the station\'s own campaign hides numbers (S3)',
-      (h) {
-        h.host.view = campaignHost(call: onTheList(row), masksPhone: true);
-        h.pump();
-        final contact = h.view.contact!;
-        expect(contact.maskPhone, isTrue);
-        final all = [...contact.heroFields, ...contact.otherFields];
-        expect(all.firstWhere((f) => f.label == 'Alt phone').value, '98••• ••210');
-        expect(all.any((f) => f.value.contains('43210')), isFalse);
-      },
-      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
-    );
+    Map<String, Object?> withDisplay(String? phoneDisplay) {
+      final b = chosenBootstrap();
+      final campaign = {...(b['taggable_campaigns']! as List<Object?>).single! as Map<String, Object?>};
+      if (phoneDisplay == null) {
+        campaign.remove('phone_display');
+      } else {
+        campaign['phone_display'] = phoneDisplay;
+      }
+      return {...b, 'taggable_campaigns': [campaign]};
+    }
 
-    softphoneTest(
-      'shown whole when the campaign shows numbers, or when the call is tagged to a campaign whose setting is not known here',
-      (h) {
-        h.host.view = campaignHost(call: onTheList(row));
-        h.pump();
-        expect([...h.view.contact!.heroFields].firstWhere((f) => f.label == 'Alt phone').value, '9876543210');
-        h.host.view = campaignHost(call: onTheList(row), campaignId: 'camp-other', masksPhone: true);
-        h.pump();
-        expect(h.view.contact!.maskPhone, isFalse, reason: 'another campaign\'s setting is not on the soft phone');
-      },
-      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, chosenBootstrap()),
-    );
+    for (final session in ['a soft-phone session', 'another campaign\'s station']) {
+      softphoneTest(
+        'a phone-typed column is hidden when the tagged campaign hides numbers, on $session (S3(b))',
+        (h) {
+          h.host.view = session == 'a soft-phone session'
+              ? hostView(call: onTheList(row))
+              : campaignHost(call: onTheList(row), campaignId: 'camp-other');
+          h.pump();
+          final contact = h.view.contact!;
+          expect(contact.maskPhone, isTrue);
+          final all = [...contact.heroFields, ...contact.otherFields];
+          expect(all.firstWhere((f) => f.label == 'Alt phone').value, '98••• ••210');
+          expect(all.any((f) => f.value.contains('43210')), isFalse);
+        },
+        before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, withDisplay('masked')),
+      );
+    }
+
+    for (final setting in ['full', null]) {
+      softphoneTest(
+        'shown whole when the tagged campaign ${setting == null ? 'sends no setting (an older server)' : 'shows numbers'}',
+        (h) {
+          h.host.view = campaignHost(call: onTheList(row));
+          h.pump();
+          expect(h.view.contact!.maskPhone, isFalse);
+          expect([...h.view.contact!.heroFields].firstWhere((f) => f.label == 'Alt phone').value, '9876543210');
+        },
+        before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, withDisplay(setting)),
+      );
+    }
   });
 
   softphoneTest('the matched contact’s name reaches the host for CallKit', (h) {

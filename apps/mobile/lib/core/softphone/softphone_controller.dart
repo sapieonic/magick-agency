@@ -2023,13 +2023,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final display = campaign?.contextDisplay;
     final context = contact.context ?? const <String, Object?>{};
     final resolved = resolveContextFields(context, display);
-    // A phone-typed column follows the campaign's number setting (AS9, AS19 S3) where the soft
-    // phone can know it: the station's own campaign. The dialled number stays as typed.
-    final host = _host;
-    final masked = host != null &&
-        host.campaignMasksPhone &&
-        host.campaignId != null &&
-        call.tag?.campaignId == host.campaignId;
+    // A phone-typed column follows the tagged campaign's own number setting (AS9, AS19 S3(b)),
+    // whatever campaign (if any) the session is on. The dialled number stays as typed.
+    final masked = campaign?.masksPhone ?? false;
     ContactField field(ResolvedField f) => StationViewMapper.contactFieldOf(f, display, masked: masked);
     return SoftphoneContactView(
       displayName: contactName(call, display),

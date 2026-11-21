@@ -28,7 +28,10 @@ export interface SideFrameProps {
   banners: ReactNode;
   /** The cue's flash in the band, for an agent who cannot hear the cue. */
   cueFlash: ReactNode;
-  /** `AS9`: how the station shows a customer's number. */
+  /**
+   * `AS9`: how the station shows a customer's number, read by the inbound call's card. The soft
+   * phone's card follows the call's campaign's own setting instead (AS19 S3(b), `softphoneCustomerCard`).
+   */
   phoneDisplay: 'full' | 'masked';
   readAloud: { available: boolean; say: (text: string) => void };
 }

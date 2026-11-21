@@ -60,7 +60,8 @@
           "hidden": [
             "internal_ref"
           ]
-        }
+        },
+        "phone_display": "masked"
       }
     ],
     "untagged": {
@@ -261,7 +262,8 @@
         "hidden": [
           "internal_ref"
         ]
-      }
+      },
+      "phone_display": "masked"
     }
   },
   "bootstrap_finish_mode": {

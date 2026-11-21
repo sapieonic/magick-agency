@@ -212,7 +212,7 @@ describe('the customer card on a side view', () => {
       prior_attempts: [],
     };
     const call = manualCall({ tag: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' }, contact });
-    const card = softphoneCustomerCard(call, CAMPAIGN.context_display);
+    const card = softphoneCustomerCard(call, CAMPAIGN);
     expect(card.name).toBe('Asha Rao');
     expect(card.facts.map((f) => f.value)).toEqual(['HL-4471']);
     expect(softphoneLastCalls(call, CAMPAIGN)).toEqual([]);
@@ -231,7 +231,7 @@ describe('the customer card on a side view', () => {
 
     const contact = { contact_id: 'ct-1', state: 'in_flight' as const, claimed: true, context, prior_attempts: [] };
     const call = manualCall({ tag: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' }, contact });
-    expect(softphoneCustomerCard(call, {}).name).toBe('Sunita Patil');
-    expect(softphoneCustomerCard(call, { facts: [] }).name).toBeNull();
+    expect(softphoneCustomerCard(call, { context_display: {} }).name).toBe('Sunita Patil');
+    expect(softphoneCustomerCard(call, { context_display: { facts: [] } }).name).toBeNull();
   });
 });

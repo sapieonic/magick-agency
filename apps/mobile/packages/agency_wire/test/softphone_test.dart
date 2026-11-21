@@ -315,6 +315,23 @@ void main() {
       expect(b.callFields.map((f) => f.type), CallFieldType.values.where((t) => !t.isUnknown));
     });
 
+    test('each campaign carries its own number setting (AS19 S3(b)); absent or unknown reads as full', () {
+      final b = SoftphoneBootstrap.fromJson(sp('bootstrap_enabled'));
+      final tagged = b.taggable('c0ffee00-1111-4222-8333-444455556666')!;
+      expect(tagged.phoneDisplay, PhoneDisplay.masked);
+      expect(tagged.masksPhone, isTrue);
+      expect(b.callCampaign!.masksPhone, isTrue);
+      final idle = SoftphoneBootstrap.fromJson(sp('bootstrap_idle'));
+      expect(idle.taggableCampaigns.single.phoneDisplay, isNull, reason: 'an older server sends none');
+      expect(idle.taggableCampaigns.single.masksPhone, isFalse);
+      final raw = (sp('bootstrap_enabled')['taggable_campaigns']! as List<Object?>).first! as Map<String, Object?>;
+      final odd = SoftphoneCampaign.fromJson({...raw, 'phone_display': 'sideways'});
+      expect(odd.phoneDisplay, PhoneDisplay.full);
+      expect(odd.masksPhone, isFalse);
+      expect(odd == SoftphoneCampaign.fromJson({...raw, 'phone_display': 'full'}), isTrue);
+      expect(odd == tagged, isFalse);
+    });
+
     test('a campaign session switched to the soft phone, with the switch queued, reads as such', () {
       final summary = SoftphoneSessionSummary.fromJson({
         ...sp('bootstrap_finish_mode')['session']! as Map<String, Object?>,

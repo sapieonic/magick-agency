@@ -358,6 +358,7 @@ function SoftphoneConsole({
             </>
           ),
           cueFlash: null,
+          // No station campaign here; the soft phone's facts follow the call's campaign (S3(b)).
           phoneDisplay: 'full',
           readAloud,
         }}

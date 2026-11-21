@@ -468,8 +468,9 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final ErrorBody e when e.softphoneCode != SoftphoneErrorCode.unknown => [e.softphoneCode],
   final ErrorBody e => [e.code],
   final SoftphoneBootstrap b => [
-    ...b.taggableCampaigns.map((c) => c.status),
+    ...b.taggableCampaigns.expand((c) => [c.status, ?c.phoneDisplay]),
     ?b.callCampaign?.status,
+    ?b.callCampaign?.phoneDisplay,
     ...b.callFields.map((f) => f.type),
     ?b.session?.kind,
     ?b.session?.state,

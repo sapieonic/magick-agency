@@ -531,7 +531,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     const acct = await freshAccount();
     const agent = await user(tenant, acct, 'agent');
     const sup = await user(tenant, acct, 'account_admin');
-    const running = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'running' });
+    const running = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'running', phone_display: 'masked' });
     const paused = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'paused' });
     const completed = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'completed' });
     const draft = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'draft' });
@@ -541,6 +541,11 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     const boot = await get('/proxy/agency/softphone/bootstrap', agent);
     expect(boot.json().taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id).sort())
       .toEqual([running.id, paused.id].sort());
+    // AS19 S3(b): each campaign carries its own number setting, so a call tagged to it shows its
+    // contact's phone facts as that campaign says (the column default is `full`).
+    const displayOf = (id: unknown) => boot.json().taggable_campaigns
+      .find((c: { campaign_id: string }) => c.campaign_id === id)?.phone_display;
+    expect([displayOf(running.id), displayOf(paused.id)]).toEqual(['masked', 'full']);
     for (const c of [completed, draft]) {
       const refused = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811300040', campaign_id: c.id });
       expect(refused.statusCode, `${c.status as string}`).toBe(403);
@@ -561,7 +566,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     const acct = await freshAccount();
     const agent = await user(tenant, acct, 'agent');
     const campaign = await insertAgencyCampaign({
-      tenant_id: tenant, account_id: acct, status: 'running', disposition_catalog: CATALOG,
+      tenant_id: tenant, account_id: acct, status: 'running', disposition_catalog: CATALOG, phone_display: 'masked',
     });
     await staff(campaign.id as string, agent.id, acct);
     const { sessionId, station } = await openSoftphone(agent);
@@ -573,7 +578,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect(boot.json().taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id)).not.toContain(campaign.id);
     expect(boot.json().call).toMatchObject({ id: callId, tag: { campaign_id: campaign.id } });
     expect(boot.json().call_campaign).toMatchObject({
-      campaign_id: campaign.id, status: 'completed',
+      campaign_id: campaign.id, status: 'completed', phone_display: 'masked',
       disposition_catalog: [expect.objectContaining({ code: 'renewed' }), expect.objectContaining({ code: 'call_back' })],
     });
     const saved = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'renewed' });

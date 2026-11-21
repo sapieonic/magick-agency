@@ -174,9 +174,9 @@ export function SoftphoneScreen({
     setBlockLine(null);
   }, [sp.form.selectedCode, sp.form.callbackAt, sp.form.promiseDate, callId]);
 
-  const display = sp.campaign?.context_display;
-  // The facts follow the station's `phone_display` (S3(b)); the dialled number stays as typed.
-  const card = useMemo(() => (call ? softphoneCustomerCard(call, display, frame.phoneDisplay) : null), [call, display, frame.phoneDisplay]);
+  // The facts follow the call's campaign's own `phone_display` (S3(b)), not the station's; the
+  // dialled number stays as typed.
+  const card = useMemo(() => (call ? softphoneCustomerCard(call, sp.campaign) : null), [call, sp.campaign]);
   const lastCalls = useMemo(() => (call ? softphoneLastCalls(call, sp.campaign) : []), [call, sp.campaign]);
   const phase: SideCallPhase =
     sp.phase === 'dialing' || sp.phase === 'ringing' ? 'coming' : sp.phase === 'on_call' ? 'on_call' : sp.phase === 'outcome' ? 'happened' : 'idle';

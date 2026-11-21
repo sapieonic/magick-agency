@@ -278,9 +278,9 @@ class SoftphoneContactView {
   /// (`wire.chosenFactTiles`), for the compact card's line (S4). Null when it did not choose.
   final FactsView? facts;
 
-  /// The tagged campaign hides customers' numbers (AS9), so the contact's phone-typed facts are
-  /// hidden too (AS19 S3; [heroFields] and [otherFields] already are). Known only for the station's
-  /// own campaign (`SoftphoneHostView.campaignMasksPhone`); false for any other tag.
+  /// The tagged campaign hides customers' numbers (AS9, its `phone_display` on the soft phone's
+  /// bootstrap), so the contact's phone-typed facts are hidden too (AS19 S3(b); [heroFields] and
+  /// [otherFields] already are). False when it shows them, or from an older server that sends none.
   final bool maskPhone;
 
   /// The tagged campaign chose its card's facts (AS19).

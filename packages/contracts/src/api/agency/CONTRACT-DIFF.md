@@ -235,7 +235,11 @@ Agent station, the number display on the agent's own lists (AS9). `AgencyAttempt
 session bootstrap reads it (anything unexpected is `full`). `AgencyAttempt`'s is added by the public
 API layer on `GET /proxy/agency/my-attempts` only (the agent's own My calls); the dialer's
 `AgencyAttemptRow`, the internal handler and the supervisor's twin carry none. `AgencyMyContact`'s is
-on every `GET /proxy/agency/my-contacts` row. The number itself is still sent in full.
+on every `GET /proxy/agency/my-contacts` row. `AgencySoftphoneCampaign.phone_display?` (optional,
+AS18; AS19 S3(b)) is the campaign's own setting on every campaign the soft phone's bootstrap
+describes (`taggable_campaigns`, `call_campaign`), so a call tagged to any campaign shows its
+contact's phone facts as that campaign says; it is declared once, in the dialer contract, and
+re-exported unchanged (§3). The number itself is still sent in full.
 
 Agent station, pool queue state (BE-5, AS18). `AgencyStationCapability` gained `queue_pool`
 (`AGENCY_STATION_QUEUE_POOL_CAPABILITY`, in `AGENCY_STATION_CAPABILITIES` and the app's

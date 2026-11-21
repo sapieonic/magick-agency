@@ -1316,7 +1316,6 @@ class StationController extends Notifier<StationView?>
       accountId: s.hosted.accountId,
       campaignId: s.hosted.campaignId,
       campaignName: s.hosted.bootstrap?.campaignName ?? s.hosted.campaignName,
-      campaignMasksPhone: s.hosted.kind == SessionKind.campaign && (s.hosted.bootstrap?.masksPhone ?? false),
       link: StationViewMapper.linkOf(_station.connection),
       everOpened: _everOpened,
       phase: StationViewMapper.phaseOf(_station.effectiveState),

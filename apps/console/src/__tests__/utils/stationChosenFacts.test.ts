@@ -329,18 +329,25 @@ describe('the side views build the chosen facts from the contact’s row (AS19)'
       ['Amount due', '₹12,500'],
     ]);
     const manual = { destination_e164: '+919876543321', contact: { context, prior_attempts: [] } } as unknown as AgencyManualCall;
-    expect(softphoneCustomerCard(manual, display).facts.map((f) => f.label)).toEqual(['Other number', 'Amount due']);
+    expect(softphoneCustomerCard(manual, { context_display: display }).facts.map((f) => f.label)).toEqual(['Other number', 'Amount due']);
   });
 
-  it('the soft phone masks its phone facts as the station says, the dialled number as typed (S3(b))', () => {
+  it('the soft phone masks its phone facts as the call\'s campaign says, the dialled number as typed (S3(b))', () => {
     const manual = { destination_e164: '+919876543321', contact: { context, prior_attempts: [] } } as unknown as AgencyManualCall;
-    const masked = softphoneCustomerCard(manual, display, 'masked');
+    const masked = softphoneCustomerCard(manual, { context_display: display, phone_display: 'masked' });
     expect(masked.facts.map((f) => f.value)).toEqual(['98••• ••345', '₹12,500']);
     expect(masked.phone).toBe('+91 98765 43321');
-    const full = softphoneCustomerCard(manual, display, 'full');
+    const full = softphoneCustomerCard(manual, { context_display: display, phone_display: 'full' });
     expect(full.facts.map((f) => f.value)).toEqual(['+91 98765 12345', '₹12,500']);
+    // An older server sends no setting, and an unknown one is not `masked`: shown in full (AS18).
+    expect(softphoneCustomerCard(manual, { context_display: display }).facts[0]!.value).toBe('+91 98765 12345');
+    const unknown = { context_display: display, phone_display: 'sideways' as unknown as 'full' };
+    expect(softphoneCustomerCard(manual, unknown).facts[0]!.value).toBe('+91 98765 12345');
     // Today's card on the soft phone: a column `types` calls a phone is masked too.
-    const legacy = softphoneCustomerCard(manual, { hero: ['Alt phone', 'Outstanding'], types: { 'Alt phone': 'phone' } }, 'masked');
+    const legacy = softphoneCustomerCard(manual, {
+      context_display: { hero: ['Alt phone', 'Outstanding'], types: { 'Alt phone': 'phone' } },
+      phone_display: 'masked',
+    });
     expect(legacy.facts.map((f) => [f.label, f.value])).toEqual([['Alt phone', '98••• ••345'], ['Outstanding', '12500']]);
     expect(legacy.phone).toBe('+91 98765 43321');
   });
