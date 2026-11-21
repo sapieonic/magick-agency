@@ -597,9 +597,16 @@ describe('review fixes', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(where().getAll('m')).toEqual(['avg_call']));
-    // A lens tab clears the URL's metrics: the page falls back to the lens, not to the deleted view.
-    fireEvent.click(screen.getByTestId('compare-lens-collections'));
+    // Away and back: the options still name it (read before the delete, or cached), but the page
+    // opens on the campaign's starting lens, not on a view that no longer exists.
+    fireEvent.change(screen.getByTestId('compare-campaign'), { target: { value: 'camp-0' } });
+    await waitFor(() => expect(where().get('campaign')).toBe('camp-0'));
+    fireEvent.change(screen.getByTestId('compare-campaign'), { target: { value: 'camp-1' } });
+    await waitFor(() => expect(where().get('campaign')).toBe('camp-1'));
+    fireEvent.click(await screen.findByRole('button', { name: /Lakshmi P/ }));
     await waitFor(() => expect(lastQuery().metrics.map(compareMetricId)).toContain('promises_rate'));
+    expect(lastQuery().metrics).not.toEqual([{ kind: 'builtin', key: 'avg_call' }]);
+    expect(screen.getByTestId('compare-lens-collections').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('a failed re-read never passes the last answer off as the new one: it is labelled with its window', async () => {
