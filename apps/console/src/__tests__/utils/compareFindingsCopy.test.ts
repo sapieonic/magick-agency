@@ -11,12 +11,10 @@ import {
 } from '@magick-agency/contracts/api/agency/compare';
 import {
   FINDING_BADGES,
-  agentCallsLink,
   agentName,
   emptyFindingsNote,
   findingAction,
   findingCopy,
-  firstName,
   neutralNote,
   notClearFoot,
   notClearLine,
@@ -224,13 +222,16 @@ describe('a likely range beside the rest of the team', () => {
 });
 
 describe('next steps link to pages that exist', () => {
-  const window = { from: '2026-11-15', to: '2026-11-21', timezone: 'Asia/Kolkata' };
-
   it('opens the agent’s placed calls on the campaign, in the window, by local midnights', () => {
-    expect(agentCallsLink('camp 1', 'u-priya', window)).toBe(
+    // The window is 15–21 Nov in Asia/Kolkata; the links are exactly the ones Insights builds.
+    const recent = on(WILL_PAY, { code: 'clear_gap', next_step: 'listen_recent' });
+    expect(findingAction(recent.f, ctx({ ...recent.response, campaign_id: 'camp 1' }))!.to).toBe(
       '/agency/campaigns/camp%201/attempts?agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z',
     );
-    expect(agentCallsLink('c', 'u', window, ['will_pay', 'part_paid'])).toMatch(/^\/agency\/campaigns\/c\/attempts\?disposition_code=will_pay&disposition_code=part_paid&agent_user_id=u/);
+    const best = on(builtin('success_rate'), { code: 'stands_out', next_step: 'share_best_call' });
+    expect(findingAction(best.f, ctx(best.response))!.to).toBe(
+      '/agency/campaigns/camp-1/attempts?disposition_code=will_pay&disposition_code=part_paid&agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z',
+    );
   });
 
   it('has an action for every next step a supervisor with listening rights can take', () => {
@@ -320,23 +321,26 @@ describe('Not clear yet, and the notes', () => {
         per_metric: Object.fromEntries(Object.entries(response.cohort.per_metric).map(([id, c]) => [id, { ...c, agents_rated: 4 }])),
       },
     };
-    expect(emptyFindingsNote(thin)).toBe(
-      'Nothing is judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and only 4 do. Check a longer window.',
-    );
-    expect(emptyFindingsNote(response)).toBe('Nothing clear stands out among these agents on these metrics.');
-    expect(emptyFindingsNote({ ...response, metrics: [metricInfo(builtin('calls_handled'))] })).toMatch(/shown for context only/);
+    expect(emptyFindingsNote(thin)).toEqual({
+      text: 'Nothing is judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and only 4 do. Check a longer window.',
+      offerLonger: true,
+    });
+    expect(emptyFindingsNote(response)).toEqual({ text: 'Nothing clear stands out among these agents on these metrics.', offerLonger: false });
+    const neutralOnly = emptyFindingsNote({ ...response, metrics: [metricInfo(builtin('calls_handled'))] });
+    expect(neutralOnly?.text).toMatch(/shown for context only/);
+    expect(neutralOnly?.offerLonger).toBe(false);
     expect(emptyFindingsNote(compareResponse())).toBeNull();
   });
 
   it('judges each metric on its own rated cohort: breaks, with no floor, never stand in for the rates and times (recorded one-day window)', () => {
     // As the server sent it: Will pay, time to choose and no outcome rate 0 agents (14 calls
     // each, the floor is 20); breaks over their limit rates all 8.
-    expect(emptyFindingsNote(ONE_DAY_COLLECTIONS)).toBe(
+    expect(emptyFindingsNote(ONE_DAY_COLLECTIONS)?.text).toBe(
       'Nothing clear stands out on breaks over their limit. Will pay, time to choose outcome and no outcome chosen are not judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and none does. Check a longer window.',
     );
     // With breaks off the page, nothing at all is judged.
     const noBreaks = { ...ONE_DAY_COLLECTIONS, metrics: ONE_DAY_COLLECTIONS.metrics.filter((m) => m.id !== 'breaks_over_limit') };
-    expect(emptyFindingsNote(noBreaks)).toBe(
+    expect(emptyFindingsNote(noBreaks)?.text).toBe(
       'Nothing is judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and none does. Check a longer window.',
     );
     // One metric short, the others judged: it alone is named, and differing counts say "at most".
@@ -344,20 +348,20 @@ describe('Not clear yet, and the notes', () => {
     perMetric['outcomes:higher:will_pay'] = { ...perMetric['outcomes:higher:will_pay']!, agents_rated: 7 };
     perMetric['choose_time'] = { ...perMetric['choose_time']!, agents_rated: 7 };
     perMetric['no_outcome_rate'] = { ...perMetric['no_outcome_rate']!, agents_rated: 3 };
-    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })).toBe(
+    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })?.text).toBe(
       'Nothing clear stands out on Will pay, time to choose outcome and breaks over their limit. No outcome chosen is not judged yet: at least 6 agents on this campaign need enough calls in this window to compare fairly, and only 3 do. Check a longer window.',
     );
     perMetric['choose_time'] = { ...perMetric['choose_time']!, agents_rated: 2 };
-    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })).toMatch(
+    expect(emptyFindingsNote({ ...ONE_DAY_COLLECTIONS, cohort: { ...ONE_DAY_COLLECTIONS.cohort, per_metric: perMetric } })?.text).toMatch(
       /^Nothing clear stands out on Will pay and breaks over their limit\. Time to choose outcome and no outcome chosen are not judged yet: .*and at most 3 do\. Check a longer window\.$/,
     );
   });
 });
 
 describe('names', () => {
-  it('falls back to a marked id, and writes the possessive the British way', () => {
-    expect(agentName({ agents: [] }, 'abcdef123')).toBe('Agent abcdef');
-    expect(firstName('Priya M')).toBe('Priya');
+  it('falls back to a marked id as every agent surface does, and writes the possessive the British way', () => {
+    expect(agentName({ agents: [] }, 'abcdef1234')).toBe('Agent abcdef12');
+    expect(agentName({ agents: [{ ...compareResponse().agents[0]!, agent_user_id: 'u-x', agent_name: '  ' }] }, 'u-x')).toBe('Agent u-x');
     expect(possessive('Priya')).toBe('’s');
     expect(possessive('Lakshmi Das')).toBe('’');
   });

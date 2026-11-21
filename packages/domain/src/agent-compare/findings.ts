@@ -115,8 +115,8 @@ function kindOf(metric: CompareFindingsMetric['metric']): Kind {
   return null;
 }
 
-/** An outcome rate: the only rates `stands_out` may praise. */
-function isOutcomeRate(metric: CompareFindingsMetric['metric']): boolean {
+/** An outcome rate: the only rates `stands_out` may praise (the console's copy asks the same). */
+export function isOutcomeRate(metric: CompareFindingsMetric['metric']): boolean {
   const { ref } = metric;
   return ref.kind === 'outcomes' || ref.key === 'success_rate' || ref.key === 'promises_rate';
 }

@@ -10,9 +10,14 @@ import {
   type CompareFindingCode,
   type CompareNextStep,
 } from '@magick-agency/contracts/api/agency/compare';
+import { isOutcomeRate } from '@magick-agency/domain/agent-compare/findings';
 import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../../types/agency-stats';
-import { DISPLAY_LOCALE, formatCount } from '../../format/number';
+import { DISPLAY_LOCALE, formatCount, plural } from '../../format/number';
+import { agentDisplayName } from '../../agencyAgentFloor';
+import { joinAnd } from '../../agencyCampaignConfigForm';
 import { addDaysToDay, zoneDayStart } from '../insights/range';
+import { attemptsLink } from '../insights/links';
+import { firstName } from '../stationScript';
 import { CALLBACKS_CAMPAIGN_PARAM } from '../accountCallbacks';
 import { formatMetricValue, formatRate, infoLabel, infoLabelInSentence, infoNoun, isNoneDue, perWords } from './compareMetrics';
 
@@ -65,15 +70,10 @@ export interface FindingContext {
   canListen: boolean;
 }
 
-/** The agent's name as the page shows it; an id that no longer resolves stays marked as one. */
+/** The agent's name as the page shows it; an id that no longer resolves stays marked as one (`agentDisplayName`). */
 export function agentName(response: Pick<AgencyCompareResponse, 'agents'>, agentId: string): string {
-  const name = response.agents.find((a) => a.agent_user_id === agentId)?.agent_name?.trim();
-  return name || `Agent ${agentId.slice(0, 6)}`;
-}
-
-/** The first word of a name, for buttons: "Priya". */
-export function firstName(name: string): string {
-  return name.split(/\s+/)[0] || name;
+  const agent_name = response.agents.find((a) => a.agent_user_id === agentId)?.agent_name ?? null;
+  return agentDisplayName({ agent_user_id: agentId, agent_name });
 }
 
 /** "Priya’s", "Lakshmi Das’" — the possessive the sentence starts with, after the bold name. */
@@ -91,12 +91,6 @@ function numeratorOf(response: AgencyCompareResponse, finding: AgencyCompareFind
   return Math.round(finding.value * (finding.count ?? 0));
 }
 
-/** An outcome rate a supervisor wants high: success, promises, a "higher" outcome set. */
-function isHigherOutcome(info: AgencyCompareMetricInfo): boolean {
-  if (info.definition.better !== 'higher') return false;
-  return info.ref.kind === 'outcomes' || info.ref.key === 'success_rate' || info.ref.key === 'promises_rate';
-}
-
 /** The codes a call-log link narrows to for this metric: the set's own, or the catalog's success or promise codes. */
 export function outcomeCodesFor(info: AgencyCompareMetricInfo, codes: readonly AgencyCompareOutcomeCode[]): string[] {
   if (info.ref.kind === 'outcomes') return [...info.ref.codes];
@@ -105,34 +99,23 @@ export function outcomeCodesFor(info: AgencyCompareMetricInfo, codes: readonly A
   return [];
 }
 
-/**
- * The campaign's Call attempts tab for one agent: their placed dials in the window (half-open on
- * the dial's local midnights, as every compare count is cut), narrowed to `codes` when given.
- */
-export function agentCallsLink(
-  campaignId: string,
-  agentId: string,
-  window: { from: string; to: string; timezone: string },
-  codes: readonly string[] = [],
-): string {
-  const params = new URLSearchParams();
-  for (const code of codes) params.append('disposition_code', code);
-  params.set('agent_user_id', agentId);
-  params.set('placed', '1');
-  params.set('dialed_from', zoneDayStart(window.from, window.timezone).toISOString());
-  params.set('dialed_to', zoneDayStart(addDaysToDay(window.to, 1), window.timezone).toISOString());
-  return `/agency/campaigns/${encodeURIComponent(campaignId)}/attempts?${params.toString()}`;
-}
-
 /** A next step as a link to a page that exists, or null when there is none for this reader. */
 export function findingAction(finding: AgencyCompareFinding, ctx: FindingContext): FindingAction | null {
   const step = finding.next_step;
   if (step === null) return null;
   const { response } = ctx;
   const info = metricOf(response, finding.metric);
-  const first = firstName(agentName(response, finding.agent_user_id));
-  const window = { from: response.from, to: response.to, timezone: ctx.timezone };
-  const calls = (codes: readonly string[] = []) => agentCallsLink(response.campaign_id, finding.agent_user_id, window, codes);
+  const name = agentName(response, finding.agent_user_id);
+  const first = firstName(name) ?? name;
+  // The campaign's Call attempts tab for this agent: their placed dials in the window (half-open
+  // on the dial's local midnights, as every compare count is cut), narrowed to `codes` when given.
+  const calls = (codes: string[] = []) =>
+    attemptsLink(response.campaign_id, {
+      disposition: codes,
+      agent_user_id: finding.agent_user_id,
+      from: zoneDayStart(response.from, ctx.timezone).toISOString(),
+      to: zoneDayStart(addDaysToDay(response.to, 1), ctx.timezone).toISOString(),
+    });
   switch (step) {
     case 'listen_recent':
       return ctx.canListen ? { step, label: `Listen to ${first}’s calls on this campaign`, to: calls() } : null;
@@ -162,7 +145,8 @@ function lowOnOutcome(finding: AgencyCompareFinding, response: AgencyCompareResp
   return response.findings.some((f) => {
     if (f.code !== 'clear_gap' || f.agent_user_id !== finding.agent_user_id) return false;
     const info = metricOf(response, f.metric);
-    return info !== null && isHigherOutcome(info);
+    // An outcome rate a supervisor wants high: success, promises, a "higher" outcome set.
+    return info !== null && info.definition.better === 'higher' && isOutcomeRate(info);
   });
 }
 
@@ -208,7 +192,7 @@ function rateWhy(finding: AgencyCompareFinding, response: AgencyCompareResponse,
  */
 export function tooFewWhy(info: AgencyCompareMetricInfo | null, floor: number): string {
   if (info === null) {
-    return `A figure is compared only from ${plainCalls(floor)}, so a few lucky or unlucky calls never name anyone.`;
+    return `A figure is compared only from ${plural(floor, 'call')}, so a few lucky or unlucky calls never name anyone.`;
   }
   const floorWords = perWords(info, floor);
   if (info.definition.unit === 'seconds') {
@@ -249,7 +233,7 @@ export function findingCopy(finding: AgencyCompareFinding, ctx: FindingContext):
         why: `None of their call-backs has come due in this window, so there is nothing to keep on time yet. ${tooFewWhy(info, finding.baseline ?? 0)}`,
       };
     }
-    const den = info ? perWords(info, finding.count ?? finding.value) : plainCalls(finding.count ?? finding.value);
+    const den = info ? perWords(info, finding.count ?? finding.value) : plural(finding.count ?? finding.value, 'call');
     // No claim that the counts are shown: a rate under the floor is withheld, hits included (CP9).
     return {
       ...base,
@@ -288,10 +272,6 @@ export function findingCopy(finding: AgencyCompareFinding, ctx: FindingContext):
     rest: `${possessive(name)} ${infoNoun(info)} is ${value} (rest of the team ${rest}).`,
     why: rateWhy(finding, response, side),
   };
-}
-
-function plainCalls(n: number): string {
-  return `${formatCount(n)} ${n === 1 ? 'call' : 'calls'}`;
 }
 
 /**
@@ -345,15 +325,16 @@ export function neutralNote(response: Pick<AgencyCompareResponse, 'metrics'>): s
   return names.length > 0 ? `Shown for context, never flagged: ${names.join(', ')}.` : null;
 }
 
-/** `a`, `a and b`, `a, b and c` (no serial comma). */
-function joinAnd(items: readonly string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
-
 /** Metric names as a list in a sentence; the first capitalised when it starts the sentence. */
 function metricList(infos: readonly AgencyCompareMetricInfo[], startsSentence: boolean): string {
   return joinAnd(infos.map((m, i) => (startsSentence && i === 0 ? infoLabel(m) : infoLabelInSentence(m))));
+}
+
+/** Why "What stands out" is empty, and whether a longer window could change it. */
+export interface EmptyFindingsNote {
+  text: string;
+  /** Some metric is not judged for want of calls: Check a longer window is offered. */
+  offerLonger: boolean;
 }
 
 /**
@@ -366,22 +347,25 @@ function metricList(infos: readonly AgencyCompareMetricInfo[], startsSentence: b
  * floored ones: on a one-day window where no agent has 20 calls, breaks are still judged, while
  * every rate and time is not, and the page says which and offers a longer window.
  */
-export function emptyFindingsNote(response: AgencyCompareResponse): string | null {
+export function emptyFindingsNote(response: AgencyCompareResponse): EmptyFindingsNote | null {
   if (response.findings.length > 0) return null;
   const flaggable = response.metrics.filter((m) => m.flaggable);
   if (flaggable.length === 0) {
-    return 'Every metric on the page is shown for context only, so none is judged. Add one with a direction, such as an outcome set, to see what stands out.';
+    return {
+      text: 'Every metric on the page is shown for context only, so none is judged. Add one with a direction, such as an outcome set, to see what stands out.',
+      offerLonger: false,
+    };
   }
   const ratedOf = (m: AgencyCompareMetricInfo) => response.cohort.per_metric[m.id]?.agents_rated ?? 0;
   const unjudged = flaggable.filter((m) => ratedOf(m) < COMPARE_MIN_RATED_COHORT);
-  if (unjudged.length === 0) return 'Nothing clear stands out among these agents on these metrics.';
+  if (unjudged.length === 0) return { text: 'Nothing clear stands out among these agents on these metrics.', offerLonger: false };
   const counts = unjudged.map(ratedOf);
   const most = Math.max(...counts);
   const same = counts.every((c) => c === most);
   const have = most === 0 ? 'none does' : !same ? `at most ${most} do` : most === 1 ? 'only 1 does' : `only ${most} do`;
   const need = `at least ${COMPARE_MIN_RATED_COHORT} agents on this campaign need enough calls in this window to compare fairly, and ${have}. Check a longer window.`;
-  if (unjudged.length === flaggable.length) return `Nothing is judged yet: ${need}`;
+  if (unjudged.length === flaggable.length) return { text: `Nothing is judged yet: ${need}`, offerLonger: true };
   const judged = flaggable.filter((m) => !unjudged.includes(m));
   const verb = unjudged.length === 1 ? 'is' : 'are';
-  return `Nothing clear stands out on ${metricList(judged, false)}. ${metricList(unjudged, true)} ${verb} not judged yet: ${need}`;
+  return { text: `Nothing clear stands out on ${metricList(judged, false)}. ${metricList(unjudged, true)} ${verb} not judged yet: ${need}`, offerLonger: true };
 }

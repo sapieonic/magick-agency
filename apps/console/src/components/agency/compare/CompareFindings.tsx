@@ -70,9 +70,9 @@ export function CompareFindings({ response, codes, timezone, canListen, onLonger
         {empty ? (
           <li className={styles.find} data-testid="compare-findings-empty">
             <p className={styles.emptyNote}>
-              {empty}
+              {empty.text}
             </p>
-            {onLonger && response.findings.length === 0 && /longer window/.test(empty) ? (
+            {onLonger && empty.offerLonger ? (
               <button type="button" className={styles.linkButton} onClick={onLonger}>
                 Check a longer window
               </button>

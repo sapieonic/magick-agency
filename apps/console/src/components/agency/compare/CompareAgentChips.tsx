@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { COMPARE_PAGE_MAX_AGENTS, type AgencyCompareCohortAgent } from '@magick-agency/contracts/api/agency/compare';
 import { pickedAgents } from '../../../utils/agency/compare/compareUrl';
 import { plural } from '../../../utils/format/number';
+import { agentDisplayName } from '../../../utils/agencyAgentFloor';
 import { agentColour } from './CompareCharts';
 import styles from './Compare.module.css';
 
@@ -15,11 +16,12 @@ import styles from './Compare.module.css';
 /** Past this many agents the chips get a filter box. */
 const FILTER_FROM = 12;
 
+/** A cohort agent's name as every chart and chip shows it (`agentDisplayName`). */
 export function cohortAgentName(agent: Pick<AgencyCompareCohortAgent, 'name' | 'agent_user_id'>): string {
-  return agent.name?.trim() || `Agent ${agent.agent_user_id.slice(0, 6)}`;
+  return agentDisplayName({ agent_user_id: agent.agent_user_id, agent_name: agent.name });
 }
 
-export function pickHint(count: number): string {
+function pickHint(count: number): string {
   if (count >= COMPARE_PAGE_MAX_AGENTS) {
     return `${COMPARE_PAGE_MAX_AGENTS} agents is the most that stays readable, also for colour-blind viewers. Remove one to add another.`;
   }

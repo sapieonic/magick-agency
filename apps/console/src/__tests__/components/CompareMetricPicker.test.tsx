@@ -130,7 +130,7 @@ describe('the outcome-set builder', () => {
 });
 
 describe('the agent chips', () => {
-  it('marks few calls and no longer active, and names an unresolved id as one', () => {
+  it('marks few calls and no longer active, and names an unresolved id as one, by its first 8 characters', () => {
     render(<CompareAgentChips agents={compareOptions().agents} slots={[null, null, null]} onToggle={vi.fn()} />);
     const chips = screen.getAllByTestId('compare-agent-chip');
     expect(chips.map((c) => c.textContent)).toEqual([
@@ -139,7 +139,7 @@ describe('the agent chips', () => {
       'Priya M',
       'Arjun T· no longer active',
       'Divya S· few calls',
-      'Agent u-kira',
+      'Agent u-kiran',
     ]);
   });
 
