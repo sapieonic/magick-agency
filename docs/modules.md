@@ -456,7 +456,7 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/integration/api/agency-reports-routes.test.ts` (the per-user rate under a burst of requests, `X-Account-Id` in upper case, re-enabling a subscription) | 6 |
 | `apps/server/test/integration/api/agency-reports-e2e.test.ts` (the real pipeline from config: routes, assembler, real builders, the inline renderer, download and email; and SQS mode, the renderer as the Lambda runs it and the signed callback) | 8 |
 | `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
-| `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`) | 4 |
+| `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`; legacy names in `zone-aliases.test.ts`) | 4 |
 | `apps/server/test/integration/agency/report-assembler-deadline.test.ts` (the deadline over the real cursor: a stalled upload and a long statement end `assembly_failed` with the cursor's transaction ended; a real builder stops at its next stage) | 5 |
 | `apps/server/test/integration/agency/report-cursor-session-timeouts.test.ts` (the report cursor replaces the pool's idle-in-transaction and statement timeouts for its own transaction only, with a bound: the report deadline or `timeoutMs`, never 0, and a lower database value kept; a consumer that stalls past the bound has its transaction ended by Postgres) | 7 |
 
@@ -483,6 +483,8 @@ Files: `assemble.ts`, `read.ts`, `validate.ts`; `db/repositories/agency/compare-
 | `apps/server/test/unit/agency/compare/compare-validate.test.ts` (the body schema, the refusal order, each `compare_metric_invalid` cause, the zone and window, a view's content with and without a campaign, the fallback copy) | — |
 | `apps/server/test/unit/agency/compare/compare-assemble.test.ts` (each built-in's and an outcome set's two counts, a missing source an error, the day split's rounding, the trend's nulls and median, the response around them) | — |
 | `apps/server/test/unit/agency/compare/compare-read-guards.test.ts` (the per-tenant limiter, the cache key) | — |
+| `apps/server/test/unit/agency/compare/compare-read-cancel.test.ts` (on a fake connection: the whole-read deadline, the cancel sent and awaited before the connection is given up, also when the statement ends first, a cancelled connection destroyed, the abandon after the grace, the slot held until the statement ends, the process-wide limit, an already-gone socket; mutation-checked) | — |
+| `apps/server/test/unit/agency/reports/zone-aliases.test.ts` (legacy zone names a browser reports, resolved to their current name when Postgres lacks them, with the lookup injected: the shared helper, the report builders' zone; every alias a current name with the same clock) | — |
 | `apps/server/test/integration/api/compare-agents.test.ts` (the oracle through the real app: eight agents over three days, every figure equal to the seed and to `GET /agents/stats?campaign_id=` where both serve it, outcome sets, promises on three call types, call-backs, breaks, trend nulls on a day off and on another campaign's day, findings for seeded gaps and none for the thin agent beyond `too_few_calls`, every refusal, the agent role, the flag, another tenant and another account, 429 under a held lock, 503 past the timeout, the cache, saved views; mutation-checked) | — |
 | `apps/server/test/integration/agency/compare-view-repository.test.ts` (owner-only edit and delete in the repository, the default switch also under concurrent creates, the per-owner limit under concurrent creates, the list's order and scope; mutation-checked) | — |
 
@@ -1684,10 +1686,13 @@ Files: `audit.repository.ts`
 
 Single-flight, SQL update builder, TTL cache, the recording predicate (`recording-request.ts`, RC1: `honourRecordingRequest` for a call row, `recordingUrlSql` / `hasRecordingSql` for SQL readers; a call has a recording only when `recording_requested`; import-free, so SQL built at load time and suites that mock the call repository get the real one), and `withTransaction` (`transaction.ts`): BEGIN with an isolation level and READ ONLY, COMMIT, ROLLBACK on a throw, release on every path, destroy a client whose ROLLBACK failed, `tx.rollback()` to end early without throwing, and `client` to join a caller's open transaction (decision B8). Import-free: the caller passes its pool. Imported as `@magick-agency/db/utils/transaction`.
 
-Files: `recording-request.ts`, `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
+Also `cancel-backend.ts` (`cancelBackend`: `pg_cancel_backend` on a fresh unpooled connection built from the pool's settings, bounded, never throwing, awaited by its callers before they give the cancelled connection up; Compare agents' read and the report cursor).
+
+Files: `cancel-backend.ts`, `recording-request.ts`, `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/cancel-backend.test.ts` (a running statement cancelled while the only pooled connection is busy with it; false, never a throw, when the server is unreachable or the backend does not exist) | — |
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; the settings SQL replacing what an earlier client left on a reused session; `SET LOCAL` lifts one for a transaction; the idle limit ending a checked-out session without ending the process, logged once as a held connection's warning; an idle pooled connection ended by `pg_terminate_backend` logged once, as a pool error only) | 7 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
@@ -1752,6 +1757,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/compare-views-migration.test.ts` (0063: the columns, every CHECK both ways, one default per campaign, the tenant and campaign cascades, the listing indexes and their plans, the lock timeout, down then up) | 9 |
+| `packages/db/test/integration/db/session-events-offline-index-migration.test.ts` (0064: the definition, a statement repeating its predicate uses it, the invalid-index refusal, down then up) | — |
 | `packages/db/test/integration/db/promise-to-pay-migration.test.ts` (0041, 0044, 0045: the columns and CHECKs, NOT VALID then validated, no index under 0041's lock, 0045's index and its invalid-index refusal, down then up) | 10 |
 | `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0042; the check's unique index holds pending, running and completed imports only) | 4 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
