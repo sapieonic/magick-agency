@@ -153,10 +153,18 @@ export function compareErrorCode(err: unknown): CompareRefusalCode | null {
   return code !== null && COMPARE_CODES.has(code) ? (code as CompareRefusalCode) : null;
 }
 
-/** A refusal that clears by itself: the page offers Try again (§7). */
+/**
+ * A failure that can clear by itself, so the page offers Try again (§7): `compare_busy` and
+ * `compare_timed_out`, any other 429 or 5xx, and a failure with no answer at all (the network).
+ * Every other refusal, a 403 or a 400 with or without a code, stays until the reader changes
+ * something, so asking again would only fail again.
+ */
 export function isRetryableCompareError(err: unknown): boolean {
   const code = compareErrorCode(err);
-  return code === 'compare_busy' || code === 'compare_timed_out';
+  if (code === 'compare_busy' || code === 'compare_timed_out') return true;
+  if (code !== null) return false;
+  if (err instanceof ApiError) return err.statusCode === 429 || err.statusCode >= 500;
+  return !(err instanceof DOMException && err.name === 'AbortError');
 }
 
 /**

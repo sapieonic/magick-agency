@@ -154,17 +154,23 @@ export function formatMetricValue(unit: CompareMetricUnit, value: number | null)
   }
 }
 
-/** The bar's words in place of a bar under the floor: "Too few to compare (12 calls; needs 20)". */
+/**
+ * The bar's words in place of a bar under the floor: "Too few to compare (12 calls; needs 20)".
+ * A null denominator (none sent) states no count: an unknown count is never written as 0.
+ */
 export function tooFewWords(info: AgencyCompareMetricInfo, denominator: number | null): string {
   const floor = info.definition.min_denominator;
-  const have = perWords(info, denominator ?? 0);
-  return floor === null ? `Too few to compare (${have})` : `Too few to compare (${have}; needs ${formatCount(floor)})`;
+  const parts = [denominator === null ? null : perWords(info, denominator), floor === null ? null : `needs ${formatCount(floor)}`].filter(
+    (p): p is string => p !== null,
+  );
+  return parts.length > 0 ? `Too few to compare (${parts.join('; ')})` : 'Too few to compare';
 }
 
 /** The same in fewer words, for a narrow chart: "Too few (12 of 20)". */
 export function tooFewShort(info: AgencyCompareMetricInfo, denominator: number | null): string {
   const floor = info.definition.min_denominator;
-  const have = formatCount(denominator ?? 0);
+  if (denominator === null) return floor === null ? 'Too few' : `Too few (needs ${formatCount(floor)})`;
+  const have = formatCount(denominator);
   return floor === null ? `Too few (${have})` : `Too few (${have} of ${formatCount(floor)})`;
 }
 

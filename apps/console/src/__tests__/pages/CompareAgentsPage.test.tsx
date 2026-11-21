@@ -261,6 +261,97 @@ describe('what it shows', () => {
   });
 });
 
+describe('reads', () => {
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('draws only the agents the answer has: a new pick waits for its figures, never “too few” or “not logged in”', async () => {
+    const base = compareResponse();
+    const onlyLak = {
+      ...base,
+      agents: base.agents.filter((a) => a.agent_user_id === 'u-lak'),
+      trend: { ...base.trend!, agents: base.trend!.agents.filter((a) => a.agent_user_id === 'u-lak') },
+    };
+    mocks.queryCompare.mockResolvedValueOnce(onlyLak);
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    // Priya's read never answers, then it fails: either way her figures are not known.
+    let fail: (e: unknown) => void = () => {};
+    mocks.queryCompare.mockImplementationOnce(() => new Promise((_r, reject) => (fail = reject)));
+    fireEvent.click(screen.getAllByTestId('compare-agent-chip')[2]!);
+    await screen.findByText('Updating…');
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    const check = () => {
+      expect(screen.getAllByTestId('compare-bar-row')).toHaveLength(3);
+      expect(screen.getAllByTestId('compare-day-row')).toHaveLength(1);
+      expect(screen.getAllByTestId('compare-trend-line')).toHaveLength(1);
+      expect(document.body.textContent).not.toMatch(/Too few[^)]*\(0/);
+      expect(screen.getAllByTestId('compare-day-row')[0]!.textContent).toContain('Lakshmi P');
+      expect(screen.getByTestId('compare-trend').getAttribute('aria-label')).not.toContain('Priya');
+      expect(within(screen.getByTestId('compare-numbers')).queryByText('Priya M')).toBeNull();
+    };
+    check();
+    fail(new TypeError('Failed to fetch'));
+    await screen.findByTestId('compare-error');
+    check();
+  });
+
+  it('holds the comparison while a new window’s agents load, then asks once with the new window', async () => {
+    renderView('?campaign=camp-1&agents=u-priya');
+    await screen.findByTestId('compare-findings');
+    expect(mocks.queryCompare).toHaveBeenCalledTimes(1);
+    let answer: (o: unknown) => void = () => {};
+    mocks.getCompareOptions.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    await waitFor(() => expect(mocks.getCompareOptions).toHaveBeenCalledTimes(2));
+    await pause(500);
+    // No read with the old window's agents, and no second read beside the options read.
+    expect(mocks.queryCompare).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Updating…')).toBeTruthy();
+    answer(compareOptions({ campaign_id: 'camp-1' }));
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    expect(lastQuery()).toMatchObject({ from: '2026-11-21', to: '2026-11-21', agent_ids: ['u-priya'] });
+    await pause(400);
+    expect(mocks.queryCompare).toHaveBeenCalledTimes(2);
+  });
+
+  it('never asks about an agent the new window’s options leave out', async () => {
+    renderView('?campaign=camp-1&agents=u-lak,u-priya');
+    await screen.findByTestId('compare-findings');
+    const withoutPriya = compareOptions();
+    mocks.getCompareOptions.mockResolvedValueOnce({ ...withoutPriya, agents: withoutPriya.agents.filter((a) => a.agent_user_id !== 'u-priya') });
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    expect(lastQuery().agent_ids).toEqual(['u-lak']);
+    expect(mocks.queryCompare.mock.calls.every(([q]) => !(q.from === '2026-11-21' && q.agent_ids.includes('u-priya')))).toBe(true);
+  });
+
+  it('shows a failed options read even when an earlier one is on screen', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    mocks.getCompareOptions.mockRejectedValueOnce(new ApiError(500, { error: 'Internal Server Error' }));
+    fireEvent.change(screen.getByTestId('compare-when'), { target: { value: 'today' } });
+    const error = await screen.findByTestId('compare-error');
+    expect(error.textContent).toBeTruthy();
+    fireEvent.click(within(error).getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(mocks.getCompareOptions).toHaveBeenCalledTimes(3));
+  });
+
+  it('sends one read for picks made in quick succession', async () => {
+    renderView('?campaign=camp-1&agents=u-lak');
+    await screen.findByTestId('compare-findings');
+    expect(mocks.queryCompare).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getAllByTestId('compare-agent-chip')[1]!);
+    await pause(80);
+    fireEvent.click(screen.getAllByTestId('compare-agent-chip')[2]!);
+    await pause(80);
+    fireEvent.click(screen.getByTestId('compare-lens-sales'));
+    await waitFor(() => expect(mocks.queryCompare).toHaveBeenCalledTimes(2));
+    await pause(400);
+    expect(mocks.queryCompare).toHaveBeenCalledTimes(2);
+    expect(lastQuery().agent_ids).toEqual(['u-lak', 'u-ravi', 'u-priya']);
+  });
+});
+
 describe('refusals', () => {
   it('words compare_busy and tries again on request', async () => {
     mocks.queryCompare.mockRejectedValueOnce(refusal(429, 'compare_busy'));
@@ -286,6 +377,20 @@ describe('refusals', () => {
     const error = await screen.findByTestId('compare-error');
     expect(error.textContent).toMatch(/valid window/);
     expect(within(error).queryByRole('button')).toBeNull();
+  });
+
+  it('offers no Try again for a 403 or a 400 with no compare code, and offers it for a network failure', async () => {
+    for (const [err, retry] of [
+      [new ApiError(403, { error: 'Forbidden' }), false],
+      [new ApiError(400, { error: 'Bad Request', message: 'body/metrics must NOT have more than 6 items' }), false],
+      [new TypeError('Failed to fetch'), true],
+    ] as const) {
+      mocks.queryCompare.mockRejectedValueOnce(err);
+      const { unmount } = renderView('?campaign=camp-1&agents=u-lak');
+      const error = await screen.findByTestId('compare-error');
+      expect(within(error).queryByRole('button', { name: 'Try again' }) !== null, String(err)).toBe(retry);
+      unmount();
+    }
   });
 
   it('holds a custom window to the reports’ rule before asking', async () => {

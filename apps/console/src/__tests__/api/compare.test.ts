@@ -130,11 +130,20 @@ describe('refusals', () => {
     expect(COMPARE_ERROR_MESSAGES.compare_timezone_invalid).toContain('recognised');
   });
 
-  it('offers Try again only for compare_busy and compare_timed_out', () => {
+  it('offers Try again only for what can clear by itself: busy, timed out, 429, 5xx, the network', () => {
     for (const code of AGENCY_COMPARE_ERROR_CODES) {
       expect(isRetryableCompareError(refusal(400, code)), code).toBe(code === 'compare_busy' || code === 'compare_timed_out');
     }
-    expect(isRetryableCompareError(new Error('network'))).toBe(false);
+    expect(isRetryableCompareError(new TypeError('Failed to fetch'))).toBe(true);
+    expect(isRetryableCompareError(new ApiError(500, { error: 'Internal Server Error' }))).toBe(true);
+    expect(isRetryableCompareError(new ApiError(503, { error: 'Service Unavailable' }))).toBe(true);
+    expect(isRetryableCompareError(new ApiError(429, { error: 'Too Many Requests' }))).toBe(true);
+    // A refusal that stays until the reader changes something: no Try again.
+    expect(isRetryableCompareError(new ApiError(403, { error: 'Forbidden' }))).toBe(false);
+    expect(isRetryableCompareError(new ApiError(400, { error: 'Bad Request', message: 'body/agent_ids must NOT have more than 3 items' }))).toBe(false);
+    expect(isRetryableCompareError(new ApiError(404, { error: 'Not Found' }))).toBe(false);
+    expect(isRetryableCompareError(refusal(403, 'feature_disabled'))).toBe(false);
+    expect(isRetryableCompareError(new DOMException('aborted', 'AbortError'))).toBe(false);
   });
 
   it('ignores a code from another family, and says a plain 403 is about permission', () => {

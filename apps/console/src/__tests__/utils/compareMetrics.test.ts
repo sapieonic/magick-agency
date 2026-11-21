@@ -89,6 +89,12 @@ describe('units', () => {
     expect(perWords(metricInfo(WILL_PAY), 1)).toBe('1 call');
     expect(tooFewShort(metricInfo(builtin('success_rate')), 12)).toBe('Too few (12 of 20)');
   });
+
+  it('never writes an unknown count as 0', () => {
+    expect(tooFewWords(metricInfo(builtin('success_rate')), null)).toBe('Too few to compare (needs 20)');
+    expect(tooFewShort(metricInfo(builtin('success_rate')), null)).toBe('Too few (needs 20)');
+    expect(tooFewWords(metricInfo(builtin('breaks_over_limit')), null)).toBe('Too few to compare');
+  });
 });
 
 describe('the picker', () => {

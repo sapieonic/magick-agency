@@ -14,11 +14,10 @@ import {
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
-import { useCompareRead } from '../../hooks/useCompareRead';
+import { COMPARE_SETTLE_MS, useCompareRead, useSettledKey } from '../../hooks/useCompareRead';
 import { hasPermission } from '../../utils/permissions';
 import { listAgencyCampaigns } from '../../api/agencyCampaigns';
 import {
-  compareErrorCode,
   compareErrorMessage,
   getCompareOptions,
   isRetryableCompareError,
@@ -53,6 +52,7 @@ import { browserZone, todayIn } from '../../utils/reports/reportWindow';
 import { dateFormatter } from '../../utils/format/date';
 import { plural } from '../../utils/format/number';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
+import { agentName } from '../../utils/agency/compare/compareFindingsCopy';
 import { CompareMetricPicker } from '../../components/agency/compare/CompareMetricPicker';
 import { CompareFindings } from '../../components/agency/compare/CompareFindings';
 import { CompareNumbers } from '../../components/agency/compare/CompareNumbers';
@@ -179,11 +179,17 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
   // ── Options: the cohort, the outcome codes, the starting lens, the default view ──
   const optionsQuery =
     state.campaignId && window ? { campaign_id: state.campaignId, from: window.from, to: window.to, timezone: zone } : null;
-  const options = useCompareRead(optionsQuery ? JSON.stringify(optionsQuery) : null, (signal) =>
-    getCompareOptions(optionsQuery!, tenantId, accountId, signal),
-  );
-  // The last answer stays up while a new one loads; one for another campaign is not this page's.
-  const opts = options.data && options.data.campaign_id === state.campaignId ? options.data : null;
+  const optionsKey = optionsQuery ? JSON.stringify(optionsQuery) : null;
+  const options = useCompareRead(optionsKey, (signal) => getCompareOptions(optionsQuery!, tenantId, accountId, signal));
+  // The options for THIS campaign, window and zone: only these may shape a query, since the
+  // cohort changes with the window (an agent of last week's may not be in today's).
+  const readyOpts = options.data && options.dataKey === optionsKey ? options.data : null;
+  // Options for a new window are on their way: the comparison is held until they are in.
+  const optionsPending = optionsKey !== null && options.doneKey !== optionsKey;
+  // What the filters and chips show: the current options, else the last of this campaign's while
+  // the next load (so a window change does not blank the page).
+  const opts =
+    readyOpts ?? (optionsPending && options.data && options.data.campaign_id === state.campaignId ? options.data : null);
   const codes = useMemo(() => opts?.outcome_codes ?? [], [opts]);
 
   // ── Saved views ──
@@ -231,19 +237,17 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
 
   // ── Agents: the URL's picks that are in this window's cohort ──
   const cohortIds = useMemo(() => new Set((opts?.agents ?? []).map((a) => a.agent_user_id)), [opts]);
+  const readyIds = useMemo(() => new Set((readyOpts?.agents ?? []).map((a) => a.agent_user_id)), [readyOpts]);
   const picked = pickedAgents(state.slots);
-  const inCohort = opts ? picked.filter((id) => cohortIds.has(id)) : [];
-  const outOfCohort = opts ? picked.length - inCohort.length : 0;
-  const chartAgents: ChartAgent[] = inCohort.map((id) => {
-    const agent = opts!.agents.find((a) => a.agent_user_id === id)!;
-    return { id, name: cohortAgentName(agent), slot: state.slots.indexOf(id) };
-  });
+  const inCohort = readyOpts ? picked.filter((id) => readyIds.has(id)) : [];
+  const outOfCohort = readyOpts ? picked.length - inCohort.length : 0;
+  const pickedShown = picked.filter((id) => cohortIds.has(id));
 
-  // ── The comparison ──
+  // ── The comparison: asked only with the current window's options, once the picks settle ──
   const query: AgencyCompareQuery | null =
-    opts && window && resolved && inCohort.length > 0
+    readyOpts && window && resolved && inCohort.length > 0
       ? {
-          campaign_id: opts.campaign_id,
+          campaign_id: readyOpts.campaign_id,
           agent_ids: inCohort,
           metrics: resolved.metrics,
           trend: resolved.trend,
@@ -252,8 +256,23 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
           timezone: zone,
         }
       : null;
-  const result = useCompareRead(query ? JSON.stringify(query) : null, (signal) => queryCompare(query!, tenantId, accountId, signal));
-  const response = result.data && query && result.data.campaign_id === query.campaign_id ? result.data : null;
+  const queryKey = query ? JSON.stringify(query) : null;
+  const askedKey = useSettledKey(queryKey, COMPARE_SETTLE_MS, optionsPending);
+  const result = useCompareRead(askedKey, (signal) =>
+    queryCompare(JSON.parse(askedKey!) as AgencyCompareQuery, tenantId, accountId, signal),
+  );
+  const response = result.data && result.data.campaign_id === state.campaignId ? result.data : null;
+  const updating = optionsPending || result.status === 'loading' || (queryKey !== null && askedKey !== queryKey);
+  // The charts draw the picked agents the answer on screen has, in their colour slots. A pick
+  // the answer does not have yet (its read pending or failed) is not drawn: it has no figures,
+  // and drawing it as "too few calls" or "not logged in" would say what is not known.
+  const chartAgents: ChartAgent[] = response
+    ? state.slots.flatMap((id, slot) => {
+        if (id === null || !response.agents.some((c) => c.agent_user_id === id)) return [];
+        const agent = opts?.agents.find((a) => a.agent_user_id === id);
+        return [{ id, name: agent ? cohortAgentName(agent) : agentName(response, id), slot }];
+      })
+    : [];
 
   // ── Changes ──
   const setCampaign = (campaignId: string) =>
@@ -434,7 +453,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
         />
       ) : null}
 
-      {options.status === 'error' && !opts ? (
+      {options.status === 'error' && options.doneKey === optionsKey ? (
         <ReadError error={options.error} onRetry={options.retry} fallback="The campaign’s agents couldn’t be loaded." />
       ) : null}
       {options.status === 'loading' && !opts ? <LoadingSpinner /> : null}
@@ -481,20 +500,17 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
         </ul>
       ) : null}
 
-      {query && result.status === 'error' && !response ? (
+      {askedKey !== null && result.status === 'error' ? (
         <ReadError error={result.error} onRetry={result.retry} fallback="The comparison couldn’t be worked out." />
       ) : null}
-      {query && result.status === 'loading' && !response ? <LoadingSpinner /> : null}
+      {updating && pickedShown.length > 0 && (!response || chartAgents.length === 0) ? <LoadingSpinner /> : null}
 
-      {response && query ? (
+      {response && chartAgents.length > 0 ? (
         <>
-          {result.status === 'loading' ? (
+          {updating ? (
             <p className={styles.updating} role="status">
               Updating…
             </p>
-          ) : null}
-          {result.status === 'error' ? (
-            <ReadError error={result.error} onRetry={result.retry} fallback="The comparison couldn’t be worked out." />
           ) : null}
           <div className={styles.board}>
             <section className={styles.card} aria-labelledby={`${ids}-sbs`}>
@@ -502,7 +518,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
                 <h2 className={styles.cardTitle} id={`${ids}-sbs`}>
                   Side by side
                 </h2>
-                <span className={styles.cardSub}>{`${response.cohort.agents} agents on this campaign · as of ${asOfTime(response.as_of)}`}</span>
+                <span className={styles.cardSub}>{`${plural(response.cohort.agents, 'agent')} on this campaign · as of ${asOfTime(response.as_of)}`}</span>
               </div>
               <div className={styles.bars}>
                 {response.metrics.map((info) => (
@@ -568,7 +584,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now 
         </>
       ) : null}
 
-      {opts && opts.agents.length > 0 && chartAgents.length === 0 ? (
+      {opts && opts.agents.length > 0 && pickedShown.length === 0 ? (
         <EmptyState
           icon={<Users size={32} />}
           title="Pick an agent to start"
@@ -587,9 +603,9 @@ export function asOfTime(iso: string): string {
 }
 
 function ReadError({ error, onRetry, fallback }: { error: unknown; onRetry: () => void; fallback: string }) {
-  // A refusal that clears by itself (busy, timed out) or a failure with no code (the network)
-  // can be tried again; any other refusal needs the reader to change something first.
-  const canRetry = isRetryableCompareError(error) || compareErrorCode(error) === null;
+  // Only a failure that can clear by itself is offered again (`isRetryableCompareError`); any
+  // other refusal needs the reader to change something first.
+  const canRetry = isRetryableCompareError(error);
   return (
     <div className={`${styles.note} ${styles.errorBox}`} role="alert" data-testid="compare-error">
       <p className={styles.emptyNote}>{compareErrorMessage(error, fallback)}</p>

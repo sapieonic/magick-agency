@@ -76,8 +76,9 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
         reportable: v?.reportable ?? false,
         interval: unit === 'rate' ? (v?.interval ?? null) : null,
         valueText: formatMetricValue(unit, v?.value ?? null),
-        withheldText: tooFewWords(info, v?.denominator ?? 0),
-        withheldShort: tooFewShort(info, v?.denominator ?? 0),
+        // No value in the answer is not "too few": nothing is known, so nothing is claimed.
+        withheldText: v ? tooFewWords(info, v.denominator) : 'No figure',
+        withheldShort: v ? tooFewShort(info, v.denominator) : 'No figure',
       },
     };
   });
@@ -85,7 +86,7 @@ export function MetricBars({ info, agents, columns, cohort }: MetricBarsProps) {
   const label = infoLabel(info);
   const median = formatMetricValue(unit, band.median);
   const summary = `${label}: ${rows
-    .map((r) => `${r.agent.name} ${r.input.reportable && r.input.value !== null ? r.input.valueText : 'too few to compare'}`)
+    .map((r) => `${r.agent.name} ${r.input.reportable && r.input.value !== null ? r.input.valueText : r.value ? 'too few to compare' : 'no figure'}`)
     .join(', ')}${band.median !== null ? `; team median ${median}` : ''}.`;
 
   return (
@@ -160,10 +161,11 @@ export interface TrendChartProps {
 /** The trend metric's count per working day: a line per agent, broken on days off; the team median dashed. */
 export function TrendChart({ trend, agents, label }: TrendChartProps) {
   const [ref, width] = useChartWidth(520);
-  const series = agents.map((agent) => ({
-    agent,
-    counts: trend.agents.find((a) => a.agent_user_id === agent.id)?.counts ?? trend.dates.map(() => null),
-  }));
+  // Only the agents the trend has: a missing series is not known, never "not logged in".
+  const series = agents.flatMap((agent) => {
+    const counts = trend.agents.find((a) => a.agent_user_id === agent.id)?.counts;
+    return counts ? [{ agent, counts }] : [];
+  });
   const g = trendGeometry({
     width,
     height: 240,
@@ -172,8 +174,8 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
     median: trend.cohort_median,
   });
   const slotOf = new Map(agents.map((a) => [a.id, a.slot] as const));
-  const summary = `${label} per day, ${shortDate(trend.dates[0] ?? '')} to ${shortDate(trend.dates[trend.dates.length - 1] ?? '')}, for ${agents
-    .map((a) => a.name)
+  const summary = `${label} per day, ${shortDate(trend.dates[0] ?? '')} to ${shortDate(trend.dates[trend.dates.length - 1] ?? '')}, for ${series
+    .map((s) => s.agent.name)
     .join(', ')} and the team median. The table below has every day's figures.`;
 
   return (
@@ -239,7 +241,7 @@ export function TrendChart({ trend, agents, label }: TrendChartProps) {
             <thead>
               <tr>
                 <th scope="col">Day</th>
-                {agents.map((a) => (
+                {series.map(({ agent: a }) => (
                   <th key={a.id} scope="col" className={styles.num}>
                     {a.name}
                   </th>
@@ -300,8 +302,10 @@ export function DaySplitBars({ agents, columns }: { agents: readonly ChartAgent[
     <div ref={ref} className={styles.dayRows}>
       {agents.map((agent) => {
         const split = columns.find((c) => c.agent_user_id === agent.id)?.day_split;
-        const segments = split ? daySplitSegments(split, 0, width) : [];
-        const logged = split ? durationWords(split.shift_seconds) : null;
+        // No column for the agent: nothing is known, so no row (never "not logged in").
+        if (!split) return null;
+        const segments = daySplitSegments(split, 0, width);
+        const logged = durationWords(split.shift_seconds);
         const summary = segments.length
           ? `${agent.name}, ${logged} logged in: ${segments.map((s) => `${s.label.toLowerCase()} ${s.percent}%`).join(', ')}.`
           : `${agent.name}: no logged-in time on this campaign in this window.`;
