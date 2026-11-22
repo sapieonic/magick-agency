@@ -34,7 +34,8 @@ before writing a repository or a migration.
   suspended, 0063 archived campaigns: `archived_at` and who archived it, and the CHECK that only a
   draft or stopped campaign is archived, 0064 Compare agents' saved views, 0065 a session's offline
   boundaries by session, for Compare agents' trend days, 0066 the events that ended a break over its
-  limit by campaign, for Compare agents' breaks over their limit). node-pg-migrate,
+  limit by campaign, for Compare agents' breaks over their limit, 0067 campaign templates: the
+  templates, their versions and the campaign's `template_source`). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

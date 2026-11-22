@@ -106,6 +106,7 @@ const ALL_MIGRATIONS = [
   '0064_compare_views',
   '0065_session_events_offline_index',
   '0066_session_events_break_overrun_index',
+  '0067_campaign_templates',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */
