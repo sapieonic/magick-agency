@@ -203,8 +203,10 @@ function inboundLogConditions(
   return [
     `i.campaign_id = ${bind.add(q.campaignId)}::uuid`,
     `i.tenant_id = ${bind.add(q.tenantId)}::uuid`,
+    // Two rules, each its own term: a live call has no outcome, and must not be let in by how a
+    // NULL compares.
     "i.state = 'ended'",
-    "i.outcome <> 'rejected'",
+    "i.outcome IS DISTINCT FROM 'rejected'",
     ...inboundLogFilterConditions(q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind),
     ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
   ];
