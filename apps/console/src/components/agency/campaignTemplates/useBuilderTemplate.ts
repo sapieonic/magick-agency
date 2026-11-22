@@ -16,7 +16,8 @@ import {
 } from '../../../utils/agency/campaignTemplates/templateForm';
 import { buildConfigPayload, validateConfig, type CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
 import { NO_ANALYSIS_PROFILE, recordingPayload } from '../../../utils/agencyCampaignRecording';
-import type { CarrierChoice } from '../../../utils/agencyCarriers';
+import { sameCarrier, type CarrierChoice } from '../../../utils/agencyCarriers';
+import { samePool } from '../../../utils/campaignSettingsChanges';
 import { BUILT_IN_START, useStartFrom } from './useStartFrom';
 import { useTemplatesAccess } from './useTemplatesAccess';
 
@@ -58,15 +59,11 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const { campaignId, config, recordCalls, callerIds, carrier, recordingEnabled, assignmentEnabled } = input;
   const inputRef = useRef(input);
   inputRef.current = input;
-  /** The config the page opened with: still this object, nothing on the form has been edited. */
-  const openingConfigRef = useRef(config);
 
   const access = useTemplatesAccess();
   const read = useStartFrom(access.use);
   /** The filled-in settings the form was last filled from; null without templates. */
   const [startFrom, setStartFrom] = useState<AgencyCampaignTemplateEffective | null>(null);
-  /** A "Start from" choice waiting on "replace your changes?". */
-  const [pendingStart, setPendingStart] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
 
   /*
@@ -86,6 +83,8 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const sectionSource = useCallback(
     (key: AgencyCampaignTemplateSectionKey): AgencyCampaignTemplateSectionSource | null => {
       if (!startFrom || !builderFields) return null;
+      // Numbers a start leaves built-in are the operator's to pick: not the template's, and not a change (C2).
+      if (key === 'numbers' && leavesNumbers(startFrom)) return null;
       return sameSection(key, builderFields, startFrom.config) ? startFrom.sources[key] : 'campaign';
     },
     [startFrom, builderFields],
@@ -120,64 +119,126 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     };
   }, [startFrom, builderFields, config, recordingEnabled, recordCalls, assignmentEnabled]);
 
-  /** Fill the form from `effective`: every section New campaign edits, as if it had been typed. */
-  const fillFrom = useCallback((effective: AgencyCampaignTemplateEffective, preselected: boolean) => {
-    const form = formOfConfig(effective.config);
-    openingConfigRef.current = form.config;
-    // A template's numbers when it sets them; the built-in "none yet" otherwise (Basics asks).
-    const ownNumbers = effective.sources.numbers !== 'builtin';
-    const values: BuilderTemplateValues = {
-      config: form.config,
-      recordCalls: form.recording.record,
-      callerIds: ownNumbers ? form.callerIds : [],
-      chosenCarrier: ownNumbers ? form.carrier : null,
-    };
-    // Before a draft exists, what the template fills in is the starting point, not an edit.
-    inputRef.current.apply(values, { baseline: values, outcomes: true });
-    setStartFrom(effective);
-    trackAgencyCampaignTemplateStartedFrom({
-      source: effective.template?.scope ?? 'builtin',
-      preselected,
-      note_count: effective.notes.length,
-    });
-  }, []);
+  /**
+   * The numbers the last filling-in put on Basics (the template's, or none when it leaves them
+   * built-in): anything else there was picked by the operator.
+   */
+  const filledNumbersRef = useRef<Numbers>(NO_NUMBERS);
+  const pickedNumbers = useCallback(() => !sameNumbers(inputRef.current, filledNumbersRef.current), []);
 
-  // Open on the default chain, unless something was typed into the settings first.
+  /**
+   * Fill the form from `effective`, as if it had been typed: every section New campaign edits,
+   * except those in `keep`, which stay as the operator left them. The numbers follow their own
+   * rule (C2): a start that sets them puts its own, unless `keepNumbers`; a start that leaves
+   * them built-in keeps the operator's when they picked some, and otherwise leaves Basics empty.
+   */
+  const fill = useCallback(
+    (
+      effective: AgencyCampaignTemplateEffective,
+      how: { keep: readonly AgencyCampaignTemplateSectionKey[]; keepNumbers: boolean; preselected: boolean },
+    ) => {
+      const now = inputRef.current;
+      const filled = formOfConfig(effective.config);
+      const typed = typedForm(filled, now);
+      let next: TemplateForm = { ...typed, config: filled.config, recording: filled.recording };
+      for (const key of how.keep) next = withSectionFrom(next, typed, key);
+      const templateNumbers = numbersOf(effective, filled);
+      const numbers = how.keepNumbers ? { callerIds: now.callerIds, chosenCarrier: now.chosenCarrier } : templateNumbers;
+      filledNumbersRef.current = templateNumbers;
+      now.apply(
+        { config: next.config, recordCalls: next.recording.record, ...numbers },
+        // What the template fills in is the starting point, not an edit; kept sections stay edits.
+        { baseline: { config: filled.config, recordCalls: filled.recording.record, ...templateNumbers }, outcomes: true },
+      );
+      setStartFrom(effective);
+      trackAgencyCampaignTemplateStartedFrom({
+        source: effective.template?.scope ?? 'builtin',
+        preselected: how.preselected,
+        note_count: effective.notes.length,
+      });
+    },
+    [],
+  );
+
+  /*
+    Open on the default chain. When the read lands after the operator has started (C8), the
+    sections they have touched stay as typed (their chips then read "Changed for this
+    campaign"), the rest are filled in, and the picker is offered all the same, so the create
+    names the template it was filled from. Nothing typed is overwritten. A draft already made
+    keeps what it has: nothing is filled into it.
+  */
+  const openingRef = useRef({ config, recordCalls });
   const filledInitialRef = useRef(false);
   useEffect(() => {
     if (filledInitialRef.current || read.status !== 'ready' || !read.initial) return;
     filledInitialRef.current = true;
     const now = inputRef.current;
-    if (now.campaignId !== null || now.config !== openingConfigRef.current || now.recordCalls || now.callerIds.length > 0) return;
-    fillFrom(read.initial, true);
-  }, [read.status, read.initial, fillFrom]);
+    if (now.campaignId !== null) return;
+    const filled = formOfConfig(read.initial.config);
+    const opening = campaignFieldsOfForm({
+      ...typedForm(filled, now),
+      config: openingRef.current.config,
+      recording: { ...filled.recording, record: openingRef.current.recordCalls },
+    });
+    const typed = campaignFieldsOfForm(typedForm(filled, now));
+    fill(read.initial, {
+      keep: TYPED_SECTIONS.filter((key) => !sameSection(key, opening, typed)),
+      keepNumbers: now.callerIds.length > 0 || now.chosenCarrier !== null,
+      preselected: true,
+    });
+  }, [read.status, read.initial, fill]);
 
+  const changedRef = useRef<AgencyCampaignTemplateSectionKey[]>([]);
+  changedRef.current = changedSections;
+  /** A "Start from" read, waiting on "Replace your changes?", with how many sections it replaces. */
+  const [pending, setPending] = useState<{ effective: AgencyCampaignTemplateEffective; count: number } | null>(null);
+
+  /**
+   * Switch "Start from": read the choice, then ask first when it would replace something the
+   * operator changed. That is a changed section, or numbers they picked when the new start sets
+   * different ones; numbers it leaves built-in are kept, so they are never asked about.
+   */
   const switchStart = useCallback(
     async (choice: string) => {
-      setPendingStart(null);
       setSwitching(true);
       try {
-        fillFrom(await read.read(choice), false);
+        const effective = await read.read(choice);
+        const filled = formOfConfig(effective.config);
+        const replaced: AgencyCampaignTemplateSectionKey[] = changedRef.current.filter((k) => k !== 'numbers');
+        const now = inputRef.current;
+        if (
+          !leavesNumbers(effective)
+          && pickedNumbers()
+          && !(samePool(now.callerIds, filled.callerIds) && sameCarrier(now.carrier, filled.carrier))
+        ) {
+          replaced.push('numbers');
+        }
+        if (replaced.length > 0) setPending({ effective, count: replaced.length });
+        else fill(effective, { keep: [], keepNumbers: leavesNumbers(effective) && pickedNumbers(), preselected: false });
       } catch {
         inputRef.current.onReadFailed('Could not read that template. The form still holds what it had.');
       } finally {
         setSwitching(false);
       }
     },
-    [fillFrom, read],
+    [fill, read, pickedNumbers],
   );
 
-  /** Put section `key` back as the template filled it in (Review's Reset). */
+  /**
+   * Put section `key` back as the template filled it in (Review's Reset). The numbers go back to
+   * the template's: never to an empty pool, and not at all when it leaves them built-in.
+   */
   const resetSection = useCallback(
     (key: AgencyCampaignTemplateSectionKey) => {
       if (!startFrom || !startForm || !builderForm) return;
       const next = withSectionFrom(builderForm, startForm, key);
-      inputRef.current.apply(
+      const now = inputRef.current;
+      now.apply(
         {
           config: next.config,
           recordCalls: next.recording.record,
-          ...(key === 'numbers'
-            ? { callerIds: next.callerIds, chosenCarrier: startFrom.sources.numbers === 'builtin' ? null : next.carrier }
+          ...(key === 'numbers' && !leavesNumbers(startFrom)
+            ? { callerIds: next.callerIds.length > 0 ? next.callerIds : now.callerIds, chosenCarrier: next.carrier }
             : {}),
         },
         { baseline: null, outcomes: key === 'outcomes' },
@@ -202,9 +263,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       effective: startFrom,
       value: current,
       onChange: (choice: string) => {
-        if (choice === current) return;
-        if (changedSections.length > 0) setPendingStart(choice);
-        else void switchStart(choice);
+        if (choice !== current) void switchStart(choice);
       },
       disabled: campaignId !== null || switching,
       lockedNote: campaignId !== null ? 'The draft is made. Change its settings in the steps below.' : null,
@@ -212,14 +271,18 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     }
     : null;
 
-  const count = changedSections.length;
+  const count = pending?.count ?? 0;
   const confirm = {
-    open: pendingStart !== null,
+    open: pending !== null,
     message: `You changed ${count === 1 ? 'a section' : `${count} sections`} of these settings. Starting from another template replaces ${
       count === 1 ? 'it' : 'them'
     } with that template’s.`,
-    onConfirm: () => void switchStart(pendingStart!),
-    onCancel: () => setPendingStart(null),
+    onConfirm: () => {
+      if (!pending) return;
+      setPending(null);
+      fill(pending.effective, { keep: [], keepNumbers: leavesNumbers(pending.effective) && pickedNumbers(), preselected: false });
+    },
+    onCancel: () => setPending(null),
   };
 
   /** A Review row's source chip and Reset, for the section it shows; nothing without templates. */
@@ -227,4 +290,39 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     startFrom ? { source: sectionSource(key), onReset: () => resetSection(key) } : {};
 
   return { startFrom, builderFields, panel, confirm, sourceProps, createFields };
+}
+
+type Numbers = Pick<BuilderTemplateValues, 'callerIds' | 'chosenCarrier'>;
+const NO_NUMBERS: Numbers = { callerIds: [], chosenCarrier: null };
+
+/** The sections New campaign's own steps edit: what a late filling-in keeps when typed (C8). */
+const TYPED_SECTIONS: readonly AgencyCampaignTemplateSectionKey[] = [
+  'outcomes', 'retries', 'hours', 'wrapup', 'recording', 'safety', 'assignment', 'inbound',
+];
+
+/** The start leaves the numbers to the operator: an organisation template, the built-in settings, or an account template that sets none. */
+function leavesNumbers(effective: AgencyCampaignTemplateEffective): boolean {
+  return effective.sources.numbers === 'builtin';
+}
+
+/** The numbers a start puts on Basics: its own, or none yet when it leaves them built-in (Basics asks). */
+function numbersOf(effective: AgencyCampaignTemplateEffective, filled: TemplateForm): Numbers {
+  return leavesNumbers(effective) ? NO_NUMBERS : { callerIds: filled.callerIds, chosenCarrier: filled.carrier };
+}
+
+function sameNumbers(a: Numbers, b: Numbers): boolean {
+  if (!samePool(a.callerIds, b.callerIds)) return false;
+  if (a.chosenCarrier === null || b.chosenCarrier === null) return a.chosenCarrier === b.chosenCarrier;
+  return sameCarrier(a.chosenCarrier, b.chosenCarrier);
+}
+
+/** The form as typed, with the parts New campaign does not edit as `filled` has them. */
+function typedForm(filled: TemplateForm, now: BuilderTemplateInput): TemplateForm {
+  return {
+    ...filled,
+    config: now.config,
+    recording: { ...filled.recording, record: now.recordCalls },
+    callerIds: now.callerIds,
+    carrier: now.carrier,
+  };
 }
