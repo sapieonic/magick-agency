@@ -225,6 +225,12 @@ describe('the settings', () => {
     });
   });
 
+  it('finds campaign templates by the words people use for them: default outcomes, calling hours (L21)', () => {
+    for (const words of ['default outcomes', 'default dispositions', 'outcome defaults', 'calling hours defaults', 'default calling hours']) {
+      expect(settingsResults(searchTokens(words), ALL_ON('account_admin')).map((r) => r.key), words).toContain('setting:campaign-templates');
+    }
+  });
+
   it('does not send "sign out" to Profile and appearance, which has no sign-out', () => {
     expect(settingsResults(searchTokens('sign out'), ALL_ON('tenant_owner'))).toEqual([]);
   });
