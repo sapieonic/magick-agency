@@ -412,6 +412,19 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     expect(blank.json().details).toEqual({ caller_ids: 'every caller ID must be a non-empty string' });
   });
 
+  it('a malformed call summary profile id is the section refusal keyed on the field, never a generic 400 (D9)', async () => {
+    // With call analysis on, the profile is looked up: a non-id must be refused before it reaches the uuid cast.
+    await setFlag(w.tenant, 'agency_call_analysis', true);
+    for (const bad of ['not-an-id', `${randomUUID()}x`]) {
+      const res = await call(w.supA, w.a, 'POST', '/campaign-templates', {
+        scope: 'account', name: `P ${bad.slice(0, 4)}`, sections: { recording: { record_calls: false, analysis_profile_id: bad } },
+      });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'campaign_template_section_invalid', sections: ['recording'] });
+      expect(Object.keys(res.json().details)).toEqual(['analysis_profile_id']);
+    }
+  });
+
   it('a set numbers section names at least one number, as a campaign does (S9)', async () => {
     for (const numbers of [{ caller_ids: [] }, { telephony_provider: 'voicelink' }]) {
       const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Carrier only', sections: { numbers } });

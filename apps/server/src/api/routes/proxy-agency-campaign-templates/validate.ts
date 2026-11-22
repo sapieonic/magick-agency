@@ -237,7 +237,8 @@ export async function sectionAccountIssues(
 
   if (sections.recording !== undefined && body['analysis_profile_id'] != null) {
     const value = body['analysis_profile_id'];
-    if (typeof value !== 'string' || value.trim() === '') {
+    // A non-id never reaches the profile read's uuid cast (`22P02`, a generic 400).
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
       details['analysis_profile_id'] = 'must be a call-analysis profile id, or null to clear it';
     } else {
       const err = await preflightAnalysisProfile(value, scope.tenantId, scope.accountId, 'agency');
