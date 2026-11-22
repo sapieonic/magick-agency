@@ -559,7 +559,10 @@ reload is silent. The microphone arms on the offer and the uplink opens on `brid
 (`audioTarget`). End call (hold-to-confirm, or `E` twice) is offered only once connected. The tiles
 (the call's resolved `disposition_catalog`, rebuilt from `allowed_codes` on a refusal), notes
 autosave (`PATCH`, 700 ms), the call-later time, Don't call again (the row under the tiles or `D`:
-campaign scope when matched, else the account) and the keys are the soft phone's. A `ready` keeps the call (the server restates it right
+campaign scope when matched, else the account, a call only filed under a campaign included) and the keys are the soft phone's.
+For a caller on no list the end of the call also says where it is filed, "Filed under: General
+enquiries (this number is not on any list)", with **Change** while it can be moved
+([`call-log.md`](call-log.md) §5): choosing another campaign loads its choices. A `ready` keeps the call (the server restates it right
 after); a reconnect asks `GET /inbound/calls/:id` and retires a copy the server no longer holds
 for this session (`inbound_call_not_found`, another `session_id`). A call that leaves without the
 agent's outcome says why on the station for 30 s (the caller hung up first; it went back to the
@@ -624,6 +627,12 @@ catalog of IQ10, the soft phone's validation and decision, DNC for a suppress co
 settled forward only by `inbound-settlement.ts`, never charged, then the agent returned) and Mark
 DNC (the matched campaign's scope, else the account's), by the agent who took the call or a
 supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`.
+Since 2026-11-22 ([`call-log.md`](call-log.md) §5): a caller on no list is filed under the route's
+campaign for unknown callers and uses that campaign's catalog (the route's own catalog is for a
+call filed under none); `GET /inbound/calls/:id/campaigns` and `POST /inbound/calls/:id/campaign`
+move such a call at the end of the call (audited `.campaign_changed`), the outcome takes
+`campaign_id`, and with the account's setting on an outcome on a call filed under none is refused
+`campaign_required`.
 Hang up asks the connector, not the row, whether the call is live here (a row the stale sweep
 ended while its call goes on still gets the call ended) and answers once the connector has written
 the end (its per-call completion promise, `whenLeft`, bounded at 5 s). A hang-up of a call on
@@ -1316,6 +1325,7 @@ Analysis of voicemails is P3.
 | Tenant's Plivo credential | super-admin | **Enable inbound**: create one Plivo Application on the tenant's account (answer, hangup and fallback answer URLs); store `inbound_app_id`, the URLs, the token's hash. Health check and Re-point on the credential page; **Disable** deletes it, refused while numbers are linked |
 | Each number | super-admin (IB6) | **Link to inbound** per number, never on sync. Store the number's previous Plivo app (`inbound_previous_app_id`) so Unlink restores it |
 | Tenant / account | super-admin | Flag `agency_inbound_enabled` (default off), the kill switch: off, every call on the account's linked numbers is answered with the closed message by the carrier (no queue, no stream, no voicemail, whatever the route's actions; closed too with the route at its `max_concurrent`, never "all lines busy") with its `closed` Missed row, and the route editor and queue tiles are hidden; the Missed list, its voicemails and Mark handled, and the finish routes of calls already taken stay available |
+| Account | account admin (`agency.calls.manage`) | **Every call must belong to a campaign** (Settings › Calls, [`call-log.md`](call-log.md) §5): off by default; on, every route needs a campaign for unknown callers and an inbound call takes no outcome until it is filed under a campaign |
 | Account | account admin (`agency.inbound.write`) | Inbound routes: name, numbers, hours/timezone/holidays, clips (greeting, hold, closed, busy, call-back, recording notice; uploaded from the editor, IQ28), sticky mode/wait/lookback, agent pool, queue limits, after-hours and overflow actions, recording and summary profile, outcome catalog for unmatched callers |
 | Campaign | supervisor | Optional `inbound_sticky_enabled` (default on) |
 | Agent | — | No setting. Sees their own Missed rows (`agency.inbound.read`, floored at `agent`) |
@@ -1439,7 +1449,7 @@ role, fill names and write the audit rows; the internal handlers
 | Route | Permission | What it does |
 |---|---|---|
 | `GET /inbound/routes`, `GET /inbound/routes/:id` | `agency.inbound.write` | the account's live routes, oldest first, with their numbers |
-| `POST /inbound/routes` | `agency.inbound.write` | create with `phone_number_ids`, one transaction: a refused number writes nothing |
+| `POST /inbound/routes` | `agency.inbound.write` | create with `phone_number_ids`, one transaction: a refused number writes nothing. `default_campaign_id` is the campaign for unknown callers (one of the account's, not archived); required on a create and a PATCH while the account's "Every call must belong to a campaign" is on (`422 default_campaign_required`, [`call-log.md`](call-log.md) §5). The list answers `campaign_required` beside `routes` |
 | `PATCH /inbound/routes/:id` | `agency.inbound.write` | the fields present; `phone_number_ids` is the whole set. The route is read `FOR UPDATE` in the write's transaction and the merged route is judged whole, so two PATCHes cannot each pass the cross-field rules and together break them |
 | `DELETE /inbound/routes/:id` | `agency.inbound.write` | soft delete, numbers detached; 204 |
 | `GET /inbound/numbers` | `agency.inbound.write` | every active number the account may use, with `linked`, this account's route holding it, and `held_elsewhere` (another account's route; never named) |
@@ -1795,6 +1805,25 @@ Inventory: `packages/db/BASELINE.md` "0067", "0068"; the design is [`call-log.md
   placed from (§7).
 - **`idx_agency_inbound_calls_campaign`** (`campaign_id, arrived_at DESC, id DESC` WHERE
   `campaign_id IS NOT NULL`) and **`idx_agency_manual_calls_callback_of`**.
+
+### 9.6 The route's campaign for unknown callers, and the account's call settings (built: `0069_call_settings.sql`)
+
+Inventory: `packages/db/BASELINE.md` "0069"; the design is [`call-log.md`](call-log.md) §5.
+
+- **`agency_inbound_routes.default_campaign_id`** (nullable, no FK): the route editor's **Campaign
+  for unknown callers**. A caller on no list is filed under it when the call arrives
+  (`campaign_source = 'route'`), whether or not the account's setting is on, and the call then
+  uses that campaign's outcomes (without the ones that ask for a promise to pay); the agent may
+  move it at the end of the call (`'agent'`, or `'supervisor'` on behalf). One of the account's
+  campaigns that is not archived.
+- **`agency_call_settings`** (`require_campaign`, `require_campaign_since`): the account's
+  **Every call must belong to a campaign**. While it is on, a route is saved only with a campaign
+  for unknown callers (`422 default_campaign_required`), the outcome of a call filed under none is
+  refused (`409 campaign_required`), and the setting cannot be switched on while a live route has
+  none.
+- `matched_campaign_id` still decides everything about the customer: the sticky agent, the
+  contact's settlement and callback, a promise, and the scope of a Do Not Call mark (a call that
+  is only filed under a campaign writes the account's entry, CL6).
 
 ## 10. Restart and failure
 

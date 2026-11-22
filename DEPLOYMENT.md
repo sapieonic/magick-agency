@@ -961,6 +961,18 @@ that arrive while it runs (`campaign_id` stays NULL), and nothing files them lat
 be missing from their campaign's Call log. **After rolling forward again, run the batch above
 until it reports `UPDATE 0`**: it files exactly those calls.
 
+**`0069_call_settings.sql`** ("Every call must belong to a campaign", `docs/call-log.md` §5) needs
+nothing before the deploy: a new, empty table, and one nullable column with a small partial index
+on `agency_inbound_routes` (a few rows per account), under a 10-second lock timeout.
+**Going back past 0069** needs no `migrate:down` either; an older image ignores the table and the
+column. While it runs, three things lapse, and they come back with the newer image: the setting is
+not enforced (a soft-phone call can be dialled, and an inbound outcome saved, with no campaign);
+an unknown caller is not filed under their route's campaign (such calls stay under no campaign,
+and nothing files them later, CL10); and **a running campaign that exists only to receive unknown
+callers completes itself within seconds**, because the older pacing leader completes any running
+campaign with nothing left to dial. A completed campaign cannot be restarted: after rolling
+forward, point the route at another campaign (or a new one) and start that.
+
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is
 needed, and none should be run: an image from before them has no listen routes and never reads or

@@ -587,6 +587,14 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
     have been placed;
   - redial fills the pad and focuses Call, it never dials;
   - Log to and Call from lock once a call is placed;
+  - every call must belong to a campaign when the bootstrap says so (`campaign_required`,
+    [`call-log.md`](call-log.md) §5): "Log to (required)", no "Not logged to a campaign", Call
+    off with "Choose a campaign to log this call to." until one is chosen; a redial of a call
+    logged to none leaves Log to empty and says "This call was not logged to a campaign. Choose
+    one to call again."; an agent on no running campaign gets "You are not on any running
+    campaign, so you cannot dial. Ask your supervisor to add you to one." in place of the pad.
+    The server refuses a dial with no campaign whatever the app shows (`campaign_required`), and
+    an older build shows that refusal's message;
   - call fields are never sent before the field set has loaded, and autosave 700 ms after the
     last edit; unsent notes are kept on the phone under `manual:<id>`;
   - notes the agent cleared go with the outcome as `''`, notes never touched are left out;
@@ -749,7 +757,9 @@ Code: `lib/features/missed/`.
   ahead (IQ55): the soft phone's SP1 note and override, as for a typed number.
 - **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
   phone is not in finish mode; otherwise the console's note says to call another way and mark the
-  call handled). It hands the number, the matched campaign and the Missed row's id to the soft
+  call handled). It hands the number, the campaign the call is filed under (a matched caller's own,
+  else the campaign the inbound number files unknown callers under, [`call-log.md`](call-log.md) §5;
+  the row names it) and the Missed row's id to the soft
   phone (`SoftphoneActions.callBack`; the id is sent with the first dial of that number as
   `callback_of_inbound_call_id`, so the console's Call log can tie the call to the missed call it
   answers, `docs/call-log.md` CL15) and goes to the pad: the Phone tab, or the station for a campaign

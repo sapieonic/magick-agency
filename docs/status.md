@@ -2610,6 +2610,37 @@ is planned on 0068's index on the test database; nothing was timed on a large ta
 files unknown callers, a missed call from a number on no roster is in no campaign's log (it is on
 Inbound › Missed calls).
 
+### One call log per campaign, P3: every call must belong to a campaign 2026-11-22 (CL17–CL24, [`call-log.md`](call-log.md) §5)
+
+P3 of six is built; P4 to P6 are not.
+
+- **The setting.** An account admin can switch on **Every call must belong to a campaign**
+  (Settings › Calls, `agency.calls.manage`; `0069_call_settings.sql`, its own table). Off by
+  default. The server enforces it: a soft-phone dial with no campaign is refused
+  (`campaign_required`, agents and supervisors alike), an inbound call's outcome is refused until
+  the call is filed under one, an inbound route cannot be saved without a campaign for unknown
+  callers, and the switch itself is refused, naming them, while a route has none.
+- **Unknown callers are filed.** An inbound route has a **Campaign for unknown callers**
+  (`default_campaign_id`). A caller on no list is filed under it when the call arrives, setting or
+  no setting, missed calls included; the agent may move it at the end of the call ("Filed under …
+  Change"), a supervisor on their behalf. A caller on a list keeps their own campaign.
+- **Do Not Call keeps its reach.** A mark from a call that is only filed under a campaign (by the
+  route, the agent or a supervisor; a soft-phone call logged to a campaign whose list does not
+  hold the number) is written for the whole account (CL6).
+- **A catch-all campaign stays usable.** A campaign a live route files unknown callers under may
+  be started with nothing to dial and is not completed when its list runs out (CL8); stopping or
+  archiving it asks first, naming the inbound numbers (CL21).
+- **Nothing old is touched.** No call is given a campaign after the fact (CL10), and a call that
+  began before the switch finishes as it is (CL19).
+- **The clients.** The console's soft phone and the agent app ask for a campaign before Call and
+  no longer offer "none"; an agent on no running campaign is told to ask their supervisor.
+  Settings › Soft phone greys what no call uses any more.
+
+**Not verified:** not run in a real browser, on a phone or against a carrier. The agent app's
+inbound call screen has no Change (a call arrives filed, so it is not needed for the setting to
+hold). The two counts on Settings › Calls are ranges of existing account indexes; neither was
+timed on a large account.
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
