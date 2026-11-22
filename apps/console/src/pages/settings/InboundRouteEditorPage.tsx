@@ -16,6 +16,7 @@ import {
   getInboundRoute,
   listInboundClips,
   listInboundNumbers,
+  listInboundRoutesWithRule,
   updateInboundRoute,
 } from '../../api/inbound';
 import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
@@ -36,6 +37,7 @@ import {
   offeredUnconnectedActions,
   patchFromDraft,
   routeErrorsFromDetails,
+  UNKNOWN_CALLERS_FIELD,
   validateRouteDraft,
   type InboundRouteDraft,
 } from '../../utils/inbound/routeForm';
@@ -54,6 +56,7 @@ import { ActionChoice, NumberField, RouteWarnings } from './inbound-route/fields
 import { HolidaysCard, OpeningHoursCard } from './inbound-route/RouteHoursCards';
 import { RouteClipsCard } from './inbound-route/RouteClipsCard';
 import { RouteRoutingCard } from './inbound-route/RouteRoutingCard';
+import { RouteUnknownCallersCard } from './inbound-route/RouteUnknownCallersCard';
 
 const COMMON_TIMEZONES = [
   'Europe/London', 'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'America/New_York', 'America/Chicago',
@@ -101,6 +104,8 @@ export default function InboundRouteEditorPage() {
   const [uploadAvailable, setUploadAvailable] = useState(false);
   const [connectsAgents, setConnectsAgents] = useState(true);
   const [campaigns, setCampaigns] = useState<AgencyCampaign[]>([]);
+  /** The account asks for a campaign on every call: the route needs one for unknown callers. */
+  const [campaignRequired, setCampaignRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,18 +118,22 @@ export default function InboundRouteEditorPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [route, numberList, clipList, campaignList] = await Promise.all([
+      const [route, numberList, clipList, campaignList, rule] = await Promise.all([
         routeId ? getInboundRoute(routeId, tenantId, accountId) : Promise.resolve(null),
         listInboundNumbers(tenantId, accountId),
         listInboundClips(tenantId, accountId),
         // The pool's choices; a failure here only empties them (the route itself still loads).
         listAgencyCampaigns(tenantId, accountId).catch(() => [] as AgencyCampaign[]),
+        // Whether "Every call must belong to a campaign" is on. A failure reads as off: the
+        // server still refuses a save without the campaign, and says so.
+        listInboundRoutesWithRule(tenantId, accountId).then((r) => r.campaignRequired).catch(() => false),
       ]);
       // A campaign archived since it was put in the pool (AR1–AR7) is not in that list: it is
       // added back, marked, so it stays visible and can be unticked. Read only when the pool
       // holds a campaign the list lacks, which is rare.
       const listed = new Set(campaignList.map((c) => c.id));
-      const archivedList = route?.pool_campaign_ids.some((id) => !listed.has(id))
+      const held = [...(route?.pool_campaign_ids ?? []), ...(route?.default_campaign_id ? [route.default_campaign_id] : [])];
+      const archivedList = held.some((id) => !listed.has(id))
         ? await listArchivedAgencyCampaigns(tenantId, accountId).catch(() => [] as AgencyCampaign[])
         : [];
       if (route) {
@@ -135,7 +144,8 @@ export default function InboundRouteEditorPage() {
       setClips(clipList.clips);
       setUploadAvailable(clipList.upload_available);
       setConnectsAgents(clipList.connects_agents);
-      setCampaigns(withHeldArchived(campaignList, archivedList, route?.pool_campaign_ids ?? []));
+      setCampaigns(withHeldArchived(campaignList, archivedList, held));
+      setCampaignRequired(rule);
     } catch (err) {
       setLoadError(getErrorMessage(err, 'We couldn’t load this inbound route.'));
     } finally {
@@ -160,7 +170,7 @@ export default function InboundRouteEditorPage() {
     }
   }, [tenantId, accountId]);
 
-  const clientErrors = useMemo(() => (draft ? validateRouteDraft(draft) : {}), [draft]);
+  const clientErrors = useMemo(() => (draft ? validateRouteDraft(draft, { campaignRequired }) : {}), [draft, campaignRequired]);
   const errors = useConfigFieldErrors({ ...serverErrors, ...(touched ? clientErrors : {}) });
   const invalid = Object.keys(clientErrors).length > 0;
   const changed = draft ? draftChanged(saved, draft) : false;
@@ -214,6 +224,11 @@ export default function InboundRouteEditorPage() {
     const refusal = result.refusal;
     if (refusal.code === 'inbound_route_invalid') setServerErrors(routeErrorsFromDetails(refusal.details));
     if (refusal.code === 'inbound_route_name_taken') setServerErrors({ name: 'Another route in this account has this name.' });
+    if (refusal.code === 'default_campaign_required') {
+      // Switched on since the page loaded: mark the field and ask for it from now on.
+      setCampaignRequired(true);
+      setServerErrors({ default_campaign_id: UNKNOWN_CALLERS_FIELD.missing });
+    }
     if (refusal.phoneNumberId) setServerErrors({ phone_number_ids: inboundRefusalCopy(refusal, numberLabel) });
     setSaveError(inboundRefusalCopy(refusal, numberLabel));
   };
@@ -359,6 +374,7 @@ export default function InboundRouteEditorPage() {
 
         <div className={styles.stack}>
           <RouteRoutingCard draft={draft} update={update} errors={errors} campaigns={campaigns} />
+          <RouteUnknownCallersCard draft={draft} update={update} errors={errors} campaigns={campaigns} required={campaignRequired} />
 
           <section className="card" aria-labelledby="ib-queue" data-testid="inbound-route-queue">
             <h2 className={styles.cardTitle} id="ib-queue">Waiting and limits</h2>
@@ -455,6 +471,9 @@ export default function InboundRouteEditorPage() {
           <section className="card" aria-labelledby="ib-outcomes" data-testid="inbound-route-outcomes">
             <h2 className={styles.cardTitle} id="ib-outcomes">Outcomes for callers we don’t recognise</h2>
             <p className={styles.cardLead}>A caller matched to a campaign uses that campaign’s outcomes.</p>
+            {draft.defaultCampaignId ? (
+              <p className={styles.note} data-testid="inbound-outcomes-unused">{UNKNOWN_CALLERS_FIELD.outcomesUnused}</p>
+            ) : null}
             {usingBuiltIn ? (
               <>
                 <p className={styles.note}>The built-in outcomes are in use.</p>

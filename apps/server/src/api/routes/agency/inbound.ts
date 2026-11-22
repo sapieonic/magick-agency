@@ -19,8 +19,11 @@
  *  3. References the table cannot check: each clip is one of the ACCOUNT's audio files (the
  *     clips' FK names `audio_files` with no tenant: without this an id from another tenant
  *     would play their recording to our caller, the campaign abandon clip's rule), the analysis
- *     profile is an active profile of the account, and every pool campaign is the account's.
+ *     profile is an active profile of the account, every pool campaign is the account's, and the
+ *     campaign for unknown callers is one of the account's that is not archived.
  *     A PATCH checks only the references it sets.
+ *  3a. While the account's "Every call must belong to a campaign" is on, the route as saved has
+ *     a campaign for unknown callers, else `default_campaign_required` (docs/call-log.md §5).
  *  4. Numbers (`phone_number_ids`, the route's whole set), by the repository's attach rule.
  * All of 1–3 answer `inbound_route_invalid` with `{ path, message }` per problem; the writes of
  * one request are one transaction, so a refused number leaves nothing written.
@@ -29,6 +32,7 @@
  * never the body: the route body is strict and is the configuration alone.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { PoolClient } from 'pg';
 import {
   AGENCY_INBOUND_AVAILABLE_ACTIONS,
   AGENCY_INBOUND_CLIP_SLOTS,
@@ -50,6 +54,7 @@ import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { config } from '../../../config/index.js';
 import { isStorageConfigured } from '../../../storage/s3.js';
 import {
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyInboundCallRepository,
   agencyInboundClipRepository,
@@ -150,7 +155,10 @@ export function unavailableActionIssues(config: Pick<AgencyInboundRouteConfig, '
 
 /** Step 3 of the module note, for the references `fields` names (a create: all of them). */
 async function referenceIssues(
-  fields: { clips?: Partial<AgencyInboundRouteConfig['clips']>; analysis_profile_id?: string | null; pool_campaign_ids?: string[] },
+  fields: {
+    clips?: Partial<AgencyInboundRouteConfig['clips']>; analysis_profile_id?: string | null; pool_campaign_ids?: string[];
+    default_campaign_id?: string | null;
+  },
   tenantId: string,
   accountId: string,
 ): Promise<InboundRouteIssue[]> {
@@ -174,7 +182,34 @@ async function referenceIssues(
       if (!owned.has(id)) issues.push({ path: `pool_campaign_ids[${i}]`, message: 'Each pool campaign must be one of this account\'s campaigns.' });
     });
   }
+  // The campaign for unknown callers (docs/call-log.md §5): one of the account's, not archived.
+  // Any status else: a call is filed under it whatever it is doing (as a matched caller's is).
+  if (fields.default_campaign_id) {
+    const campaign = await agencyCampaignRepository.findById(fields.default_campaign_id);
+    if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
+      issues.push({ path: 'default_campaign_id', message: 'The campaign for unknown callers must be one of this account\'s campaigns.' });
+    } else if (campaign.archived_at) {
+      issues.push({ path: 'default_campaign_id', message: 'The campaign for unknown callers is archived. Choose another campaign.' });
+    }
+  }
   return issues;
+}
+
+/**
+ * "Every call must belong to a campaign" (docs/call-log.md §5, CL3): while the account's setting
+ * is on, a route is saved only with a campaign for unknown callers. Under the account's
+ * call-settings lock, in the write's transaction, so this and the switch-on cannot each pass on
+ * what the other has not committed.
+ */
+async function defaultCampaignRequired(
+  client: PoolClient,
+  tenantId: string,
+  accountId: string,
+  config: Pick<AgencyInboundRouteConfig, 'default_campaign_id'>,
+): Promise<boolean> {
+  await agencyCallSettingsRepository.lockAccount(client, tenantId, accountId);
+  if (config.default_campaign_id) return false;
+  return (await agencyCallSettingsRepository.requireCampaign(tenantId, accountId, client)).on;
 }
 
 /** A number the repository refused, as the contract's refusal. The holder is named only when it is this account's route. */
@@ -200,8 +235,12 @@ type WriteOutcome<T> = { ok: true; value: T } | { ok: false; refusal: InboundRef
 export async function registerInboundRoutes(sub: FastifyInstance): Promise<void> {
   // ── GET /inbound/routes — the account's live routes, oldest first ─────────
   sub.get('/inbound/routes', async (request, reply) => {
-    const routes = await agencyInboundRouteRepository.listForAccount(getTenantId(request), getAccountId(request));
-    const body: AgencyInboundRoutesResponse = { routes: routes.map(routeWithWarnings) };
+    const [routes, required] = await Promise.all([
+      agencyInboundRouteRepository.listForAccount(getTenantId(request), getAccountId(request)),
+      agencyCallSettingsRepository.requireCampaign(getTenantId(request), getAccountId(request)),
+    ]);
+    // `campaign_required`: the editor marks "Campaign for unknown callers" required (docs/call-log.md §5).
+    const body: AgencyInboundRoutesResponse = { routes: routes.map(routeWithWarnings), campaign_required: required.on };
     return reply.send(body);
   });
 
@@ -228,6 +267,10 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     if (issues.length > 0) return sendInboundRefusal(reply, { code: 'inbound_route_invalid', details: issues });
 
     const out = await withTransaction<WriteOutcome<{ routeId: string; added: string[] }>>(async (client, tx) => {
+      if (await defaultCampaignRequired(client, actor.tenantId, actor.accountId, parsed.config)) {
+        await tx.rollback();
+        return { ok: false, refusal: { code: 'default_campaign_required' } };
+      }
       const created = await agencyInboundRouteRepository.create(
         { tenantId: actor.tenantId, accountId: actor.accountId, createdBy: actor.userId, config: parsed.config },
         { client },
@@ -279,6 +322,10 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
         ...await referenceIssues(parsed.patch, actor.tenantId, actor.accountId),
       ];
       if (issues.length > 0) return refuse({ code: 'inbound_route_invalid', details: issues });
+      // Judged as the route it makes: a patch that leaves the campaign out keeps the stored one.
+      if (await defaultCampaignRequired(client, actor.tenantId, actor.accountId, parsed.config)) {
+        return refuse({ code: 'default_campaign_required' });
+      }
 
       let added: string[] = [];
       let removed: string[] = [];

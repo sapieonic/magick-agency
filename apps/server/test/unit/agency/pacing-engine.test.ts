@@ -34,6 +34,9 @@ const { repos, settings, dedications } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
+    // The live inbound routes that file unknown callers under a campaign (docs/call-log.md §5,
+    // CL8): none by default, so a drained campaign completes as it always has.
+    inboundRoutes: { listDefaultingTo: vi.fn().mockResolvedValue([]) },
     contact: {
       claimDialable: vi.fn().mockResolvedValue([]),
       unclaim: vi.fn().mockResolvedValue(undefined),
@@ -55,6 +58,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
   agencyAgentCallerIdRepository: dedications,
+  agencyInboundRouteRepository: repos.inboundRoutes,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -171,6 +175,7 @@ beforeEach(() => {
   dedications.mapForCampaign.mockResolvedValue(new Map());
   repos.campaign.findById.mockResolvedValue(CAMPAIGN);
   repos.campaign.countOutstanding.mockResolvedValue(0);
+  repos.inboundRoutes.listDefaultingTo.mockResolvedValue([]);
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.attempt.countLive.mockResolvedValue(0);
   repos.attempt.countLiveForAccount.mockResolvedValue(0);
@@ -886,6 +891,47 @@ describe('PacingEngine reserve-before-dial', () => {
 });
 
 describe('PacingEngine finalization', () => {
+  // docs/call-log.md §5, CL8: a campaign an inbound route files its unknown callers under is there
+  // to be logged to. Completing it when its list runs out (or was always empty) would take it out
+  // of the soft phone's "Log to" and leave the route pointing at a finished campaign.
+  it('does not complete a drained campaign that an inbound route files unknown callers under', async () => {
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.inboundRoutes.listDefaultingTo.mockResolvedValue([{ id: 'route-1', name: 'Sales line', account_id: 'a1' }]);
+    const stations = makeStations(['s1']);
+    const { e } = engine(stations, makeAgents({}));
+
+    await e.tickOnce('camp-1');
+
+    expect(repos.inboundRoutes.listDefaultingTo).toHaveBeenCalledWith('t1', 'camp-1');
+    expect(repos.campaign.transitionStatus).not.toHaveBeenCalled();
+    expect(stations.broadcast.mock.calls.some((c) => (c[1] as any).reason === 'list_exhausted')).toBe(false);
+  });
+
+  it('completes nothing on a tick whose route check failed, and asks again on the next', async () => {
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
+    repos.inboundRoutes.listDefaultingTo.mockRejectedValueOnce(new Error('db down'));
+    const { e } = engine(makeStations(['s1']), makeAgents({}));
+
+    await e.tickOnce('camp-1');
+    expect(repos.campaign.transitionStatus).not.toHaveBeenCalled();
+
+    await e.tickOnce('camp-1');
+    expect(repos.campaign.transitionStatus).toHaveBeenCalledWith('camp-1', ['running'], 'completed');
+  });
+
+  it('still stops a stopping campaign a route files callers under: Stop is never held back', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, status: 'stopping' });
+    repos.attempt.countLive.mockResolvedValue(0);
+    repos.inboundRoutes.listDefaultingTo.mockResolvedValue([{ id: 'route-1', name: 'Sales line', account_id: 'a1' }]);
+    repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'stopped' });
+    const { e } = engine(makeStations(['s1']), makeAgents({}));
+
+    await e.tickOnce('camp-1');
+
+    expect(repos.campaign.transitionStatus).toHaveBeenCalledWith('camp-1', ['stopping'], 'stopped');
+  });
+
   it('completes a drained campaign and tells every agent why', async () => {
     repos.campaign.countOutstanding.mockResolvedValue(0);
     repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });

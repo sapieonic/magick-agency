@@ -15,9 +15,11 @@ const mocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
   track: vi.fn(),
   navigate: vi.fn(),
+  getCampaignInboundDefaultRoutes: vi.fn(),
 }));
 
 vi.mock('../../api/agencyCampaigns', () => ({ setAgencyCampaignArchived: mocks.setAgencyCampaignArchived }));
+vi.mock('../../api/callSettings', () => ({ getCampaignInboundDefaultRoutes: mocks.getCampaignInboundDefaultRoutes }));
 vi.mock('../../analytics/events', () => ({ trackAgencyCampaignArchiveAction: mocks.track }));
 vi.mock('react-router-dom', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router-dom')>()),
@@ -43,7 +45,10 @@ function setup(status = 'draft') {
   return { hook, commitCampaign, refreshCampaign };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.getCampaignInboundDefaultRoutes.mockResolvedValue([]);
+});
 
 describe('useCampaignArchive', () => {
   it('asks before archiving, says a draft will not start, then archives and paints the answer', async () => {
@@ -106,5 +111,44 @@ describe('useCampaignArchive', () => {
     expect(hook.result.current.busy).toBe('unarchive');
     await act(async () => answer(ARCHIVED));
     expect(hook.result.current.busy).toBeNull();
+  });
+});
+
+// docs/call-log.md §5 (CL21): archiving a campaign an inbound number files its unknown callers under asks first.
+describe('archiving a campaign that receives unknown callers', () => {
+  function Page() {
+    const archive = useCampaignArchive({
+      id: 'c-1', tenantId: 't-1', accountId: 'a-1', campaignStatus: 'stopped',
+      refreshCampaign: vi.fn().mockResolvedValue(null), commitCampaign: vi.fn(),
+    });
+    return (
+      <>
+        <button type="button" onClick={archive.onArchive}>Archive</button>
+        {archive.confirmDialog}
+      </>
+    );
+  }
+
+  it('the confirmation names the inbound numbers and says what to do first; it is read only once Archive is pressed', async () => {
+    mocks.getCampaignInboundDefaultRoutes.mockResolvedValue([{ route_id: 'r-1', name: 'Sales line' }, { route_id: 'r-2', name: 'Support line' }]);
+    mocks.setAgencyCampaignArchived.mockResolvedValue(ARCHIVED);
+    render(<MemoryRouter><Page /></MemoryRouter>);
+    expect(mocks.getCampaignInboundDefaultRoutes).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain(
+      'This campaign receives unknown callers on Sales line and Support line. Choose another campaign for those routes first.',
+    ));
+    expect(mocks.getCampaignInboundDefaultRoutes).toHaveBeenCalledWith('c-1', 't-1', 'a-1');
+    // It asks; it does not hold the archive back.
+    fireEvent.click(screen.getByRole('button', { name: 'Archive campaign' }));
+    await waitFor(() => expect(mocks.setAgencyCampaignArchived).toHaveBeenCalledWith('c-1', 'archive', 't-1', 'a-1'));
+  });
+
+  it('says nothing for a campaign no number files callers under, or when that could not be read', async () => {
+    mocks.getCampaignInboundDefaultRoutes.mockRejectedValue(new Error('403'));
+    render(<MemoryRouter><Page /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    await act(async () => {});
+    expect(screen.getByRole('dialog').textContent).not.toContain('unknown callers');
   });
 });

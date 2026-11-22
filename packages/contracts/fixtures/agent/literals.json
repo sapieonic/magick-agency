@@ -307,7 +307,8 @@
       "settings_invalid",
       "contact_assigned_elsewhere",
       "carrier_account_unavailable",
-      "customer_on_inbound_call"
+      "customer_on_inbound_call",
+      "campaign_required"
     ]
   },
   "manual_call_states": {
@@ -673,7 +674,10 @@
       "inbound_missed_call_claimed",
       "ring_not_offered",
       "ring_expired",
-      "already_accepted"
+      "already_accepted",
+      "default_campaign_required",
+      "inbound_campaign_fixed",
+      "inbound_campaign_not_allowed"
     ]
   },
   "inbound_disposition_rules": {

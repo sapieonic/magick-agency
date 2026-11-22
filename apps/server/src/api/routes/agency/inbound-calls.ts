@@ -1,7 +1,8 @@
 /*
  * The answered inbound call's internal handlers (docs/inbound.md §6; P2), on the internal handler
  * instance under `/api/v1/agency` (decision B16): read the call, its notes, hang up, the outcome,
- * Mark DNC; and the supervisor's queue tiles. Part of `agency.routes.ts`, inside its authenticated
+ * Mark DNC, the campaign an unknown caller's call is filed under (docs/call-log.md §5); and the
+ * supervisor's queue tiles. Part of `agency.routes.ts`, inside its authenticated
  * scope.
  *
  * The public routes (`../proxy-agency-inbound/calls.ts`) own RBAC, the actor (and its
@@ -15,16 +16,27 @@
  * `?supervise=true`. Every read and write names the request's tenant and account.
  */
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { AgencyInboundCall, AgencyInboundCallCampaignOptionsResponse } from '@magick-agency/contracts/agency';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { InboundCallService } from '../../../agency/inbound/inbound-disposition.js';
 import {
   sendInboundAnswer,
   sendInboundRefusal,
+  type InboundCallCampaignAudit,
   type InboundCallDispositionAudit,
   type InboundCallDncAudit,
   type InboundCallHangupAudit,
 } from './inbound-answer.js';
 import { bodyActor, queryActor } from './inbound.js';
+
+/**
+ * The campaign an audit row of a call is filed with: the one the call is filed under
+ * (docs/call-log.md §5; a matched caller's own campaign, else the route's or the one chosen at
+ * wrap-up), else none.
+ */
+function auditCampaignId(call: AgencyInboundCall): string | null {
+  return call.campaign?.campaign_id ?? call.match?.campaign_id ?? null;
+}
 
 export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: AgencyRuntime | null): Promise<void> {
   /** The runtime's call service, or (a routing-only app, no runtime) the call cannot be found. */
@@ -87,7 +99,7 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
     const hung = await service.hangup(actor, request.params.id);
     if (!hung.ok) return sendInboundRefusal(reply, hung.refusal);
     const audit: InboundCallHangupAudit = {
-      call_id: hung.call.id, on_behalf: hung.onBehalf, campaign_id: hung.call.match?.campaign_id ?? null, hung_up: hung.hungUp,
+      call_id: hung.call.id, on_behalf: hung.onBehalf, campaign_id: auditCampaignId(hung.call), hung_up: hung.hungUp,
     };
     return sendInboundAnswer(reply, 200, { call: hung.call }, audit);
   });
@@ -98,7 +110,9 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
     if (!actor) return reply;
     const service = serviceOr404(reply);
     if (!service) return reply;
-    const body = request.body as { code?: unknown; notes?: unknown; callback_at?: unknown; promise_date?: unknown; promise_amount?: unknown };
+    const body = request.body as {
+      code?: unknown; notes?: unknown; callback_at?: unknown; promise_date?: unknown; promise_amount?: unknown; campaign_id?: unknown;
+    };
     if (typeof body.code !== 'string') return reply.code(400).send({ error: 'Validation failed', details: { code: 'required' } });
     const saved = await service.submitDisposition(actor, request.params.id, {
       code: body.code,
@@ -106,18 +120,51 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
       ...(typeof body.callback_at === 'string' ? { callbackAt: body.callback_at } : {}),
       ...(body.promise_date !== undefined ? { promiseDate: body.promise_date } : {}),
       ...(body.promise_amount !== undefined ? { promiseAmount: body.promise_amount } : {}),
+      ...(typeof body.campaign_id === 'string' ? { campaignId: body.campaign_id.toLowerCase() } : {}),
     });
     if (!saved.ok) return sendInboundRefusal(reply, saved.refusal);
-    const campaignId = saved.response.call.match?.campaign_id ?? null;
     const audit: InboundCallDispositionAudit = {
       call_id: saved.response.call.id,
       on_behalf: saved.onBehalf,
-      campaign_id: campaignId,
+      campaign_id: auditCampaignId(saved.response.call),
       disposition_code: saved.response.call.disposition_code ?? body.code,
       replay: saved.replay,
-      dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: campaignId ? 'campaign' : 'account' } : null,
+      // The mark's scope is the MATCH's (CL6): a campaign the call is only filed under is the account's.
+      dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: saved.response.call.match ? 'campaign' : 'account' } : null,
     };
     return sendInboundAnswer(reply, 200, saved.response, audit);
+  });
+
+  // ── GET /inbound/calls/:id/campaigns — the campaigns the actor may file it under ──
+  sub.get<{ Params: { id: string } }>('/inbound/calls/:id/campaigns', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    const service = serviceOr404(reply);
+    if (!service) return reply;
+    const found = await service.campaignOptions(actor, request.params.id);
+    if (!found.ok) return sendInboundRefusal(reply, found.refusal);
+    const body: AgencyInboundCallCampaignOptionsResponse = { campaigns: found.campaigns };
+    return reply.send(body);
+  });
+
+  // ── POST /inbound/calls/:id/campaign — file an unknown caller's call under a campaign ──
+  sub.post<{ Params: { id: string } }>('/inbound/calls/:id/campaign', async (request, reply) => {
+    const actor = bodyActor(request, reply);
+    if (!actor) return reply;
+    const service = serviceOr404(reply);
+    if (!service) return reply;
+    const body = request.body as { campaign_id?: unknown };
+    if (typeof body.campaign_id !== 'string') return reply.code(400).send({ error: 'Validation failed', details: { campaign_id: 'required' } });
+    const filed = await service.setCampaign(actor, request.params.id, body.campaign_id.toLowerCase());
+    if (!filed.ok) return sendInboundRefusal(reply, filed.refusal);
+    const audit: InboundCallCampaignAudit = {
+      call_id: filed.call.id,
+      on_behalf: filed.onBehalf,
+      campaign_id: auditCampaignId(filed.call),
+      from_campaign_id: filed.fromCampaignId,
+      changed: filed.changed,
+    };
+    return sendInboundAnswer(reply, 200, { call: filed.call }, audit);
   });
 
   // ── POST /inbound/calls/:id/dnc — mark the caller's number Do Not Call ────
@@ -133,7 +180,7 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
     const audit: InboundCallDncAudit = {
       call_id: marked.response.call_id,
       on_behalf: marked.onBehalf,
-      campaign_id: found.ok ? found.call.match?.campaign_id ?? null : null,
+      campaign_id: found.ok ? auditCampaignId(found.call) : null,
       scope: marked.response.scope,
       dnc_recorded: marked.response.dnc_recorded,
       dnc_entry: marked.dncEntry ? { ...marked.dncEntry, scope: marked.response.scope } : null,

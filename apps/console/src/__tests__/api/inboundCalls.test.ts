@@ -22,7 +22,10 @@ import {
   getInboundSummary,
   getMissedInboundCount,
   hangupInboundCall,
+  listInboundCallCampaigns,
+  listInboundRoutesWithRule,
   markInboundCallDnc,
+  setInboundCallCampaign,
   updateInboundCallNotes,
   voicemailFetchUrl,
 } from '../../api/inbound';
@@ -145,6 +148,50 @@ describe('the call routes', () => {
     expect(lastRequest()).toMatchObject({ url: '/proxy/agency/inbound/calls/ib-1/dnc', method: 'POST', body: {} });
     await markInboundCallDnc('ib-1', ' Asked ', 't-1', 'a-1');
     expect(lastRequest().body).toEqual({ reason: 'Asked' });
+  });
+});
+
+// docs/call-log.md §5: the campaign an unknown caller's call is filed under.
+describe('filing a call under a campaign', () => {
+  it('the paths', () => {
+    expect(INBOUND_PATHS.callCampaigns('ib 1')).toBe('/proxy/agency/inbound/calls/ib%201/campaigns');
+    expect(INBOUND_PATHS.callCampaign('ib-1')).toBe('/proxy/agency/inbound/calls/ib-1/campaign');
+  });
+
+  it('reads the campaigns the caller may choose, and throws on a refusal', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { campaigns: [{ campaign_id: 'c-1', campaign_name: 'General enquiries' }] }));
+    expect(await listInboundCallCampaigns('ib-1', 't-1', 'a-1')).toEqual([{ campaign_id: 'c-1', campaign_name: 'General enquiries' }]);
+    expect(lastRequest()).toMatchObject({ url: '/proxy/agency/inbound/calls/ib-1/campaigns', method: 'GET' });
+    mocks.fetch.mockResolvedValue(respond(404, { code: 'inbound_call_not_found', message: 'Gone.' }));
+    await expect(listInboundCallCampaigns('ib-1', 't-1', 'a-1')).rejects.toBeTruthy();
+  });
+
+  it('posts the campaign and answers the call with its new outcomes; the three refusals are values', async () => {
+    const call = owing({ campaign: { campaign_id: 'c-1', campaign_name: 'General enquiries', source: 'agent' } });
+    mocks.fetch.mockResolvedValue(respond(200, { call }));
+    expect(await setInboundCallCampaign('ib-1', 'c-1', 't-1', 'a-1')).toEqual({ ok: true, value: call });
+    expect(lastRequest()).toMatchObject({ url: '/proxy/agency/inbound/calls/ib-1/campaign', method: 'POST', body: { campaign_id: 'c-1' } });
+    for (const [status, code] of [[409, 'inbound_campaign_fixed'], [403, 'inbound_campaign_not_allowed'], [409, 'inbound_outcome_already_saved']] as const) {
+      mocks.fetch.mockResolvedValue(respond(status, { code, message: 'No.' }));
+      expect(await setInboundCallCampaign('ib-1', 'c-1', 't-1', 'a-1')).toMatchObject({ ok: false, refusal: { code, status } });
+    }
+  });
+
+  it('the outcome carries the campaign when one is chosen with it, and reads `campaign_required` as itself', async () => {
+    mocks.fetch.mockResolvedValue(respond(409, { code: 'campaign_required', message: 'Choose a campaign before you save the outcome.' }));
+    const refused = await dispositionInboundCall('ib-1', { code: 'interested' }, 't-1', 'a-1');
+    // The soft phone family's code, answered by the inbound outcome: kept, not flattened to `unknown`.
+    expect(refused).toMatchObject({ ok: false, refusal: { code: 'campaign_required', status: 409 } });
+    mocks.fetch.mockResolvedValue(respond(200, { call: owing() }));
+    await dispositionInboundCall('ib-1', { code: 'interested', campaign_id: 'c-1' }, 't-1', 'a-1');
+    expect(lastRequest().body).toEqual({ code: 'interested', campaign_id: 'c-1' });
+  });
+
+  it('the routes list says whether every call must belong to a campaign', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { routes: [], campaign_required: true }));
+    expect(await listInboundRoutesWithRule('t-1', 'a-1')).toEqual({ routes: [], campaignRequired: true });
+    mocks.fetch.mockResolvedValue(respond(200, { routes: [] }));
+    expect((await listInboundRoutesWithRule('t-1', 'a-1')).campaignRequired).toBe(false);
   });
 });
 

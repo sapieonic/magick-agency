@@ -559,6 +559,15 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
   /* The caller's own email subscriptions. Floored at `tenant.read` (viewer) for the link; the
      route itself is ungated, so nobody is locked out of their own unsubscribe. */
   { id: 'notifications', label: 'Email notifications', path: '/settings/notifications', scope: 'you', gate: settingsGate({ permission: 'tenant.read' }) },
+  /* `docs/call-log.md` §5: "Every call must belong to a campaign", over the soft phone and inbound
+     calls alike, so behind neither's flag. Account admins (`agency.calls.manage`). */
+  {
+    id: 'calls',
+    label: 'Calls',
+    path: '/settings/calls',
+    scope: 'account',
+    gate: settingsGate({ permission: 'agency.calls.manage', capabilities: ['agency'] }),
+  },
   /* Read at the dial floor, edited with `agency.softphone.manage` (the page checks). */
   {
     id: 'softphone',

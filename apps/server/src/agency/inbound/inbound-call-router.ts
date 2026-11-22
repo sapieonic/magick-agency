@@ -480,6 +480,9 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         // IQ52: the route's wrap-up window, captured now so an edit or a delete of the route never
         // moves the countdown of a call already taken (`inbound-wrapup.ts`).
         wrapupSeconds: route?.wrapup_seconds ?? null,
+        // An unknown caller is filed under the route's campaign for them (docs/call-log.md §5),
+        // setting or no setting. A caller who matched keeps their own campaign (`insertArrival`).
+        routeDefaultCampaignId: route?.default_campaign_id ?? null,
       }, { client });
       if (!inserted.call) return null;
       if (inserted.created && underCap) {

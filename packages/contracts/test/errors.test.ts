@@ -223,6 +223,8 @@ describe('soft-phone codes', () => {
       'contact_assigned_elsewhere',
       'carrier_account_unavailable',
       'customer_on_inbound_call',
+      // "Every call must belong to a campaign" (docs/call-log.md §5).
+      'campaign_required',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });
@@ -353,6 +355,10 @@ describe('inbound codes', () => {
       'ring_not_offered',
       'ring_expired',
       'already_accepted',
+      // "Every call must belong to a campaign" (docs/call-log.md §5).
+      'default_campaign_required',
+      'inbound_campaign_fixed',
+      'inbound_campaign_not_allowed',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });

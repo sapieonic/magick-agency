@@ -300,6 +300,12 @@ export type AgencySoftphoneSettingsUpdateRequest = Omit<AgencySoftphoneSettings,
 /** `GET /settings` and `PUT /settings`. */
 export interface AgencySoftphoneSettingsResponse {
   settings: AgencySoftphoneSettings;
+  /**
+   * `GET /settings` only: the account's "Every call must belong to a campaign" is on
+   * (docs/call-log.md §5), so the settings of a call logged to no campaign (its outcomes,
+   * recording, analysis profile and caller ID) are not used. Absent reads as false.
+   */
+  campaign_required?: boolean;
 }
 
 // ─── The manual call, on the wire ───────────────────────────────────────────
@@ -544,6 +550,14 @@ export interface AgencySoftphoneBootstrap {
    * dial, switch) is refused `softphone_disabled`.
    */
   softphone_enabled: boolean;
+  /**
+   * The account's setting "Every call must belong to a campaign" (`require_campaign`,
+   * docs/call-log.md §5) is on: a dial with no `campaign_id` is refused `campaign_required`, so
+   * the pad offers no "Not logged to a campaign", asks for one ("Log to (required)") and keeps
+   * Call off until one is chosen. With `taggable_campaigns` empty the caller cannot dial at all.
+   * Absent (an older server) reads as false.
+   */
+  campaign_required?: boolean;
   taggable_campaigns: AgencySoftphoneCampaign[];
   untagged: AgencySoftphoneUntagged;
   /** Applies to every call, tagged or not. */
@@ -698,7 +712,11 @@ export interface AgencyManualCallDncRequest extends AgencyActorFields {
   reason?: string;
 }
 
-/** How far a soft-phone DNC mark reaches: the tagged campaign, or (untagged) the call's account. */
+/**
+ * How far a soft-phone DNC mark reaches: the tagged campaign when the number is on that
+ * campaign's list (the call matched a roster contact), else the call's account: an untagged
+ * call, and a tagged one whose campaign is only where it was filed (docs/call-log.md §5, CL6).
+ */
 export type AgencyManualCallDncScope = Extract<AgencyDncEntryScope, 'campaign' | 'account'>;
 
 export interface AgencyManualCallDncResponse {
@@ -760,6 +778,15 @@ export interface AgencySoftphoneErrorResponse {
   allowed_codes?: string[];
   /** `fields_invalid`, `settings_invalid`: one entry per offending path. */
   details?: Array<{ path: string; message: string }>;
+}
+
+/**
+ * 409 `campaign_required`: the account's "Every call must belong to a campaign" is on
+ * (docs/call-log.md §5). From `POST /softphone/calls` with no `campaign_id`, and from the inbound
+ * outcome route (`POST /inbound/calls/:id/disposition`) for a call filed under no campaign.
+ */
+export interface AgencySoftphoneCampaignRequiredRefusal extends AgencySoftphoneErrorResponse {
+  code: 'campaign_required';
 }
 
 /** How far a DNC entry reaches (decision B8): the whole tenant, one account, or one campaign. */

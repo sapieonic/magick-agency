@@ -989,7 +989,9 @@ export class InboundConnector {
     });
     let call: AgencyInboundCall | null = null;
     if (unsettled && unsettled.state !== 'queued') {
-      const ctx = this.calls.get(unsettled.id)?.panel ?? loadInboundPanelContext(unsettled);
+      // An ended call's panel is read afresh: its campaign (and so its outcomes) may have been
+      // changed at wrap-up since the context was read when it queued (docs/call-log.md §5).
+      const ctx = (unsettled.state !== 'ended' ? this.calls.get(unsettled.id)?.panel : undefined) ?? loadInboundPanelContext(unsettled);
       call = inboundCallToWire(unsettled, await ctx, this.deps.stations.get(sessionId)?.agentUserId ?? null, this.connectDelayMs);
     }
     const waiting: AgencyStationCustomerWaitingFrame[] = [];

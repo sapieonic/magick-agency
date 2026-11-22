@@ -148,6 +148,8 @@ describe('0024 — agency_inbound_routes', () => {
       'deleted_at timestamp with time zone', 'deleted_by uuid',
       // 0032: the route's wrap-up window, IQ52 (inbound-route-wrapup-migration.test.ts pins it).
       'wrapup_seconds smallint not null',
+      // 0069: the campaign unknown callers are filed under (call-settings-migration.test.ts pins it).
+      'default_campaign_id uuid',
     ]);
     const d = AGENCY_INBOUND_ROUTE_DEFAULTS;
     expect(await route()).toMatchObject({

@@ -582,6 +582,13 @@ describe('the soft phone in the station’s look (AS1)', () => {
     fireEvent.click(screen.getByTestId('stop-calling-no'));
     expect(screen.queryByTestId('stop-calling')).toBeNull();
     expect(mocks.markManualCallDnc).not.toHaveBeenCalled();
+
+    // CL6 (docs/call-log.md §5): a number on no list of this work. The work is only where the call
+    // is saved, so the mark covers the whole account, and the question says so.
+    await frame({ event: 'manual_call', call: { ...owed, contact: null } });
+    fireEvent.keyDown(window, { key: 'd' });
+    expect(screen.getByTestId('stop-calling').textContent).toMatch(/We will not call this number again for any work in this account\./);
+    fireEvent.click(screen.getByTestId('stop-calling-no'));
   });
 });
 

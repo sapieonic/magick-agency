@@ -6,6 +6,8 @@ import { setAgencyCampaignArchived } from '../../../api/agencyCampaigns';
 import { ApiError } from '../../../api/client';
 import { ARCHIVE_CONFIRM, ARCHIVE_TOASTS, trackArchiveAction } from '../../../utils/agencyCampaignArchive';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
+import { useUnknownCallerRoutes } from '../../../hooks/useUnknownCallerRoutes';
+import { unknownCallersWarning } from '../../../utils/callSettingsCopy';
 
 export type CampaignArchiveAction = 'archive' | 'unarchive';
 
@@ -81,11 +83,15 @@ export function useCampaignArchive({
   const onArchive = useCallback(() => setConfirmingFor(id ?? null), [id]);
   const onRestore = useCallback(() => void run('unarchive'), [run]);
 
+  // A campaign an inbound number files its unknown callers under (docs/call-log.md §5): Archive
+  // asks first, and says which number.
+  const routeWarning = unknownCallersWarning(useUnknownCallerRoutes(id, tenantId, accountId, confirming));
+  const archiveMessage = campaignStatus === 'draft' ? `${ARCHIVE_CONFIRM.message} ${ARCHIVE_CONFIRM.draftNote}` : ARCHIVE_CONFIRM.message;
   const confirmDialog = confirming ? (
     <ConfirmDialog
       open
       title={ARCHIVE_CONFIRM.title}
-      message={campaignStatus === 'draft' ? `${ARCHIVE_CONFIRM.message} ${ARCHIVE_CONFIRM.draftNote}` : ARCHIVE_CONFIRM.message}
+      message={routeWarning ? `${archiveMessage} ${routeWarning}` : archiveMessage}
       confirmLabel="Archive campaign"
       disabled={busy !== null}
       onConfirm={() => {

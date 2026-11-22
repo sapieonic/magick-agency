@@ -259,6 +259,16 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
       { label: 'Call details fields', keywords: ['call details', 'custom fields', 'fields'] },
     ],
   },
+  calls: {
+    // Not "log": "call log" is a campaign's page, and must find only that.
+    keywords: ['calls', 'call settings', 'campaign required', 'require campaign', 'untagged calls', 'no campaign'],
+    settings: [
+      {
+        label: 'Every call must belong to a campaign',
+        keywords: ['every call', 'must belong', 'belong to a campaign', 'require a campaign', 'filed under'],
+      },
+    ],
+  },
   inbound: {
     keywords: ['inbound', 'routing', 'route', 'incoming calls', 'ivr'],
     settings: [
@@ -268,6 +278,7 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
       { label: 'Numbers that ring your agents', keywords: ['numbers', 'phone number'] },
       { label: 'When nobody answers', keywords: ['unanswered', 'missed', 'call back', 'callback'] },
       { label: 'Waiting and limits', keywords: ['queue', 'wait', 'longest wait'] },
+      { label: 'Campaign for unknown callers', keywords: ['unknown callers', 'unknown caller', 'catch-all', 'not on any list'] },
     ],
   },
   'call-summaries': {

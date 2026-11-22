@@ -42,6 +42,8 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   carrier_account_unavailable:
     'Calls cannot go out from this number now, so nothing was dialled. Choose another number in Call from. Your supervisor can ask support to fix this one.',
   customer_on_inbound_call: 'This customer is on a call with us right now. Wait for it to end, then try again.',
+  // The account's "Every call must belong to a campaign" (docs/call-log.md §5), in the station's words.
+  campaign_required: 'Choose the work to save this call to, then press Call.',
 };
 
 /** The line for a refusal the console has no words for: never the server's own sentence (AS15). */

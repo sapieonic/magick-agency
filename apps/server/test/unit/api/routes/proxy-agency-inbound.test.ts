@@ -48,6 +48,28 @@ describe('refusals', () => {
       ring_not_offered: 404,
       ring_expired: 409,
       already_accepted: 409,
+      // "Every call must belong to a campaign" (docs/call-log.md §5).
+      default_campaign_required: 422,
+      inbound_campaign_fixed: 409,
+      inbound_campaign_not_allowed: 403,
+    });
+    // A route saved without a campaign for unknown callers, and the switch refused for the routes it names.
+    expect(inboundRefusalBody({ code: 'default_campaign_required' })).toEqual({
+      status: 422,
+      body: {
+        error: 'Unprocessable Entity', code: 'default_campaign_required',
+        message: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',
+      },
+    });
+    expect(inboundRefusalBody({ code: 'default_campaign_required', routes: [{ route_id: 'r-1', name: 'Sales line' }] }).body)
+      .toMatchObject({ code: 'default_campaign_required', routes: [{ route_id: 'r-1', name: 'Sales line' }] });
+    // The soft phone family's code, answered 409 by the inbound outcome for a call filed under no campaign.
+    expect(inboundRefusalBody({ code: 'campaign_required' })).toEqual({
+      status: 409,
+      body: {
+        error: 'Conflict', code: 'campaign_required',
+        message: 'Choose a campaign before you save the outcome. Every call in this account must belong to a campaign.',
+      },
     });
     expect(inboundRefusalBody({ code: 'inbound_call_live', inbound_call_id: 'ib-1' })).toEqual({
       status: 409,
@@ -120,6 +142,8 @@ describe('a Missed row on the wire', () => {
       id: 'c-1', account_id: 'a', route_id: 'r', route_name: 'Main line', from_e164: null, to_e164: '+441632960001',
       arrived_at: '2026-11-08T09:00:00.000Z', ended_at: '2026-11-08T09:02:00.000Z', reason: 'overflow', closed_cause: null, outcome: 'overflow',
       caller_dnc: true, match_name: null, matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null,
+      // The campaign the call is filed under (docs/call-log.md §5): none on this row.
+      campaign_id: null, campaign_name: null,
       callback_due_at: '2026-11-09T09:00:00.000Z', has_voicemail: true, assignee_user_id: 'u-1', assignee_name: 'Asha',
       assignee_departed: false, status: 'handled', handled_reason: 'reached', handled_by_user_id: 'u-2', handled_by_name: null,
       handled_at: '2026-11-08T10:00:00.000Z', voicemail_url: '/inbound/missed/c-1/voicemail',
@@ -140,6 +164,9 @@ describe('a Missed row on the wire', () => {
   });
 
   it('IQ54: match_name is the matched contact`s name, null when unmatched or withheld or nameless', () => {
+    // An unknown caller filed under the route's campaign: named on the wire, the match still empty.
+    expect(inboundMissedToWire({ ...row, campaign_id: 'camp-gen', campaign_source: 'route', campaign_name: 'General enquiries' } as AgencyInboundMissedRow))
+      .toMatchObject({ campaign_id: 'camp-gen', campaign_name: 'General enquiries', matched_campaign_id: null, matched_campaign_name: null });
     const matched = { ...row, from_e164: '+447700900123', matched_contact_id: 'k-1', matched_campaign_id: 'camp-1' };
     const ctx = (o: Record<string, unknown>) => ({ name: null, full_name: null, customer_name: null, first_name: null, ...o });
     expect(inboundMissedToWire({ ...matched, match_context: ctx({ name: '  Asha Rao ' }) }).match_name).toBe('Asha Rao');

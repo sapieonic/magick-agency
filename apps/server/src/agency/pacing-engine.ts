@@ -6,6 +6,7 @@ import {
   agencyAttemptRepository,
   agencyCampaignRepository,
   agencyContactRepository,
+  agencyInboundRouteRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
@@ -2695,6 +2696,20 @@ export class PacingEngine {
       ? await agencyAttemptRepository.countLive(campaign.id)
       : await agencyCampaignRepository.countOutstanding(campaign.id);
     if (outstanding > 0) return;
+    // A running campaign that an inbound route files its unknown callers under is not completed
+    // when its list runs out (docs/call-log.md §5, CL8): it is there to be logged to, by callers
+    // who ring in and by agents on the soft phone, and a completed campaign can be chosen by
+    // neither. It stays running until a supervisor stops it (`stopping → stopped` below is
+    // untouched). Asked only here, once nothing is outstanding: one read of a partial index on a
+    // table of a few rows. A read that fails completes nothing this tick; the next one asks again.
+    if (campaign.status === 'running') {
+      try {
+        if ((await agencyInboundRouteRepository.listDefaultingTo(campaign.tenant_id, campaign.id)).length > 0) return;
+      } catch (err) {
+        log.warn({ err, campaignId: campaign.id }, 'Could not check whether an inbound route files callers under the campaign — not completing it this tick');
+        return;
+      }
+    }
     // A stopping campaign whose in-flight attempts have drained is stopped; a
     // running one that has run out of work is completed.
     const to = campaign.status === 'stopping' ? 'stopped' : 'completed';

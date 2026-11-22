@@ -31,6 +31,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import {
   agencyAgentSessionRepository,
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyManualCallRepository,
   agencySoftphoneSettingsRepository,
@@ -42,6 +43,7 @@ import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { resolveManualCatalog } from '../../../agency/softphone/manual-disposition.js';
 import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
+import { listTaggableCampaigns } from '../../../agency/softphone/taggable-campaign.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { withDialableCallerIdsAll } from '../../../agency/campaign-dialability.js';
 import { dncEntryScope } from '../../../agency/dnc-registry.js';
@@ -70,13 +72,6 @@ import {
 import { dispositionsWithKnownIcons, phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'agency-softphone-routes' });
-
-/**
- * At most this many campaigns are offered as tags, newest first. Applied AFTER the status
- * and staffing filters (`listSoftphoneTaggable`), so it bounds a supervisor's whole-account
- * list and never cuts an agent's staffed campaigns behind the account's newer ones.
- */
-const TAGGABLE_CAMPAIGNS_MAX = 500;
 
 /** Where this instance serves a manual call's recording bytes (the public layer repoints it). */
 export function softphoneRecordingPath(callId: string): string {
@@ -199,16 +194,14 @@ async function buildBootstrap(
   actor: SoftphoneActor,
 ): Promise<Omit<AgencySoftphoneBootstrap, 'softphone_enabled'>> {
   const { tenantId, accountId } = actor;
-  const [settings, numbers, taggable, live] = await Promise.all([
+  const [settings, required, numbers, taggable, live] = await Promise.all([
     agencySoftphoneSettingsRepository.get(tenantId, accountId),
+    // "Every call must belong to a campaign" (docs/call-log.md §5): the pad asks for one.
+    agencyCallSettingsRepository.requireCampaign(tenantId, accountId),
     tenantPhoneAssignmentRepository.findAvailableForAccount(tenantId, accountId),
     // The same rule as `SoftphoneService.taggable`: in the account, running or paused, and
     // staffed unless a supervisor — filtered in the query, before the cap.
-    agencyCampaignRepository.listSoftphoneTaggable(tenantId, accountId, {
-      statuses: SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
-      staffedUserId: actor.supervise ? null : actor.userId,
-      limit: TAGGABLE_CAMPAIGNS_MAX,
-    }),
+    listTaggableCampaigns(actor),
     agencyAgentSessionRepository.findLiveForAgent(tenantId, actor.userId),
   ]);
 
@@ -270,6 +263,7 @@ async function buildBootstrap(
   const dialableTaggable = await withDialableCallerIdsAll(taggable);
 
   return {
+    campaign_required: required.on,
     taggable_campaigns: dialableTaggable.map((c) => taggableCampaign(c, profiles, settings, now)),
     untagged: {
       caller_ids: callerIds,
@@ -605,7 +599,10 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaign_id: campaignId,
       disposition_code: saved.response.call.disposition_code ?? body.code,
       replay: saved.replay,
-      dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: campaignId ? 'campaign' : 'account' } : null,
+      // The scope the mark was written at (CL6): the campaign's only when the number is on its list.
+      dnc_entry: saved.dncEntry
+        ? { ...saved.dncEntry, scope: campaignId && saved.response.call.contact ? 'campaign' : 'account' }
+        : null,
     };
     return answer(reply, 200, saved.response, audit);
   });
@@ -632,8 +629,13 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
 
   // ── GET /softphone/settings ───────────────────────────────────────────────
   sub.get('/softphone/settings', async (request, reply) => {
-    const settings = await agencySoftphoneSettingsRepository.get(getTenantId(request), getAccountId(request));
-    return reply.send({ settings });
+    const [settings, required] = await Promise.all([
+      agencySoftphoneSettingsRepository.get(getTenantId(request), getAccountId(request)),
+      agencyCallSettingsRepository.requireCampaign(getTenantId(request), getAccountId(request)),
+    ]);
+    // With "Every call must belong to a campaign" on, no call uses the untagged settings: the
+    // page greys them (docs/call-log.md §5).
+    return reply.send({ settings, campaign_required: required.on });
   });
 
   // ── PUT /softphone/settings — replace the account's settings ──────────────

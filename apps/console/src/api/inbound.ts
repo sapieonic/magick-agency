@@ -5,6 +5,8 @@ import { errorCode, errorStatus } from '../utils/agencyErrors';
 import {
   AGENCY_INBOUND_ERROR_CODES,
   type AgencyInboundCall,
+  type AgencyInboundCallCampaignOption,
+  type AgencyInboundCallCampaignOptionsResponse,
   type AgencyInboundCallDispositionRequest,
   type AgencyInboundCallDispositionResponse,
   type AgencyInboundCallDncResponse,
@@ -59,6 +61,8 @@ import {
  *   POST   /proxy/agency/inbound/calls/:id/hangup      → { call }
  *   POST   /proxy/agency/inbound/calls/:id/disposition → AgencyInboundCallDispositionResponse
  *   POST   /proxy/agency/inbound/calls/:id/dnc         → AgencyInboundCallDncResponse
+ *   GET    /proxy/agency/inbound/calls/:id/campaigns   → AgencyInboundCallCampaignOptionsResponse
+ *   POST   /proxy/agency/inbound/calls/:id/campaign    → AgencyInboundCallResponse
  *   GET    /proxy/agency/inbound/queue                 → AgencyInboundQueueResponse
  *
  * Every path is built by {@link INBOUND_PATHS}, so a renamed route is one edit here.
@@ -85,6 +89,8 @@ export const INBOUND_PATHS = {
   callHangup: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/hangup`,
   callDisposition: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/disposition`,
   callDnc: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/dnc`,
+  callCampaign: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/campaign`,
+  callCampaigns: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/campaigns`,
   queue: `${API_BASE}/proxy/agency/inbound/queue`,
   missedCount: `${API_BASE}/proxy/agency/inbound/missed/count`,
   missedAssign: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/assign`,
@@ -98,8 +104,12 @@ const INBOUND = INBOUND_PATHS.base;
 // ─── Refusals ───────────────────────────────────────────────────────────────
 
 export interface InboundRefusal {
-  /** A contract code, or `unknown` (a network failure, a masked 5xx, an RBAC 403). */
-  code: AgencyInboundErrorCode | 'unknown';
+  /**
+   * A contract code, or `unknown` (a network failure, a masked 5xx, an RBAC 403). `campaign_required`
+   * is the soft phone family's code, which the outcome route answers for a call filed under no
+   * campaign while the account asks for one on every call (`docs/call-log.md` §5).
+   */
+  code: AgencyInboundErrorCode | 'campaign_required' | 'unknown';
   status: number | null;
   /** The server's sentence: the floor when the console has no better copy. */
   message: string;
@@ -145,7 +155,7 @@ export function parseInboundRefusal(err: unknown): InboundRefusal {
       )
     : [];
   return {
-    code: code && KNOWN.has(code) ? (code as AgencyInboundErrorCode) : 'unknown',
+    code: code === 'campaign_required' ? code : code && KNOWN.has(code) ? (code as AgencyInboundErrorCode) : 'unknown',
     status: errorStatus(err),
     message: typeof body['message'] === 'string' && body['message'].trim() ? body['message'] : fallback,
     details,
@@ -174,6 +184,18 @@ async function result<T>(run: () => Promise<T>): Promise<InboundResult<T>> {
 export async function listInboundRoutes(tenantId?: string, accountId?: string): Promise<AgencyInboundRoute[]> {
   const body = await apiFetch<AgencyInboundRoutesResponse>(`${INBOUND}/routes`, {}, tenantId, accountId);
   return body.routes;
+}
+
+/**
+ * The account's routes with `campaign_required`: whether "Every call must belong to a campaign" is
+ * on, so the route editor marks "Campaign for unknown callers" required (`docs/call-log.md` §5).
+ */
+export async function listInboundRoutesWithRule(
+  tenantId?: string,
+  accountId?: string,
+): Promise<{ routes: AgencyInboundRoute[]; campaignRequired: boolean }> {
+  const body = await apiFetch<AgencyInboundRoutesResponse>(`${INBOUND}/routes`, {}, tenantId, accountId);
+  return { routes: body.routes, campaignRequired: body.campaign_required === true };
 }
 
 export async function getInboundRoute(routeId: string, tenantId?: string, accountId?: string): Promise<AgencyInboundRoute> {
@@ -417,6 +439,37 @@ export function dispositionInboundCall(
       INBOUND_PATHS.callDisposition(callId), { method: 'POST', body: JSON.stringify(request) }, tenantId, accountId,
     ),
   );
+}
+
+/**
+ * `GET /inbound/calls/:id/campaigns`: the campaigns the caller may file this call under (the soft
+ * phone's rule). Throws; the wrap-up shows it could not load them.
+ */
+export async function listInboundCallCampaigns(
+  callId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyInboundCallCampaignOption[]> {
+  const body = await apiFetch<AgencyInboundCallCampaignOptionsResponse>(INBOUND_PATHS.callCampaigns(callId), {}, tenantId, accountId);
+  return body.campaigns;
+}
+
+/**
+ * `POST /inbound/calls/:id/campaign`: file an unknown caller's call under a campaign before its
+ * outcome is saved. The answer is the call with that campaign's outcomes.
+ */
+export function setInboundCallCampaign(
+  callId: string,
+  campaignId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundCall>> {
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundCallResponse>(
+      INBOUND_PATHS.callCampaign(callId), { method: 'POST', body: JSON.stringify({ campaign_id: campaignId }) }, tenantId, accountId,
+    );
+    return body.call;
+  });
 }
 
 /** `POST /inbound/calls/:id/dnc`: campaign scope when the call matched a campaign, else the account (the server decides). */

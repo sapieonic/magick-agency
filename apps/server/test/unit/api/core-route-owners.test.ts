@@ -37,6 +37,8 @@ const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /inbound/calls/:id/hangup': INBOUND_SINGLE_PROCESS,
   'POST /inbound/calls/:id/disposition': INBOUND_SINGLE_PROCESS,
   'POST /inbound/calls/:id/dnc': INBOUND_SINGLE_PROCESS,
+  'GET /inbound/calls/:id/campaigns': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/campaign': INBOUND_SINGLE_PROCESS,
   'GET /inbound/queue': INBOUND_SINGLE_PROCESS,
   'GET /push-devices/:id': AWAY_RING_NO_STATION,
   'PUT /push-devices/:id': AWAY_RING_NO_STATION,

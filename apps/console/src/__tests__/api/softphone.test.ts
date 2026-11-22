@@ -15,7 +15,7 @@ import {
   dispositionManualCall,
   getManualCall,
   getSoftphoneBootstrap,
-  getSoftphoneSettings,
+  getSoftphoneSettingsWithRule,
   hangupManualCall,
   listManualCalls,
   markManualCallDnc,
@@ -116,7 +116,11 @@ describe('the routes, methods and bodies of §6', () => {
     await getManualCall('mc-1', 't', 'a');
     expect(lastRequest().url).toBe('/proxy/agency/softphone/calls/mc-1');
     mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true } }));
-    expect(await getSoftphoneSettings('t', 'a')).toEqual({ record_calls: true });
+    expect(await getSoftphoneSettingsWithRule('t', 'a')).toEqual({ settings: { record_calls: true }, campaignRequired: false });
+    // The account asks for a campaign on every call (docs/call-log.md §5): the page greys the untagged settings.
+    mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true }, campaign_required: true }));
+    expect((await getSoftphoneSettingsWithRule('t', 'a')).campaignRequired).toBe(true);
+    mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true } }));
     const payload = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: null };
     const saved = await putSoftphoneSettings(payload, 't', 'a');
     expect(saved).toEqual({ ok: true, value: { record_calls: true } });

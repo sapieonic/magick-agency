@@ -236,6 +236,13 @@ export interface AgencyInboundArrivalInput {
    * need not name it; the router always passes the route's.
    */
   wrapupSeconds?: number | null;
+  /**
+   * The route's campaign for unknown callers (`agency_inbound_routes.default_campaign_id`, 0069):
+   * a call that matched no contact is filed under it (`campaign_source = 'route'`), whether or not
+   * the account's setting is on (docs/call-log.md §5, CL4). Absent or null: none. Optional only
+   * for the test callers; the router always passes the route's.
+   */
+  routeDefaultCampaignId?: string | null;
 }
 
 /** How a call ends ({@link AgencyInboundCallRepository.end}). */
@@ -293,6 +300,8 @@ export interface AgencyInboundMissedListInput {
 export interface AgencyInboundMissedRow extends AgencyInboundCallRecord {
   route_name: string | null;
   matched_campaign_name: string | null;
+  /** The name of the campaign the call is filed under (`campaign_id`; docs/call-log.md §5), or NULL. */
+  campaign_name: string | null;
   /**
    * How it was handled (0028): `marked` by a person, or `reached` (the customer was put through to
    * an agent afterwards: `agency_inbound_close_reached_missed`). NULL while open, and on a row
@@ -344,15 +353,17 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.created_at, c.updated_at`;
 
 /**
- * A row's Missed-list joins: the route's name, the matched campaign's, and (IQ54) the matched
+ * A row's Missed-list joins: the route's name, the matched campaign's, the campaign the call is
+ * filed under (`fcam`: the match's, else the route's campaign for unknown callers), and (IQ54) the matched
  * contact's name columns, by primary key. All LEFT, no FK. The campaign's alias `cam` is read by
  * `contactNameContextSql` too.
  */
 const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_inbound_routes r ON r.id = c.route_id
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id
+        LEFT JOIN agency_campaigns fcam ON fcam.id = c.campaign_id AND fcam.tenant_id = c.tenant_id
         LEFT JOIN agency_contacts mc ON mc.id = c.matched_contact_id AND mc.tenant_id = c.tenant_id`;
-const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name,
+const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name, fcam.name AS campaign_name,
   ${contactNameContextSql('mc', 'cam')} AS match_context, cam.context_display AS match_display`;
 
 export class AgencyInboundCallRepository {
@@ -362,7 +373,8 @@ export class AgencyInboundCallRepository {
    * `destination_phone` the caller's or `''` when withheld, `provider_call_id` the carrier's call
    * id so the status webhook finds it), linked both ways, in one transaction (or the caller's).
    * A matched call is filed under its contact's campaign (`campaign_id`, `campaign_source =
-   * 'contact'`, 0067): the column the campaign Call log reads (`docs/call-log.md`).
+   * 'contact'`, 0067): the column the campaign Call log reads (`docs/call-log.md`). An unmatched
+   * one is filed under the route's campaign for unknown callers when it has one (`'route'`).
    * The leg is written here rather than through `WebRtcCallRepository.create`, which refuses a
    * credential that is not `active`: a call that has already arrived is answered regardless
    * (§10, "a disabled or invalid credential that still verifies").
@@ -392,7 +404,8 @@ export class AgencyInboundCallRepository {
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
                  CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint,
-                 $11::uuid, CASE WHEN $11::uuid IS NOT NULL THEN 'contact' END)
+                 COALESCE($11::uuid, $19::uuid),
+                 CASE WHEN $11::uuid IS NOT NULL THEN 'contact' WHEN $19::uuid IS NOT NULL THEN 'route' END)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
@@ -400,6 +413,7 @@ export class AgencyInboundCallRepository {
           input.providerCallId, input.fromE164, input.toE164, id.match?.contactId ?? null, id.match?.campaignId ?? null,
           id.callerDnc, id.sticky?.userId ?? null, id.sticky?.reason ?? null, input.answered,
           input.recordingRequested, input.closedCause ?? null, input.wrapupSeconds ?? null,
+          input.routeDefaultCampaignId ?? null,
         ],
       );
       const inserted = rows[0];
@@ -774,6 +788,28 @@ export class AgencyInboundCallRepository {
         WHERE c.id = $1::uuid AND c.settled_at IS NULL
         RETURNING ${CALL_COLUMNS}`,
       [id, notes],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * File an unknown caller's call under a campaign (docs/call-log.md §5, CL4): `campaign_id` and
+   * `campaign_source` (`agent`, or `supervisor` on behalf) on a call that matched no contact and
+   * whose outcome is not saved yet. Null when the call is missing, matched (its campaign is
+   * fixed) or settled; the caller re-reads to tell which. Run it on the transaction that then
+   * saves the outcome, when the two arrive together.
+   */
+  async fileUnderCampaign(
+    input: { id: string; tenantId: string; campaignId: string; source: 'agent' | 'supervisor' },
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET campaign_id = $3::uuid, campaign_source = $4::varchar
+        WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid
+          AND c.matched_campaign_id IS NULL AND c.settled_at IS NULL
+        RETURNING ${CALL_COLUMNS}`,
+      [input.id, input.tenantId, input.campaignId, input.source],
     );
     return rows[0] ?? null;
   }

@@ -94,6 +94,7 @@ const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPa
 const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
+const CallsSettingsPage = lazy(() => import('./pages/settings/CallsSettingsPage'));
 const ListeningSettingsPage = lazy(() => import('./pages/settings/ListeningSettingsPage'));
 const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPage'));
 const AgentCustomerHistoryPage = lazy(() =>
@@ -786,6 +787,9 @@ export default function App() {
                       subject on any of its routes, so there is nobody else it could expose.
                       Gating it would lock people out of their own unsubscribe. */}
                   <Route path="notifications" element={<NotificationSettingsPage />} />
+                  {/* Calls (`docs/call-log.md` §5): "Every call must belong to a campaign". Account admins
+                      (`agency.calls.manage`, which the page checks); behind no flag of its own. */}
+                  <Route path="calls" element={<RequireGate gate={settingsEntry('calls').gate}><CallsSettingsPage /></RequireGate>} />
                   {/* Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
                   <Route path="softphone" element={<RequireGate gate={settingsEntry('softphone').gate}><SoftphoneSettingsPage /></RequireGate>} />
                   {/* Inbound routing (`docs/inbound.md` §8.1): the account's routes. Account

@@ -315,10 +315,17 @@ export function getManualCall(callId: string, tenantId?: string, accountId?: str
   );
 }
 
-/** `GET /settings`, at the agent floor. */
-export async function getSoftphoneSettings(tenantId?: string, accountId?: string): Promise<AgencySoftphoneSettings> {
+/**
+ * `GET /settings`, at the agent floor: the settings with `campaignRequired`, the account asks for a campaign on every call
+ * (`docs/call-log.md` §5), so the settings of a call logged to none are not used and the page
+ * greys them.
+ */
+export async function getSoftphoneSettingsWithRule(
+  tenantId?: string,
+  accountId?: string,
+): Promise<{ settings: AgencySoftphoneSettings; campaignRequired: boolean }> {
   const res = await apiFetch<AgencySoftphoneSettingsResponse>(`${SOFTPHONE_BASE}/settings`, {}, tenantId, accountId);
-  return res.settings;
+  return { settings: res.settings, campaignRequired: res.campaign_required === true };
 }
 
 /**

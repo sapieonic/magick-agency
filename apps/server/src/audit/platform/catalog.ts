@@ -134,6 +134,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // outcome catalog, the call fields, recording, the summary profile, the default
   // caller ID. Account-wide, never campaign-scoped.
   'agency_softphone_settings.updated',
+  // The account's call settings (`PUT /call-settings`, docs/call-log.md §5): "Every call must
+  // belong to a campaign" switched on or off (`details.require_campaign`). Account-wide.
+  'agency_call_settings.updated',
   // ── Customer history (docs/customer-history.md CH10) ─────────────────────────
   // One row per search and per export of one number's history, zero results included.
   // `resource_id` is the search id; `details` carry the E.164 searched, the result count, the
@@ -182,6 +185,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_inbound_call.hung_up',
   'agency_inbound_call.dispositioned',
   'agency_inbound_call.dnc_marked',
+  // An unknown caller's call filed under another campaign at wrap-up (docs/call-log.md §5):
+  // `campaign_id` the campaign it is under now, `details.from_campaign_id` the one before.
+  'agency_inbound_call.campaign_changed',
   // A supervisor's force-available closed an outcome the agent owed (`no_disposition`, as the
   // lapse would): filed under the call, the supervisor the actor (`details.via`, the session).
   'agency_inbound_call.closed',
@@ -249,6 +255,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // settings row (`resource_id` is absent: one row per account, named by it).
   'agency_manual_call',
   'agency_softphone_settings',
+  // The account's call settings row (`resource_id` absent: one row per account).
+  'agency_call_settings',
   // One customer-history search (`resource_id`: its `search_id`, `chs_` + 32 hex).
   'customer_history',
   // One report run (`report_runs.id`) and one report subscription (`report_subscriptions.id`).

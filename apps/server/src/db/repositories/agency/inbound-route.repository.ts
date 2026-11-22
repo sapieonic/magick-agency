@@ -80,6 +80,8 @@ export interface AgencyInboundRouteRecord {
   disposition_catalog: AgencyDisposition[];
   /** IQ52: the wrap-up window of every call on the route (0032); captured on each call at arrival. */
   wrapup_seconds: number;
+  /** The campaign unknown callers are filed under at arrival (0069; docs/call-log.md §5), or NULL. */
+  default_campaign_id: string | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: Date;
@@ -156,7 +158,7 @@ const PLAIN_FIELDS = [
   'name', 'timezone', 'weekly_hours', 'holidays', 'sticky_mode', 'sticky_wait_seconds', 'sticky_lookback_days',
   'pool_campaign_ids', 'queue_max_wait_seconds', 'max_waiting', 'max_concurrent', 'after_hours_action',
   'overflow_action', 'record_calls', 'recording_notice', 'analysis_profile_id', 'disposition_catalog',
-  'wrapup_seconds',
+  'wrapup_seconds', 'default_campaign_id',
 ] as const satisfies ReadonlyArray<keyof AgencyInboundRouteConfig>;
 
 /** JSONB columns: bound as JSON text and cast, so an array is never sent as a Postgres array. */
@@ -166,13 +168,14 @@ const CAST: Record<string, string> = {
   analysis_profile_id: 'uuid', sticky_wait_seconds: 'smallint', sticky_lookback_days: 'smallint',
   queue_max_wait_seconds: 'smallint', max_waiting: 'smallint', max_concurrent: 'smallint',
   record_calls: 'boolean', recording_notice: 'boolean', wrapup_seconds: 'smallint',
+  default_campaign_id: 'uuid',
 };
 
 const ROUTE_COLUMNS = `r.id, r.tenant_id, r.account_id, r.name, r.timezone, r.weekly_hours, r.holidays,
   r.greeting_audio_id, r.hold_audio_id, r.closed_audio_id, r.busy_audio_id, r.recording_notice_audio_id,
   r.callback_audio_id, r.sticky_mode, r.sticky_wait_seconds, r.sticky_lookback_days, r.pool_campaign_ids,
   r.queue_max_wait_seconds, r.max_waiting, r.max_concurrent, r.after_hours_action, r.overflow_action,
-  r.record_calls, r.recording_notice, r.analysis_profile_id, r.disposition_catalog, r.wrapup_seconds, r.created_by, r.updated_by,
+  r.record_calls, r.recording_notice, r.analysis_profile_id, r.disposition_catalog, r.wrapup_seconds, r.default_campaign_id, r.created_by, r.updated_by,
   r.created_at, r.updated_at, r.deleted_at, r.deleted_by`;
 
 /**
@@ -190,7 +193,10 @@ function configColumns(config: AgencyInboundRouteConfig): Array<[string, unknown
   // `wrapup_seconds` is optional on the contract's type (a client written before IQ52); a config
   // without it takes the route's default rather than a NULL the column refuses.
   const out: Array<[string, unknown]> = PLAIN_FIELDS.map((f) => [f,
-    f === 'wrapup_seconds' ? (config.wrapup_seconds ?? AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds) : config[f]]);
+    f === 'wrapup_seconds' ? (config.wrapup_seconds ?? AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds)
+      // Optional on the contract's type too (a client written before 0069): none.
+      : f === 'default_campaign_id' ? (config.default_campaign_id ?? null)
+        : config[f]]);
   for (const slot of Object.keys(CLIP_COLUMNS) as AgencyInboundClipSlot[]) out.push([CLIP_COLUMNS[slot], config.clips[slot]]);
   return out;
 }
@@ -250,6 +256,7 @@ export function inboundRouteToWire(route: AgencyInboundRouteWithNumbers): Agency
     analysis_profile_id: route.analysis_profile_id,
     disposition_catalog: route.disposition_catalog,
     wrapup_seconds: route.wrapup_seconds,
+    default_campaign_id: route.default_campaign_id ?? null,
     numbers,
     created_at: route.created_at.toISOString(),
     updated_at: route.updated_at.toISOString(),
@@ -510,6 +517,41 @@ export class AgencyInboundRouteRepository {
     const row = rows[0];
     if (!row) return null;
     return { ...row, route: row.route ? reviveRoute(row.route) : null };
+  }
+
+  /**
+   * The account's live routes with no campaign for unknown callers, oldest first: what stands in
+   * the way of "Every call must belong to a campaign" (docs/call-log.md §5, CL3).
+   */
+  async listMissingDefaultCampaign(tenantId: string, accountId: string, db: Db = getPool()): Promise<Array<{ id: string; name: string }>> {
+    const { rows } = await db.query<{ id: string; name: string }>(
+      `SELECT r.id, r.name FROM agency_inbound_routes r
+        WHERE r.tenant_id = $1::uuid AND r.account_id = $2::uuid AND r.deleted_at IS NULL
+          AND r.default_campaign_id IS NULL
+        ORDER BY r.created_at, r.id`,
+      [tenantId, accountId],
+    );
+    return rows;
+  }
+
+  /**
+   * The live routes that file unknown callers under campaign `campaignId`, by name
+   * (`idx_agency_inbound_routes_default_campaign`). Tenant-scoped: a campaign id of another
+   * tenant names none. Asked before the campaign completes itself, is started with nothing to
+   * dial, stopped or archived (CL8, CL21).
+   */
+  async listDefaultingTo(
+    tenantId: string,
+    campaignId: string,
+    db: Db = getPool(),
+  ): Promise<Array<{ id: string; name: string; account_id: string }>> {
+    const { rows } = await db.query<{ id: string; name: string; account_id: string }>(
+      `SELECT r.id, r.name, r.account_id FROM agency_inbound_routes r
+        WHERE r.default_campaign_id = $2::uuid AND r.deleted_at IS NULL AND r.tenant_id = $1::uuid
+        ORDER BY lower(r.name), r.id`,
+      [tenantId, campaignId],
+    );
+    return rows;
   }
 
   /**

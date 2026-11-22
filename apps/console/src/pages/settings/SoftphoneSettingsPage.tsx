@@ -7,7 +7,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { PageDescription } from '../../components/common/PageDescription';
 import { useTenant } from '../../contexts/TenantContext';
-import { getSoftphoneSettings, putSoftphoneSettings } from '../../api/softphone';
+import { getSoftphoneSettingsWithRule, putSoftphoneSettings } from '../../api/softphone';
 import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
 import { usePermission } from '../../hooks/usePermission';
@@ -39,6 +39,9 @@ import {
 import styles from './SoftphoneSettingsPage.module.css';
 import { PanelGrid } from '../../components/common/PanelGrid';
 
+/** Why the settings of a call logged to no campaign are greyed (`docs/call-log.md` §5). */
+export const UNTAGGED_UNUSED_COPY = 'Not used while every call must belong to a campaign.';
+
 /**
  * Settings → Soft phone (`docs/softphone.md` §3, §7): what a soft-phone call uses
  * when it is NOT logged to a campaign (its outcomes, recording, summary profile,
@@ -47,6 +50,9 @@ import { PanelGrid } from '../../components/common/PanelGrid';
  * Editing is `agency.softphone.manage` (account admin); anyone who reaches the
  * page without it reads the same settings with every control disabled, because
  * a supervisor explaining an agent's screen should be able to see what drives it.
+ *
+ * While the account's "Every call must belong to a campaign" is on (Settings → Calls), no call is
+ * "not logged to a campaign": those settings are greyed and say so. The call details still apply.
  */
 export default function SoftphoneSettingsPage() {
   const { tenantId, accountId } = useTenant();
@@ -64,13 +70,19 @@ export default function SoftphoneSettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState(false);
+  /**
+   * The account's "Every call must belong to a campaign" is on (`docs/call-log.md` §5): no call
+   * is "not logged to a campaign" any more, so those settings are shown greyed and say why.
+   */
+  const [untaggedUnused, setUntaggedUnused] = useState(false);
 
   const load = useCallback(async () => {
     if (!tenantId || !accountId) return;
     setLoading(true);
     setLoadError(null);
     try {
-      const settings = await getSoftphoneSettings(tenantId, accountId);
+      const { settings, campaignRequired } = await getSoftphoneSettingsWithRule(tenantId, accountId);
+      setUntaggedUnused(campaignRequired);
       setSaved(settings);
       setDraft(draftFromSettings(settings));
       setTouched(false);
@@ -140,6 +152,11 @@ export default function SoftphoneSettingsPage() {
   const callerOptions = phoneNumbers.map((n) => n.phone_number);
   if (draft.defaultCallerId && !callerOptions.includes(draft.defaultCallerId)) callerOptions.unshift(draft.defaultCallerId);
   const profileKnown = draft.profileId === null || profiles.some((p) => p.id === draft.profileId);
+  /** The settings of a call logged to no campaign can be changed: by an admin, while they are used. */
+  const editUntagged = canEdit && !untaggedUnused;
+  const unusedNote = untaggedUnused ? (
+    <p className={styles.unused} data-testid="softphone-settings-unused">{UNTAGGED_UNUSED_COPY}</p>
+  ) : null;
 
   return (
     <div className={styles.page}>
@@ -191,6 +208,7 @@ export default function SoftphoneSettingsPage() {
               Access and defaults
             </h2>
             <p className={styles.cardLead}>For calls that are not logged to a campaign.</p>
+            {unusedNote}
             <div className={styles.row}>
               <div className={styles.rowText}>
                 <p className={styles.rowLabel}>The soft phone is on for this account</p>
@@ -219,7 +237,7 @@ export default function SoftphoneSettingsPage() {
                   role="switch"
                   aria-labelledby="sp-record-label"
                   checked={draft.record}
-                  disabled={!canEdit}
+                  disabled={!editUntagged}
                   onChange={(e) => update({ record: e.target.checked })}
                   data-testid="softphone-settings-record"
                 />
@@ -237,7 +255,7 @@ export default function SoftphoneSettingsPage() {
                 id="sp-profile"
                 className={styles.rowControl}
                 value={draft.profileId ?? ''}
-                disabled={!canEdit}
+                disabled={!editUntagged}
                 onChange={(e) => update({ profileId: e.target.value || null })}
                 aria-describedby={errors.describedBy('analysis_profile_id')}
                 data-testid="softphone-settings-profile"
@@ -263,7 +281,7 @@ export default function SoftphoneSettingsPage() {
                 id="sp-caller"
                 className={styles.rowControl}
                 value={draft.defaultCallerId ?? ''}
-                disabled={!canEdit}
+                disabled={!editUntagged}
                 onChange={(e) => update({ defaultCallerId: e.target.value || null })}
                 aria-describedby={errors.describedBy('default_caller_id')}
                 data-testid="softphone-settings-caller"
@@ -283,6 +301,7 @@ export default function SoftphoneSettingsPage() {
             <h2 className={styles.cardTitle} id="sp-outcomes">
               Outcomes when not logged to a campaign
             </h2>
+            {untaggedUnused ? <p className={styles.unused} data-testid="softphone-settings-outcomes-unused">{UNTAGGED_UNUSED_COPY}</p> : null}
             {usingBuiltIn ? (
               <>
                 <p className={styles.cardLead}>The built-in outcomes are in use. Agents press 1–9 to pick one.</p>
@@ -296,7 +315,7 @@ export default function SoftphoneSettingsPage() {
                     </li>
                   ))}
                 </ol>
-                {canEdit ? (
+                {editUntagged ? (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -308,13 +327,13 @@ export default function SoftphoneSettingsPage() {
                 ) : null}
               </>
             ) : (
-              <fieldset disabled={!canEdit} style={{ border: 'none', padding: 0, margin: 0 }}>
+              <fieldset disabled={!editUntagged} style={{ border: 'none', padding: 0, margin: 0 }}>
                 <DispositionCatalogEditor
                   dispositions={draft.catalog}
                   onChange={(next) => update({ catalog: next })}
                   errors={errors}
                 />
-                {canEdit ? (
+                {editUntagged ? (
                   <button type="button" className="btn-secondary" onClick={() => update({ catalog: [] })}>
                     Use the built-in outcomes instead
                   </button>

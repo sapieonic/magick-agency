@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getOriginator } from '../../middleware/auth.middleware.js';
 import { auditLogger } from '../../../audit/audit-logger.js';
 import { createChildLogger } from '@magick-agency/observability';
-import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyCampaignRepository, agencyInboundRouteRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignLifecycleErrorCode } from '@magick-agency/contracts/errors';
@@ -78,6 +78,11 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
   async function rosterRejected(reply: FastifyReply, campaign: AgencyCampaignRecord): Promise<boolean> {
     const roster = await agencyCampaignRepository.rosterCounts(campaign.id);
     if (roster.dialable > 0) return false;
+    // A campaign an inbound route files unknown callers under (docs/call-log.md §5, CL8) is
+    // started to be logged to, not dialled: calls are filed under it and agents choose it on the
+    // soft phone only while it is running or paused. So it may start with nothing to dial, and
+    // the pacing leader does not complete it for the same reason (`PacingEngine.maybeFinalize`).
+    if ((await agencyInboundRouteRepository.listDefaultingTo(campaign.tenant_id, campaign.id)).length > 0) return false;
     // The two cases are distinguished because the remedy differs — see
     // `rosterCounts`. Cheap: it is the same single query either way.
     reply.code(409).send(roster.total === 0

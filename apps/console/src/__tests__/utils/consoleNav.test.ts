@@ -418,7 +418,7 @@ describe('the Settings hub', () => {
     const groups = visibleSettingsGroups(input('account_admin'));
     expect(groups.map((g) => [g.scope, g.entries.map((e) => e.label)])).toEqual([
       ['you', ['Profile and appearance', 'Email notifications']],
-      ['account', ['Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
+      ['account', ['Calls', 'Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
       ['tenant', ['Team']],
     ]);
   });

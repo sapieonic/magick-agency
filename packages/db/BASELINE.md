@@ -227,6 +227,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_dialer_analysis_jobs_call` | `dialer_analysis_jobs` |
 | `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
 | `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
+| `uq_agency_call_settings_account` (0069) | `agency_call_settings` |
 | `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
 | `uq_agency_agent_caller_id_agent` (0018) | `agency_campaign_agent_caller_ids` |
 | `uq_agency_agent_caller_id_number` (0018) | `agency_campaign_agent_caller_ids` |
@@ -258,6 +259,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_dialer_analysis_jobs_updated_at` | BEFORE UPDATE | `dialer_analysis_jobs` | `update_updated_at()` |
 | `trg_agency_manual_calls_updated_at` (0005) | BEFORE UPDATE | `agency_manual_calls` | `update_updated_at()` |
 | `trg_agency_softphone_settings_updated_at` (0005) | BEFORE UPDATE | `agency_softphone_settings` | `update_updated_at()` |
+| `trg_agency_call_settings_updated_at` (0069) | BEFORE UPDATE | `agency_call_settings` | `update_updated_at()` |
 | `trg_agency_attempts_dial_placed_insert` (0011) | AFTER INSERT, WHEN `NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 | `trg_agency_attempts_dial_placed_update` (0011) | AFTER UPDATE OF `dialed_at`, WHEN `OLD.dialed_at IS NULL AND NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 | `trg_agency_attempts_insights_insert` (0012) | AFTER INSERT, FOR EACH STATEMENT, `NEW TABLE AS new_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
@@ -1914,6 +1916,33 @@ under either name by a failed concurrent build fails the migration. **Down** dro
 the invalid-index refusal, down then up), the server's
 `test/integration/api/agency-call-log-inbound.test.ts` (the inbound branch is planned on the
 index) and the down → up inventory suite.
+
+### 0069 — `migrations/0069_call_settings.sql`
+
+One call log per campaign, P3 (docs/call-log.md §5).
+**`agency_call_settings`**: the account's call settings, one optional row per (tenant, account)
+(`uq_agency_call_settings_account`); no row reads as the defaults. `require_campaign` (BOOLEAN, default
+false) is the setting "Every call must belong to a campaign"; `require_campaign_since` (TIMESTAMPTZ) is
+when it was last switched on, set exactly while it is on (`ck_agency_call_settings_since`): a call that
+began before it may finish as it is. `updated_by` (no FK). No FK to tenants or accounts, as
+`agency_softphone_settings` and `account_settings`. `trg_agency_call_settings_updated_at`. Its own table
+rather than a column of either of those: the rule governs inbound calls as much as the soft phone, and
+`account_settings` is the operator's row, cached and versioned (docs/call-log.md §5 "Where the setting
+lives"). The repository is the server's (`AgencyCallSettingsRepository`, B12).
+**`agency_inbound_routes.default_campaign_id`** (UUID, nullable, no FK, as `pool_campaign_ids`): the
+campaign a caller on no list is filed under at arrival (`agency_inbound_calls.campaign_id`,
+`campaign_source = 'route'`). The server checks it names a campaign of the account that is not archived,
+and requires it while the account's setting is on.
+**`idx_agency_inbound_routes_default_campaign`** `(default_campaign_id) WHERE default_campaign_id IS NOT
+NULL AND deleted_at IS NULL`: the live routes that file callers under a campaign, asked before that
+campaign completes itself, is started with nothing to dial, stopped or archived.
+`SET LOCAL lock_timeout = '10s'`: one ADD COLUMN with no default and one index on a table of a few rows
+per account that every inbound arrival reads. **Down** drops the index, the column and the table: the
+setting and every route's default campaign are lost; calls already filed keep their `campaign_id`.
+**Tests**: `test/integration/db/call-settings-migration.test.ts` (the columns, one row per account, the
+CHECK both ways, the trigger, the route column, the index's definition and a statement that uses it, the
+lock timeout, down then up), `inbound-migration.test.ts` (the route's column inventory) and the down → up
+inventory suite.
 
 ## Tests
 

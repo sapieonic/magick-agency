@@ -70,6 +70,23 @@ export const SIDE_COPY = {
   pasteWorks: 'You can paste a number too.',
   saveTo: 'Save this call to',
   noWorkOption: 'Not in any work',
+  // Every call must be saved to a work (the account's setting, docs/call-log.md §5; AS15's words
+  // for the proposal's "Log to (required)" and "Choose a campaign to log this call to.").
+  required: '(required)',
+  chooseWork: 'Choose the work',
+  chooseWorkHint: 'Choose the work to save this call to.',
+  noRunningWorkTitle: 'You are not in any work that is running, so you cannot dial.',
+  noRunningWorkBody: 'Ask your supervisor to add you to one.',
+  redialNoWork: 'This call was not saved to any work. Choose one to call again.',
+  // A call from a customer, saved under a work (docs/call-log.md §5).
+  filedUnder: 'Filed under',
+  notOnAnyList: 'This number is not on any list',
+  changeWork: 'Change',
+  changeWorkLabel: 'Change the work this call is filed under',
+  changingWork: 'Changing…',
+  choicesChanged: (work: string) => `What you can choose changed to match ${work}.`,
+  chooseWorkToSave: 'Choose the work to file this call under, then save.',
+  worksDidNotLoad: 'We could not load your work. Try again.',
   callDetails: 'Call details',
   recentCalls: 'My recent calls',
   recentEmpty: 'Numbers you dial show here. Press one to dial it again.',
@@ -164,10 +181,11 @@ export const DIAL_BLOCK_WORDS: Record<DialBlockReason, string> = {
  * Why Save cannot save yet on a side view (`InboundSaveBlock`, the soft phone's `SaveBlock`): the
  * station's own words for the outcome's blocks, and two of the side views' own.
  */
-export type SideSaveBlock = keyof typeof STATION_BLOCK_COPY | 'call_live' | 'fields_required';
+export type SideSaveBlock = keyof typeof STATION_BLOCK_COPY | 'call_live' | 'fields_required' | 'work_required';
 
 export function sideSaveBlockLine(block: SideSaveBlock): string {
   if (block === 'call_live') return SIDE_COPY.saveOpensAfterCall;
+  if (block === 'work_required') return SIDE_COPY.chooseWorkToSave;
   if (block === 'fields_required') return SIDE_COPY.fillCallDetails;
   return STATION_BLOCK_COPY[block];
 }

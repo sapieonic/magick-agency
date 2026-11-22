@@ -2669,6 +2669,41 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/calls/:id/campaigns",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the campaign an unknown caller’s call is filed under at wrap-up, served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/campaign",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the campaign an unknown caller’s call is filed under at wrap-up, served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/call-settings",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the account’s call settings (“Every call must belong to a campaign”), served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/agency/call-settings",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the account’s call settings (“Every call must belong to a campaign”), served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/inbound-default-routes",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the inbound routes that file unknown callers under a campaign, asked before it is stopped or archived (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/queue",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",

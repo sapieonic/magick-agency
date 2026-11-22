@@ -186,6 +186,11 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/inbound/calls/:id/hangup',
   'POST /proxy/agency/inbound/calls/:id/disposition',
   'POST /proxy/agency/inbound/calls/:id/dnc',
+  // The campaign an unknown caller's call is filed under (docs/call-log.md §5): the finish routes'
+  // floor and reach. The campaigns offered are the caller's own staffed ones (the soft phone's
+  // rule), and the handler refuses any other (`inbound_campaign_not_allowed`).
+  'GET /proxy/agency/inbound/calls/:id/campaigns',
+  'POST /proxy/agency/inbound/calls/:id/campaign',
   // Reports (docs/reports.md, RP5): `agency.station.connect`, so an agent can export their OWN
   // review and see their own runs. The reach over a subject is the route's (another agent, a
   // campaign or the account is a 403 past the guards; others' runs are 404s). Subscriptions are

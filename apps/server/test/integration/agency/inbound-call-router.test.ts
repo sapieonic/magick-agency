@@ -4,6 +4,7 @@ import { closePool, initDbPool } from '@magick-agency/db';
 import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js';
 import { getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertTenant } from '../setup/factories.js';
+import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
 import { writeTtsFile } from '../../../src/tts/tts-file-cache.js';
 import { parseInboundRouteCreate } from '../../../src/agency/inbound/route-config.js';
 import { AgencyInboundCallRouter } from '../../../src/agency/inbound/inbound-call-router.js';
@@ -281,6 +282,40 @@ describe('a message with no recording is spoken, never silence', () => {
     expect(await router.answer(second)).toEqual({ kind: 'spoken', message: 'busy' });
     expect((await spine(second.carrierCallId))[0]).toMatchObject({ outcome: 'overflow_no_capacity', follow_up_reason: 'overflow_no_capacity' });
     expect(await agencyAttemptRepository.countLiveForAccount(X, XA)).toBe(1);
+  });
+});
+
+describe('the campaign an arriving call is filed under (docs/call-log.md §5, CL4)', () => {
+  it('an unknown caller under the route\'s campaign for unknown callers, a missed call included; none without one', async () => {
+    const campaign = (await insertAgencyCampaign({ tenant_id: X, account_id: XA, status: 'running' })).id as string;
+    const withDefault = await number(X, credX);
+    await route(X, XA, withDefault.id, { default_campaign_id: campaign });
+    const bare = await number(X, credX);
+    await route(X, XA, bare.id);
+    const { router } = harness();
+
+    // Nobody can take it, so it is a Missed row at once: filed all the same ("never blank").
+    const a = arrival(X, credX, withDefault.e164);
+    await router.answer(a);
+    expect((await spine(a.carrierCallId))[0]).toMatchObject({
+      campaign_id: campaign, campaign_source: 'route', matched_campaign_id: null, follow_up_status: 'open',
+    });
+    const b = arrival(X, credX, bare.e164);
+    await router.answer(b);
+    expect((await spine(b.carrierCallId))[0]).toMatchObject({ campaign_id: null, campaign_source: null });
+  });
+
+  it('a caller on a campaign\'s list stays under their own campaign, whatever the route\'s is', async () => {
+    const theirs = (await insertAgencyCampaign({ tenant_id: X, account_id: XA, status: 'running' })).id as string;
+    const routes = (await insertAgencyCampaign({ tenant_id: X, account_id: XA, status: 'running' })).id as string;
+    const from = '+447700900555';
+    await insertAgencyContact(theirs, { tenant_id: X, account_id: XA, phone_e164: from });
+    const n = await number(X, credX);
+    await route(X, XA, n.id, { default_campaign_id: routes });
+    const { router } = harness();
+    const a = arrival(X, credX, n.e164, { fromE164: from });
+    await router.answer(a);
+    expect((await spine(a.carrierCallId))[0]).toMatchObject({ campaign_id: theirs, campaign_source: 'contact', matched_campaign_id: theirs });
   });
 });
 

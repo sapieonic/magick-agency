@@ -15,11 +15,15 @@
  *
  * ── The outcome (§2 step 8; IQ10, IQ11) ────────────────────────────────────────────
  * Only once the call ENDED after it BRIDGED. Against the matched campaign's catalog (whatever its
- * status), else the route's, else the built-in one (`resolveInboundCatalog`). One transaction:
+ * status), else the catalog of the campaign an unknown caller's call is filed under, else the
+ * route's, else the built-in one (`resolveInboundCatalog`). With the account's "Every call must
+ * belong to a campaign" on, a call filed under none is refused `campaign_required`; the request
+ * may name the campaign (`campaign_id`), filed in the same transaction (docs/call-log.md §5). One transaction:
  * the spine row saved and settled (`saveDisposition`, the soft phone's discipline: the same code
  * again is an idempotent replay, notes and callback last-write-wins, nothing settles twice; a
  * different code, or one after the lapse, is `inbound_outcome_already_saved`), then on a first
- * save: a suppress code's DNC mark (campaign scope when matched, else the call's account; never
+ * save: a suppress code's DNC mark (campaign scope when the caller MATCHED a campaign's list, else
+ * the call's account, CL6: a campaign the call is only filed under never narrows the mark; never
  * tenant-wide) and the matched campaign's roster rows with the number, and the matched contact
  * settled forward only (`inbound-settlement.ts`). After the commit the session's `inbound` field
  * is cleared (by this id) and the agent returned (`releaseAgent`: a queued break applies, or the
@@ -47,11 +51,13 @@ import type {
   AgencySoftphoneDispositionInvalidRefusal,
   AgencyContactState,
   AgencyInboundCall,
+  AgencyInboundCallCampaignOption,
   AgencyInboundCallDispositionResponse,
   AgencyInboundCallDncResponse,
 } from '@magick-agency/contracts/agency';
 import {
   agencyAgentSessionRepository,
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyContactRepository,
   agencyInboundCallRepository,
@@ -70,7 +76,9 @@ import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { withTimeoutOr } from '../../utils/with-timeout.js';
-import { inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
+import { campaignRequiredFor, inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
+import { findTaggableCampaign, listTaggableCampaigns } from '../softphone/taggable-campaign.js';
+import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
 import type { InboundAgentViewsMemo, InboundConnector } from './inbound-connector.js';
 import { callbackBookerOf } from '../call-later.js';
@@ -85,6 +93,15 @@ export type InboundCallRefusal =
   | { code: 'inbound_call_not_found' }
   | { code: 'inbound_call_not_dispositionable' }
   | { code: 'inbound_outcome_already_saved' }
+  /** A matched caller's campaign is fixed (CL4). */
+  | { code: 'inbound_campaign_fixed' }
+  /** The campaign named is not one the actor may log to. */
+  | { code: 'inbound_campaign_not_allowed' }
+  /**
+   * The soft phone family's code (docs/call-log.md §5): the account's "Every call must belong to
+   * a campaign" applies to the call and it is filed under none.
+   */
+  | { code: 'campaign_required' }
   | {
     code: 'inbound_disposition_invalid';
     /** The soft phone's rules but its own `promise_needs_contact` (a matched call has its contact). */
@@ -212,7 +229,11 @@ export class InboundCallService {
   async submitDisposition(
     actor: InboundCallActor,
     callId: string,
-    req: { code: string; notes?: string; callbackAt?: string; promiseDate?: unknown; promiseAmount?: unknown },
+    req: {
+      code: string; notes?: string; callbackAt?: string; promiseDate?: unknown; promiseAmount?: unknown;
+      /** File an unknown caller's call under this campaign with the outcome (CL4). */
+      campaignId?: string;
+    },
   ): Promise<InboundCallResult<{
     response: AgencyInboundCallDispositionResponse;
     onBehalf: boolean;
@@ -224,13 +245,36 @@ export class InboundCallService {
     const row = found.call;
     if (row.state !== 'ended' || row.bridged_at === null) return refuse({ code: 'inbound_call_not_dispositionable' });
 
-    const [campaign, route, contact] = await Promise.all([
+    // ── The campaign the call is filed under (docs/call-log.md §5) ───────────────────
+    // A `campaign_id` on the request files an unknown caller's call under it, in the outcome's
+    // transaction; the one the call already has is accepted as it is.
+    let filing: { campaign: AgencyCampaignRecord; source: 'agent' | 'supervisor' } | null = null;
+    if (req.campaignId !== undefined && req.campaignId !== row.campaign_id) {
+      const chosen = await this.campaignChoice(row, actor, req.campaignId);
+      if ('refusal' in chosen) return refuse(chosen.refusal);
+      filing = { campaign: chosen.campaign, source: found.onBehalf ? 'supervisor' : 'agent' };
+    }
+    // With the account's setting on, a call filed under no campaign takes no outcome (CL3): not
+    // a replay of one already saved, and not a call that arrived before the switch (CL19).
+    if (!filing && row.campaign_id === null && row.disposition_code === null && row.account_id !== null) {
+      const required = await agencyCallSettingsRepository.requireCampaign(row.tenant_id, row.account_id);
+      if (campaignRequiredFor(row, required)) return refuse({ code: 'campaign_required' });
+    }
+    // The campaign whose catalog applies when the caller is on no list: the one being filed, else
+    // the one the call is already under (the route's, or an earlier choice).
+    const filedId = row.matched_campaign_id === null ? (filing?.campaign.id ?? row.campaign_id) : null;
+
+    const [campaign, route, contact, filedRead] = await Promise.all([
       row.matched_campaign_id ? agencyCampaignRepository.findById(row.matched_campaign_id) : Promise.resolve(null),
       row.route_id ? agencyInboundRouteRepository.findForCall(row.tenant_id, row.route_id) : Promise.resolve(null),
       row.matched_contact_id ? agencyContactRepository.findById(row.matched_contact_id) : Promise.resolve(null),
+      filing ? Promise.resolve(filing.campaign) : filedId ? agencyCampaignRepository.findById(filedId) : Promise.resolve(null),
     ]);
     const tag = campaign && campaign.tenant_id === row.tenant_id ? campaign : null;
-    const { catalog, stored } = resolveInboundCatalog(row.matched_campaign_id !== null, tag, route);
+    const filedCampaign = filedRead && filedRead.tenant_id === row.tenant_id ? filedRead : null;
+    const { catalog, stored } = resolveInboundCatalog(
+      row.matched_campaign_id !== null, tag, route, filedId ? { campaign: filedCampaign } : null,
+    );
     const now = new Date();
     // A promise's "today" is the customer's (PT4): the matched contact's zone, else its campaign's.
     const promiseZone = promiseZoneFor(contact?.timezone, tag?.default_timezone);
@@ -274,6 +318,17 @@ export class InboundCallService {
     let contactState: AgencyContactState | null = contact?.state ?? null;
     let nextAt = null as Date | null;
     const saved = await withTransaction(async (client, tx): Promise<{ call: AgencyInboundCallRecord; replay: boolean } | { refusal: InboundCallRefusal }> => {
+      if (filing) {
+        // Filed first, in this transaction: a save refused below rolls the filing back with it.
+        const filed = await agencyInboundCallRepository.fileUnderCampaign({
+          id: row.id, tenantId: row.tenant_id, campaignId: filing.campaign.id, source: filing.source,
+        }, { client });
+        if (!filed) {
+          // Settled since it was read (another save, or the lapse).
+          await tx.rollback();
+          return { refusal: { code: 'inbound_outcome_already_saved' } };
+        }
+      }
       const result = await agencyInboundCallRepository.saveDisposition({
         id: row.id, code: entry.code, source: stored, notes, callbackAt,
         promiseDate: promise?.date ?? null, promiseAmount: promise?.amount ?? null,
@@ -340,6 +395,67 @@ export class InboundCallService {
         callback_requested_at: callbackAt ? callbackAt.toISOString() : null,
       },
     };
+  }
+
+  // ─── The campaign an unknown caller's call is filed under (docs/call-log.md §5) ──
+
+  /**
+   * Whether `actor` may file `row` under campaign `campaignId`: never a matched caller's call
+   * (its campaign is fixed, CL4), never a settled one, and only a campaign the actor may log a
+   * call to (the soft phone's rule, `findTaggableCampaign`).
+   */
+  private async campaignChoice(
+    row: AgencyInboundCallRecord,
+    actor: InboundCallActor,
+    campaignId: string,
+  ): Promise<{ campaign: AgencyCampaignRecord } | { refusal: InboundCallRefusal }> {
+    if (row.matched_campaign_id !== null) return { refusal: { code: 'inbound_campaign_fixed' } };
+    if (row.settled_at !== null) return { refusal: { code: 'inbound_outcome_already_saved' } };
+    const campaign = await findTaggableCampaign(campaignId, actor);
+    return campaign ? { campaign } : { refusal: { code: 'inbound_campaign_not_allowed' } };
+  }
+
+  /**
+   * File an unknown caller's call under a campaign at wrap-up ("Change" beside "Filed under"):
+   * the call ended after it bridged and its outcome is not saved. Source `agent`, or
+   * `supervisor` on behalf. The answer's `disposition_catalog` is the new campaign's, and the
+   * call's session is told (its panel reloads the outcomes). Choosing the campaign it already
+   * has changes nothing.
+   */
+  async setCampaign(
+    actor: InboundCallActor,
+    callId: string,
+    campaignId: string,
+  ): Promise<InboundCallResult<{ call: AgencyInboundCall; onBehalf: boolean; changed: boolean; fromCampaignId: string | null }>> {
+    const found = await this.visible(callId, actor);
+    if (!found) return refuse({ code: 'inbound_call_not_found' });
+    const row = found.call;
+    if (row.matched_campaign_id !== null) return refuse({ code: 'inbound_campaign_fixed' });
+    if (row.state !== 'ended' || row.bridged_at === null) return refuse({ code: 'inbound_call_not_dispositionable' });
+    if (campaignId === row.campaign_id) {
+      return { ok: true, call: await this.wire(row, found.takerUserId), onBehalf: found.onBehalf, changed: false, fromCampaignId: row.campaign_id };
+    }
+    const chosen = await this.campaignChoice(row, actor, campaignId);
+    if ('refusal' in chosen) return refuse(chosen.refusal);
+    const filed = await agencyInboundCallRepository.fileUnderCampaign({
+      id: row.id, tenantId: row.tenant_id, campaignId: chosen.campaign.id, source: found.onBehalf ? 'supervisor' : 'agent',
+    });
+    if (!filed) return refuse({ code: 'inbound_outcome_already_saved' });
+    return {
+      ok: true, call: await this.sendFrame(filed, found.takerUserId), onBehalf: found.onBehalf,
+      changed: true, fromCampaignId: row.campaign_id,
+    };
+  }
+
+  /** The campaigns `actor` may file call `callId` under, newest first (the soft phone's rule). */
+  async campaignOptions(
+    actor: InboundCallActor,
+    callId: string,
+  ): Promise<InboundCallResult<{ campaigns: AgencyInboundCallCampaignOption[] }>> {
+    const found = await this.visible(callId, actor);
+    if (!found) return refuse({ code: 'inbound_call_not_found' });
+    const campaigns = await listTaggableCampaigns(actor);
+    return { ok: true, campaigns: campaigns.map((c) => ({ campaign_id: c.id, campaign_name: c.name })) };
   }
 
   /**
@@ -519,6 +635,8 @@ async function settleLapsedContact(call: AgencyInboundCallRecord, client: Pick<P
 /**
  * Mark the caller's number (`fromE164`, the call's own) Do Not Call on the call's scope: the
  * matched campaign's, else the call's account; never tenant-wide. In the caller's transaction.
+ * By the MATCH, never `campaign_id` (CL6): a call filed under a campaign by its route or at
+ * wrap-up has that campaign only as a filing choice, and its mark covers the whole account.
  * `entry`: the DNC row it landed on, for the audit (null when nothing was written).
  */
 async function markCallerDnc(

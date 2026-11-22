@@ -35,6 +35,7 @@ import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/
 import { breakMustWait, type BreakRegistry } from '@magick-agency/domain/break-manager';
 import {
   agencyAgentSessionRepository,
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyContactRepository,
   agencyInboundCallRepository,
@@ -68,6 +69,7 @@ import { isUuid } from '../../utils/uuid.js';
 import { withDialableCallerIds } from '../campaign-dialability.js';
 import type { SoftphoneActor, SoftphoneRefusal, SoftphoneResult } from './types.js';
 import { callbackBookerOf } from '../call-later.js';
+import { findTaggableCampaign } from './taggable-campaign.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
 
@@ -213,18 +215,12 @@ export class SoftphoneService {
   }
 
   /**
-   * The tag, when the actor may log to it: in the account, `running` or `paused`
-   * (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`), and staffed unless a supervisor — the
-   * rule bootstrap's `taggable_campaigns` lists by.
+   * The tag, when the actor may log to it (`taggable-campaign.ts`): in the account, `running`
+   * or `paused`, and staffed unless a supervisor — the rule bootstrap's `taggable_campaigns`
+   * lists by.
    */
-  private async taggable(campaignId: string, actor: SoftphoneActor): Promise<AgencyCampaignRecord | null> {
-    if (!isUuid(campaignId)) return null;
-    const campaign = await agencyCampaignRepository.findById(campaignId);
-    if (!campaign || campaign.tenant_id !== actor.tenantId || campaign.account_id !== actor.accountId) return null;
-    if (!(SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES as readonly string[]).includes(campaign.status)) return null;
-    if (actor.supervise) return campaign;
-    const staffed = await agencyCampaignAgentRepository.listActiveForUser(actor.tenantId, actor.userId);
-    return staffed.some((s) => s.campaign_id === campaign.id) ? campaign : null;
+  private taggable(campaignId: string, actor: SoftphoneActor): Promise<AgencyCampaignRecord | null> {
+    return findTaggableCampaign(campaignId, actor);
   }
 
   // ─── Reads ────────────────────────────────────────────────────────────────
@@ -253,7 +249,8 @@ export class SoftphoneService {
    * Refusals, in the order checked: `session_not_found`; `manual_call_live` /
    * `outcome_pending` (the session's unsettled call); `not_on_softphone` (not on the
    * `soft_phone` break); `station_unavailable` (no open station socket on this
-   * replica); `campaign_not_taggable`; `fields_invalid`; then the pre-dial's
+   * replica); `campaign_required` (no campaign while the account's setting asks for one);
+   * `campaign_not_taggable`; `fields_invalid`; then the pre-dial's
    * `override_note_invalid`, `invalid_number`, `caller_id_not_allowed`,
    * `contact_in_flight`, `outside_calling_hours`, `dnc_listed`, `dnc_unavailable`
    * (`manual-predial.ts`); `dial_failed` when Redis cannot answer the session claim;
@@ -279,6 +276,14 @@ export class SoftphoneService {
     const socket = this.deps.stations.socketFor(session.id);
     if (!socket || socket.readyState !== 1 /* OPEN */ || !this.deps.stations.isLocallyOwned(session.id)) {
       return refuse({ code: 'station_unavailable' });
+    }
+
+    // "Every call must belong to a campaign" (docs/call-log.md §5): with the account's setting
+    // on, a dial that names no campaign is refused, whoever dials (a supervisor is not exempt,
+    // CL5), and before the fields are judged. Read fresh for each such dial; a read that fails
+    // throws, so a dial is never let through on a setting that could not be read.
+    if (!req.campaignId && (await agencyCallSettingsRepository.requireCampaign(actor.tenantId, actor.accountId)).on) {
+      return refuse({ code: 'campaign_required' });
     }
 
     let tag: AgencyCampaignRecord | null = null;
@@ -534,7 +539,8 @@ export class SoftphoneService {
    * Save the call's outcome and settle it: the code against the call's catalog (the
    * tag's, else the settings', else the built-in), its note / callback, the fields
    * with `required` enforced; then ONE transaction — `recordDisposition`, the DNC
-   * mark for a suppress code (campaign scope when tagged, else the call's account;
+   * mark for a suppress code (campaign scope when tagged to a campaign whose list holds
+   * the number, else the call's account, CL6;
    * B8, `dnc-mark.ts`), the
    * roster contact (`settleFromManual`, §5) — and after the commit the Redis claim
    * is released. The same code again is an idempotent replay (notes and callback
@@ -718,9 +724,10 @@ export class SoftphoneService {
   // ─── Mark DNC (POST /calls/:id/dnc) ───────────────────────────────────────
 
   /**
-   * Mark the dialled number Do Not Call: campaign scope when the call is tagged
-   * (and every roster row of that campaign carrying the number leaves the roster,
-   * as the station's mark does), the call's ACCOUNT when untagged — never tenant-wide,
+   * Mark the dialled number Do Not Call: campaign scope when the call is tagged and its
+   * number is on that campaign's list (and every roster row of that campaign carrying the
+   * number leaves the roster, as the station's mark does), the call's ACCOUNT when it is
+   * untagged or the campaign is only where the call was filed (CL6) — never tenant-wide,
    * which is the station's `agency.dnc.manage` escalation (`dnc-mark.ts`) — one
    * transaction (B8). Allowed on any call the actor can see, live or settled.
    */
@@ -766,7 +773,7 @@ export class SoftphoneService {
       response: {
         call_id: row.id,
         phone_e164: recorded.phoneE164 ?? row.destination_e164,
-        scope: row.campaign_id ? 'campaign' : 'account',
+        scope: manualDncScope(row),
         dnc_recorded: recorded.recorded,
         contact_state: contact?.state ?? null,
       },
@@ -906,10 +913,25 @@ export class SoftphoneService {
 }
 
 /**
- * The scope of a soft-phone DNC mark: the tag's campaign, else the account the call
- * belongs to (`dnc-mark.ts`, `accountScope`), so an agent's untagged mark never
- * writes a tenant-wide row.
+ * The scope of a soft-phone DNC mark ({@link manualDncScope}): the tag's campaign when the
+ * number is on its list, else the account the call belongs to (`dnc-mark.ts`, `accountScope`),
+ * so an agent's mark never writes a tenant-wide row.
  */
-function dncMarkScope(row: AgencyManualCallRecord): { campaignId: string } | { accountScope: string } {
-  return row.campaign_id ? { campaignId: row.campaign_id } : { accountScope: row.account_id };
+export function dncMarkScope(
+  row: Pick<AgencyManualCallRecord, 'campaign_id' | 'contact_id' | 'account_id'>,
+): { campaignId: string } | { accountScope: string } {
+  return manualDncScope(row) === 'campaign' ? { campaignId: row.campaign_id! } : { accountScope: row.account_id };
+}
+
+/**
+ * How far a soft-phone call's Do Not Call mark reaches (CL6, docs/call-log.md §5): the
+ * campaign's when the number is on that campaign's list (the call matched a roster contact), else
+ * the call's account. A call logged to a campaign whose number is on no list has that campaign
+ * only as a filing choice ("Log to"), so its mark covers the whole account, as an untagged
+ * call's always has: filing every call under a campaign must not make "Don't call" smaller.
+ */
+export function manualDncScope(
+  row: Pick<AgencyManualCallRecord, 'campaign_id' | 'contact_id'>,
+): 'campaign' | 'account' {
+  return row.campaign_id && row.contact_id ? 'campaign' : 'account';
 }

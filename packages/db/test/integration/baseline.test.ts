@@ -85,6 +85,8 @@ const EXPECTED_TABLES = [
   'agency_supervisor_messages',
   // Compare agents' saved views (0064, docs/compare-agents.md)
   'agency_compare_views',
+  // the account's call settings (0069, docs/call-log.md §5)
+  'agency_call_settings',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
@@ -114,6 +116,7 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
   ['trg_agency_inbound_routes_updated_at', 'agency_inbound_routes'],
   ['trg_agency_inbound_calls_updated_at', 'agency_inbound_calls'],
   ['trg_agency_push_devices_updated_at', 'agency_push_devices'],
+  ['trg_agency_call_settings_updated_at', 'agency_call_settings'],
 ];
 
 const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [

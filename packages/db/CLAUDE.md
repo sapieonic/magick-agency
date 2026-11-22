@@ -36,7 +36,9 @@ before writing a repository or a migration.
   boundaries by session, for Compare agents' trend days, 0066 the events that ended a break over its
   limit by campaign, for Compare agents' breaks over their limit, 0067 one call log per campaign: the campaign an
   inbound call is filed under (`campaign_id`, `campaign_source`, backfilled from the match) and the
-  missed call a soft-phone call rang back (`callback_of_inbound_call_id`), 0068 their two indexes).
+  missed call a soft-phone call rang back (`callback_of_inbound_call_id`), 0068 their two indexes, 0069
+  the account's call settings ("Every call must belong to a campaign") and the campaign an inbound
+  route files its unknown callers under (`default_campaign_id`), with its index).
   node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one

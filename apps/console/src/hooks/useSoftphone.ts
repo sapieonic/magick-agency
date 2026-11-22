@@ -222,6 +222,12 @@ export interface SoftphoneState {
 
   // ── Log to / caller ID ──
   taggableCampaigns: AgencySoftphoneCampaign[];
+  /** The account asks for a work on every call (`docs/call-log.md` §5): none is not a choice. */
+  campaignRequired: boolean;
+  /** `campaignRequired` and nothing to save a call to: the pad gives way to "ask your supervisor". */
+  noWorkToDial: boolean;
+  /** A line under "Save this call to": why it was left empty; null when there is nothing to say. */
+  setupNote: string | null;
   /** The draft's tag before dialling; the call's tag once dialled. */
   tagCampaignId: string | null;
   setTagCampaignId: (id: string | null) => void;
@@ -417,6 +423,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const [form, setFormState] = useState<DispositionFormState>(EMPTY_DISPOSITION_FORM);
   const [catalogOverride, setCatalogOverride] = useState<{ callId: string; catalog: AgencyDisposition[] } | null>(null);
   const [padRejection, setPadRejection] = useState<string | null>(null);
+  /** A line under "Save this call to": why it was left empty (a redial of a call saved to no work). */
+  const [setupNote, setSetupNote] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [dialError, setDialError] = useState<string | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<OverridePrompt | null>(null);
@@ -438,6 +446,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const presetAppliedRef = useRef(false);
 
   const taggableCampaigns = useMemo(() => bootstrap?.taggable_campaigns ?? [], [bootstrap]);
+  /**
+   * The account's "Every call must belong to a campaign" (`docs/call-log.md` §5): the pad offers
+   * no "Not in any work", asks for one, and keeps Call off until one is chosen. The server
+   * refuses a dial without one whatever the pad does (`campaign_required`).
+   */
+  const campaignRequired = bootstrap?.campaign_required === true;
+  /** Nothing the agent could save a call to: with the setting on they cannot dial at all. */
+  const noWorkToDial = campaignRequired && bootstrap !== null && taggableCampaigns.length === 0;
   const fields = useMemo(() => bootstrap?.call_fields ?? [], [bootstrap]);
   /**
    * Whether the field set is known. Until the bootstrap lands, `fields` is `[]`
@@ -694,9 +710,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
           ? phase === 'outcome'
             ? SOFTPHONE_REFUSAL_COPY.outcome_pending
             : SIDE_COPY.callGoingOn
-          : callerIdOptions.length === 0
-            ? SIDE_COPY.noCallerId
-            : null);
+          // Before the numbers: with no work chosen the list of numbers is not the call's own.
+          : noWorkToDial
+            ? SIDE_COPY.noRunningWorkTitle
+            : campaignRequired && tagDraft === null
+              ? SIDE_COPY.chooseWorkHint
+              : callerIdOptions.length === 0
+                ? SIDE_COPY.noCallerId
+                : null);
   const canDial = dialUnavailableReason === null && dialBlock === null && !placing;
 
   /**
@@ -814,6 +835,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         return;
       case 'caller_id_not_allowed':
       case 'campaign_not_taggable':
+      // The account began asking for a work on every call under an open page.
+      case 'campaign_required':
         setOverridePrompt(null);
         setDialError(SOFTPHONE_REFUSAL_COPY[refusal.code]);
         // What may be called from, and logged to, has changed under us: re-read it.
@@ -857,6 +880,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     (id: string | null) => {
       if (!setupEditable) return;
       setTagDraft(id);
+      setSetupNote(null);
       // The caller-ID set belongs to the tag; a pick from the old set would be refused.
       setCallerDraft(null);
       setDialError(null);
@@ -1104,7 +1128,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setNumberState(sanitiseDialInput(from.destination_e164));
       const tagId = from.tag?.campaign_id ?? null;
       const tagOk = tagId === null || taggableCampaigns.some((c) => c.campaign_id === tagId);
-      setTagDraft(tagOk ? tagId : null);
+      const nextTag = tagOk ? tagId : null;
+      setTagDraft(nextTag);
+      // The call it repeats was saved to no work, or to one that can no longer be chosen: with
+      // every call needing one, the box is left empty and says why.
+      setSetupNote(campaignRequired && nextTag === null ? SIDE_COPY.redialNoWork : null);
       // The number it went from, tagged or not: a redial goes out from the same number
       // (as WR7's wrap-up redial). On a tagged call the server still dials from the
       // contact's agent number when it has one (DN4), whatever is sent, and from the
@@ -1114,7 +1142,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setDialError(null);
       setFocusCallToken((n) => n + 1);
     },
-    [call, placing, finishOnly, taggableCampaigns],
+    [call, placing, finishOnly, taggableCampaigns, campaignRequired],
   );
 
   return {
@@ -1139,6 +1167,9 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     dialError,
     dial,
     taggableCampaigns,
+    campaignRequired,
+    noWorkToDial,
+    setupNote,
     tagCampaignId,
     setTagCampaignId,
     campaign,

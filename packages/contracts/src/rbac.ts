@@ -132,7 +132,9 @@ export type Permission =
   | 'agency.inbound.read'
   | 'agency.inbound.write'
   // Live call listening (docs/listening.md, LS3): listen in silently to a call in progress.
-  | 'agency.calls.listen';
+  | 'agency.calls.listen'
+  // The account's call settings (docs/call-log.md §5): "Every call must belong to a campaign".
+  | 'agency.calls.manage';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -302,6 +304,12 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // service's operators do that (IB6), from the super-admin console.
   'agency.inbound.read': 'agent',
   'agency.inbound.write': 'account_admin',
+  // ── The account's call settings (docs/call-log.md §5) ─────────────────────
+  // Floors at `account_admin`: whether every call must belong to a campaign is an account-wide
+  // rule over the soft phone and inbound calls alike, the seat `agency.softphone.manage` and
+  // `agency.inbound.write` are. Its own permission, because the rule is neither's alone and an
+  // account may have one of the two switched off.
+  'agency.calls.manage': 'account_admin',
   // ── Live call listening (docs/listening.md, LS3) ─────────────────────────
   // Floors at `account_admin`: hearing a call in progress is a supervisory act on somebody else's
   // call, as `agency.supervise` is, and the same seat. Tenant admins and owners pass by the

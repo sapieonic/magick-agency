@@ -66,9 +66,12 @@ export type AgencyInboundMissedReason = (typeof AGENCY_INBOUND_MISSED_REASONS)[n
 
 /**
  * How an inbound call came by the campaign it is filed under (`campaign_source`, 0067;
- * `docs/call-log.md`): `contact`, its number is on the campaign's list (the match at arrival).
- * `route`, `agent` and `supervisor` are a later phase's (the route's default campaign, and a
- * campaign chosen at wrap-up); the column's CHECK holds all four.
+ * `docs/call-log.md`): `contact`, its number is on the campaign's list (the match at arrival);
+ * `route`, the caller is on no list and the route files unknown callers under this campaign (its
+ * `default_campaign_id`, at arrival); `agent`, the agent who took the call chose it at wrap-up;
+ * `supervisor`, someone with `agency.supervise` chose it on the agent's behalf. A `contact`
+ * campaign is fixed; the other three are a filing choice and can be changed until the outcome
+ * is saved (CL4).
  */
 export const AGENCY_INBOUND_CAMPAIGN_SOURCES = ['contact', 'route', 'agent', 'supervisor'] as const;
 export type AgencyInboundCampaignSource = (typeof AGENCY_INBOUND_CAMPAIGN_SOURCES)[number];
@@ -205,6 +208,16 @@ export interface AgencyInboundRouteConfig {
    * and zone optional).
    */
   wrapup_seconds: number;
+  /**
+   * "Campaign for unknown callers" (docs/call-log.md §5): a caller whose number is on no list is
+   * filed under this campaign when the call arrives, and its outcome is saved against this
+   * campaign's catalog. A campaign of the route's account that is not archived. NULL: none (such
+   * a call is filed under no campaign, and uses `disposition_catalog`). Required on a create or
+   * a change while the account's "Every call must belong to a campaign" is on
+   * (`default_campaign_required`). Always served; a request that leaves it out keeps the stored
+   * value (NULL on a create).
+   */
+  default_campaign_id?: string | null;
 }
 
 /**
@@ -234,6 +247,7 @@ export const AGENCY_INBOUND_ROUTE_DEFAULTS = Object.freeze({
   disposition_catalog: [] as AgencyDisposition[],
   /** IQ52 (Manas: "start at 30 and let the route editor change it"). */
   wrapup_seconds: 30,
+  default_campaign_id: null as string | null,
 });
 
 /**
@@ -394,6 +408,17 @@ export interface AgencyInboundCallMatch {
   prior_attempts: AgencyPriorAttempt[];
 }
 
+/**
+ * The campaign an inbound call is filed under (`agency_inbound_calls.campaign_id`), as the
+ * agent's panel shows it: "Filed under: General enquiries".
+ */
+export interface AgencyInboundCallCampaign {
+  campaign_id: string;
+  /** `''` when the campaign row is gone. */
+  campaign_name: string;
+  source: AgencyInboundCampaignSource;
+}
+
 /** Why the panel names this agent as the caller's own (§4.1), and whether it is the viewer. */
 export interface AgencyInboundCallSticky {
   reason: AgencyInboundStickyReason;
@@ -429,6 +454,24 @@ export interface AgencyInboundCall {
   sticky: AgencyInboundCallSticky | null;
   /** NULL: the caller matched no roster contact. */
   match: AgencyInboundCallMatch | null;
+  /**
+   * The campaign the call is filed under (docs/call-log.md §5), or NULL: the matched contact's
+   * (`source: 'contact'`, fixed), else the route's campaign for unknown callers, else one chosen
+   * at wrap-up. Absent on an older server (read as NULL).
+   */
+  campaign?: AgencyInboundCallCampaign | null;
+  /**
+   * The viewer may file the call under another campaign (`POST …/campaign`, or `campaign_id` on
+   * the outcome): the caller is on no list and no outcome is saved yet. False for a matched
+   * caller, whose campaign is fixed (CL4).
+   */
+  campaign_changeable?: boolean;
+  /**
+   * The account's "Every call must belong to a campaign" applies to this call: its outcome is
+   * refused `campaign_required` until it is filed under one. False for a call that arrived
+   * before the setting was switched on (it may finish as it is, CL19).
+   */
+  campaign_required?: boolean;
   catalog_source: AgencyInboundCatalogSource;
   /** The catalog the outcome is saved against, resolved: never empty. */
   disposition_catalog: AgencyDisposition[];
@@ -557,6 +600,39 @@ export interface AgencyInboundCallDispositionRequest extends AgencyActorFields {
    */
   promise_date?: string;
   promise_amount?: string;
+  /**
+   * File an unknown caller's call under this campaign with the outcome, in one transaction
+   * (source `agent`, or `supervisor` on behalf); `code` is then checked against THIS campaign's
+   * catalog. Only a campaign the actor may log to (`inbound_campaign_not_allowed`), and only for
+   * a caller on no list (`inbound_campaign_fixed`). The same campaign the call already has is
+   * accepted on any call.
+   */
+  campaign_id?: string;
+}
+
+/**
+ * `POST /inbound/calls/:id/campaign`: file an unknown caller's call under a campaign before its
+ * outcome is saved ("Change" beside "Filed under"). Answers the call with its `campaign` and the
+ * new campaign's `disposition_catalog`. The refusals of the outcome's `campaign_id`, and
+ * `inbound_outcome_already_saved` once the call is settled.
+ */
+export interface AgencyInboundCallCampaignRequest extends AgencyActorFields {
+  campaign_id: string;
+}
+
+/** One campaign the caller may file an inbound call under. */
+export interface AgencyInboundCallCampaignOption {
+  campaign_id: string;
+  campaign_name: string;
+}
+
+/**
+ * `GET /inbound/calls/:id/campaigns`: the campaigns the caller may file this call under, newest
+ * first: the soft phone's rule (running or paused, in the account; an agent's own staffed
+ * campaigns, every one for `agency.supervise`).
+ */
+export interface AgencyInboundCallCampaignOptionsResponse {
+  campaigns: AgencyInboundCallCampaignOption[];
 }
 
 export interface AgencyInboundCallDispositionResponse {

@@ -313,6 +313,33 @@ describe('Call back and Mark handled', () => {
     expect(state).toEqual({ softphonePrefill: { number: '+447700900123', campaignId: 'camp-1', inboundCallId: 'm-1' } });
   });
 
+  // docs/call-log.md §5: a caller on no list is filed under the campaign their inbound number files unknown callers under.
+  it('an unknown caller’s row names the campaign it is filed under, and Call back logs the call to it', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [missed({
+        id: 'u-1', matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null,
+        campaign_id: 'camp-gen', campaign_name: 'General enquiries',
+      })],
+      next_cursor: null, limit: 50,
+    });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    const row = screen.getByTestId('missed-row-u-1');
+    expect(row.textContent).toContain('General enquiries');
+    expect(row.textContent).not.toContain('Not matched');
+    fireEvent.click(within(row).getByRole('button', { name: /Call back/ }));
+    expect(state).toEqual({ softphonePrefill: { number: '+447700900123', campaignId: 'camp-gen', inboundCallId: 'u-1' } });
+  });
+
+  it('a row from a server that sends no filing reads its match, as before; one under no campaign says "Not matched"', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [missed({ id: 'old' }), missed({ id: 'none', matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null })],
+      next_cursor: null, limit: 50,
+    });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.getByTestId('missed-row-old').textContent).toContain('Renewals');
+    expect(screen.getByTestId('missed-row-none').textContent).toContain('Not matched');
+  });
+
   it('a withheld number cannot be called back; a DNC caller is badged and still can (the soft phone asks why)', async () => {
     mocks.listMissedInboundCalls.mockResolvedValue({
       rows: [missed({ id: 'w', from_e164: null }), missed({ id: 'd', caller_dnc: true })], next_cursor: null, limit: 50,

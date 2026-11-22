@@ -114,6 +114,8 @@ const ROUTES: RouteRule[] = [
   [/^\/dialer$/, (r) => dialer(r) && can(r, 'agency.station.connect')],
   [/^\/settings$/, keptInShell],
   [/^\/settings\/(profile|notifications|team|accounts)$/, keptInShell],
+  // `CallsSettingsPage` checks `agency.calls.manage`; behind neither the soft phone's flag nor inbound's.
+  [/^\/settings\/calls$/, (r) => keptInShell(r) && r.caps.has('agency') && can(r, 'agency.calls.manage')],
   [/^\/settings\/softphone$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_softphone_enabled') && can(r, 'agency.softphone.dial')],
   [/^\/settings\/inbound$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_inbound_enabled') && can(r, 'agency.inbound.write')],
   // Read-only, so shown whether listening is on or off (it says which).

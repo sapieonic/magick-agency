@@ -316,6 +316,22 @@ void main() {
   });
 
   group('SoftphoneBootstrap', () {
+    test('campaign_required: on when the account asks for a campaign on every call; absent reads as off', () {
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_idle')).campaignRequired, isTrue);
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_enabled')).campaignRequired, isFalse);
+      // A server from before the setting sends no field (the finish-mode sample has none).
+      expect(sp('bootstrap_finish_mode').containsKey('campaign_required'), isFalse);
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_finish_mode')).campaignRequired, isFalse);
+      expect(
+        SoftphoneBootstrap.fromJson(sp('bootstrap_idle')),
+        isNot(SoftphoneBootstrap.fromJson({...sp('bootstrap_idle'), 'campaign_required': false})),
+      );
+    });
+
+    test('campaign_required is a soft-phone refusal code', () {
+      expect(SoftphoneErrorCode.fromWire('campaign_required'), SoftphoneErrorCode.campaignRequired);
+    });
+
     test('finds a taggable campaign by id', () {
       final b = SoftphoneBootstrap.fromJson(sp('bootstrap_enabled'));
       expect(b.taggable('c0ffee00-1111-4222-8333-444455556666')!.callingWindowOpen, isTrue);

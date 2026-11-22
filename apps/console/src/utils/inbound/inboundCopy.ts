@@ -20,7 +20,7 @@ import type {
  * contract fails to compile here until it has words.
  */
 
-export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
+export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode | 'campaign_required', string> = {
   inbound_disabled: 'Inbound calls aren’t turned on for this account.',
   inbound_route_invalid: 'Some settings need fixing. They’re marked below.',
   inbound_route_not_found: 'This route no longer exists. Someone may have deleted it.',
@@ -46,6 +46,12 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   ring_not_offered: 'This call isn’t ringing for you any more.',
   ring_expired: 'This call stopped ringing or someone else took it.',
   already_accepted: 'You’ve already answered this call. Hang up from the call screen.',
+  // "Every call must belong to a campaign" (docs/call-log.md §5). The first is the route editor's
+  // and Settings › Calls'; the other three are an agent's, at the end of a call, in the station's words.
+  default_campaign_required: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',
+  inbound_campaign_fixed: 'This customer is on a list already, so the call stays where it is.',
+  inbound_campaign_not_allowed: 'You cannot file calls under that work. Choose another.',
+  campaign_required: 'Choose the work to file this call under, then save.',
 };
 
 /** Why an upload was refused, in the editor's words. */

@@ -674,12 +674,13 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const [placedRow] = await auditRows('agency_manual_call.placed', callId);
     expect(placedRow.details).toMatchObject({ dnc_overridden: true });
 
-    // Mark DNC on the call: campaign scope (tagged), audited without the number.
+    // Mark DNC on the call: the campaign is only where the call is logged (the number is on none
+    // of its lists), so the mark covers the account (CL6). Audited without the number.
     const marked = await post(`/proxy/agency/softphone/calls/${callId}/dnc`, agent, { reason: 'asked again' });
     expect(marked.statusCode, marked.body).toBe(200);
-    expect(marked.json()).toMatchObject({ call_id: callId, scope: 'campaign', dnc_recorded: true });
+    expect(marked.json()).toMatchObject({ call_id: callId, scope: 'account', dnc_recorded: true });
     const [dncRow] = await auditRows('agency_manual_call.dnc_marked', callId);
-    expect(dncRow.details).toEqual({ scope: 'campaign', dnc_recorded: true, campaign_id: campaign.id });
+    expect(dncRow.details).toEqual({ scope: 'account', dnc_recorded: true, campaign_id: campaign.id });
 
     ringOut(await legOf(callId));
     await waitFor('settled', async () => (await manualRow(callId)).settled_at);
@@ -1380,6 +1381,109 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
       expect(probe).toHaveBeenCalledTimes(1);
     } finally {
       probe.mockRestore();
+    }
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 60_000);
+
+  it('every call must belong to a campaign (docs/call-log.md §5): an untagged dial is refused for agent and supervisor alike, before the fields; a call already owing its outcome finishes; a filed-only campaign\'s Do Not Call is the account\'s', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const boss = await user(tenant, account, 'account_admin');
+    // `[]` is the built-in catalog, whose `do_not_call` suppresses.
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: '[]' });
+    await staff(campaign.id, agent.id);
+    const onList = '+919811200301';
+    await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: onList });
+    const { sessionId, station } = await openSoftphone(agent);
+    const calls = async () => Number((await getTestPool().query(
+      'SELECT count(*) AS n FROM agency_manual_calls WHERE session_id = $1', [sessionId])).rows[0].n);
+    const dncRows = async (phone: string) => (await getTestPool().query(
+      'SELECT campaign_id, account_id FROM dnc_entries WHERE tenant_id = $1 AND phone_e164 = $2', [tenant, phone])).rows;
+    /** Place, answer, hang up: the call owes its outcome. */
+    const talk = async (body: Record<string, unknown>): Promise<string> => {
+      const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, ...body });
+      expect(placed.statusCode, placed.body).toBe(201);
+      const callId = placed.json().id as string;
+      const leg = await legOf(callId);
+      answer(leg);
+      await waitFor('bridged', () => lastCall(station)?.id === callId && lastCall(station)?.state === 'bridged');
+      expect((await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent)).statusCode).toBe(200);
+      await carrierEnded(leg);
+      await waitFor('awaiting outcome', () => lastCall(station)?.id === callId && lastCall(station)?.requires_disposition);
+      return callId;
+    };
+
+    try {
+      expect((await get('/proxy/agency/softphone/bootstrap', agent)).json().campaign_required).toBe(false);
+      expect((await get('/proxy/agency/softphone/settings', agent)).json().campaign_required).toBe(false);
+      // A call logged to no campaign, placed while that is still allowed, owing its outcome...
+      const before = await talk({ to: '+919811200300' });
+
+      // ...when the account admin switches the rule on.
+      const on = await put('/proxy/agency/call-settings', supervisor, { require_campaign: true });
+      expect(on.statusCode, on.body).toBe(200);
+      expect((await get('/proxy/agency/softphone/bootstrap', agent)).json().campaign_required).toBe(true);
+      expect((await get('/proxy/agency/softphone/settings', agent)).json().campaign_required).toBe(true);
+
+      // CL19: it finishes as it is.
+      const finished = await post(`/proxy/agency/softphone/calls/${before}/disposition`, agent, { code: 'voicemail' });
+      expect(finished.statusCode, finished.body).toBe(200);
+      expect(await manualRow(before)).toMatchObject({ campaign_id: null, disposition_code: 'voicemail' });
+
+      // A dial with no campaign: refused, nothing written, the message an older app shows.
+      const placedBefore = await calls();
+      for (const body of [{ to: '+919811200302' }, { to: '+919811200302', campaign_id: null }]) {
+        const refused = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, ...body });
+        expect(refused.statusCode, refused.body).toBe(409);
+        expect(refused.json()).toMatchObject({
+          error: 'Conflict', code: 'campaign_required',
+          message: 'Choose a campaign before you dial. Every call in this account must belong to a campaign.',
+        });
+      }
+      // Before the fields are judged: a field no setting declares is `fields_invalid` only once a campaign is named.
+      const bothWrong = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200302', fields: { nope: 'x' } });
+      expect(bothWrong.json()).toMatchObject({ code: 'campaign_required' });
+      const fieldsOnly = await post('/proxy/agency/softphone/calls', agent,
+        { session_id: sessionId, to: '+919811200302', campaign_id: campaign.id, fields: { nope: 'x' } });
+      expect(fieldsOnly.json()).toMatchObject({ code: 'fields_invalid' });
+      expect(await calls()).toBe(placedBefore);
+
+      // CL5: a supervisor is not exempt.
+      const theirs = await openSoftphone(boss);
+      const supRefused = await post('/proxy/agency/softphone/calls', boss, { session_id: theirs.sessionId, to: '+919811200302' });
+      expect(supRefused.statusCode, supRefused.body).toBe(409);
+      expect(supRefused.json()).toMatchObject({ code: 'campaign_required' });
+      expect((await post(`/proxy/agency/sessions/${theirs.sessionId}/leave`, boss)).statusCode).toBe(200);
+
+      // CL6: logged to the campaign, the number on no list. The campaign is only where the call is
+      // filed, so its "Do not call" covers the account, and the audit says so.
+      const offList = '+919811200303';
+      const filed = await talk({ to: offList, campaign_id: campaign.id });
+      expect(await manualRow(filed)).toMatchObject({ campaign_id: campaign.id, contact_id: null });
+      const suppressed = await post(`/proxy/agency/softphone/calls/${filed}/disposition`, agent, { code: 'do_not_call' });
+      expect(suppressed.statusCode, suppressed.body).toBe(200);
+      expect(await dncRows(offList)).toEqual([{ campaign_id: null, account_id: account }]);
+      const created = (await auditRows('dnc_entry.created')).filter((r) => r.details?.manual_call_id === filed);
+      expect(created).toHaveLength(1);
+      expect(created[0].details).toMatchObject({ scope: 'account' });
+      // Mark DNC on the same kind of call says and writes the same.
+      const marked = await post(`/proxy/agency/softphone/calls/${filed}/dnc`, agent, {});
+      expect(marked.json()).toMatchObject({ scope: 'account', dnc_recorded: true });
+
+      // A number on the campaign's own list still stops that campaign alone.
+      const matched = await talk({ to: onList, campaign_id: campaign.id });
+      expect((await manualRow(matched)).contact_id).not.toBeNull();
+      const own = await post(`/proxy/agency/softphone/calls/${matched}/disposition`, agent, { code: 'do_not_call' });
+      expect(own.statusCode, own.body).toBe(200);
+      expect(await dncRows(onList)).toEqual([{ campaign_id: campaign.id, account_id: null }]);
+
+      // Switched off again, a dial with no campaign is placed as before.
+      expect((await put('/proxy/agency/call-settings', supervisor, { require_campaign: false })).statusCode).toBe(200);
+      const free = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200304' });
+      expect(free.statusCode, free.body).toBe(201);
+      ringOut(await legOf(free.json().id));
+      await waitFor('settled', async () => (await manualRow(free.json().id)).settled_at !== null);
+    } finally {
+      await getTestPool().query('DELETE FROM agency_call_settings WHERE tenant_id = $1', [tenant]);
     }
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 60_000);

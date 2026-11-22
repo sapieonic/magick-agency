@@ -847,6 +847,7 @@ final class SoftphoneSessionSummary {
 final class SoftphoneBootstrap {
   SoftphoneBootstrap({
     required this.softphoneEnabled,
+    this.campaignRequired = false,
     required List<SoftphoneCampaign> taggableCampaigns,
     required this.untagged,
     required List<CallField> callFields,
@@ -863,6 +864,8 @@ final class SoftphoneBootstrap {
     final callCampaign = j.objOrNull('call_campaign');
     return SoftphoneBootstrap(
       softphoneEnabled: j.boolean('softphone_enabled'),
+      // Absent on a server from before the setting: off.
+      campaignRequired: j.boolOrNull('campaign_required') ?? false,
       taggableCampaigns: j.list('taggable_campaigns', SoftphoneCampaign.fromJson),
       untagged: SoftphoneUntagged.fromJson(j.obj('untagged')),
       callFields: j.list('call_fields', CallField.fromJson),
@@ -875,6 +878,12 @@ final class SoftphoneBootstrap {
 
   /// `agency_softphone_enabled` for the tenant and account. False: finish mode.
   final bool softphoneEnabled;
+
+  /// The account's setting "Every call must belong to a campaign" is on: a
+  /// dial with no campaign is refused `campaign_required`, so the pad offers
+  /// no "Not logged to a campaign" and keeps Call off until one is chosen.
+  /// With [taggableCampaigns] empty the agent cannot dial at all.
+  final bool campaignRequired;
   final List<SoftphoneCampaign> taggableCampaigns;
   final SoftphoneUntagged untagged;
 
@@ -907,6 +916,7 @@ final class SoftphoneBootstrap {
   bool operator ==(Object other) =>
       other is SoftphoneBootstrap &&
       other.softphoneEnabled == softphoneEnabled &&
+      other.campaignRequired == campaignRequired &&
       listEquals(other.taggableCampaigns, taggableCampaigns) &&
       other.untagged == untagged &&
       listEquals(other.callFields, callFields) &&
@@ -1949,6 +1959,11 @@ enum SoftphoneErrorCode implements WireEnum {
   /// 409: the number is on an inbound call to the account right now (waiting, connected, or its
   /// outcome owed). No override.
   customerOnInboundCall('customer_on_inbound_call'),
+
+  /// 409: the account's "Every call must belong to a campaign" is on and the
+  /// dial named none. Also from the inbound outcome route, for a call filed
+  /// under no campaign.
+  campaignRequired('campaign_required'),
   unknown('');
 
   const SoftphoneErrorCode(this.wire);

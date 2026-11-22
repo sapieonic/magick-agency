@@ -4,6 +4,7 @@ import {
   AGENCY_INBOUND_RING_MS,
   type AgencyDisposition,
   type AgencyInboundCall,
+  type AgencyInboundCallCampaign,
   type AgencyInboundCallMatch,
   type AgencyInboundCatalogSource,
   type AgencyInboundDispositionSource,
@@ -12,10 +13,13 @@ import {
 import { createChildLogger } from '@magick-agency/observability';
 import {
   agencyAttemptRepository,
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyContactRepository,
   agencyInboundRouteRepository,
+  REQUIRE_CAMPAIGN_OFF,
   type AgencyInboundCallRecord,
+  type RequireCampaign,
 } from '../../db/repositories/agency.repository.js';
 // The pure row → wire projection the station panel's history uses too (from its leaf, as there).
 import { projectPriorAttempt } from '../../db/repositories/agency/projections.js';
@@ -42,12 +46,27 @@ const log = createChildLogger({ component: 'agency-inbound-wire' });
  * always owes an outcome, so a catalog with no codes would leave it unsavable). An unmatched call
  * takes the route's catalog (`route`), or the built-in one when the route has none (`builtin`,
  * stored `route`).
+ *
+ * ── A call filed under a campaign its caller is not on (docs/call-log.md §5, CL4, CL12, CL20) ──
+ * An unknown caller's call filed under a campaign (the route's campaign for unknown callers, or
+ * one chosen at wrap-up; `campaign_id` set, `matched_campaign_id` NULL) takes THAT campaign's
+ * catalog, shown as `campaign`, without the entries that ask for a promise to pay: there is no
+ * contact to keep a promise on (the soft phone's `promise_needs_contact`, decided here once so
+ * the panel never offers what the save would refuse). The route's own catalog is for a call with
+ * no campaign at all. The outcome is still STORED `route`: `disposition_source` says `campaign`
+ * exactly when the caller matched a campaign's list (0027's CHECK, kept as it is so an older
+ * image's lapse write stays valid after a rollback); which campaign a filed call is under is on
+ * the row (`campaign_id`, `campaign_source`).
  */
 
 /** What the panel needs beside the spine row. */
 export interface InboundPanelContext {
   route: { id: string; name: string } | null;
   match: AgencyInboundCallMatch | null;
+  /** The campaign the call is filed under (`campaign_id`), named; null when it is under none. */
+  campaign: AgencyInboundCallCampaign | null;
+  /** The account's "Every call must belong to a campaign", as read with the panel (off when unread). */
+  requireCampaign: RequireCampaign;
   catalogSource: AgencyInboundCatalogSource;
   catalog: AgencyDisposition[];
   /**
@@ -62,11 +81,15 @@ function nonEmpty(catalog: unknown): catalog is AgencyDisposition[] {
   return Array.isArray(catalog) && catalog.length > 0;
 }
 
-/** The catalog an inbound call's outcome resolves against (see the header). */
+/**
+ * The catalog an inbound call's outcome resolves against (see the header). `filed`: the call is
+ * filed under a campaign its caller is not on (`campaign` null when that campaign's row is gone).
+ */
 export function resolveInboundCatalog(
   matched: boolean,
   campaign: Pick<AgencyCampaignRecord, 'disposition_catalog'> | null,
   route: { disposition_catalog: AgencyDisposition[] } | null,
+  filed: { campaign: Pick<AgencyCampaignRecord, 'disposition_catalog'> | null } | null = null,
 ): { catalog: AgencyDisposition[]; source: AgencyInboundCatalogSource; stored: AgencyInboundDispositionSource } {
   if (matched) {
     return {
@@ -75,8 +98,27 @@ export function resolveInboundCatalog(
       stored: 'campaign',
     };
   }
+  if (filed) {
+    const own = nonEmpty(filed.campaign?.disposition_catalog) ? filed.campaign!.disposition_catalog : [];
+    const usable = own.filter((entry) => entry.requires_promise !== true);
+    return {
+      catalog: usable.length > 0 ? usable : [...AGENCY_DEFAULT_DISPOSITION_CATALOG],
+      source: 'campaign',
+      stored: 'route',
+    };
+  }
   if (nonEmpty(route?.disposition_catalog)) return { catalog: route!.disposition_catalog, source: 'route', stored: 'route' };
   return { catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], source: 'builtin', stored: 'route' };
+}
+
+/**
+ * Whether the account's "Every call must belong to a campaign" applies to `call` (CL19): the
+ * setting is on and the call arrived at or after it was switched on. A call that began before
+ * the switch may finish as it is.
+ */
+export function campaignRequiredFor(call: Pick<AgencyInboundCallRecord, 'arrived_at'>, required: RequireCampaign): boolean {
+  if (!required.on) return false;
+  return required.since === null || new Date(call.arrived_at).getTime() >= required.since.getTime();
 }
 
 /** The matched contact's earlier dials, lineage-scoped as the station panel's. Never throws. */
@@ -96,19 +138,29 @@ async function priorsFor(contact: AgencyContactRecord, callId: string) {
  * kept from an agent by a panel read.
  */
 export async function loadInboundPanelContext(
-  call: Pick<AgencyInboundCallRecord, 'id' | 'tenant_id' | 'route_id' | 'matched_contact_id' | 'matched_campaign_id'>,
+  call: Pick<AgencyInboundCallRecord,
+    'id' | 'tenant_id' | 'account_id' | 'route_id' | 'matched_contact_id' | 'matched_campaign_id' | 'campaign_id' | 'campaign_source'>,
   opts: { stickyCandidates?: ReadonlyArray<{ userId: string; reason: AgencyInboundStickyReason }> } = {},
 ): Promise<InboundPanelContext> {
   const safe = <T>(what: string, p: () => Promise<T>): Promise<T | null> => Promise.resolve().then(p).catch((err: unknown) => {
     log.warn({ err, inboundCallId: call.id, what }, 'Could not read part of an inbound call\'s panel');
     return null;
   });
-  const [route, contact, campaign] = await Promise.all([
+  // The campaign the call is filed under, when it is not the match's (an unknown caller's).
+  const filedId = call.campaign_id && call.campaign_id !== call.matched_campaign_id ? call.campaign_id : null;
+  const [route, contact, campaign, filedRead, required] = await Promise.all([
     call.route_id ? safe('route', () => agencyInboundRouteRepository.findForCall(call.tenant_id, call.route_id!)) : null,
     call.matched_contact_id ? safe('contact', () => agencyContactRepository.findById(call.matched_contact_id!)) : null,
     call.matched_campaign_id ? safe('campaign', () => agencyCampaignRepository.findById(call.matched_campaign_id!)) : null,
+    filedId ? safe('filed campaign', () => agencyCampaignRepository.findById(filedId)) : null,
+    // Display only (the panel's "required" mark): the outcome's own check reads it again.
+    call.account_id ? safe('call settings', () => agencyCallSettingsRepository.requireCampaign(call.tenant_id, call.account_id!)) : null,
   ]);
   const ownCampaign = campaign && campaign.tenant_id === call.tenant_id ? campaign : null;
+  const filedCampaign = filedRead && filedRead.tenant_id === call.tenant_id ? filedRead : null;
+  const filedUnder = call.campaign_id
+    ? (call.campaign_id === call.matched_campaign_id ? ownCampaign : filedCampaign)
+    : null;
   let match: AgencyInboundCallMatch | null = null;
   if (contact && contact.tenant_id === call.tenant_id && call.matched_campaign_id && contact.campaign_id === call.matched_campaign_id) {
     match = {
@@ -121,10 +173,16 @@ export async function loadInboundPanelContext(
       prior_attempts: await priorsFor(contact, call.id),
     };
   }
-  const { catalog, source } = resolveInboundCatalog(call.matched_campaign_id !== null, ownCampaign, route);
+  const { catalog, source } = resolveInboundCatalog(
+    call.matched_campaign_id !== null, ownCampaign, route, filedId ? { campaign: filedCampaign } : null,
+  );
   return {
     route: route ? { id: route.id, name: route.name } : null,
     match,
+    campaign: call.campaign_id
+      ? { campaign_id: call.campaign_id, campaign_name: filedUnder?.name ?? '', source: call.campaign_source ?? 'contact' }
+      : null,
+    requireCampaign: required ?? { ...REQUIRE_CAMPAIGN_OFF },
     catalogSource: source,
     catalog,
     stickyCandidates: opts.stickyCandidates ?? [],
@@ -166,6 +224,12 @@ export function inboundCallToWire(
     caller_dnc: call.caller_dnc,
     sticky,
     match: ctx.match,
+    // The row's own filing wins over a context read before it changed (a Change at wrap-up).
+    campaign: call.campaign_id === (ctx.campaign?.campaign_id ?? null) ? ctx.campaign : null,
+    // An unknown caller's campaign is a filing choice until the outcome is saved (CL4).
+    campaign_changeable: call.matched_campaign_id === null && call.settled_at === null
+      && call.state === 'ended' && call.bridged_at !== null,
+    campaign_required: campaignRequiredFor(call, ctx.requireCampaign),
     catalog_source: ctx.catalogSource,
     // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
     disposition_catalog: dispositionsWithKnownIcons(ctx.catalog),

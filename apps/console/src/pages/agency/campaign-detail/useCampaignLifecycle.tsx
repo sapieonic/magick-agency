@@ -16,6 +16,8 @@ import {
 } from '../../../analytics/events';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { agencyCampaignStatusLabel } from '../AgencyCampaignStatusBadge';
+import { useUnknownCallerRoutes } from '../../../hooks/useUnknownCallerRoutes';
+import { unknownCallersWarning } from '../../../utils/callSettingsCopy';
 
 /** Only `stop` is irreversible, so only `stop` interrupts with a confirm. */
 const CONFIRM_COPY: Partial<Record<Action, { title: string; message: string }>> = {
@@ -203,11 +205,14 @@ export function useCampaignLifecycle({
   );
 
   const confirmCopy = confirming ? CONFIRM_COPY[confirming] : undefined;
+  // A campaign an inbound number files its unknown callers under (docs/call-log.md §5): Stop
+  // asks first, and says which number. It does not hold Stop back.
+  const routeWarning = unknownCallersWarning(useUnknownCallerRoutes(id, tenantId, accountId, confirming === 'stop'));
   const confirmDialog = confirming && confirmCopy ? (
     <ConfirmDialog
       open
       title={confirmCopy.title}
-      message={confirmCopy.message}
+      message={routeWarning ? `${confirmCopy.message} ${routeWarning}` : confirmCopy.message}
       confirmLabel="Stop campaign"
       danger
       disabled={busy !== null}

@@ -100,6 +100,16 @@ export {
 } from './agency/softphone-settings.repository.js';
 export type { SoftphoneSettingsIssue } from './agency/softphone-settings.repository.js';
 export {
+  AgencyCallSettingsRepository,
+  agencyCallSettingsRepository,
+  REQUIRE_CAMPAIGN_OFF,
+} from './agency/call-settings.repository.js';
+export type {
+  AccountMemberRoles,
+  AgencyCallSettingsRecord,
+  RequireCampaign,
+} from './agency/call-settings.repository.js';
+export {
   AgencyAbandonmentRepository,
   AgencyLiveConcurrencyRepository,
   agencyAbandonmentRepository,
