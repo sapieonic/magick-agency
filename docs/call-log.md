@@ -228,9 +228,15 @@ attempts and the soft-phone calls, and the campaign's missed calls that are stil
 - **Backfill:** every existing call with a matched campaign is filed under it (`contact`),
   `updated_at` untouched; an unmatched call stays unfiled (CL10). It runs inside 0067, as 0027's
   and 0032's backfills of this table did: one row per inbound call, and only the matched rows are
-  written. `db-hygiene.md` §6 asks for a batched script on a large table; 0067's header says how
-  a deployment whose table has grown past about a million rows runs the same UPDATE in batches
-  first (the migration's own then writes nothing).
+  written. `db-hygiene.md` §6 asks for a batched script on a large table, so 0067 is written to
+  find that work done: a deployment whose table has grown past about a million rows adds the two
+  columns and files the matched calls in batches **before** the deploy, the trigger disabled in
+  each batch so `updated_at` is kept (the steps are in 0067's header and `DEPLOYMENT.md` 12, and
+  the migration test runs them). 0067 then adds nothing that exists (`ADD COLUMN IF NOT EXISTS`,
+  the types checked) and files only what arrived since. Its CHECK is added `NOT VALID` and
+  validated by 0068.
+- **After a rollback:** an older image does not file the calls that arrive while it runs. The
+  same batch, run after rolling forward, files them (`DEPLOYMENT.md` 12).
 - **`agency_manual_calls.callback_of_inbound_call_id`** (nullable, no FK): the Missed inbound call
   a soft-phone call was placed from (CL1, below).
 - **Indexes**, in their own file out of 0067's lock: `idx_agency_inbound_calls_campaign`
@@ -244,7 +250,9 @@ attempts and the soft-phone calls, and the campaign's missed calls that are stil
 
 `listCallLogForCampaign` has a third branch, on the same keyset. An inbound call's place in the
 list is when it **arrived** (`arrived_at`, served as the row's `created_at`), so the three types
-interleave by when each call began. Each branch is still its own index range with its own
+interleave by when each call began. An inbound call is a row only once it has **ended**, so a
+long call appears, when it ends, at the time it arrived: above rows already on screen or already
+paged past. Refresh picks it up; nothing is dropped or repeated within one read. Each branch is still its own index range with its own
 `LIMIT n + 1`; the plan of the inbound branch's own statement is pinned on 0068's index.
 
 - **What is a row:** an **ended** call, filed under the campaign, in the tenant, that we served.
@@ -258,7 +266,13 @@ interleave by when each call began. Each branch is still its own index range wit
   own, in one spelling (`inboundMissedOpenSql`, which the Missed list's badge count uses too), so
   the two cannot disagree about who is still owed a call. **It ignores the dates** (CL14): every
   other filter narrows it, `from` and `to` do not. A caller owed a call back two days ago is
-  still owed one today, and the Call log opens on today. The page says so under the chips.
+  still owed one today, and the Call log opens on today. The page says so under the chips, and
+  while the chip is on the date fields are switched off with the reason, the dates' chip is not
+  shown, and the tip that the export follows the dates is hidden (the export of this view does
+  not). The dates stay in the URL for the next chip. **Its agent filter is the assignee**: a
+  missed call has no answerer, and "what does Arjun still owe" is what the view is asked, so
+  under To follow up (rows and its count) the agent filter matches
+  `follow_up_assignee_user_id`, the Missed list's own assignee.
 - **`findInboundForCampaign`** is one row of the same SELECT under the same rule, for the Call
   page: a call the list would not show (live, rejected, another campaign's or tenant's) is a 404.
 
@@ -270,7 +284,7 @@ type out**, rows and counts alike. It never silently lets a type through unfilte
 
 | Filter | Dialler | Soft phone | Inbound |
 |---|---|---|---|
-| Agent | the agent of the reserved session | who placed it | who **answered** (`answered_by_user_id`). A missed call has no agent, so with an agent chosen no missed call matches (To follow up reads 0) |
+| Agent | the agent of the reserved session | who placed it | who **answered** (`answered_by_user_id`). A missed call has no agent, so with an agent chosen no missed call is under Inbound or All. Under **To follow up** it is who the call is **assigned to** |
 | Outcome code | the write-up | the outcome saved | the outcome the agent saved |
 | What happened: an attempt outcome | its own | its own | `connected` is a call an agent answered; every other attempt outcome matches no inbound call |
 | What happened: **Missed**, **Voicemail**, **Abandoned** | none | none | `missed`: any call with a Missed row. `voicemail`: the caller left one. `abandoned_in_queue`: the caller hung up while waiting |
@@ -321,11 +335,12 @@ gains is the link: `callback_of_inbound_call_id`.
   number**, once.
 - The server keeps it only when it names a **Missed row of the caller's account whose caller is
   the number dialled** (`isMissedCallFrom`, digits compared). Anything else (another account's
-  row, an answered call, a different number, an id that names nothing) is **dropped, and the call
-  is placed all the same**: the link is a marker, never a reason to refuse an agent ringing a
-  customer.
-- The Call log shows both ways: the soft-phone row says "Call back · to the 3:12 pm missed call"
-  (`callback_of`), the missed row "Called back 3:31 pm" (`called_back`: the latest soft-phone call
+  row, an answered call, a different number, an id that names nothing, a string that is not an id
+  at all) is **dropped, and the call is placed all the same**: the link is a marker, never a
+  reason to refuse an agent ringing a customer. The edge bounds the string's length and refuses
+  nothing for what it holds.
+- The Call log shows both ways: the soft-phone row says "Call back · to the 3:12 PM missed call"
+  (`callback_of`), the missed row "Called back 3:31 PM" (`called_back`: the latest soft-phone call
   **dialled** from its Call back, whatever campaign that call was logged to). A call back that
   never dialled is not "called back". The two rows are tinted, and hovering one lights the other.
 - They are two calls, counted once each. A call back does not close the Missed row: the customer
@@ -347,7 +362,7 @@ customer rang us"**. No new column: the attempt already says it.
   · came through their agent" (the sticky agent answered), or **Missed** with why in the Missed
   list's own words and the wait when the caller queued ("nobody free to answer · waited 1:40",
   "hung up while waiting · 0:52", "out of hours"). Outcome: the saved outcome; for a missed call,
-  where its follow-up stands ("Called back 3:31 pm", **To follow up** with **Call back** and
+  where its follow-up stands ("Called back 3:31 PM", **To follow up** with **Call back** and
   **Mark handled**, "Handled", "Customer reached"). Call: "Open call", or "Voicemail 0:22".
 - **Mark handled** is the Missed list's action (`POST /inbound/missed/:id/handled`), offered with
   `agency.inbound.read`; the list and the counts are read again. **Call back** opens the soft
@@ -378,13 +393,24 @@ why from `call_availability` and shows the record alone.
 - The mockup's "Customer history" button on the Call page is "Open contact" (the roster contact,
   when the caller matched one): customer history is a number search with its own audit (CH6).
 - The mockup's "placed by … (supervisor)" stays out, as in P1.
-- Times are in the console's display format ("3:31 pm"), as the When column is.
+- **Times read with AM / PM in capitals** ("3:31 PM", "22 Nov 2026, 03:42 PM"), the house style
+  and the mockup's, everywhere on the Call log (the When column, the pair's times, the dialled
+  window's chip) and on the inbound Call page (the headline, the path, the cards, the shared call
+  card's instants, who listened): `upperDayPeriod` / `formatCallTimestamp`. The console's shared
+  formatters still write "pm", so its other surfaces (the attempt and soft-phone call pages, the
+  Missed list, the roster, My contacts, Listening history, the campaign header above the Call
+  log) are unchanged and still read in lower case.
+- **`wait_seconds` on a missed call runs to the end of the call**, so where the caller left a
+  voicemail it includes the prompt and the voicemail. No column records when the wait gave way
+  to the voicemail (`queued_at`, `offered_at` and `ended_at` are all there is), so it is left;
+  the row shows the voicemail's own length beside it.
 
 ### Tests
 
 - `packages/db/test/integration/db/call-log-inbound-migration.test.ts`: the columns, the CHECK
-  from every side, the backfill with `updated_at` kept, both indexes, the invalid-index refusal,
-  down then up.
+  from every side, the backfill with `updated_at` kept, the pre-deploy path for a large table
+  (columns added and a batch run, then the migration), the wrong-type refusal, the CHECK's
+  validation in 0068, both indexes, the invalid-index refusal, down then up.
 - `apps/server/test/integration/api/agency-call-log-inbound.test.ts` (real Postgres, the real
   app): the three types on one keyset across page boundaries and a tie between an inbound call
   and a soft-phone call; what is and is not a row; an inbound row's facts; the pair; the counts;
@@ -422,7 +448,7 @@ CL1–CL16, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL11 | The campaign Call log's JSON view is one combined source (amends SR6 and IN14) | **P1, built** |
 | CL12 | An inbound route's own outcome catalog stays for calls with no campaign | P3 |
 | CL13 | A filter means on each type what that type's own column says; one with no meaning on a type leaves that type out. Agent on an inbound call is who answered | **P2, built** |
-| CL14 | To follow up is the campaign's open Missed rows by the Missed list's own rule; the dates do not narrow it; it is not added to All a second time | **P2, built** |
+| CL14 | To follow up is the campaign's open Missed rows by the Missed list's own rule; the dates do not narrow it; its agent filter is the assignee; it is not added to All a second time | **P2, built** |
 | CL15 | A call back's link is kept only for a Missed row of the account from the number dialled; any other is dropped and the call still placed | **P2, built** |
 | CL16 | An inbound row is an ended, served call filed under the campaign (`campaign_id`), ordered by when it arrived; matched calls were backfilled, in the migration | **P2, built** |
 

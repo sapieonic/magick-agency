@@ -2598,6 +2598,13 @@ P2 of six is built; P3 to P6 are not.
 - **The export** gains `inbound` rows and three columns at the end (`wait_seconds`,
   `missed_reason`, `callback_of`).
 
+- **Review fixes (same day, an independent review of the two commits):** 0067 can follow a
+  pre-deploy backfill on a large table (`ADD COLUMN IF NOT EXISTS`, the types checked, the CHECK
+  validated in 0068), with the steps and the repair after a rollback in `DEPLOYMENT.md`; a
+  malformed call-back link is dropped at the edge instead of refused; under To follow up the agent
+  filter is the assignee, the date fields are switched off and the export's dates tip is hidden;
+  every time on the Call log and the inbound Call page reads with AM / PM in capitals.
+
 **Not verified:** not run in a real browser, on a phone or against a carrier. The inbound branch
 is planned on 0068's index on the test database; nothing was timed on a large table. Until P3
 files unknown callers, a missed call from a number on no roster is in no campaign's log (it is on

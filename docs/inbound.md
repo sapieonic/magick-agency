@@ -1295,7 +1295,7 @@ object for the next run, and does not stop the rest. A stored voicemail whose ro
 (the settle fails) is deleted again, best-effort, so no object is left that nothing names. Memory:
 a voicemail in flight holds its PCM16 (up to 120 s, 3.84 MB) and, while it is written, its WAV
 copy (about 7.7 MB at the peak), bounded by the route's `max_concurrent` and the stream slots. Playback: `GET /proxy/agency/inbound/missed/:id/
-voicemail` (`agency.inbound.read` and the flag; the Missed list's rules: the account's row, an
+voicemail` (`agency.inbound.read`; not behind the flag, as the Missed list and Mark handled are not: `proxy-agency-inbound/missed.ts`; the Missed list's rules: the account's row, an
 agent only their own; `inbound_missed_call_not_found` for a row with none or an object gone),
 `audio/wav`, `Cache-Control: private, no-store` (no browser or proxy copy outlives the retention
 purge), streamed from the bucket (the internal handler names the object, the public route

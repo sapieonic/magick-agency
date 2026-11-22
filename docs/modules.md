@@ -1781,7 +1781,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/customer-history-indexes-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/customer-history-contacts-index-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/plivo-numbers-migration.test.ts` | ~3 |
-| `packages/db/test/integration/db/call-log-inbound-migration.test.ts` (0067 and 0068: the campaign an inbound call is filed under and its source, the CHECK from every side, the backfill from the match with `updated_at` kept, the soft-phone call's link to the missed call, both indexes by definition, the invalid-index refusal, down then up) | 6 |
+| `packages/db/test/integration/db/call-log-inbound-migration.test.ts` (0067 and 0068: the campaign an inbound call is filed under and its source, the CHECK from every side, the backfill from the match with `updated_at` kept, the soft-phone call's link to the missed call, both indexes by definition, the invalid-index refusal, down then up; the pre-deploy path for a large table, the wrong-type refusal, the CHECK validated in 0068) | 9 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/one-station-per-agent-migration.test.ts` | 5 |
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
@@ -2357,8 +2357,8 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/AgencyAnalyticsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyAttemptCallPage.test.tsx` | 24 |
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 51 |
-| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` (the campaign Call log, docs/call-log.md: the rows a call list cannot show, the filters in the URL and the drill-downs' own links, the type chips and their counts, a row of each type, what a live and a finished campaign open on and the empty states, the soft-phone status filter, the old Soft-phone calls URL's redirect; the Inbound and To follow up chips, an inbound row answered and missed, Mark handled and Call back, a missed call and its call back lighting each other) | 100 |
-| `apps/console/src/__tests__/pages/AgencyInboundCallPage.test.tsx` (the inbound Call page: who rang and why it is in this log, the caller's path in order, the outcome or the follow-up, the voicemail, the trail, Call back's prefill with and without the missed call's id, a purged call and one that is not this campaign's) | 10 |
+| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` (the campaign Call log, docs/call-log.md: the rows a call list cannot show, the filters in the URL and the drill-downs' own links, the type chips and their counts, a row of each type, what a live and a finished campaign open on and the empty states, the soft-phone status filter, the old Soft-phone calls URL's redirect; the Inbound and To follow up chips, an inbound row answered and missed, Mark handled and Call back, a missed call and its call back lighting each other; every time with AM / PM in capitals, the date fields switched off under To follow up) | 103 |
+| `apps/console/src/__tests__/pages/AgencyInboundCallPage.test.tsx` (the inbound Call page: who rang and why it is in this log, the caller's path in order, the outcome or the follow-up, the voicemail, the trail, Call back's prefill with and without the missed call's id, a purged call and one that is not this campaign's; every time with AM / PM in capitals) | 11 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` (and check, review, Import N contacts, the downloads, the import compared with its check, IM1–IM3; the check's expiry, a check already imported followed to its import, the skipped download cut short, Import again after a failed or stopped import while the check is valid, analytics: a check is never a completed import, a failed check says so) | 24 |
 | `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
@@ -2547,7 +2547,7 @@ Agent station redesign, supervisor side: `agency/stationSettings.ts` (campaign S
 | `apps/console/src/__tests__/utils/focusFirstFieldError.test.ts` (where Fix, Go to and Show me land: live findings first, into a group, a page's own error markup) | 4 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/consoleNav.test.ts` | 82 |
-| `apps/console/src/__tests__/utils/format.test.ts` | 17 |
+| `apps/console/src/__tests__/utils/format.test.ts` (with `upperDayPeriod` and `formatCallTimestamp`, the Call log's AM / PM in capitals) | 20 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
 | `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/insightsOverview.test.ts` | 16 |
