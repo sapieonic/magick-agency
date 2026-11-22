@@ -11,7 +11,7 @@ import { getMyCampaigns } from '../../api/agencyStats';
 import { attemptDateRange } from '../../utils/agencyAttemptFilters';
 import { INVERTED_RANGE_COPY } from '../../utils/agencyCampaignAttemptParams';
 import { FiltersCard } from './FiltersCard';
-import { listMissedInboundCalls, markMissedInboundCallHandled } from '../../api/inbound';
+import { getMissedInboundCall, markMissedInboundCallHandled } from '../../api/inbound';
 import { refreshMissedCallsCount } from '../../hooks/useMissedCallsCount';
 import { hasPermission } from '../../utils/permissions';
 import { inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
@@ -26,7 +26,6 @@ import {
   type AgencyMyCallRow,
   type AgencyMyCallsCounts,
 } from '../../types/agency-call-log';
-import { AGENCY_INBOUND_MISSED_ASSIGNEE_ME } from '../../types/inbound';
 import {
   MY_CALLS_DATES_OFF_HINT,
   callbackDueCopy,
@@ -67,11 +66,18 @@ const PAGE_SIZE = 50;
  * Soft phone chip. So are the two filters, the campaign and the dates. There is no search by
  * number: on a campaign that hides numbers it would let the hidden digits be guessed (CL36).
  */
-export function MyCallsList({ softphone, inbound }: {
+export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   /** The reader may dial from the soft phone (the flag and `agency.softphone.dial`). */
   softphone: boolean;
   /** Missed calls are on for the reader (`useMissedCallsAccess().available`). */
   inbound: boolean;
+  /**
+   * The reader's OWN open Missed calls as the page's Missed calls badge counts them, live
+   * (`useMissedCallsAccess().count.open`); null while unknown, and for a supervisor, whose badge
+   * counts the account's rows. To follow up's badge counts the same rows: when this number is
+   * not the one the list last read, what is owed is read again, so the two badges agree.
+   */
+  missedOpen?: number | null;
 }) {
   const { tenantId, accountId, role } = useTenant();
   const navigate = useNavigate();
@@ -150,6 +156,35 @@ export function MyCallsList({ softphone, inbound }: {
     void load(type, filters);
   }, [load, type, filters]);
 
+  /**
+   * The Missed calls badge moved (a call was just missed, or one was handled on the Missed
+   * list): read what is owed again. Under To follow up the list itself changed, so it is read
+   * again; under another chip only the counts are, and the rows and pages on screen stay.
+   * Asked once for each number the badge shows, so a count the two reads never agree on (a row
+   * changing between them) cannot loop.
+   */
+  const followedMissed = useRef<number | null>(null);
+  useEffect(() => {
+    if (missedOpen === null || loading || counts === null || !tenantId || !accountId) return;
+    if (missedOpen === counts.missed_open) {
+      followedMissed.current = null;
+      return;
+    }
+    if (followedMissed.current === missedOpen) return;
+    followedMissed.current = missedOpen;
+    if (type === 'to_follow_up') {
+      void load(type, filters);
+      return;
+    }
+    const mine = seq.current;
+    getMyCalls({ type, ...sent(filters), limit: 1, includeCounts: true }, tenantId, accountId)
+      .then((page) => {
+        if (mine === seq.current && page.counts) setCounts(page.counts);
+      })
+      // The badge keeps its last number; the next read of the list brings a new one.
+      .catch(() => undefined);
+  }, [missedOpen, counts, loading, type, filters, load, tenantId, accountId]);
+
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     const mine = seq.current;
@@ -190,7 +225,8 @@ export function MyCallsList({ softphone, inbound }: {
    * Call back: the soft phone with the caller's number on the pad, the call's campaign chosen
    * and the missed call's id, so the call placed is linked to it (CL1). Nothing is dialled until
    * the agent presses Call. Where the list shows the number hidden, it is not in the list at
-   * all: it is read from the Missed list (the agent's own rows) at this moment, for the pad.
+   * all: this one Missed row is read by its id at this moment (the Missed list's own rule for
+   * whose row it is), for the pad. By id, so it is found however many rows the agent has open.
    */
   const callBack = useCallback(async (row: AgencyMyCallRow) => {
     if (calling) return;
@@ -199,10 +235,7 @@ export function MyCallsList({ softphone, inbound }: {
     if (!number) {
       setCalling(row.id);
       try {
-        const missed = await listMissedInboundCalls(
-          { assignee: AGENCY_INBOUND_MISSED_ASSIGNEE_ME, status: 'open', limit: 100 }, tenantId ?? undefined, accountId ?? undefined,
-        );
-        number = missed.rows.find((call) => call.id === row.id)?.from_e164 ?? null;
+        number = (await getMissedInboundCall(row.id, tenantId ?? undefined, accountId ?? undefined)).from_e164;
       } catch {
         number = null;
       } finally {

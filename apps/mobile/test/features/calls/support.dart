@@ -117,3 +117,9 @@ List<Override> myCallsOverrides(FakeMyCallsApi api, FakeMissedCallsApi missed, {
       ...missedOverrides(missed, inboundOn: inboundOn),
       myCallsApiProvider.overrideWithValue(api),
     ];
+
+/// A Missed list whose badge starts at none, as [myCallsPage]'s counts do.
+/// My calls reads what is owed again whenever the badge moves to a number its
+/// own counts do not hold (`MyCallsController.missedCountChanged`); a test
+/// that is not about that starts with the two in step, so it sees no extra read.
+FakeMissedCallsApi missedInStep() => FakeMissedCallsApi()..countAnswer = countOf(0, hasRows: true);

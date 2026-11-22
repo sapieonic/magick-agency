@@ -8,6 +8,7 @@ import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
 import '../../core/api/decode_body.dart';
 import '../../core/auth/app_gate.dart';
+import '../missed/missed_access.dart';
 import '../missed/missed_calls_api.dart';
 import '../missed/missed_calls_copy.dart';
 import '../missed/missed_count_controller.dart';
@@ -122,10 +123,20 @@ class MyCallsState {
       );
 }
 
+/// The open rows a Missed badge says: `''` is none, `'100+'` the server's cap
+/// (the count My calls' own `missed_open` stops at too).
+int _missedBadgeOpen(String badge) => badge.isEmpty ? 0 : int.tryParse(badge.replaceAll('+', '')) ?? 0;
+
 class MyCallsController extends Notifier<MyCallsState> {
   int _generation = 0;
   String? _workspace;
   bool _requested = false;
+
+  /// The open Missed count moved while a first page was in flight.
+  bool _countsStale = false;
+
+  /// This controller's own Mark handled is moving the count and reloading.
+  bool _markingMove = false;
 
   /// Rebuilt whenever the workspace changes (another account, another agent,
   /// signed out): the rows, the cursor and the chip are dropped at once, and a
@@ -135,7 +146,46 @@ class MyCallsController extends Notifier<MyCallsState> {
     _workspace = ref.watch(agentWorkspaceProvider);
     _generation++;
     _requested = false;
+    _countsStale = false;
+    _markingMove = false;
+    // The To follow up badge and the shell's My calls badge count the same
+    // open Missed rows. When the shell's moves (a call was just missed, or
+    // one was handled from the Missed list), what is owed is read again, so
+    // the two never show different numbers for long.
+    ref.listen<String>(missedCallsAccessProvider.select((a) => a.badge), (prev, next) {
+      // Mark handled here moves the count and reads the list again itself.
+      if (prev != next && !_markingMove) unawaited(missedCountChanged());
+    });
     return MyCallsState();
+  }
+
+  /// The open Missed count moved: read what is owed again. Under To follow up
+  /// the list itself changed, so its first page is read again (the rows stay
+  /// until it lands); under another chip only the counts are, and the rows,
+  /// the cursor and the pages already loaded are left alone. While a first
+  /// page is in flight, the read waits for it and then runs, since that page
+  /// may have been asked for before the count moved.
+  Future<void> missedCountChanged() async {
+    if (_workspace == null || !_requested) return;
+    final s = state;
+    if (s.status == MyCallsStatus.loading || s.refreshing) {
+      _countsStale = true;
+      return;
+    }
+    if (s.status != MyCallsStatus.ready) return;
+    // The page on screen already counts what the shell's badge says: nothing
+    // to read (the badge's first answer after a first page, most often).
+    if (s.counts != null && _missedBadgeOpen(ref.read(missedCallsAccessProvider).badge) == s.counts!.missedOpen) return;
+    if (s.type == MyCallsTypeFilter.toFollowUp) return reload(keepRows: true);
+    final mine = _generation;
+    try {
+      final page = await ref.read(myCallsApiProvider).myCalls(MyCallsQuery(type: s.type, limit: 1, includeCounts: true));
+      if (!ref.mounted || mine != _generation) return;
+      if (page.counts != null) state = state.copyWith(counts: page.counts);
+    } on Exception catch (e) {
+      // The badge keeps its last number; the next read of the list brings a new one.
+      if (ref.mounted) reportToGate(ref, e);
+    }
   }
 
   /// Ensure a first page exists (screen arrival, workspace switch).
@@ -186,6 +236,10 @@ class MyCallsController extends Notifier<MyCallsState> {
           ? state.copyWith(refreshing: false, error: message)
           : MyCallsState(type: type, status: MyCallsStatus.error, error: message, counts: counts);
     }
+    if (_countsStale && ref.mounted && mine == _generation) {
+      _countsStale = false;
+      unawaited(missedCountChanged());
+    }
   }
 
   /// Append the next page. Safe to call repeatedly: it does nothing while a
@@ -233,10 +287,13 @@ class MyCallsController extends Notifier<MyCallsState> {
     try {
       await ref.read(missedCallsApiProvider).markHandled(row.id);
       if (!ref.mounted) return true;
+      _markingMove = true;
       unawaited(ref.read(missedCountControllerProvider.notifier).refresh());
       if (mine == _generation) {
         state = state.copyWith(clearMarking: true);
-        unawaited(reload(keepRows: true));
+        unawaited(reload(keepRows: true).whenComplete(() => _markingMove = false));
+      } else {
+        _markingMove = false;
       }
       return true;
     } on Exception catch (e) {
@@ -249,20 +306,17 @@ class MyCallsController extends Notifier<MyCallsState> {
     }
   }
 
-  /// The Missed row behind a To follow up card, for its Call back: the number
-  /// is read from the Missed list (the agent's own open rows) at the moment
-  /// it is needed, for the pad. It is never in My calls' own rows where the
-  /// campaign hides numbers. Null (and a row error) when it cannot be read.
+  /// The Missed row behind a To follow up card, for its Call back: the row is
+  /// read by its id (the Missed list's own rule for whose row it is) at the
+  /// moment it is needed, for the pad; by id, so it is found however many
+  /// rows the agent has open. The number is never in My calls' own rows where
+  /// the campaign hides numbers. Null (and a row error) when it cannot be read.
   Future<InboundMissedCall?> missedCallFor(MyCallRow row) async {
     state = state.copyWith(clearRowError: true);
     try {
-      final page = await ref.read(missedCallsApiProvider).list(
-            const InboundMissedQuery(status: InboundFollowUpStatus.open, assignee: InboundMissedQuery.assigneeMe, limit: 100),
-          );
+      final call = await ref.read(missedCallsApiProvider).one(row.id);
       if (!ref.mounted) return null;
-      for (final call in page.rows) {
-        if (call.id == row.id) return call;
-      }
+      return call;
     } on Exception catch (e) {
       if (!ref.mounted) return null;
       reportToGate(ref, e);

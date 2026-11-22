@@ -102,7 +102,11 @@ export function AgentAttemptsPage() {
     opens the Soft phone chip.
   */
   const softphone = useSoftphoneAvailable();
-  const missed = useMissedCallsAccess().available;
+  const missedAccess = useMissedCallsAccess();
+  const missed = missedAccess.available;
+  // An agent's Missed calls badge counts their own open rows, the rows To follow up counts; a
+  // supervisor's counts the account's, which says nothing of their own.
+  const missedOpen = supervisor ? null : missedAccess.count?.open ?? null;
 
   return (
     <AgentSurfaceShell
@@ -119,7 +123,7 @@ export function AgentAttemptsPage() {
         ) : undefined
       }
     >
-      <MyCallsList softphone={softphone} inbound={missed} />
+      <MyCallsList softphone={softphone} inbound={missed} missedOpen={missedOpen} />
     </AgentSurfaceShell>
   );
 }

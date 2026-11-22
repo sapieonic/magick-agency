@@ -262,6 +262,14 @@ export function listMissedInboundCalls(
   return apiFetch<AgencyInboundMissedPage>(`${INBOUND}/missed${missedQueryString(query)}`, {}, tenantId, accountId);
 }
 
+/**
+ * One Missed row by its id, under the list's rules (the caller's own row, an open one nobody
+ * has, or any of the account's for a supervisor); a row the caller may not read is a 404.
+ */
+export function getMissedInboundCall(callId: string, tenantId?: string, accountId?: string): Promise<AgencyInboundMissedCall> {
+  return apiFetch<AgencyInboundMissedCall>(`${INBOUND}/missed/${enc(callId)}`, {}, tenantId, accountId);
+}
+
 /** Idempotent: a row already handled comes back as it is, with its first handler. */
 export function markMissedInboundCallHandled(
   callId: string,

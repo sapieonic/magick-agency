@@ -18,18 +18,20 @@ const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getMyCalls: vi.fn(),
   getMyCampaigns: vi.fn(),
-  listMissedInboundCalls: vi.fn(),
+  getMissedInboundCall: vi.fn(),
   markMissedInboundCallHandled: vi.fn(),
   refreshMissedCallsCount: vi.fn(),
   softphone: true,
   missed: true,
+  /** The Missed calls badge's live count (null: no answer yet). */
+  missedOpen: null as number | null,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/myCalls', () => ({ getMyCalls: mocks.getMyCalls }));
 vi.mock('../../api/agencyStats', () => ({ getMyCampaigns: mocks.getMyCampaigns }));
 vi.mock('../../api/inbound', () => ({
-  listMissedInboundCalls: mocks.listMissedInboundCalls,
+  getMissedInboundCall: mocks.getMissedInboundCall,
   markMissedInboundCallHandled: mocks.markMissedInboundCallHandled,
 }));
 vi.mock('../../hooks/useMissedCallsCount', () => ({
@@ -38,7 +40,10 @@ vi.mock('../../hooks/useMissedCallsCount', () => ({
   missedBadgeText: () => null,
 }));
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
-  useMissedCallsAccess: () => ({ available: mocks.missed, count: null }),
+  useMissedCallsAccess: () => ({
+    available: mocks.missed,
+    count: mocks.missedOpen === null ? null : { open: mocks.missedOpen, open_capped: false, has_rows: true },
+  }),
 }));
 vi.mock('../../components/agency/AgentNav', () => ({
   AgentNav: () => <nav data-testid="agent-nav" />,
@@ -47,6 +52,7 @@ vi.mock('../../components/agency/AgentNav', () => ({
 vi.mock('../../analytics/events', () => ({ trackAgentSurfaceViewed: vi.fn() }));
 
 import { AgentAttemptsPage } from '../../pages/agency/AgentAttemptsPage';
+import { MyCallsList } from '../../components/agency/MyCallsList';
 
 const BASE: AgencyMyCallRow = {
   type: 'dialler', id: 'd-1', created_at: '2026-11-22T13:10:00.000Z', campaign_id: 'c-1', campaign_name: 'Diwali EMI Collections',
@@ -113,6 +119,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.softphone = true;
   mocks.missed = true;
+  mocks.missedOpen = null;
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1', accountId: 'account-1', role: 'agent', accountResolution: 'ready', accountError: null, reloadAccounts: vi.fn(),
   });
@@ -152,7 +159,7 @@ describe('My calls: one list with chips', () => {
     expect(screen.getByTestId('my-call-customer-i-1').textContent).toBe('Sunita Deshmukh97••• ••821');
     expect(screen.getByTestId('my-call-customer-d-1').textContent).toBe('Anjali Verma+91 98765 43210');
     // Showing the list reads nothing else about a number.
-    expect(mocks.listMissedInboundCalls).not.toHaveBeenCalled();
+    expect(mocks.getMissedInboundCall).not.toHaveBeenCalled();
   });
 
   it('offers no way to a recording or a call page: an agent does not hear recordings', async () => {
@@ -276,21 +283,22 @@ describe('My calls: To follow up', () => {
     fireEvent.click(screen.getByTestId('my-call-back-m-2'));
     const state = JSON.parse((await screen.findByTestId('phone-state')).textContent!);
     expect(Object.values(state)[0]).toEqual({ number: '+919700002210', campaignId: 'c-1', inboundCallId: 'm-2' });
-    expect(mocks.listMissedInboundCalls).not.toHaveBeenCalled();
+    expect(mocks.getMissedInboundCall).not.toHaveBeenCalled();
   });
 
-  it('Call back on a hidden number reads it from the Missed list only when pressed, for the pad', async () => {
-    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [{ id: 'm-1', from_e164: '+919812307730' }], next_cursor: null, limit: 100 });
+  it('Call back on a hidden number reads that Missed row by its id only when pressed, for the pad', async () => {
+    mocks.getMissedInboundCall.mockResolvedValue({ id: 'm-1', from_e164: '+919812307730' });
     await renderPage('/dialer/attempts?type=to_follow_up');
-    expect(mocks.listMissedInboundCalls).not.toHaveBeenCalled();
+    expect(mocks.getMissedInboundCall).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('my-call-back-m-1'));
     const state = JSON.parse((await screen.findByTestId('phone-state')).textContent!);
-    expect(mocks.listMissedInboundCalls).toHaveBeenCalledWith({ assignee: 'me', status: 'open', limit: 100 }, 'tenant-1', 'account-1');
+    // That one row, by its id: never a page of the list, which an agent with many open rows would overrun.
+    expect(mocks.getMissedInboundCall).toHaveBeenCalledWith('m-1', 'tenant-1', 'account-1');
     expect(Object.values(state)[0]).toEqual({ number: '+919812307730', campaignId: 'c-2', inboundCallId: 'm-1' });
   });
 
   it('says so on the row when the number cannot be read, and dials nothing', async () => {
-    mocks.listMissedInboundCalls.mockRejectedValue(new Error('offline'));
+    mocks.getMissedInboundCall.mockRejectedValue(new Error('offline'));
     await renderPage('/dialer/attempts?type=to_follow_up');
     fireEvent.click(screen.getByTestId('my-call-back-m-1'));
     expect(await screen.findByRole('alert')).toBeTruthy();
@@ -302,6 +310,78 @@ describe('My calls: To follow up', () => {
     await renderPage('/dialer/attempts?type=to_follow_up');
     expect(screen.queryByTestId('my-call-back-m-2')).toBeNull();
     expect(screen.getByTestId('my-call-handled-m-2')).toBeTruthy();
+  });
+});
+
+describe('My calls: the To follow up badge and the Missed calls badge count the same rows', () => {
+  const owed = (missed: number) => ({ to_follow_up: missed + 1, missed_open: missed, callbacks_due: 1 });
+  const badge = () => screen.getByTestId('my-calls-count-to_follow_up').textContent;
+
+  it('reads the counts again when the Missed badge says another number, and leaves the rows alone', async () => {
+    mocks.missedOpen = 5;
+    mocks.getMyCalls.mockResolvedValueOnce(page([ANSWERED, SOFT, DIALLER], { counts: owed(2), next_cursor: 'more' }));
+    mocks.getMyCalls.mockResolvedValueOnce(page([MISSED_FULL], { counts: owed(5) }));
+    await renderPage();
+    await waitFor(() => expect(mocks.getMyCalls).toHaveBeenCalledTimes(2));
+    expect(lastQuery()).toMatchObject({ type: 'all', limit: 1, includeCounts: true });
+    await waitFor(() => expect(badge()).toBe('6'));
+    // The one-row read is for its counts: the list on screen and its next page are as they were.
+    expect(screen.getByTestId('my-call-row-d-1')).toBeTruthy();
+    expect(screen.queryByTestId('my-call-row-m-2')).toBeNull();
+    expect(screen.getByTestId('my-calls-load-more')).toBeTruthy();
+    // Asked once: the two now agree.
+    await act(async () => {});
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads nothing more while the two agree', async () => {
+    mocks.missedOpen = 2;
+    mocks.getMyCalls.mockResolvedValue(page([DIALLER], { counts: owed(2) }));
+    await renderPage();
+    await act(async () => {});
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(1);
+    expect(badge()).toBe('3');
+  });
+
+  it('asks once for a number the list never agrees with, not in a loop', async () => {
+    mocks.missedOpen = 5;
+    mocks.getMyCalls.mockResolvedValue(page([DIALLER], { counts: owed(2) }));
+    await renderPage();
+    await waitFor(() => expect(mocks.getMyCalls).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    await act(async () => {});
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(2);
+  });
+
+  it('under To follow up, reads the list again when the badge moves', async () => {
+    mocks.getMyCalls.mockResolvedValueOnce(page([MISSED_FULL], { counts: owed(1), callbacks_due: [CALLBACK] }));
+    mocks.getMyCalls.mockResolvedValueOnce(page([MISSED_MASKED, MISSED_FULL], { counts: owed(2), callbacks_due: [CALLBACK] }));
+    const view = (missedOpen: number) => (
+      <MemoryRouter initialEntries={['/dialer/attempts?type=to_follow_up']}>
+        <MyCallsList softphone inbound missedOpen={missedOpen} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(view(1));
+    await act(async () => {});
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('my-call-row-m-1')).toBeNull();
+    // A customer rings and nobody answers: the Missed badge's poll says 2.
+    rerender(view(2));
+    await waitFor(() => expect(screen.getByTestId('my-call-row-m-1')).toBeTruthy());
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(2);
+    expect(lastQuery()).toMatchObject({ type: 'to_follow_up', limit: 50, includeCounts: true });
+    expect(badge()).toBe('3');
+  });
+
+  it('does not follow a supervisor’s badge, which counts the account’s rows', async () => {
+    mocks.missedOpen = 40;
+    mocks.useTenant.mockReturnValue({
+      tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin', accountResolution: 'ready', accountError: null, reloadAccounts: vi.fn(),
+    });
+    mocks.getMyCalls.mockResolvedValue(page([DIALLER], { counts: owed(0) }));
+    await renderPage();
+    await act(async () => {});
+    expect(mocks.getMyCalls).toHaveBeenCalledTimes(1);
   });
 });
 

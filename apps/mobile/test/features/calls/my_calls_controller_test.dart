@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/features/calls/my_calls_controller.dart';
 import 'package:magick_agency_agent/features/calls/my_calls_copy.dart';
+import 'package:magick_agency_agent/features/missed/missed_count_controller.dart';
 
 import 'support.dart';
 
@@ -18,7 +19,7 @@ void main() {
 
   setUp(() {
     api = FakeMyCallsApi();
-    missed = FakeMissedCallsApi();
+    missed = missedInStep();
     container = ProviderContainer(overrides: myCallsOverrides(api, missed));
     addTearDown(container.dispose);
   });
@@ -147,14 +148,86 @@ void main() {
     expect(api.queries, hasLength(1));
   });
 
-  test('Call back reads the Missed row for its number: the agent\'s own open rows, at that moment', () async {
+  // The To follow up badge and the shell's My calls badge count the same open
+  // Missed rows: when the shell's moves, what is owed here is read again.
+  // On screen the list is watched; a provider nobody listens to has its own
+  // listeners paused, the one on the badge included.
+  void onScreen() => addTearDown(container.listen(myCallsControllerProvider, (_, _) {}).close);
+
+  Future<void> moveMissedBadge(int open) async {
+    // The count's own first read (asked for when the workspace started) lands first: a
+    // refresh while it is in flight would share it.
+    await Future<void>.delayed(Duration.zero);
+    missed.countAnswer = countOf(open, hasRows: true);
+    await container.read(missedCountControllerProvider.notifier).refresh();
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  test('the Missed badge moving under another chip reads the counts again, and leaves the rows and the cursor', () async {
+    onScreen();
+    final first = controller().ensureLoaded();
+    api.answer(0, myCallsPage([myCall('a1')], next: 'c1'));
+    await first;
+    expect(state().counts!.toFollowUp, 0);
+    await moveMissedBadge(2);
+    expect(api.queries, hasLength(2));
+    expect(api.q(1), {'limit': '1', 'include_counts': '1'});
+    api.answer(1, myCallsPage([myCall('zz')], counts: const MyCallsCounts(toFollowUp: 3, missedOpen: 2, callbacksDue: 1)));
+    await Future<void>.delayed(Duration.zero);
+    expect(state().counts, const MyCallsCounts(toFollowUp: 3, missedOpen: 2, callbacksDue: 1));
+    expect(state().rows.map((r) => r.id), ['a1'], reason: 'the one-row page is read for its counts alone');
+    expect(state().nextCursor, 'c1');
+  });
+
+  test('the Missed badge moving under To follow up reads the list again, the rows kept until it lands', () async {
+    onScreen();
+    final first = controller().choose(MyCallsTypeFilter.toFollowUp);
+    api.answer(0, myCallsPage([missedRow('m1')], counts: const MyCallsCounts(toFollowUp: 1, missedOpen: 1, callbacksDue: 0)));
+    await first;
+    await moveMissedBadge(2);
+    expect(api.queries, hasLength(2));
+    expect(api.q(1), {'type': 'to_follow_up', 'limit': '50', 'include_counts': '1'});
+    expect(state().rows.single.id, 'm1');
+    expect(state().refreshing, isTrue);
+    api.answer(1, myCallsPage([missedRow('m2'), missedRow('m1')], counts: const MyCallsCounts(toFollowUp: 2, missedOpen: 2, callbacksDue: 0)));
+    await Future<void>.delayed(Duration.zero);
+    expect(state().rows.map((r) => r.id), ['m2', 'm1']);
+    expect(state().counts!.toFollowUp, 2);
+  });
+
+  test('a Missed badge that says what the list already counts reads nothing', () async {
+    onScreen();
+    final first = controller().ensureLoaded();
+    api.answer(0, myCallsPage([myCall('a1')], counts: const MyCallsCounts(toFollowUp: 3, missedOpen: 2, callbacksDue: 1)));
+    await first;
+    await moveMissedBadge(2);
+    expect(api.queries, hasLength(1));
+  });
+
+  test('the Missed badge moving while the first page is in flight is followed once the page lands', () async {
+    onScreen();
+    final first = controller().ensureLoaded();
+    await moveMissedBadge(4);
+    expect(api.queries, hasLength(1), reason: 'the page in flight may already hold the new count');
+    api.answer(0, myCallsPage([myCall('a1')]));
+    await first;
+    await Future<void>.delayed(Duration.zero);
+    // It did not: asked for before the count moved, it still says none.
+    expect(api.queries, hasLength(2));
+    expect(api.q(1), {'limit': '1', 'include_counts': '1'});
+  });
+
+  test('Call back reads that one Missed row by its id for its number, at that moment', () async {
     final first = controller().choose(MyCallsTypeFilter.toFollowUp);
     api.answer(0, myCallsPage([missedRow('m1')]));
     await first;
-    expect(missed.queries, isEmpty, reason: 'showing the list reads no number');
-    missed.autoPage = missedPage([missed_('m0'), missed_('m1')]);
+    expect(missed.read, isEmpty, reason: 'showing the list reads no number');
+    missed.oneAnswer = missed_('m1');
     final call = await controller().missedCallFor(state().rows.single);
-    expect(missed.queries.single.toQuery(), {'status': 'open', 'assignee': 'me', 'limit': '100'});
+    // By id, never a page of the Missed list: an agent with more open rows
+    // than a page holds could not call back the ones past it.
+    expect(missed.read, ['m1']);
+    expect(missed.queries, isEmpty);
     expect(call!.id, 'm1');
     expect(call.fromE164, '+918765432109');
   });
@@ -163,7 +236,7 @@ void main() {
     final first = controller().choose(MyCallsTypeFilter.toFollowUp);
     api.answer(0, myCallsPage([missedRow('m1')]));
     await first;
-    missed.autoPage = missedPage([missed_('other')]);
+    missed.oneAnswer = inboundRefusal('inbound_missed_call_not_found');
     expect(await controller().missedCallFor(state().rows.single), isNull);
     expect(state().rowError, (id: 'm1', message: MyCallsCopy.callBackFailed));
   });

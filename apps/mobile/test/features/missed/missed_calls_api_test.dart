@@ -38,6 +38,17 @@ void main() {
     return calls.single;
   }
 
+  test('one: GET /proxy/agency/inbound/missed/:id, the row itself, the id encoded', () async {
+    h.server.json('GET', '/proxy/agency/inbound/missed/m%201', missedJson('m 1'));
+    final call = await api.one('m 1');
+    expect(call.id, 'm 1');
+    expect(call.fromE164, missedJson('m 1')['from_e164']);
+    final req = only('GET', '/proxy/agency/inbound/missed/m%201');
+    expect(req.url.queryParameters, isEmpty);
+    expect(req.headers['x-tenant-id'], 't1');
+    expect(req.headers['x-account-id'], 'a1');
+  });
+
   test('list: GET /proxy/agency/inbound/missed with the status, the agent’s own rows, the reason, cursor and limit',
       () async {
     h.server.json('GET', '/proxy/agency/inbound/missed', {

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/calls/calls_screen.dart';
@@ -54,7 +55,7 @@ void main() {
 
   setUp(() {
     api = FakeMyCallsApi();
-    missed = FakeMissedCallsApi();
+    missed = missedInStep();
     actions = FakeSoftphoneActions();
     api.auto = (query) => switch (query.type) {
           MyCallsTypeFilter.toFollowUp => myCallsPage(
@@ -181,14 +182,15 @@ void main() {
     expect(api.queries.length, reads + 1);
   });
 
-  testWidgets('Call back reads the number from the Missed list when pressed, hands it to the soft phone and dials nothing', (tester) async {
-    missed.autoPage = missedPage([missed_('m1')]);
+  testWidgets('Call back reads that Missed row by its id when pressed, hands the number to the soft phone and dials nothing', (tester) async {
+    missed.oneAnswer = missed_('m1');
     await open(tester);
     await choose(tester, 'to_follow_up');
-    expect(missed.queries, isEmpty);
+    expect(missed.read, isEmpty);
     await tester.tap(find.byKey(const Key('my-call-back-m1')));
     await tester.pumpAndSettle();
-    expect(missed.queries.single.toQuery(), {'status': 'open', 'assignee': 'me', 'limit': '100'});
+    expect(missed.read, ['m1']);
+    expect(missed.queries, isEmpty, reason: 'never a page of the Missed list');
     expect(actions.calls, ['callBack'], reason: 'only the hand-off: the screen dials nothing itself');
     // The missed call's id goes with the number: the call placed is its call back (CL1).
     expect(actions.args['callBack'], ['+918765432109', 'camp-1', 'm1']);
@@ -196,7 +198,7 @@ void main() {
   });
 
   testWidgets('a Call back whose number cannot be read says so on the card and goes nowhere', (tester) async {
-    missed.autoPage = missedPage(const []);
+    missed.oneAnswer = const ApiNetworkError('offline');
     await open(tester);
     await choose(tester, 'to_follow_up');
     await tester.tap(find.byKey(const Key('my-call-back-m1')));
