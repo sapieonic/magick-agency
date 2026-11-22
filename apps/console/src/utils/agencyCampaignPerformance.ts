@@ -412,24 +412,75 @@ export function softphoneConnectRateReadout(stats: AgencyCampaignStats | null): 
 }
 
 /**
- * Every call on this campaign, the dialler's and the soft phone's: people reached over the
- * dialler's first dials and the soft phone's calls placed (SR1's "All calls").
+ * The dialler's and the soft phone's calls on this campaign together: people reached over the
+ * dialler's first dials and the soft phone's calls placed (SR3). The **Outbound connect rate**
+ * (CL7; "All calls connect rate" before inbound calls joined the figures): an inbound call
+ * always connects from the customer's end, so it is never in a connect rate.
  */
-export function allCallsConnectRateReadout(stats: AgencyCampaignStats | null): PerformanceReadout {
+export function outboundConnectRateReadout(stats: AgencyCampaignStats | null): PerformanceReadout {
   const soft = stats?.softphone;
   const humans = stats?.human_connects;
   const firstDials = stats?.first_dials_placed;
   const connected = stats?.attempts_connected;
   if (!soft || typeof humans !== 'number' || typeof firstDials !== 'number' || typeof connected !== 'number') {
-    return { value: '—', detail: 'The all-calls figures didn’t load.', caveat: null, denominator: null, scale: null, known: false };
+    return { value: '—', detail: 'The outbound figures didn’t load.', caveat: null, denominator: null, scale: null, known: false };
   }
   return placedRateReadout({
     humans: humans + soft.human_connects,
     placed: firstDials + soft.placed,
     connected: connected + soft.connected,
     noun: 'calls',
-    detail: 'The dialler’s first dials and the soft-phone calls logged to this campaign, together: where a person answered.',
+    detail: 'The dialler’s first dials and the soft-phone calls logged to this campaign, together: where a person answered. Inbound calls are not in it.',
   });
+}
+
+// ── Inbound beside both (call log P4, CL7, CL25) ────────────────────────────
+
+/**
+ * Whether the card shows the inbound calls filed under the campaign (SR5's rule on inbound):
+ * while inbound is on for the account, or whenever the campaign holds any. Never when the
+ * payload does not carry them (an older server).
+ */
+export function showsInbound(stats: AgencyCampaignStats | null, inboundEnabled: boolean): boolean {
+  const inbound = stats?.inbound;
+  if (!inbound) return false;
+  return inboundEnabled || inbound.received > 0;
+}
+
+/**
+ * Inbound's answer rate on this campaign: the calls an agent answered over the calls that
+ * arrived in open hours. It measures how many callers we answered, never the list or the pacing,
+ * and it is added to no connect rate (CL7).
+ */
+export function inboundAnswerRateReadout(stats: AgencyCampaignStats | null): PerformanceReadout {
+  const inbound = stats?.inbound;
+  if (!inbound) {
+    return { value: '—', detail: 'The inbound figures didn’t load.', caveat: null, denominator: null, scale: null, known: false };
+  }
+  const { answered, open_hours: openHours, received, missed, open_follow_ups: toFollowUp } = inbound;
+  if (received === 0) {
+    return { value: 'No data', detail: 'No inbound calls have been filed under this campaign yet.', caveat: null, denominator: null, scale: null, known: false };
+  }
+  const tally = `${plural(received, 'call')} received · ${formatCount(missed)} missed · ${formatCount(toFollowUp)} to follow up`;
+  if (openHours < RATE_MIN_ATTEMPTS) {
+    return {
+      value: 'Not enough calls',
+      detail: `Rates are withheld below ${RATE_MIN_ATTEMPTS} calls received in open hours.`,
+      caveat: null,
+      denominator: { lead: formatCount(answered), rest: `answered · ${tally}` },
+      scale: null,
+      known: false,
+    };
+  }
+  const rate = (answered / openHours) * 100;
+  return {
+    value: pct(rate),
+    detail: 'Calls customers made to us, filed under this campaign, that an agent answered, of those that arrived in open hours. Not part of any connect rate.',
+    caveat: null,
+    denominator: { lead: formatCount(answered), rest: `answered, of ${plural(openHours, 'call')} in open hours · ${tally}` },
+    scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
+    known: true,
+  };
 }
 
 /**

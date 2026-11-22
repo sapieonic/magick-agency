@@ -3,8 +3,8 @@
   "placeholders": {
     "campaign": "00000000-0000-4000-8000-0000000000c1",
     "agent": "00000000-0000-4000-8000-0000000000a0",
-    "from": "2026-11-04T14:30:00.000Z",
-    "to": "2026-11-04T18:45:00.000Z"
+    "from": "2026-11-22T11:15:00.000Z",
+    "to": "2026-11-22T15:30:00.000Z"
   },
   "summary": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -14,15 +14,21 @@
       "id": "00000000-0000-4000-8000-000000000005",
       "name": "Load Account 0"
     },
-    "created_at": "2026-11-04T12:30:00.000Z",
+    "created_at": "2026-11-22T09:15:00.000Z",
     "created_by": null,
-    "started_at": "2026-11-04T13:30:00.000Z",
+    "started_at": "2026-11-22T10:15:00.000Z",
     "ended_at": null,
     "transitions": [
       {
         "to_status": "paused",
-        "at": "2026-11-04T15:40:00.000Z",
+        "at": "2026-11-22T12:25:00.000Z",
         "reason": "abandonment_ceiling",
+        "actor": null
+      },
+      {
+        "to_status": "paused",
+        "at": "2026-11-22T12:30:00.000Z",
+        "reason": "carrier_auth",
         "actor": null
       }
     ],
@@ -129,68 +135,18 @@
         }
       ]
     },
-    "generated_at": "2026-11-04T18:30:24.385Z"
+    "generated_at": "2026-11-22T15:18:07.017Z"
   },
   "allocation": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "assignment_mode": "strict",
     "agents": [
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a2",
-        "agent_name": "agent 0.2",
-        "staffed": true,
-        "state": "offline",
-        "last_seen_at": "2026-11-04T18:30:24.232Z",
-        "allocated": 0,
-        "attempted": 0,
-        "not_attempted": 0,
-        "due_now": 0,
-        "waiting_retry": 0,
-        "callbacks_due_today": 0,
-        "callbacks_overdue": 0,
-        "reached": 0,
-        "successes": 0,
-        "not_reached": 0,
-        "exhausted": 0,
-        "dnc": 0,
-        "redials": 0,
-        "retries_reopened": 3,
-        "retries_manual": 1,
-        "overrides_used": 1,
-        "last_activity_at": "2026-11-04T16:14:34.000Z",
-        "due_while_absent": 0
-      },
-      {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
-        "agent_name": "agent 0.0",
-        "staffed": true,
-        "state": "offline",
-        "last_seen_at": "2026-11-04T17:50:00.000Z",
-        "allocated": 26,
-        "attempted": 16,
-        "not_attempted": 10,
-        "due_now": 5,
-        "waiting_retry": 2,
-        "callbacks_due_today": 2,
-        "callbacks_overdue": 0,
-        "reached": 2,
-        "successes": 2,
-        "not_reached": 0,
-        "exhausted": 2,
-        "dnc": 2,
-        "redials": 1,
-        "retries_reopened": 6,
-        "retries_manual": 9,
-        "overrides_used": 3,
-        "last_activity_at": "2026-11-04T16:50:46.000Z",
-        "due_while_absent": 5
-      },
-      {
         "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
         "agent_name": "agent 0.1",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T18:30:24.225Z",
+        "last_seen_at": "2026-11-22T15:18:06.793Z",
         "allocated": 24,
         "attempted": 16,
         "not_attempted": 8,
@@ -207,7 +163,57 @@
         "retries_reopened": 6,
         "retries_manual": 8,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T17:28:18.000Z",
+        "last_activity_at": "2026-11-22T14:13:18.000Z",
+        "due_while_absent": 0
+      },
+      {
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+        "agent_name": "agent 0.0",
+        "staffed": true,
+        "state": "offline",
+        "last_seen_at": "2026-11-22T14:35:00.000Z",
+        "allocated": 26,
+        "attempted": 16,
+        "not_attempted": 10,
+        "due_now": 5,
+        "waiting_retry": 2,
+        "callbacks_due_today": 2,
+        "callbacks_overdue": 0,
+        "reached": 2,
+        "successes": 2,
+        "not_reached": 0,
+        "exhausted": 2,
+        "dnc": 2,
+        "redials": 1,
+        "retries_reopened": 6,
+        "retries_manual": 9,
+        "overrides_used": 3,
+        "last_activity_at": "2026-11-22T13:35:46.000Z",
+        "due_while_absent": 5
+      },
+      {
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a2",
+        "agent_name": "agent 0.2",
+        "staffed": true,
+        "state": "offline",
+        "last_seen_at": "2026-11-22T15:18:06.799Z",
+        "allocated": 0,
+        "attempted": 0,
+        "not_attempted": 0,
+        "due_now": 0,
+        "waiting_retry": 0,
+        "callbacks_due_today": 0,
+        "callbacks_overdue": 0,
+        "reached": 0,
+        "successes": 0,
+        "not_reached": 0,
+        "exhausted": 0,
+        "dnc": 0,
+        "redials": 0,
+        "retries_reopened": 3,
+        "retries_manual": 1,
+        "overrides_used": 1,
+        "last_activity_at": "2026-11-22T12:59:34.000Z",
         "due_while_absent": 0
       }
     ],
@@ -228,7 +234,7 @@
       "retries_reopened": 0,
       "retries_manual": 3,
       "overrides_used": 1,
-      "last_activity_at": "2026-11-04T16:05:31.000Z"
+      "last_activity_at": "2026-11-22T12:50:31.000Z"
     },
     "totals": {
       "allocated": 62,
@@ -247,7 +253,7 @@
       "retries_reopened": 15,
       "retries_manual": 21,
       "overrides_used": 8,
-      "last_activity_at": "2026-11-04T17:28:18.000Z"
+      "last_activity_at": "2026-11-22T14:13:18.000Z"
     },
     "imbalance": {
       "high": [
@@ -265,7 +271,7 @@
         {
           "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "due": 5,
-          "away_since": "2026-11-04T17:50:00.000Z",
+          "away_since": "2026-11-22T14:35:00.000Z",
           "staffed": true
         }
       ],
@@ -287,13 +293,13 @@
         "ok": true
       }
     ],
-    "generated_at": "2026-11-04T18:30:24.456Z"
+    "generated_at": "2026-11-22T15:18:07.127Z"
   },
   "activity": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T14:30:00.000Z",
-      "to": "2026-11-04T18:45:00.000Z",
+      "from": "2026-11-22T11:15:00.000Z",
+      "to": "2026-11-22T15:30:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -329,11 +335,20 @@
         "manual_dials": 20,
         "manual_connected": 4
       },
-      "softphone_calls": 1,
+      "softphone_calls": 2,
       "softphone": {
-        "placed": 1,
-        "connected": 0,
-        "human_connects": 0
+        "placed": 2,
+        "connected": 1,
+        "human_connects": 1,
+        "talk_seconds": 20
+      },
+      "inbound": {
+        "received": 0,
+        "answered": 0,
+        "missed": 0,
+        "open_follow_ups": 0,
+        "talk_seconds": 0,
+        "open_hours": 0
       },
       "talk_seconds": 2310.4,
       "wrapup_seconds": 540,
@@ -359,6 +374,35 @@
         "count": 4
       }
     ],
+    "outcomes_by_type": [
+      {
+        "code": "interested",
+        "label": "Interested",
+        "is_success": true,
+        "dialler": 12,
+        "soft_phone": 1,
+        "inbound": 0,
+        "total": 13
+      },
+      {
+        "code": "not_interested",
+        "label": "Not interested",
+        "is_success": false,
+        "dialler": 6,
+        "soft_phone": 0,
+        "inbound": 0,
+        "total": 6
+      },
+      {
+        "code": "callback",
+        "label": "Call back",
+        "is_success": false,
+        "dialler": 4,
+        "soft_phone": 0,
+        "inbound": 0,
+        "total": 4
+      }
+    ],
     "callbacks": {
       "booked": 4,
       "open_due_today": 5,
@@ -370,12 +414,12 @@
       "pending_due": 3,
       "by_owner": [
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
           "open": 1,
           "overdue": 1
         },
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "open": 1,
           "overdue": 1
         },
@@ -535,15 +579,15 @@
         "ok": true
       }
     ],
-    "as_of": "2026-11-04T18:30:24.245Z",
+    "as_of": "2026-11-22T15:18:06.813Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T18:30:24.477Z"
+    "generated_at": "2026-11-22T15:18:07.167Z"
   },
   "trends": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T14:30:00.000Z",
-      "to": "2026-11-04T18:45:00.000Z",
+      "from": "2026-11-22T11:15:00.000Z",
+      "to": "2026-11-22T15:30:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -551,43 +595,55 @@
     "bucket": "hour",
     "buckets": [
       {
-        "bucket_start": "2026-11-04T14:30:00.000Z",
-        "dials": 30,
-        "first_dials": 29,
-        "human_connects": 9,
-        "connected": 10,
-        "conversations": 9,
-        "successes": 4,
-        "abandoned": 4,
-        "answered": 15,
+        "bucket_start": "2026-11-22T10:30:00.000Z",
+        "dials": 7,
+        "first_dials": 7,
+        "human_connects": 3,
+        "connected": 3,
+        "conversations": 3,
+        "successes": 0,
+        "abandoned": 1,
+        "answered": 4,
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T15:30:00.000Z",
-        "dials": 26,
-        "first_dials": 23,
-        "human_connects": 7,
-        "connected": 6,
-        "conversations": 7,
-        "successes": 3,
-        "abandoned": 5,
-        "answered": 14,
-        "agents_online_peak": 3
-      },
-      {
-        "bucket_start": "2026-11-04T16:30:00.000Z",
+        "bucket_start": "2026-11-22T11:30:00.000Z",
         "dials": 26,
         "first_dials": 24,
-        "human_connects": 6,
-        "connected": 6,
-        "conversations": 6,
+        "human_connects": 7,
+        "connected": 7,
+        "conversations": 7,
         "successes": 5,
         "abandoned": 4,
-        "answered": 12,
+        "answered": 13,
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T17:30:00.000Z",
+        "bucket_start": "2026-11-22T12:30:00.000Z",
+        "dials": 30,
+        "first_dials": 28,
+        "human_connects": 8,
+        "connected": 8,
+        "conversations": 8,
+        "successes": 4,
+        "abandoned": 6,
+        "answered": 16,
+        "agents_online_peak": 3
+      },
+      {
+        "bucket_start": "2026-11-22T13:30:00.000Z",
+        "dials": 19,
+        "first_dials": 17,
+        "human_connects": 4,
+        "connected": 4,
+        "conversations": 4,
+        "successes": 3,
+        "abandoned": 2,
+        "answered": 8,
+        "agents_online_peak": 3
+      },
+      {
+        "bucket_start": "2026-11-22T14:30:00.000Z",
         "dials": 0,
         "first_dials": 0,
         "human_connects": 0,
@@ -597,18 +653,6 @@
         "abandoned": 0,
         "answered": 0,
         "agents_online_peak": 3
-      },
-      {
-        "bucket_start": "2026-11-04T18:30:00.000Z",
-        "dials": 0,
-        "first_dials": 0,
-        "human_connects": 0,
-        "connected": 0,
-        "conversations": 0,
-        "successes": 0,
-        "abandoned": 0,
-        "answered": 0,
-        "agents_online_peak": 0
       }
     ],
     "best_hours": [
@@ -726,52 +770,52 @@
       },
       {
         "hour": 16,
-        "dials": 0,
-        "first_dials": 0,
-        "human_connects": 0,
-        "connected": 0
+        "dials": 7,
+        "first_dials": 7,
+        "human_connects": 3,
+        "connected": 3
       },
       {
         "hour": 17,
-        "dials": 0,
-        "first_dials": 0,
-        "human_connects": 0,
-        "connected": 0
+        "dials": 26,
+        "first_dials": 24,
+        "human_connects": 7,
+        "connected": 7
       },
       {
         "hour": 18,
-        "dials": 0,
-        "first_dials": 0,
-        "human_connects": 0,
-        "connected": 0
+        "dials": 30,
+        "first_dials": 28,
+        "human_connects": 8,
+        "connected": 8
       },
       {
         "hour": 19,
+        "dials": 19,
+        "first_dials": 17,
+        "human_connects": 4,
+        "connected": 4
+      },
+      {
+        "hour": 20,
         "dials": 0,
         "first_dials": 0,
         "human_connects": 0,
         "connected": 0
       },
       {
-        "hour": 20,
-        "dials": 30,
-        "first_dials": 29,
-        "human_connects": 9,
-        "connected": 10
-      },
-      {
         "hour": 21,
-        "dials": 26,
-        "first_dials": 23,
-        "human_connects": 7,
-        "connected": 6
+        "dials": 0,
+        "first_dials": 0,
+        "human_connects": 0,
+        "connected": 0
       },
       {
         "hour": 22,
-        "dials": 26,
-        "first_dials": 24,
-        "human_connects": 6,
-        "connected": 6
+        "dials": 0,
+        "first_dials": 0,
+        "human_connects": 0,
+        "connected": 0
       },
       {
         "hour": 23,
@@ -781,15 +825,15 @@
         "connected": 0
       }
     ],
-    "as_of": "2026-11-04T18:30:24.245Z",
+    "as_of": "2026-11-22T15:18:06.813Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T18:30:24.498Z"
+    "generated_at": "2026-11-22T15:18:07.203Z"
   },
   "health": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T14:30:00.000Z",
-      "to": "2026-11-04T18:45:00.000Z",
+      "from": "2026-11-22T11:15:00.000Z",
+      "to": "2026-11-22T15:30:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -802,7 +846,7 @@
       "ceiling_pct": 3,
       "auto_pauses": [
         {
-          "at": "2026-11-04T15:40:00.000Z",
+          "at": "2026-11-22T12:25:00.000Z",
           "measured_pct": 3.4,
           "ceiling_pct": 3
         }
@@ -851,8 +895,8 @@
       "episodes": [
         {
           "reason": "no_agents",
-          "started_at": "2026-11-04T16:10:00.000Z",
-          "ended_at": "2026-11-04T16:13:00.000Z",
+          "started_at": "2026-11-22T12:55:00.000Z",
+          "ended_at": "2026-11-22T12:58:00.000Z",
           "minutes": 3
         }
       ],
@@ -863,9 +907,9 @@
       "recorded": 0
     },
     "analysis": null,
-    "pacing_history_since": "2026-11-04T15:20:00.000Z",
-    "as_of": "2026-11-04T18:30:24.245Z",
+    "pacing_history_since": "2026-11-22T12:05:00.000Z",
+    "as_of": "2026-11-22T15:18:06.813Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T18:30:24.532Z"
+    "generated_at": "2026-11-22T15:18:07.249Z"
   }
 }

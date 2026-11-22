@@ -66,6 +66,46 @@ export function inboundMissedOpenSql(alias: string): string {
 }
 
 /**
+ * What an inbound call must be to be one of a campaign's calls (`docs/call-log.md` §4, CL16),
+ * beside being filed under it (`campaign_id`) in its tenant: ENDED (a live call has no outcome;
+ * Live calls has it) and SERVED (never `rejected`, turned away at the answer). Two terms, each
+ * its own: a live call's NULL outcome must not be let in by how a NULL compares. One spelling for
+ * the campaign Call log's rows and counts (`inboundLogConditions`) and the campaign's inbound
+ * figures (`inbound-campaign-sql.ts`: Insights, `/stats`, the report), so a figure and the list
+ * it counts cannot disagree about what a row is.
+ */
+export function inboundCampaignRowConditions(alias: string): string[] {
+  return [`${alias}.state = 'ended'`, `${alias}.outcome IS DISTINCT FROM 'rejected'`];
+}
+
+/** An inbound call an agent answered: the Call log's "Connected" on an inbound row, and the figures' `answered`. */
+export function inboundAnsweredSql(alias: string): string {
+  return `${alias}.outcome = 'answered'`;
+}
+
+/**
+ * An inbound call that reached nobody and left a Missed row, open or handled since: the Call
+ * log's "Missed" filter and the figures' `missed`. {@link inboundMissedOpenSql} is the open ones.
+ */
+export function inboundMissedSql(alias: string): string {
+  return `${alias}.follow_up_status IS NOT NULL`;
+}
+
+/** Answered with the closed message, whatever the cause (the call's outcome, or its voicemail's reason; docs/inbound.md §11). */
+export function inboundClosedSql(alias: string): string {
+  return `(${alias}.outcome = 'closed' OR (${alias}.outcome = 'voicemail' AND ${alias}.follow_up_reason = 'closed'))`;
+}
+
+/**
+ * A caller who rang while the line was open and was not refused at the answer: the inbound
+ * summary's "open-hours calls" (docs/inbound.md §11), the denominator of the answer rate there
+ * and on a campaign's Calls by type.
+ */
+export function inboundOpenHoursSql(alias: string): string {
+  return `(NOT ${inboundClosedSql(alias)} AND ${alias}.outcome <> 'rejected')`;
+}
+
+/**
  * {@link CONTACT_PHONE_DIGITS_SQL} on the CALLER's number (`from_e164`) of the inbound call at
  * table alias `alias`: the key expression of `idx_agency_inbound_calls_live_from_digits`
  * (`0027_inbound_connect.sql`), byte for byte with the column swapped. `from_e164` is stored

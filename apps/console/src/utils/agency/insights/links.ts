@@ -122,6 +122,15 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   return withQuery(`${campaignBase(campaignId)}/attempts`, params);
 }
 
+/**
+ * The campaign Call log's **To follow up** view: its missed calls still owed a call back. No
+ * dates: that view ignores them (CL14), and so does the figure that links here
+ * (`calls.inbound.open_follow_ups`), so the list's count is the number clicked.
+ */
+export function toFollowUpLink(campaignId: string): string {
+  return `${campaignBase(campaignId)}/attempts?type=to_follow_up`;
+}
+
 /** The campaign's Agents tab. */
 export function agentsLink(campaignId: string): string {
   return `${campaignBase(campaignId)}/agents`;

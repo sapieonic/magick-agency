@@ -25,6 +25,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 
 import { RosterSection } from '../../pages/agency/campaign-detail/insights/RosterSection';
+import { OverviewCallsByType } from '../../pages/agency/campaign-detail/insights/CallsByType';
 import { OverviewKpis } from '../../pages/agency/campaign-detail/insights/OverviewSection';
 import { reconciliationLabel } from '../../pages/agency/campaign-detail/insights/InsightsParts';
 import { AllocationSection } from '../../pages/agency/campaign-detail/insights/AllocationSection';
@@ -73,6 +74,23 @@ function subLine(testId: string): string {
   const sub = screen.getByTestId(testId).querySelector('[data-part="sub"]');
   expect(sub).not.toBeNull();
   return sub?.textContent ?? '';
+}
+
+const BY_TYPE_ROWS = { calls: 'Calls', connected: 'Connected', reached: 'Reached a person', talk: 'Talk time', missed: 'Missed by us', rate: 'Rate' } as const;
+
+/** The Calls by type table's column headers, in order. */
+function columnHeaders(): string[] {
+  return [...screen.getByTestId('calls-by-type-table').querySelectorAll('thead th')].map((th) => th.textContent ?? '');
+}
+
+/** One cell of the Calls by type table: the row by its figure, the column by its header. */
+function cell(row: keyof typeof BY_TYPE_ROWS, column: string): string {
+  const table = screen.getByTestId('calls-by-type-table');
+  const at = columnHeaders().indexOf(column);
+  expect(at, `no ${column} column`).toBeGreaterThan(0);
+  const line = [...table.querySelectorAll('tbody tr')].find((tr) => tr.children[0]?.textContent === BY_TYPE_ROWS[row]);
+  expect(line, `no ${BY_TYPE_ROWS[row]} row`).toBeDefined();
+  return line?.children[at]?.textContent ?? '';
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -207,62 +225,192 @@ describe('calls and outcomes', () => {
     expect(screen.getByRole('tooltip').textContent).toContain('not this number over dials');
     expect(screen.getByTestId('kpi-redials').textContent).toContain('29 connected · 3 hit the limit · 1 refused at the limit');
     expect(screen.getByTestId('kpi-aht').textContent).toContain('3m 41s');
-    expect(screen.getByTestId('kpi-softphone').textContent).toContain('7');
+    // 7 soft-phone calls in range: their column of Calls by type, with the soft phone off.
+    expect(cell('calls', 'Soft phone')).toBe('7 dialled');
   });
 
   describe('the soft phone beside the dialler (SR1, SR5)', () => {
-    type Soft = { placed: number; connected: number; human_connects: number };
+    type Soft = { placed: number; connected: number; human_connects: number; talk_seconds: number };
     const withSoft = (softphone: Soft) => {
       const a = activity();
       return { ...a, calls: { ...a.calls, softphone, softphone_calls: softphone.placed } };
     };
 
-    it('shows the soft phone\'s placed, connected and rate, and All calls, never moving the dialler\'s rate', () => {
-      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 40, connected: 30, human_connects: 20 })} />);
+    it('shows the soft phone\'s column and All calls, never moving the dialler\'s rate', () => {
+      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 40, connected: 30, human_connects: 20, talk_seconds: 3600 })} />);
       // The dialler's: 360 human connects over 1,240 dials − 41 redials, whatever the soft phone did.
       expect(subLine('kpi-connected')).toBe('Dialler connect rate 30% · 360 people answered, of 1,199 first dials placed');
-      const soft = screen.getByTestId('kpi-softphone').textContent;
-      expect(soft).toContain('40');
-      expect(soft).toContain('30 connected');
-      expect(soft).toContain('connect rate 50%');
-      expect(soft).toContain('not in the dialler’s figures');
-      // All calls: 1,240 + 40 placed; 400 + 30 connected; (360 + 20) / (1,199 + 40) = 30.7%.
-      const all = screen.getByTestId('kpi-all-calls').textContent;
-      expect(all).toContain('1,280');
-      expect(all).toContain('430 connected');
-      expect(all).toContain('connect rate 30.7%');
+      expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Soft phone', 'All calls']);
+      expect(cell('calls', 'Dialler')).toBe('1,240 dialled');
+      expect(cell('calls', 'Soft phone')).toBe('40 dialled');
+      expect(cell('connected', 'Soft phone')).toBe('30');
+      expect(cell('reached', 'Soft phone')).toBe('20');
+      expect(cell('talk', 'Soft phone')).toBe('1h');
+      expect(cell('rate', 'Dialler')).toBe('30%Dialler connect rate');
+      expect(cell('rate', 'Soft phone')).toBe('50%Soft-phone connect rate');
+      // All calls adds the counts: 1,240 + 40; 400 + 30; 360 + 20. Never a rate.
+      expect(cell('calls', 'All calls')).toBe('1,280');
+      expect(cell('connected', 'All calls')).toBe('430');
+      expect(cell('reached', 'All calls')).toBe('380');
+      expect(cell('rate', 'All calls')).toBe('not added');
+      // The dialler and the soft phone together are the Outbound connect rate: (360 + 20) / (1,199 + 40) = 30.7%.
+      const outbound = screen.getByTestId('outbound-connect-rate').textContent;
+      expect(outbound).toContain('Outbound connect rate 30.7%');
+      expect(outbound).toContain('380 people answered of 1,239 first dials and soft-phone calls');
+      expect(screen.getByTestId('insights-calls').textContent).not.toMatch(/all calls connect rate/i);
+      expect(screen.getByTestId('calls-by-type-note').textContent).toBe(
+        'All calls adds the two types. Each call is counted once, under the type it was. Rates are not added together: '
+        + 'the dialler’s measures the list and the pacing and the soft phone’s the numbers agents chose.',
+      );
+      // No inbound call, inbound off: no Inbound column and no Missed by us row.
+      expect(screen.queryByTestId('calls-by-type-follow-ups')).toBeNull();
     });
 
     it('withholds the soft phone\'s rate below 25 calls placed, as every rate on the page', () => {
-      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 7, connected: 4, human_connects: 3 })} />);
-      expect(screen.getByTestId('kpi-softphone').textContent).toContain('connect rate Not enough calls yet');
+      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 7, connected: 4, human_connects: 3, talk_seconds: 0 })} />);
+      expect(cell('rate', 'Soft phone')).toBe('Not enough calls yetSoft-phone connect rate');
     });
 
-    it('with the soft phone off and none in range: no soft-phone figures, and the rate is just the connect rate', () => {
-      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} />);
-      expect(screen.queryByTestId('kpi-softphone')).toBeNull();
-      expect(screen.queryByTestId('kpi-all-calls')).toBeNull();
+    it('with the soft phone off and none in range: no table, and the rate is just the connect rate', () => {
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 })} />);
+      expect(screen.queryByTestId('calls-by-type')).toBeNull();
+      expect(screen.queryByTestId('outcomes-by-type')).toBeNull();
+      expect(screen.queryByTestId('outbound-connect-rate')).toBeNull();
       expect(subLine('kpi-connected')).toBe('Connect rate 30% · 360 people answered, of 1,199 first dials placed');
       expect(subLine('kpi-connected')).not.toContain('Dialler');
     });
 
     it('with the soft phone on and none in range: the figures, at zero', () => {
-      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} />);
-      expect(screen.getByTestId('kpi-softphone').textContent).toContain('connect rate —');
-      expect(screen.getByTestId('kpi-all-calls').textContent).toContain('1,240');
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 })} />);
+      expect(cell('rate', 'Soft phone')).toBe('—Soft-phone connect rate');
+      expect(cell('calls', 'All calls')).toBe('1,240');
     });
 
     it('with the soft phone off, calls already logged in range still show', () => {
-      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 2, connected: 1, human_connects: 1 })} />);
-      expect(screen.getByTestId('kpi-softphone').textContent).toContain('2');
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 2, connected: 1, human_connects: 1, talk_seconds: 60 })} />);
+      expect(cell('calls', 'Soft phone')).toBe('2 dialled');
     });
 
     it('from a server that predates the counts: no soft-phone figures', () => {
       const a = activity();
       const { softphone: _gone, ...older } = a.calls;
       show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={{ ...a, calls: older as typeof a.calls }} />);
-      expect(screen.queryByTestId('kpi-softphone')).toBeNull();
+      expect(screen.queryByTestId('calls-by-type')).toBeNull();
       expect(subLine('kpi-connected')).toBe('Connect rate 30% · 360 people answered, of 1,199 first dials placed');
+    });
+  });
+
+  describe('inbound calls beside both, and Calls by type (call log P4, CL7)', () => {
+    const inboundCounts = { received: 57, answered: 44, missed: 13, open_follow_ups: 6, talk_seconds: 10_500, open_hours: 53 };
+    const withTypes = (over: { softphone?: { placed: number; connected: number; human_connects: number; talk_seconds: number }; inbound?: typeof inboundCounts } = {}) => {
+      const a = activity();
+      const softphone = over.softphone ?? { placed: 40, connected: 30, human_connects: 20, talk_seconds: 3600 };
+      return {
+        ...a,
+        calls: { ...a.calls, softphone, softphone_calls: softphone.placed, inbound: over.inbound ?? inboundCounts },
+        outcomes_by_type: [
+          { code: 'ptp', label: 'Promise to pay', is_success: true, dialler: 150, soft_phone: 14, inbound: 21, total: 185 },
+          { code: 'callback', label: 'Call back', is_success: false, dialler: 60, soft_phone: 17, inbound: 8, total: 85 },
+          { code: null, label: null, is_success: false, dialler: 20, soft_phone: 0, inbound: 15, total: 35 },
+        ],
+      };
+    };
+
+    it('draws a column per type and All calls: counts add up, rates never do', () => {
+      show(<CallsSection ctx={ctx} activity={withTypes()} />);
+      expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Soft phone', 'Inbound', 'All calls']);
+      expect(cell('calls', 'Inbound')).toBe('57 received');
+      expect(cell('connected', 'Inbound')).toBe('44 answered');
+      // A caller an agent answered is a person reached.
+      expect(cell('reached', 'Inbound')).toBe('44');
+      expect(cell('talk', 'Inbound')).toBe('2h 55m');
+      // One call, one type: 1,240 + 40 + 57; 400 + 30 + 44; 360 + 20 + 44.
+      expect(cell('calls', 'All calls')).toBe('1,337');
+      expect(cell('connected', 'All calls')).toBe('474');
+      expect(cell('reached', 'All calls')).toBe('424');
+      // Only inbound has calls we missed.
+      expect(cell('missed', 'Dialler')).toBe('—');
+      expect(cell('missed', 'Soft phone')).toBe('—');
+      expect(cell('missed', 'Inbound')).toBe('13 (6 to follow up)');
+      expect(cell('missed', 'All calls')).toBe('13');
+      // 44 answered of the 53 that arrived in open hours, not of the 57 received.
+      expect(cell('rate', 'Inbound')).toBe('83%Answer rate, open hours');
+      expect(cell('rate', 'All calls')).toBe('not added');
+      expect(screen.getByTestId('calls-by-type-note').textContent).toContain(
+        'All calls adds the three types. Each call is counted once, under the type it was. Rates are not added together: '
+        + 'the dialler’s measures the list and the pacing, the soft phone’s the numbers agents chose, and inbound’s how many callers we answered.',
+      );
+    });
+
+    it('keeps inbound out of every connect rate (CL7)', () => {
+      show(<CallsSection ctx={ctx} activity={withTypes()} />);
+      // The dialler's rate and the Outbound rate are what they are with no inbound call at all.
+      expect(subLine('kpi-connected')).toBe('Dialler connect rate 30% · 360 people answered, of 1,199 first dials placed');
+      expect(cell('rate', 'Dialler')).toBe('30%Dialler connect rate');
+      const outbound = screen.getByTestId('outbound-connect-rate').textContent;
+      expect(outbound).toContain('Outbound connect rate 30.7%');
+      expect(outbound).toContain('380 people answered of 1,239 first dials and soft-phone calls');
+      expect(outbound).toContain('Inbound calls are not in it.');
+    });
+
+    it('links the calls still to follow up to the Call log\'s To follow up view, with no dates', () => {
+      show(<CallsSection ctx={ctx} activity={withTypes()} />);
+      const link = within(screen.getByTestId('calls-by-type-follow-ups')).getByRole('link');
+      expect(link.getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts?type=to_follow_up');
+      expect(screen.getByTestId('calls-by-type-note').textContent).toContain('whatever the dates');
+    });
+
+    it('shows the Inbound column while inbound is on or the range holds an inbound call, and not otherwise (SR5\'s rule)', () => {
+      const none = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 };
+      // Off, none in range: no Inbound column.
+      const off = show(<CallsSection ctx={{ ...ctx, inboundEnabled: false }} activity={withTypes({ inbound: none })} />);
+      expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Soft phone', 'All calls']);
+      off.unmount();
+      // On, none in range: the column, at zero, its rate a dash.
+      const on = show(<CallsSection ctx={{ ...ctx, inboundEnabled: true }} activity={withTypes({ inbound: none })} />);
+      expect(columnHeaders()).toContain('Inbound');
+      expect(cell('rate', 'Inbound')).toBe('—Answer rate, open hours');
+      expect(cell('missed', 'Inbound')).toBe('0 (0 to follow up)');
+      on.unmount();
+      // Off since, calls already filed in range: they still show.
+      show(<CallsSection ctx={{ ...ctx, inboundEnabled: false }} activity={withTypes({ inbound: { ...none, received: 1, missed: 1, open_hours: 1 } })} />);
+      expect(cell('calls', 'Inbound')).toBe('1 received');
+      expect(cell('rate', 'Inbound')).toBe('Not enough calls yetAnswer rate, open hours');
+    });
+
+    it('shows inbound with the soft phone off and unused: two types, and no Outbound rate', () => {
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withTypes({ softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } })} />);
+      expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Inbound', 'All calls']);
+      expect(screen.queryByTestId('outbound-connect-rate')).toBeNull();
+      expect(subLine('kpi-connected')).toContain('Dialler connect rate');
+      expect(screen.getByTestId('calls-by-type-note').textContent).toContain('All calls adds the two types.');
+    });
+
+    it('lists the outcomes by type, the types shown only, largest total first', () => {
+      show(<CallsSection ctx={ctx} activity={withTypes()} />);
+      const table = screen.getByTestId('outcomes-by-type-table');
+      expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['Outcome', 'Dialler', 'Soft phone', 'Inbound', 'Total']);
+      const rows = [...table.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((td) => td.textContent));
+      expect(rows).toEqual([
+        ['Promise to pay · Success', '150', '14', '21', '185'],
+        ['Call back', '60', '17', '8', '85'],
+        ['Closed with no outcome', '20', '0', '15', '35'],
+      ]);
+    });
+
+    it('adds only the columns it prints: with inbound not shown, an outcome\'s Total leaves inbound out', () => {
+      const none = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 };
+      const a = withTypes({ inbound: none });
+      show(<CallsSection ctx={ctx} activity={a} />);
+      const rows = [...screen.getByTestId('outcomes-by-type-table').querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((td) => td.textContent));
+      expect(rows[0]).toEqual(['Promise to pay · Success', '150', '14', '164']);
+    });
+
+    it('from a server that predates the inbound counts: no Inbound column', () => {
+      const a = withTypes();
+      const { inbound: _gone, ...older } = a.calls;
+      show(<CallsSection ctx={{ ...ctx, inboundEnabled: true }} activity={{ ...a, calls: older as typeof a.calls }} />);
+      expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Soft phone', 'All calls']);
     });
   });
 
@@ -627,26 +775,58 @@ describe('upload history', () => {
 
 describe('the Overview\'s connect rate beside the soft phone (SR1, SR5)', () => {
   const none = { activity: null, health: null, allocation: null };
-  const withSoft = (softphone: { placed: number; connected: number; human_connects: number }) => {
+  const withSoft = (softphone: { placed: number; connected: number; human_connects: number; talk_seconds: number }) => {
     const a = activity();
     return { ...a, calls: { ...a.calls, softphone, softphone_calls: softphone.placed } };
   };
 
-  it('names the dialler\'s rate and adds the soft phone\'s and all calls\' when the range holds soft-phone calls', () => {
-    show(<OverviewKpis ctx={ctx} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 40, connected: 30, human_connects: 20 })} health={health()} unavailable={none} />);
+  it('names the dialler\'s rate and adds the soft phone\'s and the outbound rate when the range holds soft-phone calls', () => {
+    show(<OverviewKpis ctx={ctx} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 40, connected: 30, human_connects: 20, talk_seconds: 3600 })} health={health()} unavailable={none} />);
     const kpi = screen.getByTestId('overview-kpi-connect').textContent;
     expect(kpi).toContain('Dialler connect rate · Today');
     expect(kpi).toContain('30%');
     // The rate's own fraction, not the 400 Connected calls: 360 of 1,240 − 41 first dials.
     expect(subLine('overview-kpi-connect')).toContain('360 people answered, of 1,199 first dials placed');
     expect(kpi).toContain('soft phone 50%');
-    expect(kpi).toContain('all calls 30.7%');
+    expect(kpi).toContain('outbound 30.7%');
+    expect(kpi).not.toMatch(/all calls/i);
   });
 
   it('is just the connect rate with the soft phone off and none in range', () => {
-    show(<OverviewKpis ctx={{ ...ctx, softphoneEnabled: false }} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} health={health()} unavailable={none} />);
+    show(<OverviewKpis ctx={{ ...ctx, softphoneEnabled: false }} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 })} health={health()} unavailable={none} />);
     const kpi = screen.getByTestId('overview-kpi-connect').textContent;
     expect(kpi).toContain('Connect rate · Today');
     expect(kpi).not.toContain('soft phone');
+  });
+});
+
+describe('the Overview\'s Calls by type panel (call log P4)', () => {
+  const inbound = { received: 57, answered: 44, missed: 13, open_follow_ups: 6, talk_seconds: 10_500, open_hours: 53 };
+
+  it('draws the table once a second type shows, and the answer rate beside the dialler\'s', () => {
+    const a = activity();
+    const withInbound = { ...a, calls: { ...a.calls, inbound } };
+    show(
+      <>
+        <OverviewKpis ctx={ctx} summary={summary()} allocation={allocation()} activity={withInbound} health={health()} unavailable={{ activity: null, health: null, allocation: null }} />
+        <OverviewCallsByType campaignId="camp-1" rangeLabel="Today" activity={withInbound} />
+      </>,
+    );
+    expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Soft phone', 'Inbound', 'All calls']);
+    expect(cell('calls', 'All calls')).toBe('1,304');
+    const kpi = screen.getByTestId('overview-kpi-connect').textContent;
+    expect(kpi).toContain('Dialler connect rate · Today');
+    expect(kpi).toContain('inbound answered 83%');
+    // Never an "all calls" rate.
+    expect(kpi).not.toMatch(/all calls/i);
+  });
+
+  it('draws nothing for the dialler alone, or while the activity is loading', () => {
+    const a = activity();
+    const diallerOnly = { ...a, calls: { ...a.calls, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 }, softphone_calls: 0 } };
+    const { container, rerender } = show(<OverviewCallsByType campaignId="camp-1" rangeLabel="Today" activity={diallerOnly} />);
+    expect(container.textContent).toBe('');
+    rerender(<MemoryRouter><OverviewCallsByType campaignId="camp-1" rangeLabel="Today" activity={null} softphoneEnabled inboundEnabled /></MemoryRouter>);
+    expect(container.textContent).toBe('');
   });
 });

@@ -1,12 +1,14 @@
 import { AlertTriangle, ChartNoAxesCombined } from 'lucide-react';
 import {
-  allCallsConnectRateReadout,
+  outboundConnectRateReadout,
   connectRateReadout,
   connectsBreakdown,
   conversionRateReadout,
   handleTimeReadout,
   handledCallCost,
   segmentShareText,
+  inboundAnswerRateReadout,
+  showsInbound,
   showsSoftphone,
   softphoneConnectRateReadout,
   wrapupReadout,
@@ -14,6 +16,7 @@ import {
   type PerformanceReadout,
 } from '../../utils/agencyCampaignPerformance';
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
+import { AGENCY_CALLS_BY_TYPE_RATE_LABELS, AGENCY_OUTBOUND_CONNECT_RATE_LABEL } from '../../types/agency-call-log';
 import { formatCount, plural } from '../../utils/format/number';
 import styles from './CampaignPerformance.module.css';
 
@@ -78,10 +81,15 @@ export interface CampaignPerformanceProps {
    */
   wrapupSeconds?: number | null;
   /**
-   * The soft phone's flag for the account. The soft phone's and the all-calls cards show while
+   * The soft phone's flag for the account. The soft phone's and the outbound cards show while
    * it is on, or when the campaign holds tagged soft-phone calls whatever it says (SR5).
    */
   softphoneEnabled?: boolean;
+  /**
+   * Inbound's flag for the account. The inbound card shows while it is on, or when the campaign
+   * holds inbound calls filed under it whatever it says (SR5's rule).
+   */
+  inboundEnabled?: boolean;
 }
 
 /** The bar colour for each bucket of the split — one colour per key, everywhere. */
@@ -197,10 +205,12 @@ function Readout({
   );
 }
 
-export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = false }: CampaignPerformanceProps) {
+export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = false, inboundEnabled = false }: CampaignPerformanceProps) {
   const connectRate = connectRateReadout(stats);
   // The soft phone's tagged calls beside the dialler's rate, never in it (SR1, SR5).
   const soft = showsSoftphone(stats, softphoneEnabled);
+  // The inbound calls filed under it, beside both and in no connect rate (CL7).
+  const inbound = showsInbound(stats, inboundEnabled);
   const conversionRate = conversionRateReadout(stats);
   const handleTime = handleTimeReadout(stats);
   const wrapup = wrapupReadout(stats, wrapupSeconds);
@@ -227,7 +237,7 @@ export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = f
       </div>
 
       <div className={styles.readouts}>
-        <Readout label={soft ? 'Dialler connect rate' : 'Connect rate'} testId="connect-rate-readout" readout={connectRate} />
+        <Readout label={soft || inbound ? 'Dialler connect rate' : 'Connect rate'} testId="connect-rate-readout" readout={connectRate} />
         {/*
           Immediately after the connect rate, and labelled with its own
           denominator. The two rates on this payload are measured over DIFFERENT
@@ -247,8 +257,11 @@ export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = f
         {soft ? (
           <>
             <Readout label="Soft-phone connect rate" testId="softphone-rate-readout" readout={softphoneConnectRateReadout(stats)} />
-            <Readout label="All calls connect rate" testId="all-calls-rate-readout" readout={allCallsConnectRateReadout(stats)} />
+            <Readout label={AGENCY_OUTBOUND_CONNECT_RATE_LABEL} testId="outbound-rate-readout" readout={outboundConnectRateReadout(stats)} />
           </>
+        ) : null}
+        {inbound ? (
+          <Readout label={AGENCY_CALLS_BY_TYPE_RATE_LABELS.inbound} testId="inbound-rate-readout" readout={inboundAnswerRateReadout(stats)} />
         ) : null}
       </div>
 

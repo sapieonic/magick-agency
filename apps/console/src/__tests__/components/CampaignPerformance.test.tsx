@@ -303,22 +303,24 @@ describe('CampaignPerformance', () => {
 describe('the soft phone beside the dialler (SR1, SR5)', () => {
   const dialled = { first_dials_placed: 200, human_connects: 40, attempts_connected: 52, connect_rate_pct: 20 };
 
-  it('names the dialler\'s rate as the dialler\'s and adds the soft phone\'s and All calls', () => {
-    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 50, connected: 40, human_connects: 30 } })} softphoneEnabled />);
+  it('names the dialler\'s rate as the dialler\'s and adds the soft phone\'s and the Outbound rate', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 50, connected: 40, human_connects: 30, talk_seconds: 4800 } })} softphoneEnabled />);
     expect(within(screen.getByTestId('connect-rate-readout')).getByText('Dialler connect rate')).toBeTruthy();
     // The dialler's own figure, untouched by the soft phone's 60%.
     expect(within(screen.getByTestId('connect-rate-readout')).getByText('20%')).toBeTruthy();
     const soft = screen.getByTestId('softphone-rate-readout');
     expect(within(soft).getByText('60%')).toBeTruthy();
     expect(soft.textContent).toContain('of 50 soft-phone calls placed · 40 connected');
-    const all = screen.getByTestId('all-calls-rate-readout');
-    // (40 + 30) / (200 + 50) = 28%.
+    const all = screen.getByTestId('outbound-rate-readout');
+    // The dialler and the soft phone together, called Outbound (CL7): (40 + 30) / (200 + 50) = 28%.
+    expect(within(all).getByText('Outbound connect rate')).toBeTruthy();
+    expect(screen.queryByText('All calls connect rate')).toBeNull();
     expect(within(all).getByText('28%')).toBeTruthy();
     expect(all.textContent).toContain('of 250 calls placed · 92 connected');
   });
 
   it('withholds the soft phone\'s rate below the floor', () => {
-    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 4, connected: 3, human_connects: 2 } })} softphoneEnabled />);
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 4, connected: 3, human_connects: 2, talk_seconds: 360 } })} softphoneEnabled />);
     // In calls, not dials: a soft-phone call is not a dial of the dialler's.
     const soft = screen.getByTestId('softphone-rate-readout');
     expect(within(soft).getByText('Not enough calls')).toBeTruthy();
@@ -326,9 +328,9 @@ describe('the soft phone beside the dialler (SR1, SR5)', () => {
     expect(soft.textContent).not.toContain('dial');
   });
 
-  it('withholds the All calls rate below the floor on its own denominator, in calls', () => {
-    render(<CampaignPerformance stats={stats({ first_dials_placed: 10, attempts_total: 10, human_connects: 2, attempts_connected: 3, connect_rate_pct: 20, softphone: { placed: 1, connected: 1, human_connects: 1 } })} softphoneEnabled />);
-    const all = screen.getByTestId('all-calls-rate-readout');
+  it('withholds the Outbound rate below the floor on its own denominator, in calls', () => {
+    render(<CampaignPerformance stats={stats({ first_dials_placed: 10, attempts_total: 10, human_connects: 2, attempts_connected: 3, connect_rate_pct: 20, softphone: { placed: 1, connected: 1, human_connects: 1, talk_seconds: 120 } })} softphoneEnabled />);
+    const all = screen.getByTestId('outbound-rate-readout');
     expect(within(all).getByText('Not enough calls')).toBeTruthy();
     expect(all.textContent).toContain('11 calls placed so far');
     // The dialler's own rate keeps its words.
@@ -336,14 +338,52 @@ describe('the soft phone beside the dialler (SR1, SR5)', () => {
   });
 
   it('shows nothing of the soft phone while it is off and the campaign holds none', () => {
-    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0 } })} />);
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } })} />);
     expect(screen.queryByTestId('softphone-rate-readout')).toBeNull();
-    expect(screen.queryByTestId('all-calls-rate-readout')).toBeNull();
+    expect(screen.queryByTestId('outbound-rate-readout')).toBeNull();
     expect(within(screen.getByTestId('connect-rate-readout')).getByText('Connect rate')).toBeTruthy();
   });
 
   it('shows calls already logged even with the soft phone off since', () => {
-    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 30, connected: 20, human_connects: 10 } })} />);
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 30, connected: 20, human_connects: 10, talk_seconds: 2400 } })} />);
     expect(screen.getByTestId('softphone-rate-readout')).toBeTruthy();
+  });
+});
+
+describe('inbound calls beside both (call log P4, CL7)', () => {
+  const dialled = { first_dials_placed: 200, human_connects: 40, attempts_connected: 52, connect_rate_pct: 20 };
+  const softphone = { placed: 50, connected: 40, human_connects: 30, talk_seconds: 4800 };
+  const inbound = { received: 57, answered: 44, missed: 13, open_follow_ups: 6, talk_seconds: 10_500, open_hours: 53 };
+
+  it('shows the answer rate over the calls that arrived in open hours, and moves no connect rate', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone, inbound })} softphoneEnabled inboundEnabled />);
+    const card = screen.getByTestId('inbound-rate-readout');
+    expect(within(card).getByText('Answer rate, open hours')).toBeTruthy();
+    // 44 of 53, not of the 57 received.
+    expect(within(card).getByText('83%')).toBeTruthy();
+    expect(card.textContent).toContain('answered, of 53 calls in open hours · 57 calls received · 13 missed · 6 to follow up');
+    // The dialler's rate and the Outbound rate are what they are without an inbound call.
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('20%')).toBeTruthy();
+    expect(within(screen.getByTestId('outbound-rate-readout')).getByText('28%')).toBeTruthy();
+  });
+
+  it('withholds the answer rate below the floor on its own denominator', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone, inbound: { ...inbound, received: 10, answered: 8, missed: 2, open_hours: 10 } })} inboundEnabled />);
+    const card = screen.getByTestId('inbound-rate-readout');
+    expect(within(card).getByText('Not enough calls')).toBeTruthy();
+    expect(card.textContent).toContain('10 calls received');
+  });
+
+  it('shows nothing of inbound while it is off and the campaign holds none, and calls already filed when it is off since', () => {
+    const none = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 };
+    const { unmount } = render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 }, inbound: none })} />);
+    expect(screen.queryByTestId('inbound-rate-readout')).toBeNull();
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('Connect rate')).toBeTruthy();
+    unmount();
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 }, inbound })} />);
+    expect(screen.getByTestId('inbound-rate-readout')).toBeTruthy();
+    // The dialler's rate is named as the dialler's once another type's figure sits beside it.
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('Dialler connect rate')).toBeTruthy();
+    expect(screen.queryByTestId('outbound-rate-readout')).toBeNull();
   });
 });

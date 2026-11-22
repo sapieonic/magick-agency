@@ -64,11 +64,12 @@ export function softphoneStatusSql(status: SoftphoneCallStatus): string {
   return 'm.settled_at IS NOT NULL';
 }
 
-/** A soft-phone campaign count: placed, connected and reached a person. */
+/** A soft-phone campaign count: placed, connected, reached a person, and the placed calls' talk time. */
 export interface SoftphoneCampaignCounts {
   placed: number;
   connected: number;
   human_connects: number;
+  talk_seconds: number;
 }
 
 /**
@@ -104,7 +105,8 @@ export function softphoneCampaignCountsStatement(q: {
     text: `
       SELECT count(*) FILTER (WHERE ${SOFTPHONE_PLACED_SQL})::int AS placed,
              count(*) FILTER (WHERE ${SOFTPHONE_CONNECTED_SQL})::int AS connected,
-             count(*) FILTER (WHERE ${SOFTPHONE_HUMAN_CONNECT_SQL})::int AS human_connects
+             count(*) FILTER (WHERE ${SOFTPHONE_HUMAN_CONNECT_SQL})::int AS human_connects,
+             COALESCE(sum(m.talk_seconds) FILTER (WHERE ${SOFTPHONE_PLACED_SQL}), 0)::int AS talk_seconds
         FROM agency_manual_calls m
        WHERE m.campaign_id = $1::uuid
          ${range.join('\n         ')}
@@ -116,5 +118,10 @@ export function softphoneCampaignCountsStatement(q: {
 /** A count row as `pg` returns it (`::int`), read defensively. */
 export function readSoftphoneCampaignCounts(row: Partial<Record<keyof SoftphoneCampaignCounts, unknown>> | undefined): SoftphoneCampaignCounts {
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0);
-  return { placed: n(row?.placed), connected: n(row?.connected), human_connects: n(row?.human_connects) };
+  return {
+    placed: n(row?.placed),
+    connected: n(row?.connected),
+    human_connects: n(row?.human_connects),
+    talk_seconds: n(row?.talk_seconds),
+  };
 }

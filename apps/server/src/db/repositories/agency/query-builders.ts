@@ -15,7 +15,7 @@ import {
 } from '../../../agency/spine-filters.js';
 import type { AgencyPromiseFilter, AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
-import { contactPhoneDigitsSql } from './sql-fragments.js';
+import { contactPhoneDigitsSql, inboundAnsweredSql, inboundMissedSql } from './sql-fragments.js';
 import { endsWithDigitsSql } from '../../sql-utils.js';
 import {
   agentManualAttemptSql,
@@ -542,8 +542,8 @@ export function inboundLogFilterConditions(
   if (f.states?.length && !f.states.includes('ended')) conditions.push('FALSE');
   if (f.outcomes?.length || inboundOutcomes.length > 0) {
     const any: string[] = [];
-    if (f.outcomes?.includes('connected')) any.push("i.outcome = 'answered'");
-    if (inboundOutcomes.includes('missed')) any.push('i.follow_up_status IS NOT NULL');
+    if (f.outcomes?.includes('connected')) any.push(inboundAnsweredSql('i'));
+    if (inboundOutcomes.includes('missed')) any.push(inboundMissedSql('i'));
     if (inboundOutcomes.includes('voicemail')) any.push("i.outcome = 'voicemail'");
     if (inboundOutcomes.includes('abandoned_in_queue')) any.push("i.outcome = 'abandoned_in_queue'");
     conditions.push(any.length > 0 ? `(${any.join(' OR ')})` : 'FALSE');

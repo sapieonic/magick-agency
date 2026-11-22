@@ -187,7 +187,7 @@ const rangeQuery = `from=${encodeURIComponent(RANGE.from.toISOString())}&to=${en
 describe('the soft phone\'s campaign figures: one definition, beside the dialler\'s (SR1–SR4)', () => {
   it('/stats: lifetime placed, connected and reached; the dialler\'s connect rate is the dialler\'s alone', async () => {
     const stats = (await get(`/proxy/agency/campaigns/${campaignId}/stats`)).json();
-    expect(stats.softphone).toEqual({ placed: 9, connected: 6, human_connects: 3 });
+    expect(stats.softphone).toEqual({ placed: 9, connected: 6, human_connects: 3, talk_seconds: 0 });
     // The dialler's own counts and rate, as the seed spells them, soft-phone calls nowhere in them.
     expect(stats.first_dials_placed).toBe(10);
     expect(stats.human_connects).toBe(2);
@@ -201,7 +201,7 @@ describe('the soft phone\'s campaign figures: one definition, beside the dialler
     const activity = (await get(`/proxy/agency/campaigns/${campaignId}/insights/activity?${rangeQuery}`)).json();
     expect(activity.range.from).toBe(RANGE.from.toISOString());
     expect(activity.range.to).toBe(RANGE.to.toISOString());
-    expect(activity.calls.softphone).toEqual({ placed: 7, connected: 5, human_connects: 2 });
+    expect(activity.calls.softphone).toEqual({ placed: 7, connected: 5, human_connects: 2, talk_seconds: 0 });
     // The older reader's count is the same number.
     expect(activity.calls.softphone_calls).toBe(7);
     // The dialler's: 10 placed first dials, 2 reached, no redials.
@@ -215,11 +215,11 @@ describe('the soft phone\'s campaign figures: one definition, beside the dialler
   it('a campaign with no soft-phone calls serves zeros, and one with only soft-phone calls serves no dials', async () => {
     const sibling = (await get(`/proxy/agency/campaigns/${siblingCampaignId}/stats`)).json();
     // The sibling has one tagged call and no dials at all.
-    expect(sibling.softphone).toEqual({ placed: 1, connected: 1, human_connects: 1 });
+    expect(sibling.softphone).toEqual({ placed: 1, connected: 1, human_connects: 1, talk_seconds: 0 });
     expect(sibling.first_dials_placed).toBe(0);
     expect(sibling.connect_rate_pct).toBeNull();
     const theirs = (await call(loaded.app, 'GET', `/proxy/agency/campaigns/${other.campaigns[0]}/stats`, other.supervisors[0]!, other)).json();
-    expect(theirs.softphone).toEqual({ placed: 0, connected: 0, human_connects: 0 });
+    expect(theirs.softphone).toEqual({ placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 });
   });
 });
 

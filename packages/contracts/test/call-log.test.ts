@@ -6,6 +6,10 @@ import {
   AGENCY_CALL_LOG_TYPES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
   AGENCY_CALL_LOG_TYPE_LABELS,
+  AGENCY_CALLS_BY_TYPE_NO_RATE,
+  AGENCY_CALLS_BY_TYPE_RATE_LABELS,
+  AGENCY_OUTBOUND_CONNECT_RATE_LABEL,
+  agencyCallsByTypeFootnote,
   type AgencyCallLogCounts,
   type AgencyCallLogRow,
   type AgencyCallLogStatus,
@@ -58,5 +62,33 @@ describe('the call log', () => {
     // The counts are keyed as the chips are: every `type` filter has its number.
     const countKeys: Equals<keyof AgencyCallLogCounts, AgencyCallLogTypeFilter> = true;
     expect(rowTypes && countKeys).toBe(true);
+  });
+
+  describe('Calls by type (P4)', () => {
+    it('gives each type its own rate and All calls none', () => {
+      expect(AGENCY_CALLS_BY_TYPE_RATE_LABELS).toEqual({
+        dialler: 'Dialler connect rate',
+        soft_phone: 'Soft-phone connect rate',
+        inbound: 'Answer rate, open hours',
+      });
+      expect(AGENCY_CALLS_BY_TYPE_NO_RATE).toBe('not added');
+    });
+
+    it('calls the dialler and the soft phone together Outbound, never All calls (CL7)', () => {
+      expect(AGENCY_OUTBOUND_CONNECT_RATE_LABEL).toBe('Outbound connect rate');
+    });
+
+    it('says the proposal\'s footnote for three types, and names only the types shown', () => {
+      expect(agencyCallsByTypeFootnote(['dialler', 'soft_phone', 'inbound'])).toBe(
+        'All calls adds the three types. Each call is counted once, under the type it was. Rates are not added together: '
+        + 'the dialler’s measures the list and the pacing, the soft phone’s the numbers agents chose, and inbound’s how many callers we answered.',
+      );
+      // Whatever order they are passed in, they read in the table's order.
+      expect(agencyCallsByTypeFootnote(['inbound', 'dialler'])).toBe(
+        'All calls adds the two types. Each call is counted once, under the type it was. Rates are not added together: '
+        + 'the dialler’s measures the list and the pacing and inbound’s how many callers we answered.',
+      );
+      expect(agencyCallsByTypeFootnote(['dialler', 'soft_phone'])).not.toContain('inbound');
+    });
   });
 });

@@ -5,9 +5,9 @@
  * the counts beside it and withheld below `floors.campaign_rate_min_first_dials` (RP9).
  */
 import type { ReactNode } from 'react';
-import type { CampaignReportDataset } from '@magick-agency/contracts/reports';
+import { AGENCY_CALLS_BY_TYPE_NO_RATE, AGENCY_OUTBOUND_CONNECT_RATE_LABEL, type CampaignReportDataset } from '@magick-agency/contracts/reports';
 import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, unknownUser } from '../../format';
-import { campaignFigures, campaignSoftphoneFigures, recordingShare } from '../../rates';
+import { callsByTypeFootnote, campaignCallsByType, campaignFigures, campaignOutcomeRows, recordingShare, type CampaignCallsByType } from '../../rates';
 import { HourColumns, StackedColumns, tickEvery } from '../charts';
 import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
@@ -54,7 +54,10 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
   const calls = d.activity.calls;
   const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const conversations = calls.conversations;
-  const soft = campaignSoftphoneFigures(d);
+  const byType = campaignCallsByType(d);
+  // Outcomes by type where the report shows more than the dialler and the dataset carries them (CL28).
+  const typed = byType && d.activity.outcomes_by_type ? byType : null;
+  const outcomeRows = typed ? campaignOutcomeRows(d, typed) : [];
   return (
     <div className="page" data-page="overview">
       <PageHeader
@@ -70,8 +73,8 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           items={[
             { id: 'dials', label: 'Dials', value: count(calls.dials), detail: `${count(firstDials)} first dials · ${count(calls.redials.placed)} redials` },
             { id: 'connected', label: 'Connected', value: count(calls.connected), detail: `${count(conversations)} conversations` },
-            // "Dialler connect rate" where the soft phone's figures show beside it (SR1).
-            rateKpi(soft ? 'Dialler connect rate' : 'Connect rate', connect, `${count(calls.human_connects)} people / ${count(firstDials)} first dials`, 'connect_rate'),
+            // "Dialler connect rate" where another type's figures show beside it (SR1).
+            rateKpi(byType ? 'Dialler connect rate' : 'Connect rate', connect, `${count(calls.human_connects)} people / ${count(firstDials)} first dials`, 'connect_rate'),
             rateKpi('Success rate', success, `${count(calls.successes)} successes / ${count(conversations)} conversations`, 'success_rate'),
             rateKpi('Abandonment', abandonment, `${count(abandoned)} of ${count(answered)} answered`, 'abandonment'),
             talk === null || handle === null
@@ -81,7 +84,39 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
         />
       </Section>
       <Section title="Outcomes" aside={`over ${count(conversations)} conversations`} id="outcomes">
-        {d.activity.outcomes.length === 0 ? (
+        {typed ? (
+          // One outcome list for the campaign, so one table: each outcome on every call type the
+          // report shows (CL28). Share stays the dialler's, of its conversations.
+          outcomeRows.length === 0 ? (
+            <p className="empty">No conversations in this window.</p>
+          ) : (
+            <table data-testid="outcomes-by-type">
+              <thead>
+                <tr>
+                  <th>Outcome</th>
+                  <th className="num">Dialler</th>
+                  <th className="num">Share of dialler</th>
+                  {typed.columns.filter((c) => c.key !== 'dialler').map((c) => <th key={c.key} className="num">{c.label}</th>)}
+                  <th className="num">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outcomeRows.map((o) => (
+                  <tr key={String(o.code)}>
+                    <td>
+                      {o.label ?? (o.code === null ? 'No outcome written' : <span className="idref">{o.code} (retired)</span>)}
+                      {o.is_success ? <span className="tagok">SUCCESS</span> : null}
+                    </td>
+                    <td className="num">{count(o.dialler)}</td>
+                    <td className="num">{conversations > 0 ? pct((o.dialler / conversations) * 100) : '—'}</td>
+                    {typed.columns.filter((c) => c.key !== 'dialler').map((c) => <td key={c.key} className="num">{count(o[c.key])}</td>)}
+                    <td className="num">{count(typed.columns.reduce((sum, c) => sum + o[c.key], 0))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        ) : d.activity.outcomes.length === 0 ? (
           <p className="empty">No conversations in this window.</p>
         ) : (
           <table>
@@ -137,22 +172,88 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           </dd>
           <dt>Do Not Call</dt>
           <dd>{plural(d.activity.dnc_marked.total, 'number')} marked by agents</dd>
-          {/* Beside the dialler's figures, in none of them, and All calls the two added (SR1, SR3); only when there were any. */}
-          {soft ? (
-            <>
-              <dt>Soft-phone calls</dt>
-              <dd data-testid="softphone-calls">
-                {plural(soft.placed, 'call')} placed and logged to this campaign, {count(soft.connected)} connected, {plural(soft.humanConnects, 'person', 'people')} reached (connect rate {rateText(soft.connect)}); not in the dialler’s figures above
-              </dd>
-              <dt>All calls</dt>
-              <dd data-testid="all-calls">
-                {plural(soft.all.placed, 'call')} placed by the dialler and the soft phone together, {count(soft.all.connected)} connected, {plural(soft.all.humanConnects, 'person', 'people')} reached (connect rate {rateText(soft.all.connect)}, over {count(soft.all.firstCalls)} first dials and soft-phone calls)
-              </dd>
-            </>
-          ) : null}
         </dl>
       </Section>
+      {byType ? <CallsByType t={byType} /> : null}
     </div>
+  );
+}
+
+/** A Calls by type cell that has no such thing for the type. */
+const NA = '—';
+
+/**
+ * The campaign's calls by type (`docs/call-log.md` §6): a column per type the window holds, and
+ * All calls, the counts added. No rate is added (CL7); the dialler and the soft phone together
+ * are the Outbound connect rate, under the table. Only when a second type has calls.
+ */
+function CallsByType({ t }: { t: CampaignCallsByType }) {
+  const soft = t.soft;
+  return (
+    <Section title="Calls by type" id="calls-by-type">
+      <table data-testid="calls-by-type">
+        <thead>
+          <tr>
+            <th />
+            {t.columns.map((c) => <th key={c.key} className="num">{c.label}</th>)}
+            <th className="num">All calls</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-row="calls">
+            <td>Calls</td>
+            {t.columns.map((c) => <td key={c.key} className="num">{count(c.calls)} {c.callsWord}</td>)}
+            <td className="num">{count(t.all.calls)}</td>
+          </tr>
+          <tr data-row="connected">
+            <td>Connected</td>
+            {t.columns.map((c) => <td key={c.key} className="num">{count(c.connected)}{c.key === 'inbound' ? ' answered' : ''}</td>)}
+            <td className="num">{count(t.all.connected)}</td>
+          </tr>
+          <tr data-row="reached">
+            <td>Reached a person</td>
+            {t.columns.map((c) => <td key={c.key} className="num">{count(c.reached)}</td>)}
+            <td className="num">{count(t.all.reached)}</td>
+          </tr>
+          <tr data-row="talk">
+            <td>Talk time</td>
+            {t.columns.map((c) => <td key={c.key} className="num">{duration(c.talkSeconds)}</td>)}
+            <td className="num">{duration(t.all.talkSeconds)}</td>
+          </tr>
+          {t.all.missed !== null ? (
+            <tr data-row="missed">
+              <td>Missed by us</td>
+              {t.columns.map((c) => (
+                <td key={c.key} className="num">
+                  {c.missed === null ? NA : <>{count(c.missed)} <span className="muted">({count(c.openFollowUps ?? 0)} to follow up)</span></>}
+                </td>
+              ))}
+              <td className="num">{count(t.all.missed)}</td>
+            </tr>
+          ) : null}
+          <tr data-row="rate">
+            <td>Rate</td>
+            {t.columns.map((c) => (
+              <td key={c.key} className="num">
+                <b>{rateText(c.rate)}</b>
+                <br />
+                <span className="muted">{c.rateLabel}</span>
+              </td>
+            ))}
+            <td className="num muted">{AGENCY_CALLS_BY_TYPE_NO_RATE}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="small muted" style={{ marginTop: 5 }} data-testid="calls-by-type-note">
+        {callsByTypeFootnote(t)}
+        {t.inbound ? ' To follow up counts the campaign’s missed calls still owed a call back when this report was made, whatever the window.' : ''}
+      </p>
+      {soft ? (
+        <p className="small" style={{ marginTop: 4 }} data-testid="outbound-connect-rate">
+          {AGENCY_OUTBOUND_CONNECT_RATE_LABEL}: {rateText(soft.outbound.connect)} ({plural(soft.outbound.humanConnects, 'person', 'people')} reached of {count(soft.outbound.firstCalls)} first dials and soft-phone calls, the dialler and the soft phone together; inbound calls are not in it)
+        </p>
+      ) : null}
+    </Section>
   );
 }
 

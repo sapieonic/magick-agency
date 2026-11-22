@@ -49,6 +49,13 @@ import {
   softphoneCampaignCountsStatement,
   type SoftphoneCampaignCounts,
 } from './softphone-campaign-sql.js';
+import {
+  inboundCampaignCountsStatement,
+  outcomesByTypeStatement,
+  readInboundCampaignCounts,
+  type InboundCampaignCounts,
+  type OutcomeByTypeCountRow,
+} from './inbound-campaign-sql.js';
 import type { AgencyRetrySelector } from '@magick-agency/contracts/agency';
 import { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } from '@magick-agency/domain/abandonment-predicate';
 
@@ -509,6 +516,23 @@ export class AgencyInsightsReadRepository {
     const { text, values } = softphoneCallsStatement(q);
     const { rows } = await getPool().query<SoftphoneCampaignCounts>(text, values);
     return readSoftphoneCampaignCounts(rows[0]);
+  }
+
+  /**
+   * The inbound calls filed under the campaign that arrived in `[from, to)`, and its open Missed
+   * rows as of now (`inbound-campaign-sql.ts`, the Call log's own rule for an inbound row).
+   */
+  async inboundCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<InboundCampaignCounts> {
+    const { text, values } = inboundCampaignCountsStatement(q);
+    const { rows } = await getPool().query<InboundCampaignCounts>(text, values);
+    return readInboundCampaignCounts(rows[0]);
+  }
+
+  /** The campaign's outcomes on its soft-phone and inbound calls in `[from, to)` ({@link outcomesByTypeStatement}). */
+  async outcomesByType(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<OutcomeByTypeCountRow[]> {
+    const { text, values } = outcomesByTypeStatement(q);
+    const { rows } = await getPool().query<OutcomeByTypeCountRow>(text, values);
+    return rows.map((r) => ({ source: r.source, code: r.code, count: Number(r.count) || 0 }));
   }
 
   /** {@link dncMarkedStatement}'s rows, most first; `added_by` as stored. */

@@ -307,7 +307,10 @@ export function buildCampaign(spec: CampaignSpec, options: { attemptsCap?: numbe
       redials: { placed: redials, connected: Math.round(redials * 0.4), chains_at_limit: Math.round(redials * 0.1), refused_at_limit: 3 },
       agent_retries: { reopened_dials: Math.round(dials * 0.004), reopened_connected: Math.round(dials * 0.002), manual_dials: Math.round(dials * 0.002), manual_connected: Math.round(dials * 0.001) },
       softphone_calls: 42,
-      softphone: { placed: 42, connected: 30, human_connects: 18 },
+      softphone: { placed: 42, connected: 30, human_connects: 18, talk_seconds: 5400 },
+      // Inbound calls filed under the campaign: 57 received, 44 answered, 13 missed (4 of them
+      // out of hours, so 53 arrived in open hours); 6 missed calls still to follow up.
+      inbound: { received: 57, answered: 44, missed: 13, open_follow_ups: 6, talk_seconds: 10500, open_hours: 53 },
       talk_seconds: sumOf(all, 'talk'),
       wrapup_seconds: sumOf(all, 'wrapup'),
       wrapup_measured: sumOf(all, 'wrapupMeasured'),
@@ -315,6 +318,16 @@ export function buildCampaign(spec: CampaignSpec, options: { attemptsCap?: numbe
     outcomes: [...codeTotals.entries()]
       .map(([code, n]) => ({ code, label: code ? LABELS[code]! : null, is_success: SUCCESS.has(code), count: n }))
       .sort((a, b) => b.count - a.count),
+    // The same outcomes on every call type: the dialler's conversations, and a fixed share of
+    // the 30 soft-phone and 44 inbound conversations on the first codes.
+    outcomes_by_type: [...codeTotals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, n], i) => {
+        const soft_phone = [12, 9, 6, 3][i] ?? 0;
+        const inbound = [20, 14, 7, 3][i] ?? 0;
+        return { code, label: code ? LABELS[code]! : null, is_success: SUCCESS.has(code), dialler: n, soft_phone, inbound, total: n + soft_phone + inbound };
+      })
+      .sort((a, b) => b.total - a.total),
     callbacks: {
       booked: callbacksBooked,
       open_due_today: Math.min(pendingDue, 2),
@@ -615,6 +628,9 @@ export function campaignDefinitions() {
     { key: 'stalls', label: 'Stalled minutes', text: 'Minutes in which at least half of the dialler\'s checks on the running campaign placed no call, by the main reason.' },
     { key: 'predial_blocks', label: 'Blocked before dialling', text: 'Contacts the dialler skipped because they were on the Do Not Call list, had an invalid number, or were outside calling hours.' },
     { key: 'recording_share', label: 'Recording share', text: 'Connected calls with a recording ÷ connected calls.' },
-    { key: 'softphone_calls', label: 'Soft-phone calls', text: 'Calls agents placed on the soft phone and logged to this campaign, counted when the call was started: placed, connected and people reached. Their connect rate is people reached ÷ placed. They are outside every dialler figure above; soft-phone calls logged to no campaign are in no campaign report. All calls adds them to the dialler\'s: calls placed (dials and soft-phone calls), connected, and a connect rate of every person reached ÷ first dials and soft-phone calls placed, shown in words below 25. Both show only when the window holds a soft-phone call, and the dialler\'s rate is then labelled Dialler connect rate. The soft-phone counts are read when the report is made and the dialler\'s from the Insights rollup, usually seconds behind, so All calls can add counts taken moments apart.' },
+    { key: 'softphone_calls', label: 'Soft-phone calls', text: 'Calls agents placed on the soft phone and logged to this campaign, counted when the call was started: placed (the call was dialled), connected (it ended connected) and people reached (closed with an outcome other than voicemail or "no outcome"). Their connect rate is people reached ÷ placed, shown in words below 25 placed. They are outside every dialler figure above; soft-phone calls logged to no campaign are in no campaign report. They show only when the window holds a soft-phone call, and the dialler\'s rate is then labelled Dialler connect rate. The soft-phone counts are read when the report is made and the dialler\'s from the Insights rollup, usually seconds behind.' },
+    { key: 'outbound_connect_rate', label: 'Outbound connect rate', text: 'The dialler and the soft phone together: every person reached ÷ first dials and soft-phone calls placed. Shown in words below 25, and only when the window holds a soft-phone call. Inbound calls are never in it: a customer who rings us always connects from their end.' },
+    { key: 'inbound_calls', label: 'Inbound calls', text: 'Calls customers made to us that are filed under this campaign, counted when the call arrived, once it has ended: received, answered (an agent took the call) and missed (the call reached nobody). Calls we turned away unserved are not counted. Missed calls still to follow up are the campaign\'s missed calls nobody has called back or marked handled when the report was made, whatever the window, so they can be more than the window\'s missed calls. The answer rate is answered ÷ calls that arrived in open hours, shown in words below 25. They show only when the window holds an inbound call.' },
+    { key: 'calls_by_type', label: 'Calls by type', text: 'The campaign\'s calls by how each was made: Dialler (the campaign dialled), Soft phone (an agent dialled by hand and logged the call to this campaign) and Inbound (the customer rang us). All calls adds them. Each call is counted once, under its own type: a missed call and the call back to it are two calls, and marking a missed call handled is not a call. A dial we stopped because the customer rang us is a dialler call that reached nobody; the conversation is counted once, under Inbound. Calls, connected, people reached and talk time add up. Rates are never added together.' },
   ];
 }

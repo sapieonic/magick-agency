@@ -53,7 +53,7 @@ import type {
   CampaignInboundLogRow,
 } from '../../../agency/campaign-call-log.js';
 import type { AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
-import { inboundMissedOpenSql } from './sql-fragments.js';
+import { inboundCampaignRowConditions, inboundMissedOpenSql } from './sql-fragments.js';
 import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
@@ -205,10 +205,8 @@ function inboundLogConditions(
   return [
     `i.campaign_id = ${bind.add(q.campaignId)}::uuid`,
     `i.tenant_id = ${bind.add(q.tenantId)}::uuid`,
-    // Two rules, each its own term: a live call has no outcome, and must not be let in by how a
-    // NULL compares.
-    "i.state = 'ended'",
-    "i.outcome IS DISTINCT FROM 'rejected'",
+    // Ended and served, the rule the campaign's inbound figures share (`inboundCampaignRowConditions`).
+    ...inboundCampaignRowConditions('i'),
     ...inboundLogFilterConditions(
       q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer',
     ),

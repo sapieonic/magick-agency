@@ -429,7 +429,7 @@ describe('the export’s soft-phone rows are mentioned when the file can hold th
   }
 
   it('with the soft phone switched off, once the campaign’s stats show soft-phone calls', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 3, connected: 2, human_connects: 1 } }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 3, connected: 2, human_connects: 1, talk_seconds: 240 } }));
     renderPage();
     const button = await exportButton();
     await waitFor(() => expect(screen.getByText(TIP)).toBeTruthy());
@@ -438,7 +438,7 @@ describe('the export’s soft-phone rows are mentioned when the file can hold th
 
   it('with the soft phone on, whatever the stats say', async () => {
     mocks.flags = new Set(['agency_softphone_enabled']);
-    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0 } }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } }));
     renderPage();
     const button = await exportButton();
     expect(screen.getByText(TIP)).toBeTruthy();
@@ -446,7 +446,7 @@ describe('the export’s soft-phone rows are mentioned when the file can hold th
   });
 
   it('not with the soft phone off and none logged', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0 } }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } }));
     renderPage();
     const button = await exportButton();
     await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalled());

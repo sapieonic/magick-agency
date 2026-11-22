@@ -79,6 +79,49 @@ export const AGENCY_CALL_LOG_TYPE_LABELS: Readonly<Record<AgencyCallLogType, str
   inbound: 'Inbound',
 };
 
+/**
+ * The rate each type has on a campaign's **Calls by type** table (Insights and the campaign
+ * report; `docs/call-log.md` §6). Three different measures, so no "All calls" rate exists (CL7):
+ * the dialler's connect rate measures the list and the pacing, the soft phone's the numbers
+ * agents chose, and inbound's how many callers we answered.
+ */
+export const AGENCY_CALLS_BY_TYPE_RATE_LABELS: Readonly<Record<AgencyCallLogType, string>> = {
+  dialler: 'Dialler connect rate',
+  soft_phone: 'Soft-phone connect rate',
+  inbound: 'Answer rate, open hours',
+};
+
+/** What the All calls column says in the Rate row. */
+export const AGENCY_CALLS_BY_TYPE_NO_RATE = 'not added';
+
+/**
+ * The dialler's and the soft phone's calls together, as a rate: people reached over first
+ * dials and soft-phone calls placed (SR3). Called "All calls connect rate" until inbound calls
+ * joined the figures (CL7): an inbound call always connects from the customer's end, so it is
+ * never in this or any other connect rate.
+ */
+export const AGENCY_OUTBOUND_CONNECT_RATE_LABEL = 'Outbound connect rate';
+
+const CALLS_BY_TYPE_RATE_MEANS: Readonly<Record<AgencyCallLogType, string>> = {
+  dialler: 'the dialler’s measures the list and the pacing',
+  soft_phone: 'the soft phone’s the numbers agents chose',
+  inbound: 'inbound’s how many callers we answered',
+};
+
+/**
+ * The footnote under a Calls by type table, for the types it shows (the proposal's words; with
+ * all three: "All calls adds the three types. Each call is counted once, under the type it was.
+ * Rates are not added together: the dialler's measures the list and the pacing, the soft phone's
+ * the numbers agents chose, and inbound's how many callers we answered.").
+ */
+export function agencyCallsByTypeFootnote(types: readonly AgencyCallLogType[]): string {
+  const shown = AGENCY_CALL_LOG_TYPES.filter((t) => types.includes(t));
+  const means = shown.map((t) => CALLS_BY_TYPE_RATE_MEANS[t]);
+  const list = means.length > 1 ? `${means.slice(0, -1).join(', ')}${means.length > 2 ? ',' : ''} and ${means[means.length - 1]}` : means[0] ?? '';
+  const howMany = shown.length === 3 ? 'three' : shown.length === 2 ? 'two' : '';
+  return `All calls adds the ${howMany ? `${howMany} ` : ''}types. Each call is counted once, under the type it was. Rates are not added together: ${list}.`;
+}
+
 /** A dialler row: the attempt list's own row (`AgencyAttempt`), marked with its type. */
 export interface AgencyCallLogDiallerRow extends AgencyAttempt {
   type: 'dialler';

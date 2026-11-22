@@ -10,14 +10,10 @@ import type {
 import { formatCount } from '../../../../utils/format/number';
 import { durationWords } from '../../../../utils/format/duration';
 import {
-  allCallsConnectRate,
-  allCallsCounts,
   averageHandleSeconds,
   callsConnectRate,
   firstDials,
   insightsRate,
-  showSoftphoneFigures,
-  softphoneConnectRate,
   successRate,
   rateText,
   rateValue,
@@ -45,6 +41,7 @@ import {
   tableCsv,
   type InsightsColumn,
 } from './InsightsParts';
+import { callsByTypeFor, CallsByTypeTable, OutcomesByTypeTable } from './CallsByType';
 import styles from './Insights.module.css';
 import { StatGrid } from '../../../../components/common/StatGrid';
 import { PanelGrid } from '../../../../components/common/PanelGrid';
@@ -63,6 +60,11 @@ export interface RangeSectionContext {
    * while it is on, or when the range holds tagged soft-phone calls whatever it says (SR5).
    */
   softphoneEnabled?: boolean;
+  /**
+   * Inbound's flag for the account (`agency_inbound_enabled`). Inbound figures show while it is
+   * on, or when the range holds an inbound call filed under the campaign (SR5's rule).
+   */
+  inboundEnabled?: boolean;
 }
 
 /** Outcome order on the page: the connected first, then by how often they happen in a dialler. */
@@ -110,9 +112,9 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
   const success = rateFigure(successRate(calls.successes, calls.conversations));
   const handle = averageHandleSeconds(calls);
   const lines = outcomeLines(activity);
-  // The soft phone's tagged calls BESIDE the dialler's figures, never in them (SR1, SR5).
-  const soft = showSoftphoneFigures(ctx.softphoneEnabled ?? false, calls.softphone) ? calls.softphone : null;
-  const all = soft ? allCallsCounts(calls, soft) : null;
+  // The soft phone's and inbound's calls BESIDE the dialler's figures, never in them and in no
+  // shared rate (SR1, SR5, CL7): one table, only when a second type shows.
+  const byType = callsByTypeFor(calls, ctx);
 
   const outcomeColumns: InsightsColumn<OutcomeLine>[] = [
     {
@@ -186,7 +188,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
           label="Connected"
           hint={CONNECTED_TILE_HINT}
           value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'connected', redial: false })} value={calls.connected} label="connected calls" />}
-          sub={connectRateLine(connect.value, calls.human_connects, firstDials(calls), soft !== null)}
+          sub={connectRateLine(connect.value, calls.human_connects, firstDials(calls), byType !== null)}
           testId="kpi-connected"
         />
         <Kpi
@@ -221,23 +223,11 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
           sub={`Talk ${handle.talk === null ? '—' : durationWords(handle.talk)} · wrap-up ${handle.wrapup === null ? '—' : durationWords(handle.wrapup)}`}
           testId="kpi-aht"
         />
-        {soft && all ? (
-          <>
-            <Kpi
-              label="Soft-phone calls"
-              value={formatCount(soft.placed)}
-              sub={`${formatCount(soft.connected)} connected · connect rate ${rateFigure(softphoneConnectRate(soft)).value} · logged to this campaign, not in the dialler’s figures`}
-              testId="kpi-softphone"
-            />
-            <Kpi
-              label="All calls"
-              value={formatCount(all.placed)}
-              sub={`${formatCount(all.connected)} connected · connect rate ${rateFigure(allCallsConnectRate(all)).value} · dialler and soft phone`}
-              testId="kpi-all-calls"
-            />
-          </>
-        ) : null}
       </StatGrid>
+
+      {/* Every call type side by side, and All calls: only when a second type shows (SR5's rule for each). */}
+      {byType ? <CallsByTypeTable table={byType} campaignId={campaignId} rangeLabel={ctx.rangeLabel} /> : null}
+      {byType && activity.outcomes_by_type ? <OutcomesByTypeTable rows={activity.outcomes_by_type} table={byType} /> : null}
 
       {/* Side by side once each keeps a readable width: on a wide screen one table across the panel set a row's label and its figure a screen apart. */}
       <PanelGrid min={560}>

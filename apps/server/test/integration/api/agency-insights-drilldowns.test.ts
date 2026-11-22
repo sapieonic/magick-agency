@@ -405,7 +405,11 @@ describe('the range reads', () => {
     expect(a.calls.softphone_calls).toBe(2);
     // Two placed: one ended with no outcome (neither connected nor a person reached, SR2), one
     // connected and written up `interested`.
-    expect(a.calls.softphone).toEqual({ placed: 2, connected: 1, human_connects: 1 });
+    expect(a.calls.softphone).toEqual({ placed: 2, connected: 1, human_connects: 1, talk_seconds: 20 });
+    // No inbound call is filed under this campaign: zeros, and every outcome row is the dialler's or the soft phone's.
+    expect(a.calls.inbound).toEqual({ received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 });
+    for (const row of a.outcomes_by_type) expect(row.total, row.code).toBe(row.dialler + row.soft_phone + row.inbound);
+    expect(a.outcomes_by_type.reduce((s: number, r: { dialler: number }) => s + r.dialler, 0)).toBe(a.calls.conversations);
     expect(a.calls.redials.refused_at_limit).toBe(1);
     expect(a.calls.conversations).toBeGreaterThan(0);
     expect(a.calls.successes).toBeLessThanOrEqual(a.calls.conversations);
