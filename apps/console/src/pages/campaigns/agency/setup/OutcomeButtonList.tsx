@@ -98,6 +98,9 @@ export function OutcomeButtonList({
                     onClick={() => onExpand(open ? null : index)}
                     aria-expanded={open}
                     aria-controls={open ? editorId : undefined}
+                    // Closed, the row's findings are named by no field: Edit carries them, so
+                    // "Show me" and "Go to" (`focusFirstFieldError`) land here, the way to the fix.
+                    aria-describedby={open ? undefined : errors.describedBy(...rowEditorFields(index))}
                     aria-label={`${open ? 'Close' : 'Edit'} ${named}`}
                     data-testid={`button-edit-${index}`}
                   >

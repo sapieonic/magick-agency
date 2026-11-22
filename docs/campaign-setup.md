@@ -41,3 +41,14 @@ Rules stay in the pure modules (`agencyCampaignConfigForm`, `agencyColumnMapping
 
 Built in phases on one branch: the shared parts, then the three step bodies in parallel, then New
 campaign, then Settings.
+
+- **New campaign** (`pages/campaigns/agency/CampaignBuilderPage.tsx`): built. The four steps in
+  order behind the step cards (only Name & number opens until the name and a number are in); the
+  Review step and the summary rail are gone (CS1): a finding marks its step card and is named in
+  the footer with "Go to …", and the last step's footer reads "Ready: …". Customers' footer action
+  is `customersContinue` (CS8); the agents ticked on step 4 are staffed after each save (CS10).
+  Start campaign saves, staffs, then starts; a step that fails stops the rest, leaves the draft
+  saved and says why, in words (`lifecycleRefusalMessage`), with a link to the campaign; started,
+  the campaign's page opens (CS15). Start is held, with its reason, until customers have been
+  added in this visit, since the server refuses a campaign with nothing to dial. The daily target,
+  the number display and the break limits are set on step 4 and go in the same PATCH Settings uses.

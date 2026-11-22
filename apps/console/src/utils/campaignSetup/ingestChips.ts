@@ -222,7 +222,7 @@ export interface CustomersContinue {
 /**
  * The footer's primary button on step 2 (CS8), or null while something is running (the upload,
  * the column read, a check or an import) or while the column mapper is open (its own "Check the
- * file" is the next move). Based on `contactsContinueLabel`:
+ * file" is the next move):
  *
  *  - nothing uploaded: "Skip for now";
  *  - a finished check with customers ready: "Add 1,240 customers", which imports it (a file is

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { AgencyCarrier } from '../../types/agency-campaign';
+import { applied, renderPage, staffingHook } from './campaignBuilderFixtures';
 
 /**
- * The builder's carrier choice (decisions B18–B22), at the page level: shown only when
- * the tenant has more than one carrier account, sent in full (carrier AND credential),
- * the caller IDs filtered by it, and a carrier refusal said in words.
+ * The builder's carrier choice (decisions B18–B22), at the page level: on Name & number beside
+ * the numbers (CS13), shown only when the tenant has more than one carrier account, sent in full
+ * (carrier AND credential), the caller IDs filtered by it, locked once the draft exists, and a
+ * carrier refusal said in words.
  */
 
 const CRED_A = '11111111-1111-4111-8111-111111111111';
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getIngestLimits: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  applyStaffing: vi.fn(),
   // The account's numbers; a test may drop the service's own to see the default move.
   phoneNumbers: [] as Array<Record<string, unknown>>,
 }));
@@ -55,6 +57,10 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     defaultNumber: '+912200000001',
   }),
 }));
+vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useCampaignStaffing')>()),
+  useCampaignStaffing: () => staffingHook(mocks.applyStaffing),
+}));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
   uploadRosterCsv: vi.fn(),
@@ -63,6 +69,9 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getIngestJob: vi.fn(),
   cancelIngestJob: vi.fn(),
   downloadRejectedRows: vi.fn(),
+  downloadSkippedRows: vi.fn(),
+  importCheckedFile: vi.fn(),
+  transitionAgencyCampaign: vi.fn(),
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
 }));
@@ -70,21 +79,14 @@ vi.mock('../../api/agencyCampaigns', () => ({
 const SERVICE: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' };
 const OWN_A: AgencyCarrier = { telephony_provider: 'plivo', telephony_credential_id: CRED_A, label: 'Acme main', status: 'active' };
 
-async function renderPage() {
-  const { default: CampaignBuilderPage } = await import('../../pages/campaigns/agency/CampaignBuilderPage');
-  return render(
-    <MemoryRouter>
-      <CampaignBuilderPage />
-    </MemoryRouter>,
-  );
-}
-
 const carrierSelect = () => screen.queryByLabelText(/^Carrier/) as HTMLSelectElement | null;
-const numberBox = (phone: RegExp) => screen.queryByRole('checkbox', { name: phone }) as HTMLInputElement | null;
+/** A number's card, matched on its digits whatever the grouping it is shown in. */
+const numberBox = (phone: RegExp) =>
+  screen.queryByRole('checkbox', { name: (name) => phone.test(name.replace(/[\s-]/g, '')) }) as HTMLInputElement | null;
 
 function save() {
   fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
 }
 
 /** Shaped like the `ApiError` the client throws. */
@@ -99,6 +101,7 @@ beforeEach(() => {
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
+  mocks.applyStaffing.mockResolvedValue(applied());
 });
 
 afterEach(() => {
@@ -185,7 +188,7 @@ describe('the builder’s carrier choice', () => {
   it('filters the caller IDs by the chosen account, clears the ones that no longer fit, and sends the choice', async () => {
     await renderPage();
     fireEvent.click(numberBox(/\+912200000001/)!);
-    expect(screen.getByText(/1 selected/)).toBeTruthy();
+    expect(numberBox(/\+912200000001/)!.checked).toBe(true);
 
     fireEvent.change(carrierSelect()!, { target: { value: `plivo:${CRED_A}` } });
 
@@ -215,5 +218,26 @@ describe('the builder’s carrier choice', () => {
     expect(alert.textContent).toMatch(/carrier account is not active/);
     expect(alert.textContent).toMatch(/Contact support to have it re-enabled/);
     expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('basics');
+  });
+
+  it('says why a save was refused for its carrier account, and takes the operator back to Name & number', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValue(apiError(409, 'telephony_credential_not_found'));
+    await renderPage();
+    fireEvent.click(numberBox(/\+912200000001/)!);
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Agents & timing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
+    const alert = await screen.findByTestId('builder-error');
+    expect(alert.textContent).toMatch(/carrier account no longer exists/);
+    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('basics');
+  });
+
+  it('is locked once the draft exists, with where to change it', async () => {
+    await renderPage();
+    fireEvent.click(numberBox(/\+912200000001/)!);
+    save();
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
+    await waitFor(() => expect(carrierSelect()!.disabled).toBe(true));
+    expect(screen.getByText('The draft is saved on this carrier. Change it in the campaign’s settings.')).toBeTruthy();
   });
 });

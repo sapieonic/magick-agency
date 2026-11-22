@@ -80,8 +80,8 @@
 
 /* ── Native <progress>, styled ──────────────────────────────────────────────
    The repo's first `<progress>` rules, so this is the convention now; the CSV
-   import in `CampaignBuilderPage.module.css` is the same bar and repeats it,
-   because CSS Modules give the two no shared scope.
+   check and import in `campaigns/agency/setup/CustomersStep.module.css` is the same bar and
+   repeats it, because CSS Modules give the two no shared scope.
 
    Three things it has to get right:
 
