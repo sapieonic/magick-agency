@@ -8,6 +8,7 @@ import type {
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
 import type { AgencyColumnAnalysis } from '../../types/agency-campaign';
+import { scriptPlaceholdersFor, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
 
 /**
  * New campaign with campaign templates (`docs/campaign-templates.md` §7): the form opens filled in
@@ -468,5 +469,84 @@ describe('the built-in settings', () => {
     const body = mocks.createAgencyCampaign.mock.calls[0]![0];
     expect(body).toHaveProperty('template_id', null);
     expect(body.calling_window_start).toBe('09:00');
+  });
+});
+
+/*
+  C10: a template whose script uses card keys (`{amount_due}`, `{due_date}`) passes the template's
+  check (the legacy keys) and New campaign's create (no card yet: the legacy keys), but the card
+  the roster import then saves has its own keys (AS19). The mock below refuses as the server does
+  (`apps/server/src/agency/agent-script.ts`): a card that takes away a key the stored script uses,
+  and a script with a key its card has no fact for.
+*/
+describe('a template script that uses keys the roster’s card does not have (C10)', () => {
+  const SCRIPTED = effective({ id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, {
+    ...ACCOUNT_SECTIONS,
+    agent_screen: { agent_script: { opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' } },
+  }, ORG_SECTIONS);
+  let stored: Record<string, unknown> = {};
+
+  beforeEach(() => {
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue(SCRIPTED);
+    mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'r.csv', dedupe_columns: [], file_size_bytes: 10 });
+    mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'running' });
+    mocks.getIngestJob.mockReturnValue(new Promise(() => {}));
+    stored = {};
+    mocks.createAgencyCampaign.mockImplementation(async (body: Record<string, unknown>) => {
+      stored = { ...body };
+      return { id: 'camp-1', name: 'Diwali', status: 'draft' };
+    });
+    mocks.updateAgencyCampaign.mockImplementation(async (_id: string, body: Record<string, unknown>) => {
+      const display = (body.context_display ?? stored.context_display) as { facts?: unknown[] } | undefined;
+      const script = (body.agent_script ?? stored.agent_script ?? {}) as { opening?: string; steps?: Array<{ text: string }> };
+      if (display?.facts) {
+        const text = [script.opening ?? '', ...(script.steps ?? []).map((s) => s.text)].join('\n');
+        const unknown = unknownPlaceholdersIn(text, scriptPlaceholdersFor(display as never));
+        if (unknown.length > 0) {
+          throw new Error(body.agent_script
+            ? `The script uses ${unknown[0]}, which is not a fact on the card.`
+            : `The script uses ${unknown[0]}. Take it out of the script first, or keep the fact.`);
+        }
+      }
+      stored = { ...stored, ...body };
+      return { id: 'camp-1', name: 'Diwali', status: 'draft' };
+    });
+  });
+
+  it('imports the roster all the same, then says so on Review and lets the script be fixed there', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    expect((mocks.createAgencyCampaign.mock.calls[0]?.[0])).toBeUndefined();
+    await importRoster('Loan No');
+    expect(screen.queryByTestId('builder-error')).toBeNull();
+    expect(mocks.createAgencyCampaign.mock.calls[0]![0].agent_script).toEqual({ opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' });
+
+    goToStep('Review & save');
+    const problem = screen.getByTestId('review-script-problem');
+    expect(problem.textContent).toContain(
+      'The script uses {amount_due} and {due_date}, which are not facts on the card. Add them as facts or take them out.',
+    );
+    const save = () => screen.getAllByRole('button', { name: 'Save campaign' })[0] as HTMLButtonElement;
+    expect(save().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit the script' }));
+    fireEvent.change(screen.getByLabelText('Opening line'), { target: { value: 'Hello {name}. Your {loan_no} is due.' } });
+    expect(screen.queryByTestId('review-script-problem')).toBeNull();
+    expect(chip('What agents see')).toBe('Changed for this campaign');
+    expect(save().disabled).toBe(false);
+    fireEvent.click(save());
+    await act(async () => {});
+    expect(screen.queryByTestId('builder-error')).toBeNull();
+    expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {loan_no} is due.' });
+  });
+
+  it('keeps the script whole when the card has its keys', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    await importRoster();
+    expect(screen.queryByTestId('builder-error')).toBeNull();
+    goToStep('Review & save');
+    expect(screen.queryByTestId('review-script-problem')).toBeNull();
+    expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' });
   });
 });

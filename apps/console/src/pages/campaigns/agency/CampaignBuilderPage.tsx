@@ -86,6 +86,7 @@ import type { AgencyCampaignTemplateSectionSource } from '@magick-agency/contrac
 import { SOURCE_CHIP_LABELS, sectionSummary, wrapupSummary } from '../../../utils/agency/campaignTemplates/templateCopy';
 import { useBuilderTemplate } from '../../../components/agency/campaignTemplates/useBuilderTemplate';
 import { StartFromPanel } from '../../../components/agency/campaignTemplates/StartFromPanel';
+import { ReviewScriptFix } from '../../../components/agency/campaignTemplates/ReviewScriptFix';
 import templateStyles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
 import styles from './CampaignBuilderPage.module.css';
 
@@ -323,11 +324,12 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    template.draft.created();
     serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
     // The draft has the basics now; the rest is saved by Save campaign.
     setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
-  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft, tenantId, accountId]);
 
   const {
     limits,
@@ -369,7 +371,8 @@ export default function CampaignBuilderPage() {
       if (display.facts) {
         await updateAgencyCampaign(
           id,
-          { context_display: display } as never,
+          // A template's script that uses keys this card lacks is held back (C10): Review says so.
+          { context_display: display, ...template.draft.cardFields(display) } as never,
           tenantId ?? undefined,
           accountId ?? undefined,
         );
@@ -419,12 +422,14 @@ export default function CampaignBuilderPage() {
       const sendName = server === null || trimmedName !== server.name;
       const sendCarrier = server === null || !sameCarrier(carrier, server.carrier);
       const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
+      const scriptFields = template.draft.saveFields();
       try {
         await updateAgencyCampaign(
           id,
           {
             ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
             ...(record_calls !== undefined ? { record_calls } : {}),
+            ...scriptFields,
             ...(sendName ? { name: trimmedName } : {}),
             ...(sendCallerIds ? { caller_ids: callerIds } : {}),
             ...(sendCarrier
@@ -442,6 +447,7 @@ export default function CampaignBuilderPage() {
         throw withCarrierRefusalCopy(err);
       }
       serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
+      template.draft.saved(scriptFields);
       setConfigSaved(true);
       setSavedOnce(true);
       setSavedForm({ name, callerIds, carrier: chosenCarrier, recording: builderRecording(recordCalls), config });
@@ -516,7 +522,7 @@ export default function CampaignBuilderPage() {
     }
   }, [
     config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
-    name, callerIds, carrier, chosenCarrier, goToFinding,
+    name, callerIds, carrier, chosenCarrier, goToFinding, template.draft,
   ]);
 
   const backToMapping = useCallback(() => {
@@ -620,7 +626,9 @@ export default function CampaignBuilderPage() {
   const settingsChanged = changedSettings(
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
     { name, callerIds, carrier, recording: builderRecording(recordCalls), config },
-  ).length > 0;
+  ).length > 0
+    // A script changed on Review that the draft does not hold yet (C10).
+    || (campaignId !== null && template.draft.saveFields().agent_script !== undefined);
   const unsaved = settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
   const leaveGuard = useUnsavedChangesGuard(unsaved);
 
@@ -650,7 +658,7 @@ export default function CampaignBuilderPage() {
     rowFindings.has(row) ? goToFinding(target) : goTo(target);
 
   const continueDisabled = step === 'basics' && basicsBlock !== null;
-  const saveDisabled = savingConfig || configBlock || !basicsReady;
+  const saveDisabled = savingConfig || configBlock || !basicsReady || template.scriptBlocked;
 
   return (
     <div className={styles.page}>
@@ -1097,6 +1105,7 @@ export default function CampaignBuilderPage() {
                       {/* Not edited in New campaign: as the template fills them in; change them in the campaign's Settings. */}
                       <ReviewRow label="Breaks" value={sectionSummary('breaks', template.builderFields)} {...template.sourceProps('breaks')} />
                       <ReviewRow label="What agents see" value={sectionSummary('agent_screen', template.builderFields)} {...template.sourceProps('agent_screen')} />
+                      {template.script ? <ReviewScriptFix script={template.script} /> : null}
                     </>
                   ) : null}
                   <p className={styles.reviewNote}>
@@ -1167,6 +1176,11 @@ export default function CampaignBuilderPage() {
                     </button>
                   </>
                 ) : null}
+              </span>
+            ) : null}
+            {template.scriptBlocked && !blockCopy ? (
+              <span className={styles.blockReason} data-testid="script-block">
+                Change the script on Review before you save.
               </span>
             ) : null}
             {configSaved ? (

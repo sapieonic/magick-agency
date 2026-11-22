@@ -18,6 +18,17 @@ import { buildConfigPayload, validateConfig, type CampaignConfigState } from '..
 import { NO_ANALYSIS_PROFILE, recordingPayload } from '../../../utils/agencyCampaignRecording';
 import { sameCarrier, type CarrierChoice } from '../../../utils/agencyCarriers';
 import { samePool } from '../../../utils/campaignSettingsChanges';
+import {
+  cardKeys,
+  factsFormOf,
+  scriptErrors,
+  scriptPayload,
+  type FactsForm,
+  type ScriptForm,
+} from '../../../utils/agency/stationSettings';
+import { AGENCY_SCRIPT_PLACEHOLDERS, type AgencyAgentScript, type AgencyContextDisplay } from '@magick-agency/contracts/agency';
+import { unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
+import { sameTemplateValue } from '@magick-agency/domain/campaign-templates';
 import { BUILT_IN_START, useStartFrom } from './useStartFrom';
 import { useTemplatesAccess } from './useTemplatesAccess';
 
@@ -73,11 +84,23 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     (compared by the domain's normalisation, as the server records it, CT9).
   */
   const startForm = useMemo(() => (startFrom ? formOfConfig(startFrom.config) : null), [startFrom]);
+  /**
+   * The script, which Review can change when the roster's card lacks a key it uses (C10); the
+   * filled-in template's until then.
+   */
+  const [script, setScript] = useState<ScriptForm | null>(null);
   const builderForm = useMemo<TemplateForm | null>(
     () => (startForm
-      ? { ...startForm, config, recording: { ...startForm.recording, record: recordCalls }, callerIds, carrier }
+      ? {
+        ...startForm,
+        config,
+        recording: { ...startForm.recording, record: recordCalls },
+        station: { ...startForm.station, script: script ?? startForm.station.script },
+        callerIds,
+        carrier,
+      }
       : null),
-    [startForm, config, recordCalls, callerIds, carrier],
+    [startForm, config, recordCalls, script, callerIds, carrier],
   );
   const builderFields = useMemo(() => (builderForm ? campaignFieldsOfForm(builderForm) : null), [builderForm]);
   const sectionSource = useCallback(
@@ -150,6 +173,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
         // What the template fills in is the starting point, not an edit; kept sections stay edits.
         { baseline: { config: filled.config, recordCalls: filled.recording.record, ...templateNumbers }, outcomes: true },
       );
+      setScript(filled.station.script);
       setStartFrom(effective);
       trackAgencyCampaignTemplateStartedFrom({
         source: effective.template?.scope ?? 'builtin',
@@ -232,6 +256,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     (key: AgencyCampaignTemplateSectionKey) => {
       if (!startFrom || !startForm || !builderForm) return;
       const next = withSectionFrom(builderForm, startForm, key);
+      if (key === 'agent_screen') setScript(next.station.script);
       const now = inputRef.current;
       now.apply(
         {
@@ -289,7 +314,70 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const sourceProps = (key: AgencyCampaignTemplateSectionKey) =>
     startFrom ? { source: sectionSource(key), onReset: () => resetSection(key) } : {};
 
-  return { startFrom, builderFields, panel, confirm, sourceProps, createFields };
+  /*
+    The script and the roster's card (C10, AS19). A template's script may use `{amount_due}` and
+    `{due_date}`, which a campaign without a card allows (the legacy keys, so the create takes
+    it), but the card the import saves has its own keys: a card without those facts would be
+    refused for taking away keys the draft's script uses, and the import with it. So the card's
+    save then carries an empty script (the draft has none for now), and Review says why, opens
+    the script editor on the card's keys and holds Save campaign until the script fits; Save
+    campaign then sends it.
+  */
+  /** The card the import saved on the draft; null while it has none (the legacy keys). */
+  const [card, setCard] = useState<FactsForm | null>(null);
+  /** The script the draft holds, as last sent; null before the draft exists or without templates. */
+  const draftScriptRef = useRef<AgencyAgentScript | null>(null);
+  const allowedKeys = useMemo(() => (card ? cardKeys(card) : [...AGENCY_SCRIPT_PLACEHOLDERS]), [card]);
+  const scriptErrs = useMemo(
+    () => (startFrom && script ? scriptErrors(script, allowedKeys) : {}),
+    [startFrom, script, allowedKeys],
+  );
+  const scriptFix = startFrom && script
+    ? { value: script, onChange: setScript, errors: scriptErrs, allowed: allowedKeys, facts: card ?? EMPTY_CARD }
+    : null;
+  const latestRef = useRef({ builderFields, script });
+  latestRef.current = { builderFields, script };
+  const draft = useMemo(() => ({
+    /** The draft was created with the form as it is now. */
+    created: () => {
+      const fields = latestRef.current.builderFields;
+      draftScriptRef.current = fields ? (fields.agent_script as AgencyAgentScript) : null;
+    },
+    /** What the PATCH that saves the card `display` also sends: an empty script when the draft's would not fit it. */
+    cardFields: (display: AgencyContextDisplay): { agent_script?: AgencyAgentScript } => {
+      if (!display.facts) return {};
+      const nextCard = factsFormOf(display, null);
+      setCard(nextCard);
+      const held = draftScriptRef.current;
+      if (!held || unknownPlaceholdersIn(scriptTextOf(held), cardKeys(nextCard)).length === 0) return {};
+      draftScriptRef.current = {};
+      return { agent_script: {} };
+    },
+    /** What Save campaign's PATCH also sends: the script, when it is not what the draft holds. */
+    saveFields: (): { agent_script?: AgencyAgentScript } => {
+      const { script } = latestRef.current;
+      if (!script || draftScriptRef.current === null) return {};
+      const next = scriptPayload(script);
+      return sameTemplateValue(next, draftScriptRef.current) ? {} : { agent_script: next };
+    },
+    /** Save campaign went through with `sent`. */
+    saved: (sent: { agent_script?: AgencyAgentScript }) => {
+      if (sent.agent_script) draftScriptRef.current = sent.agent_script;
+    },
+  }), []);
+
+  return {
+    startFrom,
+    builderFields,
+    panel,
+    confirm,
+    sourceProps,
+    createFields,
+    script: scriptFix,
+    /** The script does not fit the card: Save campaign waits for Review's fix. */
+    scriptBlocked: Object.keys(scriptErrs).length > 0,
+    draft,
+  };
 }
 
 type Numbers = Pick<BuilderTemplateValues, 'callerIds' | 'chosenCarrier'>;
@@ -325,4 +413,12 @@ function typedForm(filled: TemplateForm, now: BuilderTemplateInput): TemplateFor
     callerIds: now.callerIds,
     carrier: now.carrier,
   };
+}
+
+/** A card with no facts: the script editor's `facts` before the import saves one. */
+const EMPTY_CARD: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {} }) as FactsForm;
+
+/** Every text of a stored script, one per line. */
+function scriptTextOf(script: AgencyAgentScript): string {
+  return [script.opening ?? '', ...(script.steps ?? []).map((step) => step.text)].join('\n');
 }
