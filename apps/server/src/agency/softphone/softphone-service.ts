@@ -571,7 +571,8 @@ export class SoftphoneService {
     if (!prepared.ok) return prepared;
     const { entry, notes, callbackAt, promise } = prepared.prepared;
     // A promise is only ever asked by a campaign catalogue (the soft phone's own refuses
-    // `requires_promise`), and only on a call that claimed its contact (above). Its follow-up
+    // `requires_promise`, and the template catalogue it follows is passed through the same rules,
+    // `asSoftphoneCatalog`), and only on a call that claimed its contact (above). Its follow-up
     // (PT2) takes the callback arm; without one a promise books nothing (PT3).
     const followUpAt = promiseFollowUpAt(entry, promise, promiseZone);
     const { decision, nextAttemptAt } = manualDispositionDecision({

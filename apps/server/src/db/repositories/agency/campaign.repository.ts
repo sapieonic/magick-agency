@@ -535,12 +535,17 @@ export class AgencyCampaignRepository {
    * gone). For a check that must hold at the write against rows whose writers lock this
    * campaign `FOR SHARE`: the campaign PATCH's dedicated caller ID guard (DN6), which a
    * concurrent dedication PUT (`AgencyAgentCallerIdRepository.set`) either waits for or sees.
+   *
+   * `recordAfter` (campaign templates, CT9): asked with the row as written, still under the lock;
+   * a non-null answer is stored as its `template_source` in the same transaction, so a settings
+   * PATCH and the record of where its sections came from commit together or not at all.
    * Announced after the commit, as {@link update}.
    */
   async updateLocked<R>(
     id: string,
     patch: Record<string, unknown>,
     refuse: (row: AgencyCampaignRecord, client: PoolClient) => Promise<R | null>,
+    recordAfter?: (row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>,
   ): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> {
     const outcome = await withTransaction(async (client): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> => {
       const locked = await client.query<AgencyCampaignRecord>(
@@ -550,8 +555,14 @@ export class AgencyCampaignRepository {
       const refused = await refuse(row, client);
       if (refused !== null) return { refused };
       const statement = campaignUpdateStatement(id, patch);
-      if (!statement) return { row };
-      const { rows } = await client.query<AgencyCampaignRecord>(statement.text, statement.values);
+      const written = statement ? (await client.query<AgencyCampaignRecord>(statement.text, statement.values)).rows[0] ?? null : row;
+      if (!written || !recordAfter) return { row: written };
+      const record = await recordAfter(written);
+      if (record === null) return { row: written };
+      const { rows } = await client.query<AgencyCampaignRecord>(
+        'UPDATE agency_campaigns SET template_source = $2::jsonb WHERE id = $1 RETURNING *',
+        [id, JSON.stringify(record)],
+      );
       return { row: rows[0] ?? null };
     }, { pool: getPool() });
     if ('row' in outcome) announceCampaignChanged(outcome.row);
@@ -559,25 +570,34 @@ export class AgencyCampaignRepository {
   }
 
   /**
-   * Campaign templates (CT16): record a template applied to a DRAFT campaign of the tenant and
-   * account in its `template_source` (0067). Not a PATCH column: the record is the server's to
-   * write, after the apply's PATCH has written the settings. Only while the campaign is still a
-   * draft and not archived (an apply never touches anything else); null when no row matched.
-   * Nothing the pacing reads changes, so nothing is announced.
+   * Campaign templates (CT16): rewrite the `template_source` (0067) of a campaign of the tenant
+   * and account, after an apply's PATCH has written its settings. `record(row)` is asked with the
+   * row locked `FOR UPDATE`, so the record is computed from the settings as they are when it is
+   * stored; a null answer leaves it as it is. Not a PATCH column: the record is the server's to
+   * write. Any status: the apply has written the settings (a campaign started since is an accepted
+   * race), and the record says where they came from. Null when no row matched. Nothing the pacing
+   * reads changes, so nothing is announced.
    */
-  async setDraftTemplateSource(
+  async rewriteTemplateSource(
     id: string,
     scope: { tenantId: string; accountId: string },
-    source: AgencyCampaignTemplateSource,
+    record: (row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>,
   ): Promise<AgencyCampaignRecord | null> {
-    const { rows } = await getPool().query<AgencyCampaignRecord>(
-      `UPDATE agency_campaigns SET template_source = $4::jsonb, updated_at = now()
-        WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid
-          AND status = 'draft' AND archived_at IS NULL
-        RETURNING *`,
-      [id, scope.tenantId, scope.accountId, JSON.stringify(source)],
-    );
-    return rows[0] ?? null;
+    return withTransaction(async (client) => {
+      const locked = await client.query<AgencyCampaignRecord>(
+        `SELECT * FROM agency_campaigns WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid FOR UPDATE`,
+        [id, scope.tenantId, scope.accountId],
+      );
+      const row = locked.rows[0];
+      if (!row) return null;
+      const next = await record(row);
+      if (next === null) return row;
+      const { rows } = await client.query<AgencyCampaignRecord>(
+        `UPDATE agency_campaigns SET template_source = $2::jsonb, updated_at = now() WHERE id = $1::uuid RETURNING *`,
+        [id, JSON.stringify(next)],
+      );
+      return rows[0] ?? null;
+    }, { pool: getPool() });
   }
 
   /** Supervisor dashboard payload; see {@link campaignStats}. */

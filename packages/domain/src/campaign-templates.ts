@@ -106,7 +106,8 @@ function deepFreeze<T>(value: T): T {
 /**
  * Every section as a campaign create with no template stores it: the column DEFAULTs, except the
  * outcome catalog, which the create path seeds with `AGENCY_DEFAULT_DISPOSITION_CATALOG` when none
- * is sent (`withCampaignConfigDefaults`).
+ * is sent (`withCampaignConfigDefaults`), and the time zone, New campaign's `Asia/Kolkata`
+ * (`AGENCY_NEW_CAMPAIGN_TIMEZONE`, CT18), not the column's `UTC`.
  *
  * **`retries` is `{}`, "no rule stored", deliberately.** The server's retry engine applies its own
  * `DEFAULT_RETRY_POLICY` per outcome at run time to every key a campaign leaves out, so an empty
@@ -116,7 +117,8 @@ function deepFreeze<T>(value: T): T {
  * Likewise `breaks` is `[]` (the campaign's agents are offered the built-in break reasons,
  * `resolveBreakReasons`), `agent_screen`'s script `{}` (no script) and target `null` (none),
  * `recording`'s profile `null` (no summary), and `numbers` an empty pool on the service's own
- * carrier (a create must still name its caller IDs).
+ * carrier (a create must still name its caller IDs, and a template that sets the section names at
+ * least one).
  */
 const BUILTIN: CompleteTemplateSections = deepFreeze({
   outcomes: {
@@ -410,7 +412,9 @@ export function diffSections(a: AgencyCampaignTemplateSections, b: AgencyCampaig
  * of its fields present) is `campaign` when it differs from the filled-in section, else the filled-in
  * section's source; a section it left out is the filled-in source. A sent section's absent fields
  * are built-in, as the create stores them (CT8: a section sent is kept as sent), so sending a
- * section exactly as filled in, field order and `HH:MM` aside, is not a change.
+ * section exactly as filled in, field order and `HH:MM` aside, is not a change. Given a stored
+ * campaign (every field present), it judges every section: the server's record recomputes with it
+ * at each settings PATCH and at an apply (CT9 as amended).
  */
 export function sectionSourcesForCreate(
   sent: Partial<AgencyCampaign>,

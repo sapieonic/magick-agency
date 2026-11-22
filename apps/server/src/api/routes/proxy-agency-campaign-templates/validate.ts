@@ -15,8 +15,11 @@
  *    editor marks the field where campaign Settings does: `400 campaign_template_section_invalid`.
  *  - The account checks a campaign create reads the database for ({@link sectionAccountIssues}),
  *    on an account template: the call summary profile (`preflightAnalysisProfile`, as
- *    `analysisProfileRejected`) and the numbers (`callerIdsIssue` on a pool that names any, and
- *    `campaignCarrierRefusal`, as `carrierRejected`). Same refusal, same keying.
+ *    `analysisProfileRejected`) and the numbers (`callerIdsIssue`: a set numbers section names at
+ *    least one, and `campaignCarrierRefusal`, as `carrierRejected`). Same refusal, same keying.
+ *  - `null` only where a campaign column may hold it (`AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS`,
+ *    {@link sectionNullIssues}): `400 campaign_template_section_invalid`, keyed by the field.
+ *  - The sections are stored as a campaign stores them ({@link storedTemplateSections}), and judged so.
  *  - CT5, scope: an organisation template holds no account-only part (`accountOnlyPartsIn`):
  *    `400 campaign_template_scope_invalid`.
  */
@@ -25,9 +28,11 @@ import {
   AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS,
   AGENCY_CAMPAIGN_TEMPLATE_DESCRIPTION_MAX,
   AGENCY_CAMPAIGN_TEMPLATE_NAME_MAX,
+  AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS,
   AGENCY_CAMPAIGN_TEMPLATE_SCOPES,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
+  AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES,
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -38,6 +43,7 @@ import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS, validateAgencyCampaignConfig as valida
 import { preflightAnalysisProfile } from '../../../analysis/profile-preflight.js';
 import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
 import { callerIdsIssue } from '../agency-campaigns/guards.js';
+import { storedSettingValues } from '../../../agency/campaign-stored-values.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 
 const SECTION_KEYS: ReadonlySet<string> = new Set(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS);
@@ -59,8 +65,15 @@ const descriptionSchema = z
   .nullable()
   .transform((d) => (d === null || d === '' ? null : d));
 
-/** The sections as JSON objects; which keys and fields they may hold is {@link sectionsShapeIssues}'s. */
-const sectionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
+/**
+ * The sections as JSON objects, at most `AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES` serialised
+ * (each save keeps a copy in the history), checked with the body before anything is read; which
+ * keys and fields they may hold is {@link sectionsShapeIssues}'s.
+ */
+const sectionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
+  .refine((sections) => Buffer.byteLength(JSON.stringify(sections), 'utf8') <= AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES, {
+    message: `The template's settings are too large: at most ${AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES / 1024} KB.`,
+  });
 
 /** `POST /campaign-templates` (`AgencyCreateCampaignTemplateRequest`). */
 export const createTemplateSchema = z.object({
@@ -83,7 +96,8 @@ export const replaceTemplateSchema = z.object({
 
 /** `POST /campaign-templates/:id/apply` (`AgencyCampaignTemplateApplyRequest`, CT16). */
 export const applyTemplateSchema = z.object({
-  campaign_ids: z.array(z.string()).min(1).max(AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS)
+  // Lower-cased first, so one campaign named in two cases is named twice.
+  campaign_ids: z.array(z.string().transform((id) => id.toLowerCase())).min(1).max(AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS)
     .refine((ids) => new Set(ids).size === ids.length, 'each campaign once'),
   sections: z.array(z.enum(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS)).min(1)
     .refine((keys) => new Set(keys).size === keys.length, 'each section once'),
@@ -163,11 +177,45 @@ export function sectionsAsCampaignBody(sections: AgencyCampaignTemplateSections)
   return body;
 }
 
+const NULLABLE: ReadonlySet<string> = new Set(AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS);
+
 /**
- * CT4 (module note): the issues a campaign create would raise for these sections, else null.
- * Pure: the checks that read the database are {@link sectionAccountIssues}.
+ * `null` on a section field whose campaign column is NOT NULL (every field but
+ * `AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS`), keyed by the field: a campaign cannot store it, and
+ * leaving the field out is how a section takes the built-in value.
+ */
+export function sectionNullIssues(sections: AgencyCampaignTemplateSections): Record<string, string> {
+  const details: Record<string, string> = {};
+  for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
+    const values = sections[key] as Record<string, unknown> | undefined;
+    if (values === undefined) continue;
+    for (const [field, value] of Object.entries(values)) {
+      if (value === null && !NULLABLE.has(field)) details[field] = 'cannot be empty. Leave it out to use the built-in setting.';
+    }
+  }
+  return details;
+}
+
+/**
+ * The sections as a campaign write stores them (`storedSettingValues`: caller IDs and script texts
+ * trimmed), so a campaign made from the template compares equal to it (CT9). Pure; `sections` is
+ * not changed.
+ */
+export function storedTemplateSections(sections: AgencyCampaignTemplateSections): AgencyCampaignTemplateSections {
+  const out: Record<string, unknown> = {};
+  for (const [key, values] of Object.entries(sections)) out[key] = storedSettingValues(values as Record<string, unknown>);
+  return out as AgencyCampaignTemplateSections;
+}
+
+/**
+ * CT4 (module note): the issues a campaign create would raise for these sections, else null. A
+ * `null` on a NOT NULL field ({@link sectionNullIssues}) is refused first: both validators let it
+ * through, and a campaign's write would store it or fail on it. Pure: the checks that read the
+ * database are {@link sectionAccountIssues}.
  */
 export function sectionConfigIssues(sections: AgencyCampaignTemplateSections): SectionIssues | null {
+  const nulls = issuesOf(sectionNullIssues(sections));
+  if (nulls) return nulls;
   const body = sectionsAsCampaignBody(sections);
   // The public layer's first (the console's wording), then the internal handler's; first per field wins.
   return issuesOf(issuesToDetails([
@@ -199,12 +247,12 @@ export async function sectionAccountIssues(
 
   if (sections.numbers !== undefined) {
     const callerIds = body['caller_ids'];
-    // An empty pool is a template that names no numbers (the built-in one); a create still needs some.
-    const shape = Array.isArray(callerIds) && callerIds.length === 0 ? null : callerIdsIssue(callerIds);
+    // A set numbers section names at least one number, as a campaign does (CT15).
+    const shape = callerIdsIssue(callerIds);
     if (shape) {
       details['caller_ids'] = shape;
     } else {
-      const pool = (callerIds as string[]).map((id) => id.trim());
+      const pool = callerIds as string[];
       const refusal = await campaignCarrierRefusal(
         scope,
         { telephony_provider: body['telephony_provider'], telephony_credential_id: body['telephony_credential_id'], caller_ids: pool },

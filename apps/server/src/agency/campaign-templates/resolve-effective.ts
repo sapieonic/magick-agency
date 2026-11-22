@@ -9,6 +9,8 @@
  *    leaves out and records where each came from (CT9);
  *  - a template's apply to draft campaigns (CT16), which writes the chosen sections as filled in
  *    for the account;
+ *  - a campaign's record (CT9, `template-source.ts`), each section judged against the saved
+ *    versions the record names, filled in for the account now;
  *  - the soft phone's untagged outcomes (CT11, {@link softphoneTemplateOutcomes}), read live at
  *    each call: the outcomes of the account's default chain.
  *
@@ -40,6 +42,7 @@ import {
   resolveTemplateSections,
   type ResolvedTemplateSections,
   type TemplateCapabilities,
+  type TemplateSectionsInput,
 } from '@magick-agency/domain/campaign-templates';
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 import type {
@@ -48,6 +51,7 @@ import type {
   AgencyCampaignTemplateRef,
   AgencyCampaignTemplateScope,
   AgencyCampaignTemplateSectionKey,
+  AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
@@ -212,7 +216,7 @@ async function withServerNotes(
     }
   }
 
-  // Only numbers a template set: the built-in pool is empty.
+  // Only numbers an account template set (it names at least one): the built-in pool is empty.
   if (sources.numbers === 'account') {
     const numbers = sections.numbers;
     const credentialId = numbers.telephony_credential_id;
@@ -226,7 +230,7 @@ async function withServerNotes(
       sections.numbers = structuredClone(builtinTemplateSections().numbers);
       sources.numbers = 'builtin';
       notes.push({ code: 'carrier_unavailable', section: 'numbers' });
-    } else if (numbers.caller_ids.length > 0) {
+    } else {
       const usable = new Set(credentialId
         ? await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
           scope.tenantId, scope.accountId, credentialId, numbers.caller_ids)
@@ -249,45 +253,73 @@ async function withServerNotes(
 }
 
 /**
+ * A template and the organisation template it follows, filled in for the account now: the domain's
+ * rules for what the account may have, then the server's notes (module note). `chosen` null: the
+ * built-in settings alone; `basedOn` is read only for an account template. For the effective read,
+ * the create and apply (through {@link effectiveOfChain}) and a campaign's record (CT9,
+ * `template-source.ts`, which passes the saved versions it names).
+ */
+export async function fillTemplateSections(
+  scope: TemplateAccountScope,
+  chosen: TemplateSectionsInput | null,
+  basedOn: { sections: AgencyCampaignTemplateSections } | null,
+): Promise<ResolvedTemplateSections> {
+  const can = await templateCapabilities(scope);
+  const domain = resolveTemplateSections({
+    chosen,
+    basedOn: chosen?.scope === 'account' ? basedOn : null,
+    builtin: builtinTemplateSections(),
+    can,
+  });
+  return withServerNotes(scope, domain, can);
+}
+
+/** The effective settings of a chain already read (the apply reads its template once and pins it). */
+export async function effectiveOfChain(scope: TemplateAccountScope, chain: TemplateChain): Promise<EffectiveTemplate> {
+  const { chosen, basedOn } = chain;
+  const followed = chosen && chosen.account_id !== null ? basedOn : null;
+  const resolved = await fillTemplateSections(
+    scope,
+    chosen ? { scope: templateScopeOf(chosen), sections: chosen.sections } : null,
+    followed ? { sections: followed.sections } : null,
+  );
+  return {
+    wire: {
+      template: chosen ? templateRefOf(chosen) : null,
+      based_on: followed ? plainTemplateRefOf(followed) : null,
+      config: resolved.config,
+      sources: resolved.sources,
+      notes: resolved.notes,
+    },
+    resolved,
+    chain,
+  };
+}
+
+/**
  * The settings a new campaign of the account starts from (module note): the chain for
- * `templateId` (else the default chain), filled in by the domain's rules for what the account
- * may have, with the server's notes. Refused as {@link resolveTemplateChain} refuses.
+ * `templateId` (else the default chain), filled in for what the account may have, with the
+ * server's notes. Refused as {@link resolveTemplateChain} refuses.
  */
 export async function resolveEffectiveTemplate(
   scope: TemplateAccountScope,
   templateId?: string | null,
 ): Promise<{ ok: true; effective: EffectiveTemplate } | { ok: false; reason: 'not_found' | 'archived' }> {
-  const [found, can] = await Promise.all([resolveTemplateChain(scope, templateId), templateCapabilities(scope)]);
+  const found = await resolveTemplateChain(scope, templateId);
   if (!found.ok) return found;
-  const { chosen, basedOn } = found.chain;
-  const domain = resolveTemplateSections({
-    chosen: chosen ? { scope: templateScopeOf(chosen), sections: chosen.sections } : null,
-    basedOn: chosen && chosen.account_id !== null && basedOn ? { sections: basedOn.sections } : null,
-    builtin: builtinTemplateSections(),
-    can,
-  });
-  const resolved = await withServerNotes(scope, domain, can);
-  return {
-    ok: true,
-    effective: {
-      wire: {
-        template: chosen ? templateRefOf(chosen) : null,
-        based_on: chosen && chosen.account_id !== null && basedOn ? plainTemplateRefOf(basedOn) : null,
-        config: resolved.config,
-        sources: resolved.sources,
-        notes: resolved.notes,
-      },
-      resolved,
-      chain: found.chain,
-    },
-  };
+  return { ok: true, effective: await effectiveOfChain(scope, found.chain) };
 }
 
 /** What untagged soft-phone calls follow when the soft phone sets no outcomes of its own (CT11). */
 export interface SoftphoneTemplateOutcomes {
   /** The account's default template (else the organisation's), or null: the built-in outcomes. */
   template: TemplateRefWithScope | null;
-  /** The chain's outcome catalog as filled in; `[]` (a template's empty list) reads as built-in at the call (CT1). */
+  /**
+   * The chain's outcome catalog as filled in for an account without contact assignment (no agent
+   * overrides: a soft-phone call has no roster contact to grant one); `[]` (a template's empty
+   * list) reads as built-in at the call (CT1). The soft phone's own catalog rules are applied by
+   * its caller (`untagged-outcomes.ts`).
+   */
   catalog: AgencyDisposition[];
 }
 
@@ -295,8 +327,9 @@ export interface SoftphoneTemplateOutcomes {
  * CT11: the outcomes of the account's default chain, read live (the soft phone is an account
  * setting, not a campaign, so nothing is copied), or null while `agency_campaign_templates_enabled`
  * is off for the account (the built-in outcomes, as before). The same chain and the same domain
- * rule as a new campaign's; the outcomes section is not gated by anything the account may have,
- * so no capability is read. A flag or template read that throws propagates.
+ * rule as a new campaign's, with no capability read: the outcomes section is gated by nothing but
+ * contact assignment, which a soft-phone call never has. A flag or template read that throws
+ * propagates.
  */
 export async function softphoneTemplateOutcomes(scope: TemplateAccountScope): Promise<SoftphoneTemplateOutcomes | null> {
   if (!(await campaignTemplatesEnabled(scope.tenantId, scope.accountId))) return null;

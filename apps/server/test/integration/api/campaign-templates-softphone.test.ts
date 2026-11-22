@@ -9,8 +9,10 @@ import type { FastifyInstance } from 'fastify';
  *
  * Pinned here: with the flag on and the soft phone setting none of its own, untagged calls use the
  * account's default template chain's outcomes (the account's default, else the organisation's), read
- * live (a template edited after is followed at once); the soft phone's own list wins; with the flag
- * off the built-in outcomes, as before; a tagged call keeps its campaign's; the source stays
+ * live (a template edited after is followed at once); the soft phone's own list wins, and the
+ * settings still name what "Follow" would give (`outcomes_template`, on the PUT's answer too); the
+ * followed catalog passes the soft phone's own catalog rules (no override, no promise); with the
+ * flag off the built-in outcomes, as before; a tagged call keeps its campaign's; the source stays
  * `softphone`.
  */
 
@@ -170,13 +172,14 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
     expect(await untaggedPad()).toEqual([...AGENCY_DEFAULT_DISPOSITION_CATALOG]);
   });
 
-  it('the soft phone\'s own list wins: outcomes_template is null, on the GET and the PUT\'s answer', async () => {
-    await template('account', ACCOUNT_OUTCOMES);
+  it('the soft phone\'s own list wins; outcomes_template still says what Follow would give, on the GET and the PUT\'s answer', async () => {
+    const mine = await template('account', ACCOUNT_OUTCOMES);
+    const follows = { template: { id: mine.id, name: mine.name, version: 1, scope: 'account' }, disposition_catalog: ACCOUNT_OUTCOMES };
     const put = await as(w.sup, w.a, 'PUT', '/softphone/settings', {
       disposition_catalog: OWN, call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null,
     });
-    expect(put.json().outcomes_template).toBeNull();
-    expect((await readSettings()).outcomes_template).toBeNull();
+    expect(put.json().outcomes_template).toEqual(follows);
+    expect((await readSettings()).outcomes_template).toEqual(follows);
     expect(await untaggedPad()).toEqual(OWN);
     const call = await endedCall();
     expect(await save(call, 'will_pay')).toMatchObject({ ok: false, refusal: { code: 'disposition_invalid', allowed_codes: ['sold'] } });
@@ -184,6 +187,28 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
     // Set back to none: the template again.
     await ownCatalog([]);
     expect((await readSettings()).outcomes_template).toMatchObject({ disposition_catalog: ACCOUNT_OUTCOMES });
+  });
+
+  it('the followed catalog is one the soft phone would accept: no override, no promise, the outcomes kept (S8)', async () => {
+    await setFlag('agency_contact_assignment_enabled', true);
+    await template('account', [
+      { code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true, promise_follow_up_days: 2 },
+      { code: 'call_later', label: 'Call later', requires_datetime: true, override: { calling_hours: true } },
+      { code: 'refused', label: 'Refused' },
+    ]);
+    const softphone: AgencyDisposition[] = [
+      { code: 'will_pay', label: 'Will pay', is_success: true },
+      { code: 'call_later', label: 'Call later', requires_datetime: true },
+      { code: 'refused', label: 'Refused' },
+    ];
+    expect((await readSettings()).outcomes_template?.disposition_catalog).toEqual(softphone);
+    expect(await untaggedPad()).toEqual(softphone);
+    // The soft phone's own settings accept that very list.
+    await ownCatalog(softphone);
+    await ownCatalog([]);
+    // Saved against it: no promise is asked.
+    const call = await endedCall();
+    expect(await save(call, 'will_pay')).toMatchObject({ ok: true });
   });
 
   it('the flag off: the built-in outcomes as before, and no follow', async () => {

@@ -14,8 +14,10 @@ import type { FastifyInstance } from 'fastify';
  *    the account's default (following the organisation's); a named template; a section the body
  *    sends kept as sent (an empty outcome list too), its absent fields built-in; unknown, archived
  *    or another account's `template_id` refused before anything is written.
- *  - CT9: `template_source` records the template, its based-on and each section's source,
- *    `campaign` where the body changed what was filled in.
+ *  - CT9 (as amended): `template_source` records the template, its based-on, each section's
+ *    source (`campaign` where the stored settings differ from what was filled in) and the
+ *    filling-in's notes; every settings PATCH recomputes it against the versions it names.
+ *  - S1: a template's outcome overrides are left out, with a note, where contact assignment is off.
  *  - CT1: editing, then archiving, the template after the create leaves the campaign's row byte
  *    for byte the same.
  *  - CT7: a retry campaign copies its parent, never a template.
@@ -37,6 +39,7 @@ import {
   type AgencyCampaignTemplateSource,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
+import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
   insertAccount,
@@ -97,7 +100,7 @@ afterAll(async () => {
 const headers = (uid: string, account: string | null) => ({
   authorization: `Bearer tok:${uid}`, 'x-tenant-id': w.tenant, ...(account ? { 'x-account-id': account } : {}),
 });
-const sup = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown, account = w.a, uid = w.supUid) =>
+const sup = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: unknown, account = w.a, uid = w.supUid) =>
   app.inject({ method, url: `/proxy/agency${url}`, headers: headers(uid, account), ...(payload !== undefined ? { payload: payload as object } : {}) });
 const orgAdmin = (method: 'POST' | 'PUT', url: string, payload?: unknown) =>
   app.inject({ method, url: `/proxy/agency${url}`, headers: headers(w.orgUid, null), ...(payload !== undefined ? { payload: payload as object } : {}) });
@@ -173,7 +176,14 @@ describe('the flag on: filled in from a template (CT8, CT9)', () => {
   });
 
   it('no template: the built-in settings with Asia/Kolkata hours, every section built-in', async () => {
-    const id = await create(BASE);
+    const made = await sup('POST', '/campaigns', BASE);
+    expect(made.statusCode, made.body).toBe(201);
+    const id = (made.json() as AgencyCampaign).id;
+    // Every campaign payload the console reads carries `created_at` (campaign Settings' "Started from").
+    const createdAt = (made.json() as AgencyCampaign).created_at;
+    expect(createdAt).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+    expect((await sup('GET', `/campaigns/${id}`)).json().created_at).toBe(createdAt);
+    expect((await sup('GET', '/campaigns')).json().campaigns.map((c: AgencyCampaign) => c.created_at)).toEqual([createdAt]);
     expect(await settings(id)).toMatchObject({
       default_timezone: 'Asia/Kolkata', calling_window_start: '09:00:00', calling_window_end: '20:00:00',
       calling_days: [1, 2, 3, 4, 5], disposition_catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG],
@@ -200,6 +210,7 @@ describe('the flag on: filled in from a template (CT8, CT9)', () => {
       template: { id: accDef.id, name: accDef.name, version: 1, scope: 'account' },
       based_on: { id: orgDef.id, name: orgDef.name, version: 1 },
       sections: created('builtin', { outcomes: 'account', hours: 'account', wrapup: 'organisation', safety: 'campaign' }),
+      notes: [],
     });
   });
 
@@ -287,6 +298,78 @@ describe('the flag on: filled in from a template (CT8, CT9)', () => {
     expect(res.statusCode, res.body).toBe(201);
     const child = await settings((res.json() as { campaign: { id: string } }).campaign.id);
     expect(child).toMatchObject({ wrapup_seconds: 60, wrapup_auto_return: false, allow_wrapup_redial: true, template_source: null });
+  });
+});
+
+describe('the record follows the campaign (CT9 as amended)', () => {
+  const sourceOf = async (id: string) => (await settings(id)).template_source as AgencyCampaignTemplateSource;
+  const patch = async (id: string, body: Record<string, unknown>) => {
+    const res = await sup('PATCH', `/campaigns/${id}`, body);
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json() as AgencyCampaign;
+  };
+  const HOURS = { calling_window_start: '10:00', calling_window_end: '18:00', calling_days: [1, 2, 3, 4, 5, 6], default_timezone: 'Asia/Kolkata' };
+
+  it('a draft made with the template\'s sections, then PATCHed: hours read campaign; back to the template\'s, the template\'s again', async () => {
+    const tpl = await template('account', { outcomes: OUTCOMES, hours: HOURS });
+    // New campaign's roster upload makes the draft with the form as filled in, before Hours is edited.
+    const id = await create({ ...BASE, template_id: tpl.id, ...OUTCOMES, ...HOURS });
+    expect((await sourceOf(id)).sections).toEqual(created('builtin', { outcomes: 'account', hours: 'account' }));
+
+    await patch(id, { calling_window_start: '11:00' });
+    expect((await sourceOf(id)).sections).toEqual(created('builtin', { outcomes: 'account', hours: 'campaign' }));
+    // A PATCH of another section leaves the hours' record as the settings say.
+    await patch(id, { wrapup_seconds: 45 });
+    expect((await sourceOf(id)).sections).toEqual(created('builtin', { outcomes: 'account', hours: 'campaign', wrapup: 'campaign' }));
+
+    await patch(id, { calling_window_start: '10:00:00', wrapup_seconds: 30 });
+    const back = await sourceOf(id);
+    expect(back.sections).toEqual(created('builtin', { outcomes: 'account', hours: 'account' }));
+    expect(back.template).toEqual({ id: tpl.id, name: tpl.name, version: 1, scope: 'account' });
+    // Judged against the version it was made from, not the template as it is now.
+    await sup('PUT', `/campaign-templates/${tpl.id}`, {
+      name: tpl.name, description: null, based_on_template_id: null, sections: { hours: { ...HOURS, calling_window_start: '08:00' } }, expected_version: 1,
+    });
+    await patch(id, { phone_display: 'full' });
+    expect((await sourceOf(id)).sections.hours).toBe('account');
+  });
+
+  it('a recording note keeps recording\'s source and the note, through a PATCH', async () => {
+    const org = await template('organisation', { recording: { record_calls: true } }, { make_default: true });
+    const id = await create(BASE);
+    const note = { code: 'recording_not_allowed', section: 'recording' };
+    expect(await sourceOf(id)).toMatchObject({ template: { id: org.id }, sections: { recording: 'organisation' }, notes: [note] });
+    expect((await settings(id)).record_calls).toBe(false);
+    await patch(id, { calling_window_start: '11:00' });
+    expect(await sourceOf(id)).toMatchObject({ sections: { recording: 'organisation', hours: 'campaign' }, notes: [note] });
+  });
+
+  it('a record whose template version is gone is left as it is', async () => {
+    const tpl = await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const before = await sourceOf(id);
+    await q(`DELETE FROM agency_campaign_template_versions WHERE template_id = $1`, [tpl.id]);
+    const after = await patch(id, { calling_window_start: '11:00' });
+    expect(after.calling_window_start).toBe('11:00:00');
+    expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('a template\'s outcome overrides without contact assignment: left out with a note, never a 403 on a field not sent (S1)', async () => {
+    const catalog = [{ code: 'will_pay', label: 'Will pay', override: { extra_attempts: 1 } }, { code: 'refused', label: 'Refused' }];
+    const org = await template('organisation', { outcomes: { disposition_catalog: catalog, outcome_dispositions: {} } }, { make_default: true });
+    // Contact assignment is off for the account (the flag's default).
+    const effective = await sup('GET', '/campaign-templates/effective');
+    expect(effective.json().notes).toEqual([{ code: 'outcome_overrides_off', section: 'outcomes' }]);
+    const id = await create(BASE);
+    const stored = await settings(id);
+    expect(stored.disposition_catalog).toEqual([{ code: 'will_pay', label: 'Will pay' }, { code: 'refused', label: 'Refused' }]);
+    expect(stored.template_source).toMatchObject({
+      template: { id: org.id }, sections: { outcomes: 'organisation' }, notes: [{ code: 'outcome_overrides_off', section: 'outcomes' }],
+    });
+    // Where contact assignment is on, the overrides are kept.
+    await setFlag('agency_contact_assignment_enabled', true);
+    const withAssignment = await create(BASE);
+    expect((await settings(withAssignment)).disposition_catalog).toEqual(catalog);
   });
 });
 

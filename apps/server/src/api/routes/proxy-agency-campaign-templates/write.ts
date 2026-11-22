@@ -13,7 +13,9 @@
  * each section as a campaign create checks it (`campaign_template_section_invalid`, CT4), then the
  * repository's rules under the scope lock: the version (`409 campaign_template_changed`, CT6), the
  * name (`409 campaign_template_name_taken`, CT13), the default, the archive (`409
- * campaign_template_in_use`, CT14). Every write is audited (`campaign_template.*`, CT9) on success.
+ * campaign_template_in_use`, CT14). Every write is audited (`campaign_template.*`, CT9) on success;
+ * a default, archive or restore only when the repository says it changed something (two at once
+ * audit once). A replace reads its body, size included, before the template.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
@@ -48,6 +50,7 @@ import {
   sectionAccountIssues,
   sectionConfigIssues,
   sectionsShapeIssues,
+  storedTemplateSections,
   zodDetails,
 } from './validate.js';
 
@@ -92,21 +95,22 @@ function scopeOf(row: Pick<CampaignTemplateRecord, 'tenant_id' | 'account_id'>):
 
 /**
  * The content checks shared by create and replace, after the body's shape: the scope's rules, the
- * based-on, and every section (module note). `accountId` null: an organisation template. False once
- * it has replied.
+ * based-on, and every section (module note), on the sections as a campaign stores them
+ * (`storedTemplateSections`). `accountId` null: an organisation template. The sections to store,
+ * or null once it has replied.
  */
 async function contentRefused(
   request: FastifyRequest,
   reply: FastifyReply,
   accountId: string | null,
   content: { based_on_template_id: string | null; sections: Record<string, Record<string, unknown>> },
-): Promise<boolean> {
+): Promise<AgencyCampaignTemplateSections | null> {
   const shape = sectionsShapeIssues(content.sections);
   if (Object.keys(shape).length > 0) {
     sendTemplateRefusal(reply, 'campaign_template_invalid', { details: shape });
-    return true;
+    return null;
   }
-  const sections = content.sections as AgencyCampaignTemplateSections;
+  const sections = storedTemplateSections(content.sections as AgencyCampaignTemplateSections);
 
   if (accountId === null) {
     if (content.based_on_template_id !== null) {
@@ -114,7 +118,7 @@ async function contentRefused(
         message: 'An organisation template is not based on another template.',
         details: { based_on_template_id: 'must be null on an organisation template' },
       });
-      return true;
+      return null;
     }
     const parts = accountOnlyPartsIn(sections);
     if (parts.length > 0) {
@@ -122,25 +126,25 @@ async function contentRefused(
         message: 'An organisation template cannot hold an account’s numbers or call summary profile.',
         details: Object.fromEntries(parts.map((p) => [p, 'is set per account, not for the whole organisation'])),
       });
-      return true;
+      return null;
     }
   } else if (content.based_on_template_id !== null) {
     // The repository re-checks under the lock; this tells an account template from a missing one.
     const basedOn = await repo.findVisible({ tenantId: request.tenantId!, accountId }, content.based_on_template_id);
     if (!basedOn) {
       sendContentRefusal(reply, { ok: false, reason: 'based_on_not_found' });
-      return true;
+      return null;
     }
     if (basedOn.account_id !== null) {
       sendTemplateRefusal(reply, 'campaign_template_scope_invalid', {
         message: 'An account template can be based on an organisation template only.',
         details: { based_on_template_id: 'must name an organisation template' },
       });
-      return true;
+      return null;
     }
     if (basedOn.archived_at !== null) {
       sendContentRefusal(reply, { ok: false, reason: 'based_on_archived' });
-      return true;
+      return null;
     }
   }
 
@@ -148,9 +152,9 @@ async function contentRefused(
     ?? (accountId === null ? null : await sectionAccountIssues({ tenantId: request.tenantId!, accountId }, sections));
   if (issues) {
     sendTemplateRefusal(reply, 'campaign_template_section_invalid', { details: issues.details, extra: { sections: issues.sections } });
-    return true;
+    return null;
   }
-  return false;
+  return sections;
 }
 
 /**
@@ -209,10 +213,11 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
       based_on_template_id: body.based_on_template_id?.toLowerCase() ?? null,
       sections: body.sections as AgencyCampaignTemplateSections,
     };
-    if (await contentRefused(request, reply, accountId, content)) return reply;
+    const sections = await contentRefused(request, reply, accountId, content);
+    if (!sections) return reply;
 
     const scope: CampaignTemplateScope = { tenantId: request.tenantId!, accountId };
-    const created = await repo.create(scope, content, { actorUserId: request.user?.id ?? null, makeDefault: body.make_default === true });
+    const created = await repo.create(scope, { ...content, sections }, { actorUserId: request.user?.id ?? null, makeDefault: body.make_default === true });
     if (!created.ok) return sendContentRefusal(reply, created);
     const template = created.template;
     auditTemplate(request, 'campaign_template.created', template, {
@@ -227,11 +232,12 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
 
   // ── PUT /campaign-templates/:id ─────────────────────────────────────────────
   app.put<{ Params: { id: string } }>('/campaign-templates/:id', manage, async (request, reply) => {
-    const row = await writableTemplate(request, reply);
-    if (!row) return reply;
+    // The body first, its size included, before anything is read.
     const parsed = replaceTemplateSchema.safeParse(request.body ?? {});
     if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
     const body = parsed.data;
+    const row = await writableTemplate(request, reply);
+    if (!row) return reply;
     // Archived: refused before its content is judged (the repository says the same under the lock).
     if (row.archived_at !== null) return sendTemplateRefusal(reply, 'campaign_template_archived');
 
@@ -241,9 +247,10 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
       based_on_template_id: body.based_on_template_id?.toLowerCase() ?? null,
       sections: body.sections as AgencyCampaignTemplateSections,
     };
-    if (await contentRefused(request, reply, row.account_id, content)) return reply;
+    const sections = await contentRefused(request, reply, row.account_id, content);
+    if (!sections) return reply;
 
-    const replaced = await repo.replace(scopeOf(row), row.id, { ...content, expected_version: body.expected_version }, {
+    const replaced = await repo.replace(scopeOf(row), row.id, { ...content, sections, expected_version: body.expected_version }, {
       actorUserId: request.user?.id ?? null,
     });
     if (!replaced.ok) return sendContentRefusal(reply, replaced);
@@ -266,7 +273,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
     if (!row) return reply;
     const result = await repo.setDefault(scopeOf(row), row.id);
     if (!result.ok) return sendContentRefusal(reply, result);
-    if (!row.is_default) auditTemplate(request, 'campaign_template.default_set', result.template, { replaced: result.replaced });
+    if (result.changed) auditTemplate(request, 'campaign_template.default_set', result.template, { replaced: result.replaced });
     const body: AgencyCampaignTemplateDefaultResponse = { template: await summaryOf(request, result.template), replaced: result.replaced };
     return reply.send(body);
   });
@@ -277,7 +284,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
     if (!row) return reply;
     const result = await repo.clearDefault(scopeOf(row), row.id);
     if (!result.ok) return sendContentRefusal(reply, result);
-    if (row.is_default) auditTemplate(request, 'campaign_template.default_cleared', result.template);
+    if (result.changed) auditTemplate(request, 'campaign_template.default_cleared', result.template);
     const body: AgencyCampaignTemplateDefaultResponse = { template: await summaryOf(request, result.template), replaced: null };
     return reply.send(body);
   });
@@ -295,7 +302,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
       });
     }
     if (!result.ok) return sendContentRefusal(reply, result);
-    if (row.archived_at === null) {
+    if (result.changed) {
       auditTemplate(request, 'campaign_template.archived', result.template, { default_cleared: result.default_cleared });
     }
     const body: AgencyCampaignTemplateArchiveResponse = {
@@ -311,7 +318,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
     if (!row) return reply;
     const result = await repo.restore(scopeOf(row), row.id);
     if (!result.ok) return sendContentRefusal(reply, result);
-    if (row.archived_at !== null) auditTemplate(request, 'campaign_template.restored', result.template);
+    if (result.changed) auditTemplate(request, 'campaign_template.restored', result.template);
     const body: AgencyCampaignTemplateRestoreResponse = { template: await summaryOf(request, result.template) };
     return reply.send(body);
   });

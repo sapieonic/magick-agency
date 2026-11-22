@@ -13,20 +13,22 @@
  *    body leaves out is that field's BUILT-IN value (the domain's rule: a section is won whole, and
  *    absent means built-in), so the stored row is what `template_source` says. The built-in hours
  *    are New campaign's `Asia/Kolkata` (CT18), not the column's `UTC`.
- *  - `template_source` (CT9) is computed by the domain's `sectionSourcesForCreate`: per section the
- *    filled-in source, or `campaign` when what was sent differs from it.
+ *  - `template_source` (CT9) is the record's one computation (`templateSourceFor`), on the body as
+ *    the campaign will store it (`storedSettingValues`: caller IDs and script texts trimmed): per
+ *    section the filled-in source, or `campaign` where it differs, and the fill-in's notes.
  *
  * The body is the caller's; it is never mutated (a new object is returned).
  */
-import { builtinTemplateSections, sectionSourcesForCreate, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
+import { builtinTemplateSections, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
 import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   type AgencyCampaignTemplateConfig,
   type AgencyCampaignTemplateSource,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { resolveEffectiveTemplate, type TemplateAccountScope } from './resolve-effective.js';
+import { templateSourceFor } from './template-source.js';
+import { storedSettingValues } from '../campaign-stored-values.js';
 import { UUID_RE } from '../../utils/uuid.js';
 
 /** The fields the server writes or reads for the fill-in, never stored as sent. */
@@ -94,10 +96,9 @@ export async function fillCreateFromTemplate(scope: TemplateAccountScope, raw: u
   if (!found.ok) return found;
   const { wire, resolved } = found.effective;
   const sent = withoutTemplateKeys(record) as Record<string, unknown>;
-  const template_source: AgencyCampaignTemplateSource = {
-    template: wire.template,
-    based_on: wire.based_on,
-    sections: sectionSourcesForCreate(sent as Partial<AgencyCampaign>, resolved),
-  };
-  return { ok: true, body: { ...filledCreateBody(sent, resolved.config), template_source }, template_source };
+  const body = storedSettingValues(filledCreateBody(sent, resolved.config));
+  const refs = { template: wire.template, based_on: wire.based_on };
+  // The fill-in just made is of these very versions, so it is passed, never read again.
+  const template_source = (await templateSourceFor(scope, body, refs, { ...refs, resolved }))!;
+  return { ok: true, body: { ...body, template_source }, template_source };
 }

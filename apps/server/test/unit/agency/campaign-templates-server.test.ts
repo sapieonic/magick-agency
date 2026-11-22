@@ -22,14 +22,14 @@ import {
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
 import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
 import { filledCreateBody, withoutTemplateKeys } from '../../../src/agency/campaign-templates/create-fill.js';
-import { templateSourceIssue } from '../../../src/agency/campaign-templates/template-source.js';
+import { templateSourceFor, templateSourceIssue } from '../../../src/agency/campaign-templates/template-source.js';
 import {
   sectionConfigIssues,
   sectionOfPath,
   sectionsAsCampaignBody,
   sectionsShapeIssues,
 } from '../../../src/api/routes/proxy-agency-campaign-templates/validate.js';
-import { appliedTemplateSource, applyPatchBody } from '../../../src/api/routes/proxy-agency-campaign-templates/apply.js';
+import { applyPatchBody } from '../../../src/api/routes/proxy-agency-campaign-templates/apply.js';
 
 const builtin = builtinTemplateSections();
 const all = (source: string) => Object.fromEntries(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k) => [k, source]));
@@ -143,16 +143,22 @@ describe('the apply\'s body and record (CT16)', () => {
     });
   });
 
-  it('appliedTemplateSource: the chosen sections\' sources from the fill-in, the others kept, `campaign` when none', () => {
-    const wire = {
-      template: { id: 't', name: 'T', version: 3, scope: 'account' as const },
-      based_on: null,
-      sources: { ...all('builtin'), wrapup: 'account' } as AgencyCampaignTemplateEffective['sources'],
-    };
-    const fresh = appliedTemplateSource(null, { wire: { ...wire, config: {} as never, notes: [] } }, ['wrapup', 'hours']);
-    expect(fresh).toEqual({ template: wire.template, based_on: null, sections: { ...all('campaign'), wrapup: 'account', hours: 'builtin' } });
-    const before = { template: null, based_on: null, sections: { ...all('organisation'), numbers: 'campaign' } } as AgencyCampaignTemplateSource;
-    expect(appliedTemplateSource(before, { wire: { ...wire, config: {} as never, notes: [] } }, ['wrapup']).sections)
-      .toEqual({ ...all('organisation'), numbers: 'campaign', wrapup: 'account' });
+});
+
+describe('templateSourceFor (CT9 as amended): the record of stored settings', () => {
+  const refs = { template: { id: '11111111-2222-4333-8444-555555555555', name: 'T', version: 3, scope: 'account' as const }, based_on: null };
+  const fill = { ...refs, resolved: filled({ wrapup: { wrapup_seconds: 90 } }) };
+  const scope = { tenantId: 't', accountId: 'a' };
+
+  it('each section of the stored settings against the fill-in: its source where equal, else campaign; the notes kept', async () => {
+    const stored = { ...fill.resolved.config, wrapup_seconds: 90, calling_window_start: '11:00:00' };
+    const record = await templateSourceFor(scope, stored, refs, { ...fill, resolved: { ...fill.resolved, notes: [{ code: 'recording_not_allowed', section: 'recording' }] } });
+    expect(record).toEqual({
+      ...refs,
+      sections: { ...all('builtin'), wrapup: 'account', hours: 'campaign' },
+      notes: [{ code: 'recording_not_allowed', section: 'recording' }],
+    });
+    // Back to the template's value: its source again.
+    expect((await templateSourceFor(scope, fill.resolved.config, refs, fill))!.sections.hours).toBe('builtin');
   });
 });

@@ -61,8 +61,10 @@ export const PROMISE_SUMMARY_SQL = `
  * The account's active campaigns whose stored outcome catalog has an entry with
  * `requires_promise: true` ($1 tenant, $2 account, $3 the active statuses: Home's, {@link AGENCY_HOME_ACTIVE_STATUSES}). An empty catalog means
  * the default one, which has none. Only a campaign's catalog can ask for a promise: the soft
- * phone's and an inbound route's refuse `requires_promise` when saved (`allowPromise: false`), and
- * a call outside a campaign resolves to one of those or the default, so no other catalog is read.
+ * phone's and an inbound route's refuse `requires_promise` when saved (`allowPromise: false`), the
+ * template catalog untagged soft-phone calls follow (CT11) is passed through the soft phone's rules
+ * (`asSoftphoneCatalog`), and a call outside a campaign resolves to one of those or the default, so
+ * no other catalog is read.
  * Tested through {@link AgencyPromiseSummaryRepository.promiseCampaignIds}.
  */
 const PROMISE_CAMPAIGNS_SQL = `
