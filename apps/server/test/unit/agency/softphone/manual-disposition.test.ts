@@ -79,17 +79,30 @@ describe('call fields', () => {
 
 describe('the catalog', () => {
   it('tagged: the campaign\'s, else the built-in, as source campaign', () => {
-    expect(resolveManualCatalog({ disposition_catalog: CATALOG }, true, { disposition_catalog: [] }))
+    expect(resolveManualCatalog({ disposition_catalog: CATALOG }, true, { disposition_catalog: [] }, []))
       .toEqual({ catalog: CATALOG, source: 'campaign' });
-    expect(resolveManualCatalog({ disposition_catalog: [] }, true, { disposition_catalog: CATALOG }))
+    expect(resolveManualCatalog({ disposition_catalog: [] }, true, { disposition_catalog: CATALOG }, []))
       .toEqual({ catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], source: 'campaign' });
-    expect(resolveManualCatalog(null, true, { disposition_catalog: CATALOG }).source).toBe('campaign');
+    expect(resolveManualCatalog(null, true, { disposition_catalog: CATALOG }, []).source).toBe('campaign');
   });
 
   it('untagged: the settings\', else the built-in, as source softphone', () => {
-    expect(resolveManualCatalog(null, false, { disposition_catalog: CATALOG })).toEqual({ catalog: CATALOG, source: 'softphone' });
-    expect(resolveManualCatalog(null, false, { disposition_catalog: [] }))
+    expect(resolveManualCatalog(null, false, { disposition_catalog: CATALOG }, [])).toEqual({ catalog: CATALOG, source: 'softphone' });
+    expect(resolveManualCatalog(null, false, { disposition_catalog: [] }, []))
       .toEqual({ catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], source: 'softphone' });
+  });
+
+  // Campaign templates CT11: the fallback is the account's template chain's outcomes, read by the caller.
+  it('untagged: the settings\' own catalog wins over the fallback; an empty one follows it', () => {
+    const FALLBACK = [{ code: 'will_pay', label: 'Will pay' }];
+    expect(resolveManualCatalog(null, false, { disposition_catalog: CATALOG }, FALLBACK)).toEqual({ catalog: CATALOG, source: 'softphone' });
+    expect(resolveManualCatalog(null, false, { disposition_catalog: [] }, FALLBACK)).toEqual({ catalog: FALLBACK, source: 'softphone' });
+  });
+
+  it('tagged: never the fallback', () => {
+    const FALLBACK = [{ code: 'will_pay', label: 'Will pay' }];
+    expect(resolveManualCatalog({ disposition_catalog: [] }, true, { disposition_catalog: [] }, FALLBACK))
+      .toEqual({ catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], source: 'campaign' });
   });
 });
 

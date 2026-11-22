@@ -31,18 +31,26 @@ function nonEmpty(catalog: unknown): catalog is AgencyDisposition[] {
 /**
  * The catalog a call's outcome resolves against, and the `disposition_source` it
  * is stored with: a tagged call uses the campaign's `disposition_catalog`; an
- * untagged one the settings' catalog, else the built-in.
+ * untagged one the settings' catalog, else `fallback`, else the built-in.
+ *
+ * `fallback` is what untagged calls follow when the soft phone sets no outcomes of its
+ * own (campaign templates CT11: the outcomes of the account's default template chain,
+ * read live by the caller, `softphoneTemplateOutcomes`; `[]` while the templates flag is
+ * off). The caller reads it, so this stays pure. Still source `softphone`: the soft
+ * phone's own catalog, as it stands for the account.
  *
  * A tagged campaign whose catalog is EMPTY (or whose row is gone) falls back to the
  * built-in catalog, still as source `campaign`. On the station an empty catalog
  * means "no write-up step", but a soft-phone call that bridged always owes an
  * outcome (`requires_disposition`), and a catalog with no codes would leave it
- * unsavable until the lapse.
+ * unsavable until the lapse. An empty `fallback` (a template's empty outcome list,
+ * CT1) is the built-in catalog for the same reason.
  */
 export function resolveManualCatalog(
   tag: Pick<AgencyCampaignRecord, 'disposition_catalog'> | null,
   tagged: boolean,
   settings: Pick<AgencySoftphoneSettings, 'disposition_catalog'>,
+  fallback: readonly AgencyDisposition[],
 ): { catalog: AgencyDisposition[]; source: AgencyManualCallDispositionSource } {
   if (tagged) {
     return {
@@ -51,9 +59,16 @@ export function resolveManualCatalog(
     };
   }
   return {
-    catalog: nonEmpty(settings.disposition_catalog) ? settings.disposition_catalog : [...AGENCY_DEFAULT_DISPOSITION_CATALOG],
+    catalog: nonEmpty(settings.disposition_catalog)
+      ? settings.disposition_catalog
+      : nonEmpty(fallback) ? [...fallback] : [...AGENCY_DEFAULT_DISPOSITION_CATALOG],
     source: 'softphone',
   };
+}
+
+/** Whether the soft phone sets its own untagged outcomes (else they follow the template chain, CT11). */
+export function softphoneSetsOwnOutcomes(settings: Pick<AgencySoftphoneSettings, 'disposition_catalog'>): boolean {
+  return nonEmpty(settings.disposition_catalog);
 }
 
 /** The field refusals a soft-phone or inbound outcome names as its `reason`, as the station's codes. */
