@@ -114,8 +114,9 @@ export function plainTemplateRefOf(row: CampaignTemplateRecord): AgencyCampaignT
 /**
  * The chain for an account (module note). `templateId` names a template the account can see (its
  * own or the organisation's): not one, or another account's or tenant's, is `not_found`; an
- * archived one `archived`. Absent or null: the default chain. `templateId` must be a UUID (the
- * caller validates it at the edge).
+ * archived one `archived`. Absent (`undefined`): the default chain. `null`: no template, the
+ * built-in settings alone (New campaign's "Built-in settings", sent as `template_id: null`). A
+ * string must be a UUID (the caller validates it at the edge).
  */
 export async function resolveTemplateChain(
   scope: TemplateAccountScope,
@@ -123,7 +124,9 @@ export async function resolveTemplateChain(
 ): Promise<TemplateChainResult> {
   const reader: CampaignTemplateReader = { tenantId: scope.tenantId, accountId: scope.accountId };
   let chosen: CampaignTemplateRecord | null;
-  if (templateId) {
+  if (templateId === null) {
+    chosen = null;
+  } else if (templateId !== undefined) {
     chosen = await agencyCampaignTemplateRepository.findVisible(reader, templateId);
     if (!chosen) return { ok: false, reason: 'not_found' };
     if (chosen.archived_at !== null) return { ok: false, reason: 'archived' };

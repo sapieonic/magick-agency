@@ -7,11 +7,11 @@
  *
  * Read by every place that decides or shows that list, so they cannot disagree: the bootstrap's
  * `untagged.disposition_catalog` (the console's and the agent app's pad), the outcome's
- * settlement (`SoftphoneService.submitDisposition`) and the settings read's `outcomes_follow`
+ * settlement (`SoftphoneService.submitDisposition`) and the settings read's `outcomes_template`
  * (what the settings page shows as "Follow campaign template"). Tagged and inbound calls never
  * read it.
  */
-import type { AgencyDisposition, AgencySoftphoneOutcomesFollow, AgencySoftphoneSettings } from '@magick-agency/contracts/agency';
+import type { AgencyDisposition, AgencySoftphoneOutcomesTemplate, AgencySoftphoneSettings } from '@magick-agency/contracts/agency';
 import { softphoneTemplateOutcomes, type TemplateAccountScope } from '../campaign-templates/resolve-effective.js';
 import { resolveManualCatalog, softphoneSetsOwnOutcomes } from './manual-disposition.js';
 
@@ -20,14 +20,17 @@ import { resolveManualCatalog, softphoneSetsOwnOutcomes } from './manual-disposi
  * and the catalog the calls use (an empty template list read as the built-in one), or null when
  * the soft phone sets its own or the templates flag is off.
  */
-export async function untaggedOutcomesFollow(
+export async function untaggedOutcomesTemplate(
   scope: TemplateAccountScope,
   settings: Pick<AgencySoftphoneSettings, 'disposition_catalog'>,
-): Promise<AgencySoftphoneOutcomesFollow | null> {
+): Promise<AgencySoftphoneOutcomesTemplate | null> {
   if (softphoneSetsOwnOutcomes(settings)) return null;
   const follow = await softphoneTemplateOutcomes(scope);
   if (!follow) return null;
-  return { template: follow.template, catalog: resolveManualCatalog(null, false, settings, follow.catalog).catalog };
+  return {
+    template: follow.template,
+    disposition_catalog: resolveManualCatalog(null, false, settings, follow.catalog).catalog,
+  };
 }
 
 /** The catalog untagged calls are saved against now (module note). */
@@ -35,6 +38,6 @@ export async function untaggedCatalog(
   scope: TemplateAccountScope,
   settings: Pick<AgencySoftphoneSettings, 'disposition_catalog'>,
 ): Promise<AgencyDisposition[]> {
-  const follow = await untaggedOutcomesFollow(scope, settings);
-  return resolveManualCatalog(null, false, settings, follow?.catalog ?? []).catalog;
+  const follow = await untaggedOutcomesTemplate(scope, settings);
+  return resolveManualCatalog(null, false, settings, follow?.disposition_catalog ?? []).catalog;
 }

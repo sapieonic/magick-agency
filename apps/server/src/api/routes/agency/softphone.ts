@@ -41,7 +41,7 @@ import type { AgencyCampaignRecord, AgencyManualCallRecord } from '../../../db/m
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { resolveManualCatalog } from '../../../agency/softphone/manual-disposition.js';
-import { untaggedCatalog, untaggedOutcomesFollow } from '../../../agency/softphone/untagged-outcomes.js';
+import { untaggedCatalog, untaggedOutcomesTemplate } from '../../../agency/softphone/untagged-outcomes.js';
 import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
@@ -630,11 +630,11 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
   });
 
   // ── GET /softphone/settings ───────────────────────────────────────────────
-  // `outcomes_follow`: what untagged outcomes follow while the soft phone sets none (CT11).
+  // `outcomes_template`: what untagged outcomes follow while the soft phone sets none (CT11).
   sub.get('/softphone/settings', async (request, reply) => {
     const scope = { tenantId: getTenantId(request), accountId: getAccountId(request) };
     const settings = await agencySoftphoneSettingsRepository.get(scope.tenantId, scope.accountId);
-    const body: AgencySoftphoneSettingsResponse = { settings, outcomes_follow: await untaggedOutcomesFollow(scope, settings) };
+    const body: AgencySoftphoneSettingsResponse = { settings, outcomes_template: await untaggedOutcomesTemplate(scope, settings) };
     return reply.send(body);
   });
 
@@ -658,7 +658,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     };
     const body: AgencySoftphoneSettingsResponse = {
       settings,
-      outcomes_follow: await untaggedOutcomesFollow({ tenantId, accountId }, settings),
+      outcomes_template: await untaggedOutcomesTemplate({ tenantId, accountId }, settings),
     };
     return answer(reply, 200, body, audit);
   });

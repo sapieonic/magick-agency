@@ -4,8 +4,10 @@
  * (`POST /proxy/agency/campaigns`) runs it before its checks, so they judge the body the
  * campaign is stored with; with the flag off it is never called and the create is what it was.
  *
- *  - The settings come from {@link resolveEffectiveTemplate}: the template `template_id` names,
- *    else the account's default chain (the account's default, the organisation's, built-in).
+ *  - The settings come from {@link resolveEffectiveTemplate}, by `template_id`: a template's id,
+ *    that template; `null`, no template, the built-in settings alone (New campaign's "Built-in
+ *    settings"); the key absent, the account's default chain (the account's default, the
+ *    organisation's, built-in), for an API caller that names nothing.
  *  - A section the body leaves out (none of its fields sent) is the filled-in section, whole.
  *  - A section the body sends is kept as sent, an empty outcome list included; a field of it the
  *    body leaves out is that field's BUILT-IN value (the domain's rule: a section is won whole, and
@@ -72,18 +74,23 @@ export type TemplateCreateFill =
 
 /**
  * The create body filled in from a template for the account (module note), with its
- * `template_source` set on it. `raw` is the request body as sent (its `template_id` is read here);
- * `template_id` that is not a string or null is `invalid`, one that is not a UUID or not a template
- * the account can see `not_found`, an archived one `archived`.
+ * `template_source` set on it. `raw` is the request body as sent (its `template_id` is read here:
+ * absent, the default chain; `null`, built-in only; a string, that template). A `template_id` that
+ * is neither a string nor null, or the empty string, is `invalid`; one that is not a UUID or not a
+ * template the account can see `not_found`; an archived one `archived`.
  */
 export async function fillCreateFromTemplate(scope: TemplateAccountScope, raw: unknown): Promise<TemplateCreateFill> {
   const record = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   const templateId = record['template_id'];
-  if (templateId !== undefined && templateId !== null && typeof templateId !== 'string') return { ok: false, reason: 'invalid' };
-  const id = typeof templateId === 'string' && templateId !== '' ? templateId : null;
-  if (id !== null && !UUID_RE.test(id)) return { ok: false, reason: 'not_found' };
+  if (templateId !== undefined && templateId !== null && (typeof templateId !== 'string' || templateId === '')) {
+    return { ok: false, reason: 'invalid' };
+  }
+  if (typeof templateId === 'string' && !UUID_RE.test(templateId)) return { ok: false, reason: 'not_found' };
 
-  const found = await resolveEffectiveTemplate(scope, id?.toLowerCase() ?? null);
+  const found = await resolveEffectiveTemplate(
+    scope,
+    typeof templateId === 'string' ? templateId.toLowerCase() : (templateId as null | undefined),
+  );
   if (!found.ok) return found;
   const { wire, resolved } = found.effective;
   const sent = withoutTemplateKeys(record) as Record<string, unknown>;

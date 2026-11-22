@@ -52,10 +52,13 @@ export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): 
     if (!accountId) return reply;
     const parsed = effectiveQuerySchema.safeParse(request.query ?? {});
     if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
-    let templateId: string | null = null;
+    // Absent (or blank): the default chain. A query cannot say `null`; the built-in settings are
+    // the domain's `builtinTemplateSections()`, which the console reads itself.
+    let templateId: string | undefined;
     if (parsed.data.template_id !== undefined && parsed.data.template_id !== '') {
-      templateId = templateIdOf(parsed.data.template_id);
-      if (templateId === null) return sendTemplateRefusal(reply, 'campaign_template_not_found');
+      const id = templateIdOf(parsed.data.template_id);
+      if (id === null) return sendTemplateRefusal(reply, 'campaign_template_not_found');
+      templateId = id;
     }
     const found = await resolveEffectiveTemplate({ tenantId: request.tenantId!, accountId }, templateId);
     if (!found.ok) {

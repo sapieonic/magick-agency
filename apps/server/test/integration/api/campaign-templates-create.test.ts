@@ -155,6 +155,23 @@ describe('the flag off: the create is today\'s (CT17)', () => {
 });
 
 describe('the flag on: filled in from a template (CT8, CT9)', () => {
+  it('template_id null: the built-in settings alone, whatever the defaults; absent: the default chain', async () => {
+    const orgDef = await template('organisation', { wrapup: WRAPUP }, { make_default: true });
+    const builtinOnly = await create({ ...BASE, template_id: null, abandonment_ceiling_pct: 2 });
+    expect(await settings(builtinOnly)).toMatchObject({
+      wrapup_seconds: 30, default_timezone: 'Asia/Kolkata', abandonment_ceiling_pct: 2,
+      template_source: { template: null, based_on: null, sections: created('builtin', { safety: 'campaign' }) },
+    });
+    const chain = await create(BASE);
+    expect(await settings(chain)).toMatchObject({
+      wrapup_seconds: 60,
+      template_source: { template: { id: orgDef.id, scope: 'organisation' }, sections: created('builtin', { wrapup: 'organisation' }) },
+    });
+    const empty = await sup('POST', '/campaigns', { ...BASE, template_id: '' });
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json().code).toBe('campaign_template_invalid');
+  });
+
   it('no template: the built-in settings with Asia/Kolkata hours, every section built-in', async () => {
     const id = await create(BASE);
     expect(await settings(id)).toMatchObject({

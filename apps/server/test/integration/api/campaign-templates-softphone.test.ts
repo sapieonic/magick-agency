@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 /**
  * The soft phone's untagged outcomes follow the account's campaign template (docs/campaign-templates.md
  * CT11), on real Postgres: through the REAL app for what the console and the agent app read (the
- * settings' `outcomes_follow`, the bootstrap's `untagged.disposition_catalog`), and through
+ * settings' `outcomes_template`, the bootstrap's `untagged.disposition_catalog`), and through
  * `SoftphoneService.submitDisposition` for the outcome a call is saved and settled against.
  *
  * Pinned here: with the flag on and the soft phone setting none of its own, untagged calls use the
@@ -141,8 +141,8 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
     await template('organisation', ORG_OUTCOMES);
     const mine = await template('account', ACCOUNT_OUTCOMES);
     const settings = await readSettings();
-    expect(settings.outcomes_follow).toEqual({
-      template: { id: mine.id, name: mine.name, version: 1, scope: 'account' }, catalog: ACCOUNT_OUTCOMES,
+    expect(settings.outcomes_template).toEqual({
+      template: { id: mine.id, name: mine.name, version: 1, scope: 'account' }, disposition_catalog: ACCOUNT_OUTCOMES,
     });
     expect(await untaggedPad()).toEqual(ACCOUNT_OUTCOMES);
 
@@ -155,7 +155,7 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
 
   it('the organisation\'s default when the account has none; read live: an edit is followed at once', async () => {
     const org = await template('organisation', ORG_OUTCOMES);
-    expect((await readSettings()).outcomes_follow).toMatchObject({ template: { id: org.id, scope: 'organisation' }, catalog: ORG_OUTCOMES });
+    expect((await readSettings()).outcomes_template).toMatchObject({ template: { id: org.id, scope: 'organisation' }, disposition_catalog: ORG_OUTCOMES });
     const put = await as(w.org, null, 'PUT', `/campaign-templates/${org.id}`, {
       name: org.name, description: null, based_on_template_id: null,
       sections: { outcomes: { disposition_catalog: ACCOUNT_OUTCOMES } }, expected_version: 1,
@@ -166,30 +166,30 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
   });
 
   it('no template: the built-in outcomes, named as following none', async () => {
-    expect((await readSettings()).outcomes_follow).toEqual({ template: null, catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG] });
+    expect((await readSettings()).outcomes_template).toEqual({ template: null, disposition_catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG] });
     expect(await untaggedPad()).toEqual([...AGENCY_DEFAULT_DISPOSITION_CATALOG]);
   });
 
-  it('the soft phone\'s own list wins: outcomes_follow is null, on the GET and the PUT\'s answer', async () => {
+  it('the soft phone\'s own list wins: outcomes_template is null, on the GET and the PUT\'s answer', async () => {
     await template('account', ACCOUNT_OUTCOMES);
     const put = await as(w.sup, w.a, 'PUT', '/softphone/settings', {
       disposition_catalog: OWN, call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null,
     });
-    expect(put.json().outcomes_follow).toBeNull();
-    expect((await readSettings()).outcomes_follow).toBeNull();
+    expect(put.json().outcomes_template).toBeNull();
+    expect((await readSettings()).outcomes_template).toBeNull();
     expect(await untaggedPad()).toEqual(OWN);
     const call = await endedCall();
     expect(await save(call, 'will_pay')).toMatchObject({ ok: false, refusal: { code: 'disposition_invalid', allowed_codes: ['sold'] } });
     expect(await save(call, 'sold')).toMatchObject({ ok: true });
     // Set back to none: the template again.
     await ownCatalog([]);
-    expect((await readSettings()).outcomes_follow).toMatchObject({ catalog: ACCOUNT_OUTCOMES });
+    expect((await readSettings()).outcomes_template).toMatchObject({ disposition_catalog: ACCOUNT_OUTCOMES });
   });
 
   it('the flag off: the built-in outcomes as before, and no follow', async () => {
     await template('account', ACCOUNT_OUTCOMES);
     await setFlag('agency_campaign_templates_enabled', false);
-    expect((await readSettings()).outcomes_follow).toBeNull();
+    expect((await readSettings()).outcomes_template).toBeNull();
     expect(await untaggedPad()).toEqual([...AGENCY_DEFAULT_DISPOSITION_CATALOG]);
     const call = await endedCall();
     expect(await save(call, 'will_pay')).toMatchObject({ ok: false, refusal: { code: 'disposition_invalid' } });
