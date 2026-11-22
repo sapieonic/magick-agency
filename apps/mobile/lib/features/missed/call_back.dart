@@ -91,7 +91,7 @@ Future<void> startCallBack(BuildContext context, InboundMissedCall call, {VoidCa
   }
 
   // The row's id goes with the number: the call placed is this missed call's call back (CL1).
-  container.read(softphoneActionsProvider).callBack(number, campaignId: call.matchedCampaignId, inboundCallId: call.id);
+  container.read(softphoneActionsProvider).callBack(number, campaignId: call.loggedCampaignId, inboundCallId: call.id);
   if (callBackSwitchesStation(signals)) {
     final host = container.read(softphoneHostActionsProvider);
     onLeave?.call();

@@ -14,6 +14,10 @@ import '../softphone_copy.dart';
 /// and say "Fixed for this call". A closed calling window under a tag reads
 /// "(campaign time) · may need a reason": the dial checks the contact's own
 /// timezone when the number is on the roster, so this can only say "may".
+///
+/// While the account asks for a campaign on every call ([SoftphoneView.campaignRequired]) the
+/// label reads "Log to (required)", "Not logged to a campaign" is not offered, and the dial
+/// says "Choose a campaign to log this call to." until one is chosen.
 class SetupSection extends ConsumerWidget {
   const SetupSection({super.key});
 
@@ -28,6 +32,8 @@ class SetupSection extends ConsumerWidget {
           callerId: v.callerId,
           editable: v.setupEditable,
           onScreen: v.callOnScreen,
+          required: v.campaignRequired,
+          note: v.setupNote,
         ),
       ),
     );
@@ -35,6 +41,8 @@ class SetupSection extends ConsumerWidget {
     final t = context.tokens;
     final actions = ref.read(softphoneActionsProvider);
     final tag = s.campaigns.firstWhereOrNull((c) => c.campaignId == s.tag);
+    // Asked for only while a call can still be set up: a call on screen shows what it was placed with.
+    final required = s.required && s.editable;
 
     return Column(
       key: const Key('softphone-setup'),
@@ -42,13 +50,22 @@ class SetupSection extends ConsumerWidget {
       children: [
         SetupPicker<String?>(
           key: const Key('log-to'),
-          label: SoftphoneCopy.logTo,
+          label: required ? SoftphoneCopy.logToRequired : SoftphoneCopy.logTo,
           value: tag?.campaignId,
-          items: [const (value: null, label: SoftphoneCopy.notLogged), for (final c in s.campaigns) (value: c.campaignId, label: c.name)],
+          // Every call must belong to a campaign: "Not logged to a campaign" is not a choice, and
+          // the empty one only asks. A call already placed with none still shows what it has.
+          items: [
+            if (!required) const (value: null, label: SoftphoneCopy.notLogged),
+            if (required && tag == null) (value: null, label: s.editable ? SoftphoneCopy.chooseCampaign : SoftphoneCopy.notLogged),
+            for (final c in s.campaigns) (value: c.campaignId, label: c.name),
+          ],
           onChanged: s.editable ? actions.setTag : null,
         ),
         const SizedBox(height: Space.xs),
-        Text(tag == null ? SoftphoneCopy.usesUntagged : SoftphoneCopy.usesCampaign, style: text.bodySmall),
+        if (s.note case final note? when s.editable)
+          Text(note, key: const Key('log-to-note'), style: text.bodySmall!.copyWith(color: t.warning))
+        else if (tag != null || !required)
+          Text(tag == null ? SoftphoneCopy.usesUntagged : SoftphoneCopy.usesCampaign, style: text.bodySmall),
         if (tag?.windowNote case final note?) ...[
           const SizedBox(height: Space.xs),
           Text(

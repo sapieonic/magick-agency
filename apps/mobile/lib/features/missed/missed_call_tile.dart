@@ -144,9 +144,9 @@ class MissedCallTile extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              [call.matchedCampaignName ?? MissedCopy.notMatched, ?callbackBooked].join(' · '),
+              [call.loggedCampaignName ?? MissedCopy.notMatched, ?callbackBooked].join(' · '),
               key: const Key('missed-campaign'),
-              style: small.copyWith(color: call.matchedCampaignName == null ? t.textMuted : t.textSecondary),
+              style: small.copyWith(color: call.loggedCampaignName == null ? t.textMuted : t.textSecondary),
             ),
             if (call.hasVoicemail) ...[
               const SizedBox(height: Space.xs),

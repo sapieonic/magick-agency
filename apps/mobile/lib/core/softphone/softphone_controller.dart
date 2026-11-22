@@ -226,6 +226,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// The Missed inbound call the number on the pad is the Call back of, with that number.
   ({String inboundCallId, String number})? _callBackOf;
   String? _tagDraft;
+  /// A line under "Log to": why it was left empty (a redial of a call logged to no campaign).
+  String? _setupNote;
   String? _callerDraft;
   Map<String, Object?> _fieldValues = const {};
   Map<String, String> _fieldErrors = const {};
@@ -505,9 +507,19 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     if (host.kind == SessionKind.campaign && !host.onSoftphone) return softphoneNotSwitchedYetCopy;
     final call = _call;
     if (call != null) return _phase == SoftphonePhase.outcome ? softphoneSaveBeforeDialCopy : softphoneCallInProgressCopy;
+    // Every call must belong to a campaign: before the numbers, which belong to the tag.
+    if (_noCampaignToLogTo) return softphoneNoRunningCampaignCopy;
+    if (_campaignRequired && _tagDraft == null) return softphoneChooseCampaignCopy;
     if (_draftCallerIds.isEmpty) return softphoneNoCallerIdCopy;
     return null;
   }
+
+  /// The account's "Every call must belong to a campaign" (`campaign_required`):
+  /// the server refuses a dial with no campaign, whatever the pad does.
+  bool get _campaignRequired => _bootstrap?.campaignRequired ?? false;
+
+  /// [_campaignRequired] with nothing to log a call to: the agent cannot dial.
+  bool get _noCampaignToLogTo => _campaignRequired && (_bootstrap?.taggableCampaigns.isEmpty ?? false);
 
   bool get _canDial => _dialUnavailableReason == null && dialBlockReason(_number) == null && !_placing;
 
@@ -1502,7 +1514,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         _disabledAtSeq = _bootstrapSeq + 1;
         _announce(softphoneFinishIdleCopy[_surface]!);
         unawaited(_loadBootstrap());
-      case SoftphoneErrorCode.callerIdNotAllowed || SoftphoneErrorCode.campaignNotTaggable:
+      case SoftphoneErrorCode.callerIdNotAllowed ||
+          SoftphoneErrorCode.campaignNotTaggable ||
+          // The account began asking for a campaign on every call under an open soft phone.
+          SoftphoneErrorCode.campaignRequired:
         // What may be called from, and logged to, changed under us: re-read it.
         _override = null;
         _dialError = copy;
@@ -1521,6 +1536,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _number = sanitiseDialInput(from.destinationE164);
     final tagId = from.tag?.campaignId;
     _tagDraft = tagId == null || _bootstrap?.taggable(tagId) != null ? tagId : null;
+    // Logged to no campaign, or to one that can no longer be chosen: with every call needing
+    // one, "Log to" is left empty and says why.
+    _setupNote = _campaignRequired && _tagDraft == null ? softphoneRedialNoCampaignCopy : null;
     _callerDraft = from.callerId;
     _entry = 'redial';
     _dialError = null;
@@ -1652,6 +1670,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void setTag(String? campaignId) {
     if (!_setupEditable) return;
     _tagDraft = campaignId;
+    _setupNote = null;
     // The caller-ID set belongs to the tag; a pick from the old set would be refused.
     _callerDraft = null;
     _dialError = null;
@@ -2094,6 +2113,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       startAllowed: (b?.softphoneEnabled ?? false) && !_disabledSeen,
       finishOnly: finishOnly,
       campaigns: _tagOptions(b, call),
+      campaignRequired: _campaignRequired,
+      noCampaignToLogTo: _noCampaignToLogTo && call == null && !finishOnly,
+      setupNote: call == null ? _setupNote : null,
       tagCampaignId: call != null ? call.tag?.campaignId : _tagDraft,
       callerIds: [for (final id in callerIds) SoftphoneChoice(value: id, label: formatDialNumber(id))],
       callerId: call?.callerId ?? _draftCallerId,
@@ -2152,7 +2174,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       // (CallKit, the notification), which only the host sees.
       hangupFailure: _hangupFailure ?? host?.hangupFailure,
       dncEnabled: _dncEnabled,
-      dncScopeLabel: call == null ? null : softphoneDncScopeLabel(call.tag?.campaignName),
+      // The server's rule (CL6): the campaign's list only when the number is on it; a call merely
+      // logged to a campaign stops the number for the whole account.
+      dncScopeLabel: call == null ? null : softphoneDncScopeLabel(call.contact == null ? null : call.tag?.campaignName),
       dncInFlight: _dncInFlight,
       dncOutcome: _dncOutcome,
       dncFailure: _dncFailure,
