@@ -1875,6 +1875,38 @@ table; an invalid index left under the name by a failed concurrent build fails t
 down then up), the server's `test/integration/agency/compare-break-overrun-index.test.ts` (the read's
 own statement is planned on it) and the down → up inventory suite.
 
+### 0067 — `migrations/0067_call_log_inbound_campaign.sql`
+
+One call log per campaign, P2 (docs/call-log.md §4).
+**`agency_inbound_calls.campaign_id`** (UUID, nullable, no FK) is the campaign the call is filed
+under, the column the campaign Call log reads; **`campaign_source`** (VARCHAR(16), nullable) says how
+it came by it: `contact` (its number is on the campaign's list), `route`, `agent`, `supervisor`
+(contract `AGENCY_INBOUND_CAMPAIGN_SOURCES`; the last three are written by a later phase).
+**`ck_agency_inbound_calls_campaign_source`**: both NULL, or both set with a source of the list.
+**Backfill**: every call with a `matched_campaign_id` is filed under it (`contact`), `updated_at`
+kept (the trigger is disabled around it); an unmatched call stays NULL (CL10). The arrival writes
+both from now on (`insertArrival`).
+**`agency_manual_calls.callback_of_inbound_call_id`** (UUID, nullable, no FK): the Missed inbound
+call a soft-phone call was placed from (its Call back, CL1). `SET LOCAL lock_timeout = '10s'`.
+**Down** drops the CHECK and the three columns; the call-back links are lost.
+**Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (the columns, the CHECK from
+every side, the backfill with `updated_at` kept, down then up) and the down → up inventory suite.
+
+### 0068 — `migrations/0068_call_log_inbound_indexes.sql`
+
+0067's indexes, out of its ACCESS EXCLUSIVE.
+**`idx_agency_inbound_calls_campaign`** `(campaign_id, arrived_at DESC, id DESC) WHERE campaign_id IS
+NOT NULL` on `agency_inbound_calls`: the campaign Call log's inbound branch
+(`listCallLogForCampaign`), a keyset range per campaign.
+**`idx_agency_manual_calls_callback_of`** `(callback_of_inbound_call_id) WHERE
+callback_of_inbound_call_id IS NOT NULL` on `agency_manual_calls`: the call backs of a page's missed
+calls. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`; an invalid index left
+under either name by a failed concurrent build fails the migration. **Down** drops both.
+**Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (both definitions and comments,
+the invalid-index refusal, down then up), the server's
+`test/integration/api/agency-call-log-inbound.test.ts` (the inbound branch is planned on the
+index) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

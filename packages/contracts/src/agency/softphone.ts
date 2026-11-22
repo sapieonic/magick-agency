@@ -626,6 +626,12 @@ export interface AgencyManualCallCreateRequest extends Pick<AgencyActorFields, '
   campaign_id?: string | null;
   fields?: AgencyCallFieldValues;
   overrides?: AgencyManualCallOverridesRequest;
+  /**
+   * The Missed inbound call this call rings back (the row's Call back; `docs/call-log.md`, CL1).
+   * Kept on the call only when it names a Missed row of the caller's account whose caller is the
+   * number dialled; anything else is ignored, never a refusal: the link is a marker, not a rule.
+   */
+  callback_of_inbound_call_id?: string | null;
 }
 
 /**

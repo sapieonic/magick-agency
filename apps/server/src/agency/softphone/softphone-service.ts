@@ -49,6 +49,7 @@ import {
   type AgencyManualCallRecord,
 } from '../../db/models/agency.model.js';
 import { defaultPhoneCountryCode } from '../../utils/phone-normalizer.js';
+import { UUID_RE } from '../../utils/uuid.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from '../agent-state-machine.js';
 import type { DedicatedCallerIdCache } from '../pacing/dedicated-caller-ids.js';
 import type { AgencyDialer } from '../agency-dialer.js';
@@ -82,6 +83,12 @@ export interface PlaceCallRequest {
   campaignId?: string | null;
   fields?: AgencyCallFieldValues;
   overrides?: { dnc_note?: string; hours_note?: string } | null;
+  /**
+   * The Missed inbound call this call rings back (its Call back; `docs/call-log.md`, CL1). Kept
+   * only when it is a Missed row of the actor's account from the number dialled; otherwise the
+   * call is placed without the link (a marker never refuses a dial).
+   */
+  callbackOfInboundCallId?: string | null;
 }
 
 /** `submitDisposition`'s request: `AgencyManualCallDispositionRequest` without the actor. */
@@ -338,6 +345,20 @@ export class SoftphoneService {
     }
     const plan = predial.plan;
 
+    // The call back's link (CL1): only to a Missed row of this account whose caller is the
+    // number being dialled, so "Call back · to the 3:12 PM missed call" is never said of a call
+    // to someone else (the agent may have changed the number on the pad). A link that does not
+    // hold, or cannot be read, is dropped: it is a marker, and never a reason to refuse a dial.
+    const callbackOfInboundCallId = req.callbackOfInboundCallId && UUID_RE.test(req.callbackOfInboundCallId)
+      && await agencyInboundCallRepository
+        .isMissedCallFrom(actor.tenantId, actor.accountId, req.callbackOfInboundCallId, plan.destinationE164)
+        .catch((err: unknown) => {
+          log.warn({ err, accountId: actor.accountId }, 'Could not check a call back\'s missed call — the call is placed without the link');
+          return false;
+        })
+      ? req.callbackOfInboundCallId
+      : null;
+
     // ── Step 3: the row and the contact claim, in ONE transaction ────────────
     // The session row is locked first, so two dials from one session serialise here
     // and the second meets the first's committed row (manual_call_live), never a
@@ -385,6 +406,7 @@ export class SoftphoneService {
         analysisProfileId: plan.analysisProfileId,
         dncOverride: plan.dncOverride,
         hoursOverrideNote: plan.hoursOverrideNote,
+        callbackOfInboundCallId,
       }, { client });
       if (!created.ok) {
         await client.query('ROLLBACK');

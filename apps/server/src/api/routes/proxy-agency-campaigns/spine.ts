@@ -37,6 +37,7 @@ import {
 import {
   callLogSourceForType,
   isCallLogTypeFilter,
+  nameCallLogAssignees,
   toCallLogWireRow,
   type NamedCampaignCallLogRow,
 } from '../../../agency/campaign-call-log.js';
@@ -159,18 +160,20 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
 
   /**
    * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
-   * placed it, newest first on one keyset. Its dialler attempts and the soft-phone calls logged
-   * to it today; each row says its `type`.
+   * placed it, newest first on one keyset: its dialler attempts, the soft-phone calls logged
+   * to it and the inbound calls filed under it; each row says its `type`.
    *
    * Over the same internal read the export drains (`…/call-log`, decision SR6), so a row on
    * screen and a row in the file cannot disagree. The attempt list's filters and paging, plus
-   * `type=all|dialler|soft_phone` (the chip) and `include_counts=1` (how many calls of each
-   * type the filters match, the chip not applied: the chips' numbers).
+   * `type=all|dialler|soft_phone|inbound|to_follow_up` (the chip; To follow up is the
+   * campaign's open Missed rows) and `include_counts=1` (how many calls of each type the filters
+   * match, the chip not applied: the chips' numbers).
    *
    * `agency.supervise`, the attempt list's floor: this is the same record, with the soft-phone
    * calls the campaign's Soft-phone calls view listed under the same floor. Not behind the soft
    * phone's flag: a campaign keeps the soft-phone calls it holds when the flag goes off (SR5),
-   * and the export carries them either way.
+   * and the export carries them either way. Nor behind inbound's: the inbound calls a campaign
+   * holds stay in its log when that flag goes off.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/call-log', {
     preHandler: requirePermission('agency.supervise'),
@@ -212,8 +215,15 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       });
     }
     const counts = (named as { counts?: unknown }).counts;
+    // A missed inbound call names who it is assigned to, beside the agents above.
+    const rows = await nameCallLogAssignees(page.rows, request.tenantId!, resolveAgentNames, (err) => {
+      log.warn(
+        { tenantId: request.tenantId, err: err instanceof Error ? err.message : String(err) },
+        'agency call log: assignee name resolution failed; emitting assignee_name: null',
+      );
+    });
     return reply.send({
-      rows: page.rows.map(toCallLogWireRow),
+      rows: rows.map(toCallLogWireRow),
       next_cursor: page.next_cursor,
       limit: page.limit,
       ...(counts !== undefined ? { counts } : {}),

@@ -31,14 +31,29 @@ import type {
 } from '@magick-agency/contracts/agency';
 import {
   attemptFilterConditions,
+  inboundLogFilterConditions,
   keysetCondition,
   params,
   softphoneLogFilterConditions,
   toKeysetPage,
 } from './query-builders.js';
 import { attemptAgentUserSql } from './drilldown-sql.js';
-import { projectAttemptRow, projectSoftphoneLogRow, type SoftphoneLogRaw } from './projections.js';
-import type { CampaignCallLogCounts, CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
+import {
+  projectAttemptRow,
+  projectInboundLogRow,
+  projectSoftphoneLogRow,
+  type InboundLogRaw,
+  type SoftphoneLogRaw,
+} from './projections.js';
+import type {
+  CampaignCallLogCounts,
+  CampaignCallLogRow,
+  CampaignCallLogSourceFilter,
+  CampaignCallSource,
+  CampaignInboundLogRow,
+} from '../../../agency/campaign-call-log.js';
+import type { AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
+import { inboundMissedOpenSql } from './sql-fragments.js';
 import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
@@ -103,6 +118,105 @@ function campaignAttemptConditions(
       ? attemptAgentUserSql('a', bind.add(campaignId), bind.add(f.agentUserId))
       : null)),
   ];
+}
+
+/**
+ * Whether a dialler attempt or a soft-phone call can match the What happened filter. With only
+ * inbound happenings chosen (Missed, Voicemail, Abandoned) none can: those are things a caller
+ * does to us. With an attempt outcome beside them, the attempt outcome is what they match on.
+ */
+function outboundMatches(f: AgencyAttemptFilters, inboundOutcomes: readonly string[]): boolean {
+  return inboundOutcomes.length === 0 || Boolean(f.outcomes?.length);
+}
+
+/**
+ * The call log's soft-phone facts as JSON (`extra`): the Missed inbound call the call rang back
+ * (CL1) and when that call arrived, in the call's tenant; NULL when it is not a call back.
+ */
+const SOFTPHONE_LOG_EXTRA_SQL = `CASE WHEN m.callback_of_inbound_call_id IS NOT NULL THEN jsonb_build_object(
+                 'callback_of', jsonb_build_object(
+                   'inbound_call_id', m.callback_of_inbound_call_id,
+                   'arrived_at', (SELECT cb.arrived_at FROM agency_inbound_calls cb
+                                   WHERE cb.id = m.callback_of_inbound_call_id AND cb.tenant_id = m.tenant_id))) END`;
+
+/**
+ * The call log's inbound branch, column for column with {@link ATTEMPT_ROW_SELECT_SQL} and the
+ * soft-phone branch (NULL where an inbound call has no such thing), `arrived_at` as the list's
+ * `created_at`. What only an inbound call has is one JSON object (`extra`, read by
+ * `projectInboundLogRow`): how it came by the campaign, the route, the wait (arrival to the
+ * agent's answer, else to the end), whether it queued, whether the agent who answered is the
+ * caller's sticky agent, the voicemail while the row names one, the Missed row, and the latest
+ * soft-phone call DIALLED from its Call back (`idx_agency_manual_calls_callback_of`). Names the
+ * inbound call `i`.
+ */
+const INBOUND_LOG_SELECT_SQL = `'inbound'::text AS source, i.id, i.campaign_id, i.matched_contact_id AS contact_id,
+               NULL::int AS attempt_number, i.from_e164 AS phone_e164, i.to_e164 AS caller_id,
+               i.answered_by_user_id AS agent_user_id, NULL::uuid AS reserved_agent_id, i.state, i.outcome,
+               i.disposition_code, NULL::varchar AS auto_disposition_code, i.notes, i.callback_at,
+               i.promise_date::text AS promise_date, i.promise_amount,
+               i.dispositioned_by_user_id, i.dispositioned_at, i.dispositioned_on_behalf,
+               i.webrtc_call_id, NULL::timestamptz AS dialed_at, i.answered_at, i.bridged_at, i.ended_at,
+               i.talk_seconds, NULL::int AS wrapup_seconds, NULL::uuid AS redial_of_attempt_id,
+               NULL::int AS redial_number, i.arrived_at AS created_at,
+               false AS dnc_overridden, false AS hours_overridden, i.settled_at,
+               jsonb_build_object(
+                 'campaign_source', i.campaign_source,
+                 'route_name', (SELECT r.name FROM agency_inbound_routes r WHERE r.id = i.route_id),
+                 'wait_seconds', GREATEST(0, floor(extract(epoch FROM
+                   (COALESCE(i.bridged_at, i.ended_at, i.arrived_at) - i.arrived_at))))::int,
+                 'queued', i.queued_at IS NOT NULL,
+                 'via_sticky_agent', i.sticky_user_id IS NOT NULL AND i.sticky_user_id = i.answered_by_user_id,
+                 'voicemail_seconds', CASE WHEN i.voicemail_key IS NOT NULL THEN i.voicemail_seconds END,
+                 'follow_up_status', i.follow_up_status,
+                 'follow_up_reason', i.follow_up_reason,
+                 'closed_cause', i.closed_cause,
+                 'assignee_user_id', i.follow_up_assignee_user_id,
+                 'handled_reason', i.handled_reason,
+                 'handled_at', i.handled_at,
+                 'called_back', (SELECT jsonb_build_object('call_id', cb.id, 'at', cb.created_at)
+                                   FROM agency_manual_calls cb
+                                  WHERE cb.callback_of_inbound_call_id = i.id AND cb.tenant_id = i.tenant_id
+                                    AND cb.dialed_at IS NOT NULL
+                                  ORDER BY cb.created_at DESC, cb.id DESC LIMIT 1)
+               ) AS extra`;
+
+/**
+ * The WHERE terms of the call log's inbound rows, shared by the page, the counts and the Call
+ * page's read so all three mean one thing by "an inbound call on this campaign": filed under it
+ * (`campaign_id`, 0067) in the tenant, ENDED, and served (never `rejected`); then the filters
+ * (`inboundLogFilterConditions`). `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`,
+ * the Missed list's rule) and drops the dates: a caller still owed a call is owed it whatever
+ * day they rang.
+ */
+function inboundLogConditions(
+  q: {
+    campaignId: string;
+    tenantId: string;
+    filters: AgencyAttemptFilters;
+    inboundOutcomes: readonly string[];
+    toFollowUp: boolean;
+  },
+  bind: ReturnType<typeof params>,
+): string[] {
+  const { from: _from, to: _to, ...undated } = q.filters;
+  void _from; void _to;
+  return [
+    `i.campaign_id = ${bind.add(q.campaignId)}::uuid`,
+    `i.tenant_id = ${bind.add(q.tenantId)}::uuid`,
+    "i.state = 'ended'",
+    "i.outcome <> 'rejected'",
+    ...inboundLogFilterConditions(q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind),
+    ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
+  ];
+}
+
+/** A row of the call log's union → its source's projection. */
+function projectCallLogRow(row: AgencyCallAttemptRecord & {
+  source: CampaignCallSource; phone_e164: string; agent_user_id: string | null;
+}): CampaignCallLogRow {
+  if (row.source === 'dialler') return { source: 'dialler', ...projectAttemptRow(row) };
+  if (row.source === 'inbound') return projectInboundLogRow(row as unknown as InboundLogRaw);
+  return projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw);
 }
 
 export class AgencyAttemptRepository {
@@ -775,39 +889,56 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts, as
-   * {@link listForCampaign} lists them, and the soft-phone calls tagged to it in the tenant,
-   * newest first on ONE keyset `(created_at DESC, id DESC)` across both, so a page boundary
-   * neither drops nor repeats a row of either. `source` limits it to one of the two.
+   * The campaign's call log (decisions SR6, CL11; `agency/campaign-call-log.ts`): its attempts,
+   * as {@link listForCampaign} lists them, the soft-phone calls tagged to it and the inbound
+   * calls filed under it in the tenant, newest first on ONE keyset `(created_at DESC, id DESC)`
+   * across the three, so a page boundary neither drops nor repeats a row of any. An inbound
+   * call's place in it is when it ARRIVED (`arrived_at`, served as `created_at`). `source`
+   * limits it to one of the three, or to `to_follow_up`.
    *
    * One statement: each branch is its own keyset range with its own `LIMIT n + 1` (the
    * attempts on `idx_agency_attempts_campaign_created`, the tagged calls on
-   * `idx_agency_manual_calls_campaign`), and the outer sort takes the newest `n + 1` of the at
-   * most `2n + 2`. The filters mean on a soft-phone call what they mean on an attempt
-   * (`softphoneLogFilterConditions`). An untagged soft-phone call belongs to no campaign (SR4).
+   * `idx_agency_manual_calls_campaign`, the inbound calls on `idx_agency_inbound_calls_campaign`),
+   * and the outer sort takes the newest `n + 1` of the at most `3n + 3`. The filters mean on a
+   * soft-phone call what they mean on an attempt (`softphoneLogFilterConditions`), and on an
+   * inbound call what `inboundLogFilterConditions` says. An untagged soft-phone call belongs to
+   * no campaign (SR4), as does an inbound call filed under none.
    *
+   * ── A filter with no meaning on a type leaves that type out ────────────────
    * `softphoneStatus` (the Call log's Status filter) keeps the soft-phone calls in that status
-   * (`softphoneStatusSql`). A dialler attempt has no such status, so with one set no attempt
-   * matches: the dialler branch is left out, and `source: 'dialler'` with a status is no rows.
+   * (`softphoneStatusSql`); an attempt and an inbound call have no such status, so neither
+   * matches. `inboundOutcomes` (Missed, Voicemail, Abandoned) are things only an inbound call
+   * does: with one chosen and no attempt outcome beside it, no attempt and no soft-phone call
+   * matches. The counts ({@link countCallLogForCampaign}) follow both.
+   *
+   * ── Inbound rows ────────────────────────────────────────────────────────────
+   * Only ENDED calls (a live one is on Live calls, and has no outcome to list), and never a
+   * `rejected` one (we turned it away unserved). `to_follow_up` is the campaign's OPEN Missed
+   * rows (`inboundMissedOpenSql`, the Missed list's own rule) under the same filters WITHOUT
+   * the dates (`from` / `to`): a caller owed a call back yesterday is still owed one today.
    */
   async listCallLogForCampaign(input: {
     campaignId: string;
     tenantId: string;
     filters: AgencyAttemptFilters;
-    source: CampaignCallSource | null;
+    source: CampaignCallLogSourceFilter | null;
     softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
     const bind = params();
     const limit = bind.add(input.limit + 1);
+    const inboundOutcomes = input.inboundOutcomes ?? [];
+    const outbound = outboundMatches(input.filters, inboundOutcomes);
     const branches: string[] = [];
-    if (input.source !== 'soft_phone' && !input.softphoneStatus) {
+    if ((input.source === null || input.source === 'dialler') && !input.softphoneStatus && outbound) {
       const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
       if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
       branches.push(`(
         SELECT 'dialler'::text AS source, ${ATTEMPT_ROW_SELECT_SQL},
                false AS dnc_overridden, false AS hours_overridden, NULL::timestamptz AS settled_at,
+               NULL::jsonb AS extra,
                ${keysetAtSql('a.created_at')} AS cursor_at
           FROM agency_call_attempts a
           ${ATTEMPT_CONTACT_JOIN_SQL}
@@ -816,7 +947,7 @@ export class AgencyAttemptRepository {
          ORDER BY a.created_at DESC, a.id DESC
          LIMIT ${limit})`);
     }
-    if (input.source !== 'dialler') {
+    if ((input.source === null || input.source === 'soft_phone') && outbound) {
       const conditions = [
         `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
         `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
@@ -825,8 +956,8 @@ export class AgencyAttemptRepository {
       if (input.softphoneStatus) conditions.push(softphoneStatusSql(input.softphoneStatus));
       if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
       // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
-      // Then the soft phone's own three (overrides, settled), which the dialler branch fills with
-      // constants: the Call log's rows read them, the export has no column for them.
+      // Then the soft phone's own (overrides, settled, and under `extra` the missed call it rang
+      // back), which the dialler branch fills with constants: the Call log's rows read them.
       branches.push(`(
         SELECT 'soft_phone'::text AS source, m.id, m.campaign_id, m.contact_id, NULL::int AS attempt_number,
                m.destination_e164 AS phone_e164, m.caller_id,
@@ -839,13 +970,32 @@ export class AgencyAttemptRepository {
                NULL::int AS redial_number, m.created_at,
                (m.dnc_override_note IS NOT NULL) AS dnc_overridden,
                (m.hours_override_note IS NOT NULL) AS hours_overridden, m.settled_at,
+               ${SOFTPHONE_LOG_EXTRA_SQL} AS extra,
                ${keysetAtSql('m.created_at')} AS cursor_at
           FROM agency_manual_calls m
          WHERE ${conditions.join(' AND ')}
          ORDER BY m.created_at DESC, m.id DESC
          LIMIT ${limit})`);
     }
-    // A status with `source: 'dialler'`: nothing can match, and there is no branch to read.
+    if ((input.source === null || input.source === 'inbound' || input.source === 'to_follow_up') && !input.softphoneStatus) {
+      const conditions = inboundLogConditions({
+        campaignId: input.campaignId,
+        tenantId: input.tenantId,
+        filters: input.filters,
+        inboundOutcomes,
+        toFollowUp: input.source === 'to_follow_up',
+      }, bind);
+      if (input.after) conditions.push(keysetCondition(input.after, 'i', bind, 'arrived_at'));
+      branches.push(`(
+        SELECT ${INBOUND_LOG_SELECT_SQL},
+               ${keysetAtSql('i.arrived_at')} AS cursor_at
+          FROM agency_inbound_calls i
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY i.arrived_at DESC, i.id DESC
+         LIMIT ${limit})`);
+    }
+    // A filter no type left in the read can match (a status with `source: 'dialler'`, an
+    // inbound-only outcome with `source: 'soft_phone'`): there is no branch to read.
     if (branches.length === 0) return { rows: [], next_cursor: null, limit: input.limit };
     const sql = `
       SELECT * FROM (${branches.join('\n        UNION ALL\n        ')}) log
@@ -856,51 +1006,93 @@ export class AgencyAttemptRepository {
       source: CampaignCallSource; phone_e164: string; agent_user_id: string | null; cursor_at: string;
     }>(sql, bind.values);
 
-    return toKeysetPage(rows, input.limit, (row): CampaignCallLogRow => (row.source === 'dialler'
-      ? { source: 'dialler', ...projectAttemptRow(row) }
-      : projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw)));
+    return toKeysetPage(rows, input.limit, projectCallLogRow);
   }
 
   /**
    * The Call log's chips (`docs/call-log.md`): how many rows of each source
    * {@link listCallLogForCampaign} would list with these filters, across every page, in one
-   * statement. The same WHERE terms as the list's two branches, no keyset, no limit and no
+   * statement. The same WHERE terms as the list's branches, no keyset, no limit and no
    * `source` (a chip says what choosing it would list).
    *
    * `dialler` is {@link countListed}'s count. `soft_phone` counts the tagged calls whose dial was
    * sent (`SOFTPHONE_PLACED_SQL`, the campaign figures' definition of a soft-phone call, SR2): a
-   * row that failed before it dialled is listed, greyed, and is not a call. With a
-   * `softphoneStatus` no attempt matches (see {@link listCallLogForCampaign}): `dialler` is 0.
+   * row that failed before it dialled is listed, greyed, and is not a call. `inbound` counts
+   * every inbound row listed; `all` is the three added. `to_follow_up` is the open Missed rows
+   * under the filters without the dates, as the list's `to_follow_up` reads them; they are
+   * inbound calls, so `all` does not take them a second time. A filter with no meaning on a
+   * type counts none of that type (see {@link listCallLogForCampaign}).
    */
   async countCallLogForCampaign(input: {
     campaignId: string;
     tenantId: string;
     filters: AgencyAttemptFilters;
     softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
   }): Promise<CampaignCallLogCounts> {
     const bind = params();
+    const inboundOutcomes = input.inboundOutcomes ?? [];
+    const outbound = outboundMatches(input.filters, inboundOutcomes);
     const attempt = campaignAttemptConditions(input.campaignId, input.filters, bind);
-    if (input.softphoneStatus) attempt.push('FALSE');
+    if (input.softphoneStatus || !outbound) attempt.push('FALSE');
     const soft = [
       `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
       `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
       ...softphoneLogFilterConditions(input.filters, bind),
       ...(input.softphoneStatus ? [softphoneStatusSql(input.softphoneStatus)] : []),
+      ...(outbound ? [] : ['FALSE']),
       SOFTPHONE_PLACED_SQL,
     ];
-    const { rows } = await getPool().query<{ dialler: string; soft_phone: string }>(
+    const scope = { campaignId: input.campaignId, tenantId: input.tenantId, filters: input.filters, inboundOutcomes };
+    const inbound = inboundLogConditions({ ...scope, toFollowUp: false }, bind);
+    const followUp = inboundLogConditions({ ...scope, toFollowUp: true }, bind);
+    if (input.softphoneStatus) {
+      inbound.push('FALSE');
+      followUp.push('FALSE');
+    }
+    const { rows } = await getPool().query<{ dialler: string; soft_phone: string; inbound: string; to_follow_up: string }>(
       `SELECT (SELECT count(*)
                  FROM agency_call_attempts a
                  ${input.filters.phone ? ATTEMPT_CONTACT_JOIN_SQL : ''}
                 WHERE ${attempt.join(' AND ')})::text AS dialler,
               (SELECT count(*)
                  FROM agency_manual_calls m
-                WHERE ${soft.join(' AND ')})::text AS soft_phone`,
+                WHERE ${soft.join(' AND ')})::text AS soft_phone,
+              (SELECT count(*)
+                 FROM agency_inbound_calls i
+                WHERE ${inbound.join(' AND ')})::text AS inbound,
+              (SELECT count(*)
+                 FROM agency_inbound_calls i
+                WHERE ${followUp.join(' AND ')})::text AS to_follow_up`,
       bind.values,
     );
     const dialler = Number(rows[0]?.dialler ?? 0);
     const softPhone = Number(rows[0]?.soft_phone ?? 0);
-    return { all: dialler + softPhone, dialler, soft_phone: softPhone };
+    const inboundCount = Number(rows[0]?.inbound ?? 0);
+    return {
+      all: dialler + softPhone + inboundCount,
+      dialler,
+      soft_phone: softPhone,
+      inbound: inboundCount,
+      to_follow_up: Number(rows[0]?.to_follow_up ?? 0),
+    };
+  }
+
+  /**
+   * One inbound call of the campaign, in the call log's own row (the list's SELECT and its
+   * rule for what an inbound row is: ended, served, filed under this campaign in this tenant),
+   * for its Call page. Null when it is not one, so an id from another campaign or tenant cannot
+   * be substituted in the path.
+   */
+  async findInboundForCampaign(campaignId: string, tenantId: string, inboundCallId: string): Promise<CampaignInboundLogRow | null> {
+    const bind = params();
+    const conditions = inboundLogConditions({ campaignId, tenantId, filters: {}, inboundOutcomes: [], toFollowUp: false }, bind);
+    conditions.push(`i.id = ${bind.add(inboundCallId)}::uuid`);
+    const { rows } = await getPool().query<InboundLogRaw>(
+      `SELECT ${INBOUND_LOG_SELECT_SQL} FROM agency_inbound_calls i WHERE ${conditions.join(' AND ')}`,
+      bind.values,
+    );
+    return rows[0] ? projectInboundLogRow(rows[0]) : null;
   }
 
   /**

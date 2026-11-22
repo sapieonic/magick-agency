@@ -385,7 +385,7 @@ export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
   callbacks: ['callbacks', 'callback', 'overdue', 'promised'],
   health: ['health', 'abandonment', 'stalls', 'carrier failures'],
   contacts: ['contacts', 'roster', 'contact list'],
-  attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls'],
+  attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls', 'inbound calls', 'missed calls', 'to follow up'],
   manual: ['soft phone calls', 'softphone calls', 'manual calls'],
   live: ['live calls', 'in progress', 'listen', 'listen in', 'monitor'],
   activity: ['activity', 'history', 'audit', 'audit trail', 'who did what', 'changes'],

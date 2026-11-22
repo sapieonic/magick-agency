@@ -312,7 +312,7 @@ describe('the campaign call export carries the tagged soft-phone calls (SR6)', (
 
 /** A Call log page as the console reads it. */
 interface LogRow { type: string; id: string; created_at: string; [key: string]: unknown }
-interface LogPage { rows: LogRow[]; next_cursor: string | null; limit: number; counts?: { all: number; dialler: number; soft_phone: number } }
+interface LogPage { rows: LogRow[]; next_cursor: string | null; limit: number; counts?: { all: number; dialler: number; soft_phone: number; inbound: number; to_follow_up: number } }
 const logPage = async (params = ''): Promise<LogPage> =>
   (await get(`/proxy/agency/campaigns/${campaignId}/call-log${params ? `?${params}` : ''}`)).json() as LogPage;
 /** Every page of the Call log, walked by its cursor. */
@@ -396,7 +396,10 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
     expect((await walkLog('type=dialler', 50)).map((r) => r.type)).toEqual(DIALLER.map(() => 'dialler'));
     expect((await walkLog('type=soft_phone', 50)).map((r) => r.type)).toEqual(TAGGED.map(() => 'soft_phone'));
     expect(await walkLog('type=all', 50)).toHaveLength(DIALLER.length + TAGGED.length);
-    for (const bad of ['type=softphone', 'type=inbound', 'source=dialler', 'include_counts=yes']) {
+    // `inbound` and `to_follow_up` are types too (docs/call-log.md §4): this campaign holds no inbound call.
+    expect(await walkLog('type=inbound', 50)).toEqual([]);
+    expect(await walkLog('type=to_follow_up', 50)).toEqual([]);
+    for (const bad of ['type=softphone', 'type=missed', 'source=dialler', 'include_counts=yes']) {
       const refused = await call(loaded.app, 'GET', `/proxy/agency/campaigns/${campaignId}/call-log?${bad}`, floor.supervisors[0]!, floor);
       expect(refused.statusCode, bad).toBe(400);
     }
@@ -405,7 +408,7 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
   it('counts each type for the chips: by the filters, never by the chip or the page', async () => {
     // Soft phone counts the calls whose dial was sent (9 of the 10 tagged rows); the dialler every attempt.
     const placed = TAGGED.filter((s) => s.placed).length;
-    const whole = { all: DIALLER.length + placed, dialler: DIALLER.length, soft_phone: placed };
+    const whole = { all: DIALLER.length + placed, dialler: DIALLER.length, soft_phone: placed, inbound: 0, to_follow_up: 0 };
     expect(placed).toBe(9);
     expect((await logPage('include_counts=1')).counts).toEqual(whole);
     // The chip that is on, the page size and the cursor change the rows, not the counts.
@@ -417,15 +420,15 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
     expect(await logPage('type=dialler')).not.toHaveProperty('counts');
 
     // The filters do: what happened, the dates, the agent, the number.
-    expect((await logPage('include_counts=1&outcome=connected')).counts).toEqual({ all: 11, dialler: 5, soft_phone: 6 });
-    expect((await logPage(`include_counts=1&agent_user_id=${floor.agents[1]!.id}`)).counts).toEqual({ all: placed, dialler: 0, soft_phone: placed });
-    expect((await logPage('include_counts=1&phone=00000005')).counts).toEqual({ all: 2, dialler: 1, soft_phone: 1 });
+    expect((await logPage('include_counts=1&outcome=connected')).counts).toEqual({ all: 11, dialler: 5, soft_phone: 6, inbound: 0, to_follow_up: 0 });
+    expect((await logPage(`include_counts=1&agent_user_id=${floor.agents[1]!.id}`)).counts).toEqual({ all: placed, dialler: 0, soft_phone: placed, inbound: 0, to_follow_up: 0 });
+    expect((await logPage('include_counts=1&phone=00000005')).counts).toEqual({ all: 2, dialler: 1, soft_phone: 1, inbound: 0, to_follow_up: 0 });
     const upTo = encodeURIComponent(at(32, 30).toISOString());
     // Created up to 32:30: every dialler attempt (30:10 to 30:20), and before-range, reached-1, reached-2.
-    expect((await logPage(`include_counts=1&to=${upTo}`)).counts).toEqual({ all: DIALLER.length + 3, dialler: DIALLER.length, soft_phone: 3 });
+    expect((await logPage(`include_counts=1&to=${upTo}`)).counts).toEqual({ all: DIALLER.length + 3, dialler: DIALLER.length, soft_phone: 3, inbound: 0, to_follow_up: 0 });
     // A row that never dialled is listed and counted nowhere (SR2); the dialler's queued attempt is an attempt.
     const never = await logPage('include_counts=1&placed=0');
-    expect(never.counts).toEqual({ all: 1, dialler: 1, soft_phone: 0 });
+    expect(never.counts).toEqual({ all: 1, dialler: 1, soft_phone: 0, inbound: 0, to_follow_up: 0 });
     expect(never.rows.map((r) => r.type).sort()).toEqual(['dialler', 'soft_phone']);
     // Each count is the number of rows its chip lists, for rows that dialled.
     expect((await walkLog('placed=1&type=soft_phone', 50))).toHaveLength(placed);
@@ -483,9 +486,9 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
 
     // The counts follow it like any filter: no dialler call has a status, and a row that never
     // dialled is still counted nowhere.
-    expect((await logPage('include_counts=1&status=live')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1 });
+    expect((await logPage('include_counts=1&status=live')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1, inbound: 0, to_follow_up: 0 });
     const placedSettled = settled.filter((s) => s.placed).length;
-    expect((await logPage('include_counts=1&status=settled&type=dialler')).counts).toEqual({ all: placedSettled, dialler: 0, soft_phone: placedSettled });
+    expect((await logPage('include_counts=1&status=settled&type=dialler')).counts).toEqual({ all: placedSettled, dialler: 0, soft_phone: placedSettled, inbound: 0, to_follow_up: 0 });
     // The Dialler chip with a status on lists nothing.
     expect((await logPage('status=settled&type=dialler')).rows).toEqual([]);
     // It ANDs with the other filters.
@@ -498,7 +501,7 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
       await q(`UPDATE agency_manual_calls SET state = 'ended', ended_at = created_at, settled_at = created_at WHERE id = $1`, [ringing]);
       await q(`UPDATE agency_manual_calls SET settled_at = NULL WHERE id = $1`, [awaiting]);
       expect(ids(await walkLog('status=awaiting_outcome', 50))).toEqual(labels('awaiting'));
-      expect((await logPage('include_counts=1&status=awaiting_outcome')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1 });
+      expect((await logPage('include_counts=1&status=awaiting_outcome')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1, inbound: 0, to_follow_up: 0 });
       // The export is the same list.
       const file = await exportRows('&status=awaiting_outcome');
       expect(file.map((r) => r.attempt_id)).toEqual([awaiting]);

@@ -366,7 +366,7 @@ from `audit` (a success without the envelope is a 502).
 |---|---|---|
 | `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`account_id`, the account it is in; `on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
 | `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session in THIS account: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`, `account_id` and `account_name` (the account the campaign session is in, which may be a sibling one: the switch is scoped to it); 409 `session_on_softphone` with `session_id`, `account_id` and `account_name` when the agent's soft-phone session is in another account of the tenant, which is never rehydrated here (the join upsert's rehydrate arm matches the account as well as the kind and campaign: `joinSoftphone`'s `softphone_elsewhere`), since every route on it is scoped to its account. `account_name` is best-effort (NULL when the read failed). With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
-| `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
+| `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? }, callback_of_inbound_call_id? }` → 201 `AgencyManualCall`. `callback_of_inbound_call_id` is the Missed inbound call the dial rings back: kept on the call only when it is a Missed row of the account from the number dialled, else dropped without refusing the dial (CL15, `docs/call-log.md` §4) |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf. The same code again is a replay: notes and callback last-write-wins, and a corrected callback moves the `next_attempt_at` of the contact this call settled while it is still `pending` on that code (`rescheduleFromManualReplay`, as the station's replay moves its contact through `releaseFromDisposition`); no DNC mark, settlement or claim release repeats, and its audit row carries `replay: true` |
@@ -490,7 +490,11 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   station's mechanism), else the call is untagged. A call that is live or owes its outcome keeps
   the screen; the number is filled once it settles. Every rule of a typed number applies, the DNC
   check and its override note included (SP1). Live on a campaign, the page shows its
-  `session_on_campaign` screen and the prefill is not carried through the switch.
+  `session_on_campaign` screen and the prefill is not carried through the switch. The prefill also
+  carries the Missed row's id (`inboundCallId`): the first dial of that number sends it as
+  `callback_of_inbound_call_id`, so the call is linked to the missed call it answers (CL1, CL15);
+  a dial of any other number sends none. The Call log's To follow up rows and the inbound Call
+  page open the soft phone the same way.
 - **Inbound calls (a stopgap).** An agent on the soft phone is on `break/soft_phone`, which is
   never offered an inbound caller, and a caller nobody on a campaign station could take overflows
   at once to a Missed row ([`inbound.md`](inbound.md) §4.3, §5.1); taking one on the soft phone is
@@ -597,7 +601,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   connect rate, which they then label "Dialler connect rate". They show while the flag is on or
   when the counts hold any call. The campaign call export (`attempts.csv`) carries the tagged calls
   as `soft_phone` rows (its `source` column; the call details and override notes are not
-  exported, as its preamble says), and the Call log names them beside its Export button by the
+  exported, as its preamble says; a call back names the missed inbound call it answered in the
+  trailing `callback_of` column), and the Call log names them beside its Export button by the
   same rule; the campaign report adds Soft-phone calls and All calls lines and labels the
   dialler's rate when the window holds any. Untagged calls are in no campaign's results.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
@@ -638,8 +643,9 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   tagged call, by the tagged campaign's `context_display` and its own `phone_display` (agent
   station AS19 S3(b), S4).
 - **Call back from a Missed row** ([`mobile.md`](mobile.md) "Missed calls"): the console's prefill
-  (`SoftphoneActions.callBack`: the number, the matched campaign as "Log to" where taggable, Call
-  focused, never dialled; an open override prompt closed, as on a redial), and the dial's
+  (`SoftphoneActions.callBack`: the number, the matched campaign as "Log to" where taggable, the
+  Missed row's id for the dial's `callback_of_inbound_call_id` (CL15), Call focused, never
+  dialled; an open override prompt closed, as on a redial), and the dial's
   `agency_softphone_call_placed` carries `entry: 'inbound_callback'`. While the soft phone cannot
   take it (not open here yet, a call on screen, finish mode) the app holds the number for at most
   five minutes (time behind a call on screen does not count) and drops it on any session change

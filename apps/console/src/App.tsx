@@ -84,6 +84,7 @@ const AgencyCampaignContactsPage = lazy(() => import('./pages/agency/AgencyCampa
 const AgencyCampaignRosterPage = lazy(() => import('./pages/agency/AgencyCampaignRosterPage'));
 const AgencyCampaignAttemptsPage = lazy(() => import('./pages/agency/AgencyCampaignAttemptsPage'));
 const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCallPage'));
+const AgencyInboundCallPage = lazy(() => import('./pages/agency/AgencyInboundCallPage'));
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
 const CampaignManualCallsRedirect = lazy(() => import('./pages/agency/AgencyCampaignAttemptsPage').then((m) => ({ default: m.CampaignManualCallsRedirect })));
@@ -649,6 +650,15 @@ export default function App() {
                   <Route
                     path="campaigns/:id/attempts/:attemptId"
                     element={<AgencyAttemptCallPage />}
+                  />
+                  {/*
+                    One inbound call of the campaign (docs/call-log.md P2): the Call page an
+                    inbound row of the Call log opens. Under the same layout guards; the
+                    server floors its read at `agency.supervise`.
+                  */}
+                  <Route
+                    path="campaigns/:id/calls/inbound/:callId"
+                    element={<AgencyInboundCallPage />}
                   />
                   {/*
                     The audit trail lives HERE, in the agency workspace, and not at

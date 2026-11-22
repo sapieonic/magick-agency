@@ -309,7 +309,8 @@ describe('Call back and Mark handled', () => {
     await renderAt('/agency/inbound/missed', 'account_admin');
     fireEvent.click(screen.getByRole('button', { name: /Call back/ }));
     expect(screen.getByTestId('where').textContent).toBe('/dialer/phone');
-    expect(state).toEqual({ softphonePrefill: { number: '+447700900123', campaignId: 'camp-1' } });
+    // The row's id travels with the number: the call placed is this missed call's call back (CL1).
+    expect(state).toEqual({ softphonePrefill: { number: '+447700900123', campaignId: 'camp-1', inboundCallId: 'm-1' } });
   });
 
   it('a withheld number cannot be called back; a DNC caller is badged and still can (the soft phone asks why)', async () => {

@@ -148,9 +148,12 @@ final class _Override {
 
 /// A Missed call's Call back waiting for the pad.
 final class _CallBack {
-  _CallBack(this.number, this.campaignId, this.askedAt, this.sessionId);
+  _CallBack(this.number, this.campaignId, this.askedAt, this.sessionId, this.inboundCallId);
   final String number;
   final String? campaignId;
+
+  /// The Missed inbound call it is the Call back of (CL1); null: none.
+  final String? inboundCallId;
 
   /// When it was asked for, or when the call it waited behind settled.
   DateTime askedAt;
@@ -219,6 +222,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   // ── The draft ──
   String _number = '';
+
+  /// The Missed inbound call the number on the pad is the Call back of, with that number.
+  ({String inboundCallId, String number})? _callBackOf;
   String? _tagDraft;
   String? _callerDraft;
   Map<String, Object?> _fieldValues = const {};
@@ -1371,6 +1377,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       campaignId: _tagDraft,
       fields: cleaned.isEmpty ? null : cleaned,
       overrides: overrides.isEmpty ? null : overrides,
+      callbackOfInboundCallId: _callBackOf?.number == number ? _callBackOf?.inboundCallId : null,
     );
     try {
       final call = await _api.placeCall(request, accountId: host.accountId);
@@ -1381,6 +1388,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         'surface': _surface == SoftphoneSurface.station ? 'station' : 'softphone_page',
       });
       CallTelemetry.instance.manualPlaced(call);
+      // One call back per press of Call back: a later dial from this pad is its own call.
+      _callBackOf = null;
       if (epoch != _epoch) return;
       _placing = false;
       _override = null;
@@ -1524,8 +1533,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   }
 
   @override
-  void callBack(String number, {String? campaignId}) {
-    _pendingCallBack = _CallBack(number, campaignId, _now(), _host?.sessionId);
+  void callBack(String number, {String? campaignId, String? inboundCallId}) {
+    _pendingCallBack = _CallBack(number, campaignId, _now(), _host?.sessionId, inboundCallId);
     _callBackWaiting = CallBackWaiting.none;
     _emit();
   }
@@ -1617,6 +1626,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     }
     drop();
     _number = sanitiseDialInput(pending.number);
+    // The missed call the pad's number is the Call back of, with the number as filled: the
+    // link goes with a dial only while the pad still holds that number (CL1).
+    final missed = pending.inboundCallId;
+    _callBackOf = missed == null ? null : (inboundCallId: missed, number: _number);
     final tag = pending.campaignId;
     // The matched campaign is "Log to" only where the agent may log to it;
     // otherwise the tag stays as it was (the console's `presetCampaignId`).

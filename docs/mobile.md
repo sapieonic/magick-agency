@@ -749,8 +749,10 @@ Code: `lib/features/missed/`.
   ahead (IQ55): the soft phone's SP1 note and override, as for a typed number.
 - **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
   phone is not in finish mode; otherwise the console's note says to call another way and mark the
-  call handled). It hands the number and the matched campaign to the soft phone
-  (`SoftphoneActions.callBack`) and goes to the pad: the Phone tab, or the station for a campaign
+  call handled). It hands the number, the matched campaign and the Missed row's id to the soft
+  phone (`SoftphoneActions.callBack`; the id is sent with the first dial of that number as
+  `callback_of_inbound_call_id`, so the console's Call log can tie the call to the missed call it
+  answers, `docs/call-log.md` CL15) and goes to the pad: the Phone tab, or the station for a campaign
   switched to the soft phone (SP7). Like redial it fills the pad, sets "Log to" to the matched
   campaign when the agent may log to it (else leaves it), and focuses Call; it never dials, so the
   DNC check and its note (SP1) and the calling hours apply as to a typed number; an open override

@@ -64,6 +64,15 @@ export const AGENCY_INBOUND_MISSED_REASONS = [
 ] as const;
 export type AgencyInboundMissedReason = (typeof AGENCY_INBOUND_MISSED_REASONS)[number];
 
+/**
+ * How an inbound call came by the campaign it is filed under (`campaign_source`, 0067;
+ * `docs/call-log.md`): `contact`, its number is on the campaign's list (the match at arrival).
+ * `route`, `agent` and `supervisor` are a later phase's (the route's default campaign, and a
+ * campaign chosen at wrap-up); the column's CHECK holds all four.
+ */
+export const AGENCY_INBOUND_CAMPAIGN_SOURCES = ['contact', 'route', 'agent', 'supervisor'] as const;
+export type AgencyInboundCampaignSource = (typeof AGENCY_INBOUND_CAMPAIGN_SOURCES)[number];
+
 /** A Missed inbound row's status (`follow_up_status`): `open` until someone marks it handled. */
 export const AGENCY_INBOUND_FOLLOW_UP_STATUSES = ['open', 'handled'] as const;
 export type AgencyInboundFollowUpStatus = (typeof AGENCY_INBOUND_FOLLOW_UP_STATUSES)[number];

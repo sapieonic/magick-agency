@@ -418,6 +418,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const body = request.body as {
       session_id?: unknown; to?: unknown; caller_id?: unknown; campaign_id?: unknown;
       fields?: AgencyCallFieldValues; overrides?: { dnc_note?: string; hours_note?: string };
+      callback_of_inbound_call_id?: unknown;
     };
     if (typeof body.session_id !== 'string' || typeof body.to !== 'string') {
       return reply.code(400).send({ error: 'Validation failed', details: { session_id: 'required', to: 'required' } });
@@ -429,6 +430,9 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaignId: typeof body.campaign_id === 'string' ? body.campaign_id : null,
       ...(body.fields !== undefined ? { fields: body.fields } : {}),
       ...(body.overrides !== undefined ? { overrides: body.overrides } : {}),
+      ...(typeof body.callback_of_inbound_call_id === 'string'
+        ? { callbackOfInboundCallId: body.callback_of_inbound_call_id }
+        : {}),
     });
     if (!placed.ok) return sendSoftphoneRefusal(reply, placed.refusal);
     const audit: SoftphonePlaceAudit = {

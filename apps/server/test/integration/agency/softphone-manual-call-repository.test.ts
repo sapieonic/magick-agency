@@ -58,6 +58,7 @@ function createInput(session: Session, o: Partial<Parameters<typeof repo.create>
     analysisProfileId: null,
     dncOverride: null,
     hoursOverrideNote: null,
+    callbackOfInboundCallId: null,
     ...o,
   };
 }

@@ -59,8 +59,11 @@ import {
   callLogSourceForType,
   isCallLogStatus,
   isCallLogTypeFilter,
+  inboundJourney,
+  splitCallLogOutcomes,
   toCallLogWireRow,
   type CampaignDiallerLogRow,
+  type CampaignInboundLogRow,
   type CampaignSoftphoneLogRow,
 } from '../../../src/agency/campaign-call-log.js';
 import { ATTEMPT_QUERY_PARAMS } from '../../../src/agency/agency-spine.js';
@@ -109,7 +112,43 @@ const SOFT: CampaignSoftphoneLogRow = {
   bridged_at: '2026-11-22T09:40:08.000Z', ended_at: '2026-11-22T09:40:29.000Z',
   talk_seconds: 21, wrapup_seconds: null, redial_of_attempt_id: null, redial_number: null,
   dnc_overridden: false, hours_overridden: true, requires_disposition: false,
-  settled_at: '2026-11-22T09:41:00.000Z', created_at: '2026-11-22T09:40:00.000Z',
+  settled_at: '2026-11-22T09:41:00.000Z', callback_of: null, created_at: '2026-11-22T09:40:00.000Z',
+};
+
+/** A missed inbound call (nobody free, then a voicemail), assigned to Priya and rung back by `manual-1`. */
+const MISSED: CampaignInboundLogRow = {
+  source: 'inbound',
+  id: 'inbound-1', campaign_id: CAMPAIGN, contact_id: null, attempt_number: null,
+  phone_e164: '+919876507730', caller_id: '+919000000001', agent_user_id: null,
+  reserved_agent_id: null, state: 'ended', outcome: 'voicemail',
+  disposition_code: null, auto_disposition_code: null, notes: null, callback_at: null,
+  promise_date: null, promise_amount: null,
+  dispositioned_by_user_id: null, dispositioned_at: null, dispositioned_on_behalf: false,
+  webrtc_call_id: 'call-11', dialed_at: null, answered_at: '2026-11-22T09:12:01.000Z',
+  bridged_at: null, ended_at: '2026-11-22T09:13:40.000Z',
+  talk_seconds: null, wrapup_seconds: null, redial_of_attempt_id: null, redial_number: null,
+  dnc_overridden: false, hours_overridden: false, requires_disposition: false,
+  settled_at: '2026-11-22T09:13:40.000Z',
+  inbound: {
+    campaign_source: 'contact', route_name: 'Sales line', wait_seconds: 100, queued: true, via_sticky_agent: false,
+    voicemail_seconds: 22,
+    follow_up: { status: 'open', reason: 'overflow', closed_cause: null, assignee_user_id: PRIYA, handled_reason: null, handled_at: null },
+    called_back: { call_id: 'manual-1', at: '2026-11-22T09:40:00.000Z' },
+  },
+  created_at: '2026-11-22T09:12:00.000Z',
+};
+
+/** An inbound call Ravi, the caller's own agent, answered after 18 seconds. */
+const ANSWERED: CampaignInboundLogRow = {
+  ...MISSED,
+  id: 'inbound-2', contact_id: 'contact-7', agent_user_id: RAVI, outcome: 'answered',
+  disposition_code: 'will_pay', bridged_at: '2026-11-22T09:42:19.000Z', answered_at: '2026-11-22T09:42:01.000Z',
+  ended_at: '2026-11-22T09:46:31.000Z', talk_seconds: 252,
+  inbound: {
+    campaign_source: 'contact', route_name: 'Sales line', wait_seconds: 18, queued: true, via_sticky_agent: true,
+    voicemail_seconds: null, follow_up: null, called_back: null,
+  },
+  created_at: '2026-11-22T09:42:01.000Z',
 };
 
 function core(body: Record<string, unknown>, status = 200) {
@@ -156,10 +195,48 @@ describe('GET /campaigns/:id/call-log', () => {
     await app.close();
   });
 
+  it('serves an inbound row with its own facts on the row, and names who a missed call is assigned to', async () => {
+    mocks.proxyToCore.mockResolvedValue(page([ANSWERED, MISSED]));
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: URL });
+    expect(res.statusCode).toBe(200);
+    const [answered, missed] = res.json().rows;
+    expect(answered).toMatchObject({
+      type: 'inbound', id: 'inbound-2', campaign_source: 'contact', contact_id: 'contact-7',
+      phone_e164: '+919876507730', caller_id: '+919000000001', route_name: 'Sales line',
+      agent_user_id: RAVI, agent_name: 'Ravi Menon', outcome: 'answered', disposition_code: 'will_pay',
+      wait_seconds: 18, queued: true, via_sticky_agent: true, talk_seconds: 252,
+      voicemail_seconds: null, follow_up: null, called_back: null,
+    });
+    expect(missed).toMatchObject({
+      type: 'inbound', id: 'inbound-1', agent_user_id: null, agent_name: null, outcome: 'voicemail',
+      wait_seconds: 100, voicemail_seconds: 22,
+      follow_up: { status: 'open', reason: 'overflow', assignee_user_id: PRIYA, assignee_name: 'Priya Nair' },
+      called_back: { call_id: 'manual-1', at: '2026-11-22T09:40:00.000Z' },
+    });
+    // The attempt-only NULLs and the internal `inbound` envelope are not on the wire.
+    for (const key of ['source', 'inbound', 'attempt_number', 'reserved_agent_id', 'auto_disposition_code', 'wrapup_seconds', 'dialed_at', 'redial_number', 'dnc_overridden']) {
+      expect(missed, key).not.toHaveProperty(key);
+    }
+    await app.close();
+  });
+
+  it('carries a call back\'s link to the missed call on the soft-phone row', async () => {
+    const callbackOf = { inbound_call_id: 'inbound-1', arrived_at: '2026-11-22T09:12:00.000Z' };
+    mocks.proxyToCore.mockResolvedValue(page([{ ...SOFT, callback_of: callbackOf }, SOFT]));
+    const app = await buildApp();
+    const rows = (await app.inject({ method: 'GET', url: URL })).json().rows;
+    expect(rows[0].callback_of).toEqual(callbackOf);
+    expect(rows[1].callback_of).toBeNull();
+    await app.close();
+  });
+
   it('turns type into the internal source, and all into none', async () => {
     mocks.proxyToCore.mockResolvedValue(page([]));
     const app = await buildApp();
-    for (const [type, source] of [['dialler', 'dialler'], ['soft_phone', 'soft_phone'], ['all', undefined]] as const) {
+    for (const [type, source] of [
+      ['dialler', 'dialler'], ['soft_phone', 'soft_phone'], ['inbound', 'inbound'], ['to_follow_up', 'to_follow_up'], ['all', undefined],
+    ] as const) {
       await app.inject({ method: 'GET', url: `${URL}?type=${type}` });
       expect(coreQuery().query?.['source'], type).toBe(source);
       expect(coreQuery().query, type).not.toHaveProperty('type');
@@ -171,12 +248,12 @@ describe('GET /campaigns/:id/call-log', () => {
 
   it('refuses a type it does not know before reading anything', async () => {
     const app = await buildApp();
-    for (const type of ['softphone', 'inbound', 'ALL']) {
+    for (const type of ['softphone', 'missed', 'ALL']) {
       const res = await app.inject({ method: 'GET', url: `${URL}?type=${type}` });
       expect(res.statusCode, type).toBe(400);
       expect(res.json()).toEqual({
         error: 'Validation failed',
-        details: [{ param: 'type', message: 'must be one of: all, dialler, soft_phone' }],
+        details: [{ param: 'type', message: 'must be one of: all, dialler, soft_phone, inbound, to_follow_up' }],
       });
     }
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
@@ -206,7 +283,7 @@ describe('GET /campaigns/:id/call-log', () => {
   });
 
   it('passes the counts through when the handler sends them', async () => {
-    const counts = { all: 1326, dialler: 1240, soft_phone: 86 };
+    const counts = { all: 1383, dialler: 1240, soft_phone: 86, inbound: 57, to_follow_up: 6 };
     mocks.proxyToCore.mockResolvedValue(page([DIALLER], { counts }));
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: `${URL}?include_counts=1&type=dialler` });
@@ -248,12 +325,14 @@ describe('GET /campaigns/:id/call-log', () => {
 
 describe('the call log\'s vocabulary', () => {
   it('knows its types and nothing else', () => {
-    for (const ok of ['all', 'dialler', 'soft_phone']) expect(isCallLogTypeFilter(ok), ok).toBe(true);
-    for (const bad of ['inbound', 'softphone', '', undefined, null, 1, ['dialler']]) expect(isCallLogTypeFilter(bad), String(bad)).toBe(false);
+    for (const ok of ['all', 'dialler', 'soft_phone', 'inbound', 'to_follow_up']) expect(isCallLogTypeFilter(ok), ok).toBe(true);
+    for (const bad of ['missed', 'softphone', '', undefined, null, 1, ['dialler']]) expect(isCallLogTypeFilter(bad), String(bad)).toBe(false);
     expect(callLogSourceForType(undefined)).toBeNull();
     expect(callLogSourceForType('all')).toBeNull();
     expect(callLogSourceForType('dialler')).toBe('dialler');
     expect(callLogSourceForType('soft_phone')).toBe('soft_phone');
+    expect(callLogSourceForType('inbound')).toBe('inbound');
+    expect(callLogSourceForType('to_follow_up')).toBe('to_follow_up');
     for (const ok of ['live', 'awaiting_outcome', 'settled']) expect(isCallLogStatus(ok), ok).toBe(true);
     for (const bad of ['done', 'ended', '', undefined, ['live']]) expect(isCallLogStatus(bad), String(bad)).toBe(false);
   });
@@ -261,5 +340,28 @@ describe('the call log\'s vocabulary', () => {
   it('projects a soft-phone row with no name to agent_name: null, never an absent key', () => {
     expect(toCallLogWireRow(SOFT)).toHaveProperty('agent_name', null);
     expect(toCallLogWireRow({ ...SOFT, agent_name: 'Priya Nair' })).toMatchObject({ type: 'soft_phone', agent_name: 'Priya Nair' });
+  });
+
+  it('splits What happened into the attempt list\'s outcomes and the ones only an inbound call has', () => {
+    expect(splitCallLogOutcomes(undefined)).toEqual({ attempt: undefined, inbound: [] });
+    expect(splitCallLogOutcomes('connected,no_answer')).toEqual({ attempt: 'connected,no_answer', inbound: [] });
+    expect(splitCallLogOutcomes('missed,connected, voicemail')).toEqual({ attempt: 'connected', inbound: ['missed', 'voicemail'] });
+    expect(splitCallLogOutcomes(['abandoned_in_queue', 'missed,missed'])).toEqual({ attempt: undefined, inbound: ['abandoned_in_queue', 'missed'] });
+    // A word neither vocabulary knows stays with the attempt parser, whose 400 names it.
+    expect(splitCallLogOutcomes('missed,nonsense')).toEqual({ attempt: 'nonsense', inbound: ['missed'] });
+  });
+
+  it('tells an inbound call\'s path in order: answered, and missed with a voicemail', () => {
+    expect(inboundJourney(ANSWERED)).toEqual([
+      { kind: 'rang', at: '2026-11-22T09:42:01.000Z', seconds: null },
+      { kind: 'greeting', at: '2026-11-22T09:42:01.000Z', seconds: null },
+      { kind: 'waited', at: null, seconds: 18 },
+      { kind: 'answered', at: '2026-11-22T09:42:19.000Z', seconds: null },
+      { kind: 'ended', at: '2026-11-22T09:46:31.000Z', seconds: 252 },
+    ]);
+    expect(inboundJourney(MISSED).map((step) => step.kind)).toEqual(['rang', 'greeting', 'waited', 'missed', 'voicemail', 'ended']);
+    // Out of hours: answered with a message, never queued, so no wait is claimed.
+    const closed: CampaignInboundLogRow = { ...MISSED, inbound: { ...MISSED.inbound, queued: false, voicemail_seconds: null } };
+    expect(inboundJourney(closed).map((step) => step.kind)).toEqual(['rang', 'greeting', 'missed', 'ended']);
   });
 });

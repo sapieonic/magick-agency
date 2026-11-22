@@ -1042,7 +1042,10 @@ final class ManualCallOverridesRequest {
 ///
 /// `campaign_id` is always sent (null: untagged); [fields] and [overrides]
 /// only when given, so a request built before the field set loaded never
-/// clears values the server holds.
+/// clears values the server holds. [callbackOfInboundCallId] is the Missed
+/// inbound call this dial rings back (its Call back): sent only when set, and
+/// kept by the server only when it is a Missed row of the account from the
+/// number dialled (`docs/call-log.md`, CL1).
 ///
 /// Contract: `AgencyApi.AgencyManualCallCreateRequest`.
 @immutable
@@ -1054,6 +1057,7 @@ final class ManualCallCreateRequest {
     this.campaignId,
     Map<String, Object?>? fields,
     this.overrides,
+    this.callbackOfInboundCallId,
   }) : fields = fields == null ? null : frozenMap(fields);
 
   /// The live session, on the soft phone.
@@ -1070,6 +1074,9 @@ final class ManualCallCreateRequest {
   final Map<String, Object?>? fields;
   final ManualCallOverridesRequest? overrides;
 
+  /// The Missed inbound call this call rings back; null: not a call back.
+  final String? callbackOfInboundCallId;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'session_id': sessionId, 'to': to};
     putIfSet(json, 'caller_id', callerId);
@@ -1077,6 +1084,7 @@ final class ManualCallCreateRequest {
     putIfSet(json, 'fields', fields);
     final o = overrides;
     if (o != null && !o.isEmpty) json['overrides'] = o.toJson();
+    putIfSet(json, 'callback_of_inbound_call_id', callbackOfInboundCallId);
     return json;
   }
 
@@ -1088,10 +1096,12 @@ final class ManualCallCreateRequest {
       other.callerId == callerId &&
       other.campaignId == campaignId &&
       jsonEquals(other.fields, fields) &&
-      other.overrides == overrides;
+      other.overrides == overrides &&
+      other.callbackOfInboundCallId == callbackOfInboundCallId;
 
   @override
-  int get hashCode => Object.hash(sessionId, to, callerId, campaignId, jsonHash(fields), overrides);
+  int get hashCode =>
+      Object.hash(sessionId, to, callerId, campaignId, jsonHash(fields), overrides, callbackOfInboundCallId);
 }
 
 /// `PATCH /proxy/agency/softphone/calls/:id` while the call is live or owes

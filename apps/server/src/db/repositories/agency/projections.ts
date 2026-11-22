@@ -21,7 +21,7 @@ import { promiseState } from '@magick-agency/domain/promise-to-pay';
 // The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
 // codec (and the tables it builds at load) into the repository's import graph.
 import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
-import type { CampaignSoftphoneLogRow } from '../../../agency/campaign-call-log.js';
+import type { CampaignInboundFacts, CampaignInboundLogRow, CampaignSoftphoneLogRow } from '../../../agency/campaign-call-log.js';
 
 /**
  * Does this row have enough CONNECTS behind it to quote a rate whose denominator is
@@ -176,7 +176,16 @@ export interface SoftphoneLogRaw {
   dnc_overridden: boolean;
   hours_overridden: boolean;
   settled_at: Date | null;
+  /** The branch's own facts as JSON: the call back's link (`callback_of`), or null. */
+  extra: { callback_of?: { inbound_call_id: string; arrived_at: string | null } | null } | null;
   created_at: Date;
+}
+
+/** A timestamp as `to_jsonb` wrote it (ISO 8601 with an offset) → the wire's ISO string; null stays null. */
+function jsonInstant(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
 }
 
 /** {@link SoftphoneLogRaw} → the call log's `soft_phone` row: NULL where the soft phone has no such field. */
@@ -215,6 +224,116 @@ export function projectSoftphoneLogRow(row: SoftphoneLogRaw): CampaignSoftphoneL
     hours_overridden: row.hours_overridden,
     requires_disposition: manualCallRequiresDisposition(row),
     settled_at: iso(row.settled_at),
+    callback_of: row.extra?.callback_of
+      ? { inbound_call_id: row.extra.callback_of.inbound_call_id, arrived_at: jsonInstant(row.extra.callback_of.arrived_at) }
+      : null,
+    created_at: iso(row.created_at) ?? '',
+  };
+}
+
+/**
+ * An inbound branch row of the campaign call log (`listCallLogForCampaign`) as the database
+ * returns it: the inbound call's columns under the attempt row's names, and what only an inbound
+ * call has as one JSON object (`extra`, built by `INBOUND_LOG_EXTRA_SQL`).
+ */
+export interface InboundLogRaw {
+  id: string;
+  campaign_id: string;
+  contact_id: string | null;
+  phone_e164: string | null;
+  caller_id: string;
+  agent_user_id: string | null;
+  outcome: CampaignInboundLogRow['outcome'];
+  disposition_code: string | null;
+  notes: string | null;
+  callback_at: Date | null;
+  promise_date: string | null;
+  promise_amount: string | null;
+  dispositioned_by_user_id: string | null;
+  dispositioned_at: Date | null;
+  dispositioned_on_behalf: boolean;
+  webrtc_call_id: string | null;
+  answered_at: Date | null;
+  bridged_at: Date | null;
+  ended_at: Date | null;
+  talk_seconds: number | null;
+  settled_at: Date | null;
+  extra: {
+    campaign_source: CampaignInboundFacts['campaign_source'];
+    route_name: string | null;
+    wait_seconds: number | null;
+    queued: boolean;
+    via_sticky_agent: boolean;
+    voicemail_seconds: number | null;
+    follow_up_status: NonNullable<CampaignInboundFacts['follow_up']>['status'] | null;
+    follow_up_reason: NonNullable<CampaignInboundFacts['follow_up']>['reason'] | null;
+    closed_cause: NonNullable<CampaignInboundFacts['follow_up']>['closed_cause'];
+    assignee_user_id: string | null;
+    handled_reason: NonNullable<CampaignInboundFacts['follow_up']>['handled_reason'];
+    handled_at: string | null;
+    called_back: { call_id: string; at: string } | null;
+  };
+  created_at: Date;
+}
+
+/** {@link InboundLogRaw} → the call log's `inbound` row: NULL where an inbound call has no such field. */
+export function projectInboundLogRow(row: InboundLogRaw): CampaignInboundLogRow {
+  const x = row.extra;
+  const calledBackAt = x.called_back ? jsonInstant(x.called_back.at) : null;
+  return {
+    source: 'inbound',
+    id: row.id,
+    campaign_id: row.campaign_id,
+    contact_id: row.contact_id,
+    attempt_number: null,
+    phone_e164: row.phone_e164,
+    caller_id: row.caller_id,
+    agent_user_id: row.agent_user_id,
+    reserved_agent_id: null,
+    state: 'ended',
+    outcome: row.outcome,
+    disposition_code: row.disposition_code,
+    auto_disposition_code: null,
+    notes: row.notes,
+    callback_at: iso(row.callback_at),
+    promise_date: promiseDateText(row.promise_date ?? null),
+    promise_amount: row.promise_amount ?? null,
+    dispositioned_by_user_id: row.dispositioned_by_user_id,
+    dispositioned_at: iso(row.dispositioned_at),
+    dispositioned_on_behalf: row.dispositioned_on_behalf,
+    webrtc_call_id: row.webrtc_call_id,
+    dialed_at: null,
+    answered_at: iso(row.answered_at),
+    bridged_at: iso(row.bridged_at),
+    ended_at: iso(row.ended_at),
+    talk_seconds: row.talk_seconds,
+    wrapup_seconds: null,
+    redial_of_attempt_id: null,
+    redial_number: null,
+    dnc_overridden: false,
+    hours_overridden: false,
+    // Answered by an agent, and its outcome neither saved nor lapsed.
+    requires_disposition: row.bridged_at !== null && row.settled_at === null,
+    settled_at: iso(row.settled_at),
+    inbound: {
+      campaign_source: x.campaign_source,
+      route_name: x.route_name,
+      wait_seconds: Math.max(0, Math.floor(Number(x.wait_seconds ?? 0))),
+      queued: x.queued === true,
+      via_sticky_agent: x.via_sticky_agent === true,
+      voicemail_seconds: x.voicemail_seconds,
+      follow_up: x.follow_up_status && x.follow_up_reason
+        ? {
+          status: x.follow_up_status,
+          reason: x.follow_up_reason,
+          closed_cause: x.closed_cause,
+          assignee_user_id: x.assignee_user_id,
+          handled_reason: x.handled_reason,
+          handled_at: jsonInstant(x.handled_at),
+        }
+        : null,
+      called_back: x.called_back && calledBackAt ? { call_id: x.called_back.call_id, at: calledBackAt } : null,
+    },
     created_at: iso(row.created_at) ?? '',
   };
 }

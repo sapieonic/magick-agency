@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import type { AgencyCallLogDiallerRow, AgencyCallLogPage, AgencyCallLogRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
+import type {
+  AgencyCallLogDiallerRow,
+  AgencyCallLogInboundRow,
+  AgencyCallLogPage,
+  AgencyCallLogRow,
+  AgencyCallLogSoftphoneRow,
+} from '../../types/agency-call-log';
 
 /** A dialler row of the Call log: the attempt row, marked. */
 type AgencyAttempt = AgencyCallLogDiallerRow;
@@ -28,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   getCampaignCallLog: vi.fn(),
   downloadSpineCsv: vi.fn(),
   listCampaignAgents: vi.fn(),
+  markMissedInboundCallHandled: vi.fn(),
+  refreshMissedCallsCount: vi.fn(),
   // Typed with the parameter it really takes: inferred from `() => true`
   // the mock is zero-arg, and a per-capability `mockImplementation`
   // then fails to typecheck (vitest does not typecheck, so only `tsc`
@@ -58,6 +66,8 @@ vi.mock('../../api/agencyCampaigns', () => ({
   campaignLineage: mocks.campaignLineage,
 }));
 vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgents }));
+vi.mock('../../api/inbound', () => ({ markMissedInboundCallHandled: mocks.markMissedInboundCallHandled }));
+vi.mock('../../hooks/useMissedCallsCount', () => ({ refreshMissedCallsCount: mocks.refreshMissedCallsCount }));
 vi.mock('../../api/agencySpine', () => ({
   getCampaignCallLog: mocks.getCampaignCallLog,
   downloadSpineCsv: mocks.downloadSpineCsv,
@@ -715,7 +725,7 @@ describe('filters in the URL', () => {
 
   it('shows the exact count when the server sends one: the drill-down count', async () => {
     mocks.getCampaignCallLog.mockResolvedValue({
-      ...page([BRIDGED, ABANDONED], 'cursor-2'), counts: { all: 1240, dialler: 1234, soft_phone: 6 },
+      ...page([BRIDGED, ABANDONED], 'cursor-2'), counts: { all: 1240, dialler: 1234, soft_phone: 6, inbound: 0, to_follow_up: 0 },
     });
     // The link Insights builds for a lifetime dials figure.
     renderWithLocation(drilldown());
@@ -995,9 +1005,9 @@ const SOFT: AgencyCallLogSoftphoneRow = {
   dialed_at: '2026-08-17T10:30:01.000Z', answered_at: '2026-08-17T10:30:08.000Z',
   bridged_at: '2026-08-17T10:30:08.000Z', ended_at: '2026-08-17T10:30:29.000Z', talk_seconds: 21,
   dnc_overridden: false, hours_overridden: false, requires_disposition: false,
-  settled_at: '2026-08-17T10:31:00.000Z', created_at: '2026-08-17T10:30:00.000Z',
+  settled_at: '2026-08-17T10:31:00.000Z', callback_of: null, created_at: '2026-08-17T10:30:00.000Z',
 };
-const COUNTS = { all: 1326, dialler: 1240, soft_phone: 86 };
+const COUNTS = { all: 1326, dialler: 1240, soft_phone: 86, inbound: 0, to_follow_up: 0 };
 const withCounts = (rows: AgencyCallLogRow[], counts = COUNTS, cursor: string | null = null): AgencyCallLogPage =>
   ({ ...page(rows, cursor), counts });
 const lastCall = () => mocks.getCampaignCallLog.mock.calls.at(-1)!;
@@ -1060,7 +1070,7 @@ describe('the type chips', () => {
   });
 
   it('hides the Soft phone chip, and so every chip, with the soft phone off and no soft-phone call in the range', async () => {
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(screen.queryByTestId('call-log-types')).toBeNull();
@@ -1069,14 +1079,14 @@ describe('the type chips', () => {
   });
 
   it('keeps the Soft phone chip with the soft phone off while the range holds soft-phone calls (SR5)', async () => {
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT, BRIDGED], { all: 5, dialler: 4, soft_phone: 1 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT, BRIDGED], { all: 5, dialler: 4, soft_phone: 1, inbound: 0, to_follow_up: 0 }));
     renderPage();
     await screen.findByTestId(`attempt-row-${SOFT.id}`);
     expect(screen.getByTestId('call-log-type-soft_phone').textContent).toBe('Soft phone1');
   });
 
   it('ignores a type it does not know', async () => {
-    renderWithLocation('?placed=1&type=inbound');
+    renderWithLocation('?placed=1&type=missed');
     await waitFor(() => expect(lastCall()[2]).toEqual({ limit: 50, type: 'all', includeCounts: true }));
   });
 });
@@ -1156,7 +1166,7 @@ describe('a row of each type', () => {
 
   it('offers no link to a soft-phone call with the soft phone off: its page is behind the flag', async () => {
     mocks.flags = new Set();
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT], { all: 1, dialler: 0, soft_phone: 1 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT], { all: 1, dialler: 0, soft_phone: 1, inbound: 0, to_follow_up: 0 }));
     renderPage();
     const row = await screen.findByTestId(`attempt-row-${SOFT.id}`);
     expect(within(row).queryByText('Open call')).toBeNull();
@@ -1281,7 +1291,7 @@ describe('what the Call log opens on', () => {
 
   it('Show all dates keeps the chip', async () => {
     mocks.flags = new Set(['agency_softphone_enabled']);
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 3, dialler: 3, soft_phone: 0 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 3, dialler: 3, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
     renderWithLocation('?type=soft_phone');
     // The chip's type is named in an empty day.
     await screen.findByText('No soft-phone calls on this campaign for these dates.');
@@ -1339,7 +1349,7 @@ describe('the counts are asked for only when they could have changed', () => {
     expect(screen.getByTestId('attempts-count').textContent).toMatch(/^1[,.]?240 calls — showing 1$/);
 
     // Refresh: counted again.
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 1330, dialler: 1243, soft_phone: 87 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 1330, dialler: 1243, soft_phone: 87, inbound: 0, to_follow_up: 0 }));
     fireEvent.click(screen.getByLabelText('Refresh call log'));
     await waitFor(() => expect(screen.getByTestId('call-log-type-soft_phone').textContent).toBe('Soft phone87'));
     expect(lastCall()[2]).toEqual({ limit: 50, type: 'dialler', includeCounts: true });
@@ -1362,7 +1372,7 @@ describe('the soft-phone status filter', () => {
     await screen.findByTestId(`attempt-row-${SOFT.id}`);
     const select = screen.getByLabelText(/Soft-phone status/) as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual(['Any', 'On a call now', 'Waiting for an outcome', 'Done']);
-    expect(screen.getByText('Soft-phone calls only. A dialler call has no status.')).toBeTruthy();
+    expect(screen.getByText('Soft-phone calls only. A dialler or inbound call has no status.')).toBeTruthy();
   });
 
   it('applies to the list, the counts, later pages and the export, and is a chip that can be removed', async () => {
@@ -1370,7 +1380,7 @@ describe('the soft-phone status filter', () => {
     renderWithLocation('?outcome=connected');
     await screen.findByTestId(`attempt-row-${SOFT.id}`);
 
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT], { all: 4, dialler: 0, soft_phone: 4 }, 'cursor-2'));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT], { all: 4, dialler: 0, soft_phone: 4, inbound: 0, to_follow_up: 0 }, 'cursor-2'));
     fireEvent.change(screen.getByTestId('call-log-status-filter'), { target: { value: 'awaiting_outcome' } });
     fireEvent.click(screen.getByText('Apply'));
     await waitFor(() => expect(currentQuery().get('status')).toBe('awaiting_outcome'));
@@ -1409,7 +1419,7 @@ describe('the soft-phone status filter', () => {
   });
 
   it('with nothing matching says the filters match nothing, never that the campaign has no calls', async () => {
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 0, dialler: 0, soft_phone: 0 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 0, dialler: 0, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
     renderWithLocation('?status=awaiting_outcome');
     await screen.findByText('Nothing matches those filters');
     expect(screen.queryByText('No calls were placed')).toBeNull();
@@ -1417,13 +1427,13 @@ describe('the soft-phone status filter', () => {
 
   it('is not offered with the soft phone off and no soft-phone call under the filters, and is while one is applied', async () => {
     mocks.flags = new Set();
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
     const first = renderWithLocation('?dates=all');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(screen.queryByTestId('call-log-status-filter')).toBeNull();
     first.unmount();
 
-    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 0, dialler: 0, soft_phone: 0 }));
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 0, dialler: 0, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
     renderWithLocation('?status=settled');
     await screen.findByText('Nothing matches those filters');
     expect((screen.getByTestId('call-log-status-filter') as HTMLSelectElement).value).toBe('settled');
@@ -1472,5 +1482,264 @@ describe('the campaign’s old Soft-phone calls URL', () => {
     expect(currentQuery().get('phone')).toBe('98765');
     expect(currentQuery().getAll('type')).toEqual(['soft_phone']);
     expect(lastCall().slice(1, 3)).toEqual([{ phone: '98765' }, { limit: 50, type: 'soft_phone', includeCounts: true }]);
+  });
+});
+
+// ─── Inbound in the log (docs/call-log.md §4, P2) ───────────────────────────
+
+/** Answered by the caller's own agent after 18 seconds; on the roster, outcome saved. */
+const INBOUND_ANSWERED: AgencyCallLogInboundRow = {
+  type: 'inbound', id: 'inbound-answered', campaign_id: 'camp-1', campaign_source: 'contact', contact_id: 'contact-7',
+  phone_e164: '+919876504821', caller_id: '+919000000001', route_name: 'Sales line',
+  agent_user_id: 'bd2f9d2e-1111-4222-8333-444455556666', agent_name: 'Priya Nair', state: 'ended', outcome: 'answered',
+  disposition_code: 'not_interested', notes: null, callback_at: null, promise_date: null, promise_amount: null,
+  dispositioned_by_user_id: 'bd2f9d2e-1111-4222-8333-444455556666', dispositioned_at: '2026-08-17T15:47:00.000Z',
+  dispositioned_on_behalf: false, webrtc_call_id: 'call-88', answered_at: '2026-08-17T15:42:01.000Z',
+  bridged_at: '2026-08-17T15:42:19.000Z', ended_at: '2026-08-17T15:46:31.000Z', talk_seconds: 252,
+  wait_seconds: 18, queued: true, via_sticky_agent: true, requires_disposition: false, settled_at: '2026-08-17T15:47:00.000Z',
+  voicemail_seconds: null, follow_up: null, called_back: null, created_at: '2026-08-17T15:42:01.000Z',
+};
+/** Nobody free, left a voicemail; open, assigned to Arjun; not on the list. */
+const INBOUND_MISSED: AgencyCallLogInboundRow = {
+  ...INBOUND_ANSWERED, id: 'inbound-missed', campaign_source: 'route', contact_id: null, phone_e164: '+919812307730',
+  agent_user_id: null, agent_name: null, outcome: 'voicemail', disposition_code: null, dispositioned_by_user_id: null,
+  dispositioned_at: null, bridged_at: null, talk_seconds: null, wait_seconds: 100, via_sticky_agent: false, voicemail_seconds: 22,
+  follow_up: { status: 'open', reason: 'overflow', closed_cause: null, assignee_user_id: 'u-arjun', assignee_name: 'Arjun Mehta', handled_reason: null, handled_at: null },
+  created_at: '2026-08-17T15:12:00.000Z',
+};
+const INBOUND_COUNTS = { all: 1383, dialler: 1240, soft_phone: 86, inbound: 57, to_follow_up: 6 };
+
+describe('the Inbound and To follow up chips', () => {
+  beforeEach(() => {
+    mocks.flags = new Set(['agency_softphone_enabled', 'agency_inbound_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_ANSWERED, BRIDGED], INBOUND_COUNTS));
+  });
+
+  it('shows All · Dialler · Soft phone · Inbound · To follow up with their counts, To follow up as owed work', async () => {
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    const chips = within(screen.getByTestId('call-log-types')).getAllByRole('button');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['All1,383', 'Dialler1,240', 'Soft phone86', 'Inbound57', 'To follow up6']);
+    expect(screen.getByTestId('call-log-type-to_follow_up').hasAttribute('data-warning')).toBe(true);
+    expect(screen.getByTestId('call-log-type-inbound').hasAttribute('data-warning')).toBe(false);
+    expect(screen.queryByTestId('call-log-follow-up-note')).toBeNull();
+  });
+
+  it('hides To follow up at 0, and Inbound with inbound off and no inbound call in the range', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { ...INBOUND_COUNTS, to_follow_up: 0 }));
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.queryByTestId('call-log-type-to_follow_up')).toBeNull();
+    expect(screen.getByTestId('call-log-type-inbound')).toBeTruthy();
+    cleanup();
+
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 1326, dialler: 1240, soft_phone: 86, inbound: 0, to_follow_up: 0 }));
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.queryByTestId('call-log-type-inbound')).toBeNull();
+    // Switched off, but the range holds inbound calls: the chip stays.
+    cleanup();
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_ANSWERED], INBOUND_COUNTS));
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    expect(screen.getByTestId('call-log-type-inbound')).toBeTruthy();
+  });
+
+  it('To follow up reads the open missed calls, says the dates do not narrow it, and exports that view', async () => {
+    mocks.downloadSpineCsv.mockResolvedValue({ blob: new Blob(['a']), truncated: false, reason: null, rowLimit: null, rows: 1 });
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_MISSED], INBOUND_COUNTS));
+    fireEvent.click(screen.getByTestId('call-log-type-to_follow_up'));
+    await waitFor(() => expect(currentQuery().get('type')).toBe('to_follow_up'));
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    expect(lastCall()[2]).toMatchObject({ type: 'to_follow_up' });
+    expect(screen.getByTestId('call-log-follow-up-note').textContent).toContain('whatever the dates');
+    expect(screen.getByTestId('attempts-count').textContent).toContain('6 calls');
+    fireEvent.click(screen.getByText('Export CSV'));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalled());
+    expect(mocks.downloadSpineCsv.mock.calls[0]![2]).toMatchObject({ source: 'to_follow_up' });
+  });
+
+  it('What happened offers Missed, Voicemail and Abandoned, sends them as outcomes, and names them on their chips', async () => {
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    expect(screen.getByTestId('call-log-inbound-outcome-hint').textContent).toContain('inbound calls only');
+    fireEvent.click(screen.getByLabelText('Missed'));
+    fireEvent.click(screen.getByLabelText('Abandoned (hung up while waiting)'));
+    fireEvent.click(screen.getByText('Apply'));
+    await waitFor(() => expect(currentQuery().getAll('outcome')).toEqual(['missed', 'abandoned_in_queue']));
+    await waitFor(() => expect(lastCall()[1]).toEqual({ outcome: ['missed', 'abandoned_in_queue'] }));
+    expect(screen.getByText('Outcome: Missed')).toBeTruthy();
+    expect(screen.getByText('Outcome: Abandoned (hung up while waiting)')).toBeTruthy();
+  });
+
+  it('does not offer the inbound choices with inbound off and no inbound call', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }));
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.queryByLabelText('Missed')).toBeNull();
+    expect(screen.queryByTestId('call-log-inbound-outcome-hint')).toBeNull();
+  });
+});
+
+describe('an inbound row', () => {
+  beforeEach(() => {
+    mocks.flags = new Set(['agency_softphone_enabled', 'agency_inbound_enabled']);
+  });
+
+  it('an answered call: rang us, who answered, the wait and their own agent, its outcome, and its Call page', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([INBOUND_ANSWERED]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    expect(row.getAttribute('data-type')).toBe('inbound');
+    expect(screen.getByTestId(`call-type-${INBOUND_ANSWERED.id}`).textContent).toBe('Inbound');
+    expect(screen.getByTestId(`call-facts-${INBOUND_ANSWERED.id}`).textContent).toBe('rang us');
+    expect(within(row).getByText('Priya Nair')).toBeTruthy();
+    expect(screen.getByTestId(`attempt-outcome-${INBOUND_ANSWERED.id}`).textContent).toBe('Answered');
+    expect(screen.getByTestId(`call-happened-detail-${INBOUND_ANSWERED.id}`).textContent).toBe('waited 0:18 · came through their agent');
+    expect(within(row).getByText('+919876504821').closest('a')!.getAttribute('href')).toBe('/agency/campaigns/camp-1/contacts/contact-7');
+    expect(within(row).getByText('4:12')).toBeTruthy();
+    expect(within(row).getByText('Open call').closest('a')!.getAttribute('href')).toBe('/agency/campaigns/camp-1/calls/inbound/inbound-answered');
+    expect(screen.queryByTestId(`call-follow-up-${INBOUND_ANSWERED.id}`)).toBeNull();
+  });
+
+  it('a missed call: why, who it is assigned to, To follow up with its two actions, and its voicemail', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([INBOUND_MISSED]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    expect(screen.getByTestId(`attempt-outcome-${INBOUND_MISSED.id}`).textContent).toBe('Missed');
+    expect(screen.getByTestId(`call-happened-detail-${INBOUND_MISSED.id}`).textContent).toBe('nobody free to answer · waited 1:40');
+    expect(screen.getByTestId(`call-assignee-${INBOUND_MISSED.id}`).textContent).toBe('assigned to Arjun Mehta');
+    expect(within(row).getByText('not on the list')).toBeTruthy();
+    const followUp = screen.getByTestId(`call-follow-up-${INBOUND_MISSED.id}`);
+    expect(within(followUp).getByText('To follow up')).toBeTruthy();
+    expect(screen.getByTestId(`mark-handled-${INBOUND_MISSED.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`call-back-${INBOUND_MISSED.id}`)).toBeTruthy();
+    expect(within(row).getByText('Voicemail 0:22').closest('a')!.getAttribute('href')).toBe('/agency/campaigns/camp-1/calls/inbound/inbound-missed');
+  });
+
+  it('a withheld number has nothing to call back; a handled call says how it was closed and offers no action', async () => {
+    const handled = { ...INBOUND_MISSED.follow_up!, status: 'handled' as const, handled_reason: 'reached' as const, handled_at: '2026-08-17T16:00:00.000Z' };
+    mocks.getCampaignCallLog.mockResolvedValue(page([
+      { ...INBOUND_MISSED, id: 'withheld', phone_e164: null, voicemail_seconds: null },
+      { ...INBOUND_MISSED, id: 'reached', follow_up: handled },
+    ]));
+    renderPage();
+    const withheld = await screen.findByTestId('attempt-row-withheld');
+    expect(within(withheld).getByText('Number withheld')).toBeTruthy();
+    expect(screen.queryByTestId('call-back-withheld')).toBeNull();
+    expect(screen.getByTestId('mark-handled-withheld')).toBeTruthy();
+    expect(screen.getByTestId('call-follow-up-reached').textContent).toBe('Customer reached');
+    expect(screen.queryByTestId('mark-handled-reached')).toBeNull();
+  });
+
+  it('offers Call back only where the viewer may dial from the soft phone', async () => {
+    mocks.flags = new Set(['agency_inbound_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(page([INBOUND_MISSED]));
+    renderPage();
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    expect(screen.queryByTestId(`call-back-${INBOUND_MISSED.id}`)).toBeNull();
+    expect(screen.getByTestId(`mark-handled-${INBOUND_MISSED.id}`)).toBeTruthy();
+  });
+
+  it('Mark handled is the Missed list’s action; the list and its counts are read again', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_MISSED], INBOUND_COUNTS));
+    mocks.markMissedInboundCallHandled.mockResolvedValue({ ok: true, value: {} });
+    renderWithLocation('?type=to_follow_up');
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    const reads = mocks.getCampaignCallLog.mock.calls.length;
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { ...INBOUND_COUNTS, to_follow_up: 5 }));
+    fireEvent.click(screen.getByTestId(`mark-handled-${INBOUND_MISSED.id}`));
+    await waitFor(() => expect(mocks.markMissedInboundCallHandled).toHaveBeenCalledWith('inbound-missed', 'tenant-1', 'account-1'));
+    await waitFor(() => expect(mocks.getCampaignCallLog.mock.calls.length).toBe(reads + 1));
+    expect(lastCall()[2]).toMatchObject({ type: 'to_follow_up', includeCounts: true });
+    expect(mocks.refreshMissedCallsCount).toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByTestId(`attempt-row-${INBOUND_MISSED.id}`)).toBeNull());
+    expect(screen.getByTestId('call-log-type-to_follow_up').textContent).toBe('To follow up5');
+  });
+
+  it('a Mark handled the server refuses is said on the row, and the row stays', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([INBOUND_MISSED]));
+    mocks.markMissedInboundCallHandled.mockResolvedValue({ ok: false, refusal: { code: 'inbound_missed_call_not_found', message: 'gone' } });
+    renderPage();
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    fireEvent.click(screen.getByTestId(`mark-handled-${INBOUND_MISSED.id}`));
+    const said = await within(screen.getByTestId(`call-follow-up-${INBOUND_MISSED.id}`)).findByRole('alert');
+    expect(said.textContent!.length).toBeGreaterThan(10);
+    expect(screen.getByTestId(`attempt-row-${INBOUND_MISSED.id}`)).toBeTruthy();
+  });
+
+  it('Call back opens the soft phone with the number, this campaign and the missed call’s id, and dials nothing', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([INBOUND_MISSED]));
+    let landed: { pathname: string; state: unknown } | null = null;
+    function Phone() {
+      const location = useLocation();
+      landed = { pathname: location.pathname, state: location.state };
+      return <p>the soft phone</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={[ALL_DATES]}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+          <Route path="/dialer/phone" element={<Phone />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByTestId(`call-back-${INBOUND_MISSED.id}`));
+    await screen.findByText('the soft phone');
+    expect(landed).toEqual({
+      pathname: '/dialer/phone',
+      state: { softphonePrefill: { number: '+919812307730', campaignId: 'camp-1', inboundCallId: 'inbound-missed' } },
+    });
+  });
+});
+
+describe('a missed call and its call back', () => {
+  const CALL_BACK: AgencyCallLogSoftphoneRow = {
+    ...SOFT, id: 'manual-callback', contact_id: null, phone_e164: '+919812307730', created_at: '2026-08-17T15:31:00.000Z',
+    callback_of: { inbound_call_id: INBOUND_MISSED.id, arrived_at: INBOUND_MISSED.created_at },
+  };
+  const RUNG_BACK = { ...INBOUND_MISSED, called_back: { call_id: CALL_BACK.id, at: CALL_BACK.created_at } };
+
+  beforeEach(() => {
+    mocks.flags = new Set(['agency_softphone_enabled', 'agency_inbound_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(page([CALL_BACK, BRIDGED, RUNG_BACK]));
+  });
+
+  it('point at each other in words: the call back stays a Soft phone call', async () => {
+    renderPage();
+    await screen.findByTestId(`attempt-row-${CALL_BACK.id}`);
+    expect(screen.getByTestId(`call-type-${CALL_BACK.id}`).textContent).toBe('Soft phone');
+    expect(screen.getByTestId(`call-facts-${CALL_BACK.id}`).textContent).toBe('Call back · to the 3:12 pm missed call');
+    const followUp = screen.getByTestId(`call-follow-up-${RUNG_BACK.id}`);
+    expect(within(followUp).getByText('Called back 3:31 pm')).toBeTruthy();
+    // Rung back, and the Missed row is still open: still to follow up.
+    expect(within(followUp).getByText('To follow up')).toBeTruthy();
+  });
+
+  it('hovering one lights the other, and only the pair is marked', async () => {
+    renderPage();
+    const callBack = await screen.findByTestId(`attempt-row-${CALL_BACK.id}`);
+    const missed = screen.getByTestId(`attempt-row-${RUNG_BACK.id}`);
+    expect(callBack.hasAttribute('data-paired')).toBe(true);
+    expect(missed.hasAttribute('data-paired')).toBe(true);
+    expect(screen.getByTestId(`attempt-row-${BRIDGED.id}`).hasAttribute('data-paired')).toBe(false);
+    fireEvent.mouseEnter(callBack);
+    expect(missed.hasAttribute('data-pair-lit')).toBe(true);
+    expect(callBack.hasAttribute('data-pair-lit')).toBe(false);
+    fireEvent.mouseLeave(callBack);
+    expect(missed.hasAttribute('data-pair-lit')).toBe(false);
+    fireEvent.mouseEnter(missed);
+    expect(callBack.hasAttribute('data-pair-lit')).toBe(true);
+  });
+
+  it('a dial the customer’s own call stopped says so', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([{ ...CANCELED, disposition_code: 'inbound_call' }]));
+    renderPage();
+    await screen.findByTestId(`attempt-row-${CANCELED.id}`);
+    expect(screen.getByTestId(`attempt-outcome-${CANCELED.id}`).textContent).toBe('Stopped: customer rang us');
   });
 });

@@ -1211,7 +1211,10 @@ second waits on the row lock and finds it handled). A withheld caller's rows, th
 (no account) and another account's are never closed. Mark handled records `handled_reason = 'marked'` (a row handled before 0028 has none and
 reads as marked). The matched contact is not touched: its booked inbound callback
 (`callback_source = 'inbound'`) is settled by the conversation that reaches the contact, with the
-outcome the agent chose. Call back from a Missed row opens the soft phone logging to the matched
+outcome the agent chose. The call placed from a row's Call back carries the row's id
+(`agency_manual_calls.callback_of_inbound_call_id`, 0067): it stays a soft-phone call, and the
+campaign Call log shows the pair pointing at each other ([`call-log.md`](call-log.md) §4, CL1,
+CL15); the link closes nothing by itself. Call back from a Missed row opens the soft phone logging to the matched
 campaign, so its call claims a `pending` contact (SP6) and its outcome settles it, the callback
 cleared with it (`settleFromManual`; a campaign attempt's `chargeAttempt` and an answered inbound
 call's `settleFromInbound` do the same). A call logged to another campaign, or untagged, closes the
@@ -1779,6 +1782,20 @@ to an older server, but carries a break code it cannot word (below, "Going back 
   migration's comment names the search's read by its earlier name, `findRingableInAccount`), which
   otherwise scanned every session row. The down drops it.
 
+### 9.5 The campaign a call is filed under (built: `0067_call_log_inbound_campaign.sql`, `0068_call_log_inbound_indexes.sql`)
+
+Inventory: `packages/db/BASELINE.md` "0067", "0068"; the design is [`call-log.md`](call-log.md) §4.
+
+- **`agency_inbound_calls.campaign_id`** and **`campaign_source`** (`contact | route | agent |
+  supervisor`, set together, CHECKed): the campaign the call is filed under, which the campaign
+  Call log reads. The arrival writes the matched contact's campaign with `contact`; existing
+  matched calls were backfilled. `matched_campaign_id` is unchanged and still what the sticky
+  agent, the contact's callback and the outcome catalog read.
+- **`agency_manual_calls.callback_of_inbound_call_id`**: the Missed row a soft-phone call was
+  placed from (§7).
+- **`idx_agency_inbound_calls_campaign`** (`campaign_id, arrived_at DESC, id DESC` WHERE
+  `campaign_id IS NOT NULL`) and **`idx_agency_manual_calls_callback_of`**.
+
 ## 10. Restart and failure
 
 - Startup and periodic sweep: non-terminal `agency_inbound_calls` rows become `failed` (a bridged
@@ -1828,6 +1845,15 @@ Rates are to one decimal, null with nothing to divide by. Not built (P3): servic
 within 20 s), callbacks created and completed, an Inbound tab per account in Insights (the Insights
 pattern), inbound in agent performance, the floor's `calls_handled`, account reports and customer
 history.
+
+**The campaign Call log (built, one call log per campaign P2).** An ended inbound call that is
+filed under a campaign (`campaign_id`, 0067: the matched contact's campaign at arrival) is a row of
+that campaign's Call log, with its dials and soft-phone calls, and the campaign's open Missed rows
+are the log's **To follow up** view, by this section's own "open" (`inboundMissedOpenSql`). Each
+row opens the inbound Call page (the caller's path, the outcome or the follow-up, the voicemail,
+the recording and summary), and the campaign call export carries the rows. The model, the filters
+and the routes: [`call-log.md`](call-log.md) §4. Inbound figures by type in Insights and the
+reports are that work's P4.
 
 **Mode B (IQ74).** `away_ring` is break time, not staffed time, as any break. A caller whose rings
 went unanswered and who then overflows is in Missed as today. How each ring ended is on the call

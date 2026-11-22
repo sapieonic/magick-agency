@@ -274,6 +274,7 @@ function SoftphoneConsole({
     startAllowed,
     presetNumber: prefill?.number ?? null,
     presetCampaignId: prefill?.campaignId ?? null,
+    presetCallbackOf: prefill?.inboundCallId ?? null,
   });
 
   const [closeOpen, setCloseOpen] = useState(false);

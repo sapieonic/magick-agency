@@ -136,6 +136,12 @@ export interface UseSoftphoneOptions {
    * outcome, and in finish mode.
    */
   presetNumber?: string | null;
+  /**
+   * The Missed inbound call `presetNumber` is the Call back of (`docs/call-log.md`, CL1). Sent
+   * with the first dial of that number so the call is linked to the missed call; dropped once
+   * the agent changes the number on the pad (the server checks the same thing).
+   */
+  presetCallbackOf?: string | null;
   /** Which host this is, for copy and analytics. */
   surface: 'softphone_page' | 'station';
   /** The agent's cue volume (0–100), for the ringback. */
@@ -329,6 +335,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     audio,
     presetCampaignId = null,
     presetNumber = null,
+    presetCallbackOf = null,
     surface,
     cueVolume = 70,
     enabled = true,
@@ -562,14 +569,19 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   // or owes its outcome keeps the screen: the number waits until it settles, and is filled then.
   // Declared after the settle effect above, which empties the pad, so it fills the emptied pad.
   const presetNumberAppliedRef = useRef(false);
+  // The Missed call the number on the pad is the Call back of, with the number as it was
+  // filled: the link goes with a dial only while the pad still holds that number (CL1).
+  const callbackOfRef = useRef<{ inboundCallId: string; number: string } | null>(null);
   useEffect(() => {
     if (presetNumberAppliedRef.current || !bootstrap || !presetNumber || finishOnly) return;
     if (call !== null) return;
     presetNumberAppliedRef.current = true;
     entryRef.current = 'inbound_callback';
-    setNumberState(sanitiseDialInput(presetNumber));
+    const filled = sanitiseDialInput(presetNumber);
+    callbackOfRef.current = presetCallbackOf ? { inboundCallId: presetCallbackOf, number: filled } : null;
+    setNumberState(filled);
     setFocusCallToken((n) => n + 1);
-  }, [bootstrap, presetNumber, call, finishOnly]);
+  }, [bootstrap, presetNumber, presetCallbackOf, call, finishOnly]);
 
   /**
    * The field set arriving after the call (a reload where the `manual_call` frame
@@ -702,6 +714,9 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setDialError(null);
       setOverrideError(null);
       const cleanFields = cleanFieldValues(fields, fieldValues);
+      const callbackOf = callbackOfRef.current && callbackOfRef.current.number === number
+        ? callbackOfRef.current.inboundCallId
+        : null;
       const result = await placeManualCall(
         {
           session_id: sessionId,
@@ -710,6 +725,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
           campaign_id: tagDraft,
           ...(Object.keys(cleanFields).length > 0 ? { fields: cleanFields } : {}),
           ...(overrides.dnc_note || overrides.hours_note ? { overrides } : {}),
+          ...(callbackOf ? { callback_of_inbound_call_id: callbackOf } : {}),
         },
         tenantId,
         accountId,
@@ -717,6 +733,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       placingRef.current = false;
       setPlacing(false);
       if (result.ok) {
+        // One call back per press of Call back: a later dial from this pad is its own call.
+        callbackOfRef.current = null;
         setOverridePrompt(null);
         adoptCall(result.value);
         trackAgencySoftphoneCallPlaced({

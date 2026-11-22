@@ -104,6 +104,11 @@ export interface AgencyManualCallCreateInput {
   dncOverride: { note: string; entryId: string } | null;
   /** SP2. */
   hoursOverrideNote: string | null;
+  /**
+   * The Missed inbound call this call rings back (0067, `docs/call-log.md` CL1), already checked
+   * by the caller (the account's Missed row, from the number dialled); null: not a call back.
+   */
+  callbackOfInboundCallId: string | null;
 }
 
 /** Filters of the two list reads, already parsed and validated by the API layer from `AgencyManualCallListQuery`. */
@@ -178,8 +183,8 @@ export class AgencyManualCallRepository {
           contact_id, contact_claimed, contact_prior_state,
           destination_e164, caller_id, state, fields,
           recording_requested, analysis_profile_id,
-          dnc_override_note, dnc_override_entry_id, hours_override_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11::jsonb, $12, $13, $14, $15, $16)
+          dnc_override_note, dnc_override_entry_id, hours_override_note, callback_of_inbound_call_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11::jsonb, $12, $13, $14, $15, $16, $17)
        ON CONFLICT (session_id) WHERE settled_at IS NULL DO NOTHING
        RETURNING *`,
       [
@@ -190,7 +195,7 @@ export class AgencyManualCallRepository {
         input.destinationE164, input.callerId, JSON.stringify(input.fields),
         input.recordingRequested, input.analysisProfileId,
         input.dncOverride?.note ?? null, input.dncOverride?.entryId ?? null,
-        input.hoursOverrideNote,
+        input.hoursOverrideNote, input.callbackOfInboundCallId,
       ],
     );
     const call = rows[0];

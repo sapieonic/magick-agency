@@ -367,6 +367,20 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log/inbound/:callId",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency call read (proxy-agency-calls.routes.ts): one inbound call of the campaign, for its Call page (docs/call-log.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log/inbound/:callId/recording",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency call read (proxy-agency-calls.routes.ts); the console fetches these bytes itself and plays a blob URL"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/attempts.csv",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",

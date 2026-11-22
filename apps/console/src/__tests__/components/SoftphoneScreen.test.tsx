@@ -357,6 +357,31 @@ describe('Ready', () => {
     expect(api.placeManualCall).not.toHaveBeenCalled();
   });
 
+  it('a Call back’s dial names the missed call it answers, once, and only while the pad still holds that number (CL1)', async () => {
+    const MISSED = '8f2c1d2e-1111-4222-8333-444455556666';
+    api.placeManualCall.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 502, message: 'no' } });
+    await mount({ presetNumber: '+447700900123', presetCallbackOf: MISSED });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[0]![0]).toMatchObject({ to: '+447700900123', callback_of_inbound_call_id: MISSED });
+    // The agent rings someone else from the same pad: that call is no call back.
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[1]![0]).not.toHaveProperty('callback_of_inbound_call_id');
+  });
+
+  it('a pad filled without a missed call sends no link', async () => {
+    api.placeManualCall.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 502, message: 'no' } });
+    await mount({ presetNumber: '+447700900123' });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[0]![0]).not.toHaveProperty('callback_of_inbound_call_id');
+  });
+
   it('a Call back for a campaign the agent cannot log to leaves the call untagged', async () => {
     await mount({ presetNumber: '+447700900123', presetCampaignId: 'not-mine' });
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+447700900123');

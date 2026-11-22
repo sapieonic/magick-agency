@@ -57,6 +57,9 @@ const placeSchema = z.object({
     dnc_note: z.string().max(2000).optional(),
     hours_note: z.string().max(2000).optional(),
   }).strip().optional(),
+  // A Missed row's Call back (CL1). The runtime keeps it only when it names a Missed row of the
+  // account from the number dialled; the edge only refuses what is not an id.
+  callback_of_inbound_call_id: z.string().uuid().nullable().optional(),
 }).strip();
 
 /** `notes: ''` clears them; `fields` replaces the stored values wholesale. */

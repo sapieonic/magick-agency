@@ -117,6 +117,16 @@ void main() {
       expect(json.containsKey('campaign_id'), isTrue);
     });
 
+    test('create: a Call back names the missed call it answers, and a plain dial names none', () {
+      final json = ManualCallCreateRequest(sessionId: 's1', to: '+919812345678', callbackOfInboundCallId: 'in-1').toJson();
+      expect(json['callback_of_inbound_call_id'], 'in-1');
+      expect(ManualCallCreateRequest(sessionId: 's1', to: '+919812345678').toJson().containsKey('callback_of_inbound_call_id'), isFalse);
+      expect(
+        ManualCallCreateRequest(sessionId: 's1', to: 'x', callbackOfInboundCallId: 'in-1'),
+        isNot(ManualCallCreateRequest(sessionId: 's1', to: 'x')),
+      );
+    });
+
     test('create: fields and overrides only when given, and empty overrides are left out', () {
       final json = ManualCallCreateRequest(
         sessionId: 's1',

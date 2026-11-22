@@ -291,7 +291,8 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   const callBack = (call: AgencyInboundMissedCall) => {
     if (!call.from_e164) return;
     navigate('/dialer/phone', {
-      state: softphonePrefillState({ number: call.from_e164, campaignId: call.matched_campaign_id }),
+      // The row's id goes with the number: the call placed is this missed call's call back (CL1).
+      state: softphonePrefillState({ number: call.from_e164, campaignId: call.matched_campaign_id, inboundCallId: call.id }),
     });
   };
 

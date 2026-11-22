@@ -56,6 +56,16 @@ export function contactPhoneDigitsSql(alias: string): string {
 }
 
 /**
+ * An OPEN Missed row (docs/inbound.md §7): the call reached nobody and nobody has marked it handled
+ * or reached the customer since. One spelling for the Missed list's badge
+ * (`AgencyInboundCallRepository.countMissed`) and the campaign Call log's To follow up
+ * (`listCallLogForCampaign`), so the two cannot disagree about who is still owed a call.
+ */
+export function inboundMissedOpenSql(alias: string): string {
+  return `${alias}.follow_up_status = 'open'`;
+}
+
+/**
  * {@link CONTACT_PHONE_DIGITS_SQL} on the CALLER's number (`from_e164`) of the inbound call at
  * table alias `alias`: the key expression of `idx_agency_inbound_calls_live_from_digits`
  * (`0027_inbound_connect.sql`), byte for byte with the column swapped. `from_e164` is stored

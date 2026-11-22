@@ -458,7 +458,7 @@ describe('a call back from a Missed row that connects', () => {
       tenantId: floor.tenant, accountId: floor.account, sessionId: session, agentUserId: agent(0).id, campaignId: campaign,
       contact: { contactId: contact, claimed: true, priorState: 'pending' },
       destinationE164: phone, callerId: '+14155550100', fields: {}, recordingRequested: false, analysisProfileId: null,
-      dncOverride: null, hoursOverrideNote: null,
+      dncOverride: null, hoursOverrideNote: null, callbackOfInboundCallId: null,
     });
     expect(created.ok).toBe(true);
     const manual = (created as { ok: true; call: { id: string } }).call;
@@ -506,7 +506,7 @@ describe('a call back from a Missed row that connects', () => {
       const created = await agencyManualCallRepository.create({
         tenantId: floor.tenant, accountId: floor.account, sessionId: session, agentUserId: agent(1).id, campaignId: null,
         contact: null, destinationE164: phone, callerId: '+14155550100', fields: {}, recordingRequested: false,
-        analysisProfileId: null, dncOverride: null, hoursOverrideNote: null,
+        analysisProfileId: null, dncOverride: null, hoursOverrideNote: null, callbackOfInboundCallId: null,
       });
       expect(created.ok).toBe(true);
       const manual = (created as { ok: true; call: { id: string } }).call.id;

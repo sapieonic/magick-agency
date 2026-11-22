@@ -1266,7 +1266,12 @@ abstract interface class SoftphoneActions {
   /// not count), on any session change but the first session to open after
   /// it, and when the soft phone is open on another device or account. Either
   /// way any open override prompt goes: it was for another number.
-  void callBack(String number, {String? campaignId});
+  ///
+  /// [inboundCallId] is the Missed inbound call this is the Call back of: the
+  /// first dial of that number from the pad names it, so the call is linked
+  /// to the missed call (`docs/call-log.md`, CL1). A dial of any other number
+  /// names nothing.
+  void callBack(String number, {String? campaignId, String? inboundCallId});
 
   // ── Setup ──
 

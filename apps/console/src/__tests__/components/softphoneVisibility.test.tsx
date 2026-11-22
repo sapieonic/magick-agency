@@ -105,15 +105,15 @@ describe('a campaign’s Call log', () => {
   const flagOn = (flag: string) => flag === 'agency_softphone_enabled';
 
   it('offers the Soft phone chip with the flag on, after Dialler', () => {
-    expect(visibleCallLogChips(null, 'all', { softphoneEnabled: true }).map((c) => c.id)).toEqual(['all', 'dialler', 'soft_phone']);
+    expect(visibleCallLogChips(null, 'all', { softphoneEnabled: true, inboundEnabled: false }).map((c) => c.id)).toEqual(['all', 'dialler', 'soft_phone']);
   });
 
   it('offers no chips with the flag off and no soft-phone call: Dialler alone is nothing to choose', () => {
-    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0 }, 'all', { softphoneEnabled: false })).toEqual([]);
+    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }, 'all', { softphoneEnabled: false, inboundEnabled: false })).toEqual([]);
   });
 
   it('keeps the chip with the flag off while the campaign holds soft-phone calls (SR5)', () => {
-    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 1 }, 'all', { softphoneEnabled: false }).map((c) => c.id))
+    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 1, inbound: 0, to_follow_up: 0 }, 'all', { softphoneEnabled: false, inboundEnabled: false }).map((c) => c.id))
       .toEqual(['all', 'dialler', 'soft_phone']);
   });
 

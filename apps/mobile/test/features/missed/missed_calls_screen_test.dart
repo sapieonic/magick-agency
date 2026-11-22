@@ -181,7 +181,8 @@ void main() {
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(actions.calls, ['callBack'], reason: 'only the hand-off: the screen dials nothing itself');
-      expect(actions.args['callBack'], ['+918765432109', 'camp-1']);
+      // The row's id goes with the number: the call placed is this missed call's call back (CL1).
+      expect(actions.args['callBack'], ['+918765432109', 'camp-1', 'm1']);
       expect(find.text('at /phone'), findsOneWidget);
       expect(find.byType(SnackBar), findsNothing, reason: 'the pad is filled at once');
     });

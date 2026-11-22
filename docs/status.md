@@ -2572,6 +2572,37 @@ their plan's shape was read on the test database (sequential scans off): for a d
 dialler's count is a range of `idx_agency_attempts_keyset` (the attempt list's existing
 `include_total` count) and the soft phone's a range of `idx_agency_manual_calls_campaign`.
 
+### One call log per campaign, P2: inbound in the log 2026-11-22 (CL13–CL16, [`call-log.md`](call-log.md) §4)
+
+P2 of six is built; P3 to P6 are not.
+
+- **Inbound calls carry a campaign.** `0067_call_log_inbound_campaign.sql` adds
+  `agency_inbound_calls.campaign_id` and `campaign_source` (the arrival files a matched call under
+  its contact's campaign; existing matched calls backfilled, unmatched ones left unfiled, CL10)
+  and `agency_manual_calls.callback_of_inbound_call_id`; `0068_call_log_inbound_indexes.sql` adds
+  their two indexes.
+- **The Call log lists them.** A third branch on the same keyset, an inbound call placed by when
+  it arrived: ended, served calls filed under the campaign. Chips "All · Dialler · Soft phone ·
+  Inbound · To follow up"; To follow up is the campaign's open Missed rows (the Missed list's own
+  rule), whatever the dates, with Mark handled and Call back on each row. Every filter has a stated
+  meaning on an inbound call or leaves inbound calls out (CL13); What happened gains Missed,
+  Voicemail and Abandoned (hung up while waiting). Insights drill-downs still land on the Dialler
+  chip; Compare agents' next steps still open every type.
+- **A missed call and its call back point at each other.** A soft-phone call placed from a Missed
+  row's Call back stays a Soft phone call and carries the missed call's id, kept only when it is
+  that account's Missed row from the number dialled (CL15); the console and the app send it. A dial
+  the customer's own call stopped reads "Stopped: customer rang us".
+- **The inbound Call page** (`/agency/campaigns/:id/calls/inbound/:callId`, `agency.supervise`):
+  the caller's path, the outcome or the follow-up, the voicemail, and the recording and summary
+  under the account's settings.
+- **The export** gains `inbound` rows and three columns at the end (`wait_seconds`,
+  `missed_reason`, `callback_of`).
+
+**Not verified:** not run in a real browser, on a phone or against a carrier. The inbound branch
+is planned on 0068's index on the test database; nothing was timed on a large table. Until P3
+files unknown callers, a missed call from a number on no roster is in no campaign's log (it is on
+Inbound › Missed calls).
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon

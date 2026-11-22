@@ -1332,6 +1332,47 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
 
+  it('CL1: a Missed row\'s Call back is linked to it; a link that does not hold is dropped, and the call is placed all the same', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    /** A Missed row: an ended inbound call that reached nobody. */
+    const missed = async (t: string, a: string, from: string | null): Promise<string> => (await getTestPool().query(
+      `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider, provider_call_id, from_e164, to_e164, state, outcome,
+              arrived_at, ended_at, settled_at, follow_up_status, follow_up_reason)
+       VALUES ($1, $2, 'plivo', $3, $4, '+14155550100', 'ended', 'closed', now() - interval '1 hour', now() - interval '1 hour',
+               now() - interval '1 hour', 'open', 'closed') RETURNING id`, [t, a, `CA-${randomUUID()}`, from])).rows[0].id as string;
+    const caller = '+919811200070';
+    const theirs = await missed(tenant, account, caller);
+    const siblings = await missed(tenant, sibling, caller);
+    const foreign = await missed(otherTenant, otherAccount, caller);
+
+    /** Place a call with a link, let it ring out, and answer what the row kept. */
+    const place = async (to: string, link: unknown): Promise<string | null> => {
+      const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to, callback_of_inbound_call_id: link });
+      expect(placed.statusCode, placed.body).toBe(201);
+      const callId = placed.json().id as string;
+      ringOut(await legOf(callId));
+      await waitFor('ended', () => lastCall(station)?.id === callId && lastCall(station)?.state === 'ended');
+      await waitFor('settled', async () => (await manualRow(callId)).settled_at !== null);
+      return (await manualRow(callId)).callback_of_inbound_call_id as string | null;
+    };
+
+    // The account's Missed row, from the number dialled: kept.
+    expect(await place(caller, theirs)).toBe(theirs);
+    // The agent changed the number on the pad: the call is not that row's call back.
+    expect(await place('+919811200071', theirs)).toBeNull();
+    // Another account's row, another tenant's, and an id that names nothing.
+    expect(await place(caller, siblings)).toBeNull();
+    expect(await place(caller, foreign)).toBeNull();
+    expect(await place(caller, randomUUID())).toBeNull();
+    // No link asked for.
+    expect(await place(caller, undefined)).toBeNull();
+    // Not an id: refused at the edge, nothing placed.
+    const bad = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: caller, callback_of_inbound_call_id: 'nope' });
+    expect(bad.statusCode).toBe(400);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 60_000);
+
   it('the soft phone\'s reserved break is refused on /break and in a campaign\'s break catalog', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({

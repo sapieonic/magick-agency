@@ -1,8 +1,13 @@
 import {
+  AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS,
+  AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS,
   AGENCY_CALL_LOG_STATUSES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
   AGENCY_CALL_LOG_TYPE_LABELS,
   type AgencyCallLogCounts,
+  type AgencyCallLogFollowUp,
+  type AgencyCallLogInboundOutcomeFilter,
+  type AgencyCallLogInboundRow,
   type AgencyCallLogRow,
   type AgencyCallLogStatus,
   type AgencyCallLogType,
@@ -17,10 +22,14 @@ import {
   isCampaignAttemptFiltered,
 } from '../agencyCampaignAttemptParams';
 import { formatCount } from '../format/number';
+import { dateFormatter } from '../format/date';
+import { formatSpineTimestamp, formatTalkTime } from '../agencySpineCopy';
+import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
+import { missedReasonLabel } from '../inbound/missedCopy';
 
 /**
- * The campaign Call log's rules (`docs/call-log.md`, decision CL11): one list of the campaign's
- * calls with type chips, pure. The filters themselves are the attempt list's
+ * The campaign Call log's rules (`docs/call-log.md`, decisions CL1, CL11): one list of the
+ * campaign's calls (dialled, made from the soft phone, received) with type chips, pure. The filters themselves are the attempt list's
  * (`agencyCampaignAttemptParams.ts`); this adds what the combined list has on top of them:
  * the type and the soft-phone status in the URL, the dates the list opens on, the chips, and
  * how a row of each type reads.
@@ -30,7 +39,7 @@ import { formatCount } from '../format/number';
 
 /** What the page is, under its title. */
 export const CALL_LOG_DESCRIPTION =
-  'Every call on this campaign, newest first: dialled by the dialler and made from the soft phone, '
+  'Every call on this campaign, newest first: dialled, made from the soft phone and received, '
   + 'including the dials that never reached an agent.';
 
 // ─── The view in the URL ────────────────────────────────────────────────────
@@ -115,7 +124,7 @@ export const CALL_LOG_STATUS_OPTIONS: ReadonlyArray<{ value: AgencyCallLogStatus
 ];
 
 /** Said under the Status control. */
-export const CALL_LOG_STATUS_HINT = 'Soft-phone calls only. A dialler call has no status.';
+export const CALL_LOG_STATUS_HINT = 'Soft-phone calls only. A dialler or inbound call has no status.';
 
 export function callLogStatusLabel(status: AgencyCallLogStatus): string {
   return CALL_LOG_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
@@ -185,21 +194,34 @@ export interface CallLogChip {
   label: string;
   /** Calls the chosen filters match for this chip, or null before the server has said. */
   count: number | null;
+  /** Owed work, not a type: To follow up. */
+  warning?: boolean;
 }
 
 /** Whether a type has calls to show or could have: the rule one chip is shown by. */
 export interface CallLogTypeAvailability {
   /** The soft phone is on for the account (`agency_softphone_enabled`). */
   softphoneEnabled: boolean;
+  /** Inbound calls are on for the account (`agency_inbound_enabled`). */
+  inboundEnabled: boolean;
 }
 
+/** The To follow up chip's words. */
+export const TO_FOLLOW_UP_LABEL = 'To follow up';
+/** Said under the chips while To follow up is on: the one chip the dates do not narrow. */
+export const TO_FOLLOW_UP_NOTE =
+  'Every missed call on this campaign that is still open, whatever the dates. Call the customer back, or mark the call handled.';
+
 /**
- * The chips to show: "All · Dialler · Soft phone", each with its count.
+ * The chips to show: "All · Dialler · Soft phone · Inbound · To follow up", each with its count.
  *
  * A type that is switched off AND has no call under the chosen filters gets no chip (SR5's
- * rule): the soft phone's flag off and no soft-phone call in the range. The chip that is on is
- * always shown, so a link to it can be left. With one type left there is nothing to choose, so
- * no chips at all.
+ * rule): the soft phone's flag off and no soft-phone call in the range, inbound's flag off and
+ * no inbound call. The chip that is on is always shown, so a link to it can be left. With one
+ * type left there is nothing to choose, so no type chips.
+ *
+ * **To follow up** is the campaign's open Missed rows: a to-do, shown only while there is one
+ * (hidden at 0), and `warning` so it reads as owed work rather than as a fourth type.
  */
 export function visibleCallLogChips(
   counts: AgencyCallLogCounts | null,
@@ -209,13 +231,36 @@ export function visibleCallLogChips(
   const shown: Record<AgencyCallLogType, boolean> = {
     dialler: true,
     soft_phone: availability.softphoneEnabled || (counts?.soft_phone ?? 0) > 0 || selected === 'soft_phone',
+    inbound: availability.inboundEnabled || (counts?.inbound ?? 0) > 0 || selected === 'inbound',
   };
   const types = (Object.keys(AGENCY_CALL_LOG_TYPE_LABELS) as AgencyCallLogType[]).filter((type) => shown[type]);
-  if (types.length < 2) return [];
+  const followUp: CallLogChip[] = (counts?.to_follow_up ?? 0) > 0 || selected === 'to_follow_up'
+    ? [{ id: 'to_follow_up', label: TO_FOLLOW_UP_LABEL, count: counts?.to_follow_up ?? null, warning: true }]
+    : [];
+  if (types.length < 2 && followUp.length === 0) return [];
   return [
     { id: 'all', label: 'All', count: counts?.all ?? null },
-    ...types.map((type) => ({ id: type, label: AGENCY_CALL_LOG_TYPE_LABELS[type], count: counts?.[type] ?? null })),
+    ...(types.length < 2 ? [] : types.map((type) => ({ id: type, label: AGENCY_CALL_LOG_TYPE_LABELS[type], count: counts?.[type] ?? null }))),
+    ...followUp,
   ];
+}
+
+// ─── What happened: the inbound choices ─────────────────────────────────────
+
+/**
+ * The What happened filter's inbound choices (Missed, Voicemail, Abandoned), after the attempt
+ * list's. Things only a caller does to us: with one chosen, no dialler or soft-phone call
+ * matches it.
+ */
+export const CALL_LOG_INBOUND_OUTCOME_OPTIONS: ReadonlyArray<{ value: AgencyCallLogInboundOutcomeFilter; label: string }> =
+  AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS.map((value) => ({ value, label: AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS[value] }));
+
+/** Said under the What happened filter while its inbound choices are offered. */
+export const CALL_LOG_INBOUND_OUTCOME_HINT = 'Missed, Voicemail and Abandoned (hung up while waiting) are inbound calls only.';
+
+/** A What happened value in words: an inbound choice's, else the attempt outcome's. */
+export function callLogOutcomeFilterLabel(value: string): string {
+  return (AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS as Record<string, string>)[value] ?? attemptOutcomeLabel(value);
 }
 
 /** The count for the chip that is on, or null when the server sent none. */
@@ -249,6 +294,8 @@ const EMPTY_TYPE_WORDS: Record<AgencyCallLogTypeFilter, string> = {
   all: 'calls',
   dialler: 'dialler calls',
   soft_phone: 'soft-phone calls',
+  inbound: 'inbound calls',
+  to_follow_up: 'missed calls to follow up',
 };
 
 /** What an empty list says, and what it offers. `filters` are the ones the list was read with. */
@@ -257,6 +304,22 @@ export function callLogEmptyState(
   view: Pick<CallLogView, 'type' | 'status'>,
 ): { kind: CallLogEmptyKind; title: string; description: string } {
   const { type } = view;
+  // To follow up is not narrowed by the dates: an empty one is never about them.
+  if (type === 'to_follow_up') {
+    const { from: _from, to: _to, ...rest } = filters;
+    void _from; void _to;
+    return isCallLogFiltered(rest, view)
+      ? {
+        kind: 'filtered',
+        title: 'Nothing matches those filters',
+        description: 'Clear the filters to see every missed call that is still open.',
+      }
+      : {
+        kind: 'none',
+        title: 'Nobody is waiting for a call back on this campaign.',
+        description: 'A missed call stays here until the customer is reached or someone marks it handled.',
+      };
+  }
   if (onlyDatesNarrow(filters, view)) {
     return {
       kind: 'dates',
@@ -292,12 +355,48 @@ export function callLogTypeLabel(type: AgencyCallLogType): string {
   return AGENCY_CALL_LOG_TYPE_LABELS[type];
 }
 
+/** `m:ss` for a wait or a voicemail (the talk-time format). */
+const duration = (seconds: number) => formatTalkTime(seconds);
+
+/** "3:12 pm", in the console's display locale: the hour without a leading zero. */
+const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
+
+/** Whether two instants fall on one calendar day for the reader. */
+function sameLocalDay(a: string, b: string): boolean {
+  const [x, y] = [new Date(a), new Date(b)];
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/**
+ * When the other half of a pair happened, as said on this row: the clock time ("3:12 pm") when
+ * both are on one day, else the day too ("21 Nov 2026, 03:12 pm").
+ */
+export function pairedTime(other: string, own: string): string {
+  return sameLocalDay(other, own) ? dateFormatter(CLOCK).format(new Date(other)) : formatSpineTimestamp(other);
+}
+
+/**
+ * A soft-phone call placed from a Missed row's Call back says so (CL1): it is still a
+ * soft-phone call, marked "Call back" and tied to the missed call it answered.
+ */
+export function callBackFact(row: AgencyCallLogRow): string | null {
+  if (row.type !== 'soft_phone' || !row.callback_of) return null;
+  return row.callback_of.arrived_at
+    ? `Call back · to the ${pairedTime(row.callback_of.arrived_at, row.created_at)} missed call`
+    : 'Call back · to a missed call';
+}
+
 /**
  * A row's own facts, under its type: what only that type has. Dialler: which try it was, and
- * that it was a wrap-up redial. A soft-phone call has none here (its overrides are badges).
+ * that it was a wrap-up redial. Soft phone: that it was a call back to a missed call (its
+ * overrides are badges). Inbound: the customer rang us.
  */
 export function callLogTypeFacts(row: AgencyCallLogRow): string[] {
-  if (row.type !== 'dialler') return [];
+  if (row.type === 'inbound') return ['rang us'];
+  if (row.type === 'soft_phone') {
+    const callBack = callBackFact(row);
+    return callBack ? [callBack] : [];
+  }
   const facts = [`Try ${row.attempt_number}`];
   if ((row.redial_number ?? 0) > 0) facts.push('redial');
   return facts;
@@ -315,22 +414,67 @@ export function callLogBadges(row: AgencyCallLogRow): Array<{ label: string; tit
 /**
  * A soft-phone row whose dial was never sent (SR2): the station was gone, or the dial failed
  * before it left. Listed, greyed, and in no chip's count. A dialler attempt is never this:
- * one that did not dial says why in its own outcome.
+ * one that did not dial says why in its own outcome. Nor is an inbound call: it was not a dial.
  */
 export function isNotDialled(row: AgencyCallLogRow): boolean {
   return row.type === 'soft_phone' && row.dialed_at === null && row.state === 'ended';
 }
 
-/** The What happened cell: what the line did. `key` styles it (`data-outcome`). */
-export function callLogWhatHappened(row: AgencyCallLogRow): { text: string; key: string } {
+/** A dial stopped while it rang because the customer rang us (`docs/inbound.md` §5.4). */
+export function stoppedByInbound(row: AgencyCallLogRow): boolean {
+  return row.type === 'dialler' && row.disposition_code === AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE;
+}
+
+/** Whether an inbound call reached nobody (it has a Missed row, or was not answered by an agent). */
+export function isMissedInbound(row: AgencyCallLogRow): boolean {
+  return row.type === 'inbound' && (row.follow_up !== null || row.outcome !== 'answered');
+}
+
+/**
+ * The What happened cell: what the line did. `key` styles it (`data-outcome`); `detail` is the
+ * second line, where the type has more to say. An inbound call is Answered or Missed: answered,
+ * with how long the caller waited and whether they came through their own agent; missed, with
+ * why in the Missed list's words and how long they waited when they were queued.
+ */
+export function callLogWhatHappened(row: AgencyCallLogRow): { text: string; key: string; detail?: string } {
+  if (row.type === 'inbound') {
+    if (!isMissedInbound(row)) {
+      const detail = [`waited ${duration(row.wait_seconds)}`, ...(row.via_sticky_agent ? ['came through their agent'] : [])];
+      return { text: 'Answered', key: 'connected', detail: detail.join(' · ') };
+    }
+    return { text: 'Missed', key: 'missed', detail: missedDetail(row) };
+  }
   if (isNotDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
   if (row.type === 'soft_phone' && row.state !== 'ended') return { text: 'On a call now', key: 'live' };
+  if (stoppedByInbound(row)) return { text: 'Stopped: customer rang us', key: row.outcome ?? 'canceled' };
   return { text: attemptOutcomeLabel(row.outcome), key: row.outcome ?? 'unknown' };
 }
 
-/** What the Outcome cell says when no outcome is saved: a soft-phone call that still owes one says so. */
+/** Why an inbound call was missed, lower case to sit under "Missed", and the wait when the caller queued. */
+function missedDetail(row: AgencyCallLogInboundRow): string {
+  const label = row.follow_up ? missedReasonLabel(row.follow_up) : null;
+  const reason = label ? label.charAt(0).toLowerCase() + label.slice(1) : null;
+  // "hung up while waiting · 0:52" already says it was a wait.
+  const wait = !row.queued ? null : row.follow_up?.reason === 'abandoned_in_queue' ? duration(row.wait_seconds) : `waited ${duration(row.wait_seconds)}`;
+  return [reason, wait].filter(Boolean).join(' · ');
+}
+
+/** What the Outcome cell says when no outcome is saved: a call that still owes one says so. */
 export function callLogOutcomePlaceholder(row: AgencyCallLogRow): string {
-  return row.type === 'soft_phone' && row.requires_disposition ? 'No outcome yet' : '—';
+  return row.type !== 'dialler' && row.requires_disposition ? 'No outcome yet' : '—';
+}
+
+/**
+ * A missed inbound call's Outcome cell: whether it was rung back and when, and where its
+ * Missed row stands. Open rows are owed work ("To follow up"); a handled one says how it was
+ * closed, unless the call back already says so.
+ */
+export function followUpCopy(row: AgencyCallLogInboundRow): { calledBack: string | null; status: string | null; open: boolean } {
+  const calledBack = row.called_back ? `Called back ${pairedTime(row.called_back.at, row.created_at)}` : null;
+  const followUp: AgencyCallLogFollowUp | null = row.follow_up;
+  if (!followUp) return { calledBack, status: null, open: false };
+  if (followUp.status === 'open') return { calledBack, status: TO_FOLLOW_UP_LABEL, open: true };
+  return { calledBack, status: calledBack ? null : followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled', open: false };
 }
 
 /** The Agent cell of a soft-phone row: who placed it. */
@@ -339,14 +483,46 @@ export function softphoneAgentCopy(row: { agent_name: string | null }): { text: 
 }
 
 /**
- * Where a row opens: the detail page of its own type. Null when that page cannot be opened:
+ * The Agent cell of an inbound row: who answered; for a call nobody answered, a dash, with who
+ * the Missed row is assigned to under it ("assigned to Arjun Mehta").
+ */
+export function inboundAgentCopy(row: AgencyCallLogInboundRow): { text: string; muted: boolean; detail?: string } {
+  if (row.agent_user_id) return softphoneAgentCopy(row);
+  const followUp = row.follow_up;
+  if (!followUp?.assignee_user_id) return { text: '—', muted: true };
+  return { text: '—', muted: true, detail: `assigned to ${followUp.assignee_name ?? 'a former member'}` };
+}
+
+/** The inbound Call page of a campaign's call. */
+export function inboundCallPath(campaignId: string, callId: string): string {
+  return `/agency/campaigns/${campaignId}/calls/inbound/${callId}`;
+}
+
+/**
+ * Where a row opens: the Call page of its own type. Null when that page cannot be opened:
  * the soft-phone call detail is behind the soft phone's flag.
  */
 export function callLogRowPath(
   row: Pick<AgencyCallLogRow, 'type' | 'id'>,
   campaignId: string,
-  availability: CallLogTypeAvailability,
+  availability: Pick<CallLogTypeAvailability, 'softphoneEnabled'>,
 ): string | null {
   if (row.type === 'dialler') return `/agency/campaigns/${campaignId}/attempts/${row.id}`;
+  if (row.type === 'inbound') return inboundCallPath(campaignId, row.id);
   return availability.softphoneEnabled ? `/agency/softphone/calls/${row.id}` : null;
+}
+
+/**
+ * The other row of a missed call and its call back, as a row key (`type:id`), so hovering one
+ * can light the other. Null for a row that is half of no pair.
+ */
+export function pairedRowKey(row: AgencyCallLogRow): string | null {
+  if (row.type === 'soft_phone' && row.callback_of) return `inbound:${row.callback_of.inbound_call_id}`;
+  if (row.type === 'inbound' && row.called_back) return `soft_phone:${row.called_back.call_id}`;
+  return null;
+}
+
+/** A row's own key in the table. */
+export function callLogRowKey(row: Pick<AgencyCallLogRow, 'type' | 'id'>): string {
+  return `${row.type}:${row.id}`;
 }

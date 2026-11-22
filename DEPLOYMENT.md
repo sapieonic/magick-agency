@@ -915,7 +915,15 @@ that an inbound miss booked): if `agency_contacts` holds more than about a milli
 `CONCURRENTLY` first the same way; going back past it needs no `migrate:down` (an index only). Nor
 do `0054_analysis_vendor_answers.sql` and `0055_analysis_vendor_answer_indexes.sql`: an older image
 ignores the nullable `vendor_refused_at` and `completed_at` and has no summary delay at all, so every
-pending call shows the ordinary pending copy again.
+pending call shows the ordinary pending copy again. `0067_call_log_inbound_campaign.sql` (inbound
+calls in the campaign Call log) backfills `agency_inbound_calls.campaign_id` from the matched
+campaign inside its transaction: if that table holds more than about a million rows, add the two
+columns and run the same UPDATE in batches by `id` first, as its header says (the migration's own
+then writes nothing). `0068_call_log_inbound_indexes.sql` adds one index on `agency_inbound_calls`
+and one on `agency_manual_calls`; neither can be built before 0067 (their columns are new), and the
+one on `agency_manual_calls` is empty on that release, so its build is one read of the table. Going
+back past the two needs no `migrate:down`: an older image ignores the nullable columns and reads
+`matched_campaign_id` as before.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is

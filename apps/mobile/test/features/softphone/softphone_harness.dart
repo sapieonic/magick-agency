@@ -84,7 +84,8 @@ class FakeSoftphoneActions implements SoftphoneActions {
   @override
   void redial(String recentCallId) => _rec('redial', [recentCallId]);
   @override
-  void callBack(String number, {String? campaignId}) => _rec('callBack', [number, campaignId]);
+  void callBack(String number, {String? campaignId, String? inboundCallId}) =>
+      _rec('callBack', [number, campaignId, ?inboundCallId]);
   @override
   void setTag(String? campaignId) => _rec('setTag', [campaignId]);
   @override

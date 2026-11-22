@@ -265,6 +265,26 @@ void main() {
       expect(h.dials, isEmpty);
     });
 
+    softphoneTest('its dial names the missed call it answers, once, and only while the pad holds that number (CL1)', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', inboundCallId: 'in-1');
+      h.reply('POST $callsPath', {'error': 'no', 'code': 'dial_failed'}, status: 502);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json['callback_of_inbound_call_id'], 'in-1');
+      // The agent rings someone else from the same pad: that call is no call back.
+      h.actions.setNumber('9820461744');
+      h.run(h.actions.dial());
+      expect(h.dials.last.json.containsKey('callback_of_inbound_call_id'), isFalse);
+    });
+
+    softphoneTest('a Call back with no missed call behind it names none', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109');
+      h.reply('POST $callsPath', manualCallJson(), status: 201);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json.containsKey('callback_of_inbound_call_id'), isFalse);
+    });
+
     softphoneTest('a campaign the agent may not log to leaves Log to as it was', (h) {
       h.openWith(number: '');
       h.actions.callBack('+918765432109', campaignId: 'camp-not-mine');

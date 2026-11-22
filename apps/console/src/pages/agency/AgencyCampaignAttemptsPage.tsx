@@ -1,19 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Calendar,
   Download,
   ListChecks,
+  Check,
   MicOff,
+  Phone,
   PhoneOutgoing,
   Play,
+  Voicemail,
   RefreshCw,
   Search,
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
+import { markMissedInboundCallHandled } from '../../api/inbound';
+import { refreshMissedCallsCount } from '../../hooks/useMissedCallsCount';
+import { inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
+import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { listCampaignAgents } from '../../api/agency';
@@ -41,7 +49,13 @@ import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import { ATTEMPT_OUTCOME_LABELS, type AgencyAttemptFilters } from '../../types/agency-spine';
-import type { AgencyCallLogCounts, AgencyCallLogRow, AgencyCallLogStatus, AgencyCallLogTypeFilter } from '../../types/agency-call-log';
+import type {
+  AgencyCallLogCounts,
+  AgencyCallLogInboundRow,
+  AgencyCallLogRow,
+  AgencyCallLogStatus,
+  AgencyCallLogTypeFilter,
+} from '../../types/agency-call-log';
 import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
@@ -59,14 +73,19 @@ import {
 import { formatCount } from '../../utils/format/number';
 import {
   CALL_LOG_DESCRIPTION,
+  CALL_LOG_INBOUND_OUTCOME_HINT,
+  CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_HINT,
   CALL_LOG_STATUS_OPTIONS,
+  TO_FOLLOW_UP_NOTE,
   callLogBadges,
   callLogCountCopy,
   callLogEmptyState,
   callLogOpening,
+  callLogOutcomeFilterLabel,
   callLogOutcomePlaceholder,
   callLogParams,
+  callLogRowKey,
   callLogRowPath,
   callLogStatusLabel,
   callLogTypeFacts,
@@ -74,12 +93,16 @@ import {
   callLogViewFromParams,
   callLogWhatHappened,
   effectiveCallLogFilters,
+  followUpCopy,
+  inboundAgentCopy,
   isCallLogFiltered,
+  isMissedInbound,
   isNotDialled,
   lastSevenDays,
   localDay,
   manualCallsRedirectPath,
   onOpeningView,
+  pairedRowKey,
   selectedCallLogCount,
   softphoneAgentCopy,
   visibleCallLogChips,
@@ -93,10 +116,12 @@ const PAGE_SIZE = 50;
 const STATUS_CHIP = 'softphone_status';
 
 /**
- * The campaign's Call log: one row per call, whatever placed it (decision CL11,
- * `docs/call-log.md`). The dialler's attempts and the soft-phone calls logged to the campaign
- * are one list on one keyset, with type chips ("All · Dialler · Soft phone") over it; a row
- * opens the detail page of its own type.
+ * The campaign's Call log: one row per call, whatever it was (decisions CL1, CL11,
+ * `docs/call-log.md`). The dialler's attempts, the soft-phone calls logged to the campaign and
+ * the inbound calls filed under it are one list on one keyset, with type chips ("All · Dialler ·
+ * Soft phone · Inbound") over it and **To follow up**, the campaign's missed calls that are still
+ * open; a row opens the Call page of its own type. A missed call and the soft-phone call that
+ * rang it back point at each other.
  *
  * ── What it opens on ────────────────────────────────────────────────────────
  * With no filter in the URL a live campaign's list shows today's calls, and an empty day
@@ -163,6 +188,7 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
+  const navigate = useNavigate();
 
   useCampaignCrumbs(id, campaign, 'attempts');
   const [rows, setRows] = useState<AgencyCallLogRow[]>([]);
@@ -261,11 +287,21 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
    * use): the file carries them whatever the flag says now.
    */
   const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
-  const exportHoldsSoftphone = type !== 'dialler' && (softphoneOn || showsSoftphone(stats, false));
+  const exportHoldsSoftphone = (type === 'all' || type === 'soft_phone') && (softphoneOn || showsSoftphone(stats, false));
   const exportTitle = exportHoldsSoftphone
     ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (its source column says which)'
     : 'Download everything matching the filters above, not just the rows on screen';
-  const availability = useMemo(() => ({ softphoneEnabled: softphoneOn }), [softphoneOn]);
+  const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
+  const availability = useMemo(() => ({ softphoneEnabled: softphoneOn, inboundEnabled: inboundOn }), [softphoneOn, inboundOn]);
+  /** Mark handled is the Missed list's action, under its permission. */
+  const canMarkHandled = hasPermission(role, 'agency.inbound.read');
+  /** Call back opens the soft phone with the number on the pad: only where the viewer may dial from it. */
+  const canCallBack = softphoneOn && hasPermission(role, 'agency.softphone.dial');
+  /** The Missed row being marked handled, and a refusal said on its row. */
+  const [marking, setMarking] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  /** The other half of the pair under the pointer or the focus: a missed call and its call back light each other. */
+  const [pairLit, setPairLit] = useState<string | null>(null);
 
   /**
    * Guards against a slow first page landing after a newer one — without it,
@@ -384,6 +420,36 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
     }
   }, [id, nextCursor, loadingMore, filters, type, status, tenantId, accountId, showErrorToast]);
 
+  /**
+   * Mark handled: the Missed list's own action (`POST /inbound/missed/:id/handled`, idempotent).
+   * The list and its counts are read again, so the row leaves To follow up and every chip agrees.
+   */
+  const markHandled = useCallback(async (row: AgencyCallLogInboundRow) => {
+    if (marking) return;
+    setMarking(row.id);
+    setRowError(null);
+    const result = await markMissedInboundCallHandled(row.id, tenantId ?? undefined, accountId ?? undefined);
+    setMarking(null);
+    if (!result.ok) {
+      setRowError({ id: row.id, message: inboundRefusalCopy(result.refusal) });
+      return;
+    }
+    refreshMissedCallsCount();
+    void load(filters, type, status, true);
+  }, [marking, tenantId, accountId, load, filters, type, status]);
+
+  /**
+   * Call back: the soft phone with the caller's number on the pad, this campaign as "Log to",
+   * and the missed call's id, so the call placed is linked to it (CL1). Nothing is dialled until
+   * the agent presses Call.
+   */
+  const callBack = useCallback((row: AgencyCallLogInboundRow) => {
+    if (!row.phone_e164) return;
+    navigate('/dialer/phone', {
+      state: softphonePrefillState({ number: row.phone_e164, campaignId: row.campaign_id, inboundCallId: row.id }),
+    });
+  }, [navigate]);
+
   const onExport = useCallback(async () => {
     if (!id) return;
     setExporting(true);
@@ -484,6 +550,12 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
    * filters match soft-phone calls, or while one is applied (so it can be seen and removed).
    */
   const offersStatus = softphoneOn || (counts?.soft_phone ?? 0) > 0 || status !== null;
+  /**
+   * What happened's inbound choices (Missed, Voicemail, Abandoned): offered while inbound is on,
+   * while the filters match inbound calls, on an inbound view, or while one is applied.
+   */
+  const offersInboundOutcomes = inboundOn || (counts?.inbound ?? 0) > 0 || type === 'inbound' || type === 'to_follow_up'
+    || (filters.outcome ?? []).some((value) => CALL_LOG_INBOUND_OUTCOME_OPTIONS.some((option) => option.value === value));
   /** Whether the list is already on the last seven days: the empty state then offers nothing it has done. */
   const onLastSevenDays = useMemo(() => {
     const week = lastSevenDays();
@@ -501,7 +573,10 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
   }), [filters, campaign, agentOptions]);
   /** The attempt filters' chips, then the soft-phone status's. */
   const shownChips = useMemo(() => [
-    ...chips.filter((chip) => chip.id !== 'contact_id'),
+    // A What happened chip of an inbound choice says it in the filter's own words.
+    ...chips.filter((chip) => chip.id !== 'contact_id').map((chip) => (chip.id.startsWith('outcome:')
+      ? { ...chip, label: `Outcome: ${callLogOutcomeFilterLabel(chip.id.slice('outcome:'.length))}` }
+      : chip)),
     ...(status ? [{ id: STATUS_CHIP, label: `Soft-phone status: ${callLogStatusLabel(status)}` }] : []),
   ], [chips, status]);
 
@@ -587,6 +662,9 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
         description={CALL_LOG_DESCRIPTION}
         tips={[
           'A dialler call with no agent is a real row: the call was abandoned, failed, or never answered.',
+          ...(inboundOn || (counts?.inbound ?? 0) > 0
+            ? ['An inbound call is listed once it has ended. A missed call stays under To follow up until the customer is reached or someone marks it handled.']
+            : []),
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
           'The export follows the dates shown above. Clear the dates to export every call on the campaign.',
@@ -634,13 +712,17 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
               aria-pressed={type === chip.id}
               onClick={() => chooseType(chip.id)}
               data-testid={`call-log-type-${chip.id}`}
+              data-warning={chip.warning ? '' : undefined}
             >
-              {chip.id !== 'all' && <span className={styles.typeSwatch} data-type={chip.id} aria-hidden="true" />}
+              {chip.id !== 'all' && !chip.warning && <span className={styles.typeSwatch} data-type={chip.id} aria-hidden="true" />}
               {chip.label}
               {chip.count !== null && <span className={styles.typeCount}>{formatCount(chip.count)}</span>}
             </button>
           ))}
         </div>
+      )}
+      {type === 'to_follow_up' && (
+        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{TO_FOLLOW_UP_NOTE}</p>
       )}
 
       <FiltersCard activeCount={activeFilterCount}>
@@ -657,7 +739,20 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                   ))}
                 />
               ))}
+              {offersInboundOutcomes && CALL_LOG_INBOUND_OUTCOME_OPTIONS.map(({ value, label }) => (
+                <FilterChip
+                  key={value}
+                  label={label}
+                  checked={draftOutcomes.includes(value)}
+                  onChange={(checked) => setDraftOutcomes((current) => (
+                    checked ? [...current, value] : current.filter((item) => item !== value)
+                  ))}
+                />
+              ))}
             </div>
+            {offersInboundOutcomes && (
+              <span className={styles.fieldHint} data-testid="call-log-inbound-outcome-hint">{CALL_LOG_INBOUND_OUTCOME_HINT}</span>
+            )}
           </fieldset>
 
           <div className={spine.fieldRow}>
@@ -846,20 +941,32 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const agent = row.type === 'dialler' ? agentCellCopy(row) : softphoneAgentCopy(row);
+                  const agent: { text: string; muted: boolean; detail?: string } = row.type === 'dialler'
+                    ? agentCellCopy(row)
+                    : row.type === 'inbound' ? inboundAgentCopy(row) : softphoneAgentCopy(row);
                   const happened = callLogWhatHappened(row);
                   const facts = callLogTypeFacts(row);
                   const badges = callLogBadges(row);
                   const path = callLogRowPath(row, id, availability);
                   // A dialler row with no media leg says why there is nothing to open.
                   const noRecording = row.type === 'dialler' ? recordingCellCopy(row) : null;
+                  const key = callLogRowKey(row);
+                  const pair = pairedRowKey(row);
+                  const missed = row.type === 'inbound' && isMissedInbound(row) ? row : null;
+                  const followUp = missed ? followUpCopy(missed) : null;
                   return (
                     <tr
-                      key={`${row.type}:${row.id}`}
+                      key={key}
                       data-testid={`attempt-row-${row.id}`}
                       data-type={row.type}
                       data-not-dialled={isNotDialled(row) ? '' : undefined}
-                      className={isNotDialled(row) ? styles.notDialled : undefined}
+                      data-paired={pair ? '' : undefined}
+                      data-pair-lit={pairLit === key ? '' : undefined}
+                      className={[isNotDialled(row) ? styles.notDialled : '', pair ? styles.paired : ''].filter(Boolean).join(' ') || undefined}
+                      onMouseEnter={pair ? () => setPairLit(pair) : undefined}
+                      onMouseLeave={pair ? () => setPairLit(null) : undefined}
+                      onFocus={pair ? () => setPairLit(pair) : undefined}
+                      onBlur={pair ? () => setPairLit(null) : undefined}
                     >
                       <td className={styles.when}>{formatSpineTimestamp(row.created_at)}</td>
                       <td>
@@ -878,7 +985,9 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                         )}
                       </td>
                       <td>
-                        {row.contact_id ? (
+                        {row.phone_e164 === null ? (
+                          <span className={styles.mutedCell}>Number withheld</span>
+                        ) : row.contact_id ? (
                           <Link
                             to={`/agency/campaigns/${id}/contacts/${row.contact_id}`}
                             className={styles.phoneLink}
@@ -892,7 +1001,12 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                           </>
                         )}
                       </td>
-                      <td className={agent.muted ? styles.mutedCell : undefined}>{agent.text}</td>
+                      <td>
+                        <span className={agent.muted ? styles.mutedCell : undefined}>{agent.text}</span>
+                        {agent.detail && (
+                          <span className={styles.secondLine} data-testid={`call-assignee-${row.id}`}>{agent.detail}</span>
+                        )}
+                      </td>
                       <td>
                         <span
                           className={styles.outcome}
@@ -901,14 +1015,65 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                         >
                           {happened.text}
                         </span>
+                        {happened.detail && (
+                          <span className={styles.secondLine} data-testid={`call-happened-detail-${row.id}`}>{happened.detail}</span>
+                        )}
                       </td>
                       <td>
-                        <AttemptDispositionCell
-                          attempt={row}
-                          catalog={campaign?.disposition_catalog}
-                          placeholder={callLogOutcomePlaceholder(row)}
-                          testIdPrefix="attempt"
-                        />
+                        {missed && followUp ? (
+                          /*
+                            A missed call has no outcome of its own: this cell says where its
+                            follow-up stands. Rung back ("Called back 3:31 PM", the pair's other
+                            row), still owed ("To follow up", with the Missed list's two actions),
+                            or closed.
+                          */
+                          <span className={styles.followUp} data-testid={`call-follow-up-${row.id}`}>
+                            {followUp.calledBack && <span className={styles.calledBack}>{followUp.calledBack}</span>}
+                            {followUp.status && (
+                              <span className={followUp.open ? styles.toFollowUp : styles.mutedCell}>{followUp.status}</span>
+                            )}
+                            {followUp.open && (canMarkHandled || (canCallBack && missed.phone_e164)) && (
+                              <span className={styles.rowActions}>
+                                {canCallBack && missed.phone_e164 && (
+                                  <button
+                                    type="button"
+                                    className={styles.rowAction}
+                                    onClick={() => callBack(missed)}
+                                    data-testid={`call-back-${row.id}`}
+                                  >
+                                    <Phone size={12} aria-hidden="true" />
+                                    Call back
+                                  </button>
+                                )}
+                                {canMarkHandled && (
+                                  <button
+                                    type="button"
+                                    className={styles.rowAction}
+                                    onClick={() => void markHandled(missed)}
+                                    disabled={marking !== null}
+                                    data-testid={`mark-handled-${row.id}`}
+                                  >
+                                    <Check size={12} aria-hidden="true" />
+                                    {marking === row.id ? 'Marking…' : 'Mark handled'}
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                            {rowError?.id === row.id && (
+                              <span className={styles.rowError} role="alert">
+                                <AlertCircle size={12} aria-hidden="true" />
+                                {rowError.message}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <AttemptDispositionCell
+                            attempt={row.type === 'dialler' ? row : { ...row, auto_disposition_code: null }}
+                            catalog={campaign?.disposition_catalog}
+                            placeholder={callLogOutcomePlaceholder(row)}
+                            testIdPrefix="attempt"
+                          />
+                        )}
                       </td>
                       <td className={styles.numeric}>{formatTalkTime(row.talk_seconds)}</td>
                       <td>
@@ -921,13 +1086,24 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                             the call), and the destination page is where "no longer available"
                             can be said properly.
 
-                            Keyed on the ROW (the attempt, the soft-phone call), not the media
-                            leg. That is what lets the destination exist for a purged call at
-                            all, and what keeps the reader inside this shell.
+                            Keyed on the ROW (the attempt, the soft-phone call, the inbound
+                            call), not the media leg. That is what lets the destination exist
+                            for a purged call at all, and what keeps the reader inside this shell.
+
+                            A missed call that left a voicemail says so: its Call page plays it.
                           */
                           <Link to={path} className={styles.recordingLink}>
-                            <Play size={13} aria-hidden="true" />
-                            Open call
+                            {row.type === 'inbound' && row.voicemail_seconds !== null ? (
+                              <>
+                                <Voicemail size={13} aria-hidden="true" />
+                                {`Voicemail ${formatTalkTime(row.voicemail_seconds)}`}
+                              </>
+                            ) : (
+                              <>
+                                <Play size={13} aria-hidden="true" />
+                                Open call
+                              </>
+                            )}
                           </Link>
                         ) : (
                           <span className={styles.mutedCell}>—</span>

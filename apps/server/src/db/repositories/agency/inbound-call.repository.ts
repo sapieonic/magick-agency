@@ -52,6 +52,7 @@ import type {
 import {
   AGENCY_INBOUND_OUTCOME_LAPSE_MS,
   type AgencyContextDisplay,
+  type AgencyInboundCampaignSource,
   type AgencyInboundDispositionSource,
 } from '@magick-agency/contracts/agency';
 import { AGENCY_INBOUND_MISSED_COUNT_CAP } from '@magick-agency/contracts/api/agency/inbound';
@@ -59,7 +60,7 @@ import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/ke
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
-import { contactNameContextSql, inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
+import { contactNameContextSql, inboundFromDigitsSql, inboundMissedOpenSql, inboundNumberBusySql } from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -122,6 +123,13 @@ export interface AgencyInboundCallRecord {
   to_e164: string;
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
+  /**
+   * The campaign the call is filed under (0067, `docs/call-log.md`): what the campaign Call log
+   * reads. The matched contact's campaign at arrival; NULL: none.
+   */
+  campaign_id: string | null;
+  /** How it came by `campaign_id`; set exactly when that is (CHECKed). */
+  campaign_source: AgencyInboundCampaignSource | null;
   caller_dnc: boolean;
   sticky_user_id: string | null;
   sticky_reason: AgencyInboundStickyReason | null;
@@ -323,7 +331,8 @@ export type AgencyInboundReassignResult =
 
 
 const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_number_id, c.provider, c.telephony_credential_id,
-  c.provider_call_id, c.from_e164, c.to_e164, c.matched_contact_id, c.matched_campaign_id, c.caller_dnc,
+  c.provider_call_id, c.from_e164, c.to_e164, c.matched_contact_id, c.matched_campaign_id,
+  c.campaign_id, c.campaign_source, c.caller_dnc,
   c.sticky_user_id, c.sticky_reason, c.state, c.outcome, c.arrived_at, c.answered_at, c.bridged_at,
   c.answered_by_user_id, c.ended_at, c.talk_seconds, c.webrtc_call_id, c.voicemail_key, c.callback_due_at,
   c.follow_up_status, c.follow_up_reason, c.follow_up_assignee_user_id, c.handled_by_user_id, c.handled_at,
@@ -352,6 +361,8 @@ export class AgencyInboundCallRepository {
    * (`origin = 'inbound'`, `inbound_call_id` the spine row, `caller_id` the number rung,
    * `destination_phone` the caller's or `''` when withheld, `provider_call_id` the carrier's call
    * id so the status webhook finds it), linked both ways, in one transaction (or the caller's).
+   * A matched call is filed under its contact's campaign (`campaign_id`, `campaign_source =
+   * 'contact'`, 0067): the column the campaign Call log reads (`docs/call-log.md`).
    * The leg is written here rather than through `WebRtcCallRepository.create`, which refuses a
    * credential that is not `active`: a call that has already arrived is answered regardless
    * (§10, "a disabled or invalid credential that still verifies").
@@ -377,10 +388,11 @@ export class AgencyInboundCallRepository {
         `INSERT INTO agency_inbound_calls AS c
            (tenant_id, account_id, route_id, phone_number_id, provider, telephony_credential_id, provider_call_id,
             from_e164, to_e164, matched_contact_id, matched_campaign_id, caller_dnc, sticky_user_id, sticky_reason,
-            answered_at, recording_requested, closed_cause, wrapup_seconds)
+            answered_at, recording_requested, closed_cause, wrapup_seconds, campaign_id, campaign_source)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
-                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint)
+                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint,
+                 $11::uuid, CASE WHEN $11::uuid IS NOT NULL THEN 'contact' END)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
@@ -912,6 +924,23 @@ export class AgencyInboundCallRepository {
     return toKeysetPage(rows, input.limit, ({ cursor_at: _cursor, ...row }) => row);
   }
 
+  /**
+   * Whether `id` is a Missed row of the account whose caller is `phoneE164` (digits compared, as
+   * the busy probe compares them): what a soft-phone call must name to be linked as that row's
+   * call back (`agency_manual_calls.callback_of_inbound_call_id`, `docs/call-log.md` CL1). Open or
+   * handled: a row already closed may still be rung back. A withheld caller's row matches nothing.
+   */
+  async isMissedCallFrom(tenantId: string, accountId: string, id: string, phoneE164: string): Promise<boolean> {
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM agency_inbound_calls c
+        WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid AND c.account_id = $3::uuid
+          AND c.follow_up_status IS NOT NULL AND c.from_e164 IS NOT NULL
+          AND ${inboundFromDigitsSql('c')} = regexp_replace($4::text, '[^0-9]', '', 'g')`,
+      [id, tenantId, accountId, phoneE164],
+    );
+    return rows.length > 0;
+  }
+
   /** One Missed row of the account (or of the tenant default, `accountId` null), with its joins; null when it is not one. */
   async findMissed(tenantId: string, accountId: string | null, id: string): Promise<AgencyInboundMissedRow | null> {
     const { rows } = await getPool().query<AgencyInboundMissedRow>(
@@ -1126,7 +1155,7 @@ export class AgencyInboundCallRepository {
     const { rows } = await getPool().query<{ open: number; has_rows: boolean }>(
       `SELECT (SELECT COUNT(*)::int FROM (
                  SELECT 1 FROM agency_inbound_calls c
-                  WHERE ${where} AND c.follow_up_status = 'open'
+                  WHERE ${where} AND ${inboundMissedOpenSql('c')}
                   LIMIT ${AGENCY_INBOUND_MISSED_COUNT_CAP + 1}
                ) open_rows) AS open,
               EXISTS (

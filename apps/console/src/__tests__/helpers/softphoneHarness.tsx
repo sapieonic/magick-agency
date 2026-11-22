@@ -38,6 +38,7 @@ export interface HarnessProps {
   ringback: RingbackTone;
   presetCampaignId?: string | null;
   presetNumber?: string | null;
+  presetCallbackOf?: string | null;
   audioState?: SoftphoneAudio;
   startAllowed?: boolean;
   fromCampaign?: boolean;
@@ -51,6 +52,7 @@ export function Harness({
   ringback,
   presetCampaignId = null,
   presetNumber = null,
+  presetCallbackOf = null,
   audioState = audio,
   startAllowed = true,
   fromCampaign = false,
@@ -69,6 +71,7 @@ export function Harness({
     ringback,
     presetCampaignId,
     presetNumber,
+    presetCallbackOf,
     startAllowed,
   });
   return (

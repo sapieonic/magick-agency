@@ -515,11 +515,37 @@ describe('GET /:id/call-log: the campaign call log the export drains (SR6)', () 
     await app.close();
   });
 
+  it('splits What happened: attempt outcomes to the filters, the inbound-only ones beside them, to list and count alike', async () => {
+    const app = await makeApp();
+    attempts.countCallLogForCampaign.mockResolvedValue({ all: 0, dialler: 0, soft_phone: 0, inbound: 0, to_follow_up: 0 });
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=missed,connected,voicemail&include_counts=1&source=to_follow_up', headers: HEADERS,
+    });
+    expect(res.statusCode).toBe(200);
+    for (const input of [attempts.listCallLogForCampaign.mock.calls[0]![0], attempts.countCallLogForCampaign.mock.calls[0]![0]]) {
+      expect(input.filters.outcomes).toEqual(['connected']);
+      expect(input.inboundOutcomes).toEqual(['missed', 'voicemail']);
+    }
+    expect(attempts.listCallLogForCampaign.mock.calls[0]![0].source).toBe('to_follow_up');
+    // Only inbound happenings: no attempt outcome is invented, and none is absent as a key.
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=abandoned_in_queue', headers: HEADERS });
+    const only = attempts.listCallLogForCampaign.mock.calls[1]![0];
+    expect(only.filters.outcomes).toBeUndefined();
+    expect(only.inboundOutcomes).toEqual(['abandoned_in_queue']);
+    // None: the key is not sent at all, so the read is as it was.
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=busy', headers: HEADERS });
+    expect(attempts.listCallLogForCampaign.mock.calls[2]![0]).not.toHaveProperty('inboundOutcomes');
+    // A word neither vocabulary knows is still the attempt parser's 400.
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=missed,nonsense', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('refuses an unknown source and a malformed agent before any read', async () => {
     const app = await makeApp();
     const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?source=softphone', headers: HEADERS });
     expect(bad.statusCode).toBe(400);
-    expect(bad.json().details).toEqual([{ param: 'source', message: 'must be one of: dialler, soft_phone' }]);
+    expect(bad.json().details).toEqual([{ param: 'source', message: 'must be one of: dialler, soft_phone, inbound, to_follow_up' }]);
     const agent = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?agent_user_id=nope', headers: HEADERS });
     expect(agent.statusCode).toBe(400);
     expect(attempts.listCallLogForCampaign).not.toHaveBeenCalled();

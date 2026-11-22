@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_OPTIONS,
+  callBackFact,
   callLogBadges,
   callLogCountCopy,
   callLogEmptyState,
   callLogOpening,
+  callLogOutcomeFilterLabel,
   callLogOutcomePlaceholder,
   callLogParams,
+  callLogRowKey,
   callLogRowPath,
   callLogStatusLabel,
   callLogTypeFacts,
@@ -14,20 +18,25 @@ import {
   callLogWhatHappened,
   campaignCallLogPath,
   effectiveCallLogFilters,
+  followUpCopy,
+  inboundAgentCopy,
   isCallLogFiltered,
+  isMissedInbound,
   isNotDialled,
   lastSevenDays,
   localDay,
   manualCallsRedirectPath,
   onOpeningView,
   onlyDatesNarrow,
+  pairedRowKey,
   selectedCallLogCount,
+  stoppedByInbound,
   visibleCallLogChips,
   type CallLogView,
 } from '../../utils/agency/callLog';
 import { SOFTPHONE_CALL_STATUS_OPTIONS } from '../../utils/softphone/callStats';
 import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
-import type { AgencyCallLogDiallerRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
+import type { AgencyCallLogDiallerRow, AgencyCallLogInboundRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
 
 /**
  * The campaign Call log's rules (docs/call-log.md, CL11): the chip and the opening day in the
@@ -56,7 +65,7 @@ describe('the view in the URL', () => {
       .toEqual({ type: 'soft_phone', allDates: true, status: 'awaiting_outcome' });
     expect(callLogViewFromParams(new URLSearchParams('type=dialler'))).toEqual(V({ type: 'dialler' }));
     // A type or status this build does not know (a link from a newer one) and a mangled marker.
-    expect(callLogViewFromParams(new URLSearchParams('type=inbound&dates=some&status=done'))).toEqual(V());
+    expect(callLogViewFromParams(new URLSearchParams('type=missed&dates=some&status=done'))).toEqual(V());
   });
 
   it('writes the chip only when it is not All, and every-date only when no filter says more', () => {
@@ -163,10 +172,10 @@ describe('the dates the list opens on', () => {
 });
 
 describe('the chips', () => {
-  const counts = { all: 1326, dialler: 1240, soft_phone: 86 };
+  const counts = { all: 1326, dialler: 1240, soft_phone: 86, inbound: 0, to_follow_up: 0 };
 
   it('are All · Dialler · Soft phone with their counts, in that order', () => {
-    expect(visibleCallLogChips(counts, 'all', { softphoneEnabled: true })).toEqual([
+    expect(visibleCallLogChips(counts, 'all', { softphoneEnabled: true, inboundEnabled: false })).toEqual([
       { id: 'all', label: 'All', count: 1326 },
       { id: 'dialler', label: 'Dialler', count: 1240 },
       { id: 'soft_phone', label: 'Soft phone', count: 86 },
@@ -174,20 +183,20 @@ describe('the chips', () => {
   });
 
   it('carry no number before the server has counted', () => {
-    expect(visibleCallLogChips(null, 'all', { softphoneEnabled: true }).map((c) => c.count)).toEqual([null, null, null]);
+    expect(visibleCallLogChips(null, 'all', { softphoneEnabled: true, inboundEnabled: false }).map((c) => c.count)).toEqual([null, null, null]);
   });
 
   it('drop a type that is switched off and has no call, and with one type left show nothing', () => {
-    const none = { all: 4, dialler: 4, soft_phone: 0 };
-    expect(visibleCallLogChips(none, 'all', { softphoneEnabled: false })).toEqual([]);
-    expect(visibleCallLogChips(null, 'dialler', { softphoneEnabled: false })).toEqual([]);
+    const none = { all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 };
+    expect(visibleCallLogChips(none, 'all', { softphoneEnabled: false, inboundEnabled: false })).toEqual([]);
+    expect(visibleCallLogChips(null, 'dialler', { softphoneEnabled: false, inboundEnabled: false })).toEqual([]);
     // Switched off, calls in the range: shown (SR5). Switched on, none: shown.
-    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 1 }, 'all', { softphoneEnabled: false })).toHaveLength(3);
-    expect(visibleCallLogChips(none, 'all', { softphoneEnabled: true })).toHaveLength(3);
+    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 1, inbound: 0, to_follow_up: 0 }, 'all', { softphoneEnabled: false, inboundEnabled: false })).toHaveLength(3);
+    expect(visibleCallLogChips(none, 'all', { softphoneEnabled: true, inboundEnabled: false })).toHaveLength(3);
   });
 
   it('always show the chip that is on, so a link to it can be left', () => {
-    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0 }, 'soft_phone', { softphoneEnabled: false }).map((c) => c.id))
+    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }, 'soft_phone', { softphoneEnabled: false, inboundEnabled: false }).map((c) => c.id))
       .toEqual(['all', 'dialler', 'soft_phone']);
   });
 
@@ -273,5 +282,174 @@ describe('how a row reads', () => {
     expect(callLogRowPath(DIALLER, 'c-1', { softphoneEnabled: false })).toBe('/agency/campaigns/c-1/attempts/a-1');
     expect(callLogRowPath(SOFT, 'c-1', { softphoneEnabled: true })).toBe('/agency/softphone/calls/m-1');
     expect(callLogRowPath(SOFT, 'c-1', { softphoneEnabled: false })).toBeNull();
+  });
+});
+
+/**
+ * Inbound calls in the log (docs/call-log.md §4, P2): the Inbound and To follow up chips, how an
+ * inbound row reads, and a missed call and its call back pointing at each other.
+ */
+const ANSWERED = {
+  type: 'inbound', id: 'i-1', campaign_id: 'c-1', campaign_source: 'contact', contact_id: 'ct-1', phone_e164: '+919876504821',
+  caller_id: '+919000000001', route_name: 'Sales line', agent_user_id: 'u-priya', agent_name: 'Priya Nair', state: 'ended',
+  outcome: 'answered', disposition_code: 'will_pay', talk_seconds: 252, wait_seconds: 18, queued: true, via_sticky_agent: true,
+  requires_disposition: false, voicemail_seconds: null, follow_up: null, called_back: null,
+  created_at: '2026-11-22T15:42:01.000Z', bridged_at: '2026-11-22T15:42:19.000Z', ended_at: '2026-11-22T15:46:31.000Z',
+} as AgencyCallLogInboundRow;
+const MISSED = {
+  ...ANSWERED, id: 'i-2', contact_id: null, phone_e164: '+919812307730', agent_user_id: null, agent_name: null, outcome: 'overflow',
+  disposition_code: null, talk_seconds: null, wait_seconds: 100, via_sticky_agent: false, bridged_at: null,
+  follow_up: { status: 'open', reason: 'overflow', closed_cause: null, assignee_user_id: 'u-arjun', assignee_name: 'Arjun Mehta', handled_reason: null, handled_at: null },
+  created_at: '2026-11-22T15:12:00.000Z',
+} as AgencyCallLogInboundRow;
+const SOFT_ROW = { type: 'soft_phone', id: 'm-9', state: 'ended', outcome: 'connected', dialed_at: '2026-11-22T15:31:01.000Z', created_at: '2026-11-22T15:31:00.000Z', callback_of: null } as AgencyCallLogSoftphoneRow;
+const DIAL = { type: 'dialler', id: 'a-9', attempt_number: 1, redial_number: 0, outcome: 'canceled', state: 'ended', disposition_code: null } as AgencyCallLogDiallerRow;
+
+describe('the Inbound and To follow up chips', () => {
+  const counts = { all: 1383, dialler: 1240, soft_phone: 86, inbound: 57, to_follow_up: 6 };
+  const on = { softphoneEnabled: true, inboundEnabled: true };
+  const off = { softphoneEnabled: false, inboundEnabled: false };
+
+  it('are All · Dialler · Soft phone · Inbound · To follow up, the last one marked as owed work', () => {
+    expect(visibleCallLogChips(counts, 'all', on)).toEqual([
+      { id: 'all', label: 'All', count: 1383 },
+      { id: 'dialler', label: 'Dialler', count: 1240 },
+      { id: 'soft_phone', label: 'Soft phone', count: 86 },
+      { id: 'inbound', label: 'Inbound', count: 57 },
+      { id: 'to_follow_up', label: 'To follow up', count: 6, warning: true },
+    ]);
+  });
+
+  it('hide To follow up at 0, unless it is the chip that is on', () => {
+    const none = { ...counts, to_follow_up: 0 };
+    expect(visibleCallLogChips(none, 'all', on).map((c) => c.id)).toEqual(['all', 'dialler', 'soft_phone', 'inbound']);
+    expect(visibleCallLogChips(none, 'to_follow_up', on).map((c) => c.id)).toContain('to_follow_up');
+    expect(visibleCallLogChips(null, 'all', on).map((c) => c.id)).not.toContain('to_follow_up');
+  });
+
+  it('hide Inbound with inbound switched off and no inbound call; keep it while the range holds one', () => {
+    expect(visibleCallLogChips({ ...counts, inbound: 0, to_follow_up: 0 }, 'all', { softphoneEnabled: true, inboundEnabled: false }).map((c) => c.id))
+      .toEqual(['all', 'dialler', 'soft_phone']);
+    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 0, inbound: 1, to_follow_up: 0 }, 'all', off).map((c) => c.id))
+      .toEqual(['all', 'dialler', 'inbound']);
+    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 0 }, 'inbound', off).map((c) => c.id))
+      .toEqual(['all', 'dialler', 'inbound']);
+  });
+
+  it('show To follow up beside All even when Dialler is the only type: an old missed call is still owed', () => {
+    // Today holds no inbound call, inbound is off, and two missed calls from earlier are still open.
+    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 2 }, 'all', off).map((c) => c.id))
+      .toEqual(['all', 'to_follow_up']);
+  });
+
+  it('count the chip that is on, To follow up included', () => {
+    expect(selectedCallLogCount(counts, 'inbound')).toBe(57);
+    expect(selectedCallLogCount(counts, 'to_follow_up')).toBe(6);
+  });
+
+  it('read the type from the URL, and put it back', () => {
+    const view = callLogViewFromParams(new URLSearchParams('type=to_follow_up'));
+    expect(view.type).toBe('to_follow_up');
+    expect(callLogParams({}, view).get('type')).toBe('to_follow_up');
+    expect(campaignCallLogPath('c-1', 'inbound')).toBe('/agency/campaigns/c-1/attempts?type=inbound');
+  });
+
+  it('an empty To follow up is never about the dates', () => {
+    expect(callLogEmptyState({ from: 'a', to: 'b' }, { type: 'to_follow_up', status: null })).toMatchObject({
+      kind: 'none', title: 'Nobody is waiting for a call back on this campaign.',
+    });
+    expect(callLogEmptyState({ from: 'a', phone: '7730' }, { type: 'to_follow_up', status: null }).kind).toBe('filtered');
+    expect(callLogEmptyState({ from: 'a', to: 'b' }, { type: 'inbound', status: null }).title).toBe('No inbound calls on this campaign for these dates.');
+  });
+
+  it('What happened gains Missed, Voicemail and Abandoned, worded apart from the dialler’s Abandoned', () => {
+    expect(CALL_LOG_INBOUND_OUTCOME_OPTIONS.map((o) => o.value)).toEqual(['missed', 'voicemail', 'abandoned_in_queue']);
+    expect(callLogOutcomeFilterLabel('missed')).toBe('Missed');
+    expect(callLogOutcomeFilterLabel('abandoned_in_queue')).toBe('Abandoned (hung up while waiting)');
+    expect(callLogOutcomeFilterLabel('abandoned')).toBe('Abandoned (no agent free)');
+    expect(callLogOutcomeFilterLabel('connected')).toBe('Connected');
+  });
+});
+
+describe('how an inbound row reads', () => {
+  it('its own fact is that the customer rang us', () => {
+    expect(callLogTypeFacts(ANSWERED)).toEqual(['rang us']);
+    expect(callLogBadges(ANSWERED)).toEqual([]);
+    expect(isNotDialled(ANSWERED)).toBe(false);
+  });
+
+  it('answered: Answered, with the wait and whether they came through their own agent', () => {
+    expect(isMissedInbound(ANSWERED)).toBe(false);
+    expect(callLogWhatHappened(ANSWERED)).toEqual({ text: 'Answered', key: 'connected', detail: 'waited 0:18 · came through their agent' });
+    expect(callLogWhatHappened({ ...ANSWERED, via_sticky_agent: false }).detail).toBe('waited 0:18');
+    expect(inboundAgentCopy(ANSWERED)).toEqual({ text: 'Priya Nair', muted: false });
+    expect(inboundAgentCopy({ ...ANSWERED, agent_name: null })).toEqual({ text: 'Former member', muted: true });
+    expect(callLogOutcomePlaceholder({ ...ANSWERED, requires_disposition: true })).toBe('No outcome yet');
+  });
+
+  it('missed: Missed, with why in the Missed list’s words and the wait when the caller queued', () => {
+    expect(isMissedInbound(MISSED)).toBe(true);
+    expect(callLogWhatHappened(MISSED)).toEqual({ text: 'Missed', key: 'missed', detail: 'nobody free to answer · waited 1:40' });
+    const abandoned = { ...MISSED, wait_seconds: 52, follow_up: { ...MISSED.follow_up!, reason: 'abandoned_in_queue' as const } };
+    expect(callLogWhatHappened(abandoned).detail).toBe('hung up while waiting · 0:52');
+    // Out of hours: answered with a message, never queued, so no wait is claimed.
+    const closed = { ...MISSED, queued: false, follow_up: { ...MISSED.follow_up!, reason: 'closed' as const, closed_cause: 'hours' as const } };
+    expect(callLogWhatHappened(closed).detail).toBe('out of hours');
+    expect(callLogWhatHappened({ ...closed, follow_up: { ...closed.follow_up, closed_cause: 'switched_off' as const } }).detail).toBe('inbound switched off');
+  });
+
+  it('a missed call’s Agent cell is a dash, with who it is assigned to under it', () => {
+    expect(inboundAgentCopy(MISSED)).toEqual({ text: '—', muted: true, detail: 'assigned to Arjun Mehta' });
+    expect(inboundAgentCopy({ ...MISSED, follow_up: { ...MISSED.follow_up!, assignee_name: null } }).detail).toBe('assigned to a former member');
+    expect(inboundAgentCopy({ ...MISSED, follow_up: { ...MISSED.follow_up!, assignee_user_id: null, assignee_name: null } })).toEqual({ text: '—', muted: true });
+  });
+
+  it('a missed call’s Outcome cell says where its follow-up stands', () => {
+    expect(followUpCopy(MISSED)).toEqual({ calledBack: null, status: 'To follow up', open: true });
+    const calledBack = { ...MISSED, called_back: { call_id: 'm-9', at: '2026-11-22T15:31:00.000Z' } };
+    // Rung back and still open: both are said, and the row keeps its actions.
+    expect(followUpCopy(calledBack)).toEqual({ calledBack: 'Called back 3:31 pm', status: 'To follow up', open: true });
+    const handled = { ...MISSED.follow_up!, status: 'handled' as const, handled_reason: 'marked' as const, handled_at: '2026-11-22T16:00:00.000Z' };
+    expect(followUpCopy({ ...MISSED, follow_up: handled })).toEqual({ calledBack: null, status: 'Handled', open: false });
+    expect(followUpCopy({ ...MISSED, follow_up: { ...handled, handled_reason: 'reached' } }).status).toBe('Customer reached');
+    // Closed and rung back: the call back says it.
+    expect(followUpCopy({ ...calledBack, follow_up: { ...handled, handled_reason: 'reached' } })).toEqual({ calledBack: 'Called back 3:31 pm', status: null, open: false });
+    // A call back on a later day says the day too.
+    expect(followUpCopy({ ...MISSED, called_back: { call_id: 'm-9', at: '2026-11-23T09:05:00.000Z' } }).calledBack).toMatch(/^Called back 23 Nov 2026/);
+  });
+
+  it('opens the inbound Call page of its campaign, whatever the soft phone’s flag', () => {
+    expect(callLogRowPath(ANSWERED, 'c-1', { softphoneEnabled: false })).toBe('/agency/campaigns/c-1/calls/inbound/i-1');
+  });
+});
+
+describe('a missed call and its call back', () => {
+  const callBack = { ...SOFT_ROW, callback_of: { inbound_call_id: 'i-2', arrived_at: '2026-11-22T15:12:00.000Z' } };
+  const missed = { ...MISSED, called_back: { call_id: 'm-9', at: '2026-11-22T15:31:00.000Z' } };
+
+  it('the soft-phone call stays a soft-phone call, marked as the call back to the missed call (CL1)', () => {
+    expect(callBack.type).toBe('soft_phone');
+    expect(callBackFact(callBack)).toBe('Call back · to the 3:12 pm missed call');
+    expect(callLogTypeFacts(callBack)).toEqual(['Call back · to the 3:12 pm missed call']);
+    // The missed call's row has gone (retention): still a call back, to a call we can no longer time.
+    expect(callBackFact({ ...callBack, callback_of: { inbound_call_id: 'i-2', arrived_at: null } })).toBe('Call back · to a missed call');
+    expect(callBackFact(SOFT_ROW)).toBeNull();
+    expect(callLogTypeFacts(SOFT_ROW)).toEqual([]);
+  });
+
+  it('each names the other row, so hovering one lights the other', () => {
+    expect(pairedRowKey(callBack)).toBe(callLogRowKey(missed));
+    expect(pairedRowKey(missed)).toBe(callLogRowKey(callBack));
+    expect(pairedRowKey(SOFT_ROW)).toBeNull();
+    expect(pairedRowKey(MISSED)).toBeNull();
+    expect(pairedRowKey(DIAL)).toBeNull();
+  });
+
+  it('a dial stopped because the customer rang us says so', () => {
+    const stopped = { ...DIAL, disposition_code: 'inbound_call' };
+    expect(stoppedByInbound(stopped)).toBe(true);
+    expect(callLogWhatHappened(stopped)).toEqual({ text: 'Stopped: customer rang us', key: 'canceled' });
+    expect(stoppedByInbound(DIAL)).toBe(false);
+    expect(callLogWhatHappened(DIAL).text).toBe('Stopped by us before answer');
   });
 });

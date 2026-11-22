@@ -14,7 +14,7 @@ import type {
   AgencyContactFilters,
   AgencyRosterContactsPage,
 } from '../types/agency-spine';
-import type { AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter } from '../types/agency-call-log';
+import type { AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter, AgencyInboundCallLogDetail } from '../types/agency-call-log';
 
 /**
  * The attempt spine, through the server's `/proxy/agency`.
@@ -296,6 +296,46 @@ export async function fetchAgencyAttemptRecordingBlobUrl(
     return outcome;
   }
 
+  const blob = await res.blob();
+  const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
+  trackAgencyRecordingOutcome({ status: 'ok' });
+  return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
+}
+
+/**
+ * One inbound call of a campaign, for its Call page (`docs/call-log.md`): the Call log's row, the
+ * caller's path, and the media leg in the attempt detail's envelope. `agency.supervise`.
+ */
+export async function getInboundCallLogDetail(
+  campaignId: string,
+  callId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyInboundCallLogDetail> {
+  return apiFetch<AgencyInboundCallLogDetail>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log/inbound/${callId}`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/** An inbound call's recording, fetched with the caller's token and played as a blob URL, as an attempt's is. */
+export async function fetchInboundCallRecordingBlobUrl(
+  campaignId: string,
+  callId: string,
+  tenantId: string,
+  accountId?: string,
+): Promise<RecordingOutcome> {
+  const url = `${AGENCY_BASE}/campaigns/${campaignId}/call-log/inbound/${callId}/recording`;
+  const headers = await buildAuthHeaders(tenantId, accountId);
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    captureApiError(url, res);
+    const outcome = await recordingRefusal(res);
+    if (outcome.status !== 'ready') trackAgencyRecordingOutcome({ status: outcome.status });
+    return outcome;
+  }
   const blob = await res.blob();
   const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
   trackAgencyRecordingOutcome({ status: 'ok' });
