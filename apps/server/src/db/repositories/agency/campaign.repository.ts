@@ -558,6 +558,28 @@ export class AgencyCampaignRepository {
     return outcome;
   }
 
+  /**
+   * Campaign templates (CT16): record a template applied to a DRAFT campaign of the tenant and
+   * account in its `template_source` (0067). Not a PATCH column: the record is the server's to
+   * write, after the apply's PATCH has written the settings. Only while the campaign is still a
+   * draft and not archived (an apply never touches anything else); null when no row matched.
+   * Nothing the pacing reads changes, so nothing is announced.
+   */
+  async setDraftTemplateSource(
+    id: string,
+    scope: { tenantId: string; accountId: string },
+    source: AgencyCampaignTemplateSource,
+  ): Promise<AgencyCampaignRecord | null> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `UPDATE agency_campaigns SET template_source = $4::jsonb, updated_at = now()
+        WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid
+          AND status = 'draft' AND archived_at IS NULL
+        RETURNING *`,
+      [id, scope.tenantId, scope.accountId, JSON.stringify(source)],
+    );
+    return rows[0] ?? null;
+  }
+
   /** Supervisor dashboard payload; see {@link campaignStats}. */
   async stats(...args: Parameters<typeof campaignStats>): ReturnType<typeof campaignStats> {
     return campaignStats(...args);

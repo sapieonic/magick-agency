@@ -470,6 +470,7 @@ const EXPECTED_TEMPLATE_ROUTES = [
   'GET /proxy/agency/campaign-templates/:id/versions/:n',
   'GET /proxy/agency/campaign-templates/effective',
   'POST /proxy/agency/campaign-templates',
+  'POST /proxy/agency/campaign-templates/:id/apply',
   'POST /proxy/agency/campaign-templates/:id/archive',
   'POST /proxy/agency/campaign-templates/:id/default',
   'POST /proxy/agency/campaign-templates/:id/restore',

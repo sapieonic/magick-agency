@@ -133,6 +133,7 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['DELETE /proxy/agency/campaign-templates/:_/default', 'campaign templates: no default (console caller lands in step 3)'],
   ['POST /proxy/agency/campaign-templates/:_/archive', 'campaign templates: archive (console caller lands in step 3)'],
   ['POST /proxy/agency/campaign-templates/:_/restore', 'campaign templates: restore (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates/:_/apply', 'campaign templates: apply to draft campaigns, CT16 (console caller lands in step 3)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */
