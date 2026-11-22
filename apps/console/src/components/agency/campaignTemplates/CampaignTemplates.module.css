@@ -396,3 +396,7 @@
 .result[data-result='refused'] {
   color: var(--danger);
 }
+
+.plain {
+  margin: 0;
+}

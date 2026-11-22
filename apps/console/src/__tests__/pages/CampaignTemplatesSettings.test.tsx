@@ -631,6 +631,93 @@ describe('apply to draft campaigns (C7)', () => {
     expect(screen.getByTestId('apply-results')).toBeTruthy();
   });
 
+  it('says why a refused campaign was not changed, from the refusal’s details (U3)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    mocks.applyCampaignTemplate.mockResolvedValue({
+      template: { id: 'acc-1', name: 'Pune collections', version: 4 },
+      results: [{
+        campaign_id: 'c-1', result: 'refused', code: 'campaign_rejected', message: 'The campaign’s settings refused this change.', status: 400,
+        details: { calling_window_end: 'The end must be after the start', 'agent_script.opening': 'The script uses {emi}, which is not a fact on the card.' },
+      }],
+    });
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }));
+    fireEvent.click(within(dialog).getByTestId('apply-preview'));
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId('apply-confirm'));
+    await act(async () => {});
+    const results = screen.getByTestId('apply-results');
+    expect(results.textContent).toContain('Diwali renewals: Not changed. The campaign’s settings refused this change.');
+    expect([...within(results).getByTestId('apply-refusal-c-1').querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'The end must be after the start.',
+      'The script uses {emi}, which is not a fact on the card.',
+    ]);
+    // Said, and the focus moves to the results (U12).
+    expect(screen.getByTestId('apply-summary').getAttribute('role')).toBe('status');
+    expect(screen.getByTestId('apply-summary').textContent).toBe('1 campaign not changed.');
+    expect(document.activeElement).toBe(screen.getByTestId('apply-summary'));
+  });
+
+  it('selects no section when the template sets none, and never offers numbers it does not set (U3)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1' ? { ...DETAIL, sections: {}, sections_set: [] } : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    const boxes = within(within(dialog).getByRole('group', { name: 'Sections to apply' })).getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes.filter((b) => b.checked)).toEqual([]);
+    expect(within(dialog).queryByRole('checkbox', { name: 'Numbers to call from' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }));
+    // Nothing chosen: nothing to see.
+    expect((within(dialog).getByTestId('apply-preview') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('offers numbers when the template sets them', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    const numbers = { caller_ids: ['+912200000001'], telephony_provider: 'voicelink', telephony_credential_id: null };
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1' ? { ...DETAIL, sections: { ...DETAIL.sections, numbers }, sections_set: ['hours', 'numbers'] } : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    expect((within(dialog).getByRole('checkbox', { name: 'Numbers to call from' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('shows a refusal of the whole apply with its details as sentences (U3)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    mocks.applyCampaignTemplate.mockRejectedValue(apiError(400, {
+      code: 'campaign_template_invalid', message: 'This apply cannot be made.', details: { sections: 'This template does not set numbers, so they cannot be applied' },
+    }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }));
+    fireEvent.click(within(dialog).getByTestId('apply-preview'));
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId('apply-confirm'));
+    await act(async () => {});
+    const error = screen.getByTestId('apply-error');
+    expect(error.textContent).toContain('This apply cannot be made.');
+    expect(error.textContent).toContain('This template does not set numbers, so they cannot be applied.');
+  });
+
+  it('forgets a preview that lands after the dialog was closed (U10)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    let land: (v: unknown) => void = () => {};
+    mocks.getEffectiveCampaignTemplate.mockImplementation(() => new Promise((resolve) => { land = resolve; }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    let dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }));
+    fireEvent.click(within(dialog).getByTestId('apply-preview'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => {
+      land(effective());
+    });
+    dialog = await openApply();
+    expect(within(dialog).queryByTestId('apply-preview-list')).toBeNull();
+    expect(within(dialog).queryByTestId('apply-confirm')).toBeNull();
+    expect((within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it('says which account’s drafts change on the organisation’s page', async () => {
     mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
     mocks.listAgencyCampaigns.mockResolvedValue([]);

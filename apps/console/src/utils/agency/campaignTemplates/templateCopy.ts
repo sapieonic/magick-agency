@@ -199,3 +199,33 @@ export function templateRefusal(err: unknown, fallback: string): string {
       return err instanceof Error && err.message ? err.message : fallback;
   }
 }
+
+/** `text` as a sentence: trimmed, with a full stop unless it already ends one. */
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/**
+ * A refusal's field details (`{ field: message }`, a list of messages, or such a map nested) as
+ * sentences, each once, in order. The server's field messages are plain words; their keys are
+ * field paths and are not shown.
+ */
+export function detailSentences(details: unknown): string[] {
+  const out: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === 'string') {
+      if (value.trim() !== '') out.push(asSentence(value));
+    } else if (Array.isArray(value)) value.forEach(walk);
+    else if (value !== null && typeof value === 'object') Object.values(value).forEach(walk);
+  };
+  walk(details);
+  return [...new Set(out)];
+}
+
+/** The field details of a refused request (the body's `details`, `ApiError.details.details`) as sentences. */
+export function refusalDetails(err: unknown): string[] {
+  const body = (err as { details?: unknown } | null)?.details;
+  const details = body !== null && typeof body === 'object' ? (body as { details?: unknown }).details : undefined;
+  return details !== null && typeof details === 'object' ? detailSentences(details) : [];
+}
