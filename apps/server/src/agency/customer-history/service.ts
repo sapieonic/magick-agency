@@ -82,7 +82,7 @@ export async function loadCustomerSummary(
   }
   const userIds = summaryUserIds({ contacts, stats, lastPlaced, liveCalls, dnc });
   const [bookingRows, uploads, names] = await Promise.all([
-    repo.latestBookings(scope, awaiting),
+    repo.latestBookings(scope, phone, awaiting),
     repo.uploads(scope, [...uploadCampaigns]),
     agentNamesOrNone(userIds, tenantId, 'customer history'),
   ]);

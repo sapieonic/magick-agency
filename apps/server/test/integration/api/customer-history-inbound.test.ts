@@ -22,6 +22,7 @@ import type { PoolClient } from 'pg';
  *  - every filter on an inbound call; the summary's inbound totals, live call and filter options;
  *    a callback booked on an inbound call; the audit's count; the export's rows;
  *  - the dialer flag as the data boundary (CH2) and inbound's own flag hiding nothing;
+ *  - the summary's open callback names who booked it when it was booked on an inbound call;
  *  - every inbound statement planned on `idx_agency_inbound_calls_from` (0071).
  */
 
@@ -45,6 +46,8 @@ import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 
 const NUMBER = '+919876500001';
 const OTHER_NUMBER = '+919876500002';
+/** A number whose contact waits on a callback booked on an inbound call. */
+const NUMBER_CB = '+919876500003';
 const RUNG = '+918000000009';
 const DAY = 86_400_000;
 const T0 = new Date(Date.now() - 20 * DAY);
@@ -67,7 +70,8 @@ const ids = {
   rejected: randomUUID(), live: randomUUID(), arrived: randomUUID(), withheld: randomUUID(), otherNumber: randomUUID(),
   inB: randomUUID(), foreign: randomUUID(), noAccount: randomUUID(),
   tieInbound: randomUUID(), tieInbound2: randomUUID(), tieAttempt: randomUUID(), tieManual: randomUUID(),
-  callBack: randomUUID(), leg: randomUUID(),
+  callBack: randomUUID(), leg: randomUUID(), liveB: randomUUID(),
+  cbContact: randomUUID(), cbManual: randomUUID(), cbInbound: randomUUID(),
 };
 
 type Entry = Record<string, any>;
@@ -228,6 +232,34 @@ beforeAll(async () => {
   await inbound(ids.foreign, at(11 * DAY), { tenant_id: other.tenant, account_id: other.account, ...answeredBy(at(11 * DAY), other.agents[0]!.id) });
   await inbound(ids.noAccount, at(12 * DAY), { account_id: null, ...missed('closed', 'open', at(12 * DAY)), closed_cause: 'no_route', settled_at: at(12 * DAY) });
 
+  // Live in the other account too: a tenant-level caller's alone.
+  await inbound(ids.liveB, at(19 * DAY + 2000), {
+    account_id: accountB, state: 'queued', outcome: null, ended_at: null, queued_at: at(19 * DAY + 3000),
+    campaign_id: campaignB, campaign_source: 'route',
+  });
+
+  // ── A contact waiting on a callback booked on an inbound call (as `settleFromInbound` leaves it) ──
+  // An older callback booked on a soft-phone call by agent 1, then the customer rang, agent 0
+  // answered and booked the callback the contact now waits on.
+  await insert('agency_contacts', {
+    id: ids.cbContact, tenant_id: floor.tenant, account_id: floor.account, campaign_id: C0, phone_e164: NUMBER_CB,
+    context: JSON.stringify({ Name: 'Ravi Kumar' }), created_at: T0, state: 'pending', last_outcome: 'connected',
+    last_disposition: 'callback', next_attempt_at: new Date(Date.now() + DAY),
+  });
+  await insert('agency_manual_calls', {
+    id: ids.cbManual, tenant_id: floor.tenant, account_id: floor.account, session_id: await softphoneSession(floor.account, a1),
+    agent_user_id: a1, caller_id: '+919000000001', destination_e164: NUMBER_CB, state: 'ended', outcome: 'connected', campaign_id: C0,
+    contact_id: ids.cbContact, disposition_code: 'callback', disposition_source: 'campaign', callback_at: at(5 * DAY),
+    dispositioned_at: at(3 * DAY + 60_000), dialed_at: at(3 * DAY), ended_at: at(3 * DAY + 50_000), settled_at: at(3 * DAY + 60_000),
+    created_at: at(3 * DAY),
+  });
+  await inbound(ids.cbInbound, at(8 * DAY), {
+    from_e164: NUMBER_CB, ...answeredBy(at(8 * DAY), a0), matched_contact_id: ids.cbContact, matched_campaign_id: C0,
+    campaign_id: C0, campaign_source: 'contact', disposition_code: 'callback', disposition_source: 'campaign',
+    callback_at: new Date(Date.now() + DAY), dispositioned_at: at(8 * DAY + 200_000), dispositioned_by_user_id: a0,
+    settled_at: at(8 * DAY + 200_000),
+  });
+
   // ── One instant, three kinds, and two inbound calls on it ──
   const tie = at(14 * DAY);
   await inbound(ids.tieInbound, tie, { ...missed('abandoned_in_queue', 'handled', tie, { handled_reason: 'marked' }), queued_at: tie, settled_at: tie });
@@ -291,6 +323,20 @@ describe('which inbound calls are in a number\'s history (CL39)', () => {
     expect(body.summary.open.live_calls).toEqual([
       { channel: 'inbound', campaign: null, agent: null, started_at: at(19 * DAY).toISOString() },
     ]);
+  });
+
+  it('a live call in another account is a tenant-level caller\'s alone, and gone with that account\'s dialler off (CH2)', async () => {
+    const liveOf = async (actor: Actor) => (await search(actor)).summary.open.live_calls.map((l: Entry) => l.started_at);
+    const [mine, theirs] = [at(19 * DAY).toISOString(), at(19 * DAY + 2000).toISOString()];
+    expect(await liveOf(sup())).toEqual([mine]);
+    expect(await liveOf(owner)).toEqual([theirs, mine]);
+    await setFlag('agency_dialer_enabled', accountB, false);
+    try {
+      expect(await liveOf(owner)).toEqual([mine]);
+    } finally {
+      await setFlag('agency_dialer_enabled', accountB, null);
+    }
+    expect(await liveOf(owner)).toEqual([theirs, mine]);
   });
 
   it('the repository reads nothing with no visible account', async () => {
@@ -452,6 +498,28 @@ describe('a callback booked on an inbound call', () => {
   });
 });
 
+describe('the summary\'s open callback, booked on an inbound call', () => {
+  it('names who booked it: the agent who saved the inbound call\'s outcome, not the booker of an older callback', async () => {
+    const body = await search(sup(), NUMBER_CB);
+    expect(body.summary.open.callbacks).toHaveLength(1);
+    expect(body.summary.open.callbacks[0]).toMatchObject({
+      contact_id: ids.cbContact, disposition_code: 'callback',
+      booked_by: { user_id: agent(0).id, name: expect.any(String) },
+    });
+    // Its name comes with the booking: the same person the timeline's callback entry names.
+    const entry = body.timeline.entries.find((e: Entry) => e.key === `callback:${ids.cbInbound}`);
+    expect(entry.booked_by).toEqual(body.summary.open.callbacks[0].booked_by);
+  });
+
+  it('the repository reads the booking only in the accounts it is given', async () => {
+    const repo = agencyCustomerHistoryRepository;
+    const mine = await repo.latestBookings({ tenantId: floor.tenant, accountIds: [floor.account] }, NUMBER_CB, [ids.cbContact]);
+    expect(mine.map((b) => b.booked_by_user_id)).toEqual([agent(0).id]);
+    // Another account's scope never reads account A's inbound call: the soft-phone booking is not its either.
+    expect(await repo.latestBookings({ tenantId: floor.tenant, accountIds: [accountB] }, NUMBER_CB, [ids.cbContact])).toEqual([]);
+  });
+});
+
 describe('audit (CH10) and export', () => {
   it('the audit\'s result count is every entry the caller can see, inbound calls among them', async () => {
     const body = await search(sup());
@@ -571,6 +639,7 @@ describe('every inbound read uses idx_agency_inbound_calls_from (CH9, CL41)', ()
       ['callStats', CUSTOMER_HISTORY_SQL.callStats, [floor.tenant, NUMBER, accounts]],
       ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [floor.tenant, NUMBER, accounts]],
       ['pageCallbacks', CUSTOMER_HISTORY_SQL.pageCallbacks, page],
+      ['latestBookings', CUSTOMER_HISTORY_SQL.latestBookings, [floor.tenant, accounts, [ids.contact], NUMBER]],
     ]);
     for (const [name, plan] of plans) {
       // The live arm may come from an index of live calls alone (every call still on, or the

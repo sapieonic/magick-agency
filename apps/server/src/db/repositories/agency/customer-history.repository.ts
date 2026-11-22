@@ -276,7 +276,7 @@ export interface CustomerHistoryCallStatsRow {
 }
 
 export interface CustomerHistoryLastPlacedRow {
-  channel: 'campaign' | 'softphone' | 'inbound';
+  channel: 'campaign' | 'softphone';
   id: string;
   dialed_at: Date;
   agent_user_id: string | null;
@@ -580,11 +580,14 @@ export const CUSTOMER_HISTORY_SQL = {
        AND i.state <> 'ended' AND i.state <> 'arrived'`,
 
   /**
-   * Who booked each contact's latest callback (campaign or soft phone), with their name: by
-   * contact id (`uq_agency_attempt_number`, `idx_agency_manual_calls_contact_history`), the
-   * name by primary key under `findDisplayNamesInTenant`'s rule (display name trimmed, else
+   * Who booked each contact's latest callback (campaign, soft phone or inbound), with their
+   * name: by contact id (`uq_agency_attempt_number`, `idx_agency_manual_calls_contact_history`),
+   * and, for a callback booked on an inbound call that matched the contact (`settleFromInbound`
+   * settles the contact with it), the number's inbound calls (`idx_agency_inbound_calls_from`:
+   * a matched contact carries the caller's number, and nothing indexes `matched_contact_id`).
+   * The name by primary key under `findDisplayNamesInTenant`'s rule (display name trimmed, else
    * email; only a user with a membership in the tenant who is not deleted), so the search needs
-   * no second name lookup. $1 tenant, $2 accounts, $3 contact ids.
+   * no second name lookup. $1 tenant, $2 accounts, $3 contact ids, $4 the number.
    */
   latestBookings: `
     SELECT b.contact_id, b.booked_by_user_id,
@@ -603,7 +606,13 @@ export const CUSTOMER_HISTORY_SQL = {
       SELECT m.contact_id, COALESCE(m.dispositioned_by_user_id, m.agent_user_id), ${BOOKED('m')}, m.id
         FROM agency_manual_calls m
        WHERE m.contact_id = ANY($3::uuid[]) AND m.callback_at IS NOT NULL
-         AND m.tenant_id = $1::uuid AND m.account_id = ANY($2::uuid[])) x
+         AND m.tenant_id = $1::uuid AND m.account_id = ANY($2::uuid[])
+      UNION ALL
+      SELECT i.matched_contact_id, COALESCE(i.dispositioned_by_user_id, i.answered_by_user_id),
+             ${BOOKED('i', 'arrived_at')}, i.id
+        FROM agency_inbound_calls i
+       WHERE i.tenant_id = $1::uuid AND i.account_id = ANY($2::uuid[]) AND i.from_e164 = $4::text
+         AND i.matched_contact_id = ANY($3::uuid[]) AND i.callback_at IS NOT NULL) x
      ORDER BY x.contact_id, x.booked DESC, x.id DESC) b`,
 
   /** Every DNC entry covering the number that the caller may see: `idx_dnc_entries_tenant_phone`. $1 tenant, $2 phone, $3 accounts. */
@@ -877,9 +886,10 @@ export class AgencyCustomerHistoryRepository {
     return read(CUSTOMER_HISTORY_SQL.liveCalls, numberParams(scope, phone));
   }
 
-  async latestBookings(scope: CustomerHistoryScope, contactIds: readonly string[]): Promise<CustomerHistoryBookingRow[]> {
+  /** `phone` is the number searched, which every one of `contactIds` carries: the inbound arm reads its calls by it. */
+  async latestBookings(scope: CustomerHistoryScope, phone: string, contactIds: readonly string[]): Promise<CustomerHistoryBookingRow[]> {
     if (noIds(scope.accountIds) || noIds(contactIds)) return [];
-    return read(CUSTOMER_HISTORY_SQL.latestBookings, idParams(scope, contactIds));
+    return read(CUSTOMER_HISTORY_SQL.latestBookings, [...idParams(scope, contactIds), phone]);
   }
 
   /** Every DNC entry covering the number the caller may see; tenant-wide ones even with no visible account. */

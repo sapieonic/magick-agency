@@ -475,13 +475,13 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
   });
 
   it('who booked a contact\'s callback', async () => {
-    expect(await repo.latestBookings(onlyA(), [ids.cAr]))
+    expect(await repo.latestBookings(onlyA(), NUMBER, [ids.cAr]))
       .toEqual([{ contact_id: ids.cAr, booked_by_user_id: agent(0).id, booked_by_name: 'agent 0.0' }]);
     // Asked for B's contact under A's scope: nothing.
     await q(`UPDATE agency_call_attempts SET callback_at = now() WHERE id = $1`, [ids.bA1]);
     try {
-      expect(await repo.latestBookings(onlyA(), [ids.cB])).toEqual([]);
-      expect(await repo.latestBookings(both(), [ids.cB])).toHaveLength(1);
+      expect(await repo.latestBookings(onlyA(), NUMBER, [ids.cB])).toEqual([]);
+      expect(await repo.latestBookings(both(), NUMBER, [ids.cB])).toHaveLength(1);
     } finally {
       await q(`UPDATE agency_call_attempts SET callback_at = NULL WHERE id = $1`, [ids.bA1]);
     }
@@ -490,7 +490,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
   it('the booker\'s name comes with the booking, by agentNamesOrNone\'s rule: display name, else email; never a deleted user or a stranger to the tenant', async () => {
     const booker = async (userId: string) => {
       await q('UPDATE agency_call_attempts SET dispositioned_by_user_id = $2 WHERE id = $1', [ids.a3, userId]);
-      return (await repo.latestBookings(onlyA(), [ids.cAr]))[0];
+      return (await repo.latestBookings(onlyA(), NUMBER, [ids.cAr]))[0];
     };
     const blank = await user('agent', floor.account, 'Blank');
     await q(`UPDATE users SET display_name = '  ' WHERE id = $1`, [blank.id]);
@@ -561,7 +561,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       expect(await repo.callStats(onlyA(), NUMBER)).toMatchObject({ call_entries: 11, callback_entries: 1, calls: 11 });
       expect(await countCustomerEntries(await resolveViewer(sup().id, floor.tenant), floor.tenant, NUMBER)).toBe(ENTRIES_ONLY_A);
       expect((await repo.lastPlaced(onlyA(), NUMBER))?.id).toBe(ids.m1);
-      expect(await repo.latestBookings(onlyA(), [ids.cA])).toEqual([]);
+      expect(await repo.latestBookings(onlyA(), NUMBER, [ids.cA])).toEqual([]);
       const booking = [{ id: ids.a3, at: at(26 * DAY).toISOString().replace('Z', '000Z') }];
       expect((await repo.callbackNext(onlyA(), NUMBER, booking)).get(ids.a3)).toBeNull();
       // Read with B visible, they are there: the rows are real, the scope is what hid them.
@@ -1170,7 +1170,7 @@ describe('every read uses its index (CH9)', () => {
   });
 
   it('who booked a callback: attempts and soft-phone calls by contact', async () => {
-    const plan = await planOf(CUSTOMER_HISTORY_SQL.latestBookings, [floor.tenant, accounts(), [ids.cA, ids.cAr]]);
+    const plan = await planOf(CUSTOMER_HISTORY_SQL.latestBookings, [floor.tenant, accounts(), [ids.cA, ids.cAr], NUMBER]);
     expect(plan).toContain('uq_agency_attempt_number');
     expect(plan).toContain('idx_agency_manual_calls_contact_history');
     noFullScan(plan);

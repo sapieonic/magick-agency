@@ -332,6 +332,7 @@ export interface CustomerHistoryTotals {
    * Absent from a server that predates inbound calls in the history.
    */
   inbound?: { calls: number; answered: number };
+  /** The newest call we PLACED to the number: its `channel` is never `inbound` (CL40). */
   last_contacted: {
     at: string;
     channel: CustomerTimelineChannel;
