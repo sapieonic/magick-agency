@@ -33,10 +33,15 @@ interface CallingHoursFieldsProps {
   errors: ConfigFieldErrors;
   /** Injectable for tests; the echo is clock-derived. */
   now?: Date;
+  /**
+   * `false` leaves the calling days out, for a page that offers them its own way (the campaign
+   * setup's day pills, CS11). Shown by default.
+   */
+  days?: boolean;
 }
 
 /** When the campaign may dial: the window, its timezone, the days, and the echo. */
-export function CallingHoursFields({ window: state, onChange, errors, now }: CallingHoursFieldsProps) {
+export function CallingHoursFields({ window: state, onChange, errors, now, days: showDays = true }: CallingHoursFieldsProps) {
   const setWindow = (patch: Partial<CallingWindowState>) => onChange({ ...state, ...patch });
 
   const toggleDay = (iso: number) => {
@@ -90,20 +95,22 @@ export function CallingHoursFields({ window: state, onChange, errors, now }: Cal
         </div>
       </div>
 
-      <fieldset className={styles.days} aria-describedby={errors.describedBy('calling_days')}>
-        <legend className={styles.legend}>Calling days</legend>
-        {DAYS.map((day) => (
-          <label key={day.iso} className={styles.day}>
-            <input
-              type="checkbox"
-              checked={state.days.includes(day.iso)}
-              onChange={() => toggleDay(day.iso)}
-            />
-            {day.label}
-          </label>
-        ))}
-        {errors.render('calling_days')}
-      </fieldset>
+      {showDays ? (
+        <fieldset className={styles.days} aria-describedby={errors.describedBy('calling_days')}>
+          <legend className={styles.legend}>Calling days</legend>
+          {DAYS.map((day) => (
+            <label key={day.iso} className={styles.day}>
+              <input
+                type="checkbox"
+                checked={state.days.includes(day.iso)}
+                onChange={() => toggleDay(day.iso)}
+              />
+              {day.label}
+            </label>
+          ))}
+          {errors.render('calling_days')}
+        </fieldset>
+      ) : null}
 
       {/* The echo — an inverted range is invisible in a pair of time inputs. */}
       <p className={styles.echo} data-testid="calling-window-echo">
