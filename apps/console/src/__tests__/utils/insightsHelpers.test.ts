@@ -120,6 +120,11 @@ describe('drill-down links', () => {
     expect(attemptsLink('c1')).toBe('/agency/campaigns/c1/attempts?placed=1&type=dialler');
   });
 
+  it('opens on every call type only when asked: Compare agents’ next steps take soft-phone calls too (CP2)', () => {
+    expect(attemptsLink('c1', { type: 'all', agent_user_id: 'u1' })).toBe('/agency/campaigns/c1/attempts?agent_user_id=u1&placed=1');
+    expect(attemptsLink('c1', { type: 'dialler', agent_user_id: 'u1' })).toBe('/agency/campaigns/c1/attempts?agent_user_id=u1&placed=1&type=dialler');
+  });
+
   it('opens the Call log on its Dialler chip, whatever the filter: every figure that links here is the dialler’s alone (SR1)', () => {
     // The Call log lists every call type (CL11). Without the chip, the soft-phone calls logged
     // to the campaign that match the same filters would be in the list and in its count.

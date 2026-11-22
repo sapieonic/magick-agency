@@ -165,11 +165,13 @@ The mobile app does not read this route, so its Dart wire types are unchanged
 - **Export CSV** downloads what the list shows: its filters, **its dates** (a tip says so: the
   file of a live campaign's opening view is today's calls), its status, and with a chip on that
   type (`source`).
-- **Drill-downs land on the Dialler chip.** Every Insights and Compare agents figure that opens
-  this page counts the dialler's dials alone (SR1), so `attemptsLink`
-  (`utils/agency/insights/links.ts`) always sets `type=dialler`. Without it the list would also
-  hold the soft-phone calls that match the same filters, and its count would not be the number
-  clicked. A contact's "all calls" link sets no type: that list is every call to the contact.
+- **Drill-downs land on the Dialler chip.** Every Insights figure that opens this page counts the
+  dialler's dials alone (SR1), so `attemptsLink` (`utils/agency/insights/links.ts`) sets
+  `type=dialler`. Without it the list would also hold the soft-phone calls that match the same
+  filters, and its count would not be the number clicked. Compare agents' next steps ("Listen to
+  Priya's calls ending in will pay") are not counts, and its metrics take soft-phone calls too
+  (CP2), so they pass `type: 'all'` and open on every call type. A contact's "all calls" link sets
+  no type: that list is every call to the contact.
 - **The counts are asked for when they could have changed** (a filter, a status, Refresh), not
   when only the chip did: they are of every type whatever chip is on.
 - `/agency/campaigns/:id/manual-calls` redirects (replace) to `/attempts?type=soft_phone`. The
