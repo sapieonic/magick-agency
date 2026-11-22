@@ -297,9 +297,30 @@ export interface AgencySoftphoneSettings {
 /** `PUT /settings`: replaces the whole row. `agency.softphone.manage`. */
 export type AgencySoftphoneSettingsUpdateRequest = Omit<AgencySoftphoneSettings, 'updated_at'>;
 
+/**
+ * What untagged calls' outcomes follow while the soft phone sets none of its own
+ * (`disposition_catalog: []`) and campaign templates are on for the account
+ * (`docs/campaign-templates.md` CT11): the outcomes of the account's default template chain,
+ * read live at each call. `template` is the account's default template, else the
+ * organisation's (`scope` says which), or `null` when neither has one: the built-in outcomes.
+ * `catalog` is the list untagged calls are saved against now (a template's empty list reads
+ * as the built-in one), the bootstrap's `untagged.disposition_catalog`.
+ */
+export interface AgencySoftphoneOutcomesFollow {
+  template: { id: string; name: string; version: number; scope: 'organisation' | 'account' } | null;
+  catalog: AgencyDisposition[];
+}
+
 /** `GET /settings` and `PUT /settings`. */
 export interface AgencySoftphoneSettingsResponse {
   settings: AgencySoftphoneSettings;
+  /**
+   * The settings page's "Follow campaign template (<name>)" (CT11): what untagged outcomes
+   * follow, or `null` when the soft phone sets its own (`settings.disposition_catalog` not
+   * empty) or campaign templates are off for the account ("Set for the soft phone", or the
+   * built-in outcomes as before).
+   */
+  outcomes_follow: AgencySoftphoneOutcomesFollow | null;
 }
 
 // ─── The manual call, on the wire ───────────────────────────────────────────
