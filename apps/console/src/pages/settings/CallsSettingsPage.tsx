@@ -193,12 +193,21 @@ export default function CallsSettingsPage() {
                 ) : null}
               </span>
             </li>
-          ) : (
+          ) : inboundOn ? (
             <li className={styles.check} data-kind="ready" data-testid="calls-check-inbound">
               <Check size={16} aria-hidden="true" />
               <span className={styles.checkBody}>
                 <span className={styles.srOnly}>{COPY.ready}: </span>
                 {COPY.inboundReady}
+              </span>
+            </li>
+          ) : (
+            // Inbound is off for the account: the server counts none of its routes (CL18).
+            <li className={styles.check} data-kind="info" data-testid="calls-check-inbound">
+              <Info size={16} aria-hidden="true" />
+              <span className={styles.checkBody}>
+                <span className={styles.srOnly}>{COPY.note}: </span>
+                {COPY.inboundOff}
               </span>
             </li>
           )}

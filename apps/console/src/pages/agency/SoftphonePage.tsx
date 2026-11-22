@@ -19,6 +19,7 @@ import { useAgencyStation } from '../../hooks/useAgencyStation';
 import { useServerClock } from '../../hooks/useServerClock';
 import { useSoftphone } from '../../hooks/useSoftphone';
 import { hasPermission } from '../../utils/permissions';
+import { usePermission } from '../../hooks/usePermission';
 import { audioTarget } from '../../utils/softphone/audioTarget';
 import { refusalCopy } from '../../utils/softphone/refusalCopy';
 import { readSoftphonePrefill } from '../../utils/softphone/prefill';
@@ -260,6 +261,7 @@ function SoftphoneConsole({
     [audio.muted, audio.sending, audio.toggleMute, resumeAudio, preflightOnce],
   );
 
+  const supervises = usePermission('agency.supervise');
   const sp = useSoftphone({
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
@@ -275,6 +277,7 @@ function SoftphoneConsole({
     presetNumber: prefill?.number ?? null,
     presetCampaignId: prefill?.campaignId ?? null,
     presetCallbackOf: prefill?.inboundCallId ?? null,
+    supervises,
   });
 
   const [closeOpen, setCloseOpen] = useState(false);

@@ -141,6 +141,35 @@ describe('every call must be saved to a work', () => {
     expect(screen.queryByTestId('log-to-select')).toBeNull();
   });
 
+  it('a supervisor with no work running is told there is none, not to ask a supervisor', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...REQUIRED, taggable_campaigns: [] });
+    await mount({ supervises: true });
+    expect(screen.getByTestId('softphone-no-work').textContent).toBe('No work is running in this account, so no call can be made.');
+    expect(screen.queryByTestId('dial-card')).toBeNull();
+  });
+
+  // A Missed call's Call back fills the pad as a redial does.
+  it('a Call back of a call saved to no work, or to one that cannot be chosen, leaves the box empty and says why', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: 'camp-gone' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+919820461733');
+    expect(select().value).toBe('');
+    expect(screen.getByTestId('log-to-note').textContent).toBe('This call was not saved to any work. Choose one to call again.');
+    fireEvent.change(select(), { target: { value: 'camp-1' } });
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
+  it('a Call back of a call saved to a work the agent can choose keeps it, with no line; nor is there one while the rule is off', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: 'camp-1' });
+    expect(select().value).toBe('camp-1');
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+    cleanup();
+    api.getSoftphoneBootstrap.mockResolvedValue(BOOTSTRAP);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: null });
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
   it('a redial of a call saved to no work leaves the box empty and says why; choosing one clears the line', async () => {
     api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
     await mount();

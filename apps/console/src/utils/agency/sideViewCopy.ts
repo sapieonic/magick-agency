@@ -77,6 +77,8 @@ export const SIDE_COPY = {
   chooseWorkHint: 'Choose the work to save this call to.',
   noRunningWorkTitle: 'You are not in any work that is running, so you cannot dial.',
   noRunningWorkBody: 'Ask your supervisor to add you to one.',
+  // A supervisor may save a call to any work that is running: for them there is simply none.
+  noRunningWorkAnywhere: 'No work is running in this account, so no call can be made.',
   redialNoWork: 'This call was not saved to any work. Choose one to call again.',
   // A call from a customer, saved under a work (docs/call-log.md §5).
   filedUnder: 'Filed under',

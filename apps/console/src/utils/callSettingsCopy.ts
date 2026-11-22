@@ -16,7 +16,7 @@ export const CALL_SETTINGS_COPY = {
   softphoneReady: 'Soft phone: agents will be asked to choose a campaign.',
   softphoneOn: 'Soft phone: agents are asked to choose a campaign before they dial.',
   inboundReady: 'Inbound: every inbound number has a campaign for unknown callers.',
-  inboundNone: 'Inbound: there are no inbound numbers set up yet. Each one will need a campaign for unknown callers.',
+  inboundOff: 'Inbound: inbound calls are not switched on for this account, so its inbound numbers are not checked.',
   chooseCampaign: 'Choose a campaign',
   openCampaigns: 'Open campaigns',
   confirmBody: 'From now, no call can be made or saved without a campaign.',

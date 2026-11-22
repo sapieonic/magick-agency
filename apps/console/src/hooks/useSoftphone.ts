@@ -142,6 +142,11 @@ export interface UseSoftphoneOptions {
    * the agent changes the number on the pad (the server checks the same thing).
    */
   presetCallbackOf?: string | null;
+  /**
+   * The user may save a call to any work of the account that is running (`agency.supervise`):
+   * with none to choose from, the pad says there is none, not "ask your supervisor".
+   */
+  supervises?: boolean;
   /** Which host this is, for copy and analytics. */
   surface: 'softphone_page' | 'station';
   /** The agent's cue volume (0–100), for the ringback. */
@@ -224,8 +229,10 @@ export interface SoftphoneState {
   taggableCampaigns: AgencySoftphoneCampaign[];
   /** The account asks for a work on every call (`docs/call-log.md` §5): none is not a choice. */
   campaignRequired: boolean;
-  /** `campaignRequired` and nothing to save a call to: the pad gives way to "ask your supervisor". */
+  /** `campaignRequired` and nothing to save a call to: the pad gives way to what to do about it. */
   noWorkToDial: boolean;
+  /** What that card says: an agent asks their supervisor; a supervisor is told no work is running. */
+  noWorkCopy: { title: string; body: string | null };
   /** A line under "Save this call to": why it was left empty; null when there is nothing to say. */
   setupNote: string | null;
   /** The draft's tag before dialling; the call's tag once dialled. */
@@ -342,6 +349,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     presetCampaignId = null,
     presetNumber = null,
     presetCallbackOf = null,
+    supervises = false,
     surface,
     cueVolume = 70,
     enabled = true,
@@ -597,7 +605,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     callbackOfRef.current = presetCallbackOf ? { inboundCallId: presetCallbackOf, number: filled } : null;
     setNumberState(filled);
     setFocusCallToken((n) => n + 1);
-  }, [bootstrap, presetNumber, presetCallbackOf, call, finishOnly]);
+    // The missed call was saved to no work, or to one that cannot be chosen here: with every
+    // call needing one, the box is empty and says why, as after a redial.
+    const tagOk = presetCampaignId !== null && bootstrap.taggable_campaigns.some((c) => c.campaign_id === presetCampaignId);
+    if (bootstrap.campaign_required === true && !tagOk) setSetupNote(SIDE_COPY.redialNoWork);
+  }, [bootstrap, presetNumber, presetCallbackOf, presetCampaignId, call, finishOnly]);
 
   /**
    * The field set arriving after the call (a reload where the `manual_call` frame
@@ -1169,6 +1181,9 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     taggableCampaigns,
     campaignRequired,
     noWorkToDial,
+    noWorkCopy: supervises
+      ? { title: SIDE_COPY.noRunningWorkAnywhere, body: null }
+      : { title: SIDE_COPY.noRunningWorkTitle, body: SIDE_COPY.noRunningWorkBody },
     setupNote,
     tagCampaignId,
     setTagCampaignId,

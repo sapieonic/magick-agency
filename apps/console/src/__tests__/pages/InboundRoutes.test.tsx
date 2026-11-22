@@ -328,6 +328,8 @@ describe('the route editor: Campaign for unknown callers', () => {
     const card = screen.getByTestId('inbound-route-unknown-callers');
     expect(within(card).getByLabelText('Campaign for unknown callers')).toBe(field());
     expect(card.textContent).toContain('Callers whose number is not on any list are filed under this campaign and use its outcomes.');
+    // CL8: it is not completed when its list runs out, and the editor says so.
+    expect(card.textContent).toContain('The campaign stays running while it is chosen here, even when nobody is left to dial.');
     expect([...field().options].map((o) => o.textContent)).toEqual(['No campaign', 'Renewals']);
     expect(field().value).toBe('');
     expect(screen.queryByTestId('inbound-default-campaign-required')).toBeNull();

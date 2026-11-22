@@ -319,8 +319,8 @@ export function SoftphoneScreen({
           // Every call must be saved to a work and this agent is in none that is running: nothing
           // to dial from, so the pad gives way to what to do about it (docs/call-log.md §5).
           <section className={styles.card} role="status" data-testid="softphone-no-work">
-            <p className={side.reason}>{SIDE_COPY.noRunningWorkTitle}</p>
-            <p className={side.hint}>{SIDE_COPY.noRunningWorkBody}</p>
+            <p className={side.reason}>{sp.noWorkCopy.title}</p>
+            {sp.noWorkCopy.body ? <p className={side.hint}>{sp.noWorkCopy.body}</p> : null}
           </section>
         ) : (
           <DialCard sp={sp} connection={connection} numberInputRef={numberInputRef} callButtonRef={callButtonRef} inboundNote={inboundNote} />

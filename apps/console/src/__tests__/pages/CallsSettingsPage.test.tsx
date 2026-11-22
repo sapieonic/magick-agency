@@ -203,6 +203,17 @@ describe('Settings → Calls', () => {
     expect(within(inbound).queryByRole('link')).toBeNull();
   });
 
+  // CL18: with inbound off the server counts none of the account's inbound numbers, so nothing
+  // holds the switch. The page says so, not that every number is ready.
+  it('with inbound off for the account, the inbound line says its numbers are not checked, and the switch is free', async () => {
+    mocks.flags = { agency_inbound_enabled: false };
+    await renderPage();
+    const inbound = screen.getByTestId('calls-check-inbound');
+    expect(inbound.getAttribute('data-kind')).toBe('info');
+    expect(inbound.textContent).toContain('Inbound: inbound calls are not switched on for this account, so its inbound numbers are not checked.');
+    expect(theSwitch().disabled).toBe(false);
+  });
+
   it('is an account admin’s: anyone below reads nothing and nothing is asked of the server', async () => {
     mocks.role = 'operator';
     await renderPage();

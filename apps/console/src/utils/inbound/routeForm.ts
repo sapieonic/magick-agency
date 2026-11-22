@@ -245,7 +245,8 @@ export const UNKNOWN_CALLERS_FIELD = {
   title: 'Unknown callers',
   label: 'Campaign for unknown callers',
   required: '(required)',
-  hint: 'Callers whose number is not on any list are filed under this campaign and use its outcomes.',
+  hint: 'Callers whose number is not on any list are filed under this campaign and use its outcomes. '
+    + 'The campaign stays running while it is chosen here, even when nobody is left to dial.',
   none: 'No campaign',
   choose: 'Choose a campaign',
   missing: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',

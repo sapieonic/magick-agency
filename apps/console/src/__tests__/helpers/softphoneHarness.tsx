@@ -39,6 +39,7 @@ export interface HarnessProps {
   presetCampaignId?: string | null;
   presetNumber?: string | null;
   presetCallbackOf?: string | null;
+  supervises?: boolean;
   audioState?: SoftphoneAudio;
   startAllowed?: boolean;
   fromCampaign?: boolean;
@@ -53,6 +54,7 @@ export function Harness({
   presetCampaignId = null,
   presetNumber = null,
   presetCallbackOf = null,
+  supervises = false,
   audioState = audio,
   startAllowed = true,
   fromCampaign = false,
@@ -72,6 +74,7 @@ export function Harness({
     presetCampaignId,
     presetNumber,
     presetCallbackOf,
+    supervises,
     startAllowed,
   });
   return (
