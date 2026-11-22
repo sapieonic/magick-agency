@@ -8,7 +8,8 @@
  *
  *  - {@link builtinTemplateSections}: every section as a campaign create stores it when the field
  *    is omitted, from the contract's constants (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS` and its
- *    neighbours). The server and the console pass this one object; neither keeps a copy.
+ *    neighbours), except the time zone: New campaign's `AGENCY_NEW_CAMPAIGN_TIMEZONE`, not the
+ *    column's `UTC` (CT18). The server and the console pass this one object; neither keeps a copy.
  *  - {@link resolveTemplateSections}: CT2 and CT5. Per section, the chosen template, then (for an
  *    account template) the organisation template it follows, then built-in; the first that sets a
  *    section wins it whole. A flag-gated section whose feature is off is built-in; recording asked
@@ -37,6 +38,7 @@
  */
 import {
   AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
+  AGENCY_NEW_CAMPAIGN_TIMEZONE,
   AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_ORGANISATION_EXCLUDED_FIELDS,
@@ -126,7 +128,7 @@ const BUILTIN: CompleteTemplateSections = deepFreeze({
     calling_window_start: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start,
     calling_window_end: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end,
     calling_days: [...AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_days],
-    default_timezone: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.default_timezone,
+    default_timezone: AGENCY_NEW_CAMPAIGN_TIMEZONE,
   },
   wrapup: {
     wrapup_seconds: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.wrapup_seconds,

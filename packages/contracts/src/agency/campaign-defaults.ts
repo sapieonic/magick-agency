@@ -189,3 +189,12 @@ export const AGENCY_CAMPAIGN_COLUMN_DEFAULTS = Object.freeze({
   record_calls: false,
   inbound_sticky_enabled: true,
 } as const);
+
+/**
+ * The time zone New campaign starts on, and so the built-in `hours` section of campaign
+ * templates (`docs/campaign-templates.md` CT18). It differs on purpose from the column DEFAULT
+ * (`UTC`, {@link AGENCY_CAMPAIGN_COLUMN_DEFAULTS}): the console has always started a campaign in
+ * India time, and a template's built-in settings are what a supervisor sees in New campaign
+ * today. An API create that omits the hours still stores `UTC` while the templates flag is off.
+ */
+export const AGENCY_NEW_CAMPAIGN_TIMEZONE = 'Asia/Kolkata';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
+  AGENCY_NEW_CAMPAIGN_TIMEZONE,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CONTACT_ASSIGNMENT_DEFAULTS,
@@ -99,7 +100,7 @@ describe('builtinTemplateSections', () => {
         calling_window_start: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start,
         calling_window_end: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end,
         calling_days: [...AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_days],
-        default_timezone: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.default_timezone,
+        default_timezone: AGENCY_NEW_CAMPAIGN_TIMEZONE,
       },
       wrapup: { wrapup_seconds: 30, wrapup_auto_return: true, allow_wrapup_redial: false },
       breaks: { break_reasons: [] },

@@ -8,7 +8,7 @@ import {
   type AgencyRetryRule,
 } from '../types/agency-campaign';
 import { hhmm } from './format/weekdays';
-import type { AgencyDispositionOverride } from '@magick-agency/contracts/agency';
+import { AGENCY_NEW_CAMPAIGN_TIMEZONE, type AgencyDispositionOverride } from '@magick-agency/contracts/agency';
 import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from './agency/abandonmentCeiling';
 import { dispositionLabel } from './agencySpineCopy';
@@ -199,7 +199,7 @@ function cloneDisposition(entry: AgencyDispositionEntry): AgencyDispositionEntry
 export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   dispositions: DEFAULT_DISPOSITIONS.map(cloneDisposition),
   retryPolicy: {},
-  window: { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5], timezone: 'Asia/Kolkata' },
+  window: { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5], timezone: AGENCY_NEW_CAMPAIGN_TIMEZONE },
   wrapupSeconds: 30,
   autoReturn: true,
   allowWrapupRedial: false,

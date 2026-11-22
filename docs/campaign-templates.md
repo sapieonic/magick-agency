@@ -44,6 +44,7 @@ feature is **Campaign templates** and "the default template" is what a new campa
 | CT15 | Numbers | The `numbers` section (`caller_ids`, `telephony_provider`, `telephony_credential_id`) exists on account templates only. Filling in drops numbers that are no longer usable by the account or carrier (with a note), and the create path judges the carrier and numbers as it does today | default |
 | CT16 | Apply to drafts | A template can be applied, on purpose, to chosen **draft** campaigns of the same account: chosen sections are written through the campaign PATCH path (its checks and audit), and `template_source` is updated. A campaign that is not a draft is refused for that campaign only. Never automatic, never a running campaign | default |
 | CT17 | Flag | `agency_campaign_templates_enabled` (`global`, `tenant`), client-exposed, off by default. Off: every template route answers 403 `feature_disabled`, New campaign starts as before, CT8 and CT11 do not apply | default |
+| CT18 | Built-in time zone | The built-in `hours` section is New campaign's start, `Asia/Kolkata` (`AGENCY_NEW_CAMPAIGN_TIMEZONE`), not the column's `UTC`, so a supervisor with no template sees the New campaign of today. With the flag on, a create that leaves the hours out stores `Asia/Kolkata` (CT8); with it off, `UTC` as before | default |
 
 ## 3. Sections
 
