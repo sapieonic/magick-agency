@@ -35,7 +35,7 @@ import {
   sameBreakLimits,
   type BreakReasonsForm,
 } from '../breakLimits';
-import { scriptPlaceholdersFor } from '@magick-agency/domain/fact-fields';
+import { scriptPlaceholdersFor, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
 import {
   dailyTargetError,
   listed,
@@ -150,6 +150,40 @@ export function templateScriptKeys(): string[] {
 export function templateUnknownKeysMessage(tokens: readonly string[]): string {
   const keys = listed(templateScriptKeys().map((key) => `{${key}}`));
   return `The script uses ${listed(tokens)}, which a template cannot fill in. Use only ${keys}.`;
+}
+
+/** Said wherever a copy of a campaign leaves its script out ({@link templateSectionsFromCampaign}). */
+export const SCRIPT_LEFT_OUT_NOTE =
+  'This campaign’s script uses facts from its roster card, which a template cannot hold, so the template leaves the script out.';
+
+/** Whether a stored script uses a key a template's script may not (a card's fact, U2). */
+function usesCardKeys(script: unknown): boolean {
+  const s = (script ?? {}) as { opening?: unknown; steps?: unknown };
+  const texts = [
+    ...(typeof s.opening === 'string' ? [s.opening] : []),
+    ...(Array.isArray(s.steps) ? s.steps.map((step) => (step as { text?: unknown } | null)?.text).filter((t): t is string => typeof t === 'string') : []),
+  ];
+  const keys = templateScriptKeys();
+  return texts.some((text) => unknownPlaceholdersIn(text, keys).length > 0);
+}
+
+/**
+ * A campaign's settings as a `scope` template copies them (Save as template, Copy from a campaign,
+ * New template › A copy of a campaign): `sectionsFromCampaign`, except that a script using keys a
+ * template may not hold (a card's facts) is left out of "What agents see", which keeps the number
+ * display and the target (a field a section leaves out is built-in: no script). The server would
+ * refuse the script, and a template never holds card keys (U2). `scriptLeftOut` says so.
+ */
+export function templateSectionsFromCampaign(
+  campaign: Parameters<typeof sectionsFromCampaign>[0],
+  scope: AgencyCampaignTemplateScope,
+  keys: readonly AgencyCampaignTemplateSectionKey[],
+): { sections: AgencyCampaignTemplateSections; scriptLeftOut: boolean } {
+  const sections = sectionsFromCampaign(campaign, scope, keys);
+  const screen = sections.agent_screen as Record<string, unknown> | undefined;
+  if (!screen || !usesCardKeys(screen.agent_script)) return { sections, scriptLeftOut: false };
+  const { agent_script: _left, ...rest } = screen;
+  return { sections: { ...sections, agent_screen: rest } as AgencyCampaignTemplateSections, scriptLeftOut: true };
 }
 
 /** What would stop a template's script saving, keyed by its field path. */

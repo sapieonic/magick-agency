@@ -8,7 +8,7 @@ import {
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { diffSections, sectionKeysSet, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
+import { diffSections, sectionKeysSet } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { createCampaignTemplate, replaceCampaignTemplate } from '../../../api/campaignTemplates';
 import { errorCode } from '../../../utils/agencyErrors';
@@ -16,9 +16,11 @@ import {
   filledConfig,
   formOfConfig,
   organisationRecording,
+  SCRIPT_LEFT_OUT_NOTE,
   sectionOfPath,
   sectionsOfForm,
   templateFormErrors,
+  templateSectionsFromCampaign,
   withSectionFrom,
   type TemplateForm,
 } from '../../../utils/agency/campaignTemplates/templateForm';
@@ -72,6 +74,8 @@ export function useTemplateEditor({
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   /** Remounts the outcome editors after their list is replaced (a copy, Discard). */
   const [epoch, setEpoch] = useState(0);
+  /** What a copy of a campaign left out, said above the cards until Discard (U2). */
+  const [notice, setNotice] = useState<string | null>(start?.note ?? null);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -162,7 +166,8 @@ export function useTemplateEditor({
   /** "Copy from a campaign…": every shown section set from the campaign's settings. */
   const copyCampaign = (campaign: AgencyCampaign) => {
     if (!form) return;
-    const copied = sectionsFromCampaign(campaign, scope, visible);
+    const { sections: copied, scriptLeftOut } = templateSectionsFromCampaign(campaign, scope, visible);
+    setNotice(scriptLeftOut ? SCRIPT_LEFT_OUT_NOTE : null);
     const copiedForm = formOfConfig(filledConfig(scope, copied, inherited));
     let next = form;
     for (const key of visible) next = withSectionFrom(next, copiedForm, key);
@@ -181,6 +186,7 @@ export function useTemplateEditor({
     setFieldErrors({});
     setSaveError(null);
     setNameError(null);
+    setNotice(null);
     setEpoch((n) => n + 1);
   };
 
@@ -278,6 +284,7 @@ export function useTemplateEditor({
     summaryOf,
     inheritLabel,
     epoch,
+    notice,
     dirty,
     blocked: Object.keys(liveErrors).length > 0,
     shownErrors: { ...liveErrors, ...fieldErrors },

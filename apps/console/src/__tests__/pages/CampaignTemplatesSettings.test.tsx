@@ -507,6 +507,30 @@ describe('the editor', () => {
     expect(keys).toContain('numbers');
   });
 
+  it('copies a campaign whose script uses its card’s facts without the script, and says so (U2)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'c-1', name: 'Diwali renewals', status: 'running', phone_display: 'masked', caller_ids: ['+912200000001'],
+      agent_script: { opening: 'Your EMI {emi} is due' }, context_display: { facts: [{ key: 'emi', column: 'EMI', label: 'EMI' }] },
+    });
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy from a campaign…' }));
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText('Campaign'), { target: { value: 'c-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy settings' }));
+    await act(async () => {});
+    expect(screen.getByTestId('template-notice').textContent).toBe('This campaign’s script uses facts from its roster card, which a template cannot hold, so the template leaves the script out.');
+    const card = screen.getByTestId('template-section-agent_screen');
+    expect(card.getAttribute('data-set')).toBe('true');
+    expect(card.getAttribute('data-invalid')).toBeNull();
+    expect(screen.getByTestId('template-summary-agent_screen').textContent).toBe('Hidden number · No daily target · No script');
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const saved = mocks.replaceCampaignTemplate.mock.calls[0]![2].sections.agent_screen;
+    expect(saved.phone_display).toBe('masked');
+    expect(saved.agent_script ?? {}).toEqual({});
+  });
+
   it('names the numbers group, and lists the current version once in History (C12)', async () => {
     mocks.listCampaignTemplateVersions.mockResolvedValue([
       { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
@@ -643,6 +667,26 @@ describe('new template (C6, C12)', () => {
     expect(body.sections.wrapup!.wrapup_seconds).toBe(90);
     expect(body.sections).not.toHaveProperty('assignment');
     expect(body.sections).not.toHaveProperty('inbound');
+  });
+
+  it('copies a campaign whose script uses its card’s facts without the script, and says so in the editor (U2)', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'c-1', name: 'Diwali renewals', status: 'running', caller_ids: ['+912200000001'],
+      agent_script: { opening: 'Your EMI {emi} is due' }, context_display: { facts: [{ key: 'emi', column: 'EMI', label: 'EMI' }] },
+    });
+    await openNew();
+    fireEvent.click(screen.getByRole('radio', { name: /A copy of a campaign/ }));
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText('Campaign to copy'), { target: { value: 'c-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.getByTestId('template-notice').textContent).toBe('This campaign’s script uses facts from its roster card, which a template cannot hold, so the template leaves the script out.');
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const body = mocks.createCampaignTemplate.mock.calls[0]![0] as { sections: Record<string, Record<string, unknown>> };
+    expect(body.sections.agent_screen!.agent_script ?? {}).toEqual({});
   });
 
   it('copies an account template into an organisation one without the account’s parts', async () => {

@@ -8,19 +8,20 @@ import {
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSummary,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { createCampaignTemplate, replaceCampaignTemplate } from '../../../api/campaignTemplates';
 import { trackAgencyCampaignSavedAsTemplate } from '../../../analytics/events';
 import { templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { SCRIPT_LEFT_OUT_NOTE, templateSectionsFromCampaign } from '../../../utils/agency/campaignTemplates/templateForm';
 import { errorCode } from '../../../utils/agencyErrors';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import styles from './CampaignTemplates.module.css';
 
 /**
  * Campaign Settings' "Save as template…": the campaign's saved settings as a new template, or in
- * place of an existing template's sections (`sectionsFromCampaign`; an organisation template
- * leaves out the account's numbers and summary profile, CT5). The replace sends the version the
+ * place of an existing template's sections (`templateSectionsFromCampaign`; an organisation template
+ * leaves out the account's numbers and summary profile, CT5, and any template a script using the
+ * card's facts, U2, which the dialog says). The replace sends the version the
  * list showed (`expected_version`), so a save made in between is refused rather than overwritten;
  * "Reload the latest version" then reads the list again (`onReload`) and the dialog stays open on
  * the newer version (C7).
@@ -59,6 +60,8 @@ export function SaveAsTemplateDialog({
   const [stale, setStale] = useState(false);
   const replacing = templates.find((t) => t.id === replaceId) ?? null;
   const ready = mode === 'new' ? name.trim().length > 0 : replacing !== null;
+  // The scope does not change what happens to the script: test it once, as an account template.
+  const { scriptLeftOut } = templateSectionsFromCampaign(campaign, 'account', sections);
 
   const save = async () => {
     setBusy(true);
@@ -70,7 +73,7 @@ export function SaveAsTemplateDialog({
             scope,
             name: name.trim(),
             description: description.trim() === '' ? null : description.trim(),
-            sections: sectionsFromCampaign(campaign, scope, sections),
+            sections: templateSectionsFromCampaign(campaign, scope, sections).sections,
           },
           tenantId ?? undefined,
           accountId ?? undefined,
@@ -84,7 +87,7 @@ export function SaveAsTemplateDialog({
             name: replacing.name,
             description: replacing.description,
             based_on_template_id: replacing.based_on?.id ?? null,
-            sections: sectionsFromCampaign(campaign, replacing.scope, sections),
+            sections: templateSectionsFromCampaign(campaign, replacing.scope, sections).sections,
             expected_version: replacing.version,
           },
           tenantId ?? undefined,
@@ -189,6 +192,11 @@ export function SaveAsTemplateDialog({
           ) : null}
         </div>
       )}
+      {scriptLeftOut ? (
+        <p className={styles.muted} data-testid="save-as-template-script-note">
+          {SCRIPT_LEFT_OUT_NOTE}
+        </p>
+      ) : null}
       {stale && replacing ? (
         <div className={styles.banner} role="alert" data-testid="save-as-template-stale">
           <p>{`Someone else saved “${replacing.name}” after this list was read. Nothing was replaced.`}</p>

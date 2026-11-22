@@ -125,6 +125,12 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
         <ErrorAlert message={editor.saveError} />
       ) : null}
 
+      {editor.notice ? (
+        <p className={styles.banner} role="status" data-testid="template-notice">
+          {editor.notice}
+        </p>
+      ) : null}
+
       {historyOpen && template ? (
         <section className={styles.card} aria-label="History">
           <h2 className={styles.cardTitle}>History</h2>

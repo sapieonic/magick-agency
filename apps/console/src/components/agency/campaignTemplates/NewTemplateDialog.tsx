@@ -12,6 +12,7 @@ import { getAgencyCampaign } from '../../../api/agencyCampaigns';
 import { getCampaignTemplate } from '../../../api/campaignTemplates';
 import { collectionsStarterNames, collectionsStarterOutcomes } from '../../../utils/agency/collectionsStarter';
 import { templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { SCRIPT_LEFT_OUT_NOTE, templateSectionsFromCampaign } from '../../../utils/agency/campaignTemplates/templateForm';
 import { useAccountCampaigns } from './useAccountCampaigns';
 import styles from './CampaignTemplates.module.css';
 
@@ -21,6 +22,8 @@ export interface NewTemplateStart {
   name?: string;
   description?: string | null;
   basedOnId?: string | null;
+  /** Said at the top of the editor: what the copy left out (U2). */
+  note?: string;
 }
 
 type Choice = 'builtin' | 'collections' | 'template' | 'campaign';
@@ -95,7 +98,8 @@ export function NewTemplateDialog({
         });
       } else {
         const campaign = await getAgencyCampaign(campaignId, tenantId ?? undefined, accountId ?? undefined);
-        onStart({ sections: sectionsFromCampaign(campaign, scope, sections), name: campaign.name });
+        const copied = templateSectionsFromCampaign(campaign, scope, sections);
+        onStart({ sections: copied.sections, name: campaign.name, ...(copied.scriptLeftOut ? { note: SCRIPT_LEFT_OUT_NOTE } : {}) });
       }
     } catch (err) {
       setError(templateRefusal(err, 'Could not read what to copy.'));

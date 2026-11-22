@@ -174,6 +174,56 @@ describe('campaign Settings’ template line', () => {
     expect(mocks.replaceCampaignTemplate.mock.calls[1]![2].expected_version).toBe(6);
   });
 
+  describe('a campaign whose script uses its card’s facts (U2)', () => {
+    const FACTS_CAMPAIGN = {
+      ...CAMPAIGN,
+      phone_display: 'masked',
+      daily_target_calls: 90,
+      agent_script: { opening: 'Namaste {name}, your EMI {emi} is due.', steps: [{ text: 'Ask for {branch}' }] },
+      context_display: { facts: [{ key: 'emi', column: 'EMI', label: 'EMI' }, { key: 'branch', column: 'Branch', label: 'Branch' }] },
+    } as unknown as AgencyCampaign;
+
+    it('saves “What agents see” without the script as a new template, and says so', async () => {
+      await renderIt(FACTS_CAMPAIGN);
+      fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+      await act(async () => {});
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).getByTestId('save-as-template-script-note').textContent).toBe('This campaign’s script uses facts from its roster card, which a template cannot hold, so the template leaves the script out.');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+      await act(async () => {});
+      const [body] = mocks.createCampaignTemplate.mock.calls[0]!;
+      expect(body.sections.agent_screen).toEqual({ phone_display: 'masked', daily_target_calls: 90 });
+      expect(body.sections.hours.calling_window_start).toBe('11:00:00');
+    });
+
+    it('replaces an existing template’s sections without the script too', async () => {
+      await renderIt(FACTS_CAMPAIGN);
+      fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+      await act(async () => {});
+      const dialog = screen.getByRole('dialog');
+      fireEvent.click(within(dialog).getByRole('radio', { name: 'The settings of an existing template' }));
+      fireEvent.change(within(dialog).getByLabelText('Template'), { target: { value: 'tp-1' } });
+      expect(within(dialog).getByTestId('save-as-template-script-note')).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Replace its settings' }));
+      await act(async () => {});
+      const [, , body] = mocks.replaceCampaignTemplate.mock.calls[0]!;
+      expect(body.sections.agent_screen).toEqual({ phone_display: 'masked', daily_target_calls: 90 });
+    });
+
+    it('keeps a script that uses only the keys a template may hold, and says nothing', async () => {
+      await renderIt({ ...FACTS_CAMPAIGN, agent_script: { opening: 'Namaste {name}, {amount_due} is due on {due_date}.' } } as AgencyCampaign);
+      fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+      await act(async () => {});
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).queryByTestId('save-as-template-script-note')).toBeNull();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+      await act(async () => {});
+      expect(mocks.createCampaignTemplate.mock.calls[0]![0].sections.agent_screen.agent_script).toEqual({
+        opening: 'Namaste {name}, {amount_due} is due on {due_date}.',
+      });
+    });
+  });
+
   it('shows nothing to a role that cannot create campaigns (`agency.campaigns.write`)', async () => {
     mocks.tenant = { ...mocks.tenant, role: 'operator' };
     await renderIt();
