@@ -123,6 +123,8 @@ beforeEach(() => {
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1', accountId: 'account-1', role: 'agent', accountResolution: 'ready', accountError: null, reloadAccounts: vi.fn(),
   });
+  // Reset, not only cleared: an answer a test queued and never used must not reach the next one.
+  mocks.getMyCalls.mockReset();
   mocks.getMyCalls.mockResolvedValue(page([ANSWERED, SOFT, DIALLER]));
   mocks.getMyCampaigns.mockResolvedValue([
     { campaign_id: 'c-1', campaign_name: 'Diwali EMI Collections', campaign_status: 'running', assigned_at: 'x', unassigned_at: null, active: true },
