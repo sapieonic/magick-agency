@@ -19,6 +19,7 @@ import type {
   AgencyUploadResponse,
 } from '../types/agency-campaign';
 import type { AgencyRetrySelector } from '../types/agency-spine';
+import type { AgencyCampaignCreateRequest } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 /**
  * Campaign CRUD and roster ingest, all through the server's `/proxy/agency`.
@@ -342,8 +343,13 @@ export async function getAgencyCampaign(
   return apiFetch<AgencyCampaign>(`${AGENCY_BASE}/campaigns/${id}`, {}, tenantId, accountId);
 }
 
+/**
+ * Create a campaign (`POST /proxy/agency/campaigns`). With campaign templates on, the body may name
+ * `template_id` (null for the built-in settings): the server fills the sections it leaves out from
+ * that template and records where each came from (`template_source`, CT8, CT9).
+ */
 export async function createAgencyCampaign(
-  body: Partial<AgencyCampaign>,
+  body: AgencyCampaignCreateRequest,
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyCampaign> {
