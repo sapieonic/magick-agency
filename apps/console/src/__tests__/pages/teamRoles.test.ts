@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PERMISSIONS, ROLES, canManageRole, hasPermission, type Permission, type Role } from '@magick-agency/contracts/rbac';
+import { PERMISSIONS, ROLES, ROLE_HIERARCHY, canManageRole, hasPermission, type Permission, type Role } from '@magick-agency/contracts/rbac';
 import { CHANGE_ROLES, INVITE_ROLES, ROLE_DESCRIPTIONS } from '../../pages/team/teamRoles';
 
 /**
@@ -40,6 +40,11 @@ const CLAIMS: Array<{ phrase: RegExp; truth: (role: Role) => boolean }> = [
   },
   { phrase: /invites people/, truth: (r) => holds(r, 'user.invite') },
   { phrase: /create accounts/, truth: (r) => holds(r, 'account.create') },
+  // Organisation templates need tenant_admin or above as well as the permission (CT3).
+  {
+    phrase: /keep the organisation’s campaign templates/,
+    truth: (r) => holds(r, 'agency.campaign_templates.manage') && ROLE_HIERARCHY[r] >= ROLE_HIERARCHY.tenant_admin,
+  },
   { phrase: /change people’s roles and remove them/, truth: (r) => holds(r, 'user.update_role', 'user.remove') },
   { phrase: /Everything a supervisor does/, truth: (r) => covers(r, 'account_admin') },
   { phrase: /Everything an admin does/, truth: (r) => covers(r, 'tenant_admin') },
