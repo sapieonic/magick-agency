@@ -167,8 +167,9 @@ export const AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT = 3;
  * account), the calling hours (09:00 to 20:00, Monday to Friday, in UTC; `HH:MM:SS`, as Postgres
  * renders a `TIME`), the wrap-up window and its two switches, recording, and inbound sticky
  * routing. Campaign templates' built-in settings are read from here
- * (`docs/campaign-templates.md` §5), so a campaign made from no template is the campaign a create
- * makes today.
+ * (`docs/campaign-templates.md` §5), except the time zone: their built-in hours are New campaign's
+ * `AGENCY_NEW_CAMPAIGN_TIMEZONE` (CT18), not this `UTC`, which a create that omits the hours stores
+ * only with the templates flag off.
  *
  * One declaration: the server's create path, its config validator's base and the Insights
  * "hours never set" check import it, and a server integration test pins every value to the

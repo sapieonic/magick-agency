@@ -1,5 +1,5 @@
 /**
- * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT17): which campaign fields
+ * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT18): which campaign fields
  * belong to which section of a template. ONE declaration; nothing else lists them (§3). The
  * server's template routes, the create path's fill-in, the domain rules
  * (`packages/domain/src/campaign-templates.ts`) and the console's editors all read this map.
@@ -99,10 +99,24 @@ export const AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS = {
 } as const satisfies Partial<Record<AgencyCampaignTemplateSectionKey, AgencyFlagKey>>;
 
 /**
+ * The section fields where `null` is a setting, each a nullable `agency_campaigns` column:
+ * `analysis_profile_id` (no call summary), `daily_target_calls` (no target),
+ * `telephony_credential_id` (the service's own carrier account). Every other section field is a
+ * NOT NULL column, so a template that sets it to `null` is refused
+ * (`campaign_template_section_invalid`, keyed by the field): leaving the field out is how a section
+ * takes its built-in value. A server integration test pins this list to the columns'
+ * `is_nullable`.
+ */
+export const AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS = [
+  'analysis_profile_id',
+  'daily_target_calls',
+  'telephony_credential_id',
+] as const satisfies readonly AgencyCampaignTemplateField[];
+
+/**
  * Section `K`'s values as a template stores them: every field optional (absent = its built-in
- * value; see the module note), never `undefined`. A nullable campaign field stays nullable where
- * `null` means something (`daily_target_calls`: no target; `analysis_profile_id`: no summary;
- * `telephony_credential_id`: the service's own account).
+ * value; see the module note), never `undefined`. `null` is a value only on
+ * {@link AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS}.
  */
 export type AgencyCampaignTemplateSectionValues<K extends AgencyCampaignTemplateSectionKey> = {
   [F in AgencyCampaignTemplateSectionField<K>]?: Exclude<AgencyCampaign[F], undefined>;

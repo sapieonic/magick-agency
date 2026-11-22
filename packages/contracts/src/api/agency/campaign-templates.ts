@@ -1,5 +1,5 @@
 /**
- * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT17): the console wire shapes of
+ * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT18): the console wire shapes of
  * `/proxy/agency/campaign-templates/*` (§6) and what a campaign records of the template it was
  * made from (`template_source`, CT9).
  *
@@ -47,6 +47,7 @@ export {
   AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_NOTE_CODES,
+  AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS,
   AGENCY_CAMPAIGN_TEMPLATE_ORGANISATION_EXCLUDED_FIELDS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_SOURCES,
@@ -71,6 +72,12 @@ export const AGENCY_CAMPAIGN_TEMPLATE_NAME_MAX = 80;
 export const AGENCY_CAMPAIGN_TEMPLATE_DESCRIPTION_MAX = 280;
 /** The most draft campaigns one apply names (CT16). */
 export const AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS = 50;
+/**
+ * A template's `sections`, serialised as JSON, are at most this many bytes (UTF-8); a larger save
+ * is refused `400 campaign_template_invalid` with `details.sections`. Every save keeps a copy in
+ * the template's history, so the cap bounds each one.
+ */
+export const AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES = 256 * 1024;
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
