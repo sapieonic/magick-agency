@@ -1881,8 +1881,16 @@ that campaign's Call log, with its dials and soft-phone calls, and the campaign'
 are the log's **To follow up** view, by this section's own "open" (`inboundMissedOpenSql`). Each
 row opens the inbound Call page (the caller's path, the outcome or the follow-up, the voicemail,
 the recording and summary), and the campaign call export carries the rows. The model, the filters
-and the routes: [`call-log.md`](call-log.md) §4. Inbound figures by type in Insights and the
-reports are that work's P4.
+and the routes: [`call-log.md`](call-log.md) §4.
+
+**A campaign's inbound figures (built, one call log per campaign P4).** The inbound calls filed
+under a campaign are counted on its Insights (Overview and Calls), its Performance card and its
+report, in a **Calls by type** table beside the dialler's and the soft phone's: received,
+answered, missed (and how many are still to follow up), talk time, and **Answer rate, open
+hours**, this section's own definition (answered ÷ open-hours calls, `inboundOpenHoursSql`). They
+are in no connect rate. The account's Inbound summary above is unchanged, and stays the home of
+the abandon rate, the time to answer, the sticky hit rate and the voicemails. Detail:
+[`call-log.md`](call-log.md) §6.
 
 **Mode B (IQ74).** `away_ring` is break time, not staffed time, as any break. A caller whose rings
 went unanswered and who then overflows is in Missed as today. How each ring ended is on the call

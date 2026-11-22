@@ -2612,7 +2612,7 @@ Inbound › Missed calls).
 
 ### One call log per campaign, P3: every call must belong to a campaign 2026-11-22 (CL17–CL24, [`call-log.md`](call-log.md) §5)
 
-P3 of six is built; P4 to P6 are not.
+P3 of six is built; P4 to P6 are not (P4 since: below).
 
 - **The setting.** An account admin can switch on **Every call must belong to a campaign**
   (Settings › Calls, `agency.calls.manage`; `0069_call_settings.sql`, its own table). Off by
@@ -2640,6 +2640,32 @@ P3 of six is built; P4 to P6 are not.
 inbound call screen has no Change (a call arrives filed, so it is not needed for the setting to
 hold). The two counts on Settings › Calls are ranges of existing account indexes; neither was
 timed on a large account.
+
+### One call log per campaign, P4: reports and Insights by type 2026-11-22 (CL7, CL25–CL30, [`call-log.md`](call-log.md) §6)
+
+P4 of six is built; P5 and P6 are not.
+
+- **A campaign's inbound calls are in its figures.** Insights' activity serves `calls.inbound`
+  (received, answered, missed, the calls still to follow up, talk time, open-hours calls) and
+  `/stats` serves `inbound`, counted by the Call log's own rule for an inbound row (filed under
+  the campaign, ended, served, by when it arrived). Read live, like the soft phone's; no
+  migration and no rollup column (CL25).
+- **Calls by type.** The Overview and the Calls tab, and the campaign report's PDF and workbook,
+  show Dialler · Soft phone · Inbound · All calls: counts, people reached and talk time add up.
+  No rate is added: each type keeps its own (Dialler connect rate, Soft-phone connect rate,
+  Answer rate, open hours). A column shows while its flag is on or the window holds such a call;
+  with only the dialler, nothing changes.
+- **Outcomes by type**, on the Calls tab and the report.
+- **"All calls connect rate" is "Outbound connect rate"** everywhere it showed; the formula is
+  the same and an inbound call is in no connect rate (CL7).
+- **The dialler's figures did not change:** its connect rate, abandonment, pacing, stalls,
+  caller-ID health, carrier failures, best hours, retries, list progress and Trends.
+- **The report dataset** stays version 1; the renderer reads a dataset from an older server.
+
+**Not verified:** not run in a real browser. The PDF was rendered from the renderer's fixture
+and looked at (the report stays four pages). The inbound statement's plan was read on the test
+database (the window on `idx_agency_inbound_calls_campaign`); nothing was timed on a large
+table. `/stats` now runs one more statement per read.
 
 ## Not built
 

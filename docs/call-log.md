@@ -4,11 +4,11 @@ A campaign's calls used to be listed in several places, by what placed them: the
 Dialler calls, its Soft-phone calls view, the account's Soft-phone calls, Missed calls, and
 answered inbound calls nowhere at all. This work makes them one list. Manas approved the
 proposal on 2026-11-22 ("go ahead and build this end-to-end"); it is built in six phases, each
-shippable alone. **P1, P2 and P3 are built (2026-11-22). P4 to P6 are not.**
+shippable alone. **P1, P2, P3 and P4 are built (2026-11-22). P5 and P6 are not.**
 
-The decisions are CL1–CL24 in [`decisions.md`](decisions.md) ("One call log per campaign (CL)"),
+The decisions are CL1–CL30 in [`decisions.md`](decisions.md) ("One call log per campaign (CL)"),
 all **default, pending Manas**: he accepted CL1–CL12 with the proposal as a whole, not one by one,
-CL13–CL16 are P2's build rulings and CL17–CL24 are P3's.
+CL13–CL16 are P2's build rulings, CL17–CL24 are P3's and CL25–CL30 are P4's.
 
 ## 1. The model
 
@@ -46,7 +46,7 @@ campaign's missed inbound calls that are still open (§4).
 | P1 | One campaign Call log for dialler and soft-phone calls. No migration | **Built 2026-11-22** (§3) |
 | P2 | Inbound in the log: a campaign on inbound calls, the third type, To follow up, the missed call and its call back linked, the inbound call page, the export's inbound rows | **Built 2026-11-22** (§4) |
 | P3 | The setting "Every call must belong to a campaign": per account, a default campaign per inbound route, enforcement on the soft phone and inbound wrap-up, Settings › Calls, the app | **Built 2026-11-22** (§5) |
-| P4 | Reports and Insights by type: inbound figures, the Calls by type table, outcomes by type, "Outbound connect rate" | Not built |
+| P4 | Reports and Insights by type: inbound figures, the Calls by type table, outcomes by type, "Outbound connect rate" | **Built 2026-11-22** (§6) |
 | P5 | The agent's My calls as one list (console and app), and the account's All calls in place of Soft-phone calls | Not built |
 | P6 | Inbound calls in customer history | Not built |
 
@@ -385,8 +385,9 @@ why from `call_availability` and shows the record alone.
 
 ### What P2 left as it was
 
-- **Customer history, the agent's My calls, the account's lists, Insights and the reports** do
-  not show inbound calls by type yet (P4, P5, P6). Their reads keep `matched_campaign_id`.
+- **Customer history, the agent's My calls and the account's lists** do not show inbound calls
+  by type yet (P5, P6). Their reads keep `matched_campaign_id`. Insights and the campaign report
+  do since P4 (§6), counted by `campaign_id`.
 - **Filing an unknown caller** under a campaign was P3's (§5): since it, a call from an unknown
   number is filed under its route's campaign for unknown callers when the route has one, and is
   then in that campaign's log and, when missed, its To follow up. A route with none still files
@@ -637,12 +638,12 @@ their behalf, and never behind inbound's flag.
   supervisor files it from the console first.
 - **A missed call from an unknown caller** cannot be moved to another campaign; its route files
   it.
-- **Reports and Insights** still read the match (`matched_campaign_id`) for inbound figures; P4
-  moves them to `campaign_id`. **For P4:** count an inbound call by campaign from `campaign_id`
-  (and `campaign_source` for how it got there), never from `disposition_source`. That column
-  says `campaign` only when the caller matched a campaign's list; a call filed by its route, an
-  agent or a supervisor stores `route` there while its outcome is from the campaign's catalog
-  (CL20).
+- **Reports and Insights** had no inbound figures for a campaign; P4 added them (§6), counted
+  by `campaign_id`, never by `disposition_source`. That column says `campaign` only when the
+  caller matched a campaign's list; a call filed by its route, an agent or a supervisor stores
+  `route` there while its outcome is from the campaign's catalog (CL20). Compare agents, My day
+  and the promise summary still read `matched_campaign_id`: they are about the customer on the
+  list, not about where a call is filed.
 - **A call to a number on no route** has no account, so no campaign. It is an operator
   exception, as the proposal says.
 
@@ -693,9 +694,164 @@ their behalf, and never behind inbound's flag.
   `test/features/softphone/softphone_panel_test.dart` ("every call must belong to a campaign"),
   `agency_wire`'s `softphone_test.dart` and `inbound_test.dart`.
 
-## 6. Decisions
+## 6. P4: reports and Insights by type (built)
 
-CL1–CL24, in full in [`decisions.md`](decisions.md). All default, pending Manas.
+A campaign's calls are counted by type wherever the campaign shows its figures: the dialler's
+as they always were, the soft phone's beside them (SR1–SR8), and since P4 the inbound calls
+filed under it. **Counts add up across the types. Rates never do.**
+
+### Calls by type
+
+| | Dialler | Soft phone | Inbound | All calls |
+|---|---|---|---|---|
+| Calls | dials, wrap-up redials included ("1,240 dialled") | calls placed and logged to the campaign ("86 dialled") | calls received ("57 received") | the three added |
+| Connected | Connected (outcome `connected`, not a wrap-up redial) | outcome `connected` | answered ("44 answered") | added |
+| Reached a person | people reached (the connect rate's numerator) | the same rule on a soft-phone call (SR2) | answered: nobody rings us by machine (CL26) | added |
+| Talk time | the dials' talk time | the placed calls' | the answered calls' | added |
+| Missed by us | — | — | calls that left a Missed row, and "(N to follow up)" | the inbound figure |
+| Rate | **Dialler connect rate**: people reached ÷ first dials | **Soft-phone connect rate**: people reached ÷ placed | **Answer rate, open hours**: answered ÷ calls that arrived in open hours | **not added** |
+
+Under it, the proposal's footnote, naming the types shown (`agencyCallsByTypeFootnote`): "All
+calls adds the three types. Each call is counted once, under the type it was. Rates are not
+added together: the dialler's measures the list and the pacing, the soft phone's the numbers
+agents chose, and inbound's how many callers we answered."
+
+**Outbound connect rate (CL7).** The dialler and the soft phone together (people reached ÷
+first dials and soft-phone calls placed, SR3's formula) used to be called "All calls connect
+rate". It is the **Outbound connect rate** everywhere it shows: under the table on the Calls
+tab, "outbound" on the Overview's connect-rate tile, the Performance card's readout, the
+report's PDF and its workbook Summary. An inbound call always connects from the customer's end,
+so it is in no connect rate, and "All calls" has no rate at all. The label is one constant
+(`AGENCY_OUTBOUND_CONNECT_RATE_LABEL`); nothing on the wire was renamed, because no rate is
+served on the wire.
+
+**When a column shows (CL29).** The soft phone's while `agency_softphone_enabled` is on or the
+range holds a soft-phone call (SR5); inbound's while `agency_inbound_enabled` is on or the range
+holds an inbound call. With only the dialler to show there is no table, and the page and the
+report are exactly what they were. The report has no flag to read, so there each column shows
+when the window holds such a call (SR8). The dialler's rate is named "Dialler connect rate"
+whenever another type shows beside it.
+
+### The inbound figures (`calls.inbound`, `/stats` `inbound`)
+
+`{ received, answered, missed, open_follow_ups, talk_seconds, open_hours }`
+(`AgencyInboundCampaignCounts`), one statement (`inbound-campaign-sql.ts`):
+
+- **What is counted is what the Call log lists** (CL16): filed under the campaign
+  (`campaign_id`; never `matched_campaign_id`, never `disposition_source`), in its tenant,
+  ended, and served (no `rejected` call). The window is half-open on `arrived_at`. The SQL is
+  the Call log's own fragments (`inboundCampaignRowConditions`, `inboundAnsweredSql`,
+  `inboundMissedSql` in `sql-fragments.ts`), so a figure and the list it counts cannot spell a
+  row apart.
+- **`open_follow_ups` is the To follow up chip** (CL27): the campaign's open Missed rows by
+  CL14's rule (`inboundMissedOpenSql`), as of now and **not cut by the window**. It can be more
+  than the window's missed calls; the note under the table says so, and the figure links to the
+  chip (`toFollowUpLink`).
+- **`open_hours`** (CL26, added to the spec's five) is the answer rate's denominator: the calls
+  that arrived while the line was open, the inbound summary's own definition
+  (`inboundOpenHoursSql`, shared with `inbound-report.repository.ts`).
+- **Read live, no migration** (CL25). The Insights rollup is a pure function of
+  `agency_call_attempts` and holds the dialler's figures alone, so the inbound counts are read
+  from `agency_inbound_calls` when asked, as the soft phone's are from `agency_manual_calls`.
+  The window's counts are a range of `idx_agency_inbound_calls_campaign` (0068).
+- `/stats` serves them over the campaign's life, whatever inbound's flag says.
+
+The soft phone's counts gained `talk_seconds` (the placed calls' talk time) for the Talk time
+row.
+
+### Outcomes by type (`outcomes_by_type`, CL28)
+
+One outcome list for the campaign, so one table: Outcome · Dialler · Soft phone · Inbound ·
+Total. Dialler is the campaign's conversations by outcome (the `outcomes` rows, unchanged);
+Soft phone the placed calls that were put through; Inbound the answered calls; each by the
+outcome saved, labelled from the campaign's current catalog. A table prints the types it shows,
+and Total adds the columns printed. `outcomes` stays the dialler's alone: every figure that
+links to the Call log's Dialler chip is.
+
+### One row, one call, one type (CL30)
+
+- A **missed call and its call back** are two calls: an Inbound row and a Soft phone row. At
+  most one person was reached between them. A call back that never dialled is not a call (SR2).
+- **Marking a Missed row handled** is a status, not a call: no count moves but the calls to
+  follow up.
+- A **dial stopped because the customer rang us** is a dial we placed that reached nobody: it
+  stays in the dialler's Dials (the standing rule, `docs/insights.md` "System dispositions"),
+  and is no connect, no conversation, no person reached and no outcome. The customer's
+  conversation is counted once, under Inbound. The Call log lists the same two rows.
+- **The Dialler column is the Dials figure** (placed dials, by when they were dialled), so it
+  equals the Call log's Dialler chip under the figure's own link (`placed=1`, the dialled
+  window). Under plain dates that chip also lists attempts that were never dialled, which no
+  figure counts.
+
+### Where it shows
+
+| Surface | What |
+|---|---|
+| Insights › Overview | A **Calls by type** panel under the headline figures; the connect-rate tile adds "soft phone …", "outbound …" and "inbound answered …" |
+| Insights › Calls | The table in place of the Soft-phone calls and All calls tiles, the Outbound connect rate under it, and **Outcomes by type** |
+| Analytics › a campaign's Performance card | "Outbound connect rate" (renamed), and an **Answer rate, open hours** readout from `/stats` |
+| Campaign report, PDF | A **Calls by type** section on page 1, and the Outcomes table with the types' columns |
+| Campaign report, workbook | The same figures as Summary rows (soft phone, Outbound connect rate, inbound, All calls), and the types' columns on the Outcomes sheet |
+
+**Dialler-only, unchanged:** the dialler's connect rate, abandonment and its 24-hour limit,
+pacing, stalls, best hours, retries, caller-ID health, carrier failures, list progress, Trends,
+the Agents tab, the Insights CSV buttons, Home and the agent record (SR7). The account report
+sums the counts in its dataset and prints none of them yet. The mobile app reads none of this.
+
+**The report dataset** (`packages/contracts/src/reports`) stays version 1: `calls.inbound`,
+`calls.softphone.talk_seconds` and `outcomes_by_type` arrive with the activity it embeds, and
+the renderer reads a dataset from a server that predates them (no Inbound column, no outcome
+columns). Three definitions were added: `outbound_connect_rate`, `inbound_calls`,
+`calls_by_type`.
+
+### Files
+
+- Contracts: `agency/campaign-stats.ts` (`AgencyInboundCampaignCounts`, the soft phone's
+  `talk_seconds`, `/stats` `inbound`), `api/agency/insights.ts` (`calls.inbound`,
+  `outcomes_by_type`), `api/agency/call-log.ts` (the table's words: the rate labels, "not
+  added", "Outbound connect rate", the footnote), `reports/dataset.ts` (the definition keys).
+- Server: `db/repositories/agency/inbound-campaign-sql.ts`, `sql-fragments.ts` (the shared row
+  rule), `insights-reads.repository.ts` (`inboundCalls`, `outcomesByType`),
+  `agency/insights/activity.ts`, `db/repositories/agency/campaign-stats.ts`,
+  `agency/reports/datasets/definitions.ts`.
+- Console: `utils/agency/insights/rates.ts` (`callsByType`, `showInboundFigures`,
+  `inboundAnswerRate`, `outboundConnectRate`),
+  `pages/agency/campaign-detail/insights/CallsByType.tsx`, `ActivitySections.tsx`,
+  `OverviewSection.tsx`, `utils/agencyCampaignPerformance.ts`,
+  `components/agency/CampaignPerformance.tsx`.
+- Renderer: `src/rates.ts` (`campaignCallsByType`, the one gate), `src/pdf/templates/campaign.tsx`,
+  `src/xlsx/workbook.ts`.
+
+### Tests
+
+- `apps/server/test/integration/api/agency-calls-by-type.test.ts` (real Postgres, the real app):
+  one seed with every type; the figures beside the Call log's chip counts for the same campaign
+  and window, and over its life; a missed call and its call back; a call back that never
+  dialled; Mark handled; the dial the customer's call stopped; a call counted under the
+  campaign it is filed under; the dialler's figures untouched; the report's dataset and the
+  table the renderer draws from it; the statement's plan.
+- `apps/server/test/unit/agency/insights-outcomes-by-type.test.ts`: the outcome merge, and the
+  statement held to the Call log's fragments.
+- `apps/server/test/integration/api/agency-insights-drilldowns.test.ts`: the activity's wire
+  shape (`test/fixtures/insights-responses.json`, rewritten from a real run).
+- `apps/report-renderer/test/templates.test.ts` and `workbook.test.ts`: the table, the gate for
+  each type, the floors, the Outbound rate with and without inbound calls, an older dataset.
+- Console: `components/InsightsSections.test.tsx` (the table, the gate, the link, the
+  outcomes), `components/CampaignPerformance.test.tsx`.
+- `packages/contracts/test/call-log.test.ts`: the words.
+
+### What P4 left as it was
+
+- **The account report** prints no soft-phone or inbound figures (SR8, CL29).
+- **Per-agent rows** (the Agents tab, the agent report) do not count inbound calls answered by
+  type; Compare agents has its own inbound metrics (CP rulings).
+- **Inbound-only measures** on a campaign (abandon rate, time to answer, calls that came
+  through their own agent, voicemails) stay on the account's Inbound summary.
+- **The Insights CSV buttons** export the dialler's tables; the Calls by type table has no CSV.
+
+## 7. Decisions
+
+CL1–CL30, in full in [`decisions.md`](decisions.md). All default, pending Manas.
 
 | ID | In short | Phase |
 |---|---|---|
@@ -705,7 +861,7 @@ CL1–CL24, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL4 | Unknown caller: the route's default at arrival, the agent may change it at wrap-up; a matched caller's campaign is fixed | **P3, built** |
 | CL5 | Supervisors are not exempt | **P3, built** |
 | CL6 | Do Not Call from a filing-only campaign is written for the whole account | **P3, built** |
-| CL7 | "All calls connect rate" becomes "Outbound connect rate"; inbound is never blended into a rate | P4 |
+| CL7 | "All calls connect rate" becomes "Outbound connect rate"; inbound is never blended into a rate | **P4, built** |
 | CL8 | A catch-all campaign is an ordinary campaign. An empty campaign does complete itself, so a campaign a live route files unknown callers under may start with nothing to dial and is not completed when its list runs out; drained, it is quiescent in pacing | **P3, built** |
 | CL9 | The agent's My calls tabs merge into one list with chips | P5 |
 | CL10 | No backfill of old calls with no campaign; they show as "No campaign" | **P3, built**; P5 |
@@ -723,6 +879,13 @@ CL1–CL24, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL22 | The console's agent station says "work" (AS15); the app and the admin pages use the proposal's words; "Open Team" is Open campaigns, "See them in All calls" waits for P5 | **P3, built** |
 | CL23 | An unknown caller's call can be moved at the end of the call only, by its agent to a campaign they may log to, or by a supervisor to any running or paused one; a missed call is filed by its route alone | **P3, built** |
 | CL24 | What Settings › Calls counts: the members with the agent role on no running campaign, and the last 30 days' calls filed under none | **P3, built** |
+
+| CL25 | A campaign's inbound figures are read live from `agency_inbound_calls` by the Call log's own row rule; the rollup holds the dialler alone; no migration, no index | **P4, built** |
+| CL26 | The inbound counts: received, answered, missed (left a Missed row), talk time, and `open_hours` for the answer rate (the inbound summary's definition); an answered caller is a person reached | **P4, built** |
+| CL27 | `open_follow_ups` is the To follow up chip: as of now, not cut by the window | **P4, built** |
+| CL28 | Outcomes by type: the dialler's conversations, the soft phone's calls put through and inbound's answered calls, by outcome; `outcomes` stays the dialler's | **P4, built** |
+| CL29 | Where Calls by type shows and when each column does; no table for the dialler alone; the report gates on the window's calls; the dataset stays version 1 | **P4, built** |
+| CL30 | One row, one call, one type in figures: a stopped dial stays a dial that reached nobody and the conversation counts once under Inbound; the Dialler column is the Dials figure | **P4, built** |
 
 Checked while building P3: the console's agent station never said "Log to" (its label is "Save
 this call to", with "Not in any work": CL22); and a campaign with no contacts does complete
