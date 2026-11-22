@@ -12,7 +12,8 @@ import { useConfigFieldErrors } from '../../../pages/campaigns/agency/configFiel
 import { CallerIdPicker } from '../../../pages/agency/CallerIdPicker';
 import { CampaignCarrierField } from '../CampaignCarrierField';
 import { CampaignRecordingField } from '../CampaignRecordingField';
-import { CallSummaryProfileField } from '../CallSummaryProfileField';
+import { CampaignCallSummaryField } from '../CampaignCallSummaryField';
+import { useCallAnalysisProfiles } from '../../../hooks/useCallAnalysisProfiles';
 import { carrierActive, carrierOptions, sameCarrier } from '../../../utils/agencyCarriers';
 import { dailyTargetError } from '../../../utils/agency/stationSettings';
 import {
@@ -48,6 +49,8 @@ export interface TemplateSectionEditorsProps {
   carriers: readonly AgencyCarrier[] | null;
   /** Remount key for the outcome editors after their list is replaced (Copy from a campaign). */
   epoch?: number;
+  /** The call summary profile the saved template holds: keeps "Remove" reachable with analytics off. */
+  savedProfileId?: string | null;
 }
 
 /**
@@ -64,6 +67,7 @@ export function TemplateSectionEditors({
   analyticsEnabled,
   carriers,
   epoch = 0,
+  savedProfileId = null,
 }: TemplateSectionEditorsProps) {
   const behaviour = BEHAVIOUR_EDITOR[section];
   const stationErrors = useMemo(() => {
@@ -113,10 +117,9 @@ export function TemplateSectionEditors({
           />
           {/* An organisation template holds no account's profile (CT5). */}
           {scope === 'account' ? (
-            <CallSummaryProfileField
-              id={`template-analysis-profile`}
-              subject="template"
+            <TemplateCallSummary
               profileId={form.recording.profileId}
+              savedProfileId={savedProfileId}
               onChange={(profileId) => onChange({ ...form, recording: { ...form.recording, profileId } })}
               analyticsEnabled={analyticsEnabled}
               error={fieldErrors['analysis_profile_id']}
@@ -178,4 +181,35 @@ export function TemplateSectionEditors({
     default:
       return null;
   }
+}
+
+/** The recording card's call summary: the shared field, with the account's profiles read only here. */
+function TemplateCallSummary({
+  profileId,
+  savedProfileId,
+  onChange,
+  analyticsEnabled,
+  error,
+}: {
+  profileId: string;
+  savedProfileId: string | null;
+  onChange: (profileId: string) => void;
+  analyticsEnabled: boolean;
+  error?: string;
+}) {
+  const { profiles, loading, error: loadError } = useCallAnalysisProfiles({ enabled: analyticsEnabled });
+  return (
+    <CampaignCallSummaryField
+      subject="template"
+      profileId={profileId}
+      savedProfileId={savedProfileId}
+      onChange={onChange}
+      capabilityEnabled={analyticsEnabled}
+      profiles={profiles}
+      loading={loading}
+      loadError={loadError}
+      loadErrorConsequence="Saving without changing this field leaves the template’s current profile alone."
+      error={error}
+    />
+  );
 }

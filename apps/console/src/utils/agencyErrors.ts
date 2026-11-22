@@ -48,6 +48,15 @@ export function errorCode(err: unknown): string | null {
 }
 
 /**
+ * The session the caller acted on is gone: it has ended (`409 session_ended`: left on another
+ * device, ended from another tenant (OS7) or after hours offline (OS9)), or is not there (404).
+ * Retrying gets the same answer; the caller starts again or stops.
+ */
+export function isSessionGone(err: unknown): boolean {
+  return errorCode(err) === 'session_ended' || errorStatus(err) === 404;
+}
+
+/**
  * How long apart a join is retried while the server answers `503 station_token_unavailable`
  * (decision D9: Redis could not store the station token, so the server refuses to hand
  * out one that could never open the socket). A join is idempotent, so it is simply sent

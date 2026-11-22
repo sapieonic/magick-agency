@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
-import { CallSummaryProfileField } from '../../components/agency/CallSummaryProfileField';
+import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
 import { CampaignTemplateSource } from '../../components/agency/campaignTemplates/CampaignTemplateSource';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
@@ -101,6 +101,7 @@ import {
   sameCarrier,
   type CarrierChoice,
 } from '../../utils/agencyCarriers';
+import { CampaignCallSummaryField } from '../../components/agency/CampaignCallSummaryField';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { SettingsSectionNav, useSectionInView } from '../../components/agency/SettingsSectionNav';
@@ -226,6 +227,13 @@ export function AgencyCampaignSettingsPage() {
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
   const analyticsEnabled = isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY);
+  // The profile list is gated on a permission only, so `agency.analytics` alone
+  // decides — see `utils/agencyCampaignRecording.ts`.
+  const {
+    profiles: analysisProfiles,
+    loading: profilesLoading,
+    error: profilesError,
+  } = useCallAnalysisProfiles({ enabled: analyticsEnabled });
 
   // Fire once per mount per gate, not on every render — these mirror
   // `RequireCapability`'s own pattern for the same event.
@@ -748,12 +756,8 @@ export function AgencyCampaignSettingsPage() {
   const carrierChoices = carriers ? carrierOptions(carriers, carrierOfCampaign(campaign)) : [];
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
 
-  // Visible when the capability is on (picker, or a notice saying why the list
-  // is unreadable) — and also when it is OFF but a profile is already set, so
-  // the clearing path the server allows is reachable. Keyed on the LOADED campaign,
-  // not on form state: keyed on state, pressing "Remove summary profile" would
-  // make the whole block vanish before the operator had saved it. The field itself
-  // (`CallSummaryProfileField`) keeps a stored profile the list no longer has.
+  // Whether the section names the call summary: by the field's own rule (see
+  // `CampaignCallSummaryField`), keyed on the LOADED campaign.
   const summaryVisible = analyticsEnabled || (campaign.analysis_profile_id ?? null) !== null;
 
   return (
@@ -913,15 +917,18 @@ export function AgencyCampaignSettingsPage() {
                   error={fieldErrors['record_calls']}
                 />
 
-                {summaryVisible && (
-                  <CallSummaryProfileField
-                    profileId={recording.profileId}
-                    onChange={(profileId) => setRecording({ ...recording, profileId })}
-                    analyticsEnabled={analyticsEnabled}
-                    readOnly={!canEdit}
-                    error={fieldErrors['analysis_profile_id']}
-                  />
-                )}
+                <CampaignCallSummaryField
+                  profileId={recording.profileId}
+                  savedProfileId={campaign.analysis_profile_id ?? null}
+                  onChange={(profileId) => setRecording({ ...recording, profileId })}
+                  capabilityEnabled={analyticsEnabled}
+                  profiles={analysisProfiles}
+                  loading={profilesLoading}
+                  loadError={profilesError}
+                  loadErrorConsequence="Saving without changing this field leaves the campaign’s current profile alone."
+                  readOnly={!canEdit}
+                  error={fieldErrors['analysis_profile_id']}
+                />
               </div>
             </ComposerSection>
 

@@ -320,6 +320,8 @@ export function useTemplateEditor({
     epoch,
     notice,
     dirty,
+    /** The call summary profile the saved template holds (null for none, and for a new one). */
+    savedProfileId: baseline?.sections.recording?.analysis_profile_id ?? null,
     blocked: Object.keys(liveErrors).length > 0,
     /** The server refused fields of the last save (shown on their cards). */
     hasFieldErrors: Object.keys(fieldErrors).length > 0,

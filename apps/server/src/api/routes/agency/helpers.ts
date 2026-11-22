@@ -5,7 +5,6 @@
  * `agency.routes.ts`.
  */
 import { returnFromAwayRing, type AwayRingService } from '../../../agency/away-ring.js';
-import type { AgencyRingOffReason } from '@magick-agency/contracts/agency';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
@@ -19,6 +18,7 @@ import {
   agencyContactRepository,
 } from '../../../db/repositories/agency.repository.js';
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
+import { afterSessionLeft, nothingInFlight, type SessionEndRuntime } from '../../../agency/session-end.js';
 import type { AgencyAgentSessionRecord, AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { StationTokenUnavailableError, type StationTokenStore } from '../../../agency/station-token.js';
@@ -488,34 +488,6 @@ export async function sendSessionInOtherTenant(reply: FastifyReply, tenantId: st
   return reply.code(409).send(refusal);
 }
 
-/**
- * The part of the runtime {@link endIdleSessionElsewhere} reads: the same signals the agent's own
- * `leave` checks, plus station presence across processes.
- */
-interface IdleSessionRuntime {
-  stations: {
-    stationPresence(sessionId: string): Promise<'connected' | 'absent' | 'unknown'>;
-    detach(sessionId: string): Promise<unknown> | unknown;
-    /** Agent station (BE-11): the session ended; forget when its station went. */
-    sessionEnded(sessionId: string): void;
-  };
-  /** The floor's reader of the detach times, when it is not `stations` (the primary's directory). Optional for tests. */
-  stationDisconnects?: { forgetEnded(sessionIds: readonly string[]): void };
-  agents: {
-    get(sessionId: string): Promise<{ state: string; ring?: boolean } | null>;
-    clear(sessionId: string): Promise<unknown>;
-  };
-  dialer: { hasLiveAttempt(sessionId: string): boolean; hasRedialInFlight(sessionId: string): boolean };
-  softphone: { hasLiveCall(sessionId: string): boolean };
-  inbound?: { findCallForSession(sessionId: string): unknown } | null;
-  /** Mode B: the `ring_off` push to a phone whose away break the end cut short. */
-  awayRing?: {
-    sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason, awaySince: Date | null): void;
-  };
-  /** Floor assist (LF4): the session's open Need help ends with it (`help_cleared { session_ended }`). Never throws. */
-  floorAssist?: { endWithSession(sessionId: string): Promise<void> };
-}
-
 /** The session fields {@link endIdleSessionElsewhere} reads (the join's refusal carries the whole row). */
 type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
   & Partial<Pick<AgencyAgentSessionRecord, 'agent_user_id' | 'station_device_id' | 'away_ring_since'>>;
@@ -529,7 +501,7 @@ type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
  * device claimed the station), so neither says `taken_over`.
  */
 export async function leaveSession(
-  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing' | 'floorAssist' | 'stationDisconnects'>,
+  runtime: Pick<SessionEndRuntime, 'stations' | 'agents' | 'awayRing' | 'floorAssist' | 'stationDisconnects'>,
   session: Omit<IdleSession, 'tenant_id'>,
   lease: { ring?: boolean } | null,
   leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
@@ -538,15 +510,7 @@ export async function leaveSession(
   const awayRinging = lease?.ring === true || awaySince !== null;
   await runtime.agents.clear(session.id);
   await leave(session.id);
-  // The session's open Need help ends with it (LF4), before the detach, so a station still attached
-  // hears `help_cleared { session_ended }`.
-  await runtime.floorAssist?.endWithSession(session.id);
-  await runtime.stations.detach(session.id);
-  // Agent station (BE-11): a session that ended never attaches again, so when its station went is
-  // forgotten now (here, the primary's directory over IPC from a media worker, and the floor's
-  // reader when it is not this process's registry), not left for the supervisors' alerts read.
-  runtime.stations.sessionEnded(session.id);
-  runtime.stationDisconnects?.forgetEnded([session.id]);
+  await afterSessionLeft(runtime, session.id);
   if (awayRinging && session.agent_user_id) {
     runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'left', awaySince);
   }
@@ -574,15 +538,13 @@ export async function leaveSession(
  * Total: any read or write that fails leaves the session alone (false).
  */
 export async function endIdleSessionElsewhere(
-  runtime: IdleSessionRuntime,
+  runtime: SessionEndRuntime,
   session: IdleSession,
   leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
 ): Promise<boolean> {
   try {
     const id = session.id;
-    if (runtime.dialer.hasLiveAttempt(id) || runtime.dialer.hasRedialInFlight(id)) return false;
-    if (runtime.softphone.hasLiveCall(id) || runtime.inbound?.findCallForSession(id)) return false;
-    if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
+    if (!(await nothingInFlight(runtime, id))) return false;
     const lease = await runtime.agents.get(id);
     if (lease && lease.state !== 'offline' && lease.state !== 'break') return false;
     await leaveSession(runtime, session, lease, leave);
@@ -601,7 +563,7 @@ export async function endIdleSessionElsewhere(
  * an `other_tenant` refusal included, is returned as it came.
  */
 export async function joinEndingIdleElsewhere<R extends { ok: boolean }>(
-  runtime: IdleSessionRuntime,
+  runtime: SessionEndRuntime,
   join: () => Promise<R>,
 ): Promise<R> {
   const first = await join();

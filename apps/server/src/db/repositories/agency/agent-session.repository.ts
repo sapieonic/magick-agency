@@ -246,6 +246,42 @@ function sessionTransitionSql(input: {
                  ${judged}`;
 }
 
+/**
+ * OS9: when an `offline` session went offline. The later of `state_since` (a `setState` to
+ * `offline` stamps it) and its last `→ offline` event: the startup reaper's `markAllOffline` writes
+ * the event but leaves `state_since` at the state before, so after a restart `state_since` alone
+ * would date an agent who was taking calls a minute ago to the start of that state. `alias` is a
+ * row of `agency_agent_sessions` (or the transition's `prev`, which carries `id` and `state_since`).
+ */
+function offlineSinceSql(alias: string): string {
+  return `GREATEST(${alias}.state_since,
+           (SELECT max(e.at) FROM agency_agent_session_events e
+             WHERE e.session_id = ${alias}.id AND e.to_state = 'offline'))`;
+}
+
+/**
+ * OS9: an open session idle for the cutoff (`idleParam`, in ms): `offline` since then
+ * (`offlineSince`, {@link offlineSinceSql}), its row unwritten as long (`updated_at`: every write
+ * bumps it and nothing writes an idle row, so this only ever delays an end, should a restart's
+ * `→ offline` event not be written), and not on Mode B's away-ring (its reconcile ends that absence
+ * and tells the phone). `row` is the sessions row. The sweep's read and its guarded end share it.
+ */
+function idleOfflineSql(row: string, offlineSince: string, idleParam: string): string {
+  const cutoff = `now() - make_interval(secs => ${idleParam}::double precision / 1000)`;
+  return `${row}.left_at IS NULL AND ${row}.state = 'offline' AND ${row}.away_ring_since IS NULL
+          AND ${offlineSince} <= ${cutoff} AND ${row}.updated_at <= ${cutoff}`;
+}
+
+/** An open session the idle-session sweep may end (OS9, {@link AgencyAgentSessionRepository.findIdleOffline}). */
+export interface AgencyIdleOfflineSession {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  agent_user_id: string;
+  /** When it went offline ({@link offlineSinceSql}). */
+  offline_since: Date;
+}
+
 /** The absence a ring's end restored `away_ring` on ({@link AgencyAgentSessionRepository.restoreAwayRing}). */
 export interface AgencyAwayRingRestored {
   /** The absence's start. */
@@ -1298,6 +1334,48 @@ export class AgencyAgentSessionRepository {
       [id],
     );
     await this.recordTransitions(rows);
+  }
+
+  /**
+   * OS9: the idle-session sweep's candidates ({@link idleOfflineSql}), oldest first, at most
+   * `limit`. Live sessions only (a few hundred rows at most); each one's last `→ offline` event is
+   * one probe on `idx_agency_session_events_offline`.
+   */
+  async findIdleOffline(idleMs: number, limit: number): Promise<AgencyIdleOfflineSession[]> {
+    const { rows } = await getPool().query<AgencyIdleOfflineSession>(
+      `SELECT s.id, s.tenant_id, s.account_id, s.agent_user_id, went.offline_since
+         FROM agency_agent_sessions s
+         CROSS JOIN LATERAL (SELECT ${offlineSinceSql('s')} AS offline_since) went
+        WHERE ${idleOfflineSql('s', 'went.offline_since', '$1')}
+        ORDER BY went.offline_since, s.id
+        LIMIT $2`,
+      [idleMs, limit],
+    );
+    return rows;
+  }
+
+  /**
+   * OS9: end an idle session as {@link leave} does, but only while it is still idle
+   * ({@link idleOfflineSql}, checked in the UPDATE under the row lock): a rejoin since the sweep's
+   * read (the join upsert moves the row to `break` under the same lock) wins, and nothing is
+   * written. `left_at` is when the session went offline, not now: the floor reads "Not signed in
+   * today" for a session forgotten yesterday, never "Left at" the sweep's minute. The state does not
+   * move (`offline` → `offline`), so no transition is logged, as for a leave from `offline`; a
+   * suspended break it ends is recorded as {@link leave} records it.
+   *
+   * True when it ended the session.
+   */
+  async leaveIdle(id: string, idleMs: number): Promise<boolean> {
+    const { rows } = await getPool().query<AgencySessionTransitionRow>(
+      sessionTransitionSql({
+        prevWhere: 'id = $1',
+        set: `left_at = ${offlineSinceSql('prev')}, updated_at = now()`,
+        where: idleOfflineSql('s', offlineSinceSql('prev'), '$2'),
+      }),
+      [id, idleMs],
+    );
+    await this.recordTransitions(rows);
+    return rows.length > 0;
   }
 
   /** Live sessions on a campaign, whatever their state. */

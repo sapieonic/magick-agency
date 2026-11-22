@@ -2550,6 +2550,26 @@ real Firebase sign-in, or with the agent app's Dart tests (CI's mobile job runs 
 on, and what it changes beyond the pages: [`operations.md`](operations.md), "Enabling campaign
 templates for a tenant".
 
+### Sessions forgotten offline are ended 2026-11-21 (OS9, [`decisions.md`](decisions.md) "One station per agent")
+
+Manas, on Live floor's red "Connection lost" cards whose clocks ran for days: sweep them and call
+it an end. A session used to stay open until the agent pressed Leave; closing the laptop wrote it
+`offline` and nothing ever ended it.
+
+- **The sweep** (`apps/server/src/agency/idle-session-sweep.ts`, every 5 min in the primary): a
+  session `offline` for 2 h, untouched as long, not on Mode B's away-ring, with no station anywhere
+  and nothing in flight (OS7's rule) is ended as Leave ends it. `left_at` is when it went offline,
+  so the floor says "Not signed in today" for yesterday's, and reports do not move.
+- **The console** stops on a re-mint answered `session_ended` (or 404) as on a 4404, "Your work
+  was closed", instead of "We are trying again" for ever: the laptop that slept overnight.
+- **Review fixes (same day, a fresh-context review of the first commit):** the console's mint
+  refusal; the `updated_at` guard against a restart whose `→ offline` events were not written;
+  away-ring sessions left to their reconcile; each step after the end on its own; a wiring test
+  for the bootstrap; the media-worker and reattach-race limits stated in OS9.
+
+Every new guard was mutation-checked. **Not verified:** not run against a real browser or phone;
+the 2 h cutoff is a default (open decisions, below).
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
@@ -2611,6 +2631,10 @@ calls; not yet run on a phone or a carrier). Remaining:
   its booked inbound callback); a console surface for tenant-default Missed rows (super-admins see
   them per number).
 
+**Sessions forgotten offline** (OS9, above): a session left in a working state with no station (a
+join whose station never attached, a failed `offline` mirror write) is not `offline`, so the sweep
+does not end it; it shows "Connection lost" until the next restart's `markAllOffline`.
+
 **One station per agent** (OS1–OS8, above): `uq_agency_agent_live_tenant` stays beside
 `uq_agency_agent_live_agent` only so an image-only rollback still joins (OS8). Once no deployable
 image names it as its arbiter, a new migration drops it, and the same change deletes the upsert's
@@ -2648,6 +2672,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; a real Plivo call and recording (Plivo step 5, above; needs a Plivo account); launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). A cellular call while available now pauses the agent (IQ51): test it on Android and iOS devices. First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls), and an inbound call on a phone (the offer and its chime, the call and the outcome, a reconnect mid-call, CallKit on iOS) with a Missed calls Call back; store accounts and signing |
+| Idle sessions (OS9) | Ratify the 2 h cutoff for ending a session forgotten offline, and whether a session stuck in a working state with no station (not `offline`) should be ended too |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules and its phone-only default were ruled 2026-11-11 (`decisions.md` §4); "DNC row claims its key" was ruled then too, and IM4 (below) now proposes the opposite (a row refused for Do Not Call claims no key) |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |

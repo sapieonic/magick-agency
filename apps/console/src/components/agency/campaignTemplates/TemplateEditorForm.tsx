@@ -141,6 +141,7 @@ export function TemplateEditorForm({
             analyticsEnabled={analyticsEnabled}
             carriers={carriers}
             epoch={editor.epoch}
+            savedProfileId={editor.savedProfileId}
           />
         </TemplateSectionCard>
       ))}

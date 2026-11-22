@@ -1151,6 +1151,23 @@ describe('useAgencyStation', () => {
       expect(FakeSocket.instances).toHaveLength(1);
     });
 
+    it.each([
+      ['409 session_ended', { statusCode: 409, details: { error: 'Session Ended', code: 'session_ended', message: 'This session has ended. Start a new one.' } }],
+      ['404', { statusCode: 404, details: { error: 'Not Found', message: 'Session not found' } }],
+    ])('OS9: a re-mint answered %s stops as a 4404 does (session gone), with no retry', async (_name, refusal) => {
+      // The laptop slept overnight; the server ended the session after two hours offline. On
+      // waking, the reconnect's mint is refused: the agent is told the session ended, not
+      // "We are trying again" for ever.
+      mocks.mintStationToken.mockRejectedValue(Object.assign(new Error('refused'), refusal));
+      const view = await mounted();
+      act(() => latest().serverClose(1006, ''));
+      await waitFor(() => expect(view.result.current.connection).toBe('session_gone'), { timeout: 3000 });
+      expect(mocks.mintStationToken).toHaveBeenCalledTimes(1);
+      await new Promise((r) => setTimeout(r, 700));
+      expect(mocks.mintStationToken).toHaveBeenCalledTimes(1);
+      expect(FakeSocket.instances).toHaveLength(1);
+    });
+
     it('OS3: "Use this window instead" (reconnect after a supersede) takes the station over, once', async () => {
       mocks.mintStationToken.mockResolvedValue({
         session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=BACK', expires_at: 'x',

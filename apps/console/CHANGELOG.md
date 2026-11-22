@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.33.0](https://github.com/sapieonic/magick-agency/compare/console-v0.32.0...console-v0.33.0) (2026-11-22)
+
+
+### Features
+
+* **server,console:** end agent sessions forgotten offline after 2 hours (OS9) ([#116](https://github.com/sapieonic/magick-agency/issues/116)) ([8b2210e](https://github.com/sapieonic/magick-agency/commit/8b2210ecd7282118c0a4b6bfe1b5d2df8cc97700))
+
+
+### Bug Fixes
+
+* **console:** let New campaign set the call summary profile ([#115](https://github.com/sapieonic/magick-agency/issues/115)) ([c4e08d2](https://github.com/sapieonic/magick-agency/commit/c4e08d239fc919841f017f4776f9c218beea9471))
+
 ## [0.32.0](https://github.com/sapieonic/magick-agency/compare/console-v0.31.0...console-v0.32.0) (2026-11-21)
 
 
