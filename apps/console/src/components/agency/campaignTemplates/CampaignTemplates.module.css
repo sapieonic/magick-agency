@@ -507,3 +507,41 @@
 .summary {
   overflow-wrap: anywhere;
 }
+
+/* What new campaigns of an account start from (the account's templates page, L4). */
+.effectiveName {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.effective {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.effectiveRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) max-content 1fr;
+  gap: 4px 12px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .effectiveRow {
+    grid-template-columns: 1fr max-content;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .effectiveRow > :last-child {
+    grid-column: 1 / -1;
+  }
+}

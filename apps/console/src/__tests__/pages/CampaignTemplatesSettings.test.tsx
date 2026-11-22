@@ -184,6 +184,74 @@ describe('the list', () => {
     expect(within(row).queryByText('Account default')).toBeNull();
   });
 
+  it('never shows one view’s rows under the other view’s actions, while it loads or when it fails (U5)', async () => {
+    let fail: (err: Error) => void = () => {};
+    mocks.listCampaignTemplates.mockImplementation((_t: string, _a: string, o?: { archived?: boolean }) =>
+      (o?.archived ? new Promise((_resolve, reject) => { fail = reject; }) : Promise.resolve([ACCOUNT, SPARE, ORG])));
+    await renderAt('/settings/campaign-templates');
+    expect(screen.getByTestId('template-row-acc-1')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Archived' }));
+    await act(async () => {});
+    expect(screen.queryByTestId('template-row-acc-1')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Restore/ })).toBeNull();
+    await act(async () => {
+      fail(new Error('The templates could not be read.'));
+    });
+    expect(screen.getByText('The templates could not be read.')).toBeTruthy();
+    expect(screen.queryByTestId('template-row-acc-1')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore Pune collections' })).toBeNull();
+  });
+
+  it('names the template on “Stop using as default” (N3)', async () => {
+    await renderAt('/settings/campaign-templates');
+    expect(within(screen.getByTestId('template-row-acc-1')).getByRole('button', { name: 'Stop using Pune collections as the default' })).toBeTruthy();
+  });
+
+  it('opens on what new campaigns of the account start from now, section by section (L4)', async () => {
+    const resolved = resolveTemplateSections({
+      chosen: { scope: 'account', sections: DETAIL.sections }, basedOn: { sections: ORG_SECTIONS }, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true },
+    });
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue({
+      template: { id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' },
+      based_on: { id: 'org-1', name: 'Standard', version: 2 },
+      config: resolved.config,
+      sources: resolved.sources,
+      notes: [{ code: 'recording_not_allowed', section: 'recording' }],
+    });
+    await renderAt('/settings/campaign-templates');
+    expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith(null, 't-1', 'a-1');
+    const card = screen.getByRole('region', { name: 'New campaigns in this account start from' });
+    expect(within(card).getByTestId('effective-start-name').textContent).toBe('Pune collections · based on Standard');
+    const line = (key: string) => [...within(card).getByTestId(`effective-${key}`).children].map((c) => c.textContent);
+    expect(line('hours')).toEqual(['Calling hours', 'Account template', '10:00 AM–8:00 PM · Mon to Sat · India time (IST)']);
+    expect(line('wrapup')).toEqual(['Wrap-up', 'Organisation template', '45s, then agents return on their own']);
+    expect(line('retries')).toEqual(['Retries', 'Built-in', 'The built-in retry rules']);
+    expect(line('numbers')).toEqual(['Numbers to call from', 'Each campaign', 'Each new campaign picks its own numbers']);
+    // Only the sections shown here: contact assignment is off.
+    expect(within(card).queryByTestId('effective-assignment')).toBeNull();
+    expect(within(card).getByTestId('effective-start-notes').textContent).toBe('Recording is off for this account, so this campaign starts with recording off.');
+    // A new default moves the chain: read it again.
+    fireEvent.click(screen.getByRole('button', { name: 'Make Weekend push the default' }));
+    await act(async () => {});
+    expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledTimes(2);
+  });
+
+  it('says “Built-in settings” when no default is in the chain, and is not on the organisation’s page', async () => {
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue({
+      template: null, based_on: null, config: resolveTemplateSections({ chosen: null, basedOn: null, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true } }).config,
+      sources: Object.fromEntries(['outcomes', 'retries', 'hours', 'wrapup', 'breaks', 'recording', 'agent_screen', 'safety', 'assignment', 'inbound', 'numbers'].map((k) => [k, 'builtin'])),
+      notes: [],
+    });
+    await renderAt('/settings/campaign-templates');
+    expect(screen.getByTestId('effective-start-name').textContent).toBe('Built-in settings');
+    cleanup();
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    mocks.getEffectiveCampaignTemplate.mockClear();
+    await renderAt('/settings/organisation-campaign-templates');
+    expect(screen.queryByTestId('effective-start')).toBeNull();
+    expect(mocks.getEffectiveCampaignTemplate).not.toHaveBeenCalled();
+  });
+
   it('makes a template the default, then reads the list again', async () => {
     await renderAt('/settings/campaign-templates');
     fireEvent.click(screen.getByRole('button', { name: 'Make Weekend push the default' }));
@@ -209,7 +277,7 @@ describe('the list', () => {
       '“Recovery” is now the organisation default. New campaigns start from it in accounts with no default of their own.',
       'success',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Stop using as default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop using Standard as the default' }));
     await act(async () => {});
     expect(mocks.showToast).toHaveBeenLastCalledWith(
       '“Standard” is no longer the organisation default. Accounts with no default of their own now start new campaigns from the built-in settings.',

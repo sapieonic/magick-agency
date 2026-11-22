@@ -28,6 +28,7 @@ import { actorLabel, changedLine, formatStamp, templateRefusal } from '../../../
 import { trackAgencyCampaignTemplateAction } from '../../../analytics/events';
 import { useTemplatesAccess } from '../../../components/agency/campaignTemplates/useTemplatesAccess';
 import { NewTemplateDialog, type NewTemplateStart } from '../../../components/agency/campaignTemplates/NewTemplateDialog';
+import { EffectiveStartCard } from '../../../components/agency/campaignTemplates/EffectiveStartCard';
 import { useTemplateSectionKeys } from '../../../components/agency/campaignTemplates/useTemplateSectionKeys';
 import styles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
 
@@ -40,6 +41,11 @@ type View = 'live' | 'archived';
  * and its version, and Edit, Make default and Archive. The account's page also lists the
  * organisation's templates, read-only. "Archived" lists archived ones, with Restore; "New
  * template" starts one from the built-in settings, the Collections set, a template or a campaign.
+ *
+ * The account's page opens on what a new campaign of the account starts from now
+ * (`EffectiveStartCard`, L4), and each organisation template has View (read-only). Rows show only
+ * once the list of the view shown has been read: switching views never shows the other view's rows
+ * with this view's actions (U5).
  */
 export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaignTemplateScope }) {
   const { tenantId, accountId } = useTenant();
@@ -53,21 +59,29 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
   const [archiving, setArchiving] = useState<AgencyCampaignTemplateSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Moves after anything that can change what new campaigns start from: the card reads again. */
+  const [chainVersion, setChainVersion] = useState(0);
 
+  // Each read says which view it is, so rows are shown only under their own view's actions (U5).
   const fetchTemplates = useCallback(
-    () => listCampaignTemplates(tenantId ?? undefined, accountId ?? undefined, { archived: view === 'archived' }),
+    async () => ({
+      view,
+      templates: await listCampaignTemplates(tenantId ?? undefined, accountId ?? undefined, { archived: view === 'archived' }),
+    }),
     [tenantId, accountId, view],
   );
-  const list = useAsyncResource(fetchTemplates, {
-    initialData: [] as AgencyCampaignTemplateSummary[],
+  const list = useAsyncResource<{ view: View | null; templates: AgencyCampaignTemplateSummary[] }>(fetchTemplates, {
+    initialData: { view: null, templates: [] },
     errorMessage: 'Could not load the templates.',
     enabled: allowed && Boolean(tenantId && accountId),
   });
 
   if (!allowed) return <CapabilityUnavailable />;
 
-  const mine = list.data.filter((t) => t.scope === scope);
-  const fromOrganisation = scope === 'account' ? list.data.filter((t) => t.scope === 'organisation') : [];
+  const rows = list.data.view === view ? list.data.templates : [];
+  const shown = list.data.view === view;
+  const mine = rows.filter((t) => t.scope === scope);
+  const fromOrganisation = scope === 'account' ? rows.filter((t) => t.scope === 'organisation') : [];
 
   const act = async (template: AgencyCampaignTemplateSummary, action: 'make_default' | 'clear_default' | 'restore') => {
     setBusy(true);
@@ -77,6 +91,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
       else await setCampaignTemplateDefault(template.id, scope, action === 'make_default', tenantId ?? undefined, accountId ?? undefined);
       trackAgencyCampaignTemplateAction({ scope, action });
       showToast(defaultToast(scope, action, template.name), 'success');
+      setChainVersion((n) => n + 1);
       await list.reload();
     } catch (err) {
       setActionError(templateRefusal(err, 'Could not change the template.'));
@@ -100,6 +115,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
           : `“${archiving.name}” archived.`,
         'success',
       );
+      setChainVersion((n) => n + 1);
       await list.reload();
     } catch (err) {
       if (errorCode(err) === 'campaign_template_in_use') {
@@ -176,7 +192,13 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
                 Edit
               </Link>
               {t.is_default ? (
-                <button type="button" className="btn-secondary" onClick={() => void act(t, 'clear_default')} disabled={busy}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void act(t, 'clear_default')}
+                  disabled={busy}
+                  aria-label={`Stop using ${t.name} as the default`}
+                >
                   Stop using as default
                 </button>
               ) : (
@@ -221,6 +243,8 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
         }
       />
 
+      {scope === 'account' ? <EffectiveStartCard version={chainVersion} /> : null}
+
       {/* A filter of one list, as the campaign list's status filter: pressed buttons, not tabs (C9). */}
       <div className={styles.toolbar} role="group" aria-label="Which templates">
         {(['live', 'archived'] as const).map((v) => (
@@ -238,9 +262,9 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
 
       {actionError ? <ErrorAlert message={actionError} /> : null}
       {list.error ? <ErrorAlert message={list.error} onRetry={() => void list.reload()} /> : null}
-      {list.loading && list.data.length === 0 ? <LoadingSpinner /> : null}
+      {list.loading && !shown ? <LoadingSpinner /> : null}
 
-      {!list.loading || list.data.length > 0 ? (
+      {shown ? (
         <>
           {mine.length === 0 && !list.error ? (
             <p className={styles.muted} data-testid="templates-empty">
@@ -281,7 +305,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
         open={newOpen}
         onClose={() => setNewOpen(false)}
         scope={scope}
-        templates={scope === 'organisation' ? mine : list.data}
+        templates={scope === 'organisation' ? mine : rows}
         sections={sections}
         onStart={start}
       />
