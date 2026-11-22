@@ -21,7 +21,10 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
  *  - The effective read: the chain (none, the organisation's default, the account's default
  *    following its based-on or the organisation's default, a named template), its refusals, and
  *    the notes (recording, the call summary profile, numbers, carrier).
- *  - CT9: the audit rows.
+ *  - CT9: the audit rows, a default, archive or restore sent twice at once audited once.
+ *  - The review's fixes: a set numbers section names a number (S9); `null` only on a nullable
+ *    column's field, the list pinned to the schema (S4); sections stored as a campaign stores them
+ *    (S5); the size cap (S6).
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -34,7 +37,10 @@ vi.mock('../../../src/auth/firebase.js', () => ({
 import { randomUUID } from 'node:crypto';
 import { closePool, initDbPool } from '@magick-agency/db';
 import {
+  AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
+  AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
+  AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES,
   type AgencyCampaignTemplate,
   type AgencyCampaignTemplateEffective,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -404,8 +410,86 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
       scope: 'account', name: 'Blank', sections: { numbers: { caller_ids: ['  '] } },
     });
     expect(blank.json().details).toEqual({ caller_ids: 'every caller ID must be a non-empty string' });
-    // A pool that names none is a template that sets the carrier only.
-    await accountTemplate({ sections: { numbers: { caller_ids: [] } } });
+  });
+
+  it('a set numbers section names at least one number, as a campaign does (S9)', async () => {
+    for (const numbers of [{ caller_ids: [] }, { telephony_provider: 'voicelink' }]) {
+      const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Carrier only', sections: { numbers } });
+      expect(res.statusCode, JSON.stringify(numbers)).toBe(400);
+      expect(res.json()).toMatchObject({
+        code: 'campaign_template_section_invalid', sections: ['numbers'], details: { caller_ids: 'at least one caller ID is required' },
+      });
+    }
+  });
+
+  it('null only where a campaign column may hold it, keyed by the field (S4)', async () => {
+    for (const [section, field] of [
+      ['wrapup', 'wrapup_seconds'], ['wrapup', 'wrapup_auto_return'], ['recording', 'record_calls'],
+      ['breaks', 'break_reasons'], ['numbers', 'telephony_provider'], ['hours', 'default_timezone'],
+      ['outcomes', 'disposition_catalog'], ['agent_screen', 'agent_script'],
+    ] as const) {
+      const values: Record<string, unknown> = { [field]: null, ...(section === 'numbers' ? { caller_ids: ['+919000000001'] } : {}) };
+      const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: `Null ${field}`, sections: { [section]: values } });
+      expect(res.statusCode, field).toBe(400);
+      expect(res.json(), field).toMatchObject({ code: 'campaign_template_section_invalid', sections: [section] });
+      expect(Object.keys(res.json().details), field).toEqual([field]);
+    }
+    // Where null means something it is a setting.
+    const saved = await accountTemplate({ sections: { agent_screen: { daily_target_calls: null }, recording: { record_calls: false, analysis_profile_id: null } } });
+    expect(saved.sections).toEqual({ agent_screen: { daily_target_calls: null }, recording: { record_calls: false, analysis_profile_id: null } });
+  });
+
+  it('the section fields declared nullable are exactly the nullable campaign columns (S4)', async () => {
+    const fields = AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((k) => [...AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[k]] as string[]);
+    const { rows } = await q(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'agency_campaigns'
+          AND column_name = ANY($1::text[]) AND is_nullable = 'YES'
+        ORDER BY column_name`,
+      [fields],
+    );
+    const counted = await q(
+      `SELECT count(*)::int AS n FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'agency_campaigns' AND column_name = ANY($1::text[])`,
+      [fields],
+    );
+    // Every section field is a column, so the list below is judged against all of them.
+    expect(counted.rows[0].n).toBe(fields.length);
+    expect(rows.map((r: { column_name: string }) => r.column_name)).toEqual([...AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS].sort());
+  });
+
+  it('sections are saved as a campaign stores them: caller IDs and script texts trimmed (S5)', async () => {
+    const res = await call(w.supA, w.a, 'POST', '/campaign-templates', {
+      scope: 'account', name: 'Untrimmed',
+      sections: {
+        numbers: { caller_ids: [' +919000000001 '] },
+        agent_screen: { agent_script: { opening: 'Hello ', steps: [{ text: '  Ask for the amount' }] } },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const stored = (await q(`SELECT sections FROM agency_campaign_templates WHERE id = $1`, [res.json().id])).rows[0].sections;
+    expect(stored.numbers.caller_ids).toEqual(['+919000000001']);
+    expect(stored.agent_screen.agent_script).toEqual({ opening: 'Hello', steps: [{ text: 'Ask for the amount' }] });
+    const version = (await q(`SELECT sections FROM agency_campaign_template_versions WHERE template_id = $1`, [res.json().id])).rows[0].sections;
+    expect(version).toEqual(stored);
+  });
+
+  it('sections over the size cap are refused before anything is read: 400 campaign_template_invalid on sections (S6)', async () => {
+    const big = { outcomes: { disposition_catalog: [{ code: 'x', label: 'x'.repeat(AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES) }] } };
+    const created = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Big', sections: big });
+    expect(created.statusCode).toBe(400);
+    expect(created.json()).toMatchObject({ code: 'campaign_template_invalid' });
+    expect(Object.keys(created.json().details)).toEqual(['sections']);
+    // A replace too, judged before the template is looked up: a missing one is not read.
+    const replaced = await call(w.supA, w.a, 'PUT', `/campaign-templates/${randomUUID()}`, {
+      name: 'Big', description: null, based_on_template_id: null, sections: big, expected_version: 1,
+    });
+    expect(replaced.statusCode).toBe(400);
+    expect(Object.keys(replaced.json().details)).toEqual(['sections']);
+    expect((await q(`SELECT count(*)::int AS n FROM agency_campaign_templates`)).rows[0].n).toBe(0);
+    // A template within the cap is saved.
+    const fits = { breaks: { break_reasons: [{ code: 'tea', label: 'Tea' }] } };
+    await accountTemplate({ sections: fits });
   });
 });
 
@@ -520,6 +604,24 @@ describe('archive and restore (CT14)', () => {
     expect(restored.json()).toMatchObject({ template: { id: org.id, archived_at: null, is_default: false } });
     expect((await auditRows('campaign_template.archived')).map((r) => r.resource_id).sort()).toEqual([follower.id, org.id].sort());
     expect((await auditRows('campaign_template.restored')).map((r) => r.resource_id)).toEqual([org.id]);
+  });
+
+  it('a default, an archive or a restore sent twice at once is audited once (S12)', async () => {
+    const tpl = await accountTemplate();
+    const twice = (path: string, method: Method = 'POST') => Promise.all([
+      call(w.supA, w.a, method, `/campaign-templates/${tpl.id}${path}`),
+      call(w.supA, w.a, method, `/campaign-templates/${tpl.id}${path}`),
+    ]);
+    for (const [path, method, action] of [
+      ['/default', 'POST', 'campaign_template.default_set'],
+      ['/default', 'DELETE', 'campaign_template.default_cleared'],
+      ['/archive', 'POST', 'campaign_template.archived'],
+      ['/restore', 'POST', 'campaign_template.restored'],
+    ] as const) {
+      const answers = await twice(path, method);
+      expect(answers.map((r) => r.statusCode), path).toEqual([200, 200]);
+      expect((await auditRows(action)).length, action).toBe(1);
+    }
   });
 
   it('restoring checks the name again', async () => {

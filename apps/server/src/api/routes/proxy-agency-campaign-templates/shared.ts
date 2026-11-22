@@ -199,18 +199,22 @@ export type CampaignTemplateAuditAction = Extract<PlatformAuditAction, `campaign
 
 /**
  * One `campaign_template.*` row, filed under the template (`resource_id`); an account template's
- * under its account too (`account_id`), an organisation template's under the tenant alone.
- * `details` always carry the template's scope and version; each route adds what it changed.
+ * under its account too (`account_id`), an organisation template's under the tenant alone, unless
+ * `filed.accountId` names the account the write acted in (an apply changes one account's drafts,
+ * whichever template it applies). `details` always carry the template's scope and version; each
+ * route adds what it changed.
  */
 export function auditTemplate(
   request: FastifyRequest,
   action: CampaignTemplateAuditAction,
   row: Pick<CampaignTemplateRecord, 'id' | 'tenant_id' | 'account_id' | 'name' | 'version'>,
   details: Record<string, unknown> = {},
+  filed: { accountId?: string } = {},
 ): void {
+  const accountId = filed.accountId ?? row.account_id;
   platformAuditLogger.log({
     tenant_id: row.tenant_id,
-    ...(row.account_id ? { account_id: row.account_id } : {}),
+    ...(accountId ? { account_id: accountId } : {}),
     ...requestAuditActor(request),
     action,
     resource_type: 'campaign_template',

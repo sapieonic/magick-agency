@@ -4,6 +4,10 @@
  * apply (CT16, `proxy-agency-campaign-templates/apply.ts`) runs the very same path for each draft
  * campaign it writes, its checks and its audit included, and reads the answer per campaign. One
  * definition, so an apply can never write what the PATCH would refuse, nor skip its audit row.
+ *
+ * A campaign made from a template has its `template_source` recomputed by this path too (CT9 as
+ * amended): the internal handler's write does it in the same transaction as the settings
+ * (`writeCampaignPatch`), so the record and the settings cannot disagree.
  */
 import type { FastifyRequest } from 'fastify';
 import { callCore } from '../../core-dispatch.js';

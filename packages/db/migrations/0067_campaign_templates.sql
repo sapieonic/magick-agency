@@ -1,4 +1,4 @@
--- 0067_campaign_templates.sql — campaign templates (docs/campaign-templates.md, rulings CT1–CT17; wire
+-- 0067_campaign_templates.sql — campaign templates (docs/campaign-templates.md, rulings CT1–CT18; wire
 -- shapes in packages/contracts/src/api/agency/campaign-templates.ts, the section map in
 -- packages/contracts/src/agency/campaign-template-sections.ts). 0066 is applied and is not edited.
 --

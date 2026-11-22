@@ -96,6 +96,7 @@ export {
   SOFTPHONE_SETTINGS_DEFAULTS,
   SoftphoneSettingsInvalidError,
   validateSoftphoneSettings,
+  asSoftphoneCatalog,
 } from './agency/softphone-settings.repository.js';
 export type { SoftphoneSettingsIssue } from './agency/softphone-settings.repository.js';
 export {

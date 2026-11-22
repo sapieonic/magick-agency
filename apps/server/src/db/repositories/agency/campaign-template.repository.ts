@@ -122,22 +122,27 @@ export type CampaignTemplateReplaceResult =
   | NameRefusal
   | BasedOnRefusal;
 
+/**
+ * `changed`, on a default, archive or restore: whether this call changed the template (made it the
+ * default, archived it, …), decided under the row's lock, so two calls at once see one change and
+ * the routes audit it once.
+ */
 export type CampaignTemplateDefaultResult =
-  | { ok: true; template: CampaignTemplateRecord; replaced: CampaignTemplateRef | null }
+  | { ok: true; template: CampaignTemplateRecord; replaced: CampaignTemplateRef | null; changed: boolean }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'archived' };
 
 export type CampaignTemplateClearDefaultResult =
-  | { ok: true; template: CampaignTemplateRecord }
+  | { ok: true; template: CampaignTemplateRecord; changed: boolean }
   | { ok: false; reason: 'not_found' };
 
 export type CampaignTemplateArchiveResult =
-  | { ok: true; template: CampaignTemplateRecord; default_cleared: boolean }
+  | { ok: true; template: CampaignTemplateRecord; default_cleared: boolean; changed: boolean }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'in_use'; templates: CampaignTemplateBasedOnRow[] };
 
 export type CampaignTemplateRestoreResult =
-  | { ok: true; template: CampaignTemplateRecord }
+  | { ok: true; template: CampaignTemplateRecord; changed: boolean }
   | { ok: false; reason: 'not_found' }
   | NameRefusal
   | BasedOnRefusal;
@@ -368,17 +373,22 @@ export class AgencyCampaignTemplateRepository {
         `UPDATE agency_campaign_templates SET is_default = true WHERE id = $1::uuid RETURNING ${COLUMNS}`,
         [id],
       );
-      return { ok: true, template: rows[0]!, replaced } as const;
+      return { ok: true, template: rows[0]!, replaced, changed: !row.is_default } as const;
     }, { pool: getPool() });
   }
 
-  /** The scope has no default: this template is not one (already not one is fine). */
+  /** The scope has no default: this template is not one (already not one is fine: `changed` false). */
   async clearDefault(scope: CampaignTemplateScope, id: string): Promise<CampaignTemplateClearDefaultResult> {
-    const { rows } = await getPool().query<CampaignTemplateRecord>(
-      `UPDATE agency_campaign_templates SET is_default = false WHERE id = $3::uuid AND ${IN_SCOPE_SQL} RETURNING ${COLUMNS}`,
-      [scope.tenantId, scope.accountId, id],
-    );
-    return rows[0] ? { ok: true, template: rows[0] } : { ok: false, reason: 'not_found' };
+    return withTransaction(async (client) => {
+      const row = await lockRow(client, scope, id);
+      if (!row) return { ok: false, reason: 'not_found' } as const;
+      if (!row.is_default) return { ok: true, template: row, changed: false } as const;
+      const { rows } = await client.query<CampaignTemplateRecord>(
+        `UPDATE agency_campaign_templates SET is_default = false WHERE id = $1::uuid RETURNING ${COLUMNS}`,
+        [id],
+      );
+      return { ok: true, template: rows[0]!, changed: true } as const;
+    }, { pool: getPool() });
   }
 
   /**
@@ -391,7 +401,7 @@ export class AgencyCampaignTemplateRepository {
       await lockScope(client, scope);
       const row = await lockRow(client, scope, id);
       if (!row) return { ok: false, reason: 'not_found' } as const;
-      if (row.archived_at !== null) return { ok: true, template: row, default_cleared: false } as const;
+      if (row.archived_at !== null) return { ok: true, template: row, default_cleared: false, changed: false } as const;
       // After the row lock: an account template's create or replace naming it holds it FOR SHARE
       // until commit, so every one committed before this is counted here.
       if (scope.accountId === null) {
@@ -405,7 +415,7 @@ export class AgencyCampaignTemplateRepository {
           RETURNING ${COLUMNS}`,
         [id, options.actorUserId],
       );
-      return { ok: true, template: rows[0]!, default_cleared: row.is_default } as const;
+      return { ok: true, template: rows[0]!, default_cleared: row.is_default, changed: true } as const;
     }, { pool: getPool() });
   }
 
@@ -419,7 +429,7 @@ export class AgencyCampaignTemplateRepository {
       await lockScope(client, scope);
       const row = await lockRow(client, scope, id);
       if (!row) return { ok: false, reason: 'not_found' } as const;
-      if (row.archived_at === null) return { ok: true, template: row } as const;
+      if (row.archived_at === null) return { ok: true, template: row, changed: false } as const;
       const clash = await nameClash(client, scope, row.name, id);
       if (clash) return clash;
       const basedOn = await basedOnRefused(client, scope.tenantId, row.based_on_template_id);
@@ -430,7 +440,7 @@ export class AgencyCampaignTemplateRepository {
           RETURNING ${COLUMNS}`,
         [id],
       );
-      return { ok: true, template: rows[0]! } as const;
+      return { ok: true, template: rows[0]!, changed: true } as const;
     }, { pool: getPool() });
   }
 

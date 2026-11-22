@@ -8,12 +8,13 @@ import type { FastifyInstance } from 'fastify';
  * repository.
  *
  * Pinned here: a draft is written the chosen sections as filled in for the account and its
- * `template_source` updated (the others kept); a running, an archived, another account's, a missing
+ * `template_source` switched to the template, every section judged against it (CT9 as amended),
+ * the answer carrying the record as stored; a running, an archived, another account's, a missing
  * campaign is refused for itself alone; the PATCH path's own refusal is the campaign's
  * (`campaign_rejected`, the PATCH's status, code and details, the same as a PATCH of that body
  * answers); a stale `expected_version` touches nothing; who may apply; the audit rows (the
- * template's `campaign_template.applied`, and each campaign's `agency_campaign.config_changed` from
- * the PATCH path).
+ * template's `campaign_template.applied`, under the request's account for an organisation template
+ * too, and each campaign's `agency_campaign.config_changed` from the PATCH path).
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -39,6 +40,8 @@ import {
   insertUser,
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { insertAgencyCampaign } from '../agency/agency-factories.js';
+import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
+import { builtinTemplateSections, diffSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import { buildApp } from '../../../src/app.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
@@ -102,6 +105,13 @@ async function template(sections: Record<string, unknown>): Promise<AgencyCampai
 const campaign = async (overrides: Record<string, unknown> = {}) =>
   (await insertAgencyCampaign({ tenant_id: w.tenant, account_id: w.a, status: 'draft', ...overrides })).id as string;
 const stored = async (id: string) => (await q(`SELECT * FROM agency_campaigns WHERE id = $1`, [id])).rows[0];
+/** Each section's source were the campaign compared with the built-in settings alone. */
+const sourcesOf = (row: AgencyCampaign) => {
+  const builtin = builtinTemplateSections();
+  return Object.fromEntries(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k) => [
+    k, diffSections({ [k]: sectionsFromCampaign(row, 'account', [k])[k] }, { [k]: builtin[k] }).length === 0 ? 'builtin' : 'campaign',
+  ]));
+};
 const apply = (templateId: string, body: Record<string, unknown>, uid = w.sup, account = w.a) =>
   as(uid, account, 'POST', `/campaign-templates/${templateId}/apply`, body);
 
@@ -122,11 +132,15 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
     // Hours were not chosen: untouched.
     expect(row.calling_window_start).toBe('00:00:00');
     const source = row.template_source as AgencyCampaignTemplateSource;
+    // Every section judged against the template (CT9 as amended): the hours it was not given are
+    // the campaign's own (00:00 here, not the template's 11:00); the rest equal its built-in ones.
     expect(source).toEqual({
       template: { id: tpl.id, name: tpl.name, version: 1, scope: 'account' },
       based_on: null,
-      sections: Object.fromEntries(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k) => [k, k === 'outcomes' || k === 'wrapup' ? 'account' : 'campaign'])),
+      sections: { ...sourcesOf(row as AgencyCampaign), outcomes: 'account', wrapup: 'account', hours: 'campaign' },
+      notes: [],
     });
+    // The answer is the record as stored.
     expect(result.result === 'applied' && result.template_source).toEqual(source);
 
     await platformAuditLogger.flush();
@@ -140,18 +154,41 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
     expect(changed.rows[0].details.fields).toContain('disposition_catalog');
   });
 
-  it('keeps the other sections\' sources of a campaign made from a template', async () => {
-    const first = await template({ outcomes: OUTCOMES });
-    await as(w.sup, w.a, 'POST', `/campaign-templates/${first.id}/default`, undefined);
-    const made = await as(w.sup, w.a, 'POST', '/campaigns', { name: 'Made', caller_ids: ['+919000000001'], wrapup_seconds: 40 });
+  it('an apply of A2 for outcomes only re-labels every section against A2: hours made from A1 are the campaign\'s', async () => {
+    const a1 = await template({ outcomes: OUTCOMES, hours: { calling_window_start: '11:00' } });
+    await as(w.sup, w.a, 'POST', `/campaign-templates/${a1.id}/default`, undefined);
+    const made = await as(w.sup, w.a, 'POST', '/campaigns', { name: 'Made', caller_ids: ['+919000000001'] });
     expect(made.statusCode, made.body).toBe(201);
     const id = (made.json() as { id: string }).id;
-    const second = await template({ wrapup: WRAPUP });
-    const res = await apply(second.id, { campaign_ids: [id], sections: ['wrapup'] });
-    expect(res.json().results[0]).toMatchObject({ result: 'applied', changed_sections: ['wrapup'] });
+    expect(((await stored(id)).template_source as AgencyCampaignTemplateSource).sections)
+      .toMatchObject({ outcomes: 'account', hours: 'account', wrapup: 'builtin', numbers: 'campaign' });
+
+    const a2 = await template({ outcomes: { disposition_catalog: [{ code: 'paid', label: 'Paid' }], outcome_dispositions: {} } });
+    const res = await apply(a2.id, { campaign_ids: [id], sections: ['outcomes'] });
+    expect(res.json().results[0]).toMatchObject({ result: 'applied', changed_sections: ['outcomes'] });
     const source = (await stored(id)).template_source as AgencyCampaignTemplateSource;
-    expect(source.template).toMatchObject({ id: second.id });
-    expect(source.sections).toMatchObject({ outcomes: 'account', wrapup: 'account', numbers: 'campaign', hours: 'builtin' });
+    expect(source.template).toMatchObject({ id: a2.id, version: 1 });
+    // A1's hours are not A2's (built-in, 09:00): the campaign's own now, never "A2's".
+    expect(source.sections).toMatchObject({ outcomes: 'account', hours: 'campaign', wrapup: 'builtin', numbers: 'campaign' });
+    expect(res.json().results[0].template_source).toEqual(source);
+  });
+
+  it('an organisation template\'s apply: the audit row is filed under the request\'s account (S7)', async () => {
+    const admin = await insertUser({ display_name: 'Olga Admin' });
+    await insertMembership({ user_id: admin.id, tenant_id: w.tenant, account_id: null, role: 'tenant_admin' });
+    const org = await app.inject({
+      method: 'POST', url: '/proxy/agency/campaign-templates',
+      headers: { authorization: `Bearer tok:${admin.firebase_uid}`, 'x-tenant-id': w.tenant },
+      payload: { scope: 'organisation', name: 'Org wrap-up', sections: { wrapup: WRAPUP } },
+    });
+    expect(org.statusCode, org.body).toBe(201);
+    const draft = await campaign();
+    const res = await apply(org.json().id, { campaign_ids: [draft], sections: ['wrapup'] });
+    expect(res.json().results[0]).toMatchObject({ result: 'applied' });
+    expect((await stored(draft)).template_source).toMatchObject({ template: { id: org.json().id, scope: 'organisation' }, sections: { wrapup: 'organisation' } });
+    await platformAuditLogger.flush();
+    const applied = await q(`SELECT account_id FROM platform_audit_log WHERE action = 'campaign_template.applied' AND resource_id = $1`, [org.json().id]);
+    expect(applied.rows).toEqual([{ account_id: w.a }]);
   });
 
   it('refuses each campaign that is not a draft of the account, and applies the others', async () => {
@@ -179,8 +216,10 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
   });
 
   it('the PATCH path\'s refusal is the campaign\'s, as a PATCH of that body answers it', async () => {
-    // The template's numbers name none: the PATCH path refuses an empty pool.
-    const tpl = await template({ numbers: { caller_ids: [] }, wrapup: WRAPUP });
+    // A row whose numbers name none (saved before a set numbers section had to name one): the
+    // PATCH path refuses an empty pool.
+    const tpl = await template({ numbers: { caller_ids: ['+919000000001'] }, wrapup: WRAPUP });
+    await q(`UPDATE agency_campaign_templates SET sections = jsonb_set(sections, '{numbers,caller_ids}', '[]'::jsonb) WHERE id = $1`, [tpl.id]);
     const draft = await campaign();
     const res = await apply(tpl.id, { campaign_ids: [draft], sections: ['numbers', 'wrapup'] });
     const result = (res.json() as AgencyCampaignTemplateApplyResponse).results[0]!;
@@ -217,6 +256,8 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
       { campaign_ids: [draft], sections: [] },
       { campaign_ids: [draft], sections: ['lunch'] },
       { campaign_ids: [draft, draft], sections: ['wrapup'] },
+      // One campaign named in two cases is named twice (S13).
+      { campaign_ids: [draft, draft.toUpperCase()], sections: ['wrapup'] },
       { campaign_ids: Array.from({ length: 51 }, () => randomUUID()), sections: ['wrapup'] },
     ]) {
       const res = await apply(tpl.id, body);

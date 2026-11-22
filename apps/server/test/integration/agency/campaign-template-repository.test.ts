@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
  * rules it owns whatever the route checked first. Versions and the stale-save refusal (CT6), names
  * unique per scope ignoring case and spaces, also under concurrent creates (CT13), one default per
  * scope (the organisation's included), archive refused while live account templates are based on
- * an organisation template and restore re-checking the name (CT14), the based-on rules (CT10), and
+ * an organisation template, also while one naming it is being created (the two serialise), and
+ * restore re-checking the name (CT14), the based-on rules (CT10), and
  * the tenant and account scope. Then the campaign side: the create stores `template_source`, and
  * the contract's column defaults (which the built-in template settings are built from) are the
  * `agency_campaigns` column DEFAULTs.
@@ -58,6 +59,17 @@ async function created(scope: CampaignTemplateScope, o: Partial<CampaignTemplate
 }
 
 const q = (sql: string, v: unknown[] = []) => getTestPool().query(sql, v);
+
+/** Until `n` sessions of this database wait on a lock (another worker's database is not counted). */
+async function lockWaiters(n: number): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const { rows } = await q(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+    if (rows[0].n >= n) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`no ${n} lock waiters`);
+}
 
 beforeAll(async () => {
   initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 10 });
@@ -208,6 +220,31 @@ describe('based on and archive (CT10, CT14)', () => {
     expect((await repo.archive(org, o.id, by)).ok).toBe(true);
     // Its followers cannot come back while it is archived.
     expect(await repo.restore(inA, a.id)).toEqual({ ok: false, reason: 'based_on_archived' });
+  });
+
+  it('archiving an organisation template while an account template naming it is created: the two serialise', async () => {
+    const o = await created(org);
+    const oldDefault = await created(inA, { name: 'Old default' }, true);
+    // Holds the account's old default, which the create clears as its last step before the insert:
+    // the create has read its based-on (FOR SHARE) and then waits here, mid-transaction.
+    const blocker = await getTestPool().connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT 1 FROM agency_campaign_templates WHERE id = $1 FOR UPDATE', [oldDefault.id]);
+      const creating = repo.create(inA, content({ name: 'Follower', based_on_template_id: o.id }), { ...by, makeDefault: true });
+      await lockWaiters(1);
+      const archiving = repo.archive(org, o.id, by);
+      // The archive waits for the create's share lock on the organisation template; were it not
+      // taken, the archive would count no follower and finish now.
+      const early = await Promise.race([archiving.then(() => 'finished'), new Promise((r) => setTimeout(() => r('waiting'), 300))]);
+      await blocker.query('COMMIT');
+      const [create, archive] = await Promise.all([creating, archiving]);
+      expect(early).toBe('waiting');
+      expect(create.ok).toBe(true);
+      expect(archive).toEqual({ ok: false, reason: 'in_use', templates: [{ id: create.ok ? create.template.id : '', name: 'Follower', account_id: accountA }] });
+    } finally {
+      blocker.release();
+    }
   });
 
   it('an archived template cannot be edited', async () => {

@@ -12,9 +12,9 @@
  *    column's `UTC` (CT18). The server and the console pass this one object; neither keeps a copy.
  *  - {@link resolveTemplateSections}: CT2 and CT5. Per section, the chosen template, then (for an
  *    account template) the organisation template it follows, then built-in; the first that sets a
- *    section wins it whole. A flag-gated section whose feature is off is built-in; recording asked
- *    of an account that cannot record is off; an organisation template's account-only parts are
- *    ignored. Each change is a note.
+ *    section wins it whole. A flag-gated section whose feature is off is built-in; outcome overrides
+ *    without contact assignment are left out; recording asked of an account that cannot record is
+ *    off; an organisation template's account-only parts are ignored. Each change is a note.
  *  - {@link sectionsFromCampaign}: "Save as template" and "Copy from a campaign".
  *  - {@link diffSections}: version comparison, "What's different", the apply preview.
  *  - {@link sectionSourcesForCreate}: CT9's per-section source of a created campaign.
@@ -106,7 +106,8 @@ function deepFreeze<T>(value: T): T {
 /**
  * Every section as a campaign create with no template stores it: the column DEFAULTs, except the
  * outcome catalog, which the create path seeds with `AGENCY_DEFAULT_DISPOSITION_CATALOG` when none
- * is sent (`withCampaignConfigDefaults`).
+ * is sent (`withCampaignConfigDefaults`), and the time zone, New campaign's `Asia/Kolkata`
+ * (`AGENCY_NEW_CAMPAIGN_TIMEZONE`, CT18), not the column's `UTC`.
  *
  * **`retries` is `{}`, "no rule stored", deliberately.** The server's retry engine applies its own
  * `DEFAULT_RETRY_POLICY` per outcome at run time to every key a campaign leaves out, so an empty
@@ -116,7 +117,8 @@ function deepFreeze<T>(value: T): T {
  * Likewise `breaks` is `[]` (the campaign's agents are offered the built-in break reasons,
  * `resolveBreakReasons`), `agent_screen`'s script `{}` (no script) and target `null` (none),
  * `recording`'s profile `null` (no summary), and `numbers` an empty pool on the service's own
- * carrier (a create must still name its caller IDs).
+ * carrier (a create must still name its caller IDs, and a template that sets the section names at
+ * least one).
  */
 const BUILTIN: CompleteTemplateSections = deepFreeze({
   outcomes: {
@@ -214,6 +216,11 @@ function changedFields<K extends Key>(key: K, a: unknown, b: unknown): AgencyCam
 
 // ── Filling in a template (CT2, CT5) ─────────────────────────────────────────
 
+/** A catalog entry that carries an `override` (CA9), whatever its value: the create's gate counts any. */
+function isOverrideEntry(entry: unknown): boolean {
+  return entry !== null && typeof entry === 'object' && (entry as Record<string, unknown>)['override'] !== undefined;
+}
+
 /** A template as the chain reads it: its scope and its stored sections. */
 export interface TemplateSectionsInput {
   scope: AgencyCampaignTemplateScope;
@@ -253,8 +260,9 @@ function organisationSafe(sections: AgencyCampaignTemplateSections): AgencyCampa
  *
  * Per section: the first of `chosen`, `basedOn`, built-in that sets it wins it whole (fields it
  * leaves out are built-in, never the next level's). Then: a flag-gated section whose feature is off
- * is built-in (`section_flag_off`, when a template had set it); `record_calls` is off where the
- * account cannot record (`recording_not_allowed`, when it was on). An organisation template's
+ * is built-in (`section_flag_off`, when a template had set it); without contact assignment the
+ * outcomes lose their agent overrides (`outcome_overrides_off`, when one had any); `record_calls` is
+ * off where the account cannot record (`recording_not_allowed`, when it was on). An organisation template's
  * `numbers` and `analysis_profile_id` are never read (CT5). The server adds its own notes after
  * this (numbers and carrier no longer usable, a profile gone).
  */
@@ -290,6 +298,19 @@ export function resolveTemplateSections(input: {
     } else {
       sections[key] = normaliseSection(key, undefined, builtin);
       sources[key] = 'builtin';
+    }
+  }
+  if (!can.assignment) {
+    // CA9: an outcome's `override` grants a contact more than the campaign's rules, which needs
+    // contact assignment; the outcomes themselves stay.
+    const catalog = sections.outcomes!.disposition_catalog;
+    if (Array.isArray(catalog) && catalog.some((e) => isOverrideEntry(e))) {
+      sections.outcomes!.disposition_catalog = catalog.map((e) => {
+        if (!isOverrideEntry(e)) return e;
+        const { override: _override, ...rest } = e as Record<string, unknown>;
+        return rest;
+      });
+      notes.push({ code: 'outcome_overrides_off', section: 'outcomes' });
     }
   }
   if (sections.recording!.record_calls === true && !can.record) {
@@ -391,7 +412,9 @@ export function diffSections(a: AgencyCampaignTemplateSections, b: AgencyCampaig
  * of its fields present) is `campaign` when it differs from the filled-in section, else the filled-in
  * section's source; a section it left out is the filled-in source. A sent section's absent fields
  * are built-in, as the create stores them (CT8: a section sent is kept as sent), so sending a
- * section exactly as filled in, field order and `HH:MM` aside, is not a change.
+ * section exactly as filled in, field order and `HH:MM` aside, is not a change. Given a stored
+ * campaign (every field present), it judges every section: the server's record recomputes with it
+ * at each settings PATCH and at an apply (CT9 as amended).
  */
 export function sectionSourcesForCreate(
   sent: Partial<AgencyCampaign>,

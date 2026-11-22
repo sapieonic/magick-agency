@@ -33,8 +33,9 @@ import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
 import { contextColumnsRejected } from './guards.js';
 import { normalizeAgentScript } from '../../../agency/agent-script.js';
+import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
-import { templateSourceIssue } from '../../../agency/campaign-templates/template-source.js';
+import { templateSourceIssue, templateSourceRecompute } from '../../../agency/campaign-templates/template-source.js';
 import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 
@@ -136,20 +137,26 @@ export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly st
  * read after the lock, against the row as locked, and a dedication PUT (which reads the row
  * `FOR SHARE` and validates the number there) either committed before the lock, and is seen,
  * or waits and then sees the new `caller_ids`. So a number cannot be dedicated as it is
- * dropped, and never silently reactivates when it is added back. Without `caller_ids`, the
- * plain update.
+ * dropped, and never silently reactivates when it is added back.
+ *
+ * A campaign made from a template (`template_source`, CT9) has its record recomputed from the row
+ * as written, in the same transaction (`templateSourceRecompute`): a section changed away from the
+ * template reads `campaign`, one changed back reads the template's source again. Every settings
+ * PATCH comes here, the public one and a template's apply alike. Without either, the plain update.
  */
 export async function writeCampaignPatch(
   campaign: AgencyCampaignRecord,
   body: Record<string, unknown>,
 ): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] }> {
-  if (!('caller_ids' in body)) return { row: await agencyCampaignRepository.update(campaign.id, body) };
-  const next = body.caller_ids as string[];
+  const recordAfter = await templateSourceRecompute(campaign);
+  if (!('caller_ids' in body) && !recordAfter) return { row: await agencyCampaignRepository.update(campaign.id, body) };
+  const next = 'caller_ids' in body ? body.caller_ids as string[] : null;
   return agencyCampaignRepository.updateLocked(campaign.id, body, async (row, client) => {
+    if (next === null) return null;
     const dedicated = await agencyAgentCallerIdRepository.mapForCampaign(row.id, client);
     const dropped = droppedDedicatedCallerIds(row, dedicated.values(), next);
     return dropped.length > 0 ? dropped : null;
-  });
+  }, ...(recordAfter ? [recordAfter] : []));
 }
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
@@ -167,7 +174,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
         ...(callerIdsError ? { caller_ids: callerIdsError } : {}),
       });
     }
-    const callerIds = (body!.caller_ids as string[]).map((id) => id.trim());
+    const callerIds = trimCallerIds(body!.caller_ids as string[]);
 
     // Before the announcement lookup: this is pure and costs no round trip, and a
     // body that is going to be refused should not spend a DB read first.
@@ -363,7 +370,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       if (issue) {
         return replyValidationFailed(reply, { caller_ids: issue });
       }
-      body.caller_ids = (body.caller_ids as string[]).map((id) => id.trim());
+      body.caller_ids = trimCallerIds(body.caller_ids as string[]);
     }
 
     // AS19: this also checks the script's keys against the card both ways (`agentScriptIssues`,

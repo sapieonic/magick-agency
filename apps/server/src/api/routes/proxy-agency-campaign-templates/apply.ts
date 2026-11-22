@@ -8,10 +8,11 @@
  *    (`400 account_scope_required`). The template must be visible to the account (its own or the
  *    organisation's: else `404`), live (`409 campaign_template_archived`), and at
  *    `expected_version` when one is sent (`409 campaign_template_changed`, before any campaign is
- *    touched).
- *  - What is written: the chosen sections' fields from `resolveEffectiveTemplate` for this account
- *    and this template, the same fill-in New campaign shows and a create stores (CT2, CT5, CT15:
- *    the chain, what the account may have, numbers no longer usable dropped).
+ *    touched). The template and the organisation template it follows are read ONCE: the version
+ *    checked is the version applied, and both are pinned for every campaign of the request.
+ *  - What is written: the chosen sections' fields as that pinned chain fills them in for this
+ *    account (`effectiveOfChain`), the same fill-in New campaign shows and a create stores (CT2,
+ *    CT5, CT15: the chain, what the account may have, numbers no longer usable dropped).
  *  - How: each campaign through the campaign PATCH path (`patchCampaignConfig`), its validation,
  *    its capability and assignment gates, the internal handler's own checks (caller IDs, carrier,
  *    profile, the script against the card) and its `agency_campaign.config_changed` audit, never
@@ -20,11 +21,14 @@
  *    (`campaign_archived`), a draft (`campaign_not_draft`: a running campaign is never changed by a
  *    template). The status is read just before the write; a campaign started in between is
  *    written as its PATCH would be (an accepted race: starting takes a supervisor's own press).
- *  - Then its `template_source` names this template, with the chosen sections' sources from the
- *    fill-in and the others' kept (a campaign made before templates: its other sections are its
- *    own, `campaign`).
+ *  - Then its `template_source` (CT9 as amended) names this template and its based-on, and every
+ *    section is recomputed against them (`templateSourceFor`), the row locked: a section the apply
+ *    did not choose reads the template's source only where it already equals it, else `campaign`.
+ *    The answer carries the record as stored.
  *  - Refusals are per campaign, in the order sent; the others still apply. One
- *    `campaign_template.applied` row for the request, naming the campaigns applied and refused.
+ *    `campaign_template.applied` row for the request, filed under the request's account (an
+ *    organisation template's too: the drafts it changed are that account's), naming the campaigns
+ *    applied and refused.
  */
 import type { FastifyInstance } from 'fastify';
 import {
@@ -33,13 +37,17 @@ import {
   type AgencyCampaignTemplateApplyResponse,
   type AgencyCampaignTemplateApplyResult,
   type AgencyCampaignTemplateSectionKey,
-  type AgencyCampaignTemplateSectionSource,
-  type AgencyCampaignTemplateSource,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { diffSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { agencyCampaignRepository, agencyCampaignTemplateRepository } from '../../../db/repositories/agency.repository.js';
-import { plainTemplateRefOf, resolveEffectiveTemplate, type EffectiveTemplate } from '../../../agency/campaign-templates/resolve-effective.js';
+import {
+  effectiveOfChain,
+  followedTemplate,
+  plainTemplateRefOf,
+  type EffectiveTemplate,
+} from '../../../agency/campaign-templates/resolve-effective.js';
+import { templateSourceFor } from '../../../agency/campaign-templates/template-source.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { patchCampaignConfig } from '../helpers/campaign-patch.js';
@@ -80,23 +88,6 @@ export function applyPatchBody(
   return body;
 }
 
-/**
- * The campaign's `template_source` after an apply (module note): this template and its based-on,
- * the chosen sections' sources from the fill-in, the others kept (`campaign` when it had none).
- */
-export function appliedTemplateSource(
-  before: AgencyCampaignTemplateSource | null,
-  effective: Pick<EffectiveTemplate, 'wire'>,
-  sections: readonly AgencyCampaignTemplateSectionKey[],
-): AgencyCampaignTemplateSource {
-  const chosen = new Set(sections);
-  const out = {} as Record<AgencyCampaignTemplateSectionKey, AgencyCampaignTemplateSectionSource>;
-  for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
-    out[key] = chosen.has(key) ? effective.wire.sources[key] : before?.sections?.[key] ?? 'campaign';
-  }
-  return { template: effective.wire.template, based_on: effective.wire.based_on, sections: out };
-}
-
 export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance): Promise<void> {
   const guards = templateGuards('agency.campaign_templates.manage', 'agency.campaigns.write');
 
@@ -115,11 +106,12 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
     }
 
     const tenantId = request.tenantId!;
-    const found = await resolveEffectiveTemplate({ tenantId, accountId }, row.id);
-    if (!found.ok) {
-      return sendTemplateRefusal(reply, found.reason === 'archived' ? 'campaign_template_archived' : 'campaign_template_not_found');
-    }
-    const effective = found.effective;
+    const scope = { tenantId, accountId };
+    // The template (read above) and the organisation template it follows, each read once and
+    // pinned for every campaign: the version checked is the version applied (module note).
+    const effective = await effectiveOfChain(scope, { chosen: row, basedOn: await followedTemplate(readerOf(request), row) });
+    const refs = { template: effective.wire.template, based_on: effective.wire.based_on };
+    const fill = { ...refs, resolved: effective.resolved };
     // The map's order, whatever order they were sent in.
     const sections = AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter((k) => body.sections.includes(k));
     const patch = applyPatchBody(effective.resolved.config, sections);
@@ -130,7 +122,7 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
         results.push(refused(raw, 'campaign_not_found'));
         continue;
       }
-      const campaignId = raw.toLowerCase();
+      const campaignId = raw;
       // The internal handler's own read: its ownership rule (tenant AND account) and its gate.
       const probe = await fetchOwnedCoreCampaign(request, campaignId, accountId);
       if (!probe.ok) {
@@ -155,8 +147,14 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
         continue;
       }
       const after = answer.body as AgencyCampaign;
-      const source = appliedTemplateSource(before.template_source ?? null, effective, sections);
-      const recorded = await agencyCampaignRepository.setDraftTemplateSource(campaignId, { tenantId, accountId }, source);
+      const recorded = await agencyCampaignRepository.rewriteTemplateSource(
+        campaignId, scope, (current) => templateSourceFor(scope, current, refs, fill),
+      );
+      if (!recorded?.template_source) {
+        // The row went between the PATCH and here (a campaign is never deleted; not expected).
+        results.push(refused(campaignId, 'campaign_not_found'));
+        continue;
+      }
       results.push({
         campaign_id: campaignId,
         result: 'applied',
@@ -164,8 +162,7 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
           sectionsFromCampaign(before, 'account', sections),
           sectionsFromCampaign(after, 'account', sections),
         ).map((d) => d.section),
-        // Not recorded only when the campaign left draft between the PATCH and here (module note).
-        template_source: recorded?.template_source ?? source,
+        template_source: recorded.template_source,
       });
     }
 
@@ -173,7 +170,7 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
       sections,
       applied: results.filter((r) => r.result === 'applied').map((r) => r.campaign_id),
       refused: results.filter((r): r is Refused => r.result === 'refused').map((r) => ({ campaign_id: r.campaign_id, code: r.code })),
-    });
+    }, { accountId });
     const response: AgencyCampaignTemplateApplyResponse = { template: plainTemplateRefOf(row), results };
     return reply.send(response);
   });
