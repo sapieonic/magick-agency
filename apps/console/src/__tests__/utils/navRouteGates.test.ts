@@ -7,6 +7,7 @@ import {
   passesGate,
   settingsLandingPath,
   tabBarFor,
+  SETTINGS_ENTRIES,
   visibleSections,
   visibleSettingsGroups,
   type GateInput,
@@ -68,12 +69,20 @@ function subsets<T>(items: readonly T[]): T[][] {
   return items.reduce<T[][]>((all, item) => all.flatMap((s) => [s, [...s, item]]), [[]]);
 }
 
+/** The seats a reader is swept with: both only where the seat can change what is offered. */
+function organisationSeatsFor(role: Role | undefined, flags: readonly string[]): boolean[] {
+  const tenantRole = role === 'tenant_admin' || role === 'tenant_owner';
+  return tenantRole && flags.includes('agency_campaign_templates_enabled') ? [true, false] : [false];
+}
+
 const READERS: Reader[] = ROLES.flatMap((role) =>
   subsets(FLAGS).flatMap((flags) =>
     subsets(CAPABILITIES).flatMap((caps) =>
       [true, false].flatMap((missed) =>
-        // Whether the seat is organisation-wide matters only from tenant admin up (CT3).
-        (role === 'tenant_admin' || role === 'tenant_owner' ? [true, false] : [false]).map((organisationWide) => ({
+        // Whether the seat is organisation-wide matters only from tenant admin up, and only to the
+        // organisation's campaign templates (CT3), the one gate that reads it: varied only there,
+        // so the sweep does not do every other tenant reader's work twice.
+        organisationSeatsFor(role, flags).map((organisationWide) => ({
           role, flags: new Set(flags), caps: new Set(caps), missed, organisationWide,
         })),
       ),
@@ -203,7 +212,25 @@ describe('every offer passes the gate of the route it opens', () => {
       // The sweep reached destinations, not only an empty shell (the unresolved role is offered Settings).
       expect(checked).toBeGreaterThan(readers.length);
     },
+    // A backstop on a loaded machine, not the budget: alone, the largest role takes 2 to 3 seconds.
+    30_000,
   );
+
+  it('varies the seat only where a gate can read it: behind the campaign templates flag', () => {
+    // The sweep sweeps an organisation-wide seat only for readers with that flag (organisationSeatsFor).
+    // A gate that asks for the seat without the flag would be checked for one seat only: say so here.
+    const seated: Array<{ organisationSeat?: unknown; flags?: readonly string[] }> = [];
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value !== null && typeof value === 'object') {
+        if ('organisationSeat' in value) seated.push(value as (typeof seated)[number]);
+        Object.values(value).forEach(walk);
+      }
+    };
+    walk([SETTINGS_ENTRIES, CONSOLE_SECTIONS]);
+    expect(seated.length).toBeGreaterThan(0);
+    for (const gate of seated) expect(gate.flags ?? []).toContain('agency_campaign_templates_enabled');
+  });
 
   it('offers the dialler to whoever takes calls but does not supervise', () => {
     const everything = (role: Role) => READERS.find((r) => r.role === role && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length)!;
