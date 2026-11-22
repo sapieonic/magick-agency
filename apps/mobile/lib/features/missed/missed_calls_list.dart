@@ -10,7 +10,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/tokens.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../ui/primitives.dart';
-import '../calls/softphone/softphone_calls_controller.dart' show workspaceUserId;
 import '../performance/agent_workspace.dart';
 import 'call_back.dart';
 import 'missed_access.dart';
