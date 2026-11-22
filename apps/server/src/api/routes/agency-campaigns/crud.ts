@@ -34,6 +34,8 @@ import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, c
 import { contextColumnsRejected } from './guards.js';
 import { normalizeAgentScript } from '../../../agency/agent-script.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
+import { templateSourceIssue } from '../../../agency/campaign-templates/template-source.js';
+import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 
 /** Every campaign status, as a record so a status added to the type must be added here. */
@@ -176,6 +178,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // isolation cannot see that, and the default path is the ordinary one.
     if (configRejected(reply, body, CAMPAIGN_CONFIG_COLUMN_DEFAULTS)) return reply;
 
+    // Campaign templates (CT9): the record of the template the public create filled the body from.
+    // Only the public layer writes it (it takes out any a client sent, `create-fill.ts`); a
+    // malformed one is refused, never stored.
+    const templateSource = body?.template_source ?? null;
+    if (templateSource !== null) {
+      const issue = templateSourceIssue(templateSource);
+      if (issue) return replyValidationFailed(reply, { template_source: issue });
+    }
+
     if (await abandonAnnouncementRejected(request, reply, body?.abandon_announcement_id)) return reply;
 
     if (await analysisProfileRejected(request, reply, body?.analysis_profile_id)) return reply;
@@ -225,6 +236,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
       agent_script: body?.agent_script !== undefined ? normalizeAgentScript(body.agent_script) : undefined,
       context_display: body?.context_display,
+      // The break catalog (LF6), stored as the PATCH stores it and checked by the same rule
+      // (`validateBreakReasons`, in `configRejected` above). Omitted ⇒ `[]`: the built-in reasons.
+      break_reasons: body?.break_reasons,
+      // Campaign templates (0067, CT9): checked above; omitted ⇒ NULL, made without a template.
+      template_source: templateSource as AgencyCampaignTemplateSource | null,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,
       abandon_announcement_id: (body?.abandon_announcement_id as string | null) ?? null,

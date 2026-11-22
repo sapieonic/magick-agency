@@ -13,7 +13,10 @@ import {
   withCampaignConfigDefaults,
   issuesToDetails,
 } from '../../../agency/agency-campaign-config.js';
+import { campaignTemplatesEnabled } from '../../../agency/campaign-templates/resolve-effective.js';
+import { fillCreateFromTemplate, withoutTemplateKeys } from '../../../agency/campaign-templates/create-fill.js';
 import { missingAccountBody, patchCampaignConfig } from '../helpers/campaign-patch.js';
+import { sendTemplateRefusal } from '../helpers/campaign-template-refusal.js';
 
 /** Registered by `proxyAgencyCampaignsRoutes` on its own instance, after its hooks. */
 export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<void> {
@@ -22,6 +25,27 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
   app.post('/campaigns', {
     preHandler: requirePermission('agency.campaigns.write'),
   }, async (request, reply) => {
+    // ── Campaign templates (CT8, CT9), with `agency_campaign_templates_enabled` on ──
+    // The body is filled in from a template before any check, so every check below judges the
+    // body the campaign is stored with: the sections it leaves out from the template `template_id`
+    // names (else the account's default chain), a section it sends kept as sent (absent fields
+    // built-in), and `template_source` recorded (`create-fill.ts`). With the flag off (or no
+    // account to judge) none of it happens and the create is what it was: only `template_id` and
+    // `template_source` are taken out (the internal handler would ignore the first and the second
+    // is the server's to write), and the catalog default below applies.
+    const templated = request.accountId ? await campaignTemplatesEnabled(request.tenantId!, request.accountId) : false;
+    let sent: unknown = withoutTemplateKeys(request.body);
+    if (templated) {
+      const filled = await fillCreateFromTemplate({ tenantId: request.tenantId!, accountId: request.accountId! }, request.body);
+      if (!filled.ok) {
+        if (filled.reason === 'invalid') {
+          return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: { template_id: 'must be a template id, or null' } });
+        }
+        return sendTemplateRefusal(reply, filled.reason === 'archived' ? 'campaign_template_archived' : 'campaign_template_not_found');
+      }
+      sent = filled.body;
+    }
+
     // Config validation only. The body is still forwarded as-is and the dialer
     // runtime still owns the schema — this layer keeps no campaign copy (see the
     // ownership-split comment at the top of `proxy-agency-campaigns.routes.ts` on why two writable copies
@@ -29,7 +53,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // happily and then behaves wrongly on; see
     // `agency-campaign-config.ts` for why it is a good error message rather than
     // enforcement.
-    const configIssues = validateAgencyCampaignConfig(request.body);
+    const configIssues = validateAgencyCampaignConfig(sent);
     if (configIssues.length > 0) {
       return reply
         .code(400)
@@ -40,8 +64,9 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // column default that nothing seeds, so disposition would be inert on every
     // campaign created without one. A default here fixes that without deleting
     // the empty-catalog configuration, because an explicit `[]` is an opinion and
-    // is left alone — see `withCampaignConfigDefaults`.
-    const body = withCampaignConfigDefaults(request.body);
+    // is left alone — see `withCampaignConfigDefaults`. A templated body already
+    // holds its catalog (the template's, or the built-in one), so this changes nothing there.
+    const body = templated ? sent : withCampaignConfigDefaults(sent);
 
     // The behavioral capabilities. After the shape check (a malformed body earns
     // its 400 either way) and before anything is forwarded — the whole point is
