@@ -905,9 +905,9 @@ shared; only the term that says whose calls differs.
 | The account | every attempt of the account | every soft-phone call of the account | every ended, served call of the account | the account's open Missed rows |
 | An agent | the attempts of their sessions in the account | the calls they placed | the calls they **answered**, and their **open Missed rows** | their open Missed rows |
 
-- **An agent's inbound rows are two index ranges**, never the same row twice (a missed call has
-  no answerer): `answered_by_user_id = me`, and `follow_up_assignee_user_id = me` while the row
-  is open. "Mine" for a Missed row is the Missed list's own rule for an agent: assigned to them.
+- **An agent's inbound rows are two branches**, never the same row twice (a missed call has
+  no answerer): `answered_by_user_id = me` (the account's range, filtered), and
+  `follow_up_assignee_user_id = me` while the row is open (the Missed list's own index). "Mine" for a Missed row is the Missed list's own rule for an agent: assigned to them.
   A row assigned to the account (the Team view) is nobody's until it is claimed. Once a Missed
   row is handled it is no longer one of the agent's calls: they did not take it.
 - **"No campaign"** (`campaign: 'none'`) keeps the soft-phone calls logged to none and the
@@ -926,7 +926,12 @@ It was measured before it was added (the numbers are in the migration's header);
 index written on every dial, and `db-hygiene.md` §2 has the statement to build it
 `CONCURRENTLY` before the deploy on a large table. Nothing else was added: "No campaign" on the
 soft-phone and inbound branches, and an agent's answered calls, are a filter over the account's
-existing range.
+existing range. Two reads therefore grow with the account's history rather than the page: the
+inbound calls answered by somebody who has answered few (the account's inbound range is walked to
+find them), and the attempts of somebody who dials rarely (the account's range since their first
+session). Both are no slower than the list My calls had (`my-attempts` reads the whole attempts
+table); an index by answerer on inbound calls, and one by session and time on attempts, are the
+fixes if they come to matter.
 
 ### My calls (CL9, CL32, CL33, CL36)
 
@@ -951,8 +956,10 @@ is not a parameter the route takes (a 400).
 - **`counts`** (`include_counts=1`) is what the agent still owes: `to_follow_up` (the open Missed
   rows and the callbacks due), `missed_open` (the Missed calls badge's own count) and
   `callbacks_due`. The other chips carry no number.
-- **Filters:** `type`, `campaign_id` (a campaign or `none`), `from`, `to`. There is no search by
-  number: on a campaign that hides numbers it would let the hidden digits be found a few at a
+- **Filters:** `type`, `campaign_id` (a campaign or `none`), `from`, `to`. A campaign that is
+  not the account's is a 404: with a campaign named, the dialler branch is the campaign Call
+  log's own agent filter and the answered inbound calls are read on the campaign's index, so the
+  campaign is checked first. There is no search by number: on a campaign that hides numbers it would let the hidden digits be found a few at a
   time (CL36).
 
 **Call back from a hidden number.** The number is not in My calls' payload, so the row's Call

@@ -293,6 +293,9 @@ describe('My calls: the agent\'s own calls', () => {
     expect(await list('type=soft_phone')).toEqual(['s-mine-never-dialled', 's-mine-callback', 's-mine-untagged', 's-mine-masked']);
     expect(await list('type=inbound')).toEqual(['m-mine-masked', 'i-mine-unfiled', 'i-mine-masked', 'm-mine-old']);
     expect(await list(`campaign_id=${full}`)).toEqual(['s-mine-never-dialled', 'd-mine-full', 'm-mine-old']);
+    // Every type on the campaign that hides numbers, and never the colleague's calls on it.
+    expect(await list(`campaign_id=${masked}`)).toEqual(['s-mine-callback', 's-mine-masked', 'm-mine-masked', 'i-mine-masked', 'd-mine-masked']);
+    expect(await list(`campaign_id=${masked}&type=inbound`)).toEqual(['m-mine-masked', 'i-mine-masked']);
     expect(await list('campaign_id=none')).toEqual(['s-mine-untagged', 'i-mine-unfiled']);
     expect(await list(`from=${encodeURIComponent(at(82).toISOString())}`)).toEqual(['s-mine-never-dialled', 's-mine-callback', 's-mine-untagged']);
   });
@@ -403,6 +406,9 @@ describe('My calls: the agent\'s own calls', () => {
   it('refuses what it does not take', async () => {
     await get('/proxy/agency/my-calls?type=nope', me, 400);
     await get('/proxy/agency/my-calls?campaign_id=nope', me, 400);
+    // A campaign of another tenant is as unknown as one that does not exist.
+    await get(`/proxy/agency/my-calls?campaign_id=${other.campaigns[0]}`, me, 404);
+    await get('/proxy/agency/my-calls?campaign_id=7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c', me, 404);
     await get('/proxy/agency/my-calls?phone=98', me, 400);
     await get('/proxy/agency/my-calls?cursor=nope', me, 400);
   });

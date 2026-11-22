@@ -269,8 +269,16 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     const { type: rawType, campaign_id: rawCampaign, from, to, include_counts: rawCounts } = forwarded.query;
     const typed = sourceForType(rawType, reply);
     if (!typed) return reply;
-    if (rawCampaign !== undefined && rawCampaign !== AGENCY_CALLS_NO_CAMPAIGN && !UUID_RE.test(rawCampaign)) {
-      return replyValidationFailed(reply, [{ param: 'campaign_id', message: `must be a campaign id or ${AGENCY_CALLS_NO_CAMPAIGN}` }]);
+    if (rawCampaign !== undefined && rawCampaign !== AGENCY_CALLS_NO_CAMPAIGN) {
+      if (!UUID_RE.test(rawCampaign)) {
+        return replyValidationFailed(reply, [{ param: 'campaign_id', message: `must be a campaign id or ${AGENCY_CALLS_NO_CAMPAIGN}` }]);
+      }
+      // The read keys two of its branches on the campaign alone, so the campaign is checked to be
+      // this account's first; another account's or tenant's is as unknown as one that does not exist.
+      const campaign = await deps.campaign(rawCampaign);
+      if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
+        return sendRefusal(reply, 404, 'campaign_not_found', 'Campaign not found.');
+      }
     }
     const parsed = parseCallLogQuery({
       ...(from !== undefined ? { from } : {}),

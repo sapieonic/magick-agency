@@ -76,6 +76,7 @@ import { formatCount } from '../../utils/format/number';
 import {
   ALL_CALLS_DESCRIPTION,
   ALL_CALLS_CAMPAIGN_PARAM,
+  ALL_CALLS_TO_FOLLOW_UP_NOTE,
   CALL_LOG_DESCRIPTION,
   CALL_LOG_INBOUND_OUTCOME_HINT,
   CALL_LOG_INBOUND_OUTCOME_OPTIONS,
@@ -812,7 +813,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
         </div>
       )}
       {type === 'to_follow_up' && (
-        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{TO_FOLLOW_UP_NOTE}</p>
+        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{account ? ALL_CALLS_TO_FOLLOW_UP_NOTE : TO_FOLLOW_UP_NOTE}</p>
       )}
 
       <FiltersCard activeCount={activeFilterCount}>

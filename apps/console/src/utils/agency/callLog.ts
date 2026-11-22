@@ -254,6 +254,10 @@ export const TO_FOLLOW_UP_DATES_HINT = 'To follow up shows every open missed cal
 export const TO_FOLLOW_UP_NOTE =
   'Every missed call on this campaign that is still open, whatever the dates. Call the customer back, or mark the call handled. '
   + 'The Agent filter here is who a call is assigned to.';
+/** The same, on the account's All calls. */
+export const ALL_CALLS_TO_FOLLOW_UP_NOTE =
+  'Every missed call in this account that is still open, whatever the dates. Call the customer back, or mark the call handled. '
+  + 'The Agent filter here is who a call is assigned to.';
 
 /**
  * The chips to show: "All · Dialler · Soft phone · Inbound · To follow up", each with its count.

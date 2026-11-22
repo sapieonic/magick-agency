@@ -227,7 +227,11 @@ function inboundLogConditions(
  *    account's.
  *  - `agent`: the attempts of the agent's sessions in the account, the soft-phone calls they
  *    placed, the inbound calls they ANSWERED, and their OPEN Missed rows (assigned to them, the
- *    Missed list's own rule for an agent). Never anybody else's row.
+ *    Missed list's own rule for an agent). Never anybody else's row. `campaign` narrows it to
+ *    one campaign's, or to the calls filed under none. **A campaign named here must be one the
+ *    caller has checked is the account's**: with it the dialler and answered-inbound branches
+ *    are keyed on the campaign (its own indexes, as the campaign Call log's are) and carry no
+ *    account term of their own.
  */
 export type CallLogScope =
   | { kind: 'campaign'; campaignId: string; tenantId: string }
@@ -265,6 +269,11 @@ function scopedAttemptConditions(
 ): string[] | null {
   if (scope.kind === 'campaign') return campaignAttemptConditions(scope.campaignId, f, bind);
   if (scope.campaign === 'none') return null;
+  if (scope.kind === 'agent' && scope.campaign) {
+    // One campaign's attempts by this agent: the campaign Call log's own agent filter
+    // (`attemptAgentUserSql`: their sessions on the campaign), on the campaign's keyset index.
+    return campaignAttemptConditions(scope.campaign, { ...f, agentUserId: scope.agentUserId }, bind);
+  }
   const tenant = bind.add(scope.tenantId);
   const account = bind.add(scope.accountId);
   // An agent's own list is theirs whatever `agent_user_id` asks; the account's reads the filter.
@@ -273,7 +282,6 @@ function scopedAttemptConditions(
   return [
     `a.tenant_id = ${tenant}::uuid`,
     `a.account_id = ${account}::uuid`,
-    ...(scope.kind === 'agent' && scope.campaign ? [`a.campaign_id = ${bind.add(scope.campaign)}::uuid`] : []),
     // No attempt of theirs is older than their first session here. Without the bound, somebody
     // who never dialled (a supervisor opening My calls) walks the account's whole range to find
     // nothing: measured 361 ms on 2 million attempts, against 0 with it.
@@ -357,8 +365,19 @@ function scopedInboundConditions(
     ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind),
   ];
   if (q.toFollowUp) return [openMissed];
+  // The calls they answered. With a campaign, keyed on it alone (`idx_agency_inbound_calls_campaign`):
+  // beside the account term the planner walks the account's whole range for a campaign and an
+  // agent that share no call (measured 223 ms on 300,000 inbound calls, against the campaign's own
+  // few thousand rows). The campaign is the account's (see `CallLogScope`).
+  const answeredBase = scope.campaign && scope.campaign !== 'none'
+    ? [
+      `i.campaign_id = ${bind.add(scope.campaign)}::uuid`,
+      `i.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+      ...inboundCampaignRowConditions('i'),
+    ]
+    : base();
   return [
-    [...base(), `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
+    [...answeredBase, `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
     openMissed,
   ];
 }

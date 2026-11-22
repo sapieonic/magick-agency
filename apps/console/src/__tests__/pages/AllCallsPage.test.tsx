@@ -185,6 +185,13 @@ describe('All calls', () => {
     expect(options).toMatchObject({ campaign: 'none' });
   });
 
+  it('To follow up speaks of the account, and is not narrowed by the dates', async () => {
+    mocks.getAccountCalls.mockResolvedValue(page([], { counts: { all: 3, dialler: 1, soft_phone: 1, inbound: 1, to_follow_up: 2 } }));
+    await renderAt('/agency/calls?type=to_follow_up');
+    expect(screen.getByTestId('call-log-follow-up-note').textContent).toMatch(/^Every missed call in this account that is still open/);
+    expect(screen.getByText('Nobody is waiting for a call back in this account.')).toBeTruthy();
+  });
+
   it('has no export: a campaign’s file is its own Call log’s', async () => {
     await renderAt();
     expect(screen.queryByRole('button', { name: /Export CSV/ })).toBeNull();
