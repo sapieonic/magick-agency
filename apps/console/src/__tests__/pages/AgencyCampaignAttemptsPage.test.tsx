@@ -1759,8 +1759,9 @@ describe('every time on the Call log reads with AM / PM in capitals', () => {
     expect(within(row).getByText('Called back 3:31 PM')).toBeTruthy();
     expect(screen.getByTestId('call-facts-manual-cb').textContent).toBe('Call back · to the 3:12 PM missed call');
     expect(screen.getByText('Dialled from 17 Aug 2026, 09:00 AM, up to 17 Aug 2026, 06:00 PM')).toBeTruthy();
-    // Not one lower-case period anywhere in the list or its chips.
-    expect(document.body.textContent).not.toMatch(/\d ?(am|pm)(?![a-z])/);
+    // Not one lower-case period in the list itself. (The campaign's header above it is the
+    // workspace's, shared by every campaign screen, and still reads "Updated 11:58 am".)
+    expect(screen.getByRole('table').textContent).not.toMatch(/\d ?(am|pm)(?![a-z])/);
   });
 });
 
