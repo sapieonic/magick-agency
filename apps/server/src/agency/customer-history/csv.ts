@@ -128,7 +128,7 @@ function customerHistoryCsvRow(
         const assignee = entry.follow_up.assignee;
         if (assignee) details.push(`Assigned to: ${assignee.name ?? assignee.user_id}`);
       }
-      if (entry.called_back_at) details.push(`Called back ${entry.called_back_at}`);
+      if (entry.called_back_at) details.push(`Called back ${entry.called_back_at} (UTC)`);
       pushPromise(entry, details);
       return [...base, ...callCells(entry, entry.campaign?.name, details)];
     }

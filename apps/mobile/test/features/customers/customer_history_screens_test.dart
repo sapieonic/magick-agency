@@ -454,6 +454,24 @@ void main() {
       expect(find.text('Live now · Inbound'), findsOneWidget);
     });
 
+    testWidgets('a callback booked on an inbound call filed under none reads "No campaign", as its call does',
+        (tester) async {
+      api.autoSearch = answer(entries: [
+        inboundCallJson(1, answeredBy: 'Karan Shah'),
+        {
+          ...callbackJson(),
+          'key': 'callback:i1',
+          'source': {'channel': 'inbound', 'id': 'i1'},
+          'campaign': null,
+        },
+        {...callbackJson(), 'key': 'callback:m9', 'source': {'channel': 'softphone', 'id': 'm9'}, 'campaign': null},
+      ]);
+      await searched(tester);
+      expect(find.text('Inbound call · No campaign'), findsOneWidget);
+      expect(find.text('Callback booked · No campaign'), findsOneWidget);
+      expect(find.text('Callback booked · Not logged to a campaign'), findsOneWidget);
+    });
+
     testWidgets('the inbound filter reads its first page again', (tester) async {
       api.autoSearch = answer();
       await searched(tester);

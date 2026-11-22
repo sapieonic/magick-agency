@@ -515,7 +515,7 @@ describe('inbound calls (CL39–CL42)', () => {
       '"Rang +918000000009; Route: Collections line; Waited 18 seconds; Came through their agent; Promised to pay: 2026-11-25, amount 4500.00"',
     ].join(','));
     expect(lines[2]).toContain('voicemail');
-    expect(lines[2]).toContain('Rang +918000000009; Waited 100 seconds; Voicemail 22 seconds; Missed: overflow; Follow-up: open; Assigned to: Me; Called back 2026-10-05T10:20:00.000Z');
+    expect(lines[2]).toContain('Rang +918000000009; Waited 100 seconds; Voicemail 22 seconds; Missed: overflow; Follow-up: open; Assigned to: Me; Called back 2026-10-05T10:20:00.000Z (UTC)');
   });
 });
 

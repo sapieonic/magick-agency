@@ -269,6 +269,15 @@ describe('the timeline', () => {
     expect(within(row).getByTestId('customer-call-link').getAttribute('href')).toBe('/agency/campaigns/camp-7/calls/inbound/in-1');
   });
 
+  it('a call that could not be answered and left no Missed row reads "Missed" alone, never "Missed · "', () => {
+    const answer = customerHistoryFixture().search_response;
+    const call = answer.timeline.entries[5]!;
+    if (call.kind !== 'inbound_call') throw new Error('the fixture\'s sixth entry is the inbound call');
+    Object.assign(call, { outcome: 'failed', follow_up: null, queued: false, voicemail_seconds: null, called_back_at: null });
+    renderPage(answer);
+    expect(within(entries()[5]!).getByTestId('customer-inbound-happened').textContent).toBe('Missed');
+  });
+
   it('an inbound call still owed a call back says "To follow up"; hidden notes say so', () => {
     const answer = customerHistoryFixture().search_response;
     const call = answer.timeline.entries[5]!;

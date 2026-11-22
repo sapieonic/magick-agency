@@ -181,7 +181,7 @@ function InboundCallRow({ entry }: { entry: CustomerTimelineInboundCall }) {
   return (
     <Row entry={entry} title={<>Inbound call · {entry.campaign ? entry.campaign.name : AGENCY_CALLS_NO_CAMPAIGN_LABEL}</>}>
       <ul className={styles.meta}>
-        <li data-testid="customer-inbound-happened">{copy.happened} · {copy.detail}</li>
+        <li data-testid="customer-inbound-happened">{copy.happened}</li>
         <li>{copy.agent}</li>
         <li>{copy.rang}</li>
         {entry.disposition_code && <li>Outcome code: {entry.disposition_code}</li>}

@@ -318,11 +318,8 @@ class _Totals extends StatelessWidget {
     if (last == null) {
       lastLine = (inbound?.calls ?? 0) > 0 ? CustomerHistoryCopy.notCalledYet : CustomerHistoryCopy.neverContacted;
     } else {
-      final channel = switch (last.channel) {
-        CustomerTimelineChannel.softphone => 'soft phone',
-        CustomerTimelineChannel.inbound => 'inbound',
-        _ => 'campaign',
-      };
+      // The last contact is the newest call we PLACED: never an inbound call (CL40).
+      final channel = last.channel == CustomerTimelineChannel.softphone ? 'soft phone' : 'campaign';
       final outcome = last.outcomeRaw == null ? null : (attemptOutcomeLabels[last.outcome] ?? last.outcomeRaw);
       lastLine = [
         '${CustomerHistoryCopy.lastContacted} ${EnIn.timestamp(last.at)}',
@@ -1059,7 +1056,8 @@ _EntryView _viewOf(CustomerTimelineEntry entry) => switch (entry) {
   ),
   final CustomerTimelineCallback c => _EntryView(
     icon: Icons.event_outlined,
-    title: 'Callback booked · ${c.campaign?.name ?? CustomerHistoryCopy.untagged}',
+    // Booked on an inbound call filed under none: "No campaign", as its call's own row says.
+    title: 'Callback booked · ${c.campaign?.name ?? (c.source.channel == CustomerTimelineChannel.inbound ? CustomerHistoryCopy.noCampaign : CustomerHistoryCopy.untagged)}',
     lines: [
       'Due ${EnIn.timestamp(c.dueAt)}',
       if (c.bookedBy != null) 'Booked by ${personName(c.bookedBy)}',

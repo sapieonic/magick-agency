@@ -148,12 +148,12 @@ export function neverContactedLabel(inboundCalls: number): string {
 
 /**
  * An inbound entry's facts, in the Call log's own words (`inboundWhatHappened`, `followUpWords`,
- * `utils/agency/callLog.ts`): what happened and its detail, who has the call when nobody answered,
+ * `utils/agency/callLog.ts`): what happened with its detail, who has the call when nobody answered,
  * the number they rang, the voicemail's length, and where the follow-up stands.
  */
 export function inboundEntryCopy(entry: CustomerTimelineInboundCall): {
+  /** "Answered · waited 0:18", "Missed · nobody free to answer · waited 1:40", or "Missed" alone. */
   happened: string;
-  detail: string;
   agent: string;
   rang: string;
   voicemail: string | null;
@@ -165,8 +165,9 @@ export function inboundEntryCopy(entry: CustomerTimelineInboundCall): {
   const followUp = followUpWords({ calledBackAt: entry.called_back_at, arrivedAt: entry.at, followUp: entry.follow_up });
   const assignee = entry.follow_up?.assignee;
   return {
-    happened: happened.text,
-    detail: happened.detail,
+    // A call that could not be answered and left no Missed row has no reason and no wait to add:
+    // "Missed", never "Missed · ".
+    happened: happened.detail ? `${happened.text} · ${happened.detail}` : happened.text,
     agent: entry.agent
       ? `Answered by ${actorName(entry.agent)}`
       : assignee ? `Nobody answered · assigned to ${actorName(assignee)}` : 'Nobody answered',
