@@ -1906,6 +1906,19 @@ versions' key and cascade, `template_source`, the lock timeout, down then up), t
 `test/integration/agency/campaign-template-repository.test.ts` (the repository, and the contract's column
 defaults pinned to `agency_campaigns`' DEFAULTs) and the down → up inventory suite.
 
+### 0068 — `migrations/0068_campaign_templates_archived_index.sql`
+
+Campaign templates' Archived list (docs/campaign-templates.md CT14).
+**`idx_agency_campaign_templates_archived`** `(tenant_id, account_id) WHERE archived_at IS NOT NULL` on
+`agency_campaign_templates`: the twin of 0067's live `idx_agency_campaign_templates_scope`, so
+`GET /proxy/agency/campaign-templates?archived=true` reads one scope's archive instead of scanning every
+tenant's templates. The repository's list names `archived_at IS NOT NULL` (or `IS NULL`) in its statement,
+so the planner proves which index applies. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout =
+'10s'`, so a deployment may build it `CONCURRENTLY` first; an invalid index left under the name by a failed
+concurrent build fails the migration. **Down** drops it. **Tests**:
+`test/integration/db/campaign-templates-archived-index-migration.test.ts` (the definition and comment, the
+list's statement uses it, the invalid-index refusal, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
