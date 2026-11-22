@@ -234,7 +234,7 @@ export function projectSoftphoneLogRow(row: SoftphoneLogRaw): CampaignSoftphoneL
 /**
  * An inbound branch row of the campaign call log (`listCallLogForCampaign`) as the database
  * returns it: the inbound call's columns under the attempt row's names, and what only an inbound
- * call has as one JSON object (`extra`, built by `INBOUND_LOG_EXTRA_SQL`).
+ * call has as one JSON object (`extra`, built by `INBOUND_LOG_SELECT_SQL`, `inbound-log-sql.ts`).
  */
 export interface InboundLogRaw {
   id: string;

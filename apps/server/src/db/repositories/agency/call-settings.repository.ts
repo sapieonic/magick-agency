@@ -21,6 +21,7 @@
 import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
+import { inboundCampaignRowConditions } from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -155,9 +156,17 @@ export class AgencyCallSettingsRepository {
   /**
    * The account's calls of the last `days` days filed under no campaign: soft-phone calls that
    * were dialled with none (`dialed_at` set, SR2's definition of a soft-phone call), and ended
-   * inbound calls we served with none (a `rejected` call is not a call of ours). Each is a range
-   * of an account index (`idx_agency_manual_calls_account`, the inbound summary's
+   * inbound calls we served with none (the Call log's own row rule, `inboundCampaignRowConditions`:
+   * a `rejected` call is not a call of ours). Each is a range of an account index
+   * (`idx_agency_manual_calls_account`, the inbound summary's
    * `(tenant_id, account_id, arrived_at) WHERE state = 'ended'`).
+   *
+   * The window is ROLLING: the last `days` × 24 hours to this instant. The console's link from
+   * the count (`unfiledCallsPath`) opens All calls on calendar days on the reader's clock, which
+   * cannot be this window (the server does not know the reader's zone, and the list's date
+   * fields are days): the list starts up to a day earlier, and also shows soft-phone calls that
+   * never dialled, greyed, which this count leaves out. So the list can hold a few more rows
+   * than the number, never fewer.
    */
   async countUnfiledCalls(tenantId: string, accountId: string, days: number, now: Date = new Date()): Promise<number> {
     const from = new Date(now.getTime() - days * 86_400_000);
@@ -168,7 +177,7 @@ export class AgencyCallSettingsRepository {
               AND m.campaign_id IS NULL AND m.dialed_at IS NOT NULL)
         + (SELECT count(*) FROM agency_inbound_calls i
             WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.arrived_at >= $3::timestamptz
-              AND i.state = 'ended' AND i.campaign_id IS NULL AND i.outcome IS DISTINCT FROM 'rejected')
+              AND i.campaign_id IS NULL AND ${inboundCampaignRowConditions('i').join(' AND ')})
         )::text AS n`,
       [tenantId, accountId, from],
     );

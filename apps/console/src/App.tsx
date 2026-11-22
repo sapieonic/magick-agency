@@ -723,7 +723,7 @@ export default function App() {
                   */}
                   <Route path="calls" element={<AllCallsPage />} />
                   {/*
-                    The account's soft-phone calls page until All calls replaced it (CL35):
+                    The account's soft-phone calls page until All calls replaced it (CL34):
                     redirects (replace) to All calls with its Soft phone chip on, keeping the
                     rest of the query. One soft-phone call's detail (`docs/softphone.md` §7)
                     stays, behind `agency_softphone_enabled` on top of the subtree's gates.

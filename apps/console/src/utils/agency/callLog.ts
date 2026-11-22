@@ -211,8 +211,13 @@ export function lastSevenDays(now: Date = new Date()): { from?: string; to?: str
 
 /**
  * All calls on the calls of the last `days` days that are filed under no campaign: where
- * Settings › Calls' "N calls were not filed under a campaign" leads (the same window, the same
- * rows).
+ * Settings › Calls' "N calls were not filed under a campaign" leads. NOT exactly the count's
+ * rows: the count is the server's rolling `days` × 24 hours to now
+ * (`countUnfiledCalls`), and this is whole calendar days on the reader's clock, from the day
+ * `days` days ago to the end of today, because the list's date fields are days. So the list
+ * starts up to a day before the count does, and it also shows soft-phone calls that never
+ * dialled (greyed), which the count leaves out: it can hold a few more calls than the number,
+ * never fewer.
  */
 export function unfiledCallsPath(days: number, now: Date = new Date()): string {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 12);

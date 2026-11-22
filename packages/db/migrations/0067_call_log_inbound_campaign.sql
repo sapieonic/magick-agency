@@ -111,7 +111,7 @@ ALTER TABLE agency_inbound_calls
   ) NOT VALID;
 
 COMMENT ON COLUMN agency_inbound_calls.campaign_id IS
-  'The campaign this call is filed under (docs/call-log.md): the matched contact''s campaign at arrival. NULL: no campaign. No FK.';
+  'The campaign this call is filed under (docs/call-log.md): at arrival the matched contact''s campaign, else the route''s campaign for unknown callers (0069); an agent or supervisor may file an unknown caller''s call elsewhere at the end of the call. NULL: no campaign. No FK.';
 COMMENT ON COLUMN agency_inbound_calls.campaign_source IS
   'How the call came by campaign_id: contact (its number is on the campaign''s list), route, agent or supervisor. Set exactly when campaign_id is.';
 

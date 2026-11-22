@@ -24,10 +24,12 @@
 -- migrate.ts). Plain CREATE INDEX, not CONCURRENTLY (refused inside a transaction): each holds
 -- SHARE on its table until commit. On the release that adds 0067 the manual calls' column is all
 -- NULL, so that build is one read of agency_manual_calls writing an empty index; the inbound one
--- holds the calls 0067 filed. Neither can be built beforehand on a database without 0067 (the
--- columns do not exist). `IF NOT EXISTS` all the same, so a database already on 0067 can build
--- them CONCURRENTLY first (db-hygiene.md §2); the check at the end of Up refuses an invalid index
--- a failed concurrent build leaves under the name. `SET LOCAL lock_timeout = '10s'` first.
+-- holds the calls 0067 filed. The manual calls' one cannot be built beforehand on a database
+-- without 0067 (its column does not exist). The inbound one can, on the large-table path, once
+-- 0067's two columns have been added by hand and its backfill batches run (0067's header,
+-- DEPLOYMENT.md 12): build it CONCURRENTLY then (db-hygiene.md §2) and `IF NOT EXISTS` finds it;
+-- the check at the end of Up refuses an invalid index a failed concurrent build leaves under the
+-- name. `SET LOCAL lock_timeout = '10s'` first.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Drops both indexes; the reads fall back to other plans (correct, slower). A validated CHECK
