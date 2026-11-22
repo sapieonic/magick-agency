@@ -1878,7 +1878,7 @@ own statement is planned on it) and the down → up inventory suite.
 
 ### 0067 — `migrations/0067_campaign_templates.sql`
 
-Campaign templates (docs/campaign-templates.md, CT1–CT18; wire shapes in
+Campaign templates (docs/campaign-templates.md, CT1–CT21; wire shapes in
 `packages/contracts/src/api/agency/campaign-templates.ts`). **`agency_campaign_templates`** (new): `id`,
 `tenant_id`, `account_id` NULL (NULL = an organisation template, shared by the tenant's accounts; no FK on
 either, as `account_settings`, open question 2), `name` `VARCHAR(80)`, `description` `VARCHAR(280)` NULL,

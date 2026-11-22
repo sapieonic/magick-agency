@@ -172,15 +172,6 @@ export function formOfConfig(config: AgencyCampaignTemplateConfig | Partial<Agen
   };
 }
 
-/** The editors' state for a template's sections, each unset section from `inherited` (CT2). */
-export function formOfSections(
-  scope: AgencyCampaignTemplateScope,
-  sections: AgencyCampaignTemplateSections,
-  inherited: AgencyCampaignTemplateSections | null,
-): TemplateForm {
-  return formOfConfig(filledConfig(scope, sections, inherited));
-}
-
 /**
  * The config a template's sections fill in, before any account's limits (every capability on):
  * the template's own sections, then (for an account template) the organisation template it

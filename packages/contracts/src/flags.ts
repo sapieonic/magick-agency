@@ -388,7 +388,7 @@ export const AGENCY_FLAGS = Object.freeze({
     scopes: ['global', 'tenant'],
     clientExposed: true, // the console shows/hides Campaign templates and New campaign's picker
     owner: 'voice',
-    description: 'Agency campaign templates: named organisation and account templates that fill in New campaign',
+    description: 'Agency campaign templates: named organisation and account templates fill in New campaign and API creates (hours default to Asia/Kolkata), and untagged soft-phone calls follow the default template\'s outcomes when the soft phone sets none of its own',
   },
 } satisfies Record<string, FlagDefinition<boolean>>);
 

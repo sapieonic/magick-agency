@@ -7,7 +7,7 @@ import { registerCampaignTemplateWriteRoutes } from './proxy-agency-campaign-tem
 import { registerCampaignTemplateApplyRoutes } from './proxy-agency-campaign-templates/apply.js';
 
 /**
- * Campaign templates (docs/campaign-templates.md, rulings CT1–CT18; the wire is
+ * Campaign templates (docs/campaign-templates.md, rulings CT1–CT21; the wire is
  * `packages/contracts/src/api/agency/campaign-templates.ts`), at the console's paths under
  * `/proxy/agency/`. The public layer of B16, its own tables (`agency_campaign_templates`, 0067)
  * through `AgencyCampaignTemplateRepository`; no `callCore` but apply's, which writes campaigns

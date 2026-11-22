@@ -1,5 +1,5 @@
 /**
- * Campaign templates' pure rules (`docs/campaign-templates.md` §5, rulings CT2, CT5, CT9): the
+ * Campaign templates' pure rules (`docs/campaign-templates.md` §5, rulings CT2, CT5, CT9, CT18, CT20): the
  * built-in settings, how a template fills in a new campaign, a campaign's settings as template
  * sections, the difference between two sets of sections, and where each section of a created
  * campaign came from. The server's routes and create path and the console's New campaign and

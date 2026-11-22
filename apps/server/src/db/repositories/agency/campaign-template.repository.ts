@@ -31,8 +31,11 @@
  *    account template and is refused (`in_use`). Archiving clears the default; restoring re-checks
  *    the name and the based-on.
  *
- * **Lock order**, the same in every transaction here: the scope's advisory lock, then the template's
- * row, then the based-on row. Each refusal is a typed result, never a throw.
+ * **Lock order**: the scope's advisory lock, then the template's row, then the based-on row, in every
+ * transaction here that takes more than one of them. `clearDefault` takes the template's row alone:
+ * it adds no live name and no default, so it needs no scope lock, and holding one lock it cannot
+ * close a cycle (a `setDefault` or create clearing the same row waits for it, then sees it cleared).
+ * Each refusal is a typed result, never a throw.
  *
  * `updated_at` / `updated_by` move with the content (create, replace) only: a default or archive
  * change is not an edit of the template.
@@ -160,7 +163,7 @@ const IN_SCOPE_SQL = `tenant_id = $1::uuid AND account_id IS NOT DISTINCT FROM $
  * The scope's write lock (name uniqueness, the default): a transaction advisory lock keyed by the
  * tenant and the account, or `organisation`. Taken first in every write that needs it.
  */
-export const CAMPAIGN_TEMPLATE_SCOPE_LOCK_SQL =
+const CAMPAIGN_TEMPLATE_SCOPE_LOCK_SQL =
   `SELECT pg_advisory_xact_lock(hashtextextended('agency_campaign_templates:scope:' || $1::text || ':' || COALESCE($2::text, 'organisation'), 0))`;
 
 function json(value: unknown): string {
