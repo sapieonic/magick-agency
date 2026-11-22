@@ -45,7 +45,8 @@ export type ReviewRowId =
   | 'wrapup'
   | 'assignment'
   | 'abandonment'
-  | 'recording';
+  | 'recording'
+  | 'summary';
 
 /** The Review row that summarises this field's setting. */
 export function reviewRowForConfigField(field: string): ReviewRowId {
@@ -59,6 +60,7 @@ export function reviewRowForConfigField(field: string): ReviewRowId {
   if (ASSIGNMENT_FIELDS.has(field)) return 'assignment';
   if (field === 'abandonment_ceiling_pct') return 'abandonment';
   if (field === 'record_calls') return 'recording';
+  if (field === 'analysis_profile_id') return 'summary';
   // Anything else the form renders is on "How agents work"; Outcomes is that step's first row.
   return 'outcomes';
 }

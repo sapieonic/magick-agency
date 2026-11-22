@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   updateAgencyCampaign: vi.fn(),
   isCapabilityEnabled: vi.fn(),
   trackConfigSaved: vi.fn(),
+  useCallAnalysisProfiles: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -33,6 +34,9 @@ vi.mock('../../analytics/events', async (importOriginal) => ({
 }));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: mocks.isCapabilityEnabled, map: {}, loading: false, refresh: vi.fn() }),
+}));
+vi.mock('../../hooks/useCallAnalysisProfiles', () => ({
+  useCallAnalysisProfiles: mocks.useCallAnalysisProfiles,
 }));
 // The caller-ID picker is a hard gate on this page: The API rejects a campaign with
 // an empty `caller_ids`, so nothing downstream runs until one is chosen.
@@ -65,6 +69,11 @@ vi.mock('../../api/agencyCampaigns', () => ({
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
 }));
+
+const PROFILES = [
+  { id: 'prof-default', name: 'Standard summary', is_default: true },
+  { id: 'prof-collections', name: 'Collections dimensions', is_default: false },
+];
 
 async function renderPage() {
   const { default: CampaignBuilderPage } = await import(
@@ -106,6 +115,7 @@ async function openHours() {
 beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1' });
   mocks.isCapabilityEnabled.mockReturnValue(true);
+  mocks.useCallAnalysisProfiles.mockReturnValue({ profiles: PROFILES, loading: false, error: null });
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
@@ -712,8 +722,6 @@ describe('call recording in the builder', () => {
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
-    // The builder has no call-summary picker, so it never touches the profile.
-    expect('analysis_profile_id' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
   });
 
   it('sends record_calls: false when left off, so the saved value is explicit', async () => {
@@ -787,6 +795,110 @@ describe('call recording in the builder', () => {
   });
 });
 
+describe('the call summary in the builder', () => {
+  const summarySelect = () => screen.getByLabelText('Call summary') as HTMLSelectElement;
+
+  it('offers the account’s profiles on the behaviour step and sends the one picked on save', async () => {
+    await openBehaviour();
+    expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: true });
+    expect([...summarySelect().options].map((o) => o.textContent)).toEqual([
+      'No summary',
+      'Standard summary (default)',
+      'Collections dimensions',
+    ]);
+    expect(summarySelect().value).toBe('__none__');
+
+    fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
+    expect(screen.getByText(/summarised against this profile/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-collections');
+    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'builder', analysis_profile_set: true }),
+    );
+  });
+
+  it('sends an explicit null when left at No summary', async () => {
+    await openBehaviour();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
+    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(
+      expect.objectContaining({ analysis_profile_set: false }),
+    );
+  });
+
+  it('is not offered, and no profile is sent, when the account may not summarise calls', async () => {
+    mocks.isCapabilityEnabled.mockImplementation((key: string) => key !== 'agency.analytics');
+    await openBehaviour();
+
+    expect(screen.queryByLabelText('Call summary')).toBeNull();
+    expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: false });
+    goToStep('Review & save');
+    expect(screen.queryByRole('button', { name: 'Edit Call summary' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    // Clearing is always allowed, so `null` passes the API's guard with the capability off.
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
+  });
+
+  it('says when the profiles could not be loaded, and still saves without one', async () => {
+    mocks.useCallAnalysisProfiles.mockReturnValue({ profiles: [], loading: false, error: 'Network down' });
+    await openBehaviour();
+
+    expect(screen.getByRole('note').textContent).toContain('Could not load your summary profiles (Network down)');
+    expect(screen.getByRole('note').textContent).toContain('set it later in the campaign’s Settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
+  });
+
+  it('names the profile on the review step, as a way back to the step', async () => {
+    await openBehaviour();
+    fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
+    goToStep('Review & save');
+
+    expect(screen.getByText('Collections dimensions')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Call summary' }));
+    expect(summarySelect().value).toBe('prof-collections');
+  });
+
+  it('turns a profile the account no longer has into words, on the step with the picker', async () => {
+    // The API's error mask leaves a codeless 404 when the profile is gone.
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('Something went wrong'), {
+        statusCode: 404,
+        details: { error: 'Request Failed', message: 'Something went wrong' },
+      }),
+    );
+    await openBehaviour();
+    fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    const banner = await screen.findByTestId('builder-error');
+    expect(banner.textContent).toContain('That call-summary profile is no longer available');
+    expect(summarySelect()).toBeTruthy(); // back on the behaviour step
+  });
+
+  it('shows the server’s refusal of the profile on the field', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('Validation failed'), {
+        statusCode: 400,
+        details: { error: 'Validation failed', details: { analysis_profile_id: 'must be a call-analysis profile id, or null to clear it' } },
+      }),
+    );
+    await openBehaviour();
+    fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    expect(await screen.findByText('must be a call-analysis profile id, or null to clear it')).toBeTruthy();
+    expect(summarySelect().getAttribute('aria-invalid')).toBe('true');
+  });
+});
 
 describe('the Collections set (agent station AS4)', () => {
   it('names the six in the offer exactly as their tiles are labelled', async () => {

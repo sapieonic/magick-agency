@@ -1,0 +1,23 @@
+/* The look of the recording field beside it, so the two read as one section. */
+.hint {
+  composes: hint from './CampaignRecordingField.module.css';
+}
+
+.gateNotice {
+  composes: gateNotice from './CampaignRecordingField.module.css';
+}
+
+.fieldError {
+  composes: fieldError from './CampaignRecordingField.module.css';
+}
+
+.linkButton {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
