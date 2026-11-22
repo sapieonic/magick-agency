@@ -15,13 +15,16 @@ import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-
 import {
   accountOnlyPartsIn,
   builtinTemplateSections,
+  configOfSections,
   diffSections,
+  followedBy,
   normaliseSection,
   resolveTemplateSections,
   sameTemplateValue,
   sectionKeysSet,
   sectionSourcesForCreate,
   sectionsFromCampaign,
+  withBuiltinFields,
   type TemplateCapabilities,
 } from '../../../src/campaign-templates';
 
@@ -407,5 +410,73 @@ describe('the small helpers', () => {
     const s = normaliseSection('outcomes', undefined);
     expect(s).toEqual(BUILTIN.outcomes);
     expect(s.disposition_catalog).not.toBe(BUILTIN.outcomes.disposition_catalog);
+  });
+});
+
+describe('the rules the server reuses (D13)', () => {
+  it('withBuiltinFields: an absent field of a set section is its built-in value, a copy', () => {
+    const s = withBuiltinFields('wrapup', { wrapup_seconds: 5 });
+    expect(s).toStrictEqual({
+      wrapup_seconds: 5,
+      wrapup_auto_return: BUILTIN.wrapup.wrapup_auto_return,
+      allow_wrapup_redial: BUILTIN.wrapup.allow_wrapup_redial,
+    });
+    expect(Object.keys(s)).toEqual([...AGENCY_CAMPAIGN_TEMPLATE_SECTIONS.wrapup]);
+    const outcomes = withBuiltinFields('outcomes', { outcome_dispositions: {} });
+    expect(outcomes.disposition_catalog).toEqual(BUILTIN.outcomes.disposition_catalog);
+    expect(outcomes.disposition_catalog).not.toBe(BUILTIN.outcomes.disposition_catalog);
+    expect(Object.isFrozen(outcomes.disposition_catalog)).toBe(false);
+  });
+
+  it('withBuiltinFields: an unset section is the built-in section, as structuredClone would copy it', () => {
+    for (const key of KEYS) expect(withBuiltinFields(key, undefined)).toStrictEqual(structuredClone(BUILTIN[key]));
+  });
+
+  it('withBuiltinFields keeps given values as they are: not normalised, not copied; `undefined` is absent, `null` a value', () => {
+    const days = [3, 1, 1];
+    const s = withBuiltinFields('hours', { calling_window_start: '10:00', calling_days: days, default_timezone: undefined });
+    expect(s).toStrictEqual({
+      calling_window_start: '10:00',
+      calling_window_end: BUILTIN.hours.calling_window_end,
+      calling_days: [3, 1, 1],
+      default_timezone: AGENCY_NEW_CAMPAIGN_TIMEZONE,
+    });
+    expect(s.calling_days).toBe(days);
+    expect(withBuiltinFields('agent_screen', { daily_target_calls: null }).daily_target_calls).toBeNull();
+  });
+
+  it('withBuiltinFields leaves out what is not a field of the section, and reads the builtin passed', () => {
+    expect(withBuiltinFields('safety', { abandonment_ceiling_pct: 2, wrapup_seconds: 9 } as Record<string, unknown>))
+      .toStrictEqual({ abandonment_ceiling_pct: 2 });
+    const other = { ...BUILTIN, safety: { abandonment_ceiling_pct: 1.5 } };
+    expect(withBuiltinFields('safety', {}, other)).toStrictEqual({ abandonment_ceiling_pct: 1.5 });
+  });
+
+  it('normaliseSection is withBuiltinFields normalised', () => {
+    expect(normaliseSection('hours', { calling_window_start: '10:00', calling_days: [3, 1, 1] })).toEqual({
+      ...withBuiltinFields('hours', {}),
+      calling_window_start: '10:00:00',
+      calling_days: [1, 3],
+    });
+  });
+
+  it('configOfSections: every section\'s fields in one object, in the map\'s order', () => {
+    const config = configOfSections(BUILTIN);
+    expect(Object.keys(config)).toEqual(KEYS.flatMap((k) => [...AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[k]]));
+    expect(config).toMatchObject({ ...BUILTIN.hours, ...BUILTIN.numbers, ...BUILTIN.outcomes });
+    expect(config.disposition_catalog).toBe(BUILTIN.outcomes.disposition_catalog);
+  });
+
+  it('configOfSections is the config resolveTemplateSections answers', () => {
+    const resolved = resolveTemplateSections({ chosen: { scope: 'account', sections: ACCOUNT_VALUES }, basedOn: null, builtin: BUILTIN, can: ALL });
+    expect(resolved.config).toEqual(configOfSections(resolved.sections));
+  });
+
+  it('followedBy: only an account template follows its organisation template', () => {
+    const basedOn = { sections: ORG_VALUES };
+    expect(followedBy({ scope: 'account' }, basedOn)).toBe(basedOn);
+    expect(followedBy({ scope: 'account' }, null)).toBeNull();
+    expect(followedBy({ scope: 'organisation' }, basedOn)).toBeNull();
+    expect(followedBy(null, basedOn)).toBeNull();
   });
 });

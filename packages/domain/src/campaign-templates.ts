@@ -18,12 +18,16 @@
  *  - {@link sectionsFromCampaign}: "Save as template" and "Copy from a campaign".
  *  - {@link diffSections}: version comparison, "What's different", the apply preview.
  *  - {@link sectionSourcesForCreate}: CT9's per-section source of a created campaign.
+ *  - The rules the server reuses rather than restating them: {@link withBuiltinFields} (a set
+ *    section's absent field is its built-in value), {@link configOfSections} (the flat config of
+ *    complete sections) and {@link followedBy} (only an account template follows an organisation
+ *    template).
  *
  * ── Normalisation: an untouched section never reads as changed ─────────────────
  * Every comparison here is of {@link normaliseSection}'s output, which:
  *  - fills a field absent from a set section with its BUILT-IN value (never the next level's: a
  *    section is won whole, CT2), as a campaign create stores the column default for an omitted
- *    field;
+ *    field ({@link withBuiltinFields}, the one statement of that rule);
  *  - writes a calling window time as `HH:MM:SS` (`09:00` and Postgres's `09:00:00` are one time)
  *    and calling days sorted, each once;
  *  - orders the fields as the section map does;
@@ -171,8 +175,34 @@ function normaliseField(field: AgencyCampaignTemplateField, value: unknown): unk
 }
 
 /**
- * Section `key` with every field present, in the map's order: a field absent (or `undefined`)
- * takes the built-in value; times are `HH:MM:SS`, days sorted (module note). `undefined` (an unset
+ * THE rule "an absent field of a set section is its built-in value" (CT2's "whole", CT8's "kept as
+ * sent"; module note): section `key`'s fields in the map's order, each as given, or a deep copy of
+ * its built-in value when absent (or `undefined`). Fields outside the section are left out.
+ * `undefined` (an unset section) gives a copy of the built-in section.
+ *
+ * The values given are returned as they are: neither normalised nor copied, nor checked. That is
+ * what the server's create stores and its template checks judge (a sent `09:00` is stored as sent,
+ * a duplicated day is refused rather than quietly folded); {@link normaliseSection} normalises
+ * this for comparison.
+ */
+export function withBuiltinFields<K extends Key>(
+  key: K,
+  values: AgencyCampaignTemplateSectionValues<K> | Partial<Record<string, unknown>> | undefined,
+  builtin: CompleteTemplateSections = BUILTIN,
+): Record<AgencyCampaignTemplateSectionField<K>, unknown> {
+  const out: Record<string, unknown> = {};
+  const given = (values ?? {}) as Record<string, unknown>;
+  const base = builtin[key] as Record<string, unknown>;
+  for (const field of fieldsOf(key)) {
+    const v = given[field];
+    out[field] = v === undefined ? copy(base[field]) : v;
+  }
+  return out as Record<AgencyCampaignTemplateSectionField<K>, unknown>;
+}
+
+/**
+ * Section `key` with every field present, in the map's order: {@link withBuiltinFields}, then
+ * times as `HH:MM:SS`, days sorted, every value a copy (module note). `undefined` (an unset
  * section) gives the built-in section.
  */
 export function normaliseSection<K extends Key>(
@@ -180,14 +210,19 @@ export function normaliseSection<K extends Key>(
   values: AgencyCampaignTemplateSectionValues<K> | Partial<Record<string, unknown>> | undefined,
   builtin: CompleteTemplateSections = BUILTIN,
 ): Required<AgencyCampaignTemplateSectionValues<K>> {
+  const filled = withBuiltinFields(key, values, builtin) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  const given = (values ?? {}) as Record<string, unknown>;
-  const base = builtin[key] as Record<string, unknown>;
-  for (const field of fieldsOf(key)) {
-    const v = given[field];
-    out[field] = normaliseField(field, v === undefined ? base[field] : v);
-  }
+  for (const field of fieldsOf(key)) out[field] = normaliseField(field, filled[field]);
   return out as Required<AgencyCampaignTemplateSectionValues<K>>;
+}
+
+/**
+ * The flat campaign config of complete sections: every section's fields in one object, in the
+ * map's order. The objects are the sections' own, not copies. The domain's fill-in and the
+ * server's, after its notes, both answer with it.
+ */
+export function configOfSections(sections: CompleteTemplateSections): AgencyCampaignTemplateConfig {
+  return Object.assign({}, ...AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k) => sections[k])) as AgencyCampaignTemplateConfig;
 }
 
 /** A value's canonical text: object keys sorted, an object's `undefined`, `null` and `false` keys dropped (module note). */
@@ -236,6 +271,16 @@ export interface ResolvedTemplateSections {
 }
 
 /**
+ * The organisation template the chain reads after `chosen` (CT2, CT10): `basedOn` when `chosen` is
+ * an account template, else null (an organisation template follows nothing; no template, nothing
+ * to follow). Generic over what `basedOn` is (its sections, a stored row, a ref), so every reader
+ * of a chain asks the one rule.
+ */
+export function followedBy<T>(chosen: { scope: AgencyCampaignTemplateScope } | null, basedOn: T | null): T | null {
+  return chosen?.scope === 'account' ? basedOn : null;
+}
+
+/**
  * The sections an organisation template may hold: without the account-only sections and fields
  * (CT5). The routes refuse a write that carries them ({@link accountOnlyPartsIn}); this keeps a
  * hand-edited row from leaking an account's numbers into another account.
@@ -255,7 +300,7 @@ function organisationSafe(sections: AgencyCampaignTemplateSections): AgencyCampa
  *
  * `chosen` is the template it starts from, `null` for the built-in settings. `basedOn` is the
  * organisation template an account template follows (its `based_on_template_id`, else the
- * organisation's default); it is read only when `chosen` is an account template. `builtin` is
+ * organisation's default); it is read only when `chosen` is an account template ({@link followedBy}). `builtin` is
  * {@link builtinTemplateSections}'s object. `can` says what the account may have.
  *
  * Per section: the first of `chosen`, `basedOn`, built-in that sets it wins it whole (fields it
@@ -279,7 +324,8 @@ export function resolveTemplateSections(input: {
       source: chosen.scope,
       sections: chosen.scope === 'organisation' ? organisationSafe(chosen.sections) : chosen.sections,
     });
-    if (chosen.scope === 'account' && basedOn) chain.push({ source: 'organisation', sections: organisationSafe(basedOn.sections) });
+    const followed = followedBy(chosen, basedOn);
+    if (followed) chain.push({ source: 'organisation', sections: organisationSafe(followed.sections) });
   }
 
   const sections: Record<string, Record<string, unknown>> = {};
@@ -318,8 +364,8 @@ export function resolveTemplateSections(input: {
     notes.push({ code: 'recording_not_allowed', section: 'recording' });
   }
 
-  const config = Object.assign({}, ...AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k) => sections[k])) as AgencyCampaignTemplateConfig;
-  return { config, sections: sections as CompleteTemplateSections, sources, notes };
+  const complete = sections as CompleteTemplateSections;
+  return { config: configOfSections(complete), sections: complete, sources, notes };
 }
 
 // ── From a campaign ──────────────────────────────────────────────────────────
