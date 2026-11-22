@@ -77,7 +77,12 @@ flag, before any body is read), served from SQL by `AgencyCampaignTemplateReposi
 guard). Only apply reaches the internal handler, through the campaign settings PATCH as one
 function, `api/routes/helpers/campaign-patch.ts` (`patchCampaignConfig`, its checks and its
 `config_changed` audit), which `PATCH /proxy/agency/campaigns/:id` now calls too, so an apply can
-never write what the PATCH would refuse. Beside it in `helpers/`, `tenant-wide-seat.ts`
+never write what the PATCH would refuse. An apply names the templates it applies in `callCore`'s
+typed `templateApply`, which sets the internal `x-mgkvc-template-apply` header (base64url JSON of
+the template and its based-on), so the internal PATCH stores the campaign's `template_source` in
+the settings' own transaction; `callCore` strips that header from forwarded headers, as it does
+the tenancy and proven-campaign ones, so a client can never send it (`test/unit/api/core-dispatch.test.ts`).
+Beside it in `helpers/`, `tenant-wide-seat.ts`
 (`tenantWideSeatRefused`, AA1's organisation-wide seat check) is shared by `POST /accounts` and the
 organisation template writes (CT3), and `campaign-template-refusal.ts` (the template refusal body,
 its words and status per code) by the template routes and the campaign create, whose `template_id`

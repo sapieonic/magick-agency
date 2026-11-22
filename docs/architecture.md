@@ -150,7 +150,9 @@ See [`seams.md`](seams.md).
   `x-mgkvc-account` from the public layer's tenant context only, never from forwarded headers.
   Its typed `provenCampaignId` sets `x-mgkvc-proven-campaign` (`<tenant>:<account>:<campaign>`),
   which the internal spine handler honours only on an exact match; the header is stripped from
-  forwarded headers. `forwardCore` / `forwardCoreVia` (the pass-through forwarders) live beside it.
+  forwarded headers. Its typed `templateApply` (a campaign template's apply, CT16) sets
+  `x-mgkvc-template-apply`, the templates whose record the internal campaign PATCH stores with the
+  settings; it too is stripped from forwarded headers. `forwardCore` / `forwardCoreVia` (the pass-through forwarders) live beside it.
 - **Route families.** A large route file is `<family>.routes.ts` (the plugin function, its hooks)
   plus a `<family>/` folder of `register…(app)` functions on the same instance, e.g.
   `proxy-agency-campaigns/`, `proxy-agency-performance/`, `proxy-agency-staffing/`,

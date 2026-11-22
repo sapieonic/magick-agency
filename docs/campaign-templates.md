@@ -128,6 +128,13 @@ serialise. `updated_at` / `updated_by` move with a content save only, not with a
 change. Archiving an archived template, or restoring a live one, changes nothing; restoring checks
 the name and that its based-on is still live. A retry campaign's `template_source` is NULL (CT7).
 
+Migration `0068_campaign_templates_archived_index.sql` (fresh-context review D8) adds
+`idx_agency_campaign_templates_archived` on `(tenant_id, account_id) WHERE archived_at IS NOT NULL`,
+the twin of the live scope index, so the Archived list (`?archived=true`) no longer scans every
+tenant's templates. The repository's list writes `archived_at IS NULL` or `IS NOT NULL` into its
+statement rather than binding it, so the planner proves which partial index applies
+(`campaign-template-list-index.test.ts` plans that statement on real Postgres).
+
 ## 5. The pure rules (`packages/domain/src/campaign-templates.ts`)
 
 A leaf module: imports only `@magick-agency/contracts`.
@@ -194,15 +201,16 @@ for a bad name, description or body.
 Build notes (step 2): every route answers 403 `feature_disabled` with the flag off. Organisation
 writes need `tenant_admin` with an organisation-wide seat (AA1's `tenant_wide_membership_required`,
 one helper shared with `POST /accounts`); a supervisor writes their account's. A template the
-caller cannot see, or a malformed id, is 404. `effective` needs `X-Account-Id`. A create's
+caller cannot see, or a malformed id, is 404. `effective` and apply need `X-Account-Id`
+(`400 account_scope_required`). A create's
 `template_id`: an id is that template, `null` the built-in settings alone, absent the default
 chain; an unknown one 404 and an archived one 409 (the contract's statuses). A section sent keeps
 its absent fields built-in, and `template_source` is always the server's (a client's is dropped).
 With the flag off a create is as before, except that `break_reasons` sent on a create is now
 stored (it used to be dropped). Apply writes drafts through the campaign PATCH path
-(`helpers/campaign-patch.ts`, its checks and its `config_changed` audit) and then
-`template_source`, with refusals per campaign; a campaign started between the status read and
-the write is still written (an accepted race). The soft-phone settings answer `outcomes_template`
+(`helpers/campaign-patch.ts`, its checks and its `config_changed` audit), with `template_source`
+in the same transaction (below), and refusals per campaign; a campaign started between the status
+read and the write is still written (an accepted race). The soft-phone settings answer `outcomes_template`
 (CT11). Audit: `campaign_template.created|updated|archived|restored|default_set|default_cleared|applied`,
 resource `campaign_template`. A template's own rows (created, updated, default set and cleared,
 archived, restored) are filed under the template's account, an organisation template's under the
@@ -210,6 +218,50 @@ tenant alone (no account); an apply is filed under the request's account, whose 
 whichever template it applies (`auditTemplate` in `proxy-agency-campaign-templates/shared.ts`). A PUT checks its body, the size cap included, before it reads the template.
 Smaller calls: `analysis_profile_unavailable` is noted when the profile fails its check or the account
 does not analyse calls; a description is trimmed, blank is null.
+
+Build notes (fresh-context review, server fixes, 2026-11-22; the IDs are in §8 step 5):
+
+- **Apply's numbers** (D2). Choosing `numbers` from a template that sets none (an organisation
+  template always; an account template that leaves numbers built-in), or none of whose numbers the
+  account can use now, is refused up front, `400 campaign_template_invalid` with
+  `details['sections.numbers']`, before any campaign is touched. Through the PATCH it would refuse
+  every campaign, and none would get its other sections.
+- **Apply in one transaction** (D5). The templates applied ride the internal PATCH as `callCore`'s
+  typed `templateApply` (sent as `x-mgkvc-template-apply`, set from the typed field alone,
+  `seams.md`), so `writeCampaignPatch` stores a campaign's settings and its `template_source`
+  together or not at all; the separate record pass is gone. A campaign whose write fails outright
+  (a throw, not a refusal) is answered `campaign_rejected` with status 500 and the loop goes on.
+  The `campaign_template.applied` row is written whatever happened in the loop.
+- **The record on a settings PATCH** (D1). A PATCH recomputes `template_source` only when its body
+  names a section field, and best effort: a template read that fails is logged and the record
+  kept, never a 500 for the PATCH (a calling window fix on a running campaign included; the record
+  is never read at run time, CT1). Under the row lock the comparison is pure: a record that by
+  then names other versions is left as it is, with no read inside the lock. The record write moves
+  `updated_at`, as every settings write does (D15).
+- **The soft phone's save** (D3). `PUT /softphone/settings` reads what Follow gives after the save
+  best effort: a failure is logged and `outcomes_template` is left out of the answer (the console
+  reads its absence as not known); the save is answered and audited.
+- **History is paged, live templates capped** (D4). `GET /campaign-templates/:id/versions` answers
+  one page, newest first: `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE` (50) by default, `limit` up to
+  `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX` (100), `before` a version for older ones
+  (`AgencyCampaignTemplateVersionsQuery`; a malformed value is `400 campaign_template_invalid`).
+  Each row's `sections_set` is read in SQL (`jsonb_object_keys`), not from the sections. A scope
+  keeps at most `AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX` (200) live templates: a create or a restore past
+  it is refused `400 campaign_template_invalid` with `details.templates`, checked under the scope
+  lock. Archived templates do not count.
+- **A malformed profile id** (D9). A non-id `analysis_profile_id` in a template is
+  `campaign_template_section_invalid` keyed on the field, not the generic 400; one already stored
+  fills in as unavailable (`analysis_profile_unavailable`).
+- **Archive and deleted accounts** (L17). The in-use check (CT14) counts the live account templates
+  of accounts not marked `deleted` only, so a follower that no screen can reach never blocks
+  archiving its organisation template.
+- **CT1, held structurally.** `apps/server/test/unit/agency/campaign-templates-runtime-reach.test.ts`
+  lets only the template modules name the template tables, the template repository or a template
+  module (`agency/campaign-templates/*`): the repository and its barrel, `agency/campaign-templates/`,
+  the soft phone's `untagged-outcomes.ts` (CT11), the create's fill-in and the PATCH's record (the
+  two campaign `crud.ts`) and the template routes. Any other reader, such as pacing or the station
+  overlaying a template on a campaign, turns it red; each entry must still name something.
+  `campaign-templates-create.test.ts` pins the behaviour on real Postgres.
 
 ## 7. Console
 
@@ -297,7 +349,8 @@ Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 
   (N8).
 - **History** (U11, N1, N2, N4). Comparing two versions lists a change of name or Based on beside
   the sections' ("Set only in Version 3 (now)"); a template with one version says it has nothing to
-  compare yet. A stamp from another year carries the year ("18 Nov 2025, 4:12 PM").
+  compare yet. A stamp from another year carries the year ("18 Nov 2025, 4:12 PM"). It reads the
+  server's first page only, so it lists the 50 newest versions (D4; §9).
 - **Campaign Settings** (U7). "What's different from the template now" leaves out numbers the
   template leaves on built-in (each campaign's own, as New campaign treats them) and compares the
   campaign as it is now, so a save shows at once.
@@ -311,15 +364,49 @@ Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 
 
 The fresh-context review's items keep the IDs its reviewers gave them, local to this doc and
 cited in the console's tests and commits: L1–L23 (the loose-ends audit), D1–D17 (server, db,
-contract and domain; not `decisions.md`'s D-series), U1–U13 and N1–N9 (the console).
+contract and domain; not `decisions.md`'s D-series), U1–U13 and N1–N9 (the console). The first
+review's (step 4) are CTS1–CTS14 (server, db, contract and domain) and CTC1–CTC12 (the console),
+defined in the table below the steps. Its reviewers wrote S and C, which clash with
+`decisions.md`'s S1–S8 and AS19's review rulings S1–S16, so code and tests cite the CT-prefixed IDs.
 
 | Step | What | State |
 |---|---|---|
 | 1 Foundation | Contract (sections, wire types, errors, flag, permission), `0067_campaign_templates.sql` and `BASELINE.md`, the domain rules with their table tests, the repository on real Postgres | Built (2026-11-22): `campaign-template-sections.ts`, `api/agency/campaign-templates.ts`, `packages/domain/src/campaign-templates.ts`, `campaign-template.repository.ts`; their tests green, the repository's and the migration's on real Postgres |
 | 2 Server | Routes, effective fill-in, create path (CT8, CT9), soft phone (CT11), numbers (CT15), apply (CT16), audit, route-table guards, integration in both lanes | Built (2026-11-22): the route family, `agency/campaign-templates/`, `agency/softphone/untagged-outcomes.ts`, the shared PATCH and seat helpers; unit and integration green in both lanes |
 | 3 Console | Settings pages, New campaign, campaign Settings, soft phone settings, analytics events, tests | Built (2026-11-22): Settings list and editor (history, copy from a campaign, apply to drafts), New campaign's Start from with Review chips and Reset, campaign Settings' Started from, comparison and Save as template, the soft phone's Follow/Set; console tests green |
-| 4 Review | Independent review of the whole diff, fixes with tests that fail without them | Done (2026-11-22): two independent reviews (server 14 findings, console 12), no blocker; every finding fixed with a test that fails without it, except apply's two race windows (S10, S11), guarded by the code's shape; rulings CT9 (amended), CT15 and CT19–CT21 came out of it. Not yet run in a real browser, against real Firebase sign-in, or with the agent app's Dart tests |
-| 5 Fresh-context review | Three reviewers with no part in the build: a loose-ends audit against the task, the rulings and the repo's rules (L1–L23), the server, db, contract and domain (D1–D17), the console (U1–U13, nits N1–N9). No blocker | Console fixed (2026-11-22), each with a test: U1–U13, N1–N9, L1 (the route-gate sweep's size), L4 (the read-only View and "New campaigns in this account start from"), L21 (search words), and every section round-tripped through the editor's form. Docs fixed (2026-11-22): L2 (`operations.md`, "Enabling campaign templates for a tenant", with D6), L3 (`softphone.md`), L5 (CT23), L7 (`status.md`), L8 (`seams.md`), L9's console, contract, domain and db rows (`modules.md`), L11, L12, L22's doc line (`architecture.md`), L23, D17 (`db-hygiene.md`), and CT22 from U1 and U2. **In progress:** the server's findings (the D-items not accepted in §9, L10, L13–L17) on the server's own branch, with L9's server rows once it merges; L6 (naming the earlier reviews' S1–S14 and C1–C12, which code cites) after it; L18 (the agent app's Dart tests) is CI's mobile job. Accepted as they stand: §9 |
+| 4 Review | Independent review of the whole diff, fixes with tests that fail without them | Done (2026-11-22): two independent reviews (server 14 findings, console 12), no blocker; every finding fixed with a test that fails without it, except apply's two race windows (CTS10, CTS11), guarded by the code's shape; rulings CT9 (amended), CT15 and CT19–CT21 came out of it. Not yet run in a real browser, against real Firebase sign-in, or with the agent app's Dart tests |
+| 5 Fresh-context review | Three reviewers with no part in the build: a loose-ends audit against the task, the rulings and the repo's rules (L1–L23), the server, db, contract and domain (D1–D17), the console (U1–U13, nits N1–N9). No blocker | Console fixed (2026-11-22), each with a test: U1–U13, N1–N9, L1 (the route-gate sweep's size), L4 (the read-only View and "New campaigns in this account start from"), L21 (search words), and every section round-tripped through the editor's form. Docs fixed (2026-11-22): L2 (`operations.md`, "Enabling campaign templates for a tenant", with D6), L3 (`softphone.md`), L5 (CT23), L7 (`status.md`), L8 (`seams.md`), L9's console, contract, domain and db rows (`modules.md`), L11, L12, L22's doc line (`architecture.md`), L23, D17 (`db-hygiene.md`), and CT22 from U1 and U2. Server fixed (2026-11-22), each with a test that fails without it: D1, D2, D3, D4, D5, D8 (0068), D9, D15, L14 (the three criteria without a direct test) and L17, with D6's case pinned and CT1 held structurally (§6); D12, D14, L10, L13, L15 and L16 are tidy-ups of comments, the contract and dead code. Done (2026-11-22): L6 (the first review's IDs named CTS1–CTS14 and CTC1–CTC12, table below), L9's server rows (`modules.md`), L22's console line (`teamRoles.ts`). Not done: D13 (one rule written in three places) and D16 (every `SELECT *` of a campaign carries the record), nits left as they are. L18 (the agent app's Dart tests) is CI's mobile job. Accepted as they stand: §9 |
+
+**The first review's findings** (step 4, 2026-11-22), as code, tests and commits cite them:
+
+| ID | Finding | Fix |
+|---|---|---|
+| CTS1 | A template's outcome overrides reached a create, an apply or the soft phone where contact assignment is off, refused 403 on a field the caller never sent | Left out, note `outcome_overrides_off` (CT20) |
+| CTS2 | After an apply of another template, the record credited the sections not chosen to the template applied | One computation of the record against the versions it names (CT9 as amended) |
+| CTS3 | Sections the fill-in changed (recording not allowed, a profile or numbers unavailable) kept the template's source, and the notes were lost | The record keeps the fill-in's notes (CT9 as amended) |
+| CTS4 | `null` taken on section fields whose campaign column is NOT NULL | Refused, keyed by the field (CT19, `AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS`) |
+| CTS5 | Sections stored as sent, not as a campaign write stores them | Stored by the campaign writes' normalisers (CT19, `campaign-stored-values.ts`) |
+| CTS6 | No size bound on a template's sections, copied into every version | 256 KiB, checked with the body first (CT19) |
+| CTS7 | An organisation template's apply was audited under the tenant, not the account whose drafts changed | Filed under the request's account (§6) |
+| CTS8 | The catalog the soft phone follows skipped the soft phone's own catalog rules | Passed through them (CT21) |
+| CTS9 | An account template's carrier-only numbers section (no caller IDs) was lost on a create or an apply | A set numbers section names a caller ID (CT15) |
+| CTS10 | Apply checked `expected_version` on another read than the one it applied, and the based-on was not pinned | Both read once and pinned for every campaign; a race, held by the code's shape, no test |
+| CTS11 | Apply's answer claimed a `template_source` it had not stored | The answer carries the record as stored (since D5, written with the settings); a race, held by the code's shape, no test |
+| CTS12 | A default, an archive or a restore sent twice at once was audited twice | Audited only when the write changed something |
+| CTS13 | Apply's duplicate check was case-sensitive, so one draft named in two cases was written twice | Ids lower-cased before the check: `400 campaign_template_invalid` |
+| CTS14 | Stale comments and docs: old ruling ranges, the built-in hours said to be UTC | Comments name the rulings and CT18's built-in zone |
+| CTC1 | New campaign stored the record at the draft a roster upload makes, before Hours and Agents, so "Changed for this campaign" was almost never stored | The record recomputed at the settings PATCH (CT9 as amended); the draft's later edits ride Save campaign's PATCH |
+| CTC2 | Numbers left on built-in read as changed, Reset emptied the pool, and a Start from switch wiped the numbers picked on Basics | Numbers a start leaves built-in are the operator's: kept, no chip (§7) |
+| CTC3 | Soft phone settings said "Follow the built-in outcomes" whenever the soft phone had its own list, even with a default template | `outcomes_template` sent whenever templates are on, read as what Follow gives (CT21) |
+| CTC4 | Two "Default for new campaigns" badges on an account's page and two "(default)" entries in the picker | "Account default" and "Organisation default" |
+| CTC5 | Template refusals swapped the server's sentences for generic ones that named the wrong template | The server's sentence kept |
+| CTC6 | A copy of a campaign set sections the editor hides, saved and impossible to unset | Copies set only the sections the editor shows (`templateSectionKeys`) |
+| CTC7 | Apply to drafts read a failed list as "no drafts", kept stale sections, and promised a reload on a 409 that was not there | Retry, the template's sections at each open, "Reload the latest version"; Save as template the same |
+| CTC8 | A default chain read landing after the operator started never showed Start from | Fills only untouched sections, keeps the picker, names the template |
+| CTC9 | Templates / Archived was a tab list with no panels and no arrow keys | An `aria-pressed` filter |
+| CTC10 | A template script using `{amount_due}` or `{due_date}` could fail New campaign's roster import | Held back from the draft; Review explains and offers the script editor (later CT22) |
+| CTC11 | Template logic inline in two oversized components, New campaign and the editor page | `useBuilderTemplate`; `useTemplateEditorData`, `useTemplateEditor` and `TemplateEditorForm` |
+| CTC12 | Copy and labels: the unset choice's words, History listing the current version twice, an unlabelled numbers picker, a banner on every campaign with no record, dialogs keeping their choice when closed | "Use <template>" and its kin, one current version, a named group, no banner, dialogs reset |
 
 ## 9. Accepted limits
 
@@ -341,6 +428,10 @@ Found by the fresh-context review and kept as they are, each for the reason give
 - **L20, a create's `break_reasons` is stored either way.** CT8 and CT17 say nothing changes with the
   flag off, but a `break_reasons` sent on a create is now stored whatever the flag (it used to be
   dropped, §6): a fix, kept.
+- **History lists the 50 newest versions** (D4). The server pages a template's history
+  (`before`, `limit`), but the console's History reads the first page only, so a template saved
+  more than 50 times shows its 50 newest versions and compares among those. A template is rarely
+  saved that often; paging History is a console change of its own when one is.
 - **The start-from card is long on a phone.** "New campaigns in this account start from" lists
   every shown section in one line each, so on a phone it takes a few screens before the list. It
   is the clear view the task asked for, and the list follows it.
