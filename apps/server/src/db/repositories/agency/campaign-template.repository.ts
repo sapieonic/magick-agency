@@ -284,13 +284,17 @@ export class AgencyCampaignTemplateRepository {
 
   /**
    * The live account templates of the tenant based on organisation template `templateId`, by name
-   * (CT14: an archive is refused naming them; the effective read follows them).
+   * (CT14: an archive is refused naming them; the effective read follows them). A template of an
+   * account marked deleted is not counted: no screen reaches that account to rebase it, so it must
+   * not hold the organisation template live (the account name rule excludes them the same way).
    */
   async findLiveBasedOn(tenantId: string, templateId: string, client?: PoolClient): Promise<CampaignTemplateBasedOnRow[]> {
     const { rows } = await (client ?? getPool()).query<CampaignTemplateBasedOnRow>(
-      `SELECT id, name, account_id FROM agency_campaign_templates
-        WHERE tenant_id = $1::uuid AND based_on_template_id = $2::uuid AND account_id IS NOT NULL AND archived_at IS NULL
-        ORDER BY lower(name), id`,
+      `SELECT t.id, t.name, t.account_id FROM agency_campaign_templates t
+        WHERE t.tenant_id = $1::uuid AND t.based_on_template_id = $2::uuid AND t.account_id IS NOT NULL
+          AND t.archived_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = t.account_id AND a.status = 'deleted')
+        ORDER BY lower(t.name), t.id`,
       [tenantId, templateId],
     );
     return rows;

@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto';
  * unique per scope ignoring case and spaces, also under concurrent creates (CT13), one default per
  * scope (the organisation's included), archive refused while live account templates are based on
  * an organisation template, also while one naming it is being created (the two serialise), and
- * restore re-checking the name (CT14), the based-on rules (CT10), and
+ * restore re-checking the name (CT14), a follower in an account marked deleted not counted (L17),
+ * the based-on rules (CT10), and
  * the tenant and account scope. Then the campaign side: the create stores `template_source`, and
  * the contract's column defaults (which the built-in template settings are built from) are the
  * `agency_campaigns` column DEFAULTs.
@@ -32,6 +33,7 @@ import {
 } from '../../../src/db/repositories/agency.repository.js';
 import { formatAgencyCampaignResponse } from '../../../src/api/responses/agency-campaign.response.js';
 import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.js';
+import { insertAccount, insertTenant } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 
 const tenant = randomUUID();
 const otherTenant = randomUUID();
@@ -220,6 +222,21 @@ describe('based on and archive (CT10, CT14)', () => {
     expect((await repo.archive(org, o.id, by)).ok).toBe(true);
     // Its followers cannot come back while it is archived.
     expect(await repo.restore(inA, a.id)).toEqual({ ok: false, reason: 'based_on_archived' });
+  });
+
+  it('a follower in an account marked deleted does not hold an organisation template live (L17)', async () => {
+    // The accounts rows (the other tests' accounts have none: a template's account has no FK).
+    await insertTenant({ id: tenant });
+    await insertAccount({ id: accountA, tenant_id: tenant, status: 'deleted' });
+    await insertAccount({ id: accountB, tenant_id: tenant });
+    const o = await created(org);
+    await created(inA, { name: 'Alpha', based_on_template_id: o.id });
+    const b = await created(inB, { name: 'Beta', based_on_template_id: o.id });
+    expect(await repo.archive(org, o.id, by)).toEqual({
+      ok: false, reason: 'in_use', templates: [{ id: b.id, name: 'Beta', account_id: accountB }],
+    });
+    await repo.archive(inB, b.id, by);
+    expect((await repo.archive(org, o.id, by)).ok).toBe(true);
   });
 
   it('archiving an organisation template while an account template naming it is created: the two serialise', async () => {
