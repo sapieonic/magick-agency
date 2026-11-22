@@ -233,6 +233,10 @@ export function callbackDueCopy(callback: AgencyMyCallbackDue, now: Date = new D
 
 /** The empty list's words for a chip; with a filter on, that nothing matches it. */
 export function myCallsEmpty(type: AgencyCallLogTypeFilter, filtered = false): { title: string; description: string } {
+  // To follow up takes the Campaign filter alone (CL14: whatever the dates), on its missed calls and its callbacks both.
+  if (filtered && type === 'to_follow_up') {
+    return { title: 'Nobody matches that campaign', description: 'Clear the campaign filter to see everyone you still owe a call.' };
+  }
   if (filtered) {
     return { title: 'Nothing matches those filters', description: 'Widen the dates or clear the filters to see every call.' };
   }

@@ -383,6 +383,19 @@ describe('My calls: the agent\'s own calls', () => {
     expect((theirs['callbacks_due'] as Array<{ contact_id: string }>).map((c) => c.contact_id)).toEqual([id.get('cb-theirs')]);
   });
 
+  it('To follow up on one campaign: the callbacks of that campaign only, none under No campaign; the counts stay whole', async () => {
+    const dueOn = async (campaign: string) => {
+      const page = (await get(`/proxy/agency/my-calls?type=to_follow_up&include_counts=1&campaign_id=${campaign}`, me)).json<Page>();
+      expect(page.counts, campaign).toEqual({ to_follow_up: 4, missed_open: 2, callbacks_due: 2 });
+      return (page['callbacks_due'] as Array<{ contact_id: string; campaign_id: string }>);
+    };
+    const onFull = await dueOn(full);
+    expect(onFull.map((c) => labels([{ id: c.contact_id }])[0])).toEqual(['cb-late', 'cb-soon']);
+    // Both callbacks are on the open campaign: the masked one's filter leaves none, as "No campaign" does.
+    expect(await dueOn(masked)).toEqual([]);
+    expect(await dueOn('none')).toEqual([]);
+  });
+
   it('To follow up follows Mark handled', async () => {
     const res = await call(loaded.app, 'POST', `/proxy/agency/inbound/missed/${id.get('m-mine-old')}/handled`, me, floor, {});
     expect(res.statusCode, res.body).toBe(200);

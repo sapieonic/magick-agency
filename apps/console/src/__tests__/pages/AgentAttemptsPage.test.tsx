@@ -243,6 +243,17 @@ describe('My calls: To follow up', () => {
     expect(screen.queryByRole('table')).toBeNull();
   });
 
+  it('asks for the callbacks of the chosen campaign, and says so when the filter leaves nobody', async () => {
+    mocks.getMyCalls.mockResolvedValue(page([], { callbacks_due: [], counts: COUNTS }));
+    await renderPage('/dialer/attempts?type=to_follow_up&campaign_id=c-1');
+    // One request carries the campaign for the missed calls and the callbacks alike.
+    expect(mocks.getMyCalls.mock.calls.at(-1)![0]).toMatchObject({ type: 'to_follow_up', campaign: 'c-1' });
+    expect(screen.getByText('Nobody matches that campaign')).toBeTruthy();
+    expect(screen.getByText('Clear the campaign filter to see everyone you still owe a call.')).toBeTruthy();
+    expect(screen.queryByText('Nobody is waiting for a call from you.')).toBeNull();
+    expect(screen.queryByTestId('my-calls-callbacks')).toBeNull();
+  });
+
   it('shows the callbacks even with no missed call', async () => {
     mocks.getMyCalls.mockResolvedValue(page([], { callbacks_due: [CALLBACK] }));
     await renderPage('/dialer/attempts?type=to_follow_up');

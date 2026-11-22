@@ -149,5 +149,10 @@ describe('an empty list', () => {
     expect(myCallsEmpty('to_follow_up').title).toBe('Nobody is waiting for a call from you.');
     expect(myCallsEmpty('all').title).toBe('No calls yet');
     expect(myCallsEmpty('inbound', true).title).toBe('Nothing matches those filters');
+    // To follow up has no dates to widen: its filter is the campaign.
+    expect(myCallsEmpty('to_follow_up', true)).toEqual({
+      title: 'Nobody matches that campaign',
+      description: 'Clear the campaign filter to see everyone you still owe a call.',
+    });
   });
 });

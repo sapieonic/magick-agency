@@ -126,10 +126,14 @@ function sourceForType(rawType: string | undefined, reply: FastifyReply): { sour
  * (`myCallLaterStatement`, its rule for whose callbacks they are, per assignment mode) on each
  * campaign of the account they are actively on, to the end of that campaign's day. Archived
  * campaigns are left out: nothing is dialled on one.
+ *
+ * `campaign` is the list's Campaign filter: the rows of that campaign alone, and none under "No
+ * campaign" (a callback is booked on a campaign's contact, so it always has one). `total` stays
+ * the whole count, the number on the To follow up chip, which no filter narrows.
  */
 export async function myCallbacksDue(
   deps: CallListsRouteDeps,
-  q: { tenantId: string; accountId: string; userId: string; now: Date },
+  q: { tenantId: string; accountId: string; userId: string; now: Date; campaign?: string },
 ): Promise<{ rows: AgencyMyCallbackDue[]; total: number }> {
   const ids = await deps.activeCampaignIds(q.tenantId, q.userId);
   const lists = await Promise.all(ids.map(async (id) => {
@@ -159,7 +163,10 @@ export async function myCallbacksDue(
       total: later.today + later.overdue,
     };
   }));
-  return { rows: mergeCallbacksDue(lists.map((l) => l.rows)), total: lists.reduce((n, l) => n + l.total, 0) };
+  const shown = q.campaign === undefined
+    ? lists
+    : lists.filter((l, i) => q.campaign !== AGENCY_CALLS_NO_CAMPAIGN && ids[i] === q.campaign);
+  return { rows: mergeCallbacksDue(shown.map((l) => l.rows)), total: lists.reduce((n, l) => n + l.total, 0) };
 }
 
 export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: ProxyAgencyCallListsOptions = {}): Promise<void> {
@@ -254,7 +261,7 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
   /**
    * GET /proxy/agency/my-calls — the caller's own calls: `{ rows, next_cursor, limit, counts?,
    * callbacks_due? }`. `counts` with `include_counts=1`; `callbacks_due` on the first page of
-   * `type=to_follow_up`. A label read that fails is a 500, never rows served unmasked.
+   * `type=to_follow_up`, narrowed by `campaign_id` as the rows are (the counts are not). A label read that fails is a 500, never rows served unmasked.
    */
   app.get('/my-calls', { preHandler: requirePermission('agency.station.connect') }, async (request, reply) => {
     const userId = resolveMyAgentId(request, reply);
@@ -305,7 +312,9 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
         ...(cursor ? { after: cursor } : {}),
         limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
       }),
-      wantsCallbacks ? myCallbacksDue(deps, { tenantId, accountId, userId, now }) : Promise.resolve(null),
+      wantsCallbacks
+        ? myCallbacksDue(deps, { tenantId, accountId, userId, now, ...(rawCampaign !== undefined ? { campaign: rawCampaign } : {}) })
+        : Promise.resolve(null),
       // The Missed calls badge's own count of the caller's open rows.
       parsed.value.includeCounts
         ? agencyInboundCallRepository.countMissed({ tenantId, accountId, assignee: { userId } })
