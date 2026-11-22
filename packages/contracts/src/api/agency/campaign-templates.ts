@@ -256,10 +256,17 @@ export interface AgencyCampaignTemplateSource {
 }
 
 /**
- * `POST /proxy/agency/campaigns`'s body: the campaign's settings, and with the flag on an optional
- * `template_id` to fill the sections it leaves out from (CT8; else the account's default chain). A
- * section sent is kept as sent, an empty outcome list included. `template_source` is the
- * server's to write, never sent.
+ * `POST /proxy/agency/campaigns`'s body: the campaign's settings, and with the flag on the
+ * template to fill the sections it leaves out from (CT8):
+ *  - `template_id` a template's id: that template (one the account can see, live; else
+ *    `404 campaign_template_not_found` / `409 campaign_template_archived`);
+ *  - `template_id: null`: no template, the built-in settings alone (New campaign's "Built-in
+ *    settings"); `template_source.template` is `null`, each section `builtin` or `campaign`;
+ *  - the key absent: the account's default chain (the account's default, else the organisation's,
+ *    else built-in), for a caller that names nothing (an API create).
+ * A section sent is kept as sent, an empty outcome list included; a field it leaves out is
+ * built-in. `template_source` is the server's to write, never sent (one sent is ignored). With the
+ * flag off `template_id` is ignored and the create is as before.
  */
 export interface AgencyCampaignCreateRequest extends Omit<Partial<AgencyCampaign>, 'template_source'> {
   template_id?: string | null;

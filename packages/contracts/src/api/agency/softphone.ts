@@ -44,7 +44,7 @@ export type {
   AgencySoftphoneDncListedRefusal,
   AgencySoftphoneErrorCode,
   AgencySoftphoneErrorResponse,
-  AgencySoftphoneOutcomesFollow,
+  AgencySoftphoneOutcomesTemplate,
   AgencySoftphoneOutsideHoursRefusal,
   AgencySoftphoneProfileSummary,
   AgencySoftphoneSessionOnCampaignRefusal,
