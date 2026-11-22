@@ -184,7 +184,12 @@ every account the caller belongs to (CH2) where every internal handler is single
   tenant_owner 50`, and a permission matrix of minimum roles. `agent` sits below `viewer` on
   purpose: it reaches only the agent surfaces, `/auth/session`, `/accounts/mine`, notification
   preferences, the flag map and the uplink probe (`POST /client-config/uplink-probe`, any verified
-  user). Enforced by `rbac/rbac.middleware.ts`.
+  user). Enforced by `rbac/rbac.middleware.ts`. A `tenant_admin` does everything a supervisor
+  (`account_admin`) does, and the organisation's own writes: creating accounts (AA1), keeping the
+  organisation's campaign templates (CT3, `agency.campaign_templates.manage` with the role floor
+  `tenant_admin` checked by the routes) and changing or removing people's roles. Both organisation
+  writes also need an organisation-wide seat (`api/routes/helpers/tenant-wide-seat.ts`; a seat
+  scoped to one account is refused 403 `tenant_wide_membership_required`).
 - **Accounts.** A tenant starts with one account, `Default`, written with the tenant. More are added
   by a tenant admin or owner on a tenant-wide seat (`POST /accounts`, `account.create`, the console's
   Accounts page) or by a super admin (`POST /super-admin/tenants/:id/accounts`), both through
