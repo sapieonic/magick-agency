@@ -2394,7 +2394,7 @@ Campaign Settings, agent station (`docs/agent-station.md`; `agency/AgencyCampaig
 | `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 57 |
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` (My calls as one list, docs/call-log.md §7: the chips and what each asks for, the old `?view=softphone` URL, a hidden number shown as it arrived, no way to a recording, To follow up's two parts and its empty words, Mark handled, Call back reading a hidden number from the Missed list only when pressed) | 20 |
-| `apps/console/src/__tests__/pages/AllCallsPage.test.tsx` (the account's All calls: the Campaign column, "No campaign" and "Before the rule", the Campaign filter, each row's own page, no export, the floor, `/agency/softphone` landing on it) | 11 |
+| `apps/console/src/__tests__/pages/AllCallsPage.test.tsx` (the account's All calls: the Campaign column, "No campaign" and "Before the rule", the Campaign filter, each row's own page, To follow up's words, no export, the floor, `/agency/softphone` landing on it) | 12 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 10 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 54 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.dialActivity.test.tsx` (late binding's hidden dials on Ready and in the band, from the server's frame sequences: "Calling a customer…", the unanswered count, the gap hold, `reserved`, `ready`, paused, break, No calls right now, early binding unchanged) | 20 |
