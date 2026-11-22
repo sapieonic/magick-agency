@@ -121,6 +121,9 @@ const goToStep = (title: string) => fireEvent.click(screen.getByRole('button', {
 const chip = (label: string) => screen.getByTestId(`review-source-${label}`).textContent;
 
 beforeEach(() => {
+  // The banner's stamp says the year only when it is not this one: pin today.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-22T10:00:00Z'));
   mocks.flags = { agency_campaign_templates_enabled: true };
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Diwali', status: 'draft' });
@@ -132,6 +135,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe('New campaign starts from a template', () => {

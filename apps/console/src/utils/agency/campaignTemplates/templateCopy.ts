@@ -10,7 +10,7 @@ import {
 import { normaliseSection, type TemplateSectionDiff } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 import { describeIsoDays } from '../../format/weekdays';
-import { currentZoneName } from '../../format/date';
+import { currentZoneName, formatDayMonth, formatDayMonthYear } from '../../format/date';
 import { ASSIGNMENT_MODE_COPY } from '../../agencyAssignmentCopy';
 import { ceilingSummary } from '../abandonmentCeiling';
 import { PHONE_DISPLAY_LABELS } from '../stationSettings';
@@ -25,8 +25,6 @@ import { FIELD_LABELS, SECTION_LABELS } from './templateForm';
  * spelling, "organisation" (never the wire's other word for it).
  */
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
-
 /** `09:00` or `09:00:00` → `9:00 AM`. Anything else as given. */
 export function clockTime(value: string): string {
   const m = /^(\d{2}):(\d{2})/.exec(value);
@@ -36,12 +34,16 @@ export function clockTime(value: string): string {
   return `${h12}:${m[2]} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
-/** An instant as `18 Nov, 4:12 PM`, on the reader's clock. */
-export function formatStamp(iso: string): string {
+/**
+ * An instant as `18 Nov, 4:12 PM` on the reader's clock, with the year when it is not `now`'s
+ * (`18 Nov 2025, 4:12 PM`, N1), as the console's other dates say it.
+ */
+export function formatStamp(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const time = clockTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${time}`;
+  const day = d.getFullYear() === now.getFullYear() ? formatDayMonth(d) : formatDayMonthYear(d);
+  return `${day}, ${time}`;
 }
 
 /** Who did something, or null when nobody can be named. */
@@ -141,10 +143,10 @@ export function wrapupSummary(seconds: number, autoReturn: boolean, redial: bool
   }${redial ? ' · Redial from wrap-up allowed' : ''}`;
 }
 
-/** One difference between two sets of sections, in words: "Set", "No longer set", "Changed: the days and the time zone". */
+/** One difference between two sets of sections, in words: "Set only in Version 3 (now)", "Changed: the days and the time zone". */
 export function diffWords(diff: TemplateSectionDiff, names: { from: string; to: string }): string {
-  if (diff.change === 'set') return `Set in ${names.to}, not in ${names.from}`;
-  if (diff.change === 'unset') return `Set in ${names.from}, not in ${names.to}`;
+  if (diff.change === 'set') return `Set only in ${names.to}`;
+  if (diff.change === 'unset') return `Set only in ${names.from}`;
   const fields = diff.fields.map((f) => FIELD_LABELS[f] ?? f);
   const joined = fields.length <= 1 ? (fields[0] ?? '') : `${fields.slice(0, -1).join(', ')} and ${fields[fields.length - 1]}`;
   return `Changed: ${joined}`;

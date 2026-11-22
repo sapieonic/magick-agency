@@ -134,6 +134,8 @@ const apiError = (status: number, body: Record<string, unknown>) =>
   Object.assign(new Error(String(body.message ?? 'refused')), { statusCode: status, details: body });
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-22T10:00:00Z'));
   mocks.tenant = {
     tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined, accounts: [{ id: 'a-1', name: 'Pune', tenant_id: 't-1' }],
   };
@@ -155,6 +157,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe('the list', () => {
@@ -693,7 +696,61 @@ describe('the editor', () => {
     await act(async () => {});
     await act(async () => {});
     const options = [...(screen.getByLabelText('With') as HTMLSelectElement).options].map((o) => o.textContent);
-    expect(options).toEqual(['Now (version 4)', 'Version 3']);
+    expect(options).toEqual(['Version 4 (now)', 'Version 3']);
+  });
+
+  it('compares a version’s name and “Based on” too, not only its sections (U11)', async () => {
+    mocks.listCampaignTemplateVersions.mockResolvedValue([
+      { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
+      { version: 3, name: 'Pune old', based_on_template_id: 'org-1', sections_set: ['hours'], saved_at: '2026-11-10T09:00:00Z', saved_by: null },
+    ]);
+    mocks.getCampaignTemplateVersion.mockResolvedValue({
+      template_id: 'acc-1', version: 3, name: 'Pune old', based_on_template_id: 'org-1', sections_set: ['hours'],
+      saved_at: '2026-11-10T09:00:00Z', saved_by: null, sections: { hours: HOURS },
+    });
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.queryByTestId('history-diff-empty')).toBeNull();
+    const diff = screen.getByTestId('history-diff');
+    const row = (key: string) => diff.querySelector(`li[data-section="${key}"]`)!.textContent;
+    expect(row('name')).toBe('NameChangedVersion 3Pune oldVersion 4 (now)Pune collections');
+    expect(row('based_on')).toBe('Based onChangedVersion 3StandardVersion 4 (now)The organisation’s default');
+    expect(diff.querySelector('li[data-section="hours"]')).toBeNull();
+  });
+
+  it('says a template with one version has nothing to compare yet (N4)', async () => {
+    mocks.listCampaignTemplateVersions.mockResolvedValue([
+      { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
+    ]);
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await act(async () => {});
+    expect(screen.getByTestId('history-only-version').textContent).toBe('This is the only version so far. Each save adds one you can compare with.');
+    expect(screen.queryByLabelText('Compare')).toBeNull();
+    expect(mocks.getCampaignTemplateVersion).not.toHaveBeenCalled();
+  });
+
+  it('clears a version’s read error once another version is read (N4)', async () => {
+    mocks.listCampaignTemplateVersions.mockResolvedValue([
+      { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
+      { version: 3, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-10T09:00:00Z', saved_by: null },
+      { version: 2, name: 'Pune collections', based_on_template_id: null, sections_set: [], saved_at: '2026-11-09T09:00:00Z', saved_by: null },
+    ]);
+    mocks.getCampaignTemplateVersion.mockImplementation(async (_id: string, n: number) => {
+      if (n === 3) throw new Error('Could not load that version.');
+      return { template_id: 'acc-1', version: n, name: 'Pune collections', based_on_template_id: null, sections_set: [], saved_at: '2026-11-09T09:00:00Z', saved_by: null, sections: {} };
+    });
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.getByText('Could not load that version.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Compare'), { target: { value: '2' } });
+    await act(async () => {});
+    expect(screen.queryByText('Could not load that version.')).toBeNull();
+    expect(within(screen.getByTestId('history-diff')).getByText('Set only in Version 4 (now)')).toBeTruthy();
   });
 });
 

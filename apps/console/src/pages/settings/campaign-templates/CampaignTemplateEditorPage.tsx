@@ -161,7 +161,13 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
       {historyOpen && template ? (
         <section className={styles.card} aria-label="History">
           <h2 className={styles.cardTitle}>History</h2>
-          <TemplateHistory templateId={template.id} current={{ version: template.version, sections: template.sections }} />
+          <TemplateHistory
+            templateId={template.id}
+            current={{ version: template.version, name: template.name, basedOnId: template.based_on?.id ?? null, sections: template.sections }}
+            basedOnName={(basedOnId) =>
+              editor.data.organisationTemplates.find((t) => t.id === basedOnId)?.name
+              ?? (template.based_on?.id === basedOnId ? template.based_on.name : 'An organisation template no longer listed')}
+          />
         </section>
       ) : null}
 

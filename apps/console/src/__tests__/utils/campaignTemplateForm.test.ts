@@ -113,7 +113,10 @@ describe('the words', () => {
   it('writes times and stamps as Indian English does', () => {
     expect(clockTime('00:05:00')).toBe('12:05 AM');
     expect(clockTime('12:00')).toBe('12:00 PM');
-    expect(formatStamp('2026-11-18T16:12:00Z')).toBe('18 Nov, 4:12 PM');
+    const now = new Date('2026-11-22T10:00:00Z');
+    expect(formatStamp('2026-11-18T16:12:00Z', now)).toBe('18 Nov, 4:12 PM');
+    // Another year says which (N1).
+    expect(formatStamp('2025-11-18T16:12:00Z', now)).toBe('18 Nov 2025, 4:12 PM');
   });
 
   it('says every note as a sentence', () => {

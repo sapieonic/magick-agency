@@ -16,6 +16,14 @@ export interface DiffSide {
   config?: AgencyCampaignTemplateConfig | Record<string, unknown>;
 }
 
+/** A difference that is not a section's (a version's name, its "Based on"), said as one. */
+export interface DiffExtraRow {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+}
+
 function sideText(side: DiffSide, key: AgencyCampaignTemplateSectionKey): string {
   if (side.config) return sectionSummary(key, side.config);
   const values = side.sections?.[key];
@@ -28,19 +36,22 @@ function sideText(side: DiffSide, key: AgencyCampaignTemplateSectionKey): string
  */
 export function SectionDiffList({
   diffs,
+  extra = [],
   from,
   to,
   empty,
   testId = 'section-diff',
 }: {
   diffs: readonly TemplateSectionDiff[];
+  /** Differences listed before the sections' (U11). */
+  extra?: readonly DiffExtraRow[];
   from: DiffSide;
   to: DiffSide;
   /** Said when nothing differs. */
   empty: string;
   testId?: string;
 }) {
-  if (diffs.length === 0) {
+  if (diffs.length === 0 && extra.length === 0) {
     return (
       <p className={styles.muted} data-testid={`${testId}-empty`}>
         {empty}
@@ -49,6 +60,22 @@ export function SectionDiffList({
   }
   return (
     <ul className={styles.diff} data-testid={testId}>
+      {extra.map((row) => (
+        <li key={row.key} className={styles.diffRow} data-section={row.key}>
+          <div>
+            <p className={styles.diffLabel}>{row.label}</p>
+            <p className={styles.muted}>Changed</p>
+          </div>
+          <div>
+            <p className={styles.diffHead}>{from.label}</p>
+            <p className={styles.diffSide}>{row.from}</p>
+          </div>
+          <div>
+            <p className={styles.diffHead}>{to.label}</p>
+            <p className={styles.diffSide}>{row.to}</p>
+          </div>
+        </li>
+      ))}
       {diffs.map((diff) => (
         <li key={diff.section} className={styles.diffRow} data-section={diff.section}>
           <div>
