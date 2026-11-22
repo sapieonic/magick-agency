@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
+  useCallAnalysisProfiles: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -50,6 +51,7 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     loading: false, error: null, reload: vi.fn(), defaultNumber: '+912200000001',
   }),
 }));
+vi.mock('../../hooks/useCallAnalysisProfiles', () => ({ useCallAnalysisProfiles: mocks.useCallAnalysisProfiles }));
 vi.mock('../../hooks/useAgencyCarriers', () => ({ useAgencyCarriers: () => ({ carriers: null, error: null }) }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
@@ -105,6 +107,11 @@ const FROM_ACCOUNT = effective({ id: 'acc-1', name: 'Pune collections', version:
 ]);
 const FROM_ORG = effective({ id: 'org-1', name: 'Standard', version: 2, scope: 'organisation' }, ORG_SECTIONS, null);
 
+const PROFILES = [
+  { id: 'prof-default', name: 'Standard summary', is_default: true },
+  { id: 'prof-collections', name: 'Collections dimensions', is_default: false },
+];
+
 async function renderPage(role = 'account_admin') {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1', role });
   const { default: CampaignBuilderPage } = await import('../../pages/campaigns/agency/CampaignBuilderPage');
@@ -130,6 +137,7 @@ beforeEach(() => {
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Diwali', status: 'draft' });
   mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, ORG]);
   mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) => (id === 'org-1' ? FROM_ORG : FROM_ACCOUNT));
+  mocks.useCallAnalysisProfiles.mockReturnValue({ profiles: PROFILES, loading: false, error: null });
 });
 
 afterEach(() => {
@@ -568,5 +576,109 @@ describe('a template script that uses keys the roster’s card does not have (CT
     goToStep('Review & save');
     expect(screen.queryByTestId('review-script-problem')).toBeNull();
     expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' });
+  });
+});
+
+/*
+  The recording section is the record flag AND the call summary profile (CT5: an account template's
+  only; the server notes `analysis_profile_unavailable` and leaves it out when the account cannot
+  use it). New campaign's picker is filled from it like the flag, Reset puts both back, and the
+  create sends what the picker shows.
+*/
+describe('the call summary profile a template sets', () => {
+  const PROFILED = effective({ id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, {
+    ...ACCOUNT_SECTIONS,
+    recording: { record_calls: true, analysis_profile_id: 'prof-collections' },
+  }, ORG_SECTIONS);
+  const summarySelect = () => screen.getByLabelText('Call summary') as HTMLSelectElement;
+  const recordBox = () => screen.getByRole('checkbox', { name: /record every call on this campaign/i }) as HTMLInputElement;
+
+  beforeEach(() => {
+    mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) => (id === 'org-1' ? FROM_ORG : PROFILED));
+  });
+
+  it('fills the picker, names it on Review with the template’s chip, and is sent on the create and the save', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    goToStep('How agents work');
+    expect(recordBox().checked).toBe(true);
+    expect(summarySelect().value).toBe('prof-collections');
+    goToStep('Review & save');
+    expect(screen.getByText('Collections dimensions')).toBeTruthy();
+    expect(chip('Call summary')).toBe('Account template');
+    expect(chip('Recording')).toBe('Account template');
+    // Filled in, not typed: nothing to warn about on leaving before a draft exists.
+    expect(screen.queryByTestId('draft-note')).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
+    await act(async () => {});
+    const body = mocks.createAgencyCampaign.mock.calls[0]![0];
+    expect(body).toMatchObject({ template_id: 'acc-1', record_calls: true, analysis_profile_id: 'prof-collections' });
+    expect(mocks.updateAgencyCampaign.mock.calls.at(-1)![1]).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-collections' });
+  });
+
+  it('marks the recording section changed when the profile is changed, and sends the one picked', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    goToStep('How agents work');
+    fireEvent.change(summarySelect(), { target: { value: 'prof-default' } });
+    goToStep('Review & save');
+    expect(chip('Recording')).toBe('Changed for this campaign');
+    expect(chip('Call summary')).toBe('Changed for this campaign');
+    expect(screen.getByTestId('review-source-Recording').getAttribute('data-source')).toBe('campaign');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
+    await act(async () => {});
+    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-default' });
+  });
+
+  it('puts the template’s profile back, with the flag, on Reset of Recording', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    goToStep('How agents work');
+    fireEvent.click(recordBox());
+    fireEvent.change(summarySelect(), { target: { value: '__none__' } });
+    goToStep('Review & save');
+    expect(chip('Recording')).toBe('Changed for this campaign');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Recording to the template' }));
+    expect(chip('Recording')).toBe('Account template');
+    expect(chip('Call summary')).toBe('Account template');
+    goToStep('How agents work');
+    expect(recordBox().checked).toBe(true);
+    expect(summarySelect().value).toBe('prof-collections');
+  });
+
+  it('asks before replacing a profile the operator changed, and a template without one clears it', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    goToStep('How agents work');
+    fireEvent.change(summarySelect(), { target: { value: 'prof-default' } });
+    await pickStart('org-1');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('You changed a section of these settings.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start from it' }));
+    await act(async () => {});
+    // An organisation template holds no profile (CT5).
+    expect(summarySelect().value).toBe('__none__');
+  });
+
+  it('starts with no summary, and says why, when the server left the template’s profile out', async () => {
+    const UNAVAILABLE = effective({ id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, {
+      ...ACCOUNT_SECTIONS,
+      recording: { record_calls: true, analysis_profile_id: null },
+    }, ORG_SECTIONS, [{ code: 'analysis_profile_unavailable', section: 'recording' }]);
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue(UNAVAILABLE);
+    await renderPage();
+    expect(screen.getByTestId('start-from-notes').textContent).toBe(
+      'The template’s call summary profile is no longer available, so this campaign starts with no summary.',
+    );
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
+    goToStep('How agents work');
+    expect(summarySelect().value).toBe('__none__');
+    goToStep('Review & save');
+    expect(chip('Call summary')).toBe('Account template');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
+    await act(async () => {});
+    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({ record_calls: true, analysis_profile_id: null });
   });
 });

@@ -279,6 +279,11 @@ Build notes (fresh-context review, server fixes, 2026-11-22; the IDs are in §8 
 - **New campaign**: "Start from" picker above the steps; the form is filled from
   `/campaign-templates/effective`; Review rows carry the source chip and a per-section Reset; the
   create sends `template_id`. When the read fails or the flag is off, the builder starts as today.
+  New campaign's call summary picker (on "How agents work", with `agency.analytics`) is filled
+  from the template's recording section with the record flag: Review's Call summary row carries
+  the Recording chip, changing either makes the section `campaign`, Reset puts both back, and the
+  create sends the two together or neither. An organisation template holds no profile, and one
+  the account cannot use comes as none with the `analysis_profile_unavailable` note (CT5).
 - **Campaign Settings**: "Started from <template>, version n" with "What's different from the
   template now" and "Save as template…" (new, or replace an existing one's sections).
 - **Soft phone settings**: the outcome list offers "Follow campaign template (<name>)" or "Set

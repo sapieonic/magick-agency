@@ -127,9 +127,6 @@ type BuilderForm = Omit<CampaignSettingsForm, 'carrier'> & { carrier: CarrierCho
 /** A new campaign records nothing and has no call summary until the operator picks them. */
 const NEW_CAMPAIGN_RECORDING: CampaignRecordingState = { record: false, profileId: NO_ANALYSIS_PROFILE };
 
-/** The builder's recording as a template fills it in: on or off, never with an analysis profile. */
-const builderRecording = (record: boolean): CampaignRecordingState => ({ record, profileId: NO_ANALYSIS_PROFILE });
-
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
   // Contact assignment: the Assignment group and outcome overrides, flag-gated.
@@ -282,18 +279,17 @@ export default function CampaignBuilderPage() {
   const template = useBuilderTemplate({
     campaignId,
     config,
-    recordCalls: recording.record,
+    recording,
     callerIds,
     chosenCarrier,
     carrier,
     recordingEnabled,
+    analyticsEnabled,
     assignmentEnabled,
     apply: (next, how) => {
       if (next.config) setConfig(next.config);
-      if (next.recordCalls !== undefined) {
-        const record = next.recordCalls;
-        setRecording((current) => ({ ...current, record }));
-      }
+      // The flag and the call summary profile together: the template's recording section (CT5).
+      if (next.recording) setRecording(next.recording);
       if (next.callerIds) setCallerIds(next.callerIds);
       if ('chosenCarrier' in next) setChosenCarrier(next.chosenCarrier ?? null);
       if (how.outcomes) setCatalogEpoch((n) => n + 1);
@@ -306,7 +302,7 @@ export default function CampaignBuilderPage() {
           ...saved,
           callerIds: baseline.callerIds,
           carrier: baseline.chosenCarrier,
-          recording: builderRecording(baseline.recordCalls),
+          recording: baseline.recording,
           config: baseline.config,
         }));
       }

@@ -15,7 +15,7 @@ import {
   type TemplateForm,
 } from '../../../utils/agency/campaignTemplates/templateForm';
 import { buildConfigPayload, validateConfig, type CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
-import { NO_ANALYSIS_PROFILE, recordingPayload } from '../../../utils/agencyCampaignRecording';
+import { recordingPayload, type CampaignRecordingState } from '../../../utils/agencyCampaignRecording';
 import { sameCarrier, type CarrierChoice } from '../../../utils/agencyCarriers';
 import { samePool } from '../../../utils/campaignSettingsChanges';
 import {
@@ -35,7 +35,8 @@ import { useTemplatesAccess } from './useTemplatesAccess';
 /** What New campaign's own steps hold of a template's sections. */
 export interface BuilderTemplateValues {
   config: CampaignConfigState;
-  recordCalls: boolean;
+  /** The record flag and the call summary profile: the template's recording section, whole (CT5). */
+  recording: CampaignRecordingState;
   callerIds: string[];
   /** `null`: the page's default carrier stands. */
   chosenCarrier: CarrierChoice | null;
@@ -47,6 +48,8 @@ export interface BuilderTemplateInput extends BuilderTemplateValues {
   /** The carrier as the page would send it (the chosen one, else its default). */
   carrier: CarrierChoice;
   recordingEnabled: boolean;
+  /** The account's `agency.analytics`: whether the create may carry a profile. */
+  analyticsEnabled: boolean;
   assignmentEnabled: boolean;
   /**
    * Put values on the form. `baseline` is set when they are what a template fills in, the
@@ -67,7 +70,7 @@ export interface BuilderTemplateInput extends BuilderTemplateValues {
  * it was before templates.
  */
 export function useBuilderTemplate(input: BuilderTemplateInput) {
-  const { campaignId, config, recordCalls, callerIds, carrier, recordingEnabled, assignmentEnabled } = input;
+  const { campaignId, config, recording, callerIds, carrier, recordingEnabled, analyticsEnabled, assignmentEnabled } = input;
   const inputRef = useRef(input);
   inputRef.current = input;
 
@@ -79,7 +82,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
 
   /*
     The form as a template's sections see it (the parts New campaign does not edit, the break
-    limits, what agents see and the summary profile, are the filled-in template's), and where each
+    limits and what agents see, are the filled-in template's), and where each
     section now comes from: the filled-in source while it is unchanged, `campaign` once changed
     (compared by the domain's normalisation, as the server records it, CT9).
   */
@@ -94,13 +97,13 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       ? {
         ...startForm,
         config,
-        recording: { ...startForm.recording, record: recordCalls },
+        recording,
         station: { ...startForm.station, script: script ?? startForm.station.script },
         callerIds,
         carrier,
       }
       : null),
-    [startForm, config, recordCalls, script, callerIds, carrier],
+    [startForm, config, recording, script, callerIds, carrier],
   );
   const builderFields = useMemo(() => (builderForm ? campaignFieldsOfForm(builderForm) : null), [builderForm]);
   const sectionSource = useCallback(
@@ -119,28 +122,30 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   /*
     With a template in play the create names it (`template_id`, null for the built-in settings) and
     carries every section New campaign shows, when they pass their checks, plus the filled-in break
-    limits, agent screen and summary profile: so the server records each section's source as it is
-    at the create (CT9), and nothing is left to a default chain the picker moved away from. Sections
-    still being fixed are left out and filled in from the template; Save campaign sends them.
+    limits and agent screen: so the server records each section's source as it is at the create
+    (CT9), and nothing is left to a default chain the picker moved away from. Sections still being
+    fixed are left out and filled in from the template; Save campaign sends them.
+
+    The recording section goes whole or not at all: a section sent with a field left out takes that
+    field's BUILT-IN value on the server, so a flag sent without the profile would drop the
+    template's profile. It is left out (the template's, as the server filled it in) when either
+    field would be refused: recording switched on, or a profile set, where the account may not.
   */
   const createFields = useMemo(() => {
     if (!startFrom || !builderFields) return {};
     if (Object.keys(validateConfig(config)).length > 0) return { template_id: startFrom.template?.id ?? null };
-    const { record_calls } = recordingPayload({
-      recordingEnabled,
-      analyticsEnabled: false,
-      next: { record: recordCalls, profileId: NO_ANALYSIS_PROFILE },
-    });
+    const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
+    const wholeRecording = recordingFields.record_calls !== undefined && recordingFields.analysis_profile_id !== undefined;
     return {
       template_id: startFrom.template?.id ?? null,
       ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
-      ...(record_calls !== undefined ? { record_calls, analysis_profile_id: builderFields.analysis_profile_id ?? null } : {}),
+      ...(wholeRecording ? recordingFields : {}),
       break_reasons: builderFields.break_reasons,
       agent_script: builderFields.agent_script,
       phone_display: builderFields.phone_display,
       daily_target_calls: builderFields.daily_target_calls,
     };
-  }, [startFrom, builderFields, config, recordingEnabled, recordCalls, assignmentEnabled]);
+  }, [startFrom, builderFields, config, recordingEnabled, analyticsEnabled, recording, assignmentEnabled]);
 
   /**
    * The numbers the last filling-in put on Basics (the template's, or none when it leaves them
@@ -169,9 +174,9 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       const numbers = how.keepNumbers ? { callerIds: now.callerIds, chosenCarrier: now.chosenCarrier } : templateNumbers;
       filledNumbersRef.current = templateNumbers;
       now.apply(
-        { config: next.config, recordCalls: next.recording.record, ...numbers },
+        { config: next.config, recording: next.recording, ...numbers },
         // What the template fills in is the starting point, not an edit; kept sections stay edits.
-        { baseline: { config: filled.config, recordCalls: filled.recording.record, ...templateNumbers }, outcomes: true },
+        { baseline: { config: filled.config, recording: filled.recording, ...templateNumbers }, outcomes: true },
       );
       setScript(filled.station.script);
       setStartFrom(effective);
@@ -191,7 +196,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     names the template it was filled from. Nothing typed is overwritten. A draft already made
     keeps what it has: nothing is filled into it.
   */
-  const openingRef = useRef({ config, recordCalls });
+  const openingRef = useRef({ config, recording });
   const filledInitialRef = useRef(false);
   useEffect(() => {
     if (filledInitialRef.current || read.status !== 'ready' || !read.initial) return;
@@ -202,7 +207,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     const opening = campaignFieldsOfForm({
       ...typedForm(filled, now),
       config: openingRef.current.config,
-      recording: { ...filled.recording, record: openingRef.current.recordCalls },
+      recording: openingRef.current.recording,
     });
     const typed = campaignFieldsOfForm(typedForm(filled, now));
     fill(read.initial, {
@@ -261,7 +266,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       now.apply(
         {
           config: next.config,
-          recordCalls: next.recording.record,
+          recording: next.recording,
           ...(key === 'numbers' && !leavesNumbers(startFrom)
             ? { callerIds: next.callerIds.length > 0 ? next.callerIds : now.callerIds, chosenCarrier: next.carrier }
             : {}),
@@ -409,7 +414,7 @@ function typedForm(filled: TemplateForm, now: BuilderTemplateInput): TemplateFor
   return {
     ...filled,
     config: now.config,
-    recording: { ...filled.recording, record: now.recordCalls },
+    recording: now.recording,
     callerIds: now.callerIds,
     carrier: now.carrier,
   };
