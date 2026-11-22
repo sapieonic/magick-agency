@@ -5,6 +5,7 @@ import { parseSearchNumber, resolveSearchCountry } from '@magick-agency/domain/c
 import { normalizePhoneToE164 } from '../../../../src/utils/phone-normalizer.js';
 import { normalizeE164 } from '../../../../src/agency/dnc-registry.js';
 import { normalizeDialledNumber } from '../../../../src/agency/softphone/manual-predial.js';
+import { plivoNumberToE164 } from '@magick-agency/domain/plivo-number';
 
 /**
  * The search finds what the server stored (`docs/customer-history.md` CH4, CH9). The history
@@ -113,6 +114,29 @@ describe('an unlisted platform default agrees with the roster ingest exactly', (
           agree(`0${digits.slice(0, 3)} ${digits.slice(3)}`, code);
         }
       }
+    }
+  });
+});
+
+/**
+ * Inbound calls (`docs/call-log.md` §8, CL39): the history matches `agency_inbound_calls.from_e164`
+ * exactly too. The arrival stores the caller as `plivoNumberToE164` reads what the carrier sent
+ * (the full number, with or without its `+`), so for every number the table accepts, the form
+ * the search looks for is the form an inbound call from it was stored under.
+ */
+describe('the search number agrees with how an inbound call\'s caller is stored', () => {
+  const accepted = TABLE.cases.filter((c) => typeof c.e164 === 'string');
+
+  it.each(accepted.map((c) => [c.input, c.e164!] as const))('%s is searched as %s, the caller an arrival stores', (_input, e164) => {
+    expect(plivoNumberToE164(e164)).toBe(e164);
+    expect(plivoNumberToE164(e164.slice(1))).toBe(e164);
+  });
+
+  it('+91, a leading 0, spaces and bare digits are one caller', () => {
+    const stored = plivoNumberToE164('919876543210');
+    expect(stored).toBe('+919876543210');
+    for (const typed of ['+91 98765 43210', '098765-43210', '98765 43210', '9876543210', '+919876543210']) {
+      expect(parseSearchNumber(typed, resolveSearchCountry('IN', '91')), typed).toMatchObject({ ok: true, e164: stored });
     }
   });
 });

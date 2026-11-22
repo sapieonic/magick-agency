@@ -1,7 +1,8 @@
 /**
  * Customer history: search one phone number and see every interaction with it across the
  * tenant's campaigns and the soft phone, in the accounts the caller can see
- * (`docs/customer-history.md`, decisions CH1–CH12).
+ * (`docs/customer-history.md`, decisions CH1–CH14), and the calls the number made to us (inbound
+ * calls, `docs/call-log.md` §8, CL39–CL42).
  *
  * | Route | Body | Answer |
  * |---|---|---|
@@ -35,6 +36,14 @@
  * - Wire codes are never respelled (`canceled`); console copy is British English.
  */
 import type { AgencyAttemptOutcome, AgencyCampaignStatus, AgencyContactState } from '../../agency/enums';
+import type {
+  AgencyInboundCallOutcome,
+  AgencyInboundCampaignSource,
+  AgencyInboundClosedCause,
+  AgencyInboundFollowUpStatus,
+  AgencyInboundHandledReason,
+  AgencyInboundMissedReason,
+} from '../../agency/inbound';
 import type { AgencyOverrideKind } from '../../agency/session';
 import type { AgencyDncEntryScope } from '../../agency/softphone';
 import type { AllListed } from '../../primitives';
@@ -69,15 +78,28 @@ export interface CustomerSearchOptionsResponse {
   default_country_code: string;
 }
 
-/** Which channel a call came through. */
-export type CustomerTimelineChannel = 'campaign' | 'softphone';
-export const CUSTOMER_TIMELINE_CHANNELS = ['campaign', 'softphone'] as const;
+/**
+ * Which channel a call came through: a campaign's dial, the soft phone, or `inbound`, a call the
+ * customer made to us (CL39).
+ */
+export type CustomerTimelineChannel = 'campaign' | 'softphone' | 'inbound';
+export const CUSTOMER_TIMELINE_CHANNELS = ['campaign', 'softphone', 'inbound'] as const;
+
+/** {@link CUSTOMER_TIMELINE_CHANNELS} in words: the Channel filter, the summary's live call and last contact. */
+export const CUSTOMER_TIMELINE_CHANNEL_LABELS: Readonly<Record<CustomerTimelineChannel, string>> = {
+  campaign: 'Campaign call',
+  softphone: 'Soft-phone call',
+  inbound: 'Inbound call',
+};
 
 /**
  * The timeline's filters. `campaign_ids` names ROOT campaigns: a retry campaign is filtered
  * with its parent (CH7). `from` / `to` are ISO-8601 instants, half-open `[from, to)`. The
  * call-only filters (`outcomes`, `disposition_codes`, `agent_user_ids`, `connected_only`,
- * `channel`) keep only call entries (`campaign_call`, `softphone_call`). Each list takes at most
+ * `channel`) keep only call entries (`campaign_call`, `softphone_call`, `inbound_call`). On an
+ * inbound call each reads the call's own column, as on the campaign Call log (CL13): `outcomes`
+ * keeps it only for `connected`, which is a call an agent answered (as `connected_only` does); the
+ * agent is who answered; `campaign_ids` is the campaign it is filed under. Each list takes at most
  * {@link CUSTOMER_FILTER_LIST_MAX} values, and each disposition code 1 to
  * {@link CUSTOMER_FILTER_CODE_MAX} characters; past that the request is `400 invalid_search_request`.
  */
@@ -292,7 +314,7 @@ export interface CustomerHistoryOpenOverride {
   calling_hours: boolean;
 }
 
-/** A call to the number live right now. */
+/** A call to the number live right now, or (`inbound`) a call from it we have taken that has not ended. */
 export interface CustomerHistoryLiveCall {
   channel: CustomerTimelineChannel;
   campaign: CustomerHistoryCampaign | null;
@@ -301,9 +323,15 @@ export interface CustomerHistoryLiveCall {
 }
 
 export interface CustomerHistoryTotals {
-  /** Calls placed, campaign and soft phone. */
+  /** Calls placed, campaign and soft phone. Never an inbound call: the customer placed that one. */
   calls: number;
   connected: number;
+  /**
+   * The calls the number made to us (the timeline's `inbound_call` entries) and how many an agent
+   * answered. Apart from `calls`: no figure adds a call we placed to one we received (CL7).
+   * Absent from a server that predates inbound calls in the history.
+   */
+  inbound?: { calls: number; answered: number };
   last_contacted: {
     at: string;
     channel: CustomerTimelineChannel;
@@ -343,8 +371,8 @@ export interface CustomerHistorySummary {
 
 // ─── The timeline ───────────────────────────────────────────────────────────
 
-export type CustomerTimelineKind = 'campaign_call' | 'softphone_call' | 'callback' | 'dnc_mark' | 'roster_entry';
-export const CUSTOMER_TIMELINE_KINDS = ['campaign_call', 'softphone_call', 'callback', 'dnc_mark', 'roster_entry'] as const;
+export type CustomerTimelineKind = 'campaign_call' | 'softphone_call' | 'inbound_call' | 'callback' | 'dnc_mark' | 'roster_entry';
+export const CUSTOMER_TIMELINE_KINDS = ['campaign_call', 'softphone_call', 'inbound_call', 'callback', 'dnc_mark', 'roster_entry'] as const;
 
 interface CustomerTimelineBase {
   /** Unique across kinds: `<kind>:<id>`. The tie-break of the order. */
@@ -409,6 +437,69 @@ export interface CustomerTimelineSoftphoneCall extends CustomerTimelineBase {
   call_page: { account_id: string; manual_call_id: string } | null;
 }
 
+/** The Missed row of an inbound call that reached nobody ({@link CustomerTimelineInboundCall.follow_up}). */
+export interface CustomerTimelineFollowUp {
+  status: AgencyInboundFollowUpStatus;
+  reason: AgencyInboundMissedReason;
+  /** With `reason` `closed`: why the caller was answered as closed. NULL otherwise. */
+  closed_cause: AgencyInboundClosedCause | null;
+  /** Who the row is assigned to; NULL: the account. */
+  assignee: CustomerHistoryUser | null;
+  /** `marked` by a person or `reached` (the customer was spoken to afterwards). NULL while open. */
+  handled_reason: AgencyInboundHandledReason | null;
+  handled_at: string | null;
+}
+
+/**
+ * A call the number made to us (CL39): an ENDED inbound call from the number in an account the
+ * caller can see, that we served (never a `rejected` one), **whether or not it is filed under a
+ * campaign**. A live one is in the summary's live calls. `at` is when it arrived. The facts are
+ * the campaign Call log's inbound row's (`AgencyCallLogInboundRow`), under the history's own rules
+ * for who sees what (CH8): notes need `agency.campaigns.read` in the call's account or the call
+ * is the caller's own (they answered it); `call_page` needs `agency.supervise` there and a
+ * campaign (the inbound Call page is a campaign's). No voicemail link, no recording link, ever:
+ * `voicemail_seconds` and `recording` say only that one exists.
+ */
+export interface CustomerTimelineInboundCall extends CustomerTimelineBase {
+  kind: 'inbound_call';
+  inbound_call_id: string;
+  /** The campaign the call is filed under (`campaign_id`); NULL: none ("No campaign"). */
+  campaign: CustomerHistoryCampaign | null;
+  /** How the call came by that campaign; NULL with no campaign. */
+  campaign_source: AgencyInboundCampaignSource | null;
+  /** The roster contact the caller's number matched, or null. */
+  contact_id: string | null;
+  /** The number they rang, E.164. */
+  line_e164: string;
+  /** The inbound number's route, by name; null when it has gone. */
+  route_name: string | null;
+  /** Who answered; null for a call that reached nobody. */
+  agent: CustomerHistoryUser | null;
+  outcome: Exclude<AgencyInboundCallOutcome, 'rejected'>;
+  disposition_code: string | null;
+  talk_seconds: number | null;
+  notes: string | null;
+  notes_hidden: boolean;
+  callback_at: string | null;
+  promise_date: string | null;
+  promise_amount: string | null;
+  /** Whole seconds from arrival to the agent's answer, or to the end when nobody answered. */
+  wait_seconds: number;
+  /** Whether the caller was put in the queue. */
+  queued: boolean;
+  /** The agent who answered is the caller's own (the sticky agent): "came through their agent". */
+  via_sticky_agent: boolean;
+  /** The length of the voicemail the caller left; null: none (or it has aged out). */
+  voicemail_seconds: number | null;
+  /** The call's Missed row; null for an answered call. */
+  follow_up: CustomerTimelineFollowUp | null;
+  /** When the latest soft-phone call placed from this call's Call back was made; null: none. */
+  called_back_at: string | null;
+  recording: CustomerRecordingState;
+  /** Where the inbound Call page lives; NULL when the caller cannot open it (CH8) or the call has no campaign. */
+  call_page: { account_id: string; campaign_id: string; inbound_call_id: string } | null;
+}
+
 /** Whether a booked callback was kept: dialled within 15 minutes of its time, after it, or not yet. */
 export type CustomerCallbackStatus = 'kept' | 'late' | 'missed' | 'upcoming' | 'due';
 export const CUSTOMER_CALLBACK_STATUSES = ['kept', 'late', 'missed', 'upcoming', 'due'] as const;
@@ -446,6 +537,7 @@ export interface CustomerTimelineRosterEntry extends CustomerTimelineBase {
 export type CustomerTimelineEntry =
   | CustomerTimelineCampaignCall
   | CustomerTimelineSoftphoneCall
+  | CustomerTimelineInboundCall
   | CustomerTimelineCallback
   | CustomerTimelineDncMark
   | CustomerTimelineRosterEntry;

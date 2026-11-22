@@ -55,6 +55,18 @@
  * `test/integration/api/customer-history.test.ts` ("every read uses its index") EXPLAINs each
  * statement exactly as exported here, on analysed tables, without disabling any plan type.
  *
+ *  - inbound calls: `idx_agency_inbound_calls_from (tenant_id, account_id, from_e164, arrived_at
+ *    DESC, id DESC) WHERE from_e164 IS NOT NULL` (`0071_inbound_calls_from_index.sql`), walked once per visible
+ *    account in keyset order with the cursor as an index condition (no sort), as the soft-phone calls are.
+ *
+ * ── Inbound calls (CL39, `docs/call-log.md` §8) ─────────────────────────────────
+ * The number's inbound calls are the calls FROM it (`from_e164`, stored as E.164, so the search's
+ * exact match finds them) in the visible accounts that have ENDED and that we served: the campaign
+ * Call log's own row rule (`inboundCampaignRowConditions`) without its campaign term, so a call
+ * filed under no campaign is a row here. A live call is in the summary's live calls, not the
+ * timeline. A call with no account (refused before it had one) is nobody's to see (CH2). The row
+ * is the Call log's inbound row (`INBOUND_LOG_SELECT_SQL`, `projectInboundLogRow`).
+ *
  * Nothing here matches a number by its ending (CH4): every read is `= $phone`.
  *
  * `at` columns are the row's ordering instant rendered at MICROSECOND precision
@@ -65,7 +77,11 @@ import type { QueryResultRow } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { recordingUrlSql } from '@magick-agency/db/utils/recording-request';
 import { keysetAtSql } from '@magick-agency/domain/keyset-cursor';
+import type { CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
 import { AGENCY_ATTEMPT_LIVE_STATES } from '../../models/agency.model.js';
+import { INBOUND_LOG_SELECT_SQL } from './inbound-log-sql.js';
+import { projectInboundLogRow, type InboundLogRaw } from './projections.js';
+import { inboundAnsweredSql, inboundCampaignRowConditions } from './sql-fragments.js';
 
 /** Who may be read: the tenant and the accounts the caller can see. */
 export interface CustomerHistoryScope {
@@ -185,7 +201,7 @@ export interface CustomerHistoryManualCallRow {
  * microseconds: its timeline position, which a re-booking never moves.
  */
 export interface CustomerHistoryCallbackRow {
-  channel: 'campaign' | 'softphone';
+  channel: 'campaign' | 'softphone' | 'inbound';
   /** The call it was booked on (attempt or manual call id). */
   id: string;
   account_id: string;
@@ -196,6 +212,18 @@ export interface CustomerHistoryCallbackRow {
   at: string;
   /** When it was (last) booked: the disposition, else the call's end, else its start; microseconds. Judges it, never orders it. */
   booked_at: string;
+}
+
+/**
+ * An inbound call from the number: the campaign Call log's inbound row (`campaign_id` NULL for a
+ * call filed under none), its account, whether it asked for a recording, and `at`, when it
+ * arrived, microseconds.
+ */
+export interface CustomerHistoryInboundCallRow extends Omit<CampaignInboundLogRow, 'campaign_id'> {
+  campaign_id: string | null;
+  account_id: string;
+  recording_requested: boolean;
+  at: string;
 }
 
 export interface CustomerHistoryDncRow {
@@ -230,22 +258,25 @@ export interface CustomerHistoryUploadRow {
 export interface CustomerHistoryCallStatsRow {
   /** Roster rows carrying the number that the history covers (each a `roster_entry`; at most the cap). */
   contact_entries: number;
-  /** Campaign attempts and soft-phone calls (each a call entry). */
+  /** Campaign attempts, soft-phone calls and inbound calls (each a call entry). */
   call_entries: number;
   /** Calls with a callback booked (each a `callback` entry). */
   callback_entries: number;
-  /** Placed calls (`dialed_at` set) and, of them, connected. */
+  /** Placed calls (`dialed_at` set) and, of them, connected. Never an inbound call: we did not place it. */
   calls: number;
   connected: number;
+  /** Inbound calls from the number (each an `inbound_call` entry) and, of them, answered by an agent. */
+  inbound_calls: number;
+  inbound_answered: number;
   agent_ids: string[];
   outcomes: string[];
   disposition_codes: string[];
-  /** Every campaign a roster row or a soft-phone call names. */
+  /** Every campaign a roster row, a soft-phone call or an inbound call names. */
   campaign_ids: string[];
 }
 
 export interface CustomerHistoryLastPlacedRow {
-  channel: 'campaign' | 'softphone';
+  channel: 'campaign' | 'softphone' | 'inbound';
   id: string;
   dialed_at: Date;
   agent_user_id: string | null;
@@ -254,7 +285,7 @@ export interface CustomerHistoryLastPlacedRow {
 }
 
 export interface CustomerHistoryLiveCallRow {
-  channel: 'campaign' | 'softphone';
+  channel: 'campaign' | 'softphone' | 'inbound';
   id: string;
   campaign_id: string | null;
   agent_user_id: string | null;
@@ -299,7 +330,7 @@ export const UUID_NIL = '00000000-0000-0000-0000-000000000000';
  * callback (the next call placed after it) and is never a keyset position: a callback entry is
  * ordered and paged on its call's `created_at`, which nothing rewrites.
  */
-const BOOKED = (alias: string) => `COALESCE(${alias}.dispositioned_at, ${alias}.ended_at, ${alias}.created_at)`;
+const BOOKED = (alias: string, began = 'created_at') => `COALESCE(${alias}.dispositioned_at, ${alias}.ended_at, ${alias}.${began})`;
 
 /**
  * The number's newest roster rows in the visible accounts, at most `limit` (CH14): each visible
@@ -334,6 +365,19 @@ const MANUAL_CTE = `
       UNION
       SELECT m.id FROM agency_manual_calls m
        WHERE m.contact_id IN (SELECT id FROM ct) AND m.tenant_id = $1::uuid AND m.account_id = ANY($3::uuid[]))`;
+
+/**
+ * What makes an inbound call (alias `i`) one of the number's rows (CL39): from the number, in the
+ * tenant, ended and served. The account term is the caller's: one account for an index walk,
+ * `ANY($3)` for an aggregate. $1 tenant, $2 phone.
+ */
+const INBOUND_ROW = `i.tenant_id = $1::uuid AND i.from_e164 = $2::text
+           AND ${inboundCampaignRowConditions('i').join(' AND ')}`;
+
+/** The number's inbound calls in the visible accounts (alias `i`): `idx_agency_inbound_calls_from`. $1 tenant, $2 phone, $3 accounts. */
+const INBOUND_FROM = `
+      FROM agency_inbound_calls i
+     WHERE i.account_id = ANY($3::uuid[]) AND ${INBOUND_ROW}`;
 
 /** The number's campaign attempts (alias `a`, its session `s`). Needs {@link CONTACTS_CTE}. */
 const ATTEMPTS_FROM = `
@@ -377,6 +421,16 @@ const ATTEMPT_AGENT_IN = `EXISTS (
          SELECT 1 FROM agency_agent_sessions s12 WHERE s12.id = a.reserved_agent_id AND s12.agent_user_id = ANY($12::uuid[]))`;
 const MANUAL_AGENT_IN = 'm.agent_user_id = ANY($12::uuid[])';
 
+/**
+ * The call-only filters on an inbound call, each by the call's own column (the Call log's rule,
+ * CL13): an outcome filter keeps it only for `connected`, which on an inbound call is one an
+ * agent answered (no inbound call has any other attempt outcome); the agent is who answered.
+ */
+const INBOUND_CALL_FILTERS = `($10::text[] IS NULL OR ('connected' = ANY($10::text[]) AND ${inboundAnsweredSql('i')}))
+           AND ($11::text[] IS NULL OR i.disposition_code = ANY($11::text[]))
+           AND ($12::uuid[] IS NULL OR i.answered_by_user_id = ANY($12::uuid[]))
+           AND (NOT $13::boolean OR ${inboundAnsweredSql('i')})`;
+
 /** One soft-phone index walk's filters and its own top `n` (both arms of `pageManualCalls`). */
 const MANUAL_WALK_TAIL = `
            AND ${keyset('m.created_at', 'm.id')}
@@ -391,17 +445,18 @@ const MANUAL_WALK_TAIL = `
  * at their call's `created_at` (immutable: re-booking rewrites `dispositioned_at`, and a keyset
  * position that moves is an entry skipped or shown twice), after the cursor, top `n` of their
  * own. `booked_at` is {@link BOOKED}, for judging the callback only. `bookedBy`: who booked it.
+ * `began` is the call's own instant: `created_at`, or an inbound call's `arrived_at`.
  */
-const callbackArm = (channel: 'campaign' | 'softphone', x: string, from: string, bookedBy: string) => `
+const callbackArm = (channel: 'campaign' | 'softphone' | 'inbound', x: string, from: string, bookedBy: string, began = 'created_at') => `
       (SELECT '${channel}' AS channel, ${x}.id, ${x}.account_id, ${x}.campaign_id, ${x}.callback_at,
-              ${bookedBy} AS booked_by_user_id, ${x}.created_at AS created, ${keysetAtSql(`${x}.created_at`)} AS at,
-              ${keysetAtSql(BOOKED(x))} AS booked_at
+              ${bookedBy} AS booked_by_user_id, ${x}.${began} AS created, ${keysetAtSql(`${x}.${began}`)} AS at,
+              ${keysetAtSql(BOOKED(x, began))} AS booked_at
        ${from}
          AND ${x}.callback_at IS NOT NULL
-         AND ${keyset(`${x}.created_at`, `${x}.id`)}
-         AND ${timeWindow(`${x}.created_at`)}
+         AND ${keyset(`${x}.${began}`, `${x}.id`)}
+         AND ${timeWindow(`${x}.${began}`)}
          AND ${rootOf(`${x}.campaign_id`)}
-       ORDER BY ${x}.created_at DESC, ${x}.id DESC
+       ORDER BY ${x}.${began} DESC, ${x}.id DESC
        LIMIT $6::int)`;
 
 const CONTACT_COLUMNS = `c.id, c.root_contact_id, c.campaign_id, c.account_id, c.phone_e164, c.context, c.state,
@@ -466,22 +521,32 @@ export const CUSTOMER_HISTORY_SQL = {
   /** The number's calls aggregated (see {@link CustomerHistoryCallStatsRow}). $1 tenant, $2 phone, $3 accounts. */
   callStats: `
     WITH ${CONTACTS_CTE},${MANUAL_CTE},
+    -- The number's inbound calls, read once (idx_agency_inbound_calls_from): the counts and the campaigns both come from it.
+    ic AS MATERIALIZED (
+      SELECT i.outcome, i.disposition_code, i.answered_by_user_id, i.callback_at, i.campaign_id ${INBOUND_FROM}),
     calls AS (
-      SELECT a.dialed_at, a.outcome, a.disposition_code, s.agent_user_id AS agent, a.callback_at
+      SELECT a.dialed_at, a.outcome, a.disposition_code, s.agent_user_id AS agent, a.callback_at, false AS inbound
       ${ATTEMPTS_FROM}
       UNION ALL
-      SELECT m.dialed_at, m.outcome, m.disposition_code, m.agent_user_id, m.callback_at ${MANUAL_FROM})
+      SELECT m.dialed_at, m.outcome, m.disposition_code, m.agent_user_id, m.callback_at, false ${MANUAL_FROM}
+      UNION ALL
+      -- An inbound call was not placed (no dialled time) and reads connected when an agent answered it (CL13).
+      SELECT NULL::timestamptz, CASE WHEN ${inboundAnsweredSql('ic')} THEN 'connected' END, ic.disposition_code,
+             ic.answered_by_user_id, ic.callback_at, true FROM ic)
     SELECT (SELECT count(*) FROM ct)::int AS contact_entries,
            count(*)::int AS call_entries,
            count(callback_at)::int AS callback_entries,
            (count(*) FILTER (WHERE dialed_at IS NOT NULL))::int AS calls,
            (count(*) FILTER (WHERE dialed_at IS NOT NULL AND outcome = 'connected'))::int AS connected,
+           (count(*) FILTER (WHERE inbound))::int AS inbound_calls,
+           (count(*) FILTER (WHERE inbound AND outcome = 'connected'))::int AS inbound_answered,
            COALESCE(array_agg(DISTINCT agent::text) FILTER (WHERE agent IS NOT NULL), '{}') AS agent_ids,
            COALESCE(array_agg(DISTINCT outcome::text) FILTER (WHERE outcome IS NOT NULL), '{}') AS outcomes,
            COALESCE(array_agg(DISTINCT disposition_code::text) FILTER (WHERE disposition_code IS NOT NULL), '{}') AS disposition_codes,
            ARRAY(SELECT DISTINCT x::text FROM (
              SELECT campaign_id AS x FROM ct
-             UNION SELECT m.campaign_id ${MANUAL_FROM} AND m.campaign_id IS NOT NULL) u) AS campaign_ids
+             UNION SELECT m.campaign_id ${MANUAL_FROM} AND m.campaign_id IS NOT NULL
+             UNION SELECT ic.campaign_id FROM ic WHERE ic.campaign_id IS NOT NULL) u) AS campaign_ids
       FROM calls`,
 
   /** The newest placed call to the number, either channel. $1 tenant, $2 phone, $3 accounts. */
@@ -496,14 +561,23 @@ export const CUSTOMER_HISTORY_SQL = {
      ORDER BY x.dialed_at DESC, x.id DESC
      LIMIT 1`,
 
-  /** Calls to the number dialled and not ended. $1 tenant, $2 phone, $3 accounts. */
+  /**
+   * Calls to the number dialled and not ended, and calls from it we have taken and that have not
+   * ended (`arrived` is not admitted yet, as the account's live count reads it). $1 tenant,
+   * $2 phone, $3 accounts.
+   */
   liveCalls: `
     WITH ${CONTACTS_CTE},${MANUAL_CTE}
     SELECT 'campaign' AS channel, a.id, a.campaign_id, s.agent_user_id, COALESCE(a.dialed_at, a.created_at) AS started_at
     ${ATTEMPTS_FROM} AND a.state IN (${LIVE_STATES_SQL})
     UNION ALL
     SELECT 'softphone', m.id, m.campaign_id, m.agent_user_id, COALESCE(m.dialed_at, m.created_at)
-    ${MANUAL_FROM} AND m.state IN (${LIVE_STATES_SQL})`,
+    ${MANUAL_FROM} AND m.state IN (${LIVE_STATES_SQL})
+    UNION ALL
+    SELECT 'inbound', i.id, i.campaign_id, i.answered_by_user_id, i.arrived_at
+      FROM agency_inbound_calls i
+     WHERE i.tenant_id = $1::uuid AND i.account_id = ANY($3::uuid[]) AND i.from_e164 = $2::text
+       AND i.state <> 'ended' AND i.state <> 'arrived'`,
 
   /**
    * Who booked each contact's latest callback (campaign or soft phone), with their name: by
@@ -572,14 +646,16 @@ export const CUSTOMER_HISTORY_SQL = {
      ORDER BY a.created_at DESC, a.id DESC`,
 
   /**
-   * Callbacks booked on campaign attempts and on soft-phone calls (`callback`), at their call's
-   * `created_at` (see {@link callbackArm}): each channel's top `n`, then the top `n` of both. $1–$9.
+   * Callbacks booked on campaign attempts, soft-phone calls and inbound calls (`callback`), at
+   * their call's own instant (see {@link callbackArm}): each channel's top `n`, then the top `n`
+   * of them all. $1–$9.
    */
   pageCallbacks: `
     WITH ${CONTACTS_CTE},${MANUAL_CTE}
     SELECT x.channel, x.id, x.account_id, x.campaign_id, x.callback_at, x.booked_by_user_id, x.at, x.booked_at
       FROM (${callbackArm('campaign', 'a', ATTEMPTS_FROM, 'COALESCE(a.dispositioned_by_user_id, s.agent_user_id)')}
-      UNION ALL${callbackArm('softphone', 'm', MANUAL_FROM, 'COALESCE(m.dispositioned_by_user_id, m.agent_user_id)')}) x
+      UNION ALL${callbackArm('softphone', 'm', MANUAL_FROM, 'COALESCE(m.dispositioned_by_user_id, m.agent_user_id)')}
+      UNION ALL${callbackArm('inbound', 'i', INBOUND_FROM, 'COALESCE(i.dispositioned_by_user_id, i.answered_by_user_id)', 'arrived_at')}) x
      ORDER BY x.created DESC, x.id DESC
      LIMIT $6::int`,
 
@@ -604,6 +680,30 @@ export const CUSTOMER_HISTORY_SQL = {
       FROM (SELECT p.id FROM picked p ORDER BY p.created_at DESC, p.id DESC LIMIT $6::int) heads
       JOIN agency_manual_calls m ON m.id = heads.id
      ORDER BY m.created_at DESC, m.id DESC`,
+
+  /**
+   * Inbound calls from the number (`inbound_call`, CL39): `idx_agency_inbound_calls_from` walked
+   * per visible account in keyset order (when the call arrived) with the cursor in the index
+   * condition and its own `LIMIT`, the heads merged, then each row as the campaign Call log reads
+   * an inbound row. $1–$13.
+   */
+  pageInboundCalls: `
+    WITH picked AS (
+      SELECT d.id, d.arrived_at FROM unnest($3::uuid[]) AS acc(id)
+      CROSS JOIN LATERAL (
+        SELECT i.id, i.arrived_at FROM agency_inbound_calls i
+         WHERE i.account_id = acc.id AND ${INBOUND_ROW}
+           AND ${keyset('i.arrived_at', 'i.id')}
+           AND ${timeWindow('i.arrived_at')}
+           AND ${rootOf('i.campaign_id')}
+           AND ${INBOUND_CALL_FILTERS}
+         ORDER BY i.arrived_at DESC, i.id DESC
+         LIMIT $6::int) d)
+    SELECT ${INBOUND_LOG_SELECT_SQL}, i.account_id, i.recording_requested,
+           ${keysetAtSql('i.arrived_at')} AS at
+      FROM (SELECT p.id FROM picked p ORDER BY p.arrived_at DESC, p.id DESC LIMIT $6::int) heads
+      JOIN agency_inbound_calls i ON i.id = heads.id
+     ORDER BY i.arrived_at DESC, i.id DESC`,
 
   /** DNC marks (`dnc_mark`). $1–$9. */
   pageDnc: `
@@ -735,7 +835,7 @@ async function read<T extends QueryResultRow>(sql: string, params: unknown[]): P
 }
 
 const emptyCallStats = (): CustomerHistoryCallStatsRow => ({
-  contact_entries: 0, call_entries: 0, callback_entries: 0, calls: 0, connected: 0,
+  contact_entries: 0, call_entries: 0, callback_entries: 0, calls: 0, connected: 0, inbound_calls: 0, inbound_answered: 0,
   agent_ids: [], outcomes: [], disposition_codes: [], campaign_ids: [],
 });
 
@@ -794,7 +894,7 @@ export class AgencyCustomerHistoryRepository {
     return (await read<CustomerHistoryAttemptRow>(CUSTOMER_HISTORY_SQL.pageAttempts, callParams(scope, phone, q))).map(attemptRow);
   }
 
-  /** Callbacks booked on either channel's calls. */
+  /** Callbacks booked on a call of any channel. */
   async pageCallbacks(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryCallbackRow[]> {
     if (noIds(scope.accountIds)) return [];
     return read(CUSTOMER_HISTORY_SQL.pageCallbacks, baseParams(scope, phone, q));
@@ -803,6 +903,20 @@ export class AgencyCustomerHistoryRepository {
   async pageManualCalls(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryManualCallRow[]> {
     if (noIds(scope.accountIds)) return [];
     return read(CUSTOMER_HISTORY_SQL.pageManualCalls, callParams(scope, phone, q));
+  }
+
+  /** Inbound calls from the number (CL39). */
+  async pageInboundCalls(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryInboundCallRow[]> {
+    if (noIds(scope.accountIds)) return [];
+    const rows = await read<InboundLogRaw & { account_id: string; recording_requested: boolean; at: string }>(
+      CUSTOMER_HISTORY_SQL.pageInboundCalls, callParams(scope, phone, q));
+    return rows.map((r) => ({
+      ...projectInboundLogRow(r),
+      campaign_id: r.campaign_id ?? null,
+      account_id: r.account_id,
+      recording_requested: r.recording_requested === true,
+      at: r.at,
+    }));
   }
 
   /** DNC marks; tenant-wide ones even with no visible account. */

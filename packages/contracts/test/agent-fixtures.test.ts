@@ -131,6 +131,7 @@ const CUSTOMER_HISTORY = {
   entry_campaign_call: fits<AgencyApi.CustomerTimelineCampaignCall>()(customerHistory.entry_campaign_call),
   entry_dnc_mark: fits<AgencyApi.CustomerTimelineDncMark>()(customerHistory.entry_dnc_mark),
   entry_roster_entry: fits<AgencyApi.CustomerTimelineRosterEntry>()(customerHistory.entry_roster_entry),
+  entry_inbound_call: fits<AgencyApi.CustomerTimelineInboundCall>()(customerHistory.entry_inbound_call),
   search_response_empty: fits<AgencyApi.CustomerSearchResponse>()(customerHistory.search_response_empty),
   timeline_request: fits<AgencyApi.CustomerTimelineRequest>()(customerHistory.timeline_request),
   timeline_page_last: fits<AgencyApi.CustomerTimelinePage>()(customerHistory.timeline_page_last),
@@ -584,7 +585,7 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['customer-history', 'search_response', 'summary.dnc.0.scope', 'dnc_entry_scopes'],
   ['customer-history', 'search_response', 'summary.open.live_calls.0.channel', 'customer_timeline_channels'],
   ['customer-history', 'search_response', 'summary.filter_options.outcomes.0', 'attempt_outcomes'],
-  ...[0, 1, 2, 3, 4].map((i): [string, string, string, string] => [
+  ...[0, 1, 2, 3, 4, 5].map((i): [string, string, string, string] => [
     'customer-history', 'search_response', `timeline.entries.${i}.kind`, 'customer_timeline_kinds',
   ]),
   ['customer-history', 'search_response', 'timeline.entries.0.outcome', 'attempt_outcomes'],
@@ -594,6 +595,11 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['customer-history', 'search_response', 'timeline.entries.2.recording', 'customer_recording_states'],
   ['customer-history', 'search_response', 'timeline.entries.2.override_applied.0', 'override_kinds'],
   ['customer-history', 'search_response', 'timeline.entries.3.entry.scope', 'dnc_entry_scopes'],
+  ['customer-history', 'search_response', 'timeline.entries.5.outcome', 'inbound_call_outcomes'],
+  ['customer-history', 'search_response', 'timeline.entries.5.recording', 'customer_recording_states'],
+  ['customer-history', 'search_response', 'timeline.entries.5.follow_up.status', 'inbound_follow_up_statuses'],
+  ['customer-history', 'search_response', 'timeline.entries.5.follow_up.reason', 'inbound_missed_reasons'],
+  ['customer-history', 'search_response', 'timeline.entries.5.follow_up.handled_reason', 'inbound_handled_reasons'],
   ['customer-history', 'timeline_request', 'filters.channel', 'customer_timeline_channels'],
   ['customer-history', 'timeline_request', 'filters.outcomes.0', 'attempt_outcomes'],
   ['customer-history', 'error_invalid_number', 'code', 'customer_history_error_codes'],
@@ -784,13 +790,14 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     expect(new Date(push.push_ring_off.away_since).toISOString()).toBe(push.push_ring_off.away_since);
   });
 
-  it('customer history: the search answer\'s timeline is the five per-kind entry samples, in order', () => {
+  it('customer history: the search answer\'s timeline is the six per-kind entry samples, in order', () => {
     expect(customerHistory.search_response.timeline.entries).toEqual([
       customerHistory.entry_softphone_call,
       customerHistory.entry_callback,
       customerHistory.entry_campaign_call,
       customerHistory.entry_dnc_mark,
       customerHistory.entry_roster_entry,
+      customerHistory.entry_inbound_call,
     ]);
   });
 

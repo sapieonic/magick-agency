@@ -243,6 +243,7 @@ export type {
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryInboundCallRow,
   CustomerHistoryLastPlacedRow,
   CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,

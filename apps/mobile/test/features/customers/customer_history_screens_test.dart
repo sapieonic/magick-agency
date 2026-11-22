@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
+import 'package:magick_agency_agent/features/calls/my_calls_copy.dart';
 import 'package:magick_agency_agent/features/customers/customer_history_controller.dart';
 import 'package:magick_agency_agent/features/customers/customer_history_copy.dart';
 import 'package:magick_agency_agent/features/customers/customer_history_screen.dart';
@@ -274,7 +275,7 @@ void main() {
     testWidgets('nothing in the visible accounts: the empty state, and its DNC status', (tester) async {
       api.autoSearch = answer(empty: true);
       await searched(tester);
-      expect(find.text('No calls to this number in the accounts you can see'), findsOneWidget);
+      expect(find.text('No calls to or from this number in the accounts you can see'), findsOneWidget);
       expect(find.byKey(const Key('customer-dnc-none')), findsOneWidget);
       expect(find.text('Not on any do-not-call list'), findsOneWidget);
       expect(find.byKey(const Key('customer-totals')), findsNothing);
@@ -386,6 +387,82 @@ void main() {
       expect(find.text('Remark: --'), findsOneWidget);
       expect(find.text('Called despite do-not-call: “Asked us to call back”'), findsOneWidget);
       expect(find.text('Override used: retry delay waived · Customer asked'), findsOneWidget);
+    });
+
+    testWidgets('an inbound call (CL39): missed, why, who has it, the number rung, the voicemail, to follow up',
+        (tester) async {
+      api.autoSearch = answer(
+        entries: [inboundCallJson(1)],
+        inboundTotals: {'calls': 1, 'answered': 0},
+      );
+      await searched(tester);
+      expect(find.byKey(const Key('customer-entry-inbound_call:i1')), findsOneWidget);
+      expect(find.text('Inbound call · No campaign'), findsOneWidget);
+      expect(find.text('Missed · nobody free to answer · waited 1:40'), findsOneWidget);
+      expect(find.text('Nobody answered · assigned to Priya Nair'), findsOneWidget);
+      expect(find.text('Rang +918045550100 (Collections line)'), findsOneWidget);
+      expect(find.text('Voicemail 0:22'), findsOneWidget);
+      // The line and the pill both say it is owed.
+      expect(find.text('To follow up'), findsNWidgets(2));
+      expect(find.byKey(const Key('customer-total-inbound')), findsOneWidget);
+      expect(find.text('1 call received · 0 answered'), findsOneWidget);
+      // Nothing to play: the app has no recording or voicemail player here.
+      expect(find.byIcon(Icons.play_arrow), findsNothing);
+    });
+
+    testWidgets('an answered inbound call: the wait, their own agent, who answered, its outcome and notes; a call back',
+        (tester) async {
+      api.autoSearch = answer(entries: [
+        inboundCallJson(1, campaign: campaignJson(), answeredBy: 'Karan Shah', viaStickyAgent: true, notes: 'Will pay'),
+        inboundCallJson(2, followUpStatus: 'handled', handledReason: 'reached', calledBackAt: '2026-11-03T10:01:00.000Z'),
+        inboundCallJson(3, followUpStatus: 'handled', handledReason: 'marked', notesHidden: true),
+      ]);
+      await searched(tester);
+      expect(find.text('Inbound call · October dues'), findsOneWidget);
+      expect(find.text('Answered · waited 0:18 · came through their agent'), findsOneWidget);
+      expect(find.text('Answered by Karan Shah · 4:12'), findsOneWidget);
+      expect(find.text('ptp · Recording available'), findsOneWidget);
+      expect(find.text('Will pay'), findsOneWidget);
+      // Rung back on the call's own day: the time alone, AM / PM in capitals, on the reader's clock.
+      expect(find.text('Called back ${MyCallsCopy.when(DateTime.utc(2026, 11, 3, 10, 1), DateTime.utc(2026, 11, 3, 9, 42))}'),
+          findsOneWidget);
+      expect(find.textContaining(RegExp(r'Called back \d{1,2}:\d{2} (AM|PM)$')), findsOneWidget);
+      // Handled by a person, with no call back: it says so.
+      expect(find.text('Handled'), findsOneWidget);
+      expect(find.byKey(const Key('customer-notes-hidden-inbound_call:i3')), findsOneWidget);
+    });
+
+    testWidgets('a number that only rang us: "We have not called this number", and an inbound call live now',
+        (tester) async {
+      api.autoSearch = answer(
+        empty: true,
+        entries: [inboundCallJson(1)],
+        inboundTotals: {'calls': 1, 'answered': 0},
+        liveCalls: [
+          {'channel': 'inbound', 'campaign': null, 'agent': null, 'started_at': '2026-11-06T09:00:00.000Z'},
+        ],
+      );
+      await open(tester);
+      await tester.enterText(field(), '9876543210');
+      await tester.tap(find.byKey(const Key('customer-search')));
+      // The live dot never settles: pump the push through instead.
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text(CustomerHistoryCopy.empty), findsNothing);
+      expect(find.text('We have not called this number'), findsOneWidget);
+      expect(find.text('Live now · Inbound'), findsOneWidget);
+    });
+
+    testWidgets('the inbound filter reads its first page again', (tester) async {
+      api.autoSearch = answer();
+      await searched(tester);
+      api.autoTimeline = timelinePage([inboundCallJson(1)]);
+      await tester.tap(find.byKey(const Key('customer-filter-inbound')));
+      await tester.pumpAndSettle();
+      expect(api.timelines.single.filters?.toJson(), {'channel': 'inbound'});
+      expect(find.byKey(const Key('customer-entry-inbound_call:i1')), findsOneWidget);
+      expect(find.byKey(const Key('customer-entry-campaign_call:a1')), findsNothing);
     });
 
     testWidgets('Load more reads the next page with the cursor', (tester) async {

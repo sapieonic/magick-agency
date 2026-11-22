@@ -39,7 +39,8 @@ before writing a repository or a migration.
   missed call a soft-phone call rang back (`callback_of_inbound_call_id`), 0068 their two indexes, 0069
   the account's call settings ("Every call must belong to a campaign") and the campaign an inbound
   route files its unknown callers under (`default_campaign_id`), with its index, 0070 an account's
-  dialler attempts by when they were created, for the account's All calls and the agent's My calls).
+  dialler attempts by when they were created, for the account's All calls and the agent's My calls,
+  0071 an account's inbound calls by caller, for the inbound calls in customer history).
   node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one

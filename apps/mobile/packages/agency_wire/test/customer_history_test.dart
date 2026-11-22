@@ -28,6 +28,7 @@ void main() {
 
       expect(s.totals.calls, 5);
       expect(s.totals.connected, 2);
+      expect(s.totals.inbound, const CustomerHistoryInboundTotals(calls: 1, answered: 0));
       expect(s.totals.lastContacted?.channel, CustomerTimelineChannel.softphone);
       expect(s.totals.lastContacted?.outcome, AttemptOutcome.connected);
 
@@ -47,6 +48,7 @@ void main() {
         CustomerTimelineKind.campaignCall,
         CustomerTimelineKind.dncMark,
         CustomerTimelineKind.rosterEntry,
+        CustomerTimelineKind.inboundCall,
       ]);
       expect(r.timeline.hasMore, isTrue);
     });
@@ -88,6 +90,7 @@ void main() {
       expect(CustomerTimelineEntry.fromJson(fixture(file, 'entry_callback')), isA<CustomerTimelineCallback>());
       expect(CustomerTimelineEntry.fromJson(fixture(file, 'entry_dnc_mark')), isA<CustomerTimelineDncMark>());
       expect(CustomerTimelineEntry.fromJson(fixture(file, 'entry_roster_entry')), isA<CustomerTimelineRosterEntry>());
+      expect(CustomerTimelineEntry.fromJson(fixture(file, 'entry_inbound_call')), isA<CustomerTimelineInboundCall>());
     });
 
     test('a campaign call an agent reads: notes hidden, recording expired, no call page', () {
@@ -108,6 +111,50 @@ void main() {
       expect(c.fields, {'promised_amount': 2500, 'channel': 'UPI'});
       expect(c.recording, CustomerRecordingState.available);
       expect(c.callPage?.manualCallId, c.manualCallId);
+    });
+
+    test('an inbound call: a missed call filed under no campaign, its Missed row and its call back', () {
+      final c = CustomerTimelineEntry.fromJson(fixture(file, 'entry_inbound_call')) as CustomerTimelineInboundCall;
+      expect(c.kindRaw, 'inbound_call');
+      expect(c.at, DateTime.utc(2026, 9, 28, 9, 42));
+      expect(c.campaign, isNull);
+      expect(c.campaignSource, isNull);
+      expect(c.agent, isNull);
+      expect(c.outcome, InboundCallOutcome.voicemail);
+      expect(c.missed, isTrue);
+      expect(c.lineE164, '+918045550100');
+      expect(c.routeName, 'Collections line');
+      expect(c.waitSeconds, 100);
+      expect(c.queued, isTrue);
+      expect(c.viaStickyAgent, isFalse);
+      expect(c.voicemailSeconds, 22);
+      expect(c.followUp?.status, InboundFollowUpStatus.handled);
+      expect(c.followUp?.reason, InboundMissedReason.overflow);
+      expect(c.followUp?.closedCause, isNull);
+      expect(c.followUp?.assignee?.name, 'Priya Nair');
+      expect(c.followUp?.handledReason, InboundHandledReason.marked);
+      expect(c.calledBackAt, DateTime.utc(2026, 9, 28, 10, 58));
+      expect(c.recording, CustomerRecordingState.noCall);
+      expect(c.notesHidden, isFalse);
+    });
+
+    test('an answered inbound call is not missed; a server without inbound totals decodes', () {
+      final json = {
+        ...fixture(file, 'entry_inbound_call'),
+        'outcome': 'answered',
+        'follow_up': null,
+        'agent': {'user_id': 'u-1', 'name': 'Karan Shah'},
+        'campaign_source': 'route',
+        'promise_date': '2026-11-25',
+        'promise_amount': '4500.00',
+      };
+      final c = CustomerTimelineEntry.fromJson(json) as CustomerTimelineInboundCall;
+      expect(c.missed, isFalse);
+      expect(c.agent?.name, 'Karan Shah');
+      expect(c.campaignSource, 'route');
+      expect(c.promiseDate, '2026-11-25');
+      expect(c.promiseAmount, '4500.00');
+      expect(CustomerHistoryTotals.fromJson({'calls': 1, 'connected': 0, 'last_contacted': null}).inbound, isNull);
     });
 
     test('a callback: its source call and its status', () {

@@ -1960,6 +1960,23 @@ row of the list. The other two types already had theirs (`idx_agency_manual_call
 `test/integration/db/attempts-account-index-migration.test.ts` (the definition, an account's keyset page
 planned on it with no sort, the invalid-index refusal, down then up).
 
+### 0071 — `migrations/0071_inbound_calls_from_index.sql`
+
+One call log per campaign, P6: inbound calls in customer history (docs/call-log.md §8,
+docs/customer-history.md).
+**`idx_agency_inbound_calls_from`** `(tenant_id, account_id, from_e164, arrived_at DESC, id DESC)
+WHERE from_e164 IS NOT NULL` on `agency_inbound_calls`: an account's inbound calls from one number,
+newest first, the customer history's inbound reads (`CUSTOMER_HISTORY_SQL.pageInboundCalls` and the
+inbound arms of `callStats` and `pageCallbacks`), walked per visible account in keyset order as
+`idx_agency_manual_calls_destination` (0016) is. Partial: a withheld number is never searched for.
+`idx_agency_inbound_calls_answered_from` (0033: the same keys, answered calls only) is a subset of it
+and is left in place; a statement that asks for a caller's answered calls may be planned on either.
+One more index written on every inbound arrival. `CREATE INDEX IF NOT EXISTS`, so a large table can
+have it built `CONCURRENTLY` before the deploy (`db-hygiene.md` §2); Up refuses an invalid index left
+under the name. `SET LOCAL lock_timeout = '10s'`. **Down** drops the index. **Tests**:
+`test/integration/db/inbound-from-index-migration.test.ts` (the definition, a number's keyset page of
+missed calls planned on it with no sort, the invalid-index refusal, down then up).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

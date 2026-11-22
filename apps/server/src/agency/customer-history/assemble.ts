@@ -46,6 +46,7 @@ import type {
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryInboundCallRow,
   CustomerHistoryLastPlacedRow,
   CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,
@@ -214,12 +215,14 @@ function dncEntry(
 export interface TimelineSourceRows {
   attempts: readonly CustomerHistoryAttemptRow[];
   manualCalls: readonly CustomerHistoryManualCallRow[];
+  /** Inbound calls from the number (CL39). */
+  inboundCalls: readonly CustomerHistoryInboundCallRow[];
   callbacks: readonly CustomerHistoryCallbackRow[];
   dnc: readonly CustomerHistoryDncRow[];
   contacts: readonly CustomerHistoryContactRow[];
 }
 
-export const EMPTY_SOURCES: TimelineSourceRows = { attempts: [], manualCalls: [], callbacks: [], dnc: [], contacts: [] };
+export const EMPTY_SOURCES: TimelineSourceRows = { attempts: [], manualCalls: [], inboundCalls: [], callbacks: [], dnc: [], contacts: [] };
 
 /**
  * Where a source of `kind` resumes after `cursor`: its rows strictly after the cursor in
@@ -243,6 +246,7 @@ const keyOf = (kind: CustomerTimelineKind, id: string): string => `${kind}:${id}
 const SOURCE_KINDS = {
   attempts: 'campaign_call',
   manualCalls: 'softphone_call',
+  inboundCalls: 'inbound_call',
   callbacks: 'callback',
   dnc: 'dnc_mark',
   contacts: 'roster_entry',
@@ -267,6 +271,7 @@ export function cutPage(rows: TimelineSourceRows, limit: number): { rows: Timeli
     rows: {
       attempts: keep('attempts', rows.attempts),
       manualCalls: keep('manualCalls', rows.manualCalls),
+      inboundCalls: keep('inboundCalls', rows.inboundCalls),
       callbacks: keep('callbacks', rows.callbacks),
       dnc: keep('dnc', rows.dnc),
       contacts: keep('contacts', rows.contacts),
@@ -296,6 +301,10 @@ export function pageUserIds(rows: TimelineSourceRows): string[] {
   const add = (id: string | null | undefined) => { if (id) ids.add(id); };
   for (const a of rows.attempts) add(a.agent_user_id);
   for (const m of rows.manualCalls) add(m.agent_user_id);
+  for (const i of rows.inboundCalls) {
+    add(i.agent_user_id);
+    add(i.inbound.follow_up?.assignee_user_id);
+  }
   for (const c of rows.callbacks) add(c.booked_by_user_id);
   for (const d of rows.dnc) add(userIdOf(d.added_by));
   return [...ids];
@@ -306,6 +315,7 @@ export function pageCampaignIds(rows: TimelineSourceRows): string[] {
   const ids = new Set<string>();
   for (const a of rows.attempts) ids.add(a.campaign_id);
   for (const m of rows.manualCalls) if (m.campaign_id) ids.add(m.campaign_id);
+  for (const i of rows.inboundCalls) if (i.campaign_id) ids.add(i.campaign_id);
   for (const c of rows.callbacks) if (c.campaign_id) ids.add(c.campaign_id);
   for (const d of rows.dnc) if (d.campaign_id) ids.add(d.campaign_id);
   for (const c of rows.contacts) ids.add(c.campaign_id);
@@ -385,6 +395,59 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
         promise_amount: m.promise_amount ?? null,
         recording: recordingState(m.webrtc_call_id, data.mediaLegs, m.recording_requested),
         call_page: canOpenCallPage(viewer, m.account_id) ? { account_id: m.account_id, manual_call_id: m.id } : null,
+      },
+    });
+  }
+
+  for (const i of data.inboundCalls) {
+    // A campaign the read did not return (another account's, gone) is no campaign here, and no page.
+    const campaign = i.campaign_id ? campaigns.get(i.campaign_id) ?? null : null;
+    // The caller's own call is one they answered (CH8).
+    const showNotes = canSeeCallNotes(viewer, i.account_id, i.agent_user_id);
+    const hadNotes = i.notes !== null && i.notes.length > 0;
+    const facts = i.inbound;
+    const key = keyOf('inbound_call', i.id);
+    items.push({
+      at: i.at, key,
+      entry: {
+        key, kind: 'inbound_call', at: toWireInstant(i.at), account_id: i.account_id,
+        inbound_call_id: i.id,
+        campaign: campaign ? campaignWire(campaign) : null,
+        campaign_source: campaign ? facts.campaign_source : null,
+        contact_id: i.contact_id,
+        line_e164: i.caller_id,
+        route_name: facts.route_name,
+        agent: userOf(i.agent_user_id, names),
+        outcome: i.outcome,
+        disposition_code: i.disposition_code,
+        talk_seconds: i.talk_seconds,
+        notes: showNotes ? i.notes : null,
+        notes_hidden: !showNotes && hadNotes,
+        callback_at: i.callback_at,
+        // Not gated like the notes: the outcome's own fields, as `disposition_code` is (PT1).
+        promise_date: i.promise_date ?? null,
+        promise_amount: i.promise_amount ?? null,
+        wait_seconds: facts.wait_seconds,
+        queued: facts.queued,
+        via_sticky_agent: facts.via_sticky_agent,
+        voicemail_seconds: facts.voicemail_seconds,
+        follow_up: facts.follow_up
+          ? {
+            status: facts.follow_up.status,
+            reason: facts.follow_up.reason,
+            closed_cause: facts.follow_up.closed_cause,
+            assignee: userOf(facts.follow_up.assignee_user_id, names),
+            handled_reason: facts.follow_up.handled_reason,
+            handled_at: facts.follow_up.handled_at,
+          }
+          : null,
+        called_back_at: facts.called_back?.at ?? null,
+        recording: recordingState(i.webrtc_call_id, data.mediaLegs, i.recording_requested),
+        // The inbound Call page is a campaign's (`/campaigns/:id/call-log/inbound/:callId`): a call
+        // filed under none has no page.
+        call_page: campaign && canOpenCallPage(viewer, i.account_id)
+          ? { account_id: i.account_id, campaign_id: campaign.id, inbound_call_id: i.id }
+          : null,
       },
     });
   }
@@ -621,6 +684,7 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
     totals: {
       calls: data.stats.calls,
       connected: data.stats.connected,
+      inbound: { calls: data.stats.inbound_calls, answered: data.stats.inbound_answered },
       last_contacted: last
         ? {
             at: last.dialed_at.toISOString(),
@@ -639,7 +703,8 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
 
 /**
  * How many timeline entries the caller can see (the audit's `result_count`, the search's and the
- * export's): the covered roster rows, the calls, the callbacks booked on them and the DNC entries.
+ * export's): the covered roster rows, the calls (inbound calls among them), the callbacks booked on
+ * them and the DNC entries.
  */
 export function entryCount(stats: CustomerHistoryCallStatsRow, dncRows: number): number {
   return stats.contact_entries + stats.call_entries + stats.callback_entries + dncRows;

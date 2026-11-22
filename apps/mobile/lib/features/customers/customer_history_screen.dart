@@ -277,8 +277,12 @@ class _LiveCall extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final where = call.campaign?.name ??
-        (call.channel == CustomerTimelineChannel.softphone ? 'Soft phone' : '');
+    final where = switch (call.channel) {
+      // An inbound call says so whatever campaign it is filed under: the customer rang us.
+      CustomerTimelineChannel.inbound => ['Inbound', ?call.campaign?.name].join(' · '),
+      CustomerTimelineChannel.softphone => call.campaign?.name ?? 'Soft phone',
+      _ => call.campaign?.name ?? '',
+    };
     final who = call.agent == null ? null : personName(call.agent);
     return AppCard(
       key: Key('customer-live-$index'),
@@ -310,10 +314,15 @@ class _Totals extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final last = totals.lastContacted;
     final String lastLine;
+    final inbound = totals.inbound;
     if (last == null) {
-      lastLine = CustomerHistoryCopy.neverContacted;
+      lastLine = (inbound?.calls ?? 0) > 0 ? CustomerHistoryCopy.notCalledYet : CustomerHistoryCopy.neverContacted;
     } else {
-      final channel = last.channel == CustomerTimelineChannel.softphone ? 'soft phone' : 'campaign';
+      final channel = switch (last.channel) {
+        CustomerTimelineChannel.softphone => 'soft phone',
+        CustomerTimelineChannel.inbound => 'inbound',
+        _ => 'campaign',
+      };
       final outcome = last.outcomeRaw == null ? null : (attemptOutcomeLabels[last.outcome] ?? last.outcomeRaw);
       lastLine = [
         '${CustomerHistoryCopy.lastContacted} ${EnIn.timestamp(last.at)}',
@@ -329,6 +338,14 @@ class _Totals extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(CustomerHistoryCopy.totalsLine(totals.calls, totals.connected), style: text.titleSmall),
+          if (inbound != null && inbound.calls > 0) ...[
+            const SizedBox(height: Space.xs),
+            Text(
+              CustomerHistoryCopy.inboundTotalsLine(inbound.calls, inbound.answered),
+              key: const Key('customer-total-inbound'),
+              style: text.titleSmall,
+            ),
+          ],
           const SizedBox(height: Space.xs),
           Text(lastLine, key: const Key('customer-last-contacted'), style: text.bodySmall),
         ],
@@ -555,6 +572,7 @@ class _Filters extends StatelessWidget {
         channel(CustomerHistoryCopy.all, null, 'customer-filter-all'),
         channel(CustomerHistoryCopy.campaignCalls, CustomerTimelineChannel.campaign, 'customer-filter-campaign'),
         channel(CustomerHistoryCopy.softphoneCalls, CustomerTimelineChannel.softphone, 'customer-filter-softphone'),
+        channel(CustomerHistoryCopy.inboundCalls, CustomerTimelineChannel.inbound, 'customer-filter-inbound'),
         FilterChip(
           key: const Key('customer-filter-connected'),
           label: const Text(CustomerHistoryCopy.connectedOnly),
@@ -1008,6 +1026,34 @@ _EntryView _viewOf(CustomerTimelineEntry entry) => switch (entry) {
       if (c.hoursOverrideNote != null) CustomerHistoryCopy.hoursOverride(c.hoursOverrideNote!),
     ],
     pill: _outcomePill(c.outcome, c.outcomeRaw),
+    notes: c.notes,
+    notesHidden: c.notesHidden,
+  ),
+  // A call the number made to us (CL39). No voicemail or recording to play here, for anyone.
+  final CustomerTimelineInboundCall c => _EntryView(
+    icon: Icons.call_received,
+    title: 'Inbound call · ${c.campaign?.name ?? CustomerHistoryCopy.noCampaign}',
+    lines: [
+      inboundHappenedLine(c),
+      _joined([
+        inboundAgentLine(c),
+        if (c.talkSeconds != null && c.talkSeconds! > 0) EnIn.talkTime(c.talkSeconds),
+      ]),
+      CustomerHistoryCopy.rang(c.lineE164, c.routeName),
+      _joined([
+        c.dispositionCode,
+        if (c.agent != null) _recordingLabel(c.recording),
+        if (c.voicemailSeconds != null) CustomerHistoryCopy.voicemail(c.voicemailSeconds!),
+      ]),
+      ?inboundFollowUpLine(c),
+      if (c.callbackAt != null) 'Callback booked for ${EnIn.timestamp(c.callbackAt)}',
+    ],
+    pill: c.missed
+        ? StatusPill(
+            inboundToFollowUp(c) ? CustomerHistoryCopy.toFollowUp : CustomerHistoryCopy.missed,
+            tone: inboundToFollowUp(c) ? Tone.warn : Tone.neutral,
+          )
+        : const StatusPill(CustomerHistoryCopy.answered, tone: Tone.ok),
     notes: c.notes,
     notesHidden: c.notesHidden,
   ),

@@ -541,7 +541,8 @@
     "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_TIMELINE_CHANNELS",
     "values": [
       "campaign",
-      "softphone"
+      "softphone",
+      "inbound"
     ]
   },
   "customer_timeline_kinds": {
@@ -549,6 +550,7 @@
     "values": [
       "campaign_call",
       "softphone_call",
+      "inbound_call",
       "callback",
       "dnc_mark",
       "roster_entry"

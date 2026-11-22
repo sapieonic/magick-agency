@@ -13,6 +13,8 @@ import {
   campaignChainLabel,
   dncScopeLabel,
   formatWhen,
+  inboundAnsweredLabel,
+  neverContactedLabel,
   overrideFollowUpLabel,
   overrideGrantLabel,
 } from '../../../utils/customerHistoryCopy';
@@ -94,6 +96,7 @@ export const CustomerHistorySummary = memo(function CustomerHistorySummary({
 }) {
   const { contacts, totals, open } = summary;
   const last = totals.last_contacted;
+  const inbound = totals.inbound;
   const nothingOpen = open.callbacks.length === 0 && open.overrides.length === 0 && open.live_calls.length === 0;
 
   return (
@@ -125,11 +128,20 @@ export const CustomerHistorySummary = memo(function CustomerHistorySummary({
             <dt>Connected</dt>
             <dd data-testid="customer-total-connected">{totals.connected}</dd>
           </div>
+          {/* Apart from the calls placed: no figure adds a call we made to one we received (CL7). */}
+          {inbound && inbound.calls > 0 && (
+            <div>
+              <dt>Calls received</dt>
+              <dd data-testid="customer-total-inbound">
+                {inbound.calls} <span className={styles.muted}>· {inboundAnsweredLabel(inbound.answered)}</span>
+              </dd>
+            </div>
+          )}
         </dl>
         <p className={styles.lastContacted} data-testid="customer-last-contacted">
           {last
             ? `Last contacted ${formatWhen(last.at)} by ${actorName(last.agent, 'no agent')} · ${CHANNEL_LABELS[last.channel]} · ${attemptOutcomeLabel(last.outcome)}${last.disposition_code ? ` · ${last.disposition_code}` : ''}`
-            : 'Never contacted'}
+            : neverContactedLabel(inbound?.calls ?? 0)}
         </p>
       </section>
 

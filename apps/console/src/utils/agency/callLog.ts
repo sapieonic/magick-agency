@@ -495,21 +495,40 @@ export function isMissedInbound(row: AgencyCallLogRow): boolean {
  * why in the Missed list's words and how long they waited when they were queued.
  */
 export function callLogWhatHappened(row: AgencyCallLogRow): { text: string; key: string; detail?: string } {
-  if (row.type === 'inbound') {
-    if (!isMissedInbound(row)) {
-      const detail = [`waited ${duration(row.wait_seconds)}`, ...(row.via_sticky_agent ? ['came through their agent'] : [])];
-      return { text: 'Answered', key: 'connected', detail: detail.join(' · ') };
-    }
-    return { text: 'Missed', key: 'missed', detail: missedDetail(row) };
-  }
+  if (row.type === 'inbound') return inboundWhatHappened(row);
   if (isNotDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
   if (row.type === 'soft_phone' && row.state !== 'ended') return { text: 'On a call now', key: 'live' };
   if (stoppedByInbound(row)) return { text: 'Stopped: customer rang us', key: row.outcome ?? 'canceled' };
   return { text: attemptOutcomeLabel(row.outcome), key: row.outcome ?? 'unknown' };
 }
 
+/**
+ * What an inbound call needs to say what happened to it: the fields of the Call log's inbound row
+ * that the customer history's inbound entry carries under the same names (CL39).
+ */
+export interface InboundHappenedFacts {
+  outcome: string;
+  follow_up: Pick<AgencyCallLogFollowUp, 'reason' | 'closed_cause'> | null;
+  wait_seconds: number;
+  queued: boolean;
+  via_sticky_agent: boolean;
+}
+
+/**
+ * What happened on an inbound call, for the Call log's row and the customer history's: Answered,
+ * with how long the caller waited and whether they came through their own agent; Missed, with
+ * why in the Missed list's words and how long they waited when they were queued.
+ */
+export function inboundWhatHappened(call: InboundHappenedFacts): { text: string; key: string; detail: string } {
+  if (call.follow_up === null && call.outcome === 'answered') {
+    const detail = [`waited ${duration(call.wait_seconds)}`, ...(call.via_sticky_agent ? ['came through their agent'] : [])];
+    return { text: 'Answered', key: 'connected', detail: detail.join(' · ') };
+  }
+  return { text: 'Missed', key: 'missed', detail: missedDetail(call) };
+}
+
 /** Why an inbound call was missed, lower case to sit under "Missed", and the wait when the caller queued. */
-function missedDetail(row: AgencyCallLogInboundRow): string {
+function missedDetail(row: InboundHappenedFacts): string {
   const label = row.follow_up ? missedReasonLabel(row.follow_up) : null;
   const reason = label ? label.charAt(0).toLowerCase() + label.slice(1) : null;
   // "hung up while waiting · 0:52" already says it was a wait.
@@ -528,8 +547,17 @@ export function callLogOutcomePlaceholder(row: AgencyCallLogRow): string {
  * closed, unless the call back already says so.
  */
 export function followUpCopy(row: AgencyCallLogInboundRow): { calledBack: string | null; status: string | null; open: boolean } {
-  const calledBack = row.called_back ? `Called back ${pairedTime(row.called_back.at, row.created_at)}` : null;
-  const followUp: AgencyCallLogFollowUp | null = row.follow_up;
+  return followUpWords({ calledBackAt: row.called_back?.at ?? null, arrivedAt: row.created_at, followUp: row.follow_up });
+}
+
+/** {@link followUpCopy} from the three facts it reads, for the customer history's inbound entry too. */
+export function followUpWords(call: {
+  calledBackAt: string | null;
+  arrivedAt: string;
+  followUp: Pick<AgencyCallLogFollowUp, 'status' | 'handled_reason'> | null;
+}): { calledBack: string | null; status: string | null; open: boolean } {
+  const calledBack = call.calledBackAt ? `Called back ${pairedTime(call.calledBackAt, call.arrivedAt)}` : null;
+  const followUp = call.followUp;
   if (!followUp) return { calledBack, status: null, open: false };
   if (followUp.status === 'open') return { calledBack, status: TO_FOLLOW_UP_LABEL, open: true };
   return { calledBack, status: calledBack ? null : followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled', open: false };

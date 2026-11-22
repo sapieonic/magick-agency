@@ -130,20 +130,26 @@ export async function loadTimelinePage(
   };
   const campaignCalls = filter.channel === null || filter.channel === 'campaign';
   const softphoneCalls = filter.channel === null || filter.channel === 'softphone';
+  const inboundCallsRead = filter.channel === null || filter.channel === 'inbound';
   const others = !filter.callsOnly;
   const none = Promise.resolve([] as never[]);
 
-  const [attempts, manualCalls, callbacks, dnc, contacts] = await Promise.all([
+  const [attempts, manualCalls, inboundCalls, callbacks, dnc, contacts] = await Promise.all([
     campaignCalls ? repo.pageAttempts(scope, phone, q('campaign_call')) : none,
     softphoneCalls ? repo.pageManualCalls(scope, phone, q('softphone_call')) : none,
+    inboundCallsRead ? repo.pageInboundCalls(scope, phone, q('inbound_call')) : none,
     others ? repo.pageCallbacks(scope, phone, q('callback')) : none,
     others ? repo.pageDnc(scope, phone, q('dnc_mark')) : none,
     others ? repo.pageContacts(scope, phone, q('roster_entry')) : none,
   ]);
-  const cut = cutPage({ attempts, manualCalls, callbacks, dnc, contacts }, limit);
+  const cut = cutPage({ attempts, manualCalls, inboundCalls, callbacks, dnc, contacts }, limit);
   const rows = cut.rows;
 
-  const legIds = [...rows.attempts.map((a) => a.webrtc_call_id), ...rows.manualCalls.map((m) => m.webrtc_call_id)]
+  const legIds = [
+    ...rows.attempts.map((a) => a.webrtc_call_id),
+    ...rows.manualCalls.map((m) => m.webrtc_call_id),
+    ...rows.inboundCalls.map((i) => i.webrtc_call_id),
+  ]
     .filter((id): id is string => typeof id === 'string');
   const [campaignRows, legs, uploads, callbackNext, names] = await Promise.all([
     repo.campaignsByIds(scope, pageCampaignIds(rows)),

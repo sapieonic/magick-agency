@@ -90,7 +90,10 @@ server keeps running). Likewise if `agency_call_attempts` holds more than about 
 `0050_promise_summary_indexes.sql`'s three (they hold only calls with a promise, so they are small,
 but each build reads its whole table), and `0070_attempts_account_created_index.sql`'s one (every
 attempt is in it: on 2.2 million rows it is about 160 MB and builds in seconds, but a plain build blocks
-every dial while it runs). The migration's `CREATE INDEX IF NOT EXISTS` then finds them (taking only a
+every dial while it runs). If `agency_inbound_calls` holds more than about a million rows, build
+`0071_inbound_calls_from_index.sql`'s one (every call with a caller's number is in it: on 2 million
+rows it is about 180 MB and builds in seconds, but a plain build blocks every inbound arrival while
+it runs). The migration's `CREATE INDEX IF NOT EXISTS` then finds them (taking only a
 brief lock), adds their comments and records itself. A migration cannot use `CONCURRENTLY` itself:
 node-pg-migrate runs each SQL file in a transaction. `0045_promise_contacts_index.sql`'s index cannot
 be built this way (its column is 0041's, in the same release); its build writes an empty index.
@@ -144,6 +147,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_attempts_account_created
 ```
 
 ```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_inbound_calls_from
+  ON agency_inbound_calls (tenant_id, account_id, from_e164, arrived_at DESC, id DESC)
+  WHERE from_e164 IS NOT NULL;
+```
+
+```sql
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_manual_calls_promise_written
   ON agency_manual_calls (tenant_id, account_id, dispositioned_at)
   WHERE promise_date IS NOT NULL;
@@ -165,12 +174,13 @@ SELECT c.relname, i.indisvalid, pg_get_indexdef(i.indexrelid) AS definition
  WHERE c.relname IN ('idx_agency_calls_transcript_pending', 'idx_agency_inbound_calls_voicemail',
                      'idx_agency_calls_recording_unrequested', 'idx_agency_attempts_promise_written',
                      'idx_agency_manual_calls_promise_written', 'idx_agency_inbound_calls_promise_written',
-                     'idx_agency_attempts_account_created');
+                     'idx_agency_attempts_account_created', 'idx_agency_inbound_calls_from');
 ```
 
 Every `indisvalid` must be `t`, and each definition must read as in
 `packages/db/migrations/0039_retention_purge_indexes.sql`, `0046_unrequested_recordings_index.sql`,
-`0050_promise_summary_indexes.sql` or `0070_attempts_account_created_index.sql`
+`0050_promise_summary_indexes.sql`, `0070_attempts_account_created_index.sql` or
+`0071_inbound_calls_from_index.sql`
 (Postgres adds `public.`, `USING btree` and brackets). For a wrong or invalid one: `DROP INDEX CONCURRENTLY <name>;` and build it again.
 
 As before every release with a migration, take a dump or a provider snapshot first

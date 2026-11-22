@@ -31,6 +31,7 @@ export const CUSTOMER_HISTORY_CSV_HEADERS = [
 const KIND_LABELS: Record<CustomerTimelineEntry['kind'], string> = {
   campaign_call: 'Campaign call',
   softphone_call: 'Soft-phone call',
+  inbound_call: 'Inbound call',
   callback: 'Callback booked',
   dnc_mark: 'Marked do-not-call',
   roster_entry: 'Added to roster',
@@ -60,7 +61,7 @@ function notesCell(notes: string | null, hidden: boolean): string {
   return s(notes);
 }
 
-type CallEntry = Extract<CustomerTimelineEntry, { kind: 'campaign_call' | 'softphone_call' }>;
+type CallEntry = Extract<CustomerTimelineEntry, { kind: 'campaign_call' | 'softphone_call' | 'inbound_call' }>;
 
 /**
  * A promise to pay recorded with the call (PT1), in "Details" as the automatic outcome is: the
@@ -109,6 +110,25 @@ function customerHistoryCsvRow(
       }
       if (entry.dnc_override_note) details.push(`Called despite do-not-call: ${entry.dnc_override_note}`);
       if (entry.hours_override_note) details.push(`Called outside calling hours: ${entry.hours_override_note}`);
+      pushPromise(entry, details);
+      return [...base, ...callCells(entry, entry.campaign?.name, details)];
+    }
+    case 'inbound_call': {
+      // The customer rang us. "Outcome" is the inbound call's own wire outcome (`answered`,
+      // `voicemail`, …), as written as every other code in the file; the rest is in "Details",
+      // whose column every entry kind shares.
+      const details: string[] = [`Rang ${entry.line_e164}`];
+      if (entry.route_name) details.push(`Route: ${entry.route_name}`);
+      details.push(`Waited ${entry.wait_seconds} seconds`);
+      if (entry.via_sticky_agent) details.push('Came through their agent');
+      if (entry.voicemail_seconds !== null) details.push(`Voicemail ${entry.voicemail_seconds} seconds`);
+      if (entry.follow_up) {
+        details.push(`Missed: ${entry.follow_up.reason}`);
+        details.push(`Follow-up: ${entry.follow_up.status}`);
+        const assignee = entry.follow_up.assignee;
+        if (assignee) details.push(`Assigned to: ${assignee.name ?? assignee.user_id}`);
+      }
+      if (entry.called_back_at) details.push(`Called back ${entry.called_back_at}`);
       pushPromise(entry, details);
       return [...base, ...callCells(entry, entry.campaign?.name, details)];
     }

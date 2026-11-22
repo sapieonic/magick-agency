@@ -775,6 +775,9 @@ enum CustomerSearchBy implements WireEnum {
 enum CustomerTimelineChannel implements WireEnum {
   campaign('campaign'),
   softphone('softphone'),
+
+  /// A call the customer made to us (`docs/call-log.md` CL39).
+  inbound('inbound'),
   unknown('');
 
   const CustomerTimelineChannel(this.wire);
@@ -792,6 +795,7 @@ enum CustomerTimelineChannel implements WireEnum {
 enum CustomerTimelineKind implements WireEnum {
   campaignCall('campaign_call'),
   softphoneCall('softphone_call'),
+  inboundCall('inbound_call'),
   callback('callback'),
   dncMark('dnc_mark'),
   rosterEntry('roster_entry'),

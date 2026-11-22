@@ -3,8 +3,10 @@ import { formatPromise } from '../../../utils/format/promise';
 import type {
   CustomerTimelineCampaignCall,
   CustomerTimelineEntry,
+  CustomerTimelineInboundCall,
   CustomerTimelineSoftphoneCall,
 } from '@magick-agency/contracts/api/agency/customer-history';
+import { AGENCY_CALLS_NO_CAMPAIGN_LABEL } from '@magick-agency/contracts/api/agency/call-log';
 import { attemptOutcomeLabel } from '@magick-agency/contracts/api/agency/agency-spine';
 import { DNC_SOURCE_LABELS } from '@magick-agency/contracts/api/agency/dnc';
 import { durationWords } from '../../../utils/format/duration';
@@ -14,6 +16,7 @@ import {
   dncScopeLabel,
   fieldValueLabel,
   formatWhen,
+  inboundEntryCopy,
   overrideAppliedLabel,
 } from '../../../utils/customerHistoryCopy';
 import { actorName } from '../../../utils/agency/insights/copy';
@@ -169,12 +172,51 @@ function SoftphoneCallRow({ entry }: { entry: CustomerTimelineSoftphoneCall }) {
   );
 }
 
+/**
+ * A call the number made to us (CL39), in the Call log's words for an inbound row. No voicemail
+ * or recording player here, for anyone: the Call page has them, for who may open it.
+ */
+function InboundCallRow({ entry }: { entry: CustomerTimelineInboundCall }) {
+  const copy = inboundEntryCopy(entry);
+  return (
+    <Row entry={entry} title={<>Inbound call · {entry.campaign ? entry.campaign.name : AGENCY_CALLS_NO_CAMPAIGN_LABEL}</>}>
+      <ul className={styles.meta}>
+        <li data-testid="customer-inbound-happened">{copy.happened} · {copy.detail}</li>
+        <li>{copy.agent}</li>
+        <li>{copy.rang}</li>
+        {entry.disposition_code && <li>Outcome code: {entry.disposition_code}</li>}
+        {entry.talk_seconds != null && entry.talk_seconds > 0 && <li>Talk time {durationWords(entry.talk_seconds)}</li>}
+        {copy.voicemail && <li>{copy.voicemail}</li>}
+        {entry.agent && <li data-testid="customer-recording">{RECORDING_LABELS[entry.recording]}</li>}
+      </ul>
+      {(copy.followUp || copy.calledBack || entry.callback_at || entry.promise_date) && (
+        <ul className={styles.meta}>
+          {copy.followUp && (
+            <li data-testid="customer-inbound-follow-up" data-open={copy.open ? 'true' : undefined}>
+              {copy.open ? <strong>{copy.followUp}</strong> : copy.followUp}
+            </li>
+          )}
+          {copy.calledBack && <li>{copy.calledBack}</li>}
+          {entry.callback_at && <li>Callback booked for {formatWhen(entry.callback_at)}</li>}
+          {entry.promise_date && (
+            <li data-testid="customer-promise">{formatPromise({ date: entry.promise_date, amount: entry.promise_amount ?? null })}</li>
+          )}
+        </ul>
+      )}
+      <Notes notes={entry.notes} hidden={entry.notes_hidden} />
+      <CustomerCallLink entry={entry} />
+    </Row>
+  );
+}
+
 function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimelineEntry; chains: RedialChains }) {
   switch (entry.kind) {
     case 'campaign_call':
       return <CampaignCallRow entry={entry} chains={chains} />;
     case 'softphone_call':
       return <SoftphoneCallRow entry={entry} />;
+    case 'inbound_call':
+      return <InboundCallRow entry={entry} />;
     case 'callback':
       return (
         <Row entry={entry} title={<>Callback · {CALLBACK_STATUS_LABELS[entry.status]}</>}>

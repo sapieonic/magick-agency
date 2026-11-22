@@ -407,7 +407,7 @@ describe('the identification reads', () => {
     expect(identity).toEqual({ match: null, candidates: [{ userId: took, reason: 'last_connected', accountId: A, at: expect.any(Date) }] });
   });
 
-  it('IQ49: the inbound arm walks idx_agency_inbound_calls_answered_from (0033)', async () => {
+  it('IQ49: the inbound arm walks an index of the caller\'s calls, newest first (0033\'s, or 0071\'s superset of it)', async () => {
     const client = await pool().connect();
     try {
       await client.query('BEGIN');
@@ -417,7 +417,13 @@ describe('the identification reads', () => {
           WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.from_e164 = $3::text
             AND i.bridged_at IS NOT NULL AND i.from_e164 IS NOT NULL AND i.arrived_at >= $4::timestamptz
           ORDER BY i.arrived_at DESC, i.id DESC LIMIT 50`, [T, A, '+919812345678', new Date()]);
-      expect(rows.map((r) => r['QUERY PLAN']).join('\n')).toContain('idx_agency_inbound_calls_answered_from');
+      // Since 0071 the table has a second index by caller, every call of the number
+      // (`idx_agency_inbound_calls_from`, the customer history's), of which 0033's answered-only
+      // one is a subset: on this unanalysed handful of rows the two cost the same and the planner
+      // may take either. Both are the walk IQ49 asks for: the caller's calls newest first, no sort.
+      const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+      expect(plan).toMatch(/Index Scan using idx_agency_inbound_calls_(answered_from|from) /);
+      expect(plan).not.toMatch(/Sort/);
     } finally {
       await client.query('ROLLBACK');
       client.release();

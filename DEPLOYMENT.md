@@ -961,6 +961,12 @@ that arrive while it runs (`campaign_id` stays NULL), and nothing files them lat
 be missing from their campaign's Call log. **After rolling forward again, run the batch above
 until it reports `UPDATE 0`**: it files exactly those calls.
 
+**`0071_inbound_calls_from_index.sql`** (inbound calls in customer history, `docs/call-log.md` §8)
+adds one index on `agency_inbound_calls`. If that table holds more than about a million rows, build
+it `CONCURRENTLY` before the deploy (`db-hygiene.md` §2 has the statement); the migration then finds
+it. Otherwise it needs nothing. **Going back past 0071** needs no `migrate:down`: an older image
+ignores the index, and does not read inbound calls into a customer's history at all.
+
 **`0070_attempts_account_created_index.sql`** (All calls and My calls, `docs/call-log.md` §7) adds one
 index on `agency_call_attempts`. If that table holds more than about a million rows, build it
 `CONCURRENTLY` before the deploy (`db-hygiene.md` §2 has the statement); the migration then finds

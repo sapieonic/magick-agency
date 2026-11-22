@@ -2,16 +2,24 @@ import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import type {
   CustomerTimelineCampaignCall,
+  CustomerTimelineInboundCall,
   CustomerTimelineSoftphoneCall,
 } from '@magick-agency/contracts/api/agency/customer-history';
+import { inboundCallPath } from '../../../utils/agency/callLog';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useUrlScope } from '../../../contexts/UrlScopeContext';
 import styles from './CustomerHistory.module.css';
 
 /** The app path of a call's existing page, or `null` when the caller cannot open it (CH8). */
-export function customerCallPagePath(
-  entry: CustomerTimelineCampaignCall | CustomerTimelineSoftphoneCall,
-): { accountId: string; path: string } | null {
+type CallEntry = CustomerTimelineCampaignCall | CustomerTimelineSoftphoneCall | CustomerTimelineInboundCall;
+
+export function customerCallPagePath(entry: CallEntry): { accountId: string; path: string } | null {
+  if (entry.kind === 'inbound_call') {
+    // The inbound Call page is a campaign's: a call filed under none has no page (`call_page` null).
+    const page = entry.call_page;
+    if (!page) return null;
+    return { accountId: page.account_id, path: inboundCallPath(page.campaign_id, page.inbound_call_id) };
+  }
   if (entry.kind === 'campaign_call') {
     const page = entry.call_page;
     if (!page) return null;
@@ -27,7 +35,7 @@ export function customerCallPagePath(
  * another account opens under that account's scope, through `useUrlScope().go`,
  * since react-router cannot leave the scope it was rendered in.
  */
-export function CustomerCallLink({ entry }: { entry: CustomerTimelineCampaignCall | CustomerTimelineSoftphoneCall }) {
+export function CustomerCallLink({ entry }: { entry: CallEntry }) {
   const { tenantId, accountId } = useTenant();
   const { go } = useUrlScope();
   const target = customerCallPagePath(entry);

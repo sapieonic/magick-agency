@@ -761,24 +761,51 @@ final class CustomerHistoryLastContacted {
   int get hashCode => Object.hash(at, channelRaw, agent, outcomeRaw, dispositionCode);
 }
 
-/// Calls placed (campaign and soft phone), connected, and the last contact.
+/// The calls the number made to us, and how many an agent answered.
+///
+/// Contract: `CustomerHistoryTotals['inbound']`.
+@immutable
+final class CustomerHistoryInboundTotals {
+  const CustomerHistoryInboundTotals({required this.calls, required this.answered});
+
+  factory CustomerHistoryInboundTotals.fromJson(Map<String, Object?> j) =>
+      CustomerHistoryInboundTotals(calls: j.integer('calls'), answered: j.integer('answered'));
+
+  final int calls;
+  final int answered;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomerHistoryInboundTotals && other.calls == calls && other.answered == answered;
+
+  @override
+  int get hashCode => Object.hash(calls, answered);
+}
+
+/// Calls placed (campaign and soft phone), connected, the calls received
+/// (apart: never added to the calls placed), and the last contact.
 ///
 /// Contract: `CustomerHistoryTotals`.
 @immutable
 final class CustomerHistoryTotals {
-  const CustomerHistoryTotals({required this.calls, required this.connected, this.lastContacted});
+  const CustomerHistoryTotals({required this.calls, required this.connected, this.inbound, this.lastContacted});
 
   factory CustomerHistoryTotals.fromJson(Map<String, Object?> j) {
     final last = j.objOrNull('last_contacted');
+    final inbound = j.objOrNull('inbound');
     return CustomerHistoryTotals(
       calls: j.integer('calls'),
       connected: j.integer('connected'),
+      inbound: inbound == null ? null : CustomerHistoryInboundTotals.fromJson(inbound),
       lastContacted: last == null ? null : CustomerHistoryLastContacted.fromJson(last),
     );
   }
 
   final int calls;
   final int connected;
+
+  /// Null from a server that predates inbound calls in the history.
+  final CustomerHistoryInboundTotals? inbound;
   final CustomerHistoryLastContacted? lastContacted;
 
   @override
@@ -786,10 +813,11 @@ final class CustomerHistoryTotals {
       other is CustomerHistoryTotals &&
       other.calls == calls &&
       other.connected == connected &&
+      other.inbound == inbound &&
       other.lastContacted == lastContacted;
 
   @override
-  int get hashCode => Object.hash(calls, connected, lastContacted);
+  int get hashCode => Object.hash(calls, connected, inbound, lastContacted);
 }
 
 /// What is open on the number right now.
@@ -942,6 +970,7 @@ sealed class CustomerTimelineEntry {
     return switch (CustomerTimelineKind.fromWire(kind)) {
       CustomerTimelineKind.campaignCall => CustomerTimelineCampaignCall.fromJson(j),
       CustomerTimelineKind.softphoneCall => CustomerTimelineSoftphoneCall.fromJson(j),
+      CustomerTimelineKind.inboundCall => CustomerTimelineInboundCall.fromJson(j),
       CustomerTimelineKind.callback => CustomerTimelineCallback.fromJson(j),
       CustomerTimelineKind.dncMark => CustomerTimelineDncMark.fromJson(j),
       CustomerTimelineKind.rosterEntry => CustomerTimelineRosterEntry.fromJson(j),
@@ -1289,6 +1318,256 @@ final class CustomerTimelineSoftphoneCall extends CustomerTimelineEntry {
     callbackAt,
     recordingRaw,
     callPage,
+  ]);
+}
+
+/// The Missed row of an inbound call that reached nobody.
+///
+/// Contract: `CustomerTimelineFollowUp`.
+@immutable
+final class CustomerTimelineFollowUp {
+  CustomerTimelineFollowUp({
+    required this.status,
+    String? statusRaw,
+    required this.reason,
+    String? reasonRaw,
+    this.closedCause,
+    String? closedCauseRaw,
+    this.assignee,
+    this.handledReason,
+    String? handledReasonRaw,
+    this.handledAt,
+  }) : statusRaw = statusRaw ?? status.wire,
+       reasonRaw = reasonRaw ?? reason.wire,
+       closedCauseRaw = closedCauseRaw ?? closedCause?.wire,
+       handledReasonRaw = handledReasonRaw ?? handledReason?.wire;
+
+  factory CustomerTimelineFollowUp.fromJson(Map<String, Object?> j) {
+    final status = j.str('status');
+    final reason = j.str('reason');
+    final closedCause = j.strOrNull('closed_cause');
+    final handledReason = j.strOrNull('handled_reason');
+    return CustomerTimelineFollowUp(
+      status: InboundFollowUpStatus.fromWire(status),
+      statusRaw: status,
+      reason: InboundMissedReason.fromWire(reason),
+      reasonRaw: reason,
+      closedCause: closedCause == null ? null : InboundClosedCause.fromWire(closedCause),
+      closedCauseRaw: closedCause,
+      assignee: _userOrNull(j, 'assignee'),
+      handledReason: handledReason == null ? null : InboundHandledReason.fromWire(handledReason),
+      handledReasonRaw: handledReason,
+      handledAt: j.timeOrNull('handled_at'),
+    );
+  }
+
+  final InboundFollowUpStatus status;
+  final String statusRaw;
+  final InboundMissedReason reason;
+  final String reasonRaw;
+
+  /// With [reason] `closed`: why the caller was answered as closed.
+  final InboundClosedCause? closedCause;
+  final String? closedCauseRaw;
+
+  /// Who the row is assigned to; null: the account.
+  final CustomerHistoryUser? assignee;
+  final InboundHandledReason? handledReason;
+  final String? handledReasonRaw;
+  final DateTime? handledAt;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomerTimelineFollowUp &&
+      other.statusRaw == statusRaw &&
+      other.reasonRaw == reasonRaw &&
+      other.closedCauseRaw == closedCauseRaw &&
+      other.assignee == assignee &&
+      other.handledReasonRaw == handledReasonRaw &&
+      other.handledAt == handledAt;
+
+  @override
+  int get hashCode => Object.hash(statusRaw, reasonRaw, closedCauseRaw, assignee, handledReasonRaw, handledAt);
+}
+
+/// A call the number made to us (`docs/call-log.md` CL39): ended, served,
+/// filed under a campaign or under none. [at] is when it arrived. It carries
+/// no voicemail or recording link, and the app opens no Call page (CH8), so
+/// the wire's `call_page` is not decoded.
+///
+/// Contract: `CustomerTimelineInboundCall`.
+@immutable
+final class CustomerTimelineInboundCall extends CustomerTimelineEntry {
+  CustomerTimelineInboundCall({
+    required super.key,
+    required super.at,
+    super.accountId,
+    required this.inboundCallId,
+    this.campaign,
+    this.campaignSource,
+    this.contactId,
+    required this.lineE164,
+    this.routeName,
+    this.agent,
+    required this.outcome,
+    String? outcomeRaw,
+    this.dispositionCode,
+    this.talkSeconds,
+    this.notes,
+    required this.notesHidden,
+    this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount,
+    required this.waitSeconds,
+    required this.queued,
+    required this.viaStickyAgent,
+    this.voicemailSeconds,
+    this.followUp,
+    this.calledBackAt,
+    required this.recording,
+    String? recordingRaw,
+  }) : outcomeRaw = outcomeRaw ?? outcome.wire,
+       recordingRaw = recordingRaw ?? recording.wire,
+       super(kindRaw: 'inbound_call');
+
+  factory CustomerTimelineInboundCall.fromJson(Map<String, Object?> j) {
+    final outcome = j.str('outcome');
+    final recording = j.str('recording');
+    final followUp = j.objOrNull('follow_up');
+    return CustomerTimelineInboundCall(
+      key: j.str('key'),
+      at: j.time('at'),
+      accountId: j.strOrNull('account_id'),
+      inboundCallId: j.str('inbound_call_id'),
+      campaign: _campaignOrNull(j, 'campaign'),
+      campaignSource: j.strOrNull('campaign_source'),
+      contactId: j.strOrNull('contact_id'),
+      lineE164: j.str('line_e164'),
+      routeName: j.strOrNull('route_name'),
+      agent: _userOrNull(j, 'agent'),
+      outcome: InboundCallOutcome.fromWire(outcome),
+      outcomeRaw: outcome,
+      dispositionCode: j.strOrNull('disposition_code'),
+      talkSeconds: j.numberOrNull('talk_seconds'),
+      notes: j.strOrNull('notes'),
+      notesHidden: j.boolean('notes_hidden'),
+      callbackAt: j.timeOrNull('callback_at'),
+      promiseDate: j.strOrNull('promise_date'),
+      promiseAmount: j.strOrNull('promise_amount'),
+      waitSeconds: j.integer('wait_seconds'),
+      queued: j.boolean('queued'),
+      viaStickyAgent: j.boolean('via_sticky_agent'),
+      voicemailSeconds: j.numberOrNull('voicemail_seconds'),
+      followUp: followUp == null ? null : CustomerTimelineFollowUp.fromJson(followUp),
+      calledBackAt: j.timeOrNull('called_back_at'),
+      recording: CustomerRecordingState.fromWire(recording),
+      recordingRaw: recording,
+    );
+  }
+
+  final String inboundCallId;
+
+  /// The campaign the call is filed under; null: none ("No campaign").
+  final CustomerHistoryCampaign? campaign;
+
+  /// How the call came by that campaign, as the wire writes it
+  /// (`contact`, `route`, `agent`, `supervisor`); null with no campaign.
+  final String? campaignSource;
+  final String? contactId;
+
+  /// The number they rang.
+  final String lineE164;
+  final String? routeName;
+
+  /// Who answered; null for a call that reached nobody.
+  final CustomerHistoryUser? agent;
+  final InboundCallOutcome outcome;
+  final String outcomeRaw;
+  final String? dispositionCode;
+  final double? talkSeconds;
+  final String? notes;
+  final bool notesHidden;
+  final DateTime? callbackAt;
+
+  /// `YYYY-MM-DD`, or null.
+  final String? promiseDate;
+  final String? promiseAmount;
+
+  /// Whole seconds from arrival to the agent's answer, or to the end.
+  final int waitSeconds;
+  final bool queued;
+  final bool viaStickyAgent;
+  final double? voicemailSeconds;
+
+  /// The call's Missed row; null for an answered call.
+  final CustomerTimelineFollowUp? followUp;
+
+  /// When the latest soft-phone call placed from its Call back was made.
+  final DateTime? calledBackAt;
+  final CustomerRecordingState recording;
+  final String recordingRaw;
+
+  /// Whether the call reached nobody: it left a Missed row, or no agent answered.
+  bool get missed => followUp != null || outcome != InboundCallOutcome.answered;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomerTimelineInboundCall &&
+      other.key == key &&
+      other.kindRaw == kindRaw &&
+      other.at == at &&
+      other.accountId == accountId &&
+      other.inboundCallId == inboundCallId &&
+      other.campaign == campaign &&
+      other.campaignSource == campaignSource &&
+      other.contactId == contactId &&
+      other.lineE164 == lineE164 &&
+      other.routeName == routeName &&
+      other.agent == agent &&
+      other.outcomeRaw == outcomeRaw &&
+      other.dispositionCode == dispositionCode &&
+      other.talkSeconds == talkSeconds &&
+      other.notes == notes &&
+      other.notesHidden == notesHidden &&
+      other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount &&
+      other.waitSeconds == waitSeconds &&
+      other.queued == queued &&
+      other.viaStickyAgent == viaStickyAgent &&
+      other.voicemailSeconds == voicemailSeconds &&
+      other.followUp == followUp &&
+      other.calledBackAt == calledBackAt &&
+      other.recordingRaw == recordingRaw;
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    key,
+    kindRaw,
+    at,
+    accountId,
+    inboundCallId,
+    campaign,
+    campaignSource,
+    contactId,
+    lineE164,
+    routeName,
+    agent,
+    outcomeRaw,
+    dispositionCode,
+    talkSeconds,
+    notes,
+    notesHidden,
+    callbackAt,
+    promiseDate,
+    promiseAmount,
+    waitSeconds,
+    queued,
+    viaStickyAgent,
+    voicemailSeconds,
+    followUp,
+    calledBackAt,
+    recordingRaw,
   ]);
 }
 
