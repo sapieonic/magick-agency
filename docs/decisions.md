@@ -1040,5 +1040,8 @@ Reusable campaign settings at the organisation and at each account (ClickUp "Reu
 Campaign Settings at Tenant or Account Level"). Designed 2026-11-21; Manas answered the design's
 five questions on 2026-11-22: override by section (CT2), API creates get the template (CT8),
 named templates (CT10), the soft phone follows the account's template (CT11), no locked sections
-(CT12). The full table, CT1–CT21, is in [`campaign-templates.md`](campaign-templates.md) §2.
+(CT12). The build's and the review's own calls (CT13–CT21, among them CT18's `Asia/Kolkata`
+built-in time zone and CT9's amended record) were accepted on 2026-11-22 ("The route taken for open
+decision looks good to me."). Every ruling is decided; the full table, CT1–CT21, is in
+[`campaign-templates.md`](campaign-templates.md) §2.
 
