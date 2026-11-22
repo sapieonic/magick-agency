@@ -82,6 +82,16 @@ export const AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS = 50;
  * the template's history, so the cap bounds each one.
  */
 export const AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES = 256 * 1024;
+/**
+ * The most LIVE templates one scope keeps (the organisation's, or one account's): a create or a
+ * restore past it is refused `400 campaign_template_invalid` with `details.templates`. Archived
+ * templates do not count.
+ */
+export const AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX = 200;
+/** How many versions `GET …/versions` answers when no `limit` is sent: the newest ones. */
+export const AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE = 50;
+/** The largest `limit` `GET …/versions` takes. */
+export const AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX = 100;
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
@@ -213,7 +223,23 @@ export interface AgencyCampaignTemplateVersionSummary {
   saved_by: AgencyCampaignActor | null;
 }
 
-/** `GET /proxy/agency/campaign-templates/:id/versions`: newest first. */
+/**
+ * `GET /proxy/agency/campaign-templates/:id/versions` query: one page of the history, newest first.
+ * `limit` (1 to `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX`, default
+ * `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE`) versions older than `before` (a version number; absent:
+ * from the newest). A malformed value is `400 campaign_template_invalid`.
+ */
+export interface AgencyCampaignTemplateVersionsQuery {
+  before?: number;
+  limit?: number;
+}
+
+/**
+ * `GET /proxy/agency/campaign-templates/:id/versions`: newest first, one page
+ * ({@link AgencyCampaignTemplateVersionsQuery}). Versions are numbered from 1 with no gaps and never
+ * deleted, so older ones exist while the last row's `version` is above 1: the next page is
+ * `before` that version.
+ */
 export interface AgencyCampaignTemplateVersionsResponse {
   template_id: string;
   versions: AgencyCampaignTemplateVersionSummary[];

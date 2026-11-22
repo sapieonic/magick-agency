@@ -22,7 +22,7 @@ import {
   AGENCY_NEW_CAMPAIGN_TIMEZONE,
   AGENCY_PHONE_DISPLAY_DEFAULT,
 } from '@magick-agency/contracts/agency';
-import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
+import { AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX, type AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { builtinTemplateSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import { closeTestPool, getTestPool, TEST_DB_URL, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
@@ -92,10 +92,46 @@ describe('create, versions', () => {
     if (!r.ok) throw new Error(r.reason);
     expect(r.template).toMatchObject({ version: 2, name: 'Collections v2', sections: { safety: { abandonment_ceiling_pct: 2 } } });
     expect(r.template.updated_at.getTime()).toBeGreaterThanOrEqual(t.updated_at.getTime());
-    const versions = await repo.listVersions(inA, t.id);
+    const versions = await repo.listVersions(inA, t.id, { limit: 50 });
     expect(versions!.map((v) => [v.version, v.name])).toEqual([[2, 'Collections v2'], [1, 'Collections']]);
     expect(await repo.findVersion(inA, t.id, 1)).toMatchObject({ version: 1, sections: t.sections, saved_by: actor });
     expect(await repo.findVersion(inA, t.id, 3)).toBeNull();
+  });
+
+  it('the history is read a page at a time, with each version\'s section keys and never its sections (D4)', async () => {
+    const t = await created(inA, { sections: { hours: { calling_window_start: '10:00:00' } } });
+    for (let v = 1; v <= 4; v++) {
+      const sections = v % 2 === 0 ? { safety: { abandonment_ceiling_pct: 2 }, outcomes: {} } : {};
+      const r = await repo.replace(inA, t.id, { ...content({ name: t.name, sections }), expected_version: v }, by);
+      expect(r.ok).toBe(true);
+    }
+    const newest = (await repo.listVersions(inA, t.id, { limit: 2 }))!;
+    expect(newest.map((v) => v.version)).toEqual([5, 4]);
+    expect(newest[0]).not.toHaveProperty('sections');
+    expect(newest.map((v) => [...v.section_keys].sort())).toEqual([['outcomes', 'safety'], []]);
+    const older = (await repo.listVersions(inA, t.id, { before: 4, limit: 2 }))!;
+    expect(older.map((v) => [v.version, [...v.section_keys].sort()])).toEqual([[3, ['outcomes', 'safety']], [2, []]]);
+    expect((await repo.listVersions(inA, t.id, { before: 2, limit: 50 }))!.map((v) => [v.version, v.section_keys])).toEqual([[1, ['hours']]]);
+  });
+
+  it('a scope keeps at most AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX live templates: a create or a restore past it is refused (D4)', async () => {
+    // Filled in one statement (the cap's own count reads the scope's live rows under its lock).
+    await q(
+      `INSERT INTO agency_campaign_templates (tenant_id, account_id, name)
+       SELECT $1::uuid, $2::uuid, 'Filler ' || n FROM generate_series(1, $3::int - 1) n`,
+      [tenant, accountA, AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX],
+    );
+    const archived = await created(inA, { name: 'Old one' });
+    await repo.archive(inA, archived.id, by);
+    const last = await created(inA, { name: 'The last one' });
+    expect(await repo.create(inA, content({ name: 'One too many' }), by))
+      .toEqual({ ok: false, reason: 'limit_reached', limit: AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX });
+    expect(await repo.restore(inA, archived.id)).toEqual({ ok: false, reason: 'limit_reached', limit: AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX });
+    // A replace keeps the count; another scope has its own cap; archiving one makes room.
+    expect((await repo.replace(inA, last.id, { ...content({ name: 'Renamed' }), expected_version: 1 }, by)).ok).toBe(true);
+    expect((await repo.create(inB, content(), by)).ok).toBe(true);
+    await repo.archive(inA, last.id, by);
+    expect((await repo.restore(inA, archived.id)).ok).toBe(true);
   });
 
   it('a save on a stale version is refused with the current version, and changes nothing', async () => {
@@ -105,7 +141,7 @@ describe('create, versions', () => {
     expect(await repo.replace(inA, t.id, { ...content({ name: 'Second' }), expected_version: 1 }, by))
       .toEqual({ ok: false, reason: 'changed', current_version: 2 });
     expect(await repo.findVisible(inA, t.id)).toMatchObject({ name: 'First', version: 2 });
-    expect((await repo.listVersions(inA, t.id))!.length).toBe(2);
+    expect((await repo.listVersions(inA, t.id, { limit: 50 }))!.length).toBe(2);
   });
 
   it('two saves of the same version at once: one wins, the other is refused (the row lock)', async () => {
@@ -279,7 +315,7 @@ describe('tenant and account scope', () => {
     expect(await repo.findVisible(stranger, t.id)).toBeNull();
     expect(await repo.findVisible({ tenantId: otherTenant, accountId: null }, o.id)).toBeNull();
     expect(await repo.list(stranger)).toEqual([]);
-    expect(await repo.listVersions(stranger, t.id)).toBeNull();
+    expect(await repo.listVersions(stranger, t.id, { limit: 50 })).toBeNull();
     expect(await repo.findVersion(stranger, t.id, 1)).toBeNull();
     expect(await repo.replace(stranger, t.id, { ...content(), expected_version: 1 }, by)).toEqual({ ok: false, reason: 'not_found' });
     expect(await repo.setDefault(stranger, t.id)).toEqual({ ok: false, reason: 'not_found' });
@@ -292,7 +328,7 @@ describe('tenant and account scope', () => {
     const a = await created(inA, { name: 'A one' });
     const o = await created(org, { name: 'Org one' });
     expect(await repo.findVisible(inB, a.id)).toBeNull();
-    expect(await repo.listVersions(inB, a.id)).toBeNull();
+    expect(await repo.listVersions(inB, a.id, { limit: 50 })).toBeNull();
     expect(await repo.replace(inB, a.id, { ...content(), expected_version: 1 }, by)).toEqual({ ok: false, reason: 'not_found' });
     expect((await repo.findVisible(inB, o.id))!.id).toBe(o.id);
     expect((await repo.list(inB)).map((t) => t.id)).toEqual([o.id]);

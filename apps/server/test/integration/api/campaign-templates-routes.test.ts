@@ -41,6 +41,9 @@ import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES,
+  AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX,
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE,
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX,
   type AgencyCampaignTemplate,
   type AgencyCampaignTemplateEffective,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -543,6 +546,46 @@ describe('versions and the stale save (CT6)', () => {
     });
   });
 
+  it('the history a page at a time: the newest by default, older ones before a version; a bad query is 400 (D4)', async () => {
+    const tpl = await accountTemplate();
+    for (let v = 1; v <= 3; v++) {
+      const res = await call(w.supA, w.a, 'PUT', `/campaign-templates/${tpl.id}`, {
+        name: tpl.name, description: null, based_on_template_id: null,
+        sections: v === 2 ? { hours: HOURS, outcomes: OUTCOMES } : { outcomes: OUTCOMES }, expected_version: v,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    const page = async (query: string) => {
+      const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions${query}`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { versions: Array<{ version: number; sections_set: string[] }> }).versions;
+    };
+    expect((await page('')).map((v) => v.version)).toEqual([4, 3, 2, 1]);
+    // `sections_set` in the section map's order, read without the sections.
+    expect((await page('?limit=2')).map((v) => [v.version, v.sections_set])).toEqual([[4, ['outcomes']], [3, ['outcomes', 'hours']]]);
+    expect((await page('?before=3&limit=5')).map((v) => v.version)).toEqual([2, 1]);
+    expect(await page('?before=1')).toEqual([]);
+    for (const bad of ['?limit=0', `?limit=${AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX + 1}`, '?limit=x', '?before=0', '?before=-1']) {
+      const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions${bad}`);
+      expect(res.statusCode, bad).toBe(400);
+      expect(res.json().code).toBe('campaign_template_invalid');
+    }
+  });
+
+  it('the history answers at most AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE versions when no limit is sent (D4)', async () => {
+    const tpl = await accountTemplate();
+    // Older saved states, written straight to the history.
+    await q(
+      `INSERT INTO agency_campaign_template_versions (template_id, version, name, sections)
+       SELECT $1::uuid, n, 'Old', '{}'::jsonb FROM generate_series(2, $2::int + 5) n`,
+      [tpl.id, AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE],
+    );
+    const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions`);
+    const versions = (res.json() as { versions: Array<{ version: number }> }).versions;
+    expect(versions).toHaveLength(AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE);
+    expect(versions[0]!.version).toBe(AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE + 5);
+  });
+
   it('an archived template is not edited (409 campaign_template_archived)', async () => {
     const tpl = await accountTemplate();
     await call(w.supA, w.a, 'POST', `/campaign-templates/${tpl.id}/archive`);
@@ -562,6 +605,27 @@ describe('names (CT13)', () => {
     expect(clash.json()).toMatchObject({ code: 'campaign_template_name_taken', template: { id: first.id, name: 'Collections  Default' } });
     await orgTemplate({ name: 'Collections Default' });
     await accountTemplate({ name: 'Collections Default' }, w.b, w.supB);
+  });
+});
+
+describe('the cap on live templates (D4)', () => {
+  it('a create or a restore past AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX is 400 campaign_template_invalid on templates', async () => {
+    const archived = await accountTemplate({ name: 'Old one' });
+    await call(w.supA, w.a, 'POST', `/campaign-templates/${archived.id}/archive`);
+    await q(
+      `INSERT INTO agency_campaign_templates (tenant_id, account_id, name)
+       SELECT $1::uuid, $2::uuid, 'Filler ' || n FROM generate_series(1, $3::int) n`,
+      [w.tenant, w.a, AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX],
+    );
+    const create = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'One too many', sections: {} });
+    expect(create.statusCode).toBe(400);
+    expect(create.json()).toMatchObject({ code: 'campaign_template_invalid', details: { templates: expect.stringContaining(`${AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX} templates`) } });
+    expect(create.json().message).toBe(create.json().details.templates);
+    const restore = await call(w.supA, w.a, 'POST', `/campaign-templates/${archived.id}/restore`);
+    expect(restore.statusCode).toBe(400);
+    expect(restore.json().code).toBe('campaign_template_invalid');
+    // The organisation has its own cap.
+    expect((await call(w.orgAdmin, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Org', sections: {} })).statusCode).toBe(201);
   });
 });
 

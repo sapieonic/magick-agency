@@ -1,6 +1,6 @@
 /*
  * The campaign template reads (docs/campaign-templates.md §6, CT3): the list, one template, its
- * history and one saved state, and the filled-in form New campaign opens on. Part of
+ * history (a page at a time, newest first) and one saved state, and the filled-in form New campaign opens on. Part of
  * `proxy-agency-campaign-templates.routes.ts`. All need `agency.campaigns.write` (whoever creates
  * campaigns starts from templates) and the flag.
  *
@@ -9,9 +9,10 @@
  * malformed id and a missing one are the same `404 campaign_template_not_found`.
  */
 import type { FastifyInstance } from 'fastify';
-import type {
-  AgencyCampaignTemplateListResponse,
-  AgencyCampaignTemplateVersionsResponse,
+import {
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE,
+  type AgencyCampaignTemplateListResponse,
+  type AgencyCampaignTemplateVersionsResponse,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { agencyCampaignTemplateRepository } from '../../../db/repositories/agency.repository.js';
 import { resolveEffectiveTemplate } from '../../../agency/campaign-templates/resolve-effective.js';
@@ -28,7 +29,7 @@ import {
   versionSummaryToWire,
   versionToWire,
 } from './shared.js';
-import { effectiveQuerySchema, listQuerySchema, zodDetails } from './validate.js';
+import { effectiveQuerySchema, listQuerySchema, versionsQuerySchema, zodDetails } from './validate.js';
 
 export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): Promise<void> {
   const read = templateGuards('agency.campaigns.write');
@@ -77,9 +78,13 @@ export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): 
 
   // ── GET /campaign-templates/:id/versions ────────────────────────────────────
   app.get<{ Params: { id: string } }>('/campaign-templates/:id/versions', read, async (request, reply) => {
+    const parsed = versionsQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
     const id = templateIdOf(request.params.id);
     const reader = readerOf(request);
-    const rows = id === null ? null : await agencyCampaignTemplateRepository.listVersions(reader, id);
+    // One page, newest first (the contract's query): never the whole history at once.
+    const page = { before: parsed.data.before ?? null, limit: parsed.data.limit ?? AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE };
+    const rows = id === null ? null : await agencyCampaignTemplateRepository.listVersions(reader, id, page);
     if (rows === null) return sendTemplateRefusal(reply, 'campaign_template_not_found');
     const names = await namesFor(rows, reader.tenantId);
     const body: AgencyCampaignTemplateVersionsResponse = {

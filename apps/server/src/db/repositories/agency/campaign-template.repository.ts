@@ -43,7 +43,10 @@
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { PoolClient } from 'pg';
-import type { AgencyCampaignTemplateSections } from '@magick-agency/contracts/api/agency/campaign-templates';
+import {
+  AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX,
+  type AgencyCampaignTemplateSections,
+} from '@magick-agency/contracts/api/agency/campaign-templates';
 import { nameKey } from '../../../utils/name-key.js';
 
 /** One stored template (`agency_campaign_templates`). `account_id` null: an organisation template. */
@@ -74,6 +77,14 @@ export interface CampaignTemplateVersionRecord {
   sections: AgencyCampaignTemplateSections;
   saved_by: string | null;
   saved_at: Date;
+}
+
+/**
+ * One row of a template's history, without its sections: `section_keys` are the keys its sections
+ * set, read in SQL (`jsonb_object_keys`), so a page of history never carries the sections to Node.
+ */
+export interface CampaignTemplateVersionSummaryRecord extends Omit<CampaignTemplateVersionRecord, 'sections'> {
+  section_keys: string[];
 }
 
 /** A template's exact scope: `accountId: null` is the tenant's organisation templates. */
@@ -111,10 +122,13 @@ export interface CampaignTemplateContent {
 /** Why a based-on cannot be used: none of the tenant's organisation templates has the id, or it is archived. */
 type BasedOnRefusal = { ok: false; reason: 'based_on_not_found' } | { ok: false; reason: 'based_on_archived' };
 type NameRefusal = { ok: false; reason: 'name_taken'; template: { id: string; name: string } };
+/** The scope already keeps `AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX` live templates (a create or a restore would add one). */
+type LimitRefusal = { ok: false; reason: 'limit_reached'; limit: number };
 
 export type CampaignTemplateCreateResult =
   | { ok: true; template: CampaignTemplateRecord; replaced: CampaignTemplateRef | null }
   | NameRefusal
+  | LimitRefusal
   | BasedOnRefusal;
 
 export type CampaignTemplateReplaceResult =
@@ -148,6 +162,7 @@ export type CampaignTemplateRestoreResult =
   | { ok: true; template: CampaignTemplateRecord; changed: boolean }
   | { ok: false; reason: 'not_found' }
   | NameRefusal
+  | LimitRefusal
   | BasedOnRefusal;
 
 const COLUMNS = `id, tenant_id, account_id, name, description, based_on_template_id, sections, is_default, version,
@@ -185,13 +200,18 @@ async function lockScope(client: PoolClient, scope: CampaignTemplateScope): Prom
   await client.query(CAMPAIGN_TEMPLATE_SCOPE_LOCK_SQL, [scope.tenantId, scope.accountId]);
 }
 
-/** The scope's live template whose name is `name` by {@link nameKey}, but `exceptId`. Under the scope lock. */
+/**
+ * The scope's live template whose name is `name` by {@link nameKey}, but `exceptId`; with `adding`
+ * (a create or a restore: one more live template), also the scope's cap
+ * (`AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX`, which bounds this read). Under the scope lock.
+ */
 async function nameClash(
   client: PoolClient,
   scope: CampaignTemplateScope,
   name: string,
   exceptId: string | null,
-): Promise<NameRefusal | null> {
+  adding = false,
+): Promise<NameRefusal | LimitRefusal | null> {
   const { rows } = await client.query<{ id: string; name: string }>(
     `SELECT id, name FROM agency_campaign_templates
       WHERE ${IN_SCOPE_SQL} AND archived_at IS NULL AND ($3::uuid IS NULL OR id <> $3::uuid)`,
@@ -199,7 +219,11 @@ async function nameClash(
   );
   const key = nameKey(name);
   const clash = rows.find((r) => nameKey(r.name) === key);
-  return clash ? { ok: false, reason: 'name_taken', template: { id: clash.id, name: clash.name } } : null;
+  if (clash) return { ok: false, reason: 'name_taken', template: { id: clash.id, name: clash.name } };
+  if (adding && rows.length >= AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX) {
+    return { ok: false, reason: 'limit_reached', limit: AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX };
+  }
+  return null;
 }
 
 /**
@@ -321,7 +345,7 @@ export class AgencyCampaignTemplateRepository {
   ): Promise<CampaignTemplateCreateResult> {
     return withTransaction(async (client) => {
       await lockScope(client, scope);
-      const clash = await nameClash(client, scope, content.name, null);
+      const clash = await nameClash(client, scope, content.name, null, true);
       if (clash) return clash;
       const basedOn = await basedOnRefused(client, scope.tenantId, content.based_on_template_id);
       if (basedOn) return basedOn;
@@ -359,7 +383,8 @@ export class AgencyCampaignTemplateRepository {
       if (!row) return { ok: false, reason: 'not_found' } as const;
       if (row.archived_at !== null) return { ok: false, reason: 'archived' } as const;
       if (row.version !== content.expected_version) return { ok: false, reason: 'changed', current_version: row.version } as const;
-      const clash = await nameClash(client, scope, content.name, id);
+      // Not `adding`: a replace keeps the count, so only a name can clash.
+      const clash = await nameClash(client, scope, content.name, id) as NameRefusal | null;
       if (clash) return clash;
       const basedOn = await basedOnRefused(client, scope.tenantId, content.based_on_template_id);
       if (basedOn) return basedOn;
@@ -446,7 +471,7 @@ export class AgencyCampaignTemplateRepository {
       const row = await lockRow(client, scope, id);
       if (!row) return { ok: false, reason: 'not_found' } as const;
       if (row.archived_at === null) return { ok: true, template: row, changed: false } as const;
-      const clash = await nameClash(client, scope, row.name, id);
+      const clash = await nameClash(client, scope, row.name, id, true);
       if (clash) return clash;
       const basedOn = await basedOnRefused(client, scope.tenantId, row.based_on_template_id);
       if (basedOn) return basedOn;
@@ -460,13 +485,25 @@ export class AgencyCampaignTemplateRepository {
     }, { pool: getPool() });
   }
 
-  /** A visible template's saved states, newest first; null when the reader cannot see the template. */
-  async listVersions(reader: CampaignTemplateReader, id: string): Promise<CampaignTemplateVersionRecord[] | null> {
+  /**
+   * A page of a visible template's saved states, newest first: at most `page.limit`, older than
+   * `page.before` when given. Each row's section keys are read in SQL, never its sections (each up
+   * to 256 KiB). Null when the reader cannot see the template.
+   */
+  async listVersions(
+    reader: CampaignTemplateReader,
+    id: string,
+    page: { before?: number | null; limit: number },
+  ): Promise<CampaignTemplateVersionSummaryRecord[] | null> {
     if (!(await this.findVisible(reader, id))) return null;
-    const { rows } = await getPool().query<CampaignTemplateVersionRecord>(
-      `SELECT template_id, version, name, based_on_template_id, sections, saved_by, saved_at
-         FROM agency_campaign_template_versions WHERE template_id = $1::uuid ORDER BY version DESC`,
-      [id],
+    const { rows } = await getPool().query<CampaignTemplateVersionSummaryRecord>(
+      `SELECT template_id, version, name, based_on_template_id,
+              ARRAY(SELECT jsonb_object_keys(sections)) AS section_keys, saved_by, saved_at
+         FROM agency_campaign_template_versions
+        WHERE template_id = $1::uuid AND ($2::int IS NULL OR version < $2::int)
+        ORDER BY version DESC
+        LIMIT $3`,
+      [id, page.before ?? null, page.limit],
     );
     return rows;
   }

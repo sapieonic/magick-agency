@@ -7,6 +7,7 @@ import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'f
 import { ROLE_HIERARCHY, type Permission } from '@magick-agency/contracts/rbac';
 import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 import {
+  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   type AgencyCampaignTemplate,
   type AgencyCampaignTemplateFollows,
   type AgencyCampaignTemplateSectionKey,
@@ -25,6 +26,7 @@ import {
   type CampaignTemplateReader,
   type CampaignTemplateRecord,
   type CampaignTemplateVersionRecord,
+  type CampaignTemplateVersionSummaryRecord,
 } from '../../../db/repositories/agency.repository.js';
 import {
   campaignTemplatesEnabled,
@@ -174,14 +176,16 @@ export async function templateOf(request: FastifyRequest, row: CampaignTemplateR
 
 /** One saved state as a history row. */
 export function versionSummaryToWire(
-  row: CampaignTemplateVersionRecord,
+  row: CampaignTemplateVersionSummaryRecord,
   names: ReadonlyMap<string, string | null>,
 ): AgencyCampaignTemplateVersionSummary {
+  const keys = new Set(row.section_keys);
   return {
     version: row.version,
     name: row.name,
     based_on_template_id: row.based_on_template_id,
-    sections_set: sectionKeysSet(row.sections),
+    // In the section map's order, whatever order the keys were read in.
+    sections_set: AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter((k) => keys.has(k)),
     saved_at: iso(row.saved_at),
     saved_by: actor(row.saved_by, names),
   };
@@ -189,7 +193,12 @@ export function versionSummaryToWire(
 
 /** One saved state with its sections. */
 export function versionToWire(row: CampaignTemplateVersionRecord, names: ReadonlyMap<string, string | null>): AgencyCampaignTemplateVersion {
-  return { ...versionSummaryToWire(row, names), template_id: row.template_id, sections: row.sections };
+  const { sections, ...rest } = row;
+  return {
+    ...versionSummaryToWire({ ...rest, section_keys: sectionKeysSet(sections) }, names),
+    template_id: row.template_id,
+    sections,
+  };
 }
 
 // ── The audit (CT9) ──────────────────────────────────────────────────────────

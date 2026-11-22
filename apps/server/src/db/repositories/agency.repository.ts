@@ -376,4 +376,5 @@ export type {
   CampaignTemplateRestoreResult,
   CampaignTemplateScope,
   CampaignTemplateVersionRecord,
+  CampaignTemplateVersionSummaryRecord,
 } from './agency/campaign-template.repository.js';
