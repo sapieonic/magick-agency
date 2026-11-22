@@ -4,7 +4,7 @@ import { AGENCY_HELP_ANSWER_HOWS, AGENCY_HELP_CLEARED_REASONS } from '@magick-ag
 import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
-import { errorCode, errorStatus } from '../utils/agencyErrors';
+import { errorCode, isSessionGone } from '../utils/agencyErrors';
 import {
   trackAgencyStationConnectionChanged,
   trackAgencyStationTokenMintFailed,
@@ -1257,9 +1257,9 @@ export function useAgencyStation(
          * device, OS7 ended it from another tenant, or the server's idle-session sweep ended it
          * after hours offline (OS9: the laptop closed overnight). Stop exactly as a 4404 stops:
          * every re-mint would be refused the same way, and "We are trying again" for ever gives
-         * the agent nothing to do. A 404 is the same answer for a session that is not there.
+         * the agent nothing to do.
          */
-        if (errorCode(err) === 'session_ended' || errorStatus(err) === 404) {
+        if (isSessionGone(err)) {
           logDiagnostic('token_mint_refused', 'session_ended: the session has ended');
           dispatch({ type: 'connection', connection: 'session_gone' });
           reportConnection('session_gone', null);

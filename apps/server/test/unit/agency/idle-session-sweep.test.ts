@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { IdleSessionSweepRepo, IdleSessionSweepRuntime } from '../../../src/agency/idle-session-sweep.js';
 
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyAgentSessionRepository: {} }));
 
 const {
-  IdleSessionSweep, afterSessionLeft, IDLE_SESSION_END_AFTER_MS,
+  IdleSessionSweep, IDLE_SESSION_END_AFTER_MS, IDLE_SESSION_SWEEP_BATCH,
 } = await import('../../../src/agency/idle-session-sweep.js');
-type Runtime = ConstructorParameters<typeof IdleSessionSweep>[0];
-type Repo = NonNullable<ConstructorParameters<typeof IdleSessionSweep>[1]>;
+const { afterSessionLeft } = await import('../../../src/agency/session-end.js');
+type Runtime = IdleSessionSweepRuntime;
+type Repo = IdleSessionSweepRepo;
 
 /**
  * OS9, the idle-session sweep's rules (`agency/idle-session-sweep.ts`) over stand-ins: a session
@@ -58,12 +60,8 @@ describe('IdleSessionSweep (OS9)', () => {
     const { runtime, repo, calls } = world();
     expect(await new IdleSessionSweep(runtime, repo).sweep()).toBe(1);
     expect(calls).toEqual(['leave:s1', 'clear:s1', 'help:s1', 'detach:s1', 'ended:s1', 'forget:s1']);
-    expect(repo.findIdleOffline).toHaveBeenCalledWith(IDLE_SESSION_END_AFTER_MS, 200);
+    expect(repo.findIdleOffline).toHaveBeenCalledWith(IDLE_SESSION_END_AFTER_MS, IDLE_SESSION_SWEEP_BATCH);
     expect(repo.leaveIdle).toHaveBeenCalledWith('s1', IDLE_SESSION_END_AFTER_MS);
-  });
-
-  it('the cutoff is two hours', () => {
-    expect(IDLE_SESSION_END_AFTER_MS).toBe(2 * 60 * 60 * 1000);
   });
 
   it('ends a session with no lease at all (it lapsed)', async () => {

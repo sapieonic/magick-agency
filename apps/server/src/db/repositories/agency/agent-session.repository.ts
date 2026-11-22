@@ -259,6 +259,19 @@ function offlineSinceSql(alias: string): string {
              WHERE e.session_id = ${alias}.id AND e.to_state = 'offline'))`;
 }
 
+/**
+ * OS9: an open session idle for the cutoff (`idleParam`, in ms): `offline` since then
+ * (`offlineSince`, {@link offlineSinceSql}), its row unwritten as long (`updated_at`: every write
+ * bumps it and nothing writes an idle row, so this only ever delays an end, should a restart's
+ * `→ offline` event not be written), and not on Mode B's away-ring (its reconcile ends that absence
+ * and tells the phone). `row` is the sessions row. The sweep's read and its guarded end share it.
+ */
+function idleOfflineSql(row: string, offlineSince: string, idleParam: string): string {
+  const cutoff = `now() - make_interval(secs => ${idleParam}::double precision / 1000)`;
+  return `${row}.left_at IS NULL AND ${row}.state = 'offline' AND ${row}.away_ring_since IS NULL
+          AND ${offlineSince} <= ${cutoff} AND ${row}.updated_at <= ${cutoff}`;
+}
+
 /** An open session the idle-session sweep may end (OS9, {@link AgencyAgentSessionRepository.findIdleOffline}). */
 export interface AgencyIdleOfflineSession {
   id: string;
@@ -1324,24 +1337,16 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
-   * OS9: the idle-session sweep's candidates. Open sessions that have been `offline` for at least
-   * `idleMs` (on the database's clock, {@link offlineSinceSql}) AND whose row nothing has written for
-   * as long (`updated_at`: every write bumps it, and nothing writes an idle row periodically), oldest
-   * first, at most `limit`. The second clause only ever delays an end: it holds when the `→ offline`
-   * event of a restart's `markAllOffline` could not be written (`recordTransitions` logs and goes on),
-   * which would otherwise date an agent working a minute before the restart by a stale `state_since`.
-   * Never a session on Mode B's away-ring (`away_ring_since` set): its reconcile ends that absence,
-   * with the phone's `ring_off`. Live sessions only (`left_at IS NULL`, a few hundred rows at most);
-   * each one's last `→ offline` event is one probe on `idx_agency_session_events_offline`.
+   * OS9: the idle-session sweep's candidates ({@link idleOfflineSql}), oldest first, at most
+   * `limit`. Live sessions only (a few hundred rows at most); each one's last `→ offline` event is
+   * one probe on `idx_agency_session_events_offline`.
    */
   async findIdleOffline(idleMs: number, limit: number): Promise<AgencyIdleOfflineSession[]> {
     const { rows } = await getPool().query<AgencyIdleOfflineSession>(
       `SELECT s.id, s.tenant_id, s.account_id, s.agent_user_id, went.offline_since
          FROM agency_agent_sessions s
          CROSS JOIN LATERAL (SELECT ${offlineSinceSql('s')} AS offline_since) went
-        WHERE s.left_at IS NULL AND s.state = 'offline' AND s.away_ring_since IS NULL
-          AND went.offline_since <= now() - $1::double precision * interval '1 millisecond'
-          AND s.updated_at <= now() - $1::double precision * interval '1 millisecond'
+        WHERE ${idleOfflineSql('s', 'went.offline_since', '$1')}
         ORDER BY went.offline_since, s.id
         LIMIT $2`,
       [idleMs, limit],
@@ -1350,13 +1355,13 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
-   * OS9: end an idle session as {@link leave} does, but only if it is STILL what
-   * {@link findIdleOffline} found (`offline`, for at least `idleMs`, untouched as long, not on
-   * away-ring): the check runs in the UPDATE under the row lock, so a rejoin since the sweep's read
-   * (the join upsert moves the row to `break` under the same lock) wins, and nothing is written. `left_at` is when the session went offline, not now: the agent left then, so the
-   * floor reads "Not signed in today" for a session forgotten yesterday, never "Left at" the sweep's
-   * minute. The state does not move (`offline` → `offline`), so no transition is logged, as for a
-   * leave from `offline`; a suspended break it ends is recorded as {@link leave} records it.
+   * OS9: end an idle session as {@link leave} does, but only while it is still idle
+   * ({@link idleOfflineSql}, checked in the UPDATE under the row lock): a rejoin since the sweep's
+   * read (the join upsert moves the row to `break` under the same lock) wins, and nothing is
+   * written. `left_at` is when the session went offline, not now: the floor reads "Not signed in
+   * today" for a session forgotten yesterday, never "Left at" the sweep's minute. The state does not
+   * move (`offline` → `offline`), so no transition is logged, as for a leave from `offline`; a
+   * suspended break it ends is recorded as {@link leave} records it.
    *
    * True when it ended the session.
    */
@@ -1365,9 +1370,7 @@ export class AgencyAgentSessionRepository {
       sessionTransitionSql({
         prevWhere: 'id = $1',
         set: `left_at = ${offlineSinceSql('prev')}, updated_at = now()`,
-        where: `s.left_at IS NULL AND s.state = 'offline' AND s.away_ring_since IS NULL
-                AND ${offlineSinceSql('prev')} <= now() - $2::double precision * interval '1 millisecond'
-                AND s.updated_at <= now() - $2::double precision * interval '1 millisecond'`,
+        where: idleOfflineSql('s', offlineSinceSql('prev'), '$2'),
       }),
       [id, idleMs],
     );

@@ -1,6 +1,6 @@
 import { leaveAgencySession } from '../../../api/agency';
 import { getSoftphoneBootstrap } from '../../../api/softphone';
-import { errorCode, errorStatus } from '../../../utils/agencyErrors';
+import { errorCode, isSessionGone } from '../../../utils/agencyErrors';
 
 /** What closing the agent's soft-phone session came to. */
 export type SoftphoneCloseOutcome =
@@ -76,7 +76,7 @@ export async function closeSoftphoneSession({
   } catch (err: unknown) {
     const code = errorCode(err);
     if (code === 'agent_on_live_call' || code === 'manual_call_live') return { kind: 'call_pending' };
-    if (code !== 'session_ended' && errorStatus(err) !== 404) return { kind: 'failed', code };
+    if (!isSessionGone(err)) return { kind: 'failed', code };
   }
   return { kind: 'closed' };
 }

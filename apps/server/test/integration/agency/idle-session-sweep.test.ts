@@ -27,10 +27,7 @@ function idleSession(campaignId: string, over: Record<string, unknown>, untouche
 }
 
 async function sessionRow(id: string) {
-  const { rows } = await getTestPool().query<{ state: string; left_at: Date | null; state_since: Date }>(
-    'SELECT state, left_at, state_since FROM agency_agent_sessions WHERE id = $1', [id],
-  );
-  return rows[0]!;
+  return (await repo.findById(id))!;
 }
 
 async function eventCount(id: string): Promise<number> {
@@ -173,7 +170,7 @@ describe('idle-session sweep (OS9): one pass over the real statements', () => {
       agents: { get: async () => ({ state: 'offline' }), clear: async (id) => { cleared.push(id); } },
       dialer: { hasLiveAttempt: () => false, hasRedialInFlight: () => false },
       softphone: { hasLiveCall: () => false },
-    }, repo, { idleMs: IDLE_MS });
+    }, repo);
 
     expect(await sweep.sweep()).toBe(1);
     expect((await sessionRow(gone.id)).left_at).not.toBeNull();

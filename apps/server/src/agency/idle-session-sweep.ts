@@ -3,6 +3,7 @@ import {
   agencyAgentSessionRepository,
   type AgencyIdleOfflineSession,
 } from '../db/repositories/agency.repository.js';
+import { afterSessionLeft, nothingInFlight, type SessionEndRuntime } from './session-end.js';
 
 const log = createChildLogger({ component: 'agency-idle-session-sweep' });
 
@@ -16,15 +17,11 @@ const log = createChildLogger({ component: 'agency-idle-session-sweep' });
  * for {@link IDLE_SESSION_END_AFTER_MS} with nothing in it, as Leave ends it.
  *
  * ── What keeps a session ─────────────────────────────────────────────────────
- * The row (`findIdleOffline`, then `leaveIdle`'s own guard under the row lock): `offline` for the
- * cutoff, untouched for as long, and not on Mode B's away-ring (its reconcile ends that absence and
- * tells the phone). Then OS7's rule (`endIdleSessionElsewhere`): no station attached in any process
- * (`stationPresence`, the Redis ownership key every process writes; `unknown` keeps the session), a
- * lease `offline` or gone (never `ring`), and no live attempt, redial being set up, soft-phone call
- * or inbound call.
+ * The row's rule (`findIdleOffline`, re-checked by `leaveIdle` under the row lock), then OS7's
+ * (`nothingInFlight`, `session-end.ts`), and a lease `offline` or gone, never Mode B's `ring`.
  *
  * With media workers the sweep runs in the primary, whose dialer and soft phone hold nothing, so
- * those last checks answer "none" there and only matter in one process. What protects a working
+ * `nothingInFlight`'s call checks answer "none" there and only matter in one process. What protects a working
  * session is the rest: a station's close never writes `offline` while its process holds a live
  * attempt or call (`releaseStationOnClose`), the ownership key, and the two hours.
  *
@@ -46,46 +43,8 @@ export const IDLE_SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 /** At most this many sessions are ended per pass; the oldest first, the rest on the next pass. */
 export const IDLE_SESSION_SWEEP_BATCH = 200;
 
-/** What a session that just ended needs from the runtime, after its row is left. */
-export interface SessionEndRuntime {
-  stations: {
-    detach(sessionId: string): Promise<unknown> | unknown;
-    /** Agent station (BE-11): the session ended; forget when its station went. */
-    sessionEnded(sessionId: string): void;
-  };
-  /** The floor's reader of the detach times, when it is not `stations` (the primary's directory). */
-  stationDisconnects?: { forgetEnded(sessionIds: readonly string[]): void };
-  /** Floor assist (LF4): the session's open Need help ends with it. Never throws. */
-  floorAssist?: { endWithSession(sessionId: string): Promise<void> };
-}
-
-/**
- * What every end of a session does once its row is left: its open Need help ends (LF4, before the
- * detach, so a station still attached hears `help_cleared { session_ended }`), the station is
- * detached, and when it went is forgotten (BE-11). The agent's Leave and OS7 (`leaveSession`) and
- * this sweep share it.
- */
-export async function afterSessionLeft(runtime: SessionEndRuntime, sessionId: string): Promise<void> {
-  await runtime.floorAssist?.endWithSession(sessionId);
-  await runtime.stations.detach(sessionId);
-  runtime.stations.sessionEnded(sessionId);
-  runtime.stationDisconnects?.forgetEnded([sessionId]);
-}
-
-/** What the sweep reads from the runtime: OS7's idle rule and the end's cleanup. */
-export interface IdleSessionSweepRuntime extends SessionEndRuntime {
-  stations: SessionEndRuntime['stations'] & {
-    stationPresence(sessionId: string): Promise<'connected' | 'absent' | 'unknown'>;
-  };
-  agents: {
-    get(sessionId: string): Promise<{ state: string; ring?: boolean } | null>;
-    clear(sessionId: string): Promise<unknown>;
-  };
-  dialer: { hasLiveAttempt(sessionId: string): boolean; hasRedialInFlight(sessionId: string): boolean };
-  softphone: { hasLiveCall(sessionId: string): boolean };
-  /** Read on every candidate: the runtime sets it after it is built. */
-  inbound?: { findCallForSession(sessionId: string): unknown } | null;
-}
+/** What the sweep reads from the runtime: all of ending a session but Mode B's `ring_off` (it never ends an away-ring). */
+export type IdleSessionSweepRuntime = Omit<SessionEndRuntime, 'awayRing'>;
 
 /** The two statements the sweep runs. */
 export interface IdleSessionSweepRepo {
@@ -118,10 +77,8 @@ export class IdleSessionSweep {
    * never overlap. Never throws: a candidate that fails is logged and left for the next pass.
    */
   sweep(): Promise<number> {
-    if (this.inFlight) return this.inFlight;
-    const pass = this.pass().finally(() => { this.inFlight = null; });
-    this.inFlight = pass;
-    return pass;
+    this.inFlight ??= this.pass().finally(() => { this.inFlight = null; });
+    return this.inFlight;
   }
 
   start(intervalMs: number = IDLE_SESSION_SWEEP_INTERVAL_MS): void {
@@ -160,9 +117,7 @@ export class IdleSessionSweep {
   private async endIfIdle(session: AgencyIdleOfflineSession): Promise<boolean> {
     const { runtime } = this;
     const id = session.id;
-    if (runtime.dialer.hasLiveAttempt(id) || runtime.dialer.hasRedialInFlight(id)) return false;
-    if (runtime.softphone.hasLiveCall(id) || runtime.inbound?.findCallForSession(id)) return false;
-    if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
+    if (!(await nothingInFlight(runtime, id))) return false;
     const lease = await runtime.agents.get(id);
     if (lease && (lease.state !== 'offline' || lease.ring === true)) return false;
     // The row first, under its own guard: a session that came back since the read is not touched,
