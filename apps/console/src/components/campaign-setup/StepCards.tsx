@@ -16,6 +16,8 @@ export interface StepCardsProps {
   invalid?: ReadonlySet<string>;
   /** Steps that cannot be opened yet: rendered and disabled, never hidden. */
   disabled?: ReadonlySet<string>;
+  /** Steps holding an unsaved change (Settings): a small dot on the badge, named ", unsaved changes". */
+  unsaved?: ReadonlySet<string>;
   onSelect: (id: string) => void;
   /**
    * `sequence` (New campaign): `<nav><ol>` of buttons, the current one `aria-current="step"`.
@@ -44,6 +46,7 @@ export function StepCards({
   completed,
   invalid,
   disabled,
+  unsaved,
   onSelect,
   mode = 'sequence',
   label,
@@ -92,6 +95,7 @@ export function StepCards({
     const isInvalid = invalid?.has(step.id) ?? false;
     const isComplete = (completed?.has(step.id) ?? false) && !isCurrent;
     const isDisabled = disabled?.has(step.id) ?? false;
+    const isUnsaved = unsaved?.has(step.id) ?? false;
     const subtitleId = `${uid}-${index}-subtitle`;
     const button = (
       <button
@@ -106,7 +110,8 @@ export function StepCards({
         data-current={isCurrent || undefined}
         data-complete={isComplete || undefined}
         data-invalid={isInvalid || undefined}
-        aria-label={isInvalid ? `${step.title}, needs fixing` : step.title}
+        data-unsaved={isUnsaved || undefined}
+        aria-label={`${step.title}${isInvalid ? ', needs fixing' : ''}${isUnsaved ? ', unsaved changes' : ''}`}
         aria-describedby={subtitleId}
         disabled={isDisabled}
         onClick={() => onSelect(step.id)}
@@ -128,6 +133,7 @@ export function StepCards({
           ) : (
             index + 1
           )}
+          {isUnsaved ? <span className={styles.unsavedDot} /> : null}
         </span>
         <span className={styles.text}>
           <span className={styles.title}>{step.title}</span>

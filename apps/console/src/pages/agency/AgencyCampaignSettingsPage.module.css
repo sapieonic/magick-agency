@@ -1,69 +1,53 @@
 /*
   The page sits in the campaign frame (`CampaignWorkspaceFrame`, 1680px), so its header and
-  tab bar line up with every other tab. Inside it: the sticky section nav, then the form in
-  one reading column from the tab bar's left edge. The column stops at 960px however wide the
-  screen: past that a text field is a line the eye cannot follow, and a settings form is read
-  top to bottom, not across. What the form leaves on the right of a wide screen stays empty
-  rather than filled with something made up for it; the only content that wants the width,
-  the read-only lifecycle and upload history below the Save bar, takes it (`.wide`), so its
-  table stops scrolling sideways.
-
-  One column on a phone, the nav a strip above.
+  tab bar line up with every other tab. Inside it: the four step cards as tabs (CS1), then the
+  tab's panel, in one column from the tab bar's left edge. The column stops at 1120px however
+  wide the screen, the width the steps are drawn for (two columns of cards from 760px of their
+  own); past that a settings form is a line the eye cannot follow. The Save bar keeps the same
+  measure.
 */
-.layout {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 32px;
-  align-items: start;
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  max-width: 1120px;
 }
 
-.sections {
+.panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-width: 0;
 }
 
-/*
-  Every card, and the Save bar with them, keeps the form's measure. A cap only, no width:
-  the column already stretches them, and a width here would also widen the Save bar's
-  visually hidden status line (`.sr-only`, a child of this column) past the screen's edge.
-  Every section is an anchor (`#id`), landed just below the top of the scroll area.
-*/
-.sections > * {
-  max-width: 960px;
+/* `hidden` is the panel's own attribute; the flex above would otherwise show it. */
+.panel[hidden] {
+  display: none;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+}
+
+/* Every section id is a link target (`…/settings#id`), landed just below the top of the scroll area. */
+.page [id] {
   scroll-margin-top: 16px;
-}
-
-.sections > .wide {
-  max-width: none;
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .anchor {
   min-width: 0;
 }
 
-@media (max-width: 900px) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  /* Clear the sticky section strip, then the same gap as on a wide screen. */
-  .sections > * {
-    scroll-margin-top: calc(var(--settings-strip-height) + 16px);
-  }
-}
-
 .liveNote {
+  margin: 0;
   padding: 10px 14px;
-  margin-bottom: 16px;
   border: 1px solid var(--warning);
   border-radius: var(--radius);
   background: rgba(245, 166, 35, 0.08);
@@ -72,22 +56,18 @@
   color: var(--text-secondary);
 }
 
-/* The dialling note above the form: the frame's body already spaces it from what follows. */
-.pageNote {
+.liveNote p {
   margin: 0;
+}
+
+.liveNote p + p {
+  margin-top: 6px;
 }
 
 .fieldError {
   margin-top: 6px;
   font-size: 12px;
   color: var(--danger);
-}
-
-.hint {
-  margin-top: 6px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-muted);
 }
 
 .linkButton {

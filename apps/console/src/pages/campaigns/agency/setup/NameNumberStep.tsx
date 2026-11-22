@@ -2,7 +2,7 @@ import { useId, type Ref } from 'react';
 import { SetupCard } from '../../../../components/campaign-setup';
 import { CampaignCarrierField } from '../../../../components/agency/CampaignCarrierField';
 import { CallerIdPicker } from '../../../agency/CallerIdPicker';
-import type { CarrierChoice, CarrierOption } from '../../../../utils/agencyCarriers';
+import { carrierName, sameCarrier, type CarrierChoice, type CarrierOption } from '../../../../utils/agencyCarriers';
 import styles from './NameNumberStep.module.css';
 
 export interface NameNumberStepProps {
@@ -34,6 +34,13 @@ export interface NameNumberStepProps {
   callerIdsError?: string | null;
   /** The card's heading, so the page can move focus to it on a step change. */
   headingRef?: Ref<HTMLHeadingElement>;
+  /**
+   * The viewer cannot write campaigns (Settings): the name and the numbers are locked, and the
+   * carrier, when there is a choice, is said in words rather than offered.
+   */
+  readOnly?: boolean;
+  /** Element ids for links into the step (Settings' `…/settings#<id>`): the card, and the numbers. */
+  anchors?: { card?: string; numbers?: string };
 }
 
 /**
@@ -58,6 +65,8 @@ export function NameNumberStep({
   onCallerIds,
   callerIdsError = null,
   headingRef,
+  readOnly = false,
+  anchors,
 }: NameNumberStepProps) {
   const uid = useId();
   const nameId = `${uid}-name`;
@@ -70,6 +79,7 @@ export function NameNumberStep({
       helper="Give it a name your team will recognise, and pick the number customers will see."
       headingRef={headingRef}
       testId="name-number-step"
+      id={anchors?.card}
     >
       <div className={`form-group ${styles.field}`}>
         <label htmlFor={nameId}>
@@ -81,6 +91,7 @@ export function NameNumberStep({
           onChange={(event) => onName(event.target.value)}
           placeholder="e.g. Collections, November"
           autoFocus={mode === 'create'}
+          disabled={readOnly}
           aria-invalid={nameError ? true : undefined}
           aria-describedby={nameError ? `${nameHintId} ${nameErrorId}` : nameHintId}
         />
@@ -94,7 +105,11 @@ export function NameNumberStep({
         ) : null}
       </div>
 
-      {carrierChoices.length > 1 ? (
+      {carrierChoices.length > 1 && readOnly ? (
+        <p className={styles.hint} data-testid="campaign-carrier-readonly">
+          {`Carrier: ${carrierChoices.find((o) => sameCarrier(o, carrier))?.name ?? carrierName(carrier)}`}
+        </p>
+      ) : carrierChoices.length > 1 ? (
         <div className={styles.carrier}>
           <CampaignCarrierField
             options={carrierChoices}
@@ -107,7 +122,7 @@ export function NameNumberStep({
         </div>
       ) : null}
 
-      <div className={styles.numbers} data-testid="caller-id-field">
+      <div className={styles.numbers} data-testid="caller-id-field" id={anchors?.numbers}>
         <CallerIdPicker
           layout="cards"
           legend={
@@ -120,9 +135,11 @@ export function NameNumberStep({
           carrier={carrier}
           carrierLabel={carrierLabel}
           carrierActive={carrierActive}
+          disabled={readOnly}
         />
         {callerIdsError ? (
-          <p className="error-text" role="alert">
+          // `data-field-error`: the picker marks no control invalid, so this is what "Show me" finds.
+          <p className="error-text" role="alert" data-field-error>
             {callerIdsError}
           </p>
         ) : null}

@@ -7,7 +7,8 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
 /**
  * The campaign settings page's Assignment group and outcome overrides, at the
  * page level: what the operator can change on which status, and what each save
- * sends (all settings; all but the locked mode; nothing with the flag off).
+ * sends (all settings; all but the locked mode; nothing with the flag off). Contact assignment is
+ * under Agents & timing's Advanced settings, the overrides under Purpose & buttons' Advanced.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +43,15 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     loading: false, error: null, reload: vi.fn(), defaultNumber: '+912200000001',
   }),
 }));
+// Who calls (CS10): nobody on the campaign, nobody in the team; this file is not about staffing.
+vi.mock('../../api/agency', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agency')>()),
+  listCampaignAgents: async () => ({ agents: [] }),
+}));
+vi.mock('../../api/tenants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/tenants')>()),
+  listTenantMembers: async () => [],
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
@@ -58,7 +68,7 @@ vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
 }));
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
-import { saveSettings } from '../helpers/settingsForm';
+import { openAgentsAdvanced, openTab, saveSettings } from '../helpers/settingsForm';
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   return {
@@ -109,6 +119,7 @@ describe('the mode gate', () => {
   it('a paused campaign changes its mode, and the save sends every setting', async () => {
     renderPage();
     const mode = await screen.findByTestId('assignment-mode');
+    openAgentsAdvanced();
     expect((mode as HTMLFieldSetElement).disabled).toBe(false);
     fireEvent.click(within(mode).getByRole('radio', { name: /Own contacts only/ }));
     fireEvent.click(screen.getByTestId('allow-agent-retry'));
@@ -130,6 +141,7 @@ describe('the mode gate', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running', assignment_mode: 'preferred' }));
     renderPage();
     const mode = await screen.findByTestId('assignment-mode');
+    openAgentsAdvanced();
     expect((mode as HTMLFieldSetElement).disabled).toBe(true);
     expect(screen.getByTestId('assignment-mode-locked').textContent)
       .toBe('Pause the campaign to change how contacts are assigned.');
@@ -215,6 +227,9 @@ describe('with the flag off', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
     renderPage();
     const notice = await screen.findByTestId('assignment-off-notice');
+    // At the top of Agents & timing, not folded away: dialling still follows these.
+    openTab('agents');
+    expect(notice.closest('details')).toBeNull();
     expect(notice.textContent).toContain('Contact assignment is turned off for this account');
     expect(notice.textContent).toContain(
       'the “Own contacts only” assignment mode, agent retry, changed callback or retry timings and 1 outcome override',

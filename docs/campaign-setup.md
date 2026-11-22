@@ -52,3 +52,12 @@ campaign, then Settings.
   the campaign's page opens (CS15). Start is held, with its reason, until customers have been
   added in this visit, since the server refuses a campaign with nothing to dial. The daily target,
   the number display and the break limits are set on step 4 and go in the same PATCH Settings uses.
+- **Campaign Settings** (`pages/agency/AgencyCampaignSettingsPage.tsx`): built. The same four steps
+  as tabs (`StepCards` in tabs mode) with one save bar and one leave guard; a tab with an unsaved
+  change carries a dot, one with a finding the needs-fixing mark, and a refused or blocked save
+  brings forward the tab holding the field. All four panels stay mounted, so every section id is
+  on the page; `utils/campaignSettingsSections.ts` names each section's tab (and whether it sits
+  under Advanced), and `…/settings#<id>` opens that tab, opens Advanced when needed and scrolls to
+  it (CS16). Customers holds the card editor and Lifecycle and uploads; Purpose & buttons holds the
+  Script under the buttons; Agents & timing stages the ticked agents with the save bar and applies
+  them after the PATCH, a failed tick staying unsaved (CS10).

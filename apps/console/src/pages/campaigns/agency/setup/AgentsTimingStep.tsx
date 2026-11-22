@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import {
   AdvancedFold,
@@ -124,8 +124,18 @@ export interface AgentsTimingStepProps {
    * lists them. On by default; `false` when another step shows them.
    */
   unansweredOutcomes?: boolean;
-  /** Open the Advanced fold whatever is in it (e.g. a break-limit finding the page holds). */
+  /**
+   * Open the Advanced fold whatever is in it (e.g. a break-limit finding the page holds, or a link
+   * to a setting inside it). Held open while true; once opened this way it stays open, as a fold
+   * the supervisor opened does, until they close it.
+   */
   forceAdvancedOpen?: boolean;
+  /**
+   * Element ids for links into the step (Settings' `…/settings#<id>`): When to call, the Agent
+   * screen switches, and under Advanced the retry rules (the table and the abandonment limit) and
+   * the agents' rules (contact assignment, inbound callers and the break limits).
+   */
+  anchors?: { whenToCall?: string; agentScreen?: string; retries?: string; agentRules?: string };
   /** The viewer cannot write campaigns: every control is locked. */
   readOnly?: boolean;
   /** Injectable for tests; the custom window's echo is clock-derived. */
@@ -148,6 +158,7 @@ export function AgentsTimingStep({
   inbound = false,
   unansweredOutcomes = true,
   forceAdvancedOpen = false,
+  anchors,
   readOnly = false,
   now,
 }: AgentsTimingStepProps) {
@@ -190,6 +201,10 @@ export function AgentsTimingStep({
   const advancedFinding = Object.keys(merged).some(
     (field) => isAdvancedField(field) && (unansweredOutcomes || !field.startsWith('outcome_dispositions')),
   );
+  // A fold the page opened stays open once it lets go, as one the supervisor opened does.
+  useEffect(() => {
+    if (forceAdvancedOpen) setOwnOpen(true);
+  }, [forceAdvancedOpen]);
   const advancedOpen = ownOpen || forceAdvancedOpen || advancedFinding;
   const openAdvanced = () => {
     setOwnOpen(true);
@@ -251,7 +266,7 @@ export function AgentsTimingStep({
         </SetupCard>
 
         <SetupCard testId="call-timing">
-          <SetupSection title="When to call" helper="Calls only go out inside these hours." testId="when-to-call">
+          <SetupSection title="When to call" helper="Calls only go out inside these hours." testId="when-to-call" id={anchors?.whenToCall}>
             <PillGroup
               legend="Calling hours"
               hideLegend
@@ -362,7 +377,7 @@ export function AgentsTimingStep({
             </div>
           </SetupSection>
 
-          <SetupSection title="Agent screen" testId="agent-screen">
+          <SetupSection title="Agent screen" testId="agent-screen" id={anchors?.agentScreen}>
             <div className={styles.rows}>
               <SwitchRow
                 label="Time to choose “What happened?” after each call"
@@ -495,14 +510,16 @@ export function AgentsTimingStep({
           testId="advanced-settings"
         >
           <div className={styles.advanced}>
-            <RetryPolicyTable retryPolicy={config.retryPolicy} onChange={setRetry} errors={errors} />
-            <AbandonmentCeilingFields
-              ceilingPct={config.abandonmentCeilingPct}
-              storedPct={config.abandonmentCeilingStoredPct}
-              onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
-              errors={errors}
-              readOnly={readOnly}
-            />
+            <div className={styles.advanced} id={anchors?.retries}>
+              <RetryPolicyTable retryPolicy={config.retryPolicy} onChange={setRetry} errors={errors} />
+              <AbandonmentCeilingFields
+                ceilingPct={config.abandonmentCeilingPct}
+                storedPct={config.abandonmentCeilingStoredPct}
+                onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
+                errors={errors}
+                readOnly={readOnly}
+              />
+            </div>
             {unansweredOutcomes ? (
               <OutcomeDispositionMap
                 mapping={config.outcomeDispositions}
@@ -519,21 +536,25 @@ export function AgentsTimingStep({
               errors={errors}
               seconds={false}
             />
-            {assignment ? (
-              <AssignmentFields
-                assignment={config.assignment}
-                onChange={(next) => onChange({ ...config, assignment: next })}
-                errors={errors}
-                modeLocked={assignment.modeLocked}
-              />
+            {assignment || inbound || breakLimits ? (
+              <div className={styles.advanced} id={anchors?.agentRules}>
+                {assignment ? (
+                  <AssignmentFields
+                    assignment={config.assignment}
+                    onChange={(next) => onChange({ ...config, assignment: next })}
+                    errors={errors}
+                    modeLocked={assignment.modeLocked}
+                  />
+                ) : null}
+                {inbound ? (
+                  <InboundStickyField
+                    checked={config.inboundSticky}
+                    onChange={(inboundSticky) => onChange({ ...config, inboundSticky })}
+                  />
+                ) : null}
+                {breakLimits ?? null}
+              </div>
             ) : null}
-            {inbound ? (
-              <InboundStickyField
-                checked={config.inboundSticky}
-                onChange={(inboundSticky) => onChange({ ...config, inboundSticky })}
-              />
-            ) : null}
-            {breakLimits ?? null}
           </div>
         </AdvancedFold>
       </div>

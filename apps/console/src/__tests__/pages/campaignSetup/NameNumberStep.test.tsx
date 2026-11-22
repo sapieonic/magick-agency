@@ -135,4 +135,23 @@ describe('NameNumberStep (CS1, step 1)', () => {
     renderStep({ carrierChoices: TWO_CARRIERS, carrier: TENANT_A, carrierLabel: 'Acme main' });
     expect(screen.getAllByRole('checkbox').map((box) => box.getAttribute('value'))).toEqual(['+14155550104']);
   });
+
+  it('locks the name and the numbers for a viewer, and says the carrier instead of offering it', () => {
+    renderStep({ mode: 'edit', name: 'Collections', readOnly: true, carrierChoices: TWO_CARRIERS, carrier: TENANT_A, callerIds: ['+14155550104'] });
+    expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).disabled).toBe(true);
+    const box = screen.getByRole('checkbox', { name: (name) => name.replace(/\s/g, '').includes('+14155550104') });
+    expect(box.closest('fieldset')?.disabled).toBe(true);
+    expect(screen.queryByLabelText(/^Carrier/)).toBeNull();
+    expect(screen.getByTestId('campaign-carrier-readonly').textContent).toBe('Carrier: Pravah (Acme main)');
+    cleanup();
+    renderStep({ mode: 'edit', readOnly: true });
+    expect(screen.queryByTestId('campaign-carrier-readonly')).toBeNull();
+  });
+
+  it('puts the ids a link names on the card and on the numbers, and marks a numbers error for “Show me”', () => {
+    renderStep({ mode: 'edit', anchors: { card: 'general', numbers: 'caller-ids' }, callerIdsError: 'Pick at least one number.' });
+    expect(document.getElementById('general')).toBe(screen.getByTestId('name-number-step'));
+    expect(document.getElementById('caller-ids')).toBe(screen.getByTestId('caller-id-field'));
+    expect(screen.getByText('Pick at least one number.').hasAttribute('data-field-error')).toBe(true);
+  });
 });

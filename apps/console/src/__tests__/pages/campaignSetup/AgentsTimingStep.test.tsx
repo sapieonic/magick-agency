@@ -332,6 +332,54 @@ describe('Advanced settings', () => {
     expect(fold().open).toBe(true);
   });
 
+  it('stays open once the page lets go of it, until the supervisor closes it', () => {
+    const props: AgentsTimingStepProps = {
+      config: emptyCampaignConfig(),
+      onChange: vi.fn(),
+      fieldErrors: {},
+      mode: 'edit',
+      staffing: { agents: AGENTS, selected: [], onChange: vi.fn(), loading: false, error: null },
+      recording: {
+        state: { record: false, profileId: NO_ANALYSIS_PROFILE },
+        onChange: vi.fn(),
+        recordingEnabled: true,
+        analyticsEnabled: true,
+        profiles: PROFILES,
+        profilesLoading: false,
+        profilesError: null,
+        savedProfileId: null,
+      },
+      now: NOW,
+    };
+    const { rerender } = render(<MemoryRouter><AgentsTimingStep {...props} forceAdvancedOpen /></MemoryRouter>);
+    expect(fold().open).toBe(true);
+    rerender(<MemoryRouter><AgentsTimingStep {...props} forceAdvancedOpen={false} /></MemoryRouter>);
+    expect(fold().open).toBe(true);
+    fireEvent.click(fold().querySelector('summary')!);
+    expect(fold().open).toBe(false);
+  });
+
+  it('puts the ids a link names on When to call, the agent screen, the retry rules and the agents’ rules', () => {
+    renderStep({
+      props: {
+        anchors: { whenToCall: 'calling-hours', agentScreen: 'recording', retries: 'dialling-retries', agentRules: 'agents' },
+        breakLimits: <p data-testid="break-limits">Break limits</p>,
+      },
+    });
+    expect(document.getElementById('calling-hours')).toBe(screen.getByTestId('when-to-call'));
+    expect(document.getElementById('recording')).toBe(screen.getByTestId('agent-screen'));
+    const retries = document.getElementById('dialling-retries')!;
+    expect(fold().contains(retries)).toBe(true);
+    expect(retries.querySelector('[data-testid="abandonment-ceiling-input"]')).not.toBeNull();
+    const rules = document.getElementById('agents')!;
+    expect(fold().contains(rules)).toBe(true);
+    expect(rules.querySelector('[data-testid="break-limits"]')).not.toBeNull();
+    cleanup();
+    // Nothing for the agents' rules to hold: no empty box.
+    renderStep({ props: { anchors: { agentRules: 'agents' } } });
+    expect(document.getElementById('agents')).toBeNull();
+  });
+
   it('stays folded for a finding the step shows open', () => {
     renderStep({ props: { fieldErrors: { wrapup_seconds: 'Wrap-up is 0–600 seconds. 0 means no wrap-up.' } } });
     expect(fold().open).toBe(false);

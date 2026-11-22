@@ -117,4 +117,15 @@ describe('StepCards as tabs', () => {
     tabs({ invalid: new Set(['agents']) });
     expect(screen.getByRole('tab', { name: 'Agents & timing, needs fixing' })).toBeTruthy();
   });
+
+  it('marks a tab holding an unsaved change with a dot, and says so in its name', () => {
+    tabs({ unsaved: new Set(['name', 'agents']), invalid: new Set(['agents']) });
+    const name = screen.getByRole('tab', { name: 'Name & number, unsaved changes' });
+    expect(name.hasAttribute('data-unsaved')).toBe(true);
+    expect(name.querySelector('[aria-hidden="true"] > span')).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Agents & timing, needs fixing, unsaved changes' })).toBeTruthy();
+    const customers = screen.getByRole('tab', { name: 'Customers' });
+    expect(customers.hasAttribute('data-unsaved')).toBe(false);
+    expect(customers.querySelector('[aria-hidden="true"] > span')).toBeNull();
+  });
 });
