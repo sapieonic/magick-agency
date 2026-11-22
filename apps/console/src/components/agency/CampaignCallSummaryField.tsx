@@ -6,6 +6,7 @@ import {
   storedProfileStatus,
 } from '../../utils/agencyCampaignRecording';
 import type { CallAnalysisProfile } from '../../types/call-analysis-profile';
+import { FieldError } from '../common/FieldError';
 import styles from './CampaignCallSummaryField.module.css';
 
 /**
@@ -16,11 +17,16 @@ import styles from './CampaignCallSummaryField.module.css';
  * picker. With it off the field only says whether a profile is set and offers to remove it:
  * `analysis_profile_id: null` passes the API's guard with the capability off, so a campaign
  * whose account lost it can still be cleared (see `utils/agencyCampaignRecording.ts`).
- * Whether the field shows at all is the caller's call.
+ *
+ * With the capability off and no profile saved there is nothing to pick or clear, so the
+ * field is left out. Keyed on what the SERVER holds, not on form state: keyed on state,
+ * pressing "Remove summary profile" would make the field vanish before it was saved.
  */
 export function CampaignCallSummaryField(props: {
   /** {@link NO_ANALYSIS_PROFILE} or a profile id. */
   profileId: string;
+  /** The profile the server holds for the campaign: null for none, and for a campaign not yet saved. */
+  savedProfileId: string | null;
   onChange: (next: string) => void;
   capabilityEnabled: boolean;
   profiles: CallAnalysisProfile[];
@@ -33,11 +39,12 @@ export function CampaignCallSummaryField(props: {
   error?: string;
 }) {
   const {
-    profileId, onChange, capabilityEnabled, profiles, loading, loadError, loadErrorConsequence,
+    profileId, savedProfileId, onChange, capabilityEnabled, profiles, loading, loadError, loadErrorConsequence,
     readOnly = false, error,
   } = props;
   const id = useId();
   const selectId = `${id}-select`;
+  const errorId = `${id}-error`;
   const gate = analysisGate({ enabled: capabilityEnabled, current: profileId });
   const storedProfileId = resolveProfileId(profileId);
   // A profile set by an earlier save (or by curl) may not be in the fetched list —
@@ -46,6 +53,7 @@ export function CampaignCallSummaryField(props: {
   // `storedProfileStatus` decides whether that absence is a verdict ("no longer listed")
   // or an in-flight or failed fetch that has not answered the question yet.
   const profileStatus = storedProfileStatus({ storedProfileId, profiles, loading, error: loadError });
+  if (!capabilityEnabled && savedProfileId === null) return null;
 
   return (
     <div className="form-group">
@@ -57,6 +65,7 @@ export function CampaignCallSummaryField(props: {
             value={profileId}
             disabled={readOnly || loading}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             onChange={(event) => onChange(event.target.value)}
           >
             <option value={NO_ANALYSIS_PROFILE}>No summary</option>
@@ -106,7 +115,7 @@ export function CampaignCallSummaryField(props: {
           )}
         </>
       )}
-      {error && <p className={styles.fieldError}>{error}</p>}
+      <FieldError id={errorId} message={error} className={styles.fieldError} />
     </div>
   );
 }

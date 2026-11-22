@@ -1,25 +1,14 @@
+/* The look of the recording field beside it, so the two read as one section. */
 .hint {
-  margin-top: 6px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-muted);
+  composes: hint from './CampaignRecordingField.module.css';
 }
 
-/*
-  Deliberately not styled as an error. A capability being off is a fact about
-  the account, not a mistake the operator made — and the message names the
-  capability so they know what to ask for.
-*/
 .gateNotice {
-  padding: 8px 10px;
-  margin-top: 8px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--warning);
-  border-radius: var(--radius);
-  background: rgba(245, 166, 35, 0.06);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+  composes: gateNotice from './CampaignRecordingField.module.css';
+}
+
+.fieldError {
+  composes: fieldError from './CampaignRecordingField.module.css';
 }
 
 .linkButton {
@@ -31,10 +20,4 @@
   color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
-}
-
-.fieldError {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--danger);
 }

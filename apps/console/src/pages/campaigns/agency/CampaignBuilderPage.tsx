@@ -150,7 +150,6 @@ export default function CampaignBuilderPage() {
    * enforcement, and `useGovernance` fails open), as on campaign Settings.
    */
   const [recording, setRecording] = useState<CampaignRecordingState>(NEW_CAMPAIGN_RECORDING);
-  const recordCalls = recording.record;
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
   const analyticsEnabled = isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY);
@@ -159,7 +158,6 @@ export default function CampaignBuilderPage() {
     loading: profilesLoading,
     error: profilesError,
   } = useCallAnalysisProfiles({ enabled: analyticsEnabled });
-  const chosenProfileName = analysisProfiles.find((p) => p.id === recording.profileId)?.name ?? null;
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
   /**
@@ -437,7 +435,7 @@ export default function CampaignBuilderPage() {
               override_outcome_count: config.dispositions.filter((d) => d.override != null).length,
             }
             : {}),
-          recording_enabled: recordCalls,
+          recording_enabled: recording.record,
           analysis_profile_set: resolveProfileId(recording.profileId) !== null,
           reordered,
         });
@@ -448,8 +446,8 @@ export default function CampaignBuilderPage() {
         goTo('basics');
         return;
       }
-      // A `capability_disabled` 403 (recording switched on for an account that may
-      // not record) carries no `details`; say what happened, on the step that has the box.
+      // A `capability_disabled` 403 (recording or a summary profile the account may not
+      // set) carries no `details`; say what happened, on the step that has the two fields.
       const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: payloadSetsProfile(recordingFields) });
       if (refusal !== null) {
         setError(refusal);
@@ -479,7 +477,7 @@ export default function CampaignBuilderPage() {
       setSavingConfig(false);
     }
   }, [
-    config, recording, recordCalls, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
+    config, recording, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
     name, callerIds, carrier, chosenCarrier, goToFinding,
   ]);
 
@@ -943,7 +941,7 @@ export default function CampaignBuilderPage() {
                     inbound={inboundEnabled}
                   />
                   <CampaignRecordingField
-                    checked={recordCalls}
+                    checked={recording.record}
                     onChange={(next) => {
                       setRecording((current) => ({ ...current, record: next }));
                       setConfigSaved(false);
@@ -951,25 +949,20 @@ export default function CampaignBuilderPage() {
                     capabilityEnabled={recordingEnabled}
                     error={fieldErrors['record_calls']}
                   />
-                  {/*
-                    A new campaign has no profile to clear, so the field shows only while
-                    the account may set one (Settings also shows it to clear a stored one).
-                  */}
-                  {analyticsEnabled ? (
-                    <CampaignCallSummaryField
-                      profileId={recording.profileId}
-                      onChange={(profileId) => {
-                        setRecording((current) => ({ ...current, profileId }));
-                        setConfigSaved(false);
-                      }}
-                      capabilityEnabled
-                      profiles={analysisProfiles}
-                      loading={profilesLoading}
-                      loadError={profilesError}
-                      loadErrorConsequence="You can save without one and set it later in the campaign’s Settings."
-                      error={fieldErrors['analysis_profile_id']}
-                    />
-                  ) : null}
+                  <CampaignCallSummaryField
+                    profileId={recording.profileId}
+                    savedProfileId={resolveProfileId(savedForm.recording.profileId)}
+                    onChange={(profileId) => {
+                      setRecording((current) => ({ ...current, profileId }));
+                      setConfigSaved(false);
+                    }}
+                    capabilityEnabled={analyticsEnabled}
+                    profiles={analysisProfiles}
+                    loading={profilesLoading}
+                    loadError={profilesError}
+                    loadErrorConsequence="You can save without one and set it later in the campaign’s Settings."
+                    error={fieldErrors['analysis_profile_id']}
+                  />
                 </>
               ) : null}
 
@@ -1054,7 +1047,7 @@ export default function CampaignBuilderPage() {
                   />
                   <ReviewRow
                     label="Recording"
-                    value={recordCalls ? 'Every call is recorded' : 'Off'}
+                    value={recording.record ? 'Every call is recorded' : 'Off'}
                     errors={rowFindings.get('recording')}
                     onEdit={editRow('recording', 'behaviour')}
                   />
@@ -1064,7 +1057,7 @@ export default function CampaignBuilderPage() {
                       value={
                         resolveProfileId(recording.profileId) === null
                           ? 'No summary'
-                          : chosenProfileName ?? 'A summary profile is set'
+                          : analysisProfiles.find((p) => p.id === recording.profileId)?.name ?? 'A summary profile is set'
                       }
                       errors={rowFindings.get('summary')}
                       onEdit={editRow('summary', 'behaviour')}

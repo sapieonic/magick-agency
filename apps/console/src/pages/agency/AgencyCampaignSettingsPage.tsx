@@ -755,11 +755,8 @@ export function AgencyCampaignSettingsPage() {
   const carrierChoices = carriers ? carrierOptions(carriers, carrierOfCampaign(campaign)) : [];
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
 
-  // Visible when the capability is on (picker, or a notice saying why the list
-  // is unreadable) — and also when it is OFF but a profile is already set, so
-  // the clearing path the server allows is reachable. Keyed on the LOADED campaign,
-  // not on form state: keyed on state, pressing "Remove summary profile" would
-  // make the whole block vanish before the operator had saved it.
+  // Whether the section names the call summary: by the field's own rule (see
+  // `CampaignCallSummaryField`), keyed on the LOADED campaign.
   const summaryVisible = analyticsEnabled || (campaign.analysis_profile_id ?? null) !== null;
 
   return (
@@ -916,19 +913,18 @@ export function AgencyCampaignSettingsPage() {
                   error={fieldErrors['record_calls']}
                 />
 
-                {summaryVisible && (
-                  <CampaignCallSummaryField
-                    profileId={recording.profileId}
-                    onChange={(profileId) => setRecording({ ...recording, profileId })}
-                    capabilityEnabled={analyticsEnabled}
-                    profiles={analysisProfiles}
-                    loading={profilesLoading}
-                    loadError={profilesError}
-                    loadErrorConsequence="Saving without changing this field leaves the campaign’s current profile alone."
-                    readOnly={!canEdit}
-                    error={fieldErrors['analysis_profile_id']}
-                  />
-                )}
+                <CampaignCallSummaryField
+                  profileId={recording.profileId}
+                  savedProfileId={campaign.analysis_profile_id ?? null}
+                  onChange={(profileId) => setRecording({ ...recording, profileId })}
+                  capabilityEnabled={analyticsEnabled}
+                  profiles={analysisProfiles}
+                  loading={profilesLoading}
+                  loadError={profilesError}
+                  loadErrorConsequence="Saving without changing this field leaves the campaign’s current profile alone."
+                  readOnly={!canEdit}
+                  error={fieldErrors['analysis_profile_id']}
+                />
               </div>
             </ComposerSection>
 
