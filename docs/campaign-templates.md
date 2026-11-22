@@ -231,6 +231,23 @@ Breaks and the agent screen, which New campaign has no step for, show on Review 
 with their chip. The script editor in a template offers the fixed placeholders only (a template
 has no customer card). With the flag off or the read failing, New campaign is unchanged.
 
+Build notes (review fixes, 2026-11-22): in New campaign, numbers the template leaves on built-in
+are the operator's: kept across a switch or a Reset, with no chip (the record calls them
+`campaign`). A start that sets numbers replaces them, asking first only when the operator picked
+others; Reset never empties the pool. The chosen template is read before "Replace your changes?".
+A default-chain read that lands after the operator started typing fills only untouched sections,
+still shows the picker and still names the template. A template script using keys the roster's
+card lacks is held back from the draft (empty script); Review explains it with the AS19 message,
+offers the script editor, and Save campaign waits for the fix. Lists and the picker say "Account
+default" / "Organisation default"; Templates / Archived is an `aria-pressed` filter. Copies set
+only the sections the editor shows (`templateSectionKeys`); an unset section reads "Use
+<template>", "Use the organisation's default" or "Use built-in settings". Apply and Save as
+template recover from a 409 with "Reload the latest version", the dialog kept open; apply names
+the account on the organisation page. Campaign Settings reads "Started from <template>, version
+n · created <d Mon>" with the record's notes as sentences; an archived template "has since been
+archived" with no comparison; a campaign with no record offers only "Save as template…". The soft
+phone reads `outcomes_template` as what Follow gives; Follow or Set comes from its own list.
+
 ## 8. Build plan and status
 
 | Step | What | State |
