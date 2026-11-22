@@ -2,6 +2,7 @@ import type { Permission } from './permissions';
 import { hasPermission } from './permissions';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
 import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
+import { campaignCallLogPath } from './agency/callLog';
 import type { Role } from '../types/auth';
 
 /**
@@ -45,11 +46,15 @@ import type { Role } from '../types/auth';
  * Callbacks, Health), Data (Contacts, Call log) and Set up (Settings). The
  * groups are labels, never menus (each label above its tabs, NV1): every tab is still one click
  * and one question. Two screens left the bar to make room for the grouping:
- * Soft-phone calls is the second view of Call log (`CALL_LOG_VIEWS`, a
- * segmented control on both list pages), and Activity is the campaign
- * header's History button. Both keep their URLs and their gates, and stay in
- * `CAMPAIGN_TABS` with `group: null`, so a link to either and the analytics
- * event still name them.
+ * Soft-phone calls went into Call log, and Activity is the campaign header's
+ * History button. Both stay in `CAMPAIGN_TABS` with `group: null` and their
+ * gates, so search still finds them and the analytics event still names them.
+ *
+ * ── Call log is one list (decision CL11, `docs/call-log.md`) ──────────────────
+ * Call log lists every call on the campaign with type chips ("All · Dialler ·
+ * Soft phone"), not two views. The `manual` screen is that list with the Soft
+ * phone chip on (`campaignCallLogPath`); its old URL, `…/manual-calls`,
+ * redirects there.
  *
  * ── The permission on each tab is the one the API enforces ───────────────────
  * Not a looser proxy for it. A tab that renders and then 403s on arrival is a
@@ -91,7 +96,7 @@ export interface CampaignTabDefinition {
   label: string;
   /**
    * The bar group the tab sits in, or `null` for a campaign screen reached
-   * another way: Soft-phone calls (Call log's second view) and History (the
+   * another way: Soft-phone calls (Call log's Soft phone chip) and History (the
    * header's History button).
    */
   group: CampaignTabGroupId | null;
@@ -171,7 +176,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     group: 'data',
     // "Call attempts" until IN14; the URL stays `/attempts`.
     label: 'Call log',
-    hint: 'Every dial this campaign placed, including the ones that never reached an agent',
+    hint: 'Every call on this campaign: dialled and made from the soft phone',
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/attempts`,
   },
@@ -180,11 +185,10 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     group: null,
     label: 'Soft-phone calls',
     hint: 'Calls agents placed from the soft phone and logged to this campaign',
-    // The account's soft-phone list, tag-filtered: the server scopes it to the
-    // whole account for `agency.supervise`, the same floor as the dialler's
-    // calls. Not a tab since IN14: the second view of Call log.
+    // Call log with the Soft phone chip on (CL11), under Call log's own floor.
+    // Not a tab since IN14; offered by search while the soft phone is on.
     permission: 'agency.supervise',
-    path: (id) => `/agency/campaigns/${id}/manual-calls`,
+    path: (id) => campaignCallLogPath(id, 'soft_phone'),
     flag: SOFTPHONE_FLAG,
     bar: 'attempts',
   },
@@ -281,8 +285,8 @@ export function visibleCampaignTabGroups(role: Role | undefined): CampaignTabGro
 }
 
 /**
- * The bar tab marked current while a screen shows: Call log for both of its
- * views, Calls for both of its (Summary and Live), and none for Activity,
+ * The bar tab marked current while a screen shows: Call log for its Soft phone
+ * chip, Calls for both of its views (Summary and Live), and none for Activity,
  * which is the header's History and not a tab.
  */
 export function barTabFor(id: CampaignTabId): CampaignTabId | null {
@@ -297,22 +301,6 @@ function visibleViews<Id extends CampaignTabId>(
   isFlagEnabled: (flag: string) => boolean,
 ): { id: Id; label: string }[] {
   return views.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
-}
-
-/** Call log's two views, in segment order (decision IN14). */
-export type CallLogViewId = 'attempts' | 'manual';
-
-export const CALL_LOG_VIEWS: readonly { id: CallLogViewId; label: string }[] = [
-  { id: 'attempts', label: 'Dialler calls' },
-  { id: 'manual', label: 'Soft-phone calls' },
-];
-
-/** The Call log views a role can open; each is gated as its screen (`CAMPAIGN_TABS`). */
-export function visibleCallLogViews(
-  role: Role | undefined,
-  isFlagEnabled: (flag: string) => boolean = () => false,
-): { id: CallLogViewId; label: string }[] {
-  return visibleViews(CALL_LOG_VIEWS, role, isFlagEnabled);
 }
 
 /** The Calls tab's two views, in segment order: the analytic panel and the calls in progress. */

@@ -93,7 +93,8 @@ const ROUTES: RouteRule[] = [
   [new RegExp(`^/agency/campaigns/${ID}/(overview|calls|callbacks|health|contacts|attempts|settings)$`), (r) => dialer(r) && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}/agents$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/activity$`), (r) => dialer(r) && can(r, 'audit.read')],
-  [new RegExp(`^/agency/campaigns/${ID}/manual-calls$`), (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
+  // Only a redirect to the Call log with its Soft phone chip on (CL11): the Call log's gate. Search offers the chip itself.
+  [new RegExp(`^/agency/campaigns/${ID}/manual-calls$`), (r) => dialer(r) && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/calls/live$`), (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
   [/^\/agency\/live$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
@@ -208,7 +209,7 @@ describe('every offer passes the gate of the route it opens', () => {
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/softphone', '/agency/inbound/missed',
       '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
-      '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/manual-calls',
+      '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
     ]) {

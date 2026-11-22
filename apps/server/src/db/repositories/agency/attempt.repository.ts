@@ -38,7 +38,8 @@ import {
 } from './query-builders.js';
 import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow, projectSoftphoneLogRow, type SoftphoneLogRaw } from './projections.js';
-import type { CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
+import type { CampaignCallLogCounts, CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
+import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
@@ -801,6 +802,7 @@ export class AgencyAttemptRepository {
       if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
       branches.push(`(
         SELECT 'dialler'::text AS source, ${ATTEMPT_ROW_SELECT_SQL},
+               false AS dnc_overridden, false AS hours_overridden, NULL::timestamptz AS settled_at,
                ${keysetAtSql('a.created_at')} AS cursor_at
           FROM agency_call_attempts a
           ${ATTEMPT_CONTACT_JOIN_SQL}
@@ -817,6 +819,8 @@ export class AgencyAttemptRepository {
       ];
       if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
       // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
+      // Then the soft phone's own three (overrides, settled), which the dialler branch fills with
+      // constants: the Call log's rows read them, the export has no column for them.
       branches.push(`(
         SELECT 'soft_phone'::text AS source, m.id, m.campaign_id, m.contact_id, NULL::int AS attempt_number,
                m.destination_e164 AS phone_e164, m.caller_id,
@@ -827,6 +831,8 @@ export class AgencyAttemptRepository {
                m.webrtc_call_id, m.dialed_at, m.answered_at, m.bridged_at, m.ended_at,
                m.talk_seconds, NULL::int AS wrapup_seconds, NULL::uuid AS redial_of_attempt_id,
                NULL::int AS redial_number, m.created_at,
+               (m.dnc_override_note IS NOT NULL) AS dnc_overridden,
+               (m.hours_override_note IS NOT NULL) AS hours_overridden, m.settled_at,
                ${keysetAtSql('m.created_at')} AS cursor_at
           FROM agency_manual_calls m
          WHERE ${conditions.join(' AND ')}
@@ -845,6 +851,44 @@ export class AgencyAttemptRepository {
     return toKeysetPage(rows, input.limit, (row): CampaignCallLogRow => (row.source === 'dialler'
       ? { source: 'dialler', ...projectAttemptRow(row) }
       : projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw)));
+  }
+
+  /**
+   * The Call log's chips (`docs/call-log.md`): how many rows of each source
+   * {@link listCallLogForCampaign} would list with these filters, across every page, in one
+   * statement. The same WHERE terms as the list's two branches, no keyset, no limit and no
+   * `source` (a chip says what choosing it would list).
+   *
+   * `dialler` is {@link countListed}'s count. `soft_phone` counts the tagged calls whose dial was
+   * sent (`SOFTPHONE_PLACED_SQL`, the campaign figures' definition of a soft-phone call, SR2): a
+   * row that failed before it dialled is listed, greyed, and is not a call.
+   */
+  async countCallLogForCampaign(input: {
+    campaignId: string;
+    tenantId: string;
+    filters: AgencyAttemptFilters;
+  }): Promise<CampaignCallLogCounts> {
+    const bind = params();
+    const attempt = campaignAttemptConditions(input.campaignId, input.filters, bind);
+    const soft = [
+      `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
+      `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
+      ...softphoneLogFilterConditions(input.filters, bind),
+      SOFTPHONE_PLACED_SQL,
+    ];
+    const { rows } = await getPool().query<{ dialler: string; soft_phone: string }>(
+      `SELECT (SELECT count(*)
+                 FROM agency_call_attempts a
+                 ${input.filters.phone ? ATTEMPT_CONTACT_JOIN_SQL : ''}
+                WHERE ${attempt.join(' AND ')})::text AS dialler,
+              (SELECT count(*)
+                 FROM agency_manual_calls m
+                WHERE ${soft.join(' AND ')})::text AS soft_phone`,
+      bind.values,
+    );
+    const dialler = Number(rows[0]?.dialler ?? 0);
+    const softPhone = Number(rows[0]?.soft_phone ?? 0);
+    return { all: dialler + softPhone, dialler, soft_phone: softPhone };
   }
 
   /**

@@ -11,6 +11,7 @@
 export * from './agency';
 export * from './agency-campaign';
 export * from './agency-spine';
+export * from './call-log';
 export * from './agency-stats';
 export * from './agency-activity';
 export * from './agency-campaign-series';

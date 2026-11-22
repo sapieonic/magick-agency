@@ -80,6 +80,14 @@ export const PREAMBLE_QUERY_PARAMS = ['preamble'] as const;
 export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source'] as const;
 
 /**
+ * The Call log's own params on its JSON route (`GET /proxy/agency/campaigns/:id/call-log`,
+ * CL11): `type=all|dialler|soft_phone`, the chip, and `include_counts=1`, the chips' counts.
+ * Both are read by the route: `type` becomes the internal read's `source`, and
+ * `include_counts` is forwarded by name. Neither is on the export, which keeps `source`.
+ */
+export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts'] as const;
+
+/**
  * The outcome of narrowing a query down to the params a route forwards.
  *
  * A result type rather than a bare record, because an unrecognised param is now

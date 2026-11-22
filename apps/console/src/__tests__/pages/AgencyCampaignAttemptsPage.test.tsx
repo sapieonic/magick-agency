@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
+import type { AgencyCallLogDiallerRow, AgencyCallLogPage, AgencyCallLogRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
+
+/** A dialler row of the Call log: the attempt row, marked. */
+type AgencyAttempt = AgencyCallLogDiallerRow;
 
 /**
  * The campaign Attempts view.
@@ -22,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaign: vi.fn(),
   getAgencyCampaignStats: vi.fn(),
   campaignLineage: vi.fn(),
-  getCampaignAttempts: vi.fn(),
+  getCampaignCallLog: vi.fn(),
   downloadSpineCsv: vi.fn(),
   listCampaignAgents: vi.fn(),
   // Typed with the parameter it really takes: inferred from `() => true`
@@ -56,7 +59,7 @@ vi.mock('../../api/agencyCampaigns', () => ({
 }));
 vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgents }));
 vi.mock('../../api/agencySpine', () => ({
-  getCampaignAttempts: mocks.getCampaignAttempts,
+  getCampaignCallLog: mocks.getCampaignCallLog,
   downloadSpineCsv: mocks.downloadSpineCsv,
 }));
 
@@ -66,6 +69,7 @@ import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 /** Connected, agent named, recording reachable. */
 const BRIDGED: AgencyAttempt = {
+  type: 'dialler',
   id: 'attempt-bridged', contact_id: 'contact-1', campaign_id: 'camp-1', attempt_number: 2,
   phone_e164: '+919876500001', caller_id: '+919000000001',
   // A UUID, as the server actually serves. A fixture that looks like a name is how
@@ -117,11 +121,17 @@ const CANCELED: AgencyAttempt = {
   dialed_at: '2026-08-17T09:30:00.000Z', created_at: '2026-08-17T09:30:00.000Z',
 };
 
-function page(rows: AgencyAttempt[], nextCursor: string | null = null): AgencyKeysetPage<AgencyAttempt> {
+function page(rows: AgencyCallLogRow[], nextCursor: string | null = null): AgencyCallLogPage {
   return { rows, next_cursor: nextCursor, limit: 50 };
 }
 
-function renderPage(initialPath = '/agency/campaigns/camp-1/attempts') {
+/**
+ * Every date, said in the URL: the list as these cases mean it, whatever day they run on. A
+ * bare `/attempts` opens on today ("the Call log opens on today", below).
+ */
+const ALL_DATES = '/agency/campaigns/camp-1/attempts?dates=all';
+
+function renderPage(initialPath = ALL_DATES) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -142,7 +152,7 @@ beforeEach(() => {
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
   mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
   mocks.campaignLineage.mockResolvedValue(noLineage());
-  mocks.getCampaignAttempts.mockResolvedValue(page([BRIDGED, ABANDONED, ORPHANED, CANCELED]));
+  mocks.getCampaignCallLog.mockResolvedValue(page([BRIDGED, ABANDONED, ORPHANED, CANCELED]));
   mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
 });
 
@@ -240,7 +250,7 @@ describe('the rows a call list cannot show', () => {
   it('falls back to the id rather than claiming there was no agent', async () => {
     // The server could not resolve the name. The attempt still HAD an agent, so
     // "no agent" would be false — the id is a real, if unreadable, answer.
-    mocks.getCampaignAttempts.mockResolvedValue(page([{ ...BRIDGED, agent_name: null }]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([{ ...BRIDGED, agent_name: null }]));
     renderPage();
     const row = await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(within(row).getByText(BRIDGED.agent_user_id!)).toBeTruthy();
@@ -251,7 +261,7 @@ describe('a terminal campaign is the primary case', () => {
   it('loads without polling and shows the rows on a stopped campaign', async () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
-    expect(mocks.getCampaignAttempts).toHaveBeenCalledTimes(1);
+    expect(mocks.getCampaignCallLog).toHaveBeenCalledTimes(1);
     // The campaign's name is the top bar's (`useCampaignCrumbs`); its status is the header's.
     expect(await screen.findByText('Stopped')).toBeTruthy();
   });
@@ -269,8 +279,8 @@ describe('filters', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() => {
-      expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
-        'camp-1', { outcome: ['abandoned'] }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      expect(mocks.getCampaignCallLog).toHaveBeenLastCalledWith(
+        'camp-1', { outcome: ['abandoned'] }, { limit: 50, type: 'all', includeCounts: true }, 'tenant-1', 'account-1',
       );
     });
 
@@ -299,8 +309,8 @@ describe('filters', () => {
   it('pins to one contact when arrived at from the drill-down', async () => {
     renderPage('/agency/campaigns/camp-1/attempts?contact_id=contact-2');
     await waitFor(() => {
-      expect(mocks.getCampaignAttempts).toHaveBeenCalledWith(
-        'camp-1', { contact_id: 'contact-2' }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      expect(mocks.getCampaignCallLog).toHaveBeenCalledWith(
+        'camp-1', { contact_id: 'contact-2' }, { limit: 50, type: 'all', includeCounts: true }, 'tenant-1', 'account-1',
       );
     });
     expect(screen.getByTestId('attempts-pinned-contact')).toBeTruthy();
@@ -309,19 +319,19 @@ describe('filters', () => {
 
 describe('paging', () => {
   it('follows the cursor and appends, never replacing', async () => {
-    mocks.getCampaignAttempts
+    mocks.getCampaignCallLog
       .mockResolvedValueOnce(page([BRIDGED], 'cursor-2'))
       .mockResolvedValueOnce(page([ABANDONED]));
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
 
-    fireEvent.click(screen.getByText('Load older attempts'));
+    fireEvent.click(screen.getByText('Load older calls'));
 
     await screen.findByTestId(`attempt-row-${ABANDONED.id}`);
     // Both on screen: a keyset page is a continuation, not a replacement.
     expect(screen.getByTestId(`attempt-row-${BRIDGED.id}`)).toBeTruthy();
-    expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
-      'camp-1', {}, { cursor: 'cursor-2', limit: 50 }, 'tenant-1', 'account-1',
+    expect(mocks.getCampaignCallLog).toHaveBeenLastCalledWith(
+      'camp-1', {}, { cursor: 'cursor-2', limit: 50, type: 'all' }, 'tenant-1', 'account-1',
     );
   });
 
@@ -331,7 +341,7 @@ describe('paging', () => {
     const count = screen.getByTestId('attempts-count').textContent ?? '';
     // Tracks the default seed (4 rows), not a meaningful constant — the assertion
     // is about the SHAPE below: a count of what is on screen, never "N of M".
-    expect(count).toContain('Showing 4 attempts');
+    expect(count).toContain('Showing 4 calls');
     // "3 of N" would be a number nothing counted — the API has no total by
     // design, because counting a million rows per page is a second scan for a
     // figure that is stale on arrival.
@@ -345,7 +355,7 @@ describe('an empty result is never reported as a fact about the campaign', () =>
     // thousands. `contact_id` was omitted from the `filtered` flag, so the
     // empty state read "This campaign has not dialled anyone yet" — an answer
     // about the query presented as an answer about the campaign.
-    mocks.getCampaignAttempts.mockResolvedValue(page([]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([]));
     renderPage('/agency/campaigns/camp-1/attempts?contact_id=contact-2');
 
     await screen.findByText('Nothing matches those filters');
@@ -354,7 +364,7 @@ describe('an empty result is never reported as a fact about the campaign', () =>
   });
 
   it('still says so when the campaign really did dial nobody', async () => {
-    mocks.getCampaignAttempts.mockResolvedValue(page([]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([]));
     renderPage();
     await screen.findByText('No calls were placed');
   });
@@ -532,28 +542,13 @@ describe('the campaign section bar', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Call log' })).toBeTruthy();
   });
 
-  /*
-    Call log's views (IN14): Dialler calls here, Soft-phone calls at `…/manual-calls`,
-    the second only behind the soft phone's flag, as its route is.
-  */
-  it('offers Dialler calls | Soft-phone calls with the soft phone on, this view current', async () => {
+  it('has no second view to switch to: Call log is one list (CL11)', async () => {
     mocks.flags = new Set(['agency_softphone_enabled']);
-    renderPage();
-
-    const dialler = await screen.findByTestId('call-log-view-attempts');
-    expect(dialler.getAttribute('aria-current')).toBe('page');
-    expect(dialler.textContent).toBe('Dialler calls');
-    const softphone = screen.getByTestId('call-log-view-manual');
-    expect(softphone.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
-    expect(softphone.getAttribute('aria-current')).toBeNull();
-    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
-  });
-
-  it('offers no views with the soft phone off', async () => {
     renderPage();
 
     await screen.findByTestId('campaign-tab-attempts');
     expect(screen.queryByTestId('call-log-views')).toBeNull();
+    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
   });
 });
 
@@ -567,7 +562,7 @@ describe('the workspace’s campaign re-read', () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     await screen.findByRole('heading', { level: 1 });
-    const listReads = mocks.getCampaignAttempts.mock.calls.length;
+    const listReads = mocks.getCampaignCallLog.mock.calls.length;
     const campaignReads = mocks.getAgencyCampaign.mock.calls.length;
 
     // The same campaign, as a new object: what every re-read hands over.
@@ -581,7 +576,7 @@ describe('the workspace’s campaign re-read', () => {
     await waitFor(() => expect(mocks.getAgencyCampaignStats.mock.calls.length).toBeGreaterThan(1));
     // Let the new campaign object land and the section render with it.
     await act(async () => {});
-    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(listReads);
+    expect(mocks.getCampaignCallLog.mock.calls.length).toBe(listReads);
   });
 });
 
@@ -619,7 +614,7 @@ describe('filters in the URL', () => {
   it('reads every drill-down filter from the URL and sends it, asking for the total', async () => {
     renderWithLocation(DRILLDOWN);
     await waitFor(() => {
-      expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
+      expect(mocks.getCampaignCallLog).toHaveBeenLastCalledWith(
         'camp-1',
         {
           outcome: ['connected'],
@@ -633,7 +628,7 @@ describe('filters in the URL', () => {
           dialed_from: '2026-08-17T00:00:00.000Z',
           dialed_to: '2026-08-18T00:00:00.000Z',
         },
-        { limit: 50, includeTotal: true },
+        { limit: 50, type: 'all', includeCounts: true },
         'tenant-1',
         'account-1',
       );
@@ -672,7 +667,7 @@ describe('filters in the URL', () => {
     expect(currentQuery().get('caller_id')).toBe('+919000000001');
     expect(currentQuery().get('dialed_from')).toBe('2026-08-17T00:00:00.000Z');
     await waitFor(() => {
-      const [, filters] = mocks.getCampaignAttempts.mock.calls.at(-1)!;
+      const [, filters] = mocks.getCampaignCallLog.mock.calls.at(-1)!;
       expect(filters).not.toHaveProperty('redial');
       expect(filters).toHaveProperty('caller_id', '+919000000001');
     });
@@ -705,18 +700,21 @@ describe('filters in the URL', () => {
   it('ignores an unknown key and a malformed flag rather than failing the page', async () => {
     renderWithLocation('?utm_source=mail&redial=yes&placed=1');
     await waitFor(() => {
-      expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
-        'camp-1', { placed: '1' }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      expect(mocks.getCampaignCallLog).toHaveBeenLastCalledWith(
+        'camp-1', { placed: '1' }, { limit: 50, type: 'all', includeCounts: true }, 'tenant-1', 'account-1',
       );
     });
   });
 
-  it('shows the exact total when the server sends one: the drill-down count', async () => {
-    mocks.getCampaignAttempts.mockResolvedValue({ ...page([BRIDGED, ABANDONED], 'cursor-2'), total: 1234 });
-    renderWithLocation('?placed=1');
+  it('shows the exact count when the server sends one: the drill-down count', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue({
+      ...page([BRIDGED, ABANDONED], 'cursor-2'), counts: { all: 1240, dialler: 1234, soft_phone: 6 },
+    });
+    renderWithLocation('?placed=1&type=dialler');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     const count = screen.getByTestId('attempts-count').textContent ?? '';
-    expect(count).toMatch(/^1[,.]?234 attempts — showing 2$/);
+    // The count of the chip that is on, not of every type.
+    expect(count).toMatch(/^1[,.]?234 calls — showing 2$/);
   });
 
   it('the export carries every applied filter, the drill-down ones included', async () => {
@@ -751,7 +749,7 @@ describe('an automatic outcome (decisions OD1–OD8)', () => {
   });
 
   it('shows it in place of the dash, by its label and tagged automatic', async () => {
-    mocks.getCampaignAttempts.mockResolvedValue(page([BUSY_AUTO]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([BUSY_AUTO]));
     renderPage();
     const auto = await screen.findByTestId(`attempt-auto-disposition-${BUSY_AUTO.id}`);
     expect(auto.textContent).toBe('Retry later (automatic)');
@@ -762,7 +760,7 @@ describe('an automatic outcome (decisions OD1–OD8)', () => {
 
   it('keeps a write-up as the disposition and the automatic one secondary', async () => {
     const both: AgencyAttempt = { ...BRIDGED, auto_disposition_code: 'retry_later' };
-    mocks.getCampaignAttempts.mockResolvedValue(page([both]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([both]));
     renderPage();
     const row = await screen.findByTestId(`attempt-row-${both.id}`);
     await within(row).findByText('Not interested');
@@ -772,7 +770,7 @@ describe('an automatic outcome (decisions OD1–OD8)', () => {
   });
 
   it('shows the dash and no tag on a row without one', async () => {
-    mocks.getCampaignAttempts.mockResolvedValue(page([ABANDONED]));
+    mocks.getCampaignCallLog.mockResolvedValue(page([ABANDONED]));
     renderPage();
     const row = await screen.findByTestId(`attempt-row-${ABANDONED.id}`);
     // The Disposition column (When, Number, Try, Agent, Outcome, Disposition, …).
@@ -793,7 +791,7 @@ describe('a filter the server refuses', () => {
     // The first load answers rows; the agent filter from the URL is then refused.
     renderWithLocation('');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
-    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('agent_user_id', 'must be an agent id'));
+    mocks.getCampaignCallLog.mockRejectedValueOnce(refusal('agent_user_id', 'must be an agent id'));
 
     // The section's Refresh (the list), not the header's (the campaign).
     fireEvent.click(screen.getByRole('button', { name: 'Refresh call log' }));
@@ -807,7 +805,7 @@ describe('a filter the server refuses', () => {
   });
 
   it('names the phone filter for a link that carries one with no digits', async () => {
-    mocks.getCampaignAttempts.mockRejectedValue(
+    mocks.getCampaignCallLog.mockRejectedValue(
       refusal('phone', 'must contain at least one digit — search by the whole number or its last few digits'),
     );
     renderWithLocation('?phone=abc!!');
@@ -821,7 +819,7 @@ describe('a filter the server refuses', () => {
   it('keeps Retry, and clears the stale rows, for a failure retrying can fix', async () => {
     renderWithLocation('');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
-    mocks.getCampaignAttempts.mockRejectedValueOnce(new ApiError(503, { message: 'Service unavailable' }));
+    mocks.getCampaignCallLog.mockRejectedValueOnce(new ApiError(503, { message: 'Service unavailable' }));
 
     // The section's Refresh (the list), not the header's (the campaign).
     fireEvent.click(screen.getByRole('button', { name: 'Refresh call log' }));
@@ -889,7 +887,7 @@ describe('moving to another campaign on the same page', () => {
 
     const select = screen.getByTestId('attempts-agent-filter') as HTMLSelectElement;
     await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(['All agents', 'Asha Rao', 'Ravi Menon']));
-    expect(screen.getByText('Call attempts on Q4 Winback, newest first')).toBeTruthy();
+    expect(screen.getByText('Calls on Q4 Winback, newest first')).toBeTruthy();
   });
 });
 
@@ -926,13 +924,13 @@ describe('a phone filter with no digits is caught in the form', () => {
   it('says so in a sentence and does not send it', async () => {
     renderWithLocation('');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
-    const calls = mocks.getCampaignAttempts.mock.calls.length;
+    const calls = mocks.getCampaignCallLog.mock.calls.length;
 
     fireEvent.change(screen.getByPlaceholderText('Number or last digits'), { target: { value: 'abc!!' } });
 
     expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
     expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(true);
-    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+    expect(mocks.getCampaignCallLog.mock.calls.length).toBe(calls);
   });
 });
 
@@ -940,7 +938,7 @@ describe('a phone number still being typed', () => {
   it('is not an error at its first "+", is said on Apply, and is never sent', async () => {
     renderWithLocation('');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
-    const calls = mocks.getCampaignAttempts.mock.calls.length;
+    const calls = mocks.getCampaignCallLog.mock.calls.length;
     const field = screen.getByPlaceholderText('Number or last digits');
 
     fireEvent.change(field, { target: { value: '+' } });
@@ -951,7 +949,7 @@ describe('a phone number still being typed', () => {
     fireEvent.click(screen.getByText('Apply'));
     expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
     expect(field.getAttribute('aria-invalid')).toBe('true');
-    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+    expect(mocks.getCampaignCallLog.mock.calls.length).toBe(calls);
 
     // A digit clears it, and Apply sends it.
     fireEvent.change(field, { target: { value: '+9' } });
@@ -963,12 +961,279 @@ describe('a phone number still being typed', () => {
 
 describe('a link whose dates are the wrong way round', () => {
   it('says to swap them, not that a date cannot be read', async () => {
-    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
+    mocks.getCampaignCallLog.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
     renderWithLocation('?from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
 
     // The refusal itself, not the form's own check of the drafts the link filled in.
     const said = await screen.findByText(/Change or remove it above to see the call log/);
     expect(said.textContent).toContain('The “From” date is after the “To” date');
     expect(said.textContent).not.toContain('not a date this list can use');
+  });
+});
+
+// ─── One list, every type (CL11, docs/call-log.md) ──────────────────────────
+
+/** A soft-phone call logged to the campaign: connected, on the roster, outcome saved. */
+const SOFT: AgencyCallLogSoftphoneRow = {
+  type: 'soft_phone', id: 'manual-1', campaign_id: 'camp-1', contact_id: 'contact-9',
+  phone_e164: '+919876500099', caller_id: '+919000000002',
+  agent_user_id: 'bd2f9d2e-1111-4222-8333-444455556666', agent_name: 'Priya Nair',
+  state: 'ended', outcome: 'connected', disposition_code: 'not_interested', notes: null, callback_at: null,
+  promise_date: null, promise_amount: null,
+  dispositioned_by_user_id: 'bd2f9d2e-1111-4222-8333-444455556666', dispositioned_at: '2026-08-17T10:31:00.000Z',
+  dispositioned_on_behalf: false, webrtc_call_id: 'call-77',
+  dialed_at: '2026-08-17T10:30:01.000Z', answered_at: '2026-08-17T10:30:08.000Z',
+  bridged_at: '2026-08-17T10:30:08.000Z', ended_at: '2026-08-17T10:30:29.000Z', talk_seconds: 21,
+  dnc_overridden: false, hours_overridden: false, requires_disposition: false,
+  settled_at: '2026-08-17T10:31:00.000Z', created_at: '2026-08-17T10:30:00.000Z',
+};
+const COUNTS = { all: 1326, dialler: 1240, soft_phone: 86 };
+const withCounts = (rows: AgencyCallLogRow[], counts = COUNTS, cursor: string | null = null): AgencyCallLogPage =>
+  ({ ...page(rows, cursor), counts });
+const lastCall = () => mocks.getCampaignCallLog.mock.calls.at(-1)!;
+
+describe('the type chips', () => {
+  it('shows All · Dialler · Soft phone with the counts for the filters, All on', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT, BRIDGED]));
+    renderWithLocation('?dates=all');
+    await screen.findByTestId(`attempt-row-${SOFT.id}`);
+
+    const chips = within(screen.getByRole('group', { name: 'Call type' })).getAllByRole('button');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['All1,326', 'Dialler1,240', 'Soft phone86']);
+    expect(chips.map((chip) => chip.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false']);
+    expect(screen.getByTestId('attempts-count').textContent).toMatch(/^1[,.]?326 calls — showing 2$/);
+  });
+
+  it('choosing a chip puts it in the URL, keeps the filters, and reads that type alone', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT, BRIDGED]));
+    renderWithLocation('?outcome=connected');
+    await screen.findByTestId(`attempt-row-${SOFT.id}`);
+
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT]));
+    fireEvent.click(screen.getByTestId('call-log-type-soft_phone'));
+    await waitFor(() => expect(currentQuery().get('type')).toBe('soft_phone'));
+    expect(currentQuery().getAll('outcome')).toEqual(['connected']);
+    await waitFor(() => expect(lastCall().slice(1, 3)).toEqual([
+      { outcome: ['connected'] }, { limit: 50, type: 'soft_phone', includeCounts: true },
+    ]));
+    await waitFor(() => expect(screen.getByTestId('call-log-type-soft_phone').getAttribute('aria-pressed')).toBe('true'));
+    // The count line is the chip's own count.
+    expect(screen.getByTestId('attempts-count').textContent).toMatch(/^86 calls — showing 1$/);
+
+    // Back to All: the param leaves the URL.
+    fireEvent.click(screen.getByTestId('call-log-type-all'));
+    await waitFor(() => expect(currentQuery().has('type')).toBe(false));
+    expect(currentQuery().getAll('outcome')).toEqual(['connected']);
+  });
+
+  it('a later page keeps the chip, and the export is that type’s file', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.downloadSpineCsv.mockResolvedValue({ blob: new Blob(['a']), truncated: false, reason: null, rowLimit: null, rows: 1 });
+    mocks.getCampaignCallLog.mockResolvedValueOnce(withCounts([SOFT], COUNTS, 'cursor-2')).mockResolvedValueOnce(page([{ ...SOFT, id: 'manual-2' }]));
+    renderWithLocation('?placed=1&type=soft_phone');
+    await screen.findByTestId(`attempt-row-${SOFT.id}`);
+
+    fireEvent.click(screen.getByText('Load older calls'));
+    await screen.findByTestId('attempt-row-manual-2');
+    expect(lastCall().slice(1, 3)).toEqual([{ placed: '1' }, { cursor: 'cursor-2', limit: 50, type: 'soft_phone' }]);
+    // The counts came with the first page and are kept.
+    expect(screen.getByTestId('call-log-type-soft_phone').textContent).toBe('Soft phone86');
+
+    fireEvent.click(screen.getByText('Export CSV'));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledWith(
+      'camp-1', 'attempts', { placed: '1', source: 'soft_phone' }, 'tenant-1', 'account-1',
+    ));
+  });
+
+  it('hides the Soft phone chip, and so every chip, with the soft phone off and no soft-phone call in the range', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([BRIDGED], { all: 4, dialler: 4, soft_phone: 0 }));
+    renderPage();
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.queryByTestId('call-log-types')).toBeNull();
+    // The count is still said.
+    expect(screen.getByTestId('attempts-count').textContent).toBe('4 calls — showing 1');
+  });
+
+  it('keeps the Soft phone chip with the soft phone off while the range holds soft-phone calls (SR5)', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT, BRIDGED], { all: 5, dialler: 4, soft_phone: 1 }));
+    renderPage();
+    await screen.findByTestId(`attempt-row-${SOFT.id}`);
+    expect(screen.getByTestId('call-log-type-soft_phone').textContent).toBe('Soft phone1');
+  });
+
+  it('ignores a type it does not know', async () => {
+    renderWithLocation('?placed=1&type=inbound');
+    await waitFor(() => expect(lastCall()[2]).toEqual({ limit: 50, type: 'all', includeCounts: true }));
+  });
+});
+
+describe('a row of each type', () => {
+  beforeEach(() => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+  });
+
+  it('heads the table When · Type · Customer · Agent · What happened · Outcome · Talk time · Call', async () => {
+    renderPage();
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
+      'When', 'Type', 'Customer', 'Agent', 'What happened', 'Outcome', 'Talk time', 'Call',
+    ]);
+  });
+
+  it('a dialler row says which try it was, and that it was a redial, under its type', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([BRIDGED, { ...ABANDONED, redial_number: 1, redial_of_attempt_id: BRIDGED.id }]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.getByTestId(`call-type-${BRIDGED.id}`).textContent).toBe('Dialler');
+    expect(screen.getByTestId(`call-facts-${BRIDGED.id}`).textContent).toBe('Try 2');
+    expect(screen.getByTestId(`call-facts-${ABANDONED.id}`).textContent).toBe('Try 1 · redial');
+    expect(row.getAttribute('data-type')).toBe('dialler');
+    expect(within(row).getByText('Open call').closest('a')!.getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/attempt-bridged');
+  });
+
+  it('a soft-phone row names its agent and its outcome from the campaign’s catalog, and opens the soft-phone call', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([SOFT]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${SOFT.id}`);
+    expect(row.getAttribute('data-type')).toBe('soft_phone');
+    expect(screen.getByTestId(`call-type-${SOFT.id}`).textContent).toBe('Soft phone');
+    expect(screen.queryByTestId(`call-facts-${SOFT.id}`)).toBeNull();
+    expect(within(row).getByText('Priya Nair')).toBeTruthy();
+    expect(screen.getByTestId(`attempt-outcome-${SOFT.id}`).textContent).toBe('Connected');
+    // On the roster: the number links to its contact, as a dialler row's does.
+    expect(within(row).getByText('+919876500099').closest('a')!.getAttribute('href')).toBe('/agency/campaigns/camp-1/contacts/contact-9');
+    expect(within(row).getByText('Open call').closest('a')!.getAttribute('href')).toBe('/agency/softphone/calls/manual-1');
+    expect(row.hasAttribute('data-not-dialled')).toBe(false);
+  });
+
+  it('says a soft-phone number is not on the list, and shows its override badges', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([{ ...SOFT, contact_id: null, dnc_overridden: true, hours_overridden: true }]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${SOFT.id}`);
+    expect(within(row).getByText('+919876500099').closest('a')).toBeNull();
+    expect(within(row).getByText('not on the list')).toBeTruthy();
+    expect(within(row).getByText('DNC override').getAttribute('title')).toBe('Called through a Do Not Call entry, with a note');
+    expect(within(row).getByText('Hours override').getAttribute('title')).toBe('Called outside calling hours, with a note');
+  });
+
+  it('greys a soft-phone row whose dial was never sent and says Not dialled', async () => {
+    const never: AgencyCallLogSoftphoneRow = {
+      ...SOFT, id: 'manual-never', outcome: 'failed', disposition_code: null, dialed_at: null, answered_at: null,
+      bridged_at: null, talk_seconds: null, webrtc_call_id: null,
+    };
+    mocks.getCampaignCallLog.mockResolvedValue(page([never, SOFT]));
+    renderPage();
+    const row = await screen.findByTestId('attempt-row-manual-never');
+    expect(row.hasAttribute('data-not-dialled')).toBe(true);
+    expect(screen.getByTestId('attempt-outcome-manual-never').textContent).toBe('Not dialled');
+    expect(screen.getByTestId(`attempt-row-${SOFT.id}`).hasAttribute('data-not-dialled')).toBe(false);
+  });
+
+  it('says a soft-phone call is still on, and that an ended one owes its outcome', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([
+      { ...SOFT, id: 'manual-live', state: 'bridged', outcome: null, disposition_code: null, ended_at: null, settled_at: null, talk_seconds: null },
+      { ...SOFT, id: 'manual-owed', disposition_code: null, settled_at: null, requires_disposition: true },
+    ]));
+    renderPage();
+    await screen.findByTestId('attempt-row-manual-live');
+    expect(screen.getByTestId('attempt-outcome-manual-live').textContent).toBe('On a call now');
+    expect(within(screen.getByTestId('attempt-row-manual-owed')).getByText('No outcome yet')).toBeTruthy();
+  });
+
+  it('offers no link to a soft-phone call with the soft phone off: its page is behind the flag', async () => {
+    mocks.flags = new Set();
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT], { all: 1, dialler: 0, soft_phone: 1 }));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${SOFT.id}`);
+    expect(within(row).queryByText('Open call')).toBeNull();
+  });
+});
+
+describe('the Call log opens on today', () => {
+  /** The inclusive local day the page asks for, as `attemptDateRange` cuts it (TZ is UTC here). */
+  const day = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  const startOf = (d: string) => `${d}T00:00:00.000Z`;
+  const endOf = (d: string) => `${d}T23:59:59.999Z`;
+
+  it('reads today alone when the URL carries no filter, shows the day in the form, and offers no Clear', async () => {
+    const today = day(new Date());
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(lastCall()[1]).toEqual({ from: startOf(today), to: endOf(today) });
+    expect((screen.getByLabelText('From date') as HTMLInputElement).value).toBe(today);
+    expect((screen.getByLabelText('To date') as HTMLInputElement).value).toBe(today);
+    // The opening view is not something to clear, and the URL stays clean.
+    expect(screen.queryByText('Clear')).toBeNull();
+    expect(currentQuery().toString()).toBe('');
+  });
+
+  it('never narrows a link that carries a filter', async () => {
+    renderWithLocation('?contact_id=contact-2');
+    await waitFor(() => expect(lastCall()[1]).toEqual({ contact_id: 'contact-2' }));
+  });
+
+  it('an empty day says so and offers the last seven days', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([]));
+    renderWithLocation('');
+    await screen.findByText('No calls on this campaign for these dates.');
+    expect(screen.queryByText('No calls were placed')).toBeNull();
+
+    fireEvent.click(screen.getByText('Show last 7 days'));
+    const now = new Date();
+    const weekAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6));
+    await waitFor(() => expect(lastCall()[1]).toEqual({ from: startOf(day(weekAgo)), to: endOf(day(now)) }));
+    expect(currentQuery().get('from')).toBe(startOf(day(weekAgo)));
+    // Still empty: the same words, and nothing offered that has already been done.
+    await screen.findByText('No calls on this campaign for these dates.');
+    await waitFor(() => expect(screen.queryByText('Show last 7 days')).toBeNull());
+  });
+
+  it('names the chip’s type in an empty day', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([], { all: 3, dialler: 3, soft_phone: 0 }));
+    renderWithLocation('?type=soft_phone');
+    await screen.findByText('No soft-phone calls on this campaign for these dates.');
+  });
+
+  it('removing the dates asks for every date, and says so in the URL so it does not spring back', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    fireEvent.click(within(screen.getByTestId('attempts-chip-created')).getByRole('button'));
+    await waitFor(() => expect(currentQuery().get('dates')).toBe('all'));
+    await waitFor(() => expect(lastCall()[1]).toEqual({}));
+    // Clear goes back to the opening view.
+    fireEvent.click(screen.getByText('Clear'));
+    await waitFor(() => expect(currentQuery().toString()).toBe(''));
+  });
+
+  it('a filter with no match offers Clear in the empty state', async () => {
+    mocks.getCampaignCallLog.mockResolvedValue(page([]));
+    renderWithLocation('?outcome=busy');
+    await screen.findByText('Nothing matches those filters');
+    fireEvent.click(screen.getByTestId('call-log-empty-clear'));
+    await waitFor(() => expect(currentQuery().toString()).toBe(''));
+  });
+});
+
+describe('the campaign’s old Soft-phone calls URL', () => {
+  it('redirects to the Call log with the Soft phone chip on', async () => {
+    const { CampaignManualCallsRedirect } = await import('../../pages/agency/AgencyCampaignAttemptsPage');
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([SOFT]));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/manual-calls']}>
+        <AttemptsLocationProbe />
+        <Routes>
+          <Route path="/agency/campaigns/:id/manual-calls" element={<CampaignManualCallsRedirect />} />
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId(`attempt-row-${SOFT.id}`);
+    expect(currentQuery().get('type')).toBe('soft_phone');
+    expect(screen.getByTestId('call-log-type-soft_phone').getAttribute('aria-pressed')).toBe('true');
+    expect(lastCall()[2]).toMatchObject({ type: 'soft_phone' });
   });
 });

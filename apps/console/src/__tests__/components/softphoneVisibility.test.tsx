@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
  * Who is offered the soft phone, and where (`docs/softphone.md` §7, SP4):
  * nothing anywhere while `agency_softphone_enabled` is off; with it on, every
  * agent gets "Soft phone" in their screens, supervisors get "Soft-phone calls"
- * and each campaign's Call log gains its "Soft-phone calls" view (IN14), and the
+ * and each campaign's Call log gains its Soft phone chip (CL11), and the
  * settings sit with the account's.
  */
 
@@ -20,9 +20,9 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 
 import { AgentNav } from '../../components/agency/AgentNav';
 import { settingsEntry, tabBarFor, visibleSettingsGroups, type GateInput } from '../../utils/consoleNav';
-import { CallLogViews } from '../../components/agency/CallLogViews';
 import { agentSurfacesFor, AGENT_SURFACES } from '../../utils/agencyAgentSurfaces';
-import { visibleCallLogViews } from '../../utils/agencyCampaignTabs';
+import { CAMPAIGN_TABS, canOpenCampaignScreen } from '../../utils/agencyCampaignTabs';
+import { visibleCallLogChips } from '../../utils/agency/callLog';
 
 function as(role: string | undefined, flagOn: boolean) {
   mocks.useTenant.mockReturnValue({ role });
@@ -102,29 +102,26 @@ describe('the console navigation', () => {
 });
 
 describe('a campaign’s Call log', () => {
-  it('offers Soft-phone calls to a supervisor only with the flag on, after Dialler calls', () => {
-    expect(visibleCallLogViews('account_admin').map((v) => v.id)).not.toContain('manual');
-    const on = visibleCallLogViews('account_admin', (flag) => flag === 'agency_softphone_enabled').map((v) => v.id);
-    expect(on).toEqual(['attempts', 'manual']);
-    expect(visibleCallLogViews('viewer', () => true).map((v) => v.id)).not.toContain('manual');
+  const flagOn = (flag: string) => flag === 'agency_softphone_enabled';
+
+  it('offers the Soft phone chip with the flag on, after Dialler', () => {
+    expect(visibleCallLogChips(null, 'all', { softphoneEnabled: true }).map((c) => c.id)).toEqual(['all', 'dialler', 'soft_phone']);
   });
 
-  it('renders it as a view linking to the campaign’s manual calls', () => {
-    as('account_admin', true);
-    render(<MemoryRouter><CallLogViews campaignId="camp-1" active="manual" role="account_admin" /></MemoryRouter>);
-    const view = screen.getByTestId('call-log-view-manual');
-    // Named as the sidebar names the same calls.
-    expect(view.textContent).toBe('Soft-phone calls');
-    expect(view.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
-    expect(view.getAttribute('aria-current')).toBe('page');
-    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
-    expect(screen.getByTestId('call-log-view-attempts').getAttribute('aria-current')).toBeNull();
+  it('offers no chips with the flag off and no soft-phone call: Dialler alone is nothing to choose', () => {
+    expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0 }, 'all', { softphoneEnabled: false })).toEqual([]);
   });
 
-  it('renders no views with the flag off: Dialler calls alone is nothing to choose', () => {
-    as('account_admin', false);
-    render(<MemoryRouter><CallLogViews campaignId="camp-1" active="attempts" role="account_admin" /></MemoryRouter>);
-    expect(screen.queryByTestId('call-log-views')).toBeNull();
+  it('keeps the chip with the flag off while the campaign holds soft-phone calls (SR5)', () => {
+    expect(visibleCallLogChips({ all: 5, dialler: 4, soft_phone: 1 }, 'all', { softphoneEnabled: false }).map((c) => c.id))
+      .toEqual(['all', 'dialler', 'soft_phone']);
+  });
+
+  it('search offers a campaign’s soft-phone calls to a supervisor only with the flag on, as the Call log’s chip', () => {
+    expect(canOpenCampaignScreen('manual', 'account_admin')).toBe(false);
+    expect(canOpenCampaignScreen('manual', 'account_admin', flagOn)).toBe(true);
+    expect(canOpenCampaignScreen('manual', 'viewer', () => true)).toBe(false);
+    expect(CAMPAIGN_TABS.find((t) => t.id === 'manual')!.path('camp-1')).toBe('/agency/campaigns/camp-1/attempts?type=soft_phone');
   });
 });
 
@@ -153,9 +150,11 @@ describe('the routes', () => {
   });
 
   it('puts every supervisor surface and the settings behind the flag', () => {
-    for (const path of ['softphone', 'softphone/calls/:callId', 'campaigns/:id/manual-calls']) {
+    for (const path of ['softphone', 'softphone/calls/:callId']) {
       expect(routeBlock(path)).toContain('flag="agency_softphone_enabled"');
     }
+    // A campaign's soft-phone calls are in its Call log (CL11): the old URL only redirects there.
+    expect(routeBlock('campaigns/:id/manual-calls')).toContain('<CampaignManualCallsRedirect');
     const settings = routeBlock('softphone', app.indexOf('<Route path="/settings"'));
     expect(settings).toContain('<SoftphoneSettingsPage');
     // The Settings route's guards are its entry's gate (`RequireGate`).

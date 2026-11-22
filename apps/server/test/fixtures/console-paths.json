@@ -332,6 +332,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/contacts",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",

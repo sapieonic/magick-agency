@@ -2347,6 +2347,9 @@ describe('every campaign route carries its RBAC permission', () => {
     // tenant narrowing one must be able to narrow it without silently taking
     // the other away.
     ['get', '/campaigns/:id/attempts', 'agency.supervise'],
+    // The Call log (CL11): the attempt list's record with the soft-phone calls logged to the
+    // campaign beside it, on the attempt list's floor. Never lower: it carries every number.
+    ['get', '/campaigns/:id/call-log', 'agency.supervise'],
     ['get', '/campaigns/:id/contacts', 'agency.supervise'],
     ['get', '/campaigns/:id/contacts/:contactId', 'agency.supervise'],
     // The exports carry every phone number on the campaign in one file. They

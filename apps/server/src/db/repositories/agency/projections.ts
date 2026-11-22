@@ -173,6 +173,9 @@ export interface SoftphoneLogRaw {
   bridged_at: Date | null;
   ended_at: Date | null;
   talk_seconds: number | null;
+  dnc_overridden: boolean;
+  hours_overridden: boolean;
+  settled_at: Date | null;
   created_at: Date;
 }
 
@@ -208,6 +211,10 @@ export function projectSoftphoneLogRow(row: SoftphoneLogRaw): CampaignSoftphoneL
     wrapup_seconds: null,
     redial_of_attempt_id: null,
     redial_number: null,
+    dnc_overridden: row.dnc_overridden,
+    hours_overridden: row.hours_overridden,
+    requires_disposition: manualCallRequiresDisposition(row),
+    settled_at: iso(row.settled_at),
     created_at: iso(row.created_at) ?? '',
   };
 }

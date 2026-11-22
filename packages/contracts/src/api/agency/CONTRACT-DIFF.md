@@ -188,6 +188,15 @@ handler writes `total` only when the request carries `?include_total=1`; the dia
 too: `AgencyContactWaiting` / `AGENCY_CONTACT_WAITING` (`?waiting=`), `AgencyListFlag` (`1` / `0`),
 and the new keys on `AgencyAttemptFilters` / `AgencyContactFilters` (docs/insights.md, WS F).
 
+The campaign Call log (`call-log.ts`, docs/call-log.md): `AgencyCallLogRow` is a union on `type`
+(`AgencyCallLogDiallerRow`, an `AgencyAttempt` marked `dialler`; `AgencyCallLogSoftphoneRow`, a
+soft-phone call logged to the campaign, under the attempt row's names for the fields the two
+share), with `AgencyCallLogType` / `AGENCY_CALL_LOG_TYPES`, the `?type=` filter
+(`AgencyCallLogTypeFilter`), the chips' `AgencyCallLogCounts` and the page `AgencyCallLogPage`
+(`counts` only with `?include_counts=1`). The public API layer builds the rows from the dialer
+runtime's call-log read (`apps/server/src/agency/campaign-call-log.ts`, whose rows say `source`
+and stay attempt-shaped for the CSV export); that read is not in the dialer contract.
+
 Customer history (`customer-history.ts`, docs/customer-history.md) is console-side only: the
 public API layer reads it directly (no internal handler hop), so every type there
 (`CustomerSearchRequest`, `CustomerSearchResponse`, `CustomerTimelineEntry`, …) has no dialer

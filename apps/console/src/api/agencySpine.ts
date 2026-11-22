@@ -14,6 +14,7 @@ import type {
   AgencyContactFilters,
   AgencyRosterContactsPage,
 } from '../types/agency-spine';
+import type { AgencyCallLogPage, AgencyCallLogTypeFilter } from '../types/agency-call-log';
 
 /**
  * The attempt spine, through the server's `/proxy/agency`.
@@ -94,6 +95,43 @@ export async function getCampaignAttempts(
 ): Promise<AgencyAttemptsListPage> {
   return apiFetch<AgencyAttemptsListPage>(
     `${AGENCY_BASE}/campaigns/${campaignId}/attempts${toQuery({ ...filters }, listExtra(options))}`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/** The Call log's paging: the chip that is on, and the opt-in chip counts. */
+export interface CallLogListOptions {
+  cursor?: string;
+  limit?: number;
+  /** The chip: one type, or `all` (sent as no `type` at all). */
+  type?: AgencyCallLogTypeFilter;
+  /**
+   * Ask for `counts`: how many calls of each type the filters match, across every page and
+   * whatever chip is on (`?include_counts=1`). Asked on the first page only; later pages keep it.
+   */
+  includeCounts?: boolean;
+}
+
+/**
+ * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
+ * placed it, newest first on one keyset; each row says its `type`. The attempt list's filters.
+ */
+export async function getCampaignCallLog(
+  campaignId: string,
+  filters: AgencyAttemptFilters,
+  options: CallLogListOptions = {},
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCallLogPage> {
+  const extra: Record<string, string> = {};
+  if (options.cursor) extra['cursor'] = options.cursor;
+  if (options.limit !== undefined) extra['limit'] = String(options.limit);
+  if (options.type && options.type !== 'all') extra['type'] = options.type;
+  if (options.includeCounts) extra['include_counts'] = '1';
+  return apiFetch<AgencyCallLogPage>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log${toQuery({ ...filters }, extra)}`,
     {},
     tenantId,
     accountId,

@@ -21,6 +21,7 @@ import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../../utils
 import { fieldLabel, formatFieldValue } from '../../../utils/softphone/callFields';
 import { callEndSummary } from '../../../utils/softphone/callState';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
+import { campaignCallLogPath } from '../../../utils/agency/callLog';
 import { dncEntryFacts, dncEntryReach } from '../../../utils/softphone/overrides';
 import type {
   AgencyCallField,
@@ -264,13 +265,13 @@ export default function SoftphoneCallDetailPage() {
 
   /*
     The trail back, in the top bar: "Campaigns / Soft-phone calls / <campaign> / <when>". The
-    campaign the call was logged to leads to that campaign's soft-phone calls.
+    campaign the call was logged to leads to that campaign's Call log, with the Soft phone chip on.
   */
   const current = detail && detail.call.id === callId ? detail : null;
   const tag = current?.call.tag ?? null;
   usePageCrumbs([
     { label: 'Soft-phone calls', to: '/agency/softphone' },
-    ...(tag ? [{ label: tag.campaign_name, to: `/agency/campaigns/${tag.campaign_id}/manual-calls` }] : []),
+    ...(tag ? [{ label: tag.campaign_name, to: campaignCallLogPath(tag.campaign_id, 'soft_phone') }] : []),
     { label: current ? formatSpineTimestamp(current.call.created_at) : 'Call' },
   ]);
 

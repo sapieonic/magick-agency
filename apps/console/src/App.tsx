@@ -86,7 +86,7 @@ const AgencyCampaignAttemptsPage = lazy(() => import('./pages/agency/AgencyCampa
 const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCallPage'));
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
-const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
+const CampaignManualCallsRedirect = lazy(() => import('./pages/agency/AgencyCampaignAttemptsPage').then((m) => ({ default: m.CampaignManualCallsRedirect })));
 const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
 const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
 const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPage'));
@@ -704,8 +704,8 @@ export default function App() {
                   />
                   {/*
                     The soft phone's supervisor surfaces (`docs/softphone.md` §7):
-                    the account's soft-phone calls, one call's detail, and a
-                    campaign's Manual calls — each behind `agency_softphone_enabled`
+                    the account's soft-phone calls and one call's detail, each
+                    behind `agency_softphone_enabled`
                     on top of the subtree's gates. The server floors the
                     account-wide reads at `agency.supervise`, as the sidebar entry
                     and the campaign tab do.
@@ -718,10 +718,13 @@ export default function App() {
                     path="softphone/calls/:callId"
                     element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallDetailPage /></RequireFlag>}
                   />
-                  <Route
-                    path="campaigns/:id/manual-calls"
-                    element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
-                  />
+                  {/*
+                    The campaign's Soft-phone calls view until the Call log became one list
+                    (CL11, `docs/call-log.md`): redirects (replace) to the Call log with the
+                    Soft phone chip on. No flag guard: the Call log has none, and it shows the
+                    chip itself when the campaign holds soft-phone calls.
+                  */}
+                  <Route path="campaigns/:id/manual-calls" element={<CampaignManualCallsRedirect />} />
                   {/*
                     Live calls (`docs/listening.md` §9): the account's calls in progress, and a
                     campaign's (the Calls tab's Live view), behind `agency_live_listen_enabled`

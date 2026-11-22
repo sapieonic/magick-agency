@@ -270,7 +270,7 @@ describe('the breadcrumb', () => {
     // The soft-phone call's page names its list, which the trail already has as the parent tab.
     const page = [
       { label: 'Soft-phone calls', to: '/agency/softphone' },
-      { label: 'Diwali renewals', to: '/agency/campaigns/c-1/manual-calls' },
+      { label: 'Diwali renewals', to: '/agency/campaigns/c-1/attempts?type=soft_phone' },
       { label: '12 Nov, 10:04' },
     ];
     expect(breadcrumbFor('/agency/softphone/calls/x', page)).toEqual([

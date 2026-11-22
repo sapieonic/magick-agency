@@ -10,9 +10,6 @@ const mocks = vi.hoisted(() => ({
   getManualCall: vi.fn(),
   fetchManualCallRecordingBlobUrl: vi.fn(),
   listTenantMembers: vi.fn(),
-  getAgencyCampaign: vi.fn(),
-  getAgencyCampaignStats: vi.fn(),
-  campaignLineage: vi.fn(),
   isEnabled: vi.fn((_c: string) => true),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -29,12 +26,6 @@ vi.mock('../../api/softphone', () => ({
   fetchManualCallRecordingBlobUrl: mocks.fetchManualCallRecordingBlobUrl,
 }));
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
-// The campaign's workspace (header, health strip, bar) around Manual calls reads these.
-vi.mock('../../api/agencyCampaigns', () => ({
-  getAgencyCampaign: mocks.getAgencyCampaign,
-  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
-  campaignLineage: mocks.campaignLineage,
-}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
 }));
@@ -43,10 +34,8 @@ vi.mock('../../components/audio/AudioWaveform', () => ({ AudioWaveform: () => <d
 
 import SoftphoneCallsPage from '../../pages/agency/softphone/SoftphoneCallsPage';
 import SoftphoneCallDetailPage, { savedByLine } from '../../pages/agency/softphone/SoftphoneCallDetailPage';
-import AgencyCampaignManualCallsPage from '../../pages/agency/AgencyCampaignManualCallsPage';
 import { todayLocal } from '../../utils/softphone/callStats';
 import { BOOTSTRAP, CAMPAIGN, manualCall } from '../helpers/softphone';
-import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { AgencyManualCallListRow } from '../../types/softphone';
 import { ANALYSIS_DELAY_MESSAGES, ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
@@ -301,33 +290,6 @@ describe('Soft-phone calls (the account list)', () => {
   });
 });
 
-describe('a campaign’s Manual calls', () => {
-  it('is the same list with the tag fixed', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Home Loan Renewals', status: 'running' });
-    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
-    mocks.campaignLineage.mockResolvedValue(noLineage());
-    render(
-      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/manual-calls']}>
-        <Routes>
-          <Route path="/agency/campaigns/:id/manual-calls" element={<AgencyCampaignManualCallsPage />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-    await act(async () => {});
-    expect(mocks.listManualCalls.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1' });
-    expect(screen.queryByTestId('filter-campaign')).toBeNull();
-    // A view of Call log since IN14: the bar marks Call log, the views mark this one.
-    expect(screen.getByTestId('campaign-tab-attempts').getAttribute('aria-current')).toBe('page');
-    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
-    expect(screen.getByTestId('call-log-view-manual').getAttribute('aria-current')).toBe('page');
-    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
-    // In the campaign's workspace: the header names the campaign, the section is Call log.
-    expect(screen.getByTestId('campaign-workspace')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Home Loan Renewals');
-    expect(screen.getByRole('heading', { level: 2, name: 'Call log' })).toBeTruthy();
-  });
-});
-
 const MEDIA: WebRtcCallRecord = {
   id: 'call-9',
   tenant_id: 't-1',
@@ -399,9 +361,9 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/ReasonAsked twice/);
     expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
     expect(document.body.textContent).not.toContain('dnc-1');
-    // The trail goes back through the campaign the call was logged to.
+    // The trail goes back through the campaign the call was logged to: its Call log, Soft phone chip on.
     expect(suppliedCrumbs()).toMatch(
-      /^Soft-phone calls→\/agency\/softphone \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/manual-calls \/ .+/,
+      /^Soft-phone calls→\/agency\/softphone \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/attempts\?type=soft_phone \/ .+/,
     );
   });
 

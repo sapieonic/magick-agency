@@ -36,8 +36,9 @@ moved to Settings. `…/insights` redirects to Overview. Detail in [`decisions.m
 IN14 (2026-11-11, the navigation redesign) groups the campaign's bar without nesting it: **Monitor**
 (Overview, Calls, Agents, Callbacks, Health), **Data** (Contacts, Call log) and **Set up**
 (Settings), each still one tab per question. Call attempts is now **Call log** (still `/attempts`),
-with Dialler calls and Soft-phone calls (`/manual-calls`, behind the soft phone's flag) as its two
-views; Activity left the bar for a **History** button in the campaign header (still `/activity`).
+one list of the campaign's dialler and soft-phone calls with type chips since CL11
+([`call-log.md`](call-log.md); it had two views, Dialler calls and Soft-phone calls at
+`/manual-calls`, which now redirects); Activity left the bar for a **History** button in the campaign header (still `/activity`).
 Settings is split into anchored sections (`utils/campaignSettingsSections.ts`, `…/settings#<id>`),
 with Lifecycle and uploads the last.
 

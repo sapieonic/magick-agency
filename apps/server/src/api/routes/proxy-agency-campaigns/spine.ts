@@ -12,6 +12,7 @@ import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import {
   ATTEMPT_QUERY_PARAMS,
   CALL_LOG_EXPORT_QUERY_PARAMS,
+  CALL_LOG_QUERY_PARAMS,
   CONTACT_QUERY_PARAMS,
   PAGING_QUERY_PARAMS,
   TOTAL_QUERY_PARAMS,
@@ -33,6 +34,14 @@ import {
   type SpineContactRow,
   type SpineExportTruncation,
 } from '../../../agency/agency-spine.js';
+import {
+  callLogSourceForType,
+  isCallLogTypeFilter,
+  toCallLogWireRow,
+  type NamedCampaignCallLogRow,
+} from '../../../agency/campaign-call-log.js';
+import { AGENCY_CALL_LOG_TYPE_FILTERS } from '@magick-agency/contracts/api/agency/call-log';
+import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { drainPages } from '../helpers/drain-pages.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
 import { requireOwnedCampaign } from './ownership.js';
@@ -146,6 +155,69 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       })
       : result.body;
     return reply.code(result.status).send(body);
+  });
+
+  /**
+   * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
+   * placed it, newest first on one keyset. Its dialler attempts and the soft-phone calls logged
+   * to it today; each row says its `type`.
+   *
+   * Over the same internal read the export drains (`…/call-log`, decision SR6), so a row on
+   * screen and a row in the file cannot disagree. The attempt list's filters and paging, plus
+   * `type=all|dialler|soft_phone` (the chip) and `include_counts=1` (how many calls of each
+   * type the filters match, the chip not applied: the chips' numbers).
+   *
+   * `agency.supervise`, the attempt list's floor: this is the same record, with the soft-phone
+   * calls the campaign's Soft-phone calls view listed under the same floor. Not behind the soft
+   * phone's flag: a campaign keeps the soft-phone calls it holds when the flag goes off (SR5),
+   * and the export carries them either way.
+   */
+  app.get<{ Params: { id: string } }>('/campaigns/:id/call-log', {
+    preHandler: requirePermission('agency.supervise'),
+  }, async (request, reply) => {
+    const forwarded = forwardAllowedQuery(
+      request.query, [...ATTEMPT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS, ...CALL_LOG_QUERY_PARAMS],
+    );
+    if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
+    const { type: rawType, ...query } = forwarded.query;
+    if (rawType !== undefined && !isCallLogTypeFilter(rawType)) {
+      return replyValidationFailed(reply, [
+        { param: 'type', message: `must be one of: ${AGENCY_CALL_LOG_TYPE_FILTERS.join(', ')}` },
+      ]);
+    }
+    const source = callLogSourceForType(rawType);
+
+    const result = await callCore({
+      method: 'GET',
+      path: `/agency-campaigns/${request.params.id}/call-log`,
+      query: { ...query, ...(source ? { source } : {}) },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    // Non-2xx bodies pass through untouched, as on the attempt list.
+    if (result.status < 200 || result.status >= 300) return reply.code(result.status).send(result.body);
+
+    const named = await enrichAttemptAgentNames(result.body, request.tenantId!, resolveAgentNames, (err) => {
+      log.warn(
+        { tenantId: request.tenantId, err: err instanceof Error ? err.message : String(err) },
+        'agency call log: agent name resolution failed; emitting agent_name: null',
+      );
+    });
+    const page = asSpinePage<NamedCampaignCallLogRow>(named);
+    if (!page) {
+      return reply.code(502).send({
+        error: 'Bad Gateway',
+        code: 'call_log_unreadable',
+        message: 'The call log could not be read. Try again.',
+      });
+    }
+    const counts = (named as { counts?: unknown }).counts;
+    return reply.send({
+      rows: page.rows.map(toCallLogWireRow),
+      next_cursor: page.next_cursor,
+      limit: page.limit,
+      ...(counts !== undefined ? { counts } : {}),
+    });
   });
 
   /**

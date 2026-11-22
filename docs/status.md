@@ -2544,6 +2544,26 @@ it an end. A session used to stay open until the agent pressed Leave; closing th
 Every new guard was mutation-checked. **Not verified:** not run against a real browser or phone;
 the 2 h cutoff is a default (open decisions, below).
 
+### One call log per campaign, P1 2026-11-22 (CL1–CL12, [`call-log.md`](call-log.md))
+
+Manas approved the proposal on 2026-11-22: a call's type and campaign are columns of one list,
+built in six phases. P1 is built; P2 to P6 are not ([`call-log.md`](call-log.md) §2).
+
+- **The campaign Call log is one list.** Its dialler attempts and the soft-phone calls logged to
+  it, newest first, with type chips "All · Dialler · Soft phone" and their counts; columns When,
+  Type, Customer, Agent, What happened, Outcome, Talk time, Call. It opens on today, and an empty
+  day offers the last seven. The Soft-phone calls view is gone: `/manual-calls` redirects to
+  `/attempts?type=soft_phone`.
+- **The route.** `GET /proxy/agency/campaigns/:id/call-log` (`agency.supervise`), over the read
+  the export has drained since SR6, with `type` and the chips' counts. No migration. The export,
+  its columns and `source` are unchanged.
+- **Decisions.** CL1–CL12 recorded, all default, pending Manas; SR6 and IN14 amended in place.
+
+**Not verified:** not run in a real browser. The counts were not timed on a large campaign;
+their plan's shape was read on the test database (sequential scans off): for a date window the
+dialler's count is a range of `idx_agency_attempts_keyset` (the attempt list's existing
+`include_total` count) and the soft phone's a range of `idx_agency_manual_calls_campaign`.
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon

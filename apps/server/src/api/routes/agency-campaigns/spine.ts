@@ -16,7 +16,9 @@ import {
   clampLimit,
   parseAttemptFilters,
   parseContactFilters,
+  parseFlagParam,
   parseIncludeTotal,
+  type FilterIssue,
 } from '../../../agency/spine-filters.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyAttemptRow } from '@magick-agency/contracts/agency';
@@ -154,8 +156,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   // The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts and the
   // soft-phone calls tagged to it, newest first on one keyset, each row marked with its
   // `source`. The attempt list's filters and paging, plus `source=dialler|soft_phone` to keep
-  // one of the two. What the campaign call export drains; the Call log's JSON views stay one
-  // source each (Dialler calls, Soft-phone calls).
+  // one of the two. What the campaign call export drains, and what the console's Call log reads
+  // (CL11, `docs/call-log.md`): for it, `include_counts=1` adds `counts`, how many rows of each
+  // source the filters match across every page, `source` and cursor not applied (the chips).
   app.get<{ Params: { id: string } }>('/:id/call-log', async (request, reply) => {
     const owned = await spinePageCampaign(request, reply);
     if (!owned) return reply;
@@ -170,17 +173,29 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     if (rawSource !== undefined && !isCampaignCallSource(rawSource)) {
       return replyValidationFailed(reply, [{ param: 'source', message: `must be one of: ${CAMPAIGN_CALL_SOURCES.join(', ')}` }]);
     }
+    const countsFlag: FilterIssue[] = [];
+    const includeCounts = parseFlagParam('include_counts', query['include_counts'], countsFlag) === true;
+    if (countsFlag.length > 0) return replyValidationFailed(reply, countsFlag);
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
-    return reply.send(await agencyAttemptRepository.listCallLogForCampaign({
-      campaignId: owned.id,
-      tenantId: getTenantId(request),
-      filters: parsed.filters,
-      source: rawSource === undefined ? null : rawSource,
-      ...(cursor ? { after: cursor } : {}),
-      limit: clampLimit((query as { limit?: unknown }).limit),
-    }));
+    // The counts are of the whole filtered log (no cursor, no source), by the page's own WHERE
+    // terms; the two reads run side by side.
+    const tenantId = getTenantId(request);
+    const [page, counts] = await Promise.all([
+      agencyAttemptRepository.listCallLogForCampaign({
+        campaignId: owned.id,
+        tenantId,
+        filters: parsed.filters,
+        source: rawSource === undefined ? null : rawSource,
+        ...(cursor ? { after: cursor } : {}),
+        limit: clampLimit((query as { limit?: unknown }).limit),
+      }),
+      includeCounts
+        ? agencyAttemptRepository.countCallLogForCampaign({ campaignId: owned.id, tenantId, filters: parsed.filters })
+        : Promise.resolve(null),
+    ]);
+    return reply.send(counts === null ? page : { ...page, counts });
   });
 
   // ── The agency-native call read ──────────────────────────────

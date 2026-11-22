@@ -1,4 +1,4 @@
-/* Call log's two views: a segmented control, the console's usual shape for "one of two". */
+/* A campaign screen's views (Calls: Summary | Live): a segmented control, the console's usual shape for "one of two". */
 .views {
   display: inline-flex;
   max-width: 100%;
