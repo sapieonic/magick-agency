@@ -46,7 +46,6 @@ const mocks = vi.hoisted(() => ({
   getMyStats: vi.fn(),
   getMyCampaigns: vi.fn(),
   getAgentAttempts: vi.fn(),
-  getMyAttempts: vi.fn(),
   getAgencyRoster: vi.fn(),
   getAgencyGroupedStats: vi.fn(),
 }));
@@ -64,7 +63,6 @@ vi.mock('../../api/agencyStats', () => ({
   getMyStats: mocks.getMyStats,
   getMyCampaigns: mocks.getMyCampaigns,
   getAgentAttempts: mocks.getAgentAttempts,
-  getMyAttempts: mocks.getMyAttempts,
   getAgencyRoster: mocks.getAgencyRoster,
   /*
     The contribution view's read. Listed even though most cases never enter that
@@ -697,7 +695,6 @@ describe('AgentAnalyticsSection — drilling into one person', () => {
     // Never the caller-scoped forms, which would show the supervisor their own
     // shift under somebody else's name.
     expect(mocks.getMyStats).not.toHaveBeenCalled();
-    expect(mocks.getMyAttempts).not.toHaveBeenCalled();
   });
 
   it('replaces the roster rather than stacking under it, and offers a way back', async () => {
@@ -1587,7 +1584,6 @@ describe('AgentAnalyticsSection — the way into the campaign’s contribution',
     await waitFor(() => expect(mocks.getAgentAttempts).toHaveBeenCalled());
     expect(mocks.getAgentAttempts.mock.calls[0]?.[0]).toBe('user-1');
     expect(mocks.getMyStats).not.toHaveBeenCalled();
-    expect(mocks.getMyAttempts).not.toHaveBeenCalled();
 
     // The name from the grouped row, in the heading and in the call table's caption.
     expect(await screen.findByRole('heading', { name: 'Ravi Kumar' })).toBeTruthy();

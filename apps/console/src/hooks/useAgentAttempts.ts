@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMountedRef } from './useMountedRef';
 import { useTenant } from '../contexts/TenantContext';
-import { getAgentAttempts, getMyAttempts } from '../api/agencyStats';
+import { getAgentAttempts } from '../api/agencyStats';
 import { decideListResponse } from '../utils/agencyStaleResponse';
 import { attemptFilterGroupCount } from '../utils/agencyAttemptFilters';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -13,22 +13,20 @@ import {
 import type { AgencyAttempt, AgencyAttemptFilters } from '../types/agency-spine';
 
 /**
- * One person's dial history, across every campaign they worked — the read behind
- * "My calls" and behind its supervisor twin.
+ * One person's dial history, across every campaign they worked: the read behind the
+ * supervisor's per-agent calls panel (`AgentAttemptsPanel`).
  *
- * ── Whose calls, decided by a discriminated subject ────────────────────────
- * The same union {@link useAgentPerformance} uses, for the same reason and against
- * the same pair of routes. `{ kind: 'me' }` reads `GET /agency/my-attempts`,
- * floored at `agency.station.connect` so a bare `agent` (hierarchy level 5) can
- * call it and scoped to the caller **server-side**. `{ kind: 'agent', userId }`
- * reads the supervisor twin, floored at `agency.supervise`.
+ * ── Whose calls ─────────────────────────────────────────────────────────────
+ * `{ kind: 'agent', userId }` reads `GET /agency/agents/:userId/attempts`, floored at
+ * `agency.supervise`. Callers **must** gate on `hasPermission(role, 'agency.supervise')`,
+ * the API's exact floor: looser renders a list whose first read 403s; tighter hides it from
+ * an `account_admin` who holds it.
  *
- * A union rather than an optional `userId`: an optional subject is a subject a
- * caller can supply by accident, and the whole point of the paired routes is that
- * an agent cannot form a request for somebody else's shift. Callers of the
- * `agent` form **must** gate on `hasPermission(role, 'agency.supervise')` —
- * the API's exact floor. Looser renders a list whose first read 403s; tighter
- * hides it from an `account_admin` who holds it.
+ * There was a `{ kind: 'me' }` form on `GET /agency/my-attempts` for the agent's own My calls.
+ * My calls reads `GET /my-calls` now (`MyCallsList`, `docs/call-log.md` §7), which masks the
+ * number as each campaign's setting says; `/my-attempts` sends it in full, so nothing in the
+ * console reads it. The subject keeps its `kind` so the paired performance hook
+ * (`useAgentPerformance`) and this one still take the same shape.
  *
  * ── The filters live HERE, and that is the cursor-reset fix ────────────────
  * The tempting shape is filters in the component and a `load(filters)` call in
@@ -62,7 +60,7 @@ import type { AgencyAttempt, AgencyAttemptFilters } from '../types/agency-spine'
  * `React.StrictMode`'s setup → cleanup → setup.
  */
 
-export type AgentAttemptsSubject = { kind: 'me' } | { kind: 'agent'; userId: string };
+export type AgentAttemptsSubject = { kind: 'agent'; userId: string };
 
 /** Everything the filter card can narrow by. `campaign_id` is not on the base type. */
 export type AgentAttemptsFilters = AgencyAttemptFilters & { campaign_id?: string };
@@ -131,28 +129,16 @@ export function useAgentAttempts(subject: AgentAttemptsSubject): UseAgentAttempt
   const pagesLoaded = useRef(0);
 
   /**
-   * The subject as two primitives, so `load`'s identity does not change on every
-   * render just because the caller passed a fresh object literal — which is what
-   * every caller naturally does, and which would otherwise refetch the first page
-   * on each keystroke elsewhere on the page. Two values rather than one encoded
-   * `` `agent:${id}` `` key: that has to be taken apart again at the call, and an
-   * id containing the separator would silently address the wrong person.
+   * The subject as a primitive, so `load`'s identity does not change on every render just
+   * because the caller passed a fresh object literal, which is what every caller naturally
+   * does and which would otherwise refetch the first page on each keystroke elsewhere.
    */
-  const subjectKind = subject.kind;
-  const subjectUserId = subject.kind === 'agent' ? subject.userId : null;
+  const subjectUserId = subject.userId;
 
   const read = useCallback(
     (active: AgentAttemptsFilters, cursor: string | undefined, ids: { tenantId: string; accountId: string }) =>
-      subjectKind === 'me' || subjectUserId === null
-        ? getMyAttempts(active, { cursor, limit: ATTEMPTS_PAGE_SIZE }, ids.tenantId, ids.accountId)
-        : getAgentAttempts(
-            subjectUserId,
-            active,
-            { cursor, limit: ATTEMPTS_PAGE_SIZE },
-            ids.tenantId,
-            ids.accountId,
-          ),
-    [subjectKind, subjectUserId],
+      getAgentAttempts(subjectUserId, active, { cursor, limit: ATTEMPTS_PAGE_SIZE }, ids.tenantId, ids.accountId),
+    [subjectUserId],
   );
 
   const load = useCallback(() => {
@@ -253,11 +239,11 @@ export function useAgentAttempts(subject: AgentAttemptsSubject): UseAgentAttempt
         // screen are still good, and `pages_loaded` is read BEFORE this attempt
         // would have incremented it — the count the reader was looking at when
         // "load more" failed.
-        trackAgentAttemptsLoadMoreFailed({ subject: subjectKind, pages_loaded: pagesLoaded.current });
+        trackAgentAttemptsLoadMoreFailed({ subject: 'agent', pages_loaded: pagesLoaded.current });
         setMoreError(getErrorMessage(err, 'We couldn’t load any more calls.'));
         setLoadingMore(false);
       });
-  }, [page, loadingMore, tenantId, accountId, filters, read, subjectKind]);
+  }, [page, loadingMore, tenantId, accountId, filters, read]);
 
   /**
    * Applying filters is the ONLY way to change them, and it goes through
@@ -277,7 +263,7 @@ export function useAgentAttempts(subject: AgentAttemptsSubject): UseAgentAttempt
         upstream that still knows which control the operator used.
       */
       trackAgentAttemptsFiltered({
-        subject: subjectKind,
+        subject: 'agent',
         filter_group_count: attemptFilterGroupCount(next),
         has_date_range: Boolean(next.from || next.to),
         disposition_chip_count: next.disposition_code?.length ?? 0,
@@ -286,7 +272,7 @@ export function useAgentAttempts(subject: AgentAttemptsSubject): UseAgentAttempt
       });
       setFilters(next);
     },
-    [subjectKind],
+    [],
   );
 
   return useMemo(

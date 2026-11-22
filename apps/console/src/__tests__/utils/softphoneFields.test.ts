@@ -17,9 +17,7 @@ import {
 import { draftFromSettings, payloadFromDraft, validateSettingsDraft } from '../../utils/softphone/settingsForm';
 import { overrideNoteBlock, overrideNoteLength, withOverride } from '../../utils/softphone/overrides';
 import { refusalCopy, SOFTPHONE_REFUSAL_COPY, SOFTPHONE_UNKNOWN_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
-import { summariseCalls, queryFromDraft, EMPTY_SOFTPHONE_CALLS_DRAFT } from '../../utils/softphone/callStats';
 import { AGENCY_SOFTPHONE_ERROR_CODES, type AgencyCallField } from '../../types/softphone';
-import { manualCall } from '../helpers/softphone';
 
 const FIELDS: AgencyCallField[] = [
   { key: 'customer_name', label: 'Customer name', type: 'text', required: true },
@@ -192,31 +190,5 @@ describe('refusal copy', () => {
     for (const code of AGENCY_SOFTPHONE_ERROR_CODES) {
       expect(SOFTPHONE_REFUSAL_COPY[code], code).toMatch(/\S/);
     }
-  });
-});
-
-describe('the list’s stats strip and query', () => {
-  it('counts the rows on screen', () => {
-    const stats = summariseCalls([
-      manualCall({ id: 'a', state: 'ended', outcome: 'connected', bridged_at: 'x', talk_seconds: 120, settled_at: 'y' }),
-      manualCall({ id: 'b', state: 'ended', outcome: 'connected', bridged_at: 'x', talk_seconds: 60, requires_disposition: true, tag: { campaign_id: 'c', campaign_name: 'C' } }),
-      manualCall({ id: 'c', state: 'ended', outcome: 'no_answer', settled_at: 'y' }),
-    ]);
-    expect(stats).toEqual({ calls: 3, connected: 2, avgTalkSeconds: 90, notLogged: 2, awaitingOutcome: 1 });
-  });
-
-  it('turns the draft into the §6 query, the “to” day inclusive', () => {
-    const query = queryFromDraft(
-      { ...EMPTY_SOFTPHONE_CALLS_DRAFT, from: '2026-10-30', to: '2026-10-30', campaignId: 'untagged', outcome: 'busy', phone: '+91 98204' },
-      { agentUserId: 'u-1' },
-    );
-    expect(query).toEqual({
-      from: new Date('2026-10-30T00:00:00').toISOString(),
-      to: new Date('2026-10-31T00:00:00').toISOString(),
-      agent_user_id: 'u-1',
-      campaign_id: 'untagged',
-      outcome: 'busy',
-      phone: '9198204',
-    });
   });
 });

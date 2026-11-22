@@ -37,7 +37,6 @@ import { MemoryRouter } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({
   getMyStats: vi.fn(),
   getAgentStats: vi.fn(),
-  getMyAttempts: vi.fn(),
   getAgentAttempts: vi.fn(),
   getMyCampaigns: vi.fn(),
   listAgencyCampaigns: vi.fn(),
@@ -57,7 +56,6 @@ vi.mock('../../contexts/TenantContext', () => ({
 vi.mock('../../api/agencyStats', () => ({
   getMyStats: mocks.getMyStats,
   getAgentStats: mocks.getAgentStats,
-  getMyAttempts: mocks.getMyAttempts,
   getAgentAttempts: mocks.getAgentAttempts,
   getMyCampaigns: mocks.getMyCampaigns,
 }));
@@ -122,7 +120,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getMyStats.mockResolvedValue(stats());
   mocks.getAgentStats.mockResolvedValue(stats());
-  mocks.getMyAttempts.mockResolvedValue({ rows: [attempt('a-1')], next_cursor: null });
   mocks.getAgentAttempts.mockResolvedValue({ rows: [attempt('a-1')], next_cursor: null });
   mocks.getMyCampaigns.mockResolvedValue([]);
   mocks.listAgencyCampaigns.mockResolvedValue([
@@ -248,14 +245,14 @@ describe('useAgentPerformance under StrictMode', () => {
 
 describe('useAgentAttempts under StrictMode', () => {
   it('reaches its first page when React double-invokes its effects', async () => {
-    const { result } = renderHook(() => useAgentAttempts({ kind: 'me' }), { wrapper: strict });
+    const { result } = renderHook(() => useAgentAttempts({ kind: 'agent', userId: 'u-9' }), { wrapper: strict });
 
     await waitFor(() => expect(result.current.page.status).toBe('ready'));
     expect(result.current.page.status === 'ready' && result.current.page.rows).toHaveLength(1);
   });
 
   it('reaches its first page without StrictMode too', async () => {
-    const { result } = renderHook(() => useAgentAttempts({ kind: 'me' }), { wrapper: plain });
+    const { result } = renderHook(() => useAgentAttempts({ kind: 'agent', userId: 'u-9' }), { wrapper: plain });
     await waitFor(() => expect(result.current.page.status).toBe('ready'));
   });
 
@@ -270,11 +267,11 @@ describe('useAgentAttempts under StrictMode', () => {
       the first page is READ TWICE and a one-shot value would be spent on the
       response that `decideListResponse` then discards.
     */
-    mocks.getMyAttempts.mockResolvedValue({ rows: [attempt('a-1')], next_cursor: 'cur-1' });
-    const { result } = renderHook(() => useAgentAttempts({ kind: 'me' }), { wrapper: strict });
+    mocks.getAgentAttempts.mockResolvedValue({ rows: [attempt('a-1')], next_cursor: 'cur-1' });
+    const { result } = renderHook(() => useAgentAttempts({ kind: 'agent', userId: 'u-9' }), { wrapper: strict });
     await waitFor(() => expect(result.current.page.status).toBe('ready'));
 
-    mocks.getMyAttempts.mockResolvedValue({ rows: [attempt('a-2')], next_cursor: null });
+    mocks.getAgentAttempts.mockResolvedValue({ rows: [attempt('a-2')], next_cursor: null });
     result.current.loadMore();
 
     await waitFor(() =>

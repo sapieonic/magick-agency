@@ -38,8 +38,9 @@ import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
-  getMyAttempts: vi.fn(),
-  getAgentAttempts: vi.fn(),
+  /** The read, without the user id it was asked for (kept in `subject`). */
+  attempts: vi.fn(),
+  subject: vi.fn(),
   getMyCampaigns: vi.fn(),
   getMyStats: vi.fn(),
   getAgentStats: vi.fn(),
@@ -47,8 +48,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agencyStats', () => ({
-  getMyAttempts: mocks.getMyAttempts,
-  getAgentAttempts: mocks.getAgentAttempts,
+  getAgentAttempts: (userId: string, ...rest: unknown[]) => {
+    mocks.subject(userId);
+    return mocks.attempts(...rest);
+  },
   getMyCampaigns: mocks.getMyCampaigns,
   getMyStats: mocks.getMyStats,
   getAgentStats: mocks.getAgentStats,
@@ -123,9 +126,9 @@ function renderPage(path = '/dialer/attempts') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <AgentAttemptsPanel
-        subject={{ kind: 'me' }}
+        subject={{ kind: 'agent', userId: 'u-9' }}
         campaignNames={new Map([['camp-1', 'Renewals'], ['camp-2', 'Collections']])}
-        caption="Calls you have taken, newest first"
+        caption="Calls this person has taken, newest first"
       />
     </MemoryRouter>,
   );
@@ -134,7 +137,7 @@ function renderPage(path = '/dialer/attempts') {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.useTenant.mockReturnValue(tenant());
-  mocks.getMyAttempts.mockResolvedValue(page([CONNECTED, NEVER_BRIDGED]));
+  mocks.attempts.mockResolvedValue(page([CONNECTED, NEVER_BRIDGED]));
   mocks.getMyCampaigns.mockResolvedValue([
     staffing(),
     staffing({ campaign_id: 'camp-2', campaign_name: 'Collections', active: false }),
@@ -156,40 +159,31 @@ describe('AgentAttemptsPanel — the account-resolution trap', () => {
     // and the API requires it — an omitted one does not degrade, it produces a 400
     // about a header this client never sent.
     renderPage();
-    await waitFor(() => expect(mocks.getMyAttempts).toHaveBeenCalled());
-    const call = mocks.getMyAttempts.mock.calls[0]!;
+    await waitFor(() => expect(mocks.attempts).toHaveBeenCalled());
+    const call = mocks.attempts.mock.calls[0]!;
     expect(call[2]).toBe('tenant-1');
     expect(call[3]).toBe('account-1');
   });
 });
 
 describe('AgentAttemptsPanel — the rows a call list cannot show', () => {
-  it('reads the caller-scoped route, never the supervisor twin', async () => {
-    /**
-     * `my-attempts` takes no subject: The API scopes it to the caller. A page that
-     * reached for the twin here would be naming the subject of its own history,
-     * which is exactly what the paired routes exist to make impossible — and it
-     * would 403 for the only role this page is for.
-     */
+  it('reads the named person’s dials, and nothing of the reader’s own', async () => {
+    // The agent's own form (`getMyAttempts`, the unmasked `/my-attempts`) is gone from the console:
+    // My calls reads `/my-calls`. The module mock above has no such export, so a read of it would throw.
     renderPage();
-    await waitFor(() => expect(mocks.getMyAttempts).toHaveBeenCalled());
-    expect(mocks.getAgentAttempts).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.attempts).toHaveBeenCalled());
+    expect(mocks.subject).toHaveBeenCalledWith('u-9');
+    const api = readFileSync(resolve(process.cwd(), 'src/api/agencyStats.ts'), 'utf8');
+    expect(api).not.toMatch(/export (async )?function getMyAttempts/);
   });
 
-  it('masks each row as the server says its list does (AS9), however the page was opened, and formats the rest', async () => {
-    // FALSIFIED: with the row's `phone_display` ignored, camp-1's number shows in full and this reds.
-    mocks.getMyAttempts.mockResolvedValue(page([{ ...CONNECTED, phone_display: 'masked' }, { ...NEVER_BRIDGED, phone_display: 'full' }]));
+  it('shows a supervisor the number as stored, whatever the campaign shows its agents', async () => {
+    // `phone_display` is the agents' rule (AS9); this panel is a supervisor's.
+    mocks.attempts.mockResolvedValue(page([{ ...CONNECTED, phone_display: 'masked' }, { ...NEVER_BRIDGED, phone_display: 'full' }]));
     renderPage();
     await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
-    expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('98••• ••001');
-    // camp-2 does not mask: its number in full, in the station's one format.
-    expect(screen.getByTestId(`my-attempt-phone-${NEVER_BRIDGED.id}`).textContent).toBe('+91 98765 00002');
-    cleanup();
-    // An older server sends no `phone_display`: in full.
-    mocks.getMyAttempts.mockResolvedValue(page([CONNECTED, NEVER_BRIDGED]));
-    renderPage('/dialer/attempts?masked=camp-1');
-    await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
-    expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe('+91 98765 00001');
+    expect(screen.getByTestId(`my-attempt-phone-${CONNECTED.id}`).textContent).toBe(CONNECTED.phone_e164);
+    expect(screen.getByTestId(`my-attempt-phone-${NEVER_BRIDGED.id}`).textContent).toBe(NEVER_BRIDGED.phone_e164);
   });
 
   it('shows a call that never bridged beside one that connected', async () => {
@@ -227,7 +221,7 @@ describe('AgentAttemptsPanel — the rows a call list cannot show', () => {
     // span campaigns, so no catalog names it: the code, as a write-up would be.
     const auto: AgencyAttempt = { ...NEVER_BRIDGED, auto_disposition_code: 'retry_later' };
     const both: AgencyAttempt = { ...CONNECTED, auto_disposition_code: 'retry_later' };
-    mocks.getMyAttempts.mockResolvedValue(page([both, auto]));
+    mocks.attempts.mockResolvedValue(page([both, auto]));
     renderPage();
     const row = await screen.findByTestId(`my-attempt-row-${auto.id}`);
     expect(within(row).queryByText('Not written up')).toBeNull();
@@ -289,7 +283,7 @@ describe('AgentAttemptsPanel — the campaign column', () => {
      * `Campaign 4f21ab90` is neither: it says "a campaign, and here is enough of
      * its id to chase it".
      */
-    mocks.getMyAttempts.mockResolvedValue(page([UNRESOLVABLE_CAMPAIGN]));
+    mocks.attempts.mockResolvedValue(page([UNRESOLVABLE_CAMPAIGN]));
     renderPage();
 
     const cell = await screen.findByTestId(`my-attempt-campaign-${UNRESOLVABLE_CAMPAIGN.id}`);
@@ -304,7 +298,7 @@ describe('AgentAttemptsPanel — the campaign column', () => {
 
 describe('AgentAttemptsPanel — the three absences', () => {
   it('shows a spinner while the first page is in flight', () => {
-    mocks.getMyAttempts.mockReturnValue(new Promise(() => {}));
+    mocks.attempts.mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(screen.getByRole('status')).toBeTruthy();
   });
@@ -312,7 +306,7 @@ describe('AgentAttemptsPanel — the three absences', () => {
   it('surfaces a failed read with the server’s own sentence, and offers a retry', async () => {
     // These failures are mostly permission- or connectivity-shaped and our own
     // sentence would be a guess.
-    mocks.getMyAttempts.mockRejectedValue(new Error('Request Failed (req_7)'));
+    mocks.attempts.mockRejectedValue(new Error('Request Failed (req_7)'));
     renderPage();
 
     const alert = await screen.findByRole('alert');
@@ -326,10 +320,10 @@ describe('AgentAttemptsPanel — the three absences', () => {
      * error, and must not be told in the voice of one — the same rule the
      * performance panel applies to its own empty range.
      */
-    mocks.getMyAttempts.mockResolvedValue(page([]));
+    mocks.attempts.mockResolvedValue(page([]));
     renderPage();
 
-    expect(await screen.findByText('You haven’t taken any calls yet')).toBeTruthy();
+    expect(await screen.findByText('No calls on record for this person')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -340,15 +334,15 @@ describe('AgentAttemptsPanel — the three absences', () => {
      * `filtered` check. Telling an agent who filtered to one bad afternoon that
      * they have never taken a call is the worst sentence this screen could produce.
      */
-    mocks.getMyAttempts.mockResolvedValue(page([]));
+    mocks.attempts.mockResolvedValue(page([]));
     renderPage();
-    await screen.findByText('You haven’t taken any calls yet');
+    await screen.findByText('No calls on record for this person');
 
     fireEvent.click(screen.getByLabelText('Abandoned (no agent free)'));
     fireEvent.click(screen.getByText('Apply'));
 
     expect(await screen.findByText('No calls match those filters')).toBeTruthy();
-    expect(screen.queryByText('You haven’t taken any calls yet')).toBeNull();
+    expect(screen.queryByText('No calls on record for this person')).toBeNull();
   });
 
   it('keeps the rows on screen when LOAD MORE is what failed', async () => {
@@ -357,7 +351,7 @@ describe('AgentAttemptsPanel — the three absences', () => {
      * MORE of them failed throws away exactly what the reader came for, so the
      * failure sits beside the button.
      */
-    mocks.getMyAttempts
+    mocks.attempts
       .mockResolvedValueOnce(page([CONNECTED], 'cursor-2'))
       .mockRejectedValueOnce(new Error('Upstream unavailable'));
     renderPage();
@@ -373,7 +367,7 @@ describe('AgentAttemptsPanel — the three absences', () => {
 
 describe('AgentAttemptsPanel — keyset paging', () => {
   it('follows the cursor and APPENDS, never replacing', async () => {
-    mocks.getMyAttempts
+    mocks.attempts
       .mockResolvedValueOnce(page([CONNECTED], 'cursor-2'))
       .mockResolvedValueOnce(page([NEVER_BRIDGED]));
     renderPage();
@@ -384,7 +378,7 @@ describe('AgentAttemptsPanel — keyset paging', () => {
     await screen.findByTestId(`my-attempt-row-${NEVER_BRIDGED.id}`);
     // Both on screen: a keyset page is a continuation, not a replacement.
     expect(screen.getByTestId(`my-attempt-row-${CONNECTED.id}`)).toBeTruthy();
-    expect(mocks.getMyAttempts.mock.calls[1]?.[1]).toEqual({ cursor: 'cursor-2', limit: 50 });
+    expect(mocks.attempts.mock.calls[1]?.[1]).toEqual({ cursor: 'cursor-2', limit: 50 });
   });
 
   it('offers no "load more" once the cursor runs out', async () => {
@@ -405,7 +399,7 @@ describe('AgentAttemptsPanel — keyset paging', () => {
      * `useAgentAttempts` and the panel never sees it, so there is no code path in
      * which a caller can change a filter and keep a cursor.
      */
-    mocks.getMyAttempts
+    mocks.attempts
       .mockResolvedValueOnce(page([CONNECTED], 'cursor-2'))
       .mockResolvedValueOnce(page([NEVER_BRIDGED], 'cursor-3'))
       .mockResolvedValueOnce(page([UNRESOLVABLE_CAMPAIGN]));
@@ -419,7 +413,7 @@ describe('AgentAttemptsPanel — keyset paging', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await screen.findByTestId(`my-attempt-row-${UNRESOLVABLE_CAMPAIGN.id}`);
-    const filteredCall = mocks.getMyAttempts.mock.calls[2]!;
+    const filteredCall = mocks.attempts.mock.calls[2]!;
     expect(filteredCall[0]).toEqual({ outcome: ['abandoned'] });
     expect(filteredCall[1].cursor).toBeUndefined();
     // And the previous query's rows are GONE rather than sitting under the new
@@ -437,7 +431,7 @@ describe('AgentAttemptsPanel — keyset paging', () => {
      * the page actually obeys it.
      */
     const resolvers: ((value: AgencyKeysetPage<AgencyAttempt>) => void)[] = [];
-    mocks.getMyAttempts.mockImplementation(
+    mocks.attempts.mockImplementation(
       () => new Promise<AgencyKeysetPage<AgencyAttempt>>((res) => resolvers.push(res)),
     );
 
@@ -467,7 +461,7 @@ describe('AgentAttemptsPanel — the filters', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts).toHaveBeenLastCalledWith(
+      expect(mocks.attempts).toHaveBeenLastCalledWith(
         { outcome: ['abandoned'] }, { cursor: undefined, limit: 50 }, 'tenant-1', 'account-1',
       ),
     );
@@ -482,7 +476,7 @@ describe('AgentAttemptsPanel — the filters', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toEqual({
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).toEqual({
         state: ['ended'],
         campaign_id: 'camp-2',
       }),
@@ -521,7 +515,7 @@ describe('AgentAttemptsPanel — the filters', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toMatchObject({
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).toMatchObject({
         state: ['ended'],
         campaign_id: 'camp-2',
         phone: '500001',
@@ -563,7 +557,7 @@ describe('AgentAttemptsPanel — the filters', () => {
     // is a filter the reader can see and the list no longer has.
     fireEvent.click(screen.getByText('Clear'));
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).not.toHaveProperty('phone'),
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).not.toHaveProperty('phone'),
     );
     expect((screen.getByTestId('phone-filter') as HTMLInputElement).value).toBe('');
   });
@@ -583,8 +577,8 @@ describe('AgentAttemptsPanel — the filters', () => {
     fireEvent.change(screen.getByLabelText('Last day'), { target: { value: '2026-08-03' } });
     fireEvent.click(screen.getByText('Apply'));
 
-    await waitFor(() => expect(mocks.getMyAttempts.mock.calls.length).toBeGreaterThan(1));
-    const sent = mocks.getMyAttempts.mock.calls.at(-1)![0] as { from: string; to: string };
+    await waitFor(() => expect(mocks.attempts.mock.calls.length).toBeGreaterThan(1));
+    const sent = mocks.attempts.mock.calls.at(-1)![0] as { from: string; to: string };
     expect(new Date(sent.to).getTime()).toBeGreaterThan(new Date(sent.from).getTime());
     expect(new Date(sent.to).getDate()).toBe(3);
   });
@@ -617,10 +611,10 @@ describe('AgentAttemptsPanel — the filters', () => {
 
     fireEvent.click(screen.getByLabelText('Abandoned (no agent free)'));
     fireEvent.click(screen.getByText('Apply'));
-    await waitFor(() => expect(mocks.getMyAttempts.mock.calls.length).toBe(2));
+    await waitFor(() => expect(mocks.attempts.mock.calls.length).toBe(2));
 
     fireEvent.click(screen.getByText('Clear'));
-    await waitFor(() => expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toEqual({}));
+    await waitFor(() => expect(mocks.attempts.mock.calls.at(-1)?.[0]).toEqual({}));
   });
 });
 
@@ -674,7 +668,7 @@ describe('AgentAttemptsPanel — the disposition-code filter', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toEqual({
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).toEqual({
         disposition_code: ['renamed_last_quarter'],
       }),
     );
@@ -700,7 +694,7 @@ describe('AgentAttemptsPanel — the disposition-code filter', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toEqual({
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).toEqual({
         disposition_code: ['wrong number, do not call'],
       }),
     );
@@ -716,7 +710,7 @@ describe('AgentAttemptsPanel — the disposition-code filter', () => {
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() => {
-      const codes = (mocks.getMyAttempts.mock.calls.at(-1)?.[0] as { disposition_code: string[] })
+      const codes = (mocks.attempts.mock.calls.at(-1)?.[0] as { disposition_code: string[] })
         .disposition_code;
       expect([...codes].sort()).toEqual(['not_interested', 'sold']);
     });
@@ -787,7 +781,7 @@ describe('AgentAttemptsPanel — the filter card’s controls have accessible na
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(mocks.getMyAttempts.mock.calls.at(-1)?.[0]).toMatchObject({ campaign_id: 'camp-2' }),
+      expect(mocks.attempts.mock.calls.at(-1)?.[0]).toMatchObject({ campaign_id: 'camp-2' }),
     );
   });
 

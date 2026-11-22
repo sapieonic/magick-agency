@@ -172,7 +172,6 @@ export const ENDPOINTS = {
        * Filtering to one person is the per-agent record's job.
        */
       agentsGroupedStats: `${API_BASE}/proxy/agency/agents/grouped-stats`,
-      myAttempts: `${API_BASE}/proxy/agency/my-attempts`,
       agentAttempts: (userId: string) =>
         `${API_BASE}/proxy/agency/agents/${encodeURIComponent(userId)}/attempts`,
       /** The agent's full staffing history, ENDED assignments included. */

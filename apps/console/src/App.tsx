@@ -390,10 +390,11 @@ export default function App() {
                   This is the CROSS-campaign list, which is what makes it a separate
                   surface rather than a link into `/agency/campaigns/:id/attempts`:
                   that one is scoped by its URL and floored at `agency.supervise`, so
-                  an agent cannot read even their own rows through it. The server serves
-                  the pair — `my-attempts` for the caller, `agents/:userId/attempts`
-                  for their supervisor — and the supervisor half is read by the
-                  per-agent section on `AgencyAnalyticsPage`, through the same panel.
+                  an agent cannot read even their own rows through it. The page reads
+                  `GET /my-calls` (`MyCallsList`, `docs/call-log.md` §7): the caller's
+                  own calls of every type, the number masked by the server as each
+                  campaign says. A supervisor reads one agent's dials in the per-agent
+                  section on `AgencyAnalyticsPage` (`agents/:userId/attempts`).
 
                   A supervisor who opens this is SERVED rather than bounced, and
                   nothing routes them here. See `AgentAttemptsPage`.

@@ -27,7 +27,6 @@ import {
   getAgencyRoster,
   getAgentAttempts,
   getAgentStats,
-  getMyAttempts,
   getMyCampaigns,
   getMyStats,
 } from '../../api/agencyStats';
@@ -103,7 +102,7 @@ describe('getAgentStats', () => {
   });
 });
 
-describe('getMyAttempts and getAgentAttempts', () => {
+describe('getAgentAttempts', () => {
   it('sends multi-value filters as REPEATED params', async () => {
     /**
      * Matching `agencySpine.ts`, because one convention across the two spines is
@@ -114,24 +113,24 @@ describe('getMyAttempts and getAgentAttempts', () => {
      * disposition code containing a comma is unfilterable however this client
      * spells it. See `attemptQuery`'s docstring.
      */
-    await getMyAttempts({ outcome: ['connected', 'no_answer'] }, {}, TENANT, ACCOUNT);
+    await getAgentAttempts('user-9', { outcome: ['connected', 'no_answer'] }, {}, TENANT, ACCOUNT);
     expect(url()).toContain('outcome=connected&outcome=no_answer');
   });
 
   it('drops a blank filter value', async () => {
-    await getMyAttempts({ phone: '' }, {}, TENANT, ACCOUNT);
+    await getAgentAttempts('user-9', { phone: '' }, {}, TENANT, ACCOUNT);
     expect(url()).not.toContain('phone=');
   });
 
   it('passes the cursor and limit through', async () => {
-    await getMyAttempts({}, { cursor: 'opaque', limit: 50 }, TENANT, ACCOUNT);
+    await getAgentAttempts('user-9', {}, { cursor: 'opaque', limit: 50 }, TENANT, ACCOUNT);
     expect(url()).toContain('cursor=opaque');
     expect(url()).toContain('limit=50');
   });
 
   it('takes no filters at all', async () => {
-    await getMyAttempts(undefined, undefined, TENANT, ACCOUNT);
-    expect(url()).toMatch(/\/proxy\/agency\/my-attempts$/);
+    await getAgentAttempts('user-9', undefined, undefined, TENANT, ACCOUNT);
+    expect(url()).toMatch(/\/proxy\/agency\/agents\/user-9\/attempts$/);
   });
 
   it('routes the supervisor form through the twin', async () => {
@@ -388,9 +387,10 @@ describe('the routes come from the ENDPOINTS catalog', () => {
     expect(url().startsWith(`${ENDPOINTS.proxy.agency.agentStats('user-9')}?`)).toBe(true);
   });
 
-  it('reads my-attempts from the catalog', async () => {
-    await getMyAttempts({}, {}, TENANT, ACCOUNT);
-    expect(url()).toBe(ENDPOINTS.proxy.agency.myAttempts);
+  it('has no entry for the agent’s own unmasked dial history', () => {
+    // My calls reads `GET /my-calls` (`api/myCalls.ts`), masked by the server; `/my-attempts` sends numbers in full.
+    expect(ENDPOINTS.proxy.agency).not.toHaveProperty('myAttempts');
+    expect(JSON.stringify(ENDPOINTS.proxy.agency)).not.toContain('my-attempts');
   });
 
   it('reads the supervisor attempts twin from the catalog', async () => {

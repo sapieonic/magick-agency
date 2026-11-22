@@ -430,13 +430,6 @@
     },
     {
       "method": "GET",
-      "path": "/proxy/agency/my-attempts",
-      "source": "apps/console/src/api/agencyStats.ts",
-      "status": "served",
-      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.myAttempts)"
-    },
-    {
-      "method": "GET",
       "path": "/proxy/agency/agents/:userId/attempts",
       "source": "apps/console/src/api/agencyStats.ts",
       "status": "served",
