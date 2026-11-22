@@ -727,10 +727,23 @@ served on the wire.
 
 **When a column shows (CL29).** The soft phone's while `agency_softphone_enabled` is on or the
 range holds a soft-phone call (SR5); inbound's while `agency_inbound_enabled` is on or the range
-holds an inbound call. With only the dialler to show there is no table, and the page and the
-report are exactly what they were. The report has no flag to read, so there each column shows
-when the window holds such a call (SR8). The dialler's rate is named "Dialler connect rate"
+holds an inbound call, **or while the campaign has missed calls still to follow up** (a quiet
+week must not hide callers owed a call back; CL27). With only the dialler to show there is no
+table, and the console's pages are what they were. The report has no flag to read, so there
+each column shows when the window holds such a call (SR8), and inbound's also while calls are
+still to follow up. A dialler-only report prints the figures it always did; its Definitions
+page gains three entries (`outbound_connect_rate`, `inbound_calls`, `calls_by_type`), which the
+server writes for every campaign report. The dialler's rate is named "Dialler connect rate"
 whenever another type shows beside it.
+
+**The bar above the table.** On the console, the proposal's stacked bar: a segment per type
+that has calls, in the Call log's own type colours, and the counts beside the types' names
+(the figures are text; the colours carry nothing on their own). **The report's PDF has the
+table without the bar** (a deviation from the mockup: the page is full, and the table says the
+same).
+
+**An older server.** A type's talk time that was not served is a dash, and All calls adds the
+talk time of the types that are known, never a made-up 0.
 
 ### The inbound figures (`calls.inbound`, `/stats` `inbound`)
 
@@ -754,6 +767,10 @@ whenever another type shows beside it.
   `agency_call_attempts` and holds the dialler's figures alone, so the inbound counts are read
   from `agency_inbound_calls` when asked, as the soft phone's are from `agency_manual_calls`.
   The window's counts are a range of `idx_agency_inbound_calls_campaign` (0068).
+  `open_follow_ups`, asked on every read whatever the range, is read from the account's open
+  Missed rows (`idx_agency_inbound_calls_missed`, by naming the campaign's own account), not
+  from every call the campaign ever had; a call is always filed under a campaign of its own
+  account, so this removes no row.
 - `/stats` serves them over the campaign's life, whatever inbound's flag says.
 
 The soft phone's counts gained `talk_seconds` (the placed calls' talk time) for the Talk time
@@ -764,11 +781,17 @@ row.
 One outcome list for the campaign, so one table: Outcome · Dialler · Soft phone · Inbound ·
 Total. Dialler is the campaign's conversations by outcome (the `outcomes` rows, unchanged);
 Soft phone the placed calls that were put through; Inbound the answered calls; each by the
-outcome saved, labelled from the campaign's current catalog. A table prints the types it shows,
-and Total adds the columns printed. `outcomes` stays the dialler's alone: every figure that
+outcome saved, labelled from the campaign's current catalog. `no_disposition` (the outcome
+window ran out) reads "No outcome chosen", its own row, apart from a call with no code at all.
+A table prints the types it shows, and Total adds the columns printed. `outcomes` stays the dialler's alone: every figure that
 links to the Call log's Dialler chip is.
 
 ### One row, one call, one type (CL30)
+
+**Open question for Manas.** The proposal says a dial stopped because the customer rang us
+"counts once, as Inbound". As built that holds for Connected, Reached a person, Talk time and
+the outcomes, and **not for the Calls row**, where the stopped dial is a Dialler call and the
+customer's call an Inbound one. The reason is in the third bullet; CL30 has the alternatives.
 
 - A **missed call and its call back** are two calls: an Inbound row and a Soft phone row. At
   most one person was reached between them. A call back that never dialled is not a call (SR2).
@@ -783,15 +806,25 @@ links to the Call log's Dialler chip is.
   window). Under plain dates that chip also lists attempts that were never dialled, which no
   figure counts.
 
+**Where a figure and the Call log's count differ, on purpose** (each has a row on both sides of
+it in the parity test's seed):
+
+| | The figure | The Call log |
+|---|---|---|
+| The window | half-open `[from, to)` | `from` and `to` inclusive: a call at exactly `to` is in the log's count alone |
+| Dialler · Calls | placed dials, by `dialed_at` | under plain dates, every attempt by `created_at`, never-dialled ones included; equal under the figure's link |
+| Dialler · Connected | outcome `connected`, wrap-up redials left out | `outcome=connected` lists a connected redial as its own row; equal with `redial=0` |
+| Soft phone, Inbound, To follow up | | the same rows, by the same SQL |
+
 ### Where it shows
 
 | Surface | What |
 |---|---|
 | Insights › Overview | A **Calls by type** panel under the headline figures; the connect-rate tile adds "soft phone …", "outbound …" and "inbound answered …" |
-| Insights › Calls | The table in place of the Soft-phone calls and All calls tiles, the Outbound connect rate under it, and **Outcomes by type** |
+| Insights › Calls | The bar and the table in place of the Soft-phone calls and All calls tiles, the Outbound connect rate under it, and **Outcomes by type** |
 | Analytics › a campaign's Performance card | "Outbound connect rate" (renamed), and an **Answer rate, open hours** readout from `/stats` |
-| Campaign report, PDF | A **Calls by type** section on page 1, and the Outcomes table with the types' columns |
-| Campaign report, workbook | The same figures as Summary rows (soft phone, Outbound connect rate, inbound, All calls), and the types' columns on the Outcomes sheet |
+| Campaign report, PDF | A **Calls by type** section on page 1, and the Outcomes table with the types' columns (headed with the conversations across the types, and whose the share is) |
+| Campaign report, workbook | The same figures as Summary rows: the soft phone's; **Outbound calls placed**, **Outbound calls connected** and **Outbound connect rate** (the dialler and the soft phone together: the numbers "All calls placed / connected / connect rate" were); inbound's; and **All call types: calls / connected / people reached / talk time** for the sums. No "All calls …" name is reused, so an old lookup finds nothing rather than a different number. The Outcomes sheet gains the types' columns, the dialler's headed "Dialler" and "Share of dialler" |
 
 **Dialler-only, unchanged:** the dialler's connect rate, abandonment and its 24-hour limit,
 pacing, stalls, best hours, retries, caller-ID health, carrier failures, list progress, Trends,
@@ -848,6 +881,9 @@ columns). Three definitions were added: `outbound_connect_rate`, `inbound_calls`
 - **Inbound-only measures** on a campaign (abandon rate, time to answer, calls that came
   through their own agent, voicemails) stay on the account's Inbound summary.
 - **The Insights CSV buttons** export the dialler's tables; the Calls by type table has no CSV.
+- **The dialler's own outcome tables** (Conversations by disposition, the report's dialler-only
+  Outcomes table) still print `no_disposition` as its code where the catalog has no label; only
+  the by-type tables read "No outcome chosen".
 
 ## 7. Decisions
 

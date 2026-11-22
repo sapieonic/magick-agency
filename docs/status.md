@@ -2653,14 +2653,24 @@ P4 of six is built; P5 and P6 are not.
 - **Calls by type.** The Overview and the Calls tab, and the campaign report's PDF and workbook,
   show Dialler · Soft phone · Inbound · All calls: counts, people reached and talk time add up.
   No rate is added: each type keeps its own (Dialler connect rate, Soft-phone connect rate,
-  Answer rate, open hours). A column shows while its flag is on or the window holds such a call;
-  with only the dialler, nothing changes.
+  Answer rate, open hours). A column shows while its flag is on or the window holds such a call
+  (inbound's also while calls are still to follow up); with only the dialler, the console's
+  pages are what they were and the report gains only three definitions.
 - **Outcomes by type**, on the Calls tab and the report.
 - **"All calls connect rate" is "Outbound connect rate"** everywhere it showed; the formula is
   the same and an inbound call is in no connect rate (CL7).
 - **The dialler's figures did not change:** its connect rate, abandonment, pacing, stalls,
   caller-ID health, carrier failures, best hours, retries, list progress and Trends.
 - **The report dataset** stays version 1; the renderer reads a dataset from an older server.
+
+- **Review fixes (same day, an independent review of the four commits):** the workbook's
+  Summary keeps the dialler-plus-soft-phone pair as "Outbound calls placed / connected" and names
+  the three-type sums "All call types: …", so no old row name changes meaning; the Inbound column
+  stays while callers are owed a call back; a talk time an older server did not serve is a dash;
+  `no_disposition` reads "No outcome chosen" in the by-type tables; the console draws the
+  proposal's bar above the table; the calls still to follow up are read from the account's open
+  Missed rows; the parity test's seed holds a wrap-up redial, a never-dialled attempt and calls
+  at the window's end. CL30's departure from the proposal's words is stated as an open question.
 
 **Not verified:** not run in a real browser. The PDF was rendered from the renderer's fixture
 and looked at (the report stays four pages). The inbound statement's plan was read on the test
