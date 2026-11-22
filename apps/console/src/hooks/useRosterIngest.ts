@@ -13,6 +13,7 @@ import {
 import {
   buildIngestRequest,
   initialMapping,
+  sameIngestMapping,
   type MappingState,
 } from '../utils/agencyColumnMapping';
 import { HIGH_REJECTION_RATIO, checkStillImportable, isTerminal } from '../utils/agencyIngestSummary';
@@ -149,8 +150,10 @@ export function useRosterIngest(
   const [checkJob, setCheckJob] = useState<AgencyIngestJob | null>(null);
   /**
    * The mapping the current check ran with. The server imports a check with the check's own
-   * mapping (IM2), so a check only stands for the mapping on screen while the two are the same
-   * object: any edit makes a new `mapping`, and the review (with its Import) no longer applies.
+   * mapping (IM2), so a check only stands for the mapping on screen while the two send the same
+   * ingest (`sameIngestMapping`): an edit to the phone, timezone, ignored columns, country code
+   * or duplicate key withdraws the review (with its Import). Picking the card's columns does not:
+   * the card is campaign config, written as the import starts (AS19, CS9).
    */
   const [checkedMapping, setCheckedMapping] = useState<MappingState | null>(null);
   const [importing, setImporting] = useState(false);
@@ -163,7 +166,7 @@ export function useRosterIngest(
    * is to import the check again (IM2).
    */
   const retryable = job !== null && !job.dry_run && (job.status === 'failed' || job.status === 'cancelled')
-    && checkJob !== null && checkStillImportable(checkJob) && mapping === checkedMapping;
+    && checkJob !== null && checkStillImportable(checkJob) && sameIngestMapping(mapping, checkedMapping);
 
   // Held in a ref so a caller can pass an inline closure without restarting the
   // poll loop on every render.
@@ -343,7 +346,7 @@ export function useRosterIngest(
   const importChecked = useCallback(async () => {
     const check = job?.dry_run ? job : retryable ? checkJob : null;
     if (!check || !check.dry_run || check.status !== 'completed' || !mapping || importing) return;
-    if (mapping !== checkedMapping) {
+    if (!sameIngestMapping(mapping, checkedMapping)) {
       // The import would run with the CHECK's mapping while the campaign saved this one.
       setError('The column mapping changed after the check. Check the file again before importing.');
       return;
@@ -449,7 +452,7 @@ export function useRosterIngest(
    * Import (IM2). A check that names its import is followed to it by the poll instead.
    */
   const reviewing = finished && job.dry_run && job.status === 'completed' && !job.import_job_id
-    && mapping === checkedMapping;
+    && sameIngestMapping(mapping, checkedMapping);
 
   return {
     limits,

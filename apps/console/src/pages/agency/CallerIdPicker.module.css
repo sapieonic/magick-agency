@@ -120,3 +120,11 @@
   font-size: 12px;
   padding: 2px 8px;
 }
+
+/* The cards layout's field name, above a state with no cards (loading, error, no numbers). */
+.cardsLegend {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}

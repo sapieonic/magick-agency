@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { formatSearchNumber } from '@magick-agency/domain/customer-search-number';
+import { ChoiceCardGroup, type ChoiceCardOption } from '../../components/campaign-setup';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
 import { carrierKey, carrierName, numberOnCarrier, type CarrierChoice } from '../../utils/agencyCarriers';
 import styles from './CallerIdPicker.module.css';
@@ -21,6 +23,14 @@ export interface CallerIdPickerProps {
    */
   carrierActive?: boolean;
   disabled?: boolean;
+  /**
+   * `list` (default): the compact tick-box list campaign Settings has always shown. `cards`: the
+   * campaign setup's large cards (CS1, step 1), each number spaced for reading with its label
+   * under it, through `ChoiceCardGroup`. Both keep every rule below; only the look differs.
+   */
+  layout?: 'list' | 'cards';
+  /** The cards' group name (a visible legend). Cards only. */
+  legend?: ReactNode;
 }
 
 /**
@@ -53,6 +63,8 @@ export function CallerIdPicker({
   carrierLabel = null,
   carrierActive = true,
   disabled = false,
+  layout = 'list',
+  legend = 'Numbers to call from',
 }: CallerIdPickerProps) {
   const { phoneNumbers, loading, error } = usePhoneNumbers();
   const key = carrierKey(carrier);
@@ -119,12 +131,23 @@ export function CallerIdPicker({
     )
   );
 
-  if (loading) return <p className={styles.status}>Loading your numbers…</p>;
-  if (error) return <p className={styles.error}>{error}</p>;
+  // The cards' legend names the field; with no cards to show (loading, an error, no numbers)
+  // it is said above the state instead, so the field keeps its name.
+  const titled = (body: ReactElement) => (
+    layout === 'cards' ? (
+      <div className={styles.picker}>
+        <p className={styles.cardsLegend}>{legend}</p>
+        {body}
+      </div>
+    ) : body
+  );
+
+  if (loading) return titled(<p className={styles.status}>Loading your numbers…</p>);
+  if (error) return titled(<p className={styles.error}>{error}</p>);
 
   if (onCarrier.length === 0 && !carrierActive) {
     // PL4: an account that is not active offers no numbers, so the fix is the account.
-    return withUnavailable(
+    return titled(withUnavailable(
       <div className={styles.empty}>
         <p className={styles.emptyTitle}>
           {carrierLabel
@@ -138,11 +161,11 @@ export function CallerIdPicker({
           re-enabled, or choose another carrier.
         </p>
       </div>,
-    );
+    ));
   }
 
   if (onCarrier.length === 0) {
-    return withUnavailable(
+    return titled(withUnavailable(
       <div className={styles.empty}>
         <p className={styles.emptyTitle}>No numbers on {name} are assigned to this account.</p>
         <p className={styles.emptyBody}>
@@ -157,6 +180,56 @@ export function CallerIdPicker({
           )}{' '}
           Contact support to have one assigned.
         </p>
+      </div>,
+    ));
+  }
+
+  /*
+    Named rather than silently filtered. An operator who has just assigned a
+    number on another carrier and cannot find it here would otherwise have
+    no way to tell an absent number from a broken picker.
+  */
+  const excluded = otherCount > 0 ? (
+    <p className={styles.excluded}>
+      {`${otherCount} number${otherCount === 1 ? '' : 's'} on other carriers ${otherCount === 1 ? 'is' : 'are'} not shown — this campaign dials through ${name} only.`}
+    </p>
+  ) : null;
+
+  if (layout === 'cards') {
+    const options: ChoiceCardOption[] = onCarrier.map((pn) => ({
+      value: pn.phone_number,
+      title: formatSearchNumber(pn.phone_number),
+      description: pn.label ?? undefined,
+      aside: pn.is_default ? 'Default' : undefined,
+    }));
+    // The cards hold only this carrier's numbers. A selection change is one number in or out;
+    // applying it through `toggle` keeps the pool's order and any no-longer-available number
+    // (listed under the cards) that the group cannot see.
+    const shownSelected = selected.filter(isOnCarrier);
+    return withUnavailable(
+      <div className={styles.picker}>
+        <ChoiceCardGroup
+          multiple
+          legend={legend}
+          columns={2}
+          size="lg"
+          options={options}
+          value={shownSelected}
+          disabled={disabled}
+          testId="caller-id-cards"
+          onChange={(next) => {
+            const changed =
+              next.find((phone) => !shownSelected.includes(phone)) ??
+              shownSelected.find((phone) => !next.includes(phone));
+            if (changed !== undefined) toggle(changed);
+          }}
+        />
+        <p className={styles.hint}>
+          {selected.length === 0
+            ? 'Pick at least one number. Pick more than one to rotate numbers. Most campaigns need one.'
+            : 'Pick more than one to rotate numbers. Most campaigns need one.'}
+        </p>
+        {excluded}
       </div>,
     );
   }
@@ -190,16 +263,7 @@ export function CallerIdPicker({
           : `${selected.length} selected. Calls rotate through them evenly.`}
       </p>
 
-      {/*
-        Named rather than silently filtered. An operator who has just assigned a
-        number on another carrier and cannot find it here would otherwise have
-        no way to tell an absent number from a broken picker.
-      */}
-      {otherCount > 0 && (
-        <p className={styles.excluded}>
-          {`${otherCount} number${otherCount === 1 ? '' : 's'} on other carriers ${otherCount === 1 ? 'is' : 'are'} not shown — this campaign dials through ${name} only.`}
-        </p>
-      )}
+      {excluded}
     </div>,
   );
 }
