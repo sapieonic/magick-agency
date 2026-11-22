@@ -21,6 +21,8 @@ import {
   unfiledCallsLine,
 } from '../../utils/callSettingsCopy';
 import type { AgencyCallSettingsResponse, AgencyCallSettingsRouteRef } from '../../types/call-settings';
+import { AGENCY_CALL_SETTINGS_UNFILED_DAYS } from '../../types/call-settings';
+import { unfiledCallsPath } from '../../utils/agency/callLog';
 import { useSettingsNav } from './useSettingsNav';
 import styles from './CallsSettingsPage.module.css';
 
@@ -245,7 +247,16 @@ export default function CallsSettingsPage() {
         {saveError ? <ErrorAlert message={saveError} /> : null}
       </section>
 
-      <p className={styles.count} data-testid="calls-unfiled-count">{unfiledCallsLine(readiness.unfiled_calls)}</p>
+      <p className={styles.count}>
+        <span data-testid="calls-unfiled-count">{unfiledCallsLine(readiness.unfiled_calls)}</span>
+        {/* All calls floors at `agency.supervise`, which whoever may open this page holds. */}
+        {readiness.unfiled_calls > 0 ? (
+          <>
+            {' '}
+            <Link to={unfiledCallsPath(AGENCY_CALL_SETTINGS_UNFILED_DAYS)} data-testid="calls-unfiled-link">{COPY.seeUnfiled}</Link>
+          </>
+        ) : null}
+      </p>
     </div>
   );
 }

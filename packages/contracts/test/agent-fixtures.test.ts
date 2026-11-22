@@ -388,6 +388,10 @@ const READS = {
   // Agent station (BE-1 to BE-3): My day with a target and call-laters, and a pool campaign's empty day.
   my_day: fits<AgencyApi.AgencyMyDay>()(reads.my_day),
   my_day_pool_no_target: fits<AgencyApi.AgencyMyDay>()(reads.my_day_pool_no_target),
+  // My calls (docs/call-log.md §7): every type on one page, To follow up with its callbacks, a last page.
+  my_calls: fits<AgencyApi.AgencyMyCallsPage>()(reads.my_calls),
+  my_calls_to_follow_up: fits<AgencyApi.AgencyMyCallsPage>()(reads.my_calls_to_follow_up),
+  my_calls_last_page: fits<AgencyApi.AgencyMyCallsPage>()(reads.my_calls_last_page),
 };
 
 const PLATFORM = {
@@ -479,6 +483,11 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['reads', 'my_attempts', 'rows.0.state', 'attempt_states'],
   ['reads', 'my_attempts', 'rows.0.outcome', 'attempt_outcomes'],
   ['reads', 'my_attempts', 'rows.1.outcome', 'attempt_outcomes'],
+  ...[0, 1, 2, 3, 4, 5, 6, 7].map((i): [string, string, string, string] => ['reads', 'my_calls', `rows.${i}.type`, 'call_log_types']),
+  ...[0, 1, 2].map((i): [string, string, string, string] => ['reads', 'my_calls_to_follow_up', `rows.${i}.type`, 'call_log_types']),
+  ...[0, 1, 2].map((i): [string, string, string, string] => ['reads', 'my_calls_to_follow_up', `rows.${i}.follow_up.reason`, 'inbound_missed_reasons']),
+  ...[0, 1, 2].map((i): [string, string, string, string] => ['reads', 'my_calls_to_follow_up', `rows.${i}.follow_up.status`, 'inbound_follow_up_statuses']),
+  ['reads', 'my_calls_to_follow_up', 'rows.2.follow_up.closed_cause', 'inbound_closed_causes'],
   ['platform', 'session_response', 'memberships.0.role', 'roles'],
   ['platform', 'invite_lookup_pending', 'invite.role', 'roles'],
   ['platform', 'invite_lookup_expired', 'status', 'invite_unavailable_statuses'],

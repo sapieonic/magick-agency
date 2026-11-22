@@ -214,6 +214,155 @@ function inboundLogConditions(
   ];
 }
 
+/**
+ * Whose calls a call-log read lists (`docs/call-log.md` §7): one campaign's (the campaign Call
+ * log), the account's (All calls) or one agent's own in the account (My calls). The three are
+ * the same read with a different term fixed, so a row means one thing on every list.
+ *
+ *  - `campaign`: the attempts of the campaign, the soft-phone calls tagged to it and the inbound
+ *    calls filed under it, in the tenant.
+ *  - `account`: every call of the account, or with `campaign: 'none'` the calls filed under
+ *    none (no dialler call is: an attempt always has one). One campaign's calls at the account's
+ *    scope are the `campaign` scope itself, once the caller has checked the campaign is the
+ *    account's.
+ *  - `agent`: the attempts of the agent's sessions in the account, the soft-phone calls they
+ *    placed, the inbound calls they ANSWERED, and their OPEN Missed rows (assigned to them, the
+ *    Missed list's own rule for an agent). Never anybody else's row.
+ */
+export type CallLogScope =
+  | { kind: 'campaign'; campaignId: string; tenantId: string }
+  | { kind: 'account'; tenantId: string; accountId: string; campaign?: 'none' }
+  | { kind: 'agent'; tenantId: string; accountId: string; agentUserId: string; campaign?: string | 'none' };
+
+/**
+ * The attempts of agent USER `userParam` in the account: `reserved_agent_id` is one of their
+ * sessions there (`attemptAgentUserSql`'s form and reasoning, without the campaign).
+ */
+function accountAgentAttemptSql(tenantParam: string, accountParam: string, userParam: string): string {
+  return `a.reserved_agent_id = ANY(ARRAY(
+           SELECT id FROM agency_agent_sessions
+            WHERE agent_user_id = ${userParam}::uuid AND tenant_id = ${tenantParam}::uuid
+              AND account_id = ${accountParam}::uuid))`;
+}
+
+/** When agent USER `userParam` first joined a session in the account; NULL (no row matches) when they never did. */
+function accountAgentFirstSessionSql(tenantParam: string, accountParam: string, userParam: string): string {
+  return `(SELECT min(joined_at) FROM agency_agent_sessions
+            WHERE agent_user_id = ${userParam}::uuid AND tenant_id = ${tenantParam}::uuid
+              AND account_id = ${accountParam}::uuid)`;
+}
+
+/**
+ * The dialler branch's WHERE terms under a scope, or null when the scope holds no dialler call
+ * (the calls filed under no campaign). At the account's and the agent's scope the attempt's own
+ * `tenant_id` / `account_id` lead (`idx_agency_attempts_account_created`, 0070), and the agent
+ * is a set of session ids, never a join condition.
+ */
+function scopedAttemptConditions(
+  scope: CallLogScope,
+  f: AgencyAttemptFilters,
+  bind: ReturnType<typeof params>,
+): string[] | null {
+  if (scope.kind === 'campaign') return campaignAttemptConditions(scope.campaignId, f, bind);
+  if (scope.campaign === 'none') return null;
+  const tenant = bind.add(scope.tenantId);
+  const account = bind.add(scope.accountId);
+  // An agent's own list is theirs whatever `agent_user_id` asks; the account's reads the filter.
+  const agent = scope.kind === 'agent' ? scope.agentUserId : f.agentUserId;
+  const user = agent ? bind.add(agent) : null;
+  return [
+    `a.tenant_id = ${tenant}::uuid`,
+    `a.account_id = ${account}::uuid`,
+    ...(scope.kind === 'agent' && scope.campaign ? [`a.campaign_id = ${bind.add(scope.campaign)}::uuid`] : []),
+    // No attempt of theirs is older than their first session here. Without the bound, somebody
+    // who never dialled (a supervisor opening My calls) walks the account's whole range to find
+    // nothing: measured 361 ms on 2 million attempts, against 0 with it.
+    ...(user ? [`a.created_at >= ${accountAgentFirstSessionSql(tenant, account, user)}`] : []),
+    ...attemptFilterConditions(f, bind, () => (user ? accountAgentAttemptSql(tenant, account, user) : null)),
+  ];
+}
+
+/** The campaign term of a soft-phone or inbound branch at the account's or an agent's scope. */
+function scopedCampaignTerm(
+  scope: Exclude<CallLogScope, { kind: 'campaign' }>,
+  alias: 'm' | 'i',
+  bind: ReturnType<typeof params>,
+): string[] {
+  if (scope.campaign === 'none') return [`${alias}.campaign_id IS NULL`];
+  return scope.campaign ? [`${alias}.campaign_id = ${bind.add(scope.campaign)}::uuid`] : [];
+}
+
+/** The soft-phone branch's WHERE terms under a scope (the filters without the status and the keyset). */
+function scopedSoftphoneConditions(
+  scope: CallLogScope,
+  f: AgencyAttemptFilters,
+  bind: ReturnType<typeof params>,
+): string[] {
+  if (scope.kind === 'campaign') {
+    return [
+      `m.campaign_id = ${bind.add(scope.campaignId)}::uuid`,
+      `m.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+      ...softphoneLogFilterConditions(f, bind),
+    ];
+  }
+  const { agentUserId: _asked, ...withoutAgent } = f;
+  void _asked;
+  return [
+    `m.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+    `m.account_id = ${bind.add(scope.accountId)}::uuid`,
+    ...(scope.kind === 'agent' ? [`m.agent_user_id = ${bind.add(scope.agentUserId)}::uuid`] : []),
+    ...scopedCampaignTerm(scope, 'm', bind),
+    ...softphoneLogFilterConditions(scope.kind === 'agent' ? withoutAgent : f, bind),
+  ];
+}
+
+/**
+ * The inbound branches' WHERE terms under a scope: one set per branch. A campaign's and the
+ * account's are one branch (`inboundLogConditions`' rule: ended, served, the filters; To follow
+ * up the open Missed rows without the dates, its agent the assignee). An agent's are two, each
+ * its own index range and never the same row twice (a missed call has no answerer): the calls
+ * they answered, and their open Missed rows; To follow up keeps the second alone.
+ */
+function scopedInboundConditions(
+  scope: CallLogScope,
+  q: { filters: AgencyAttemptFilters; inboundOutcomes: readonly string[]; toFollowUp: boolean },
+  bind: ReturnType<typeof params>,
+): string[][] {
+  if (scope.kind === 'campaign') {
+    return [inboundLogConditions({ campaignId: scope.campaignId, tenantId: scope.tenantId, ...q }, bind)];
+  }
+  const { from: _from, to: _to, ...undated } = q.filters;
+  void _from; void _to;
+  const filters = q.toFollowUp ? undated : q.filters;
+  const base = (): string[] => [
+    `i.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+    `i.account_id = ${bind.add(scope.accountId)}::uuid`,
+    ...scopedCampaignTerm(scope, 'i', bind),
+    ...inboundCampaignRowConditions('i'),
+  ];
+  if (scope.kind === 'account') {
+    return [[
+      ...base(),
+      ...inboundLogFilterConditions(filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer'),
+      ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
+    ]];
+  }
+  const { agentUserId: _asked, ...mine } = filters;
+  void _asked;
+  const me = (): string => `${bind.add(scope.agentUserId)}::uuid`;
+  const openMissed = [
+    ...base(),
+    `i.follow_up_assignee_user_id = ${me()}`,
+    inboundMissedOpenSql('i'),
+    ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind),
+  ];
+  if (q.toFollowUp) return [openMissed];
+  return [
+    [...base(), `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
+    openMissed,
+  ];
+}
+
 /** A row of the call log's union → its source's projection. */
 function projectCallLogRow(row: AgencyCallAttemptRecord & {
   source: CampaignCallSource; phone_e164: string; agent_user_id: string | null;
@@ -931,15 +1080,43 @@ export class AgencyAttemptRepository {
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
+    const { campaignId, tenantId, ...rest } = input;
+    return this.listCallLog({ scope: { kind: 'campaign', campaignId, tenantId }, ...rest });
+  }
+
+  /**
+   * {@link listCallLogForCampaign}'s read under any {@link CallLogScope}: the campaign Call log,
+   * the account's All calls and the agent's My calls are this one statement with a different
+   * term fixed (`docs/call-log.md` §7). The branches, the keyset, the filters' meaning on each
+   * type and what an inbound row is are the same on all three.
+   *
+   * At the account's scope each branch is still its own index range: the attempts on
+   * `idx_agency_attempts_account_created` (0070), the soft-phone calls on
+   * `idx_agency_manual_calls_account`, the inbound calls on
+   * `idx_agency_inbound_calls_account_arrived`. At an agent's, the soft-phone calls on
+   * `idx_agency_manual_calls_agent`, the open Missed rows on
+   * `idx_agency_inbound_calls_missed_assignee`; the attempts and the answered inbound calls are
+   * the account's range filtered to the agent (their sessions; `answered_by_user_id`).
+   */
+  async listCallLog(input: {
+    scope: CallLogScope;
+    filters: AgencyAttemptFilters;
+    source: CampaignCallLogSourceFilter | null;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+    after?: AgencyKeysetPosition;
+    limit: number;
+  }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
     const bind = params();
     const limit = bind.add(input.limit + 1);
     const inboundOutcomes = input.inboundOutcomes ?? [];
     const outbound = outboundMatches(input.filters, inboundOutcomes);
     const branches: string[] = [];
     if ((input.source === null || input.source === 'dialler') && !input.softphoneStatus && outbound) {
-      const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
-      if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
-      branches.push(`(
+      const conditions = scopedAttemptConditions(input.scope, input.filters, bind);
+      if (conditions) {
+        if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
+        branches.push(`(
         SELECT 'dialler'::text AS source, ${ATTEMPT_ROW_SELECT_SQL},
                false AS dnc_overridden, false AS hours_overridden, NULL::timestamptz AS settled_at,
                NULL::jsonb AS extra,
@@ -950,13 +1127,10 @@ export class AgencyAttemptRepository {
          WHERE ${conditions.join(' AND ')}
          ORDER BY a.created_at DESC, a.id DESC
          LIMIT ${limit})`);
+      }
     }
     if ((input.source === null || input.source === 'soft_phone') && outbound) {
-      const conditions = [
-        `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
-        `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
-        ...softphoneLogFilterConditions(input.filters, bind),
-      ];
+      const conditions = scopedSoftphoneConditions(input.scope, input.filters, bind);
       if (input.softphoneStatus) conditions.push(softphoneStatusSql(input.softphoneStatus));
       if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
       // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
@@ -982,21 +1156,21 @@ export class AgencyAttemptRepository {
          LIMIT ${limit})`);
     }
     if ((input.source === null || input.source === 'inbound' || input.source === 'to_follow_up') && !input.softphoneStatus) {
-      const conditions = inboundLogConditions({
-        campaignId: input.campaignId,
-        tenantId: input.tenantId,
+      const sets = scopedInboundConditions(input.scope, {
         filters: input.filters,
         inboundOutcomes,
         toFollowUp: input.source === 'to_follow_up',
       }, bind);
-      if (input.after) conditions.push(keysetCondition(input.after, 'i', bind, 'arrived_at'));
-      branches.push(`(
+      for (const conditions of sets) {
+        if (input.after) conditions.push(keysetCondition(input.after, 'i', bind, 'arrived_at'));
+        branches.push(`(
         SELECT ${INBOUND_LOG_SELECT_SQL},
                ${keysetAtSql('i.arrived_at')} AS cursor_at
           FROM agency_inbound_calls i
          WHERE ${conditions.join(' AND ')}
          ORDER BY i.arrived_at DESC, i.id DESC
          LIMIT ${limit})`);
+      }
     }
     // A filter no type left in the read can match (a status with `source: 'dialler'`, an
     // inbound-only outcome with `source: 'soft_phone'`): there is no branch to read.
@@ -1034,26 +1208,35 @@ export class AgencyAttemptRepository {
     softphoneStatus?: SoftphoneCallStatus;
     inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
   }): Promise<CampaignCallLogCounts> {
+    const { campaignId, tenantId, ...rest } = input;
+    return this.countCallLog({ scope: { kind: 'campaign', campaignId, tenantId }, ...rest });
+  }
+
+  /** {@link countCallLogForCampaign}'s counts under any {@link CallLogScope}, by {@link listCallLog}'s own WHERE terms. */
+  async countCallLog(input: {
+    scope: CallLogScope;
+    filters: AgencyAttemptFilters;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+  }): Promise<CampaignCallLogCounts> {
     const bind = params();
     const inboundOutcomes = input.inboundOutcomes ?? [];
     const outbound = outboundMatches(input.filters, inboundOutcomes);
-    const attempt = campaignAttemptConditions(input.campaignId, input.filters, bind);
+    const attempt = scopedAttemptConditions(input.scope, input.filters, bind) ?? ['FALSE'];
     if (input.softphoneStatus || !outbound) attempt.push('FALSE');
     const soft = [
-      `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
-      `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
-      ...softphoneLogFilterConditions(input.filters, bind),
+      ...scopedSoftphoneConditions(input.scope, input.filters, bind),
       ...(input.softphoneStatus ? [softphoneStatusSql(input.softphoneStatus)] : []),
       ...(outbound ? [] : ['FALSE']),
       SOFTPHONE_PLACED_SQL,
     ];
-    const scope = { campaignId: input.campaignId, tenantId: input.tenantId, filters: input.filters, inboundOutcomes };
-    const inbound = inboundLogConditions({ ...scope, toFollowUp: false }, bind);
-    const followUp = inboundLogConditions({ ...scope, toFollowUp: true }, bind);
-    if (input.softphoneStatus) {
-      inbound.push('FALSE');
-      followUp.push('FALSE');
-    }
+    const q = { filters: input.filters, inboundOutcomes };
+    const inbound = scopedInboundConditions(input.scope, { ...q, toFollowUp: false }, bind);
+    const followUp = scopedInboundConditions(input.scope, { ...q, toFollowUp: true }, bind);
+    if (input.softphoneStatus) for (const set of [...inbound, ...followUp]) set.push('FALSE');
+    const inboundCountSql = (sets: string[][]): string => sets
+      .map((set) => `(SELECT count(*) FROM agency_inbound_calls i WHERE ${set.join(' AND ')})`)
+      .join(' + ');
     const { rows } = await getPool().query<{ dialler: string; soft_phone: string; inbound: string; to_follow_up: string }>(
       `SELECT (SELECT count(*)
                  FROM agency_call_attempts a
@@ -1062,12 +1245,8 @@ export class AgencyAttemptRepository {
               (SELECT count(*)
                  FROM agency_manual_calls m
                 WHERE ${soft.join(' AND ')})::text AS soft_phone,
-              (SELECT count(*)
-                 FROM agency_inbound_calls i
-                WHERE ${inbound.join(' AND ')})::text AS inbound,
-              (SELECT count(*)
-                 FROM agency_inbound_calls i
-                WHERE ${followUp.join(' AND ')})::text AS to_follow_up`,
+              (${inboundCountSql(inbound)})::text AS inbound,
+              (${inboundCountSql(followUp)})::text AS to_follow_up`,
       bind.values,
     );
     const dialler = Number(rows[0]?.dialler ?? 0);

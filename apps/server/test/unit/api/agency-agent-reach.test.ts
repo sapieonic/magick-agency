@@ -106,6 +106,9 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-assignment',
   'GET /proxy/agency/my-assignments',
   'GET /proxy/agency/my-attempts',
+  // The agent's own My calls (docs/call-log.md §7): `agency.station.connect`. The subject is always
+  // the caller, and a number its campaign hides from agents is masked by the route.
+  'GET /proxy/agency/my-calls',
   'GET /proxy/agency/my-campaigns',
   // Contact assignment: the caller's own contacts (`agency.contacts.own`, floored at `agent`).
   // The flag and the staffing check refuse past the guards; the subject is always the caller.

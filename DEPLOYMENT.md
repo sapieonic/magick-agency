@@ -961,6 +961,12 @@ that arrive while it runs (`campaign_id` stays NULL), and nothing files them lat
 be missing from their campaign's Call log. **After rolling forward again, run the batch above
 until it reports `UPDATE 0`**: it files exactly those calls.
 
+**`0070_attempts_account_created_index.sql`** (All calls and My calls, `docs/call-log.md` §7) adds one
+index on `agency_call_attempts`. If that table holds more than about a million rows, build it
+`CONCURRENTLY` before the deploy (`db-hygiene.md` §2 has the statement); the migration then finds
+it. Otherwise it needs nothing. **Going back past 0070** needs no `migrate:down`: an older image
+ignores the index.
+
 **`0069_call_settings.sql`** ("Every call must belong to a campaign", `docs/call-log.md` §5) needs
 nothing before the deploy: a new, empty table, and one nullable column with a small partial index
 on `agency_inbound_routes` (a few rows per account), under a 10-second lock timeout.

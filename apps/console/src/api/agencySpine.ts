@@ -14,7 +14,7 @@ import type {
   AgencyContactFilters,
   AgencyRosterContactsPage,
 } from '../types/agency-spine';
-import type { AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter, AgencyInboundCallLogDetail } from '../types/agency-call-log';
+import type { AgencyAccountCallsPage, AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter, AgencyInboundCallLogDetail } from '../types/agency-call-log';
 
 /**
  * The attempt spine, through the server's `/proxy/agency`.
@@ -116,6 +116,33 @@ export interface CallLogListOptions {
   includeCounts?: boolean;
 }
 
+/** The Call log's paging options as query params. */
+function callLogExtra(options: CallLogListOptions): Record<string, string> {
+  const extra: Record<string, string> = {};
+  if (options.cursor) extra['cursor'] = options.cursor;
+  if (options.limit !== undefined) extra['limit'] = String(options.limit);
+  if (options.type && options.type !== 'all') extra['type'] = options.type;
+  if (options.status) extra['status'] = options.status;
+  if (options.includeCounts) extra['include_counts'] = '1';
+  return extra;
+}
+
+/**
+ * The account's All calls (`docs/call-log.md` §7): every call of the account, of the three
+ * types, newest first; the Call log's filters and chips, plus `campaign` (a campaign's id, or
+ * `none` for the calls filed under no campaign).
+ */
+export async function getAccountCalls(
+  filters: AgencyAttemptFilters,
+  options: CallLogListOptions & { campaign?: string | null } = {},
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyAccountCallsPage> {
+  const extra = callLogExtra(options);
+  if (options.campaign) extra['campaign_id'] = options.campaign;
+  return apiFetch<AgencyAccountCallsPage>(`${AGENCY_BASE}/calls${toQuery({ ...filters }, extra)}`, {}, tenantId, accountId);
+}
+
 /**
  * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
  * placed it, newest first on one keyset; each row says its `type`. The attempt list's filters.
@@ -127,14 +154,8 @@ export async function getCampaignCallLog(
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyCallLogPage> {
-  const extra: Record<string, string> = {};
-  if (options.cursor) extra['cursor'] = options.cursor;
-  if (options.limit !== undefined) extra['limit'] = String(options.limit);
-  if (options.type && options.type !== 'all') extra['type'] = options.type;
-  if (options.status) extra['status'] = options.status;
-  if (options.includeCounts) extra['include_counts'] = '1';
   return apiFetch<AgencyCallLogPage>(
-    `${AGENCY_BASE}/campaigns/${campaignId}/call-log${toQuery({ ...filters }, extra)}`,
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log${toQuery({ ...filters }, callLogExtra(options))}`,
     {},
     tenantId,
     accountId,

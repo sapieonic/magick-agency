@@ -8,6 +8,8 @@ import { AGENCY_CALL_SETTINGS_UNFILED_DAYS, type AgencyCallSettingsAgentRef } fr
  */
 export const CALL_SETTINGS_COPY = {
   title: 'Calls',
+  /** Beside the count of calls filed under no campaign: All calls, on those calls. */
+  seeUnfiled: 'See them in All calls',
   description:
     'Whether every call in this account has to be filed under a campaign. It covers calls agents make from the soft phone and calls customers make to you.',
   switchLabel: 'Every call must belong to a campaign',

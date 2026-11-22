@@ -79,6 +79,9 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'inbound_sticky_reasons': InboundStickyReason.values,
   'inbound_catalog_sources': InboundCatalogSource.values,
   'inbound_missed_reasons': InboundMissedReason.values,
+  // My calls (docs/call-log.md §7): a row's type, and the chips sent as `type=`.
+  'call_log_types': CallLogType.values,
+  'my_calls_type_filters': MyCallsTypeFilter.values,
   'inbound_follow_up_statuses': InboundFollowUpStatus.values,
   'inbound_handled_reasons': InboundHandledReason.values,
   'inbound_closed_causes': InboundClosedCause.values,
@@ -173,6 +176,8 @@ final Map<String, List<WireEnum>> appSends = {
     for (final v in InboundMissedReason.values)
       if (!v.isUnknown) v,
   ],
+  // My calls: every chip is sent as `type=` (All as no `type`).
+  'my_calls_type_filters': MyCallsTypeFilter.values,
   // Mode B: the register's `platform` and the ring decline's `reason`.
   'push_platforms': [PushPlatform.android, PushPlatform.ios],
   'inbound_ring_decline_reasons': [InboundRingDeclineReason.declined, InboundRingDeclineReason.busyOnPhone],

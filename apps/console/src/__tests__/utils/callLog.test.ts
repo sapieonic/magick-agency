@@ -34,6 +34,7 @@ import {
   visibleCallLogChips,
   type CallLogView,
 } from '../../utils/agency/callLog';
+import { ALL_CALLS_CAMPAIGN_PARAM, allCallsPath, softphoneCallsRedirectPath, unfiledCallsPath } from '../../utils/agency/callLog';
 import { SOFTPHONE_CALL_STATUS_OPTIONS } from '../../utils/softphone/callStats';
 import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
 import type { AgencyCallLogDiallerRow, AgencyCallLogInboundRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
@@ -96,6 +97,40 @@ describe('the view in the URL', () => {
     expect(manualCallsRedirectPath('c-1', '?phone=98765&dates=all')).toBe('/agency/campaigns/c-1/attempts?phone=98765&dates=all&type=soft_phone');
     // A `type` of its own cannot land it on another chip.
     expect(manualCallsRedirectPath('c-1', '?type=dialler&outcome=busy')).toBe('/agency/campaigns/c-1/attempts?type=soft_phone&outcome=busy');
+  });
+});
+
+describe('the account’s All calls (CL34)', () => {
+  it('the account’s old Soft-phone calls URL lands on All calls with the chip on, its query kept', () => {
+    expect(softphoneCallsRedirectPath('')).toBe('/agency/calls?type=soft_phone');
+    expect(softphoneCallsRedirectPath('?agent_user_id=u-1&from=2026-11-01T00%3A00%3A00.000Z'))
+      .toBe('/agency/calls?agent_user_id=u-1&from=2026-11-01T00%3A00%3A00.000Z&type=soft_phone');
+    expect(softphoneCallsRedirectPath('?type=inbound')).toBe('/agency/calls?type=soft_phone');
+  });
+
+  it('builds its path for a chip and a campaign', () => {
+    expect(allCallsPath()).toBe('/agency/calls');
+    expect(allCallsPath({ type: 'to_follow_up' })).toBe('/agency/calls?type=to_follow_up');
+    expect(allCallsPath({ campaign: 'none' })).toBe('/agency/calls?campaign_id=none');
+  });
+
+  it('Settings › Calls’ count of unfiled calls leads to those calls: no campaign, the same days', () => {
+    const params = new URLSearchParams(unfiledCallsPath(30, new Date(2026, 10, 22, 15, 0)).split('?')[1]);
+    expect(params.get(ALL_CALLS_CAMPAIGN_PARAM)).toBe('none');
+    expect(new Date(params.get('from')!).toISOString()).toBe(new Date(2026, 9, 23, 0, 0, 0, 0).toISOString());
+    expect(new Date(params.get('to')!).getTime()).toBe(new Date(2026, 10, 23, 0, 0, 0, 0).getTime() - 1);
+  });
+
+  it('an empty list speaks of the account, and a chosen campaign is a filter like any other', () => {
+    const today = { from: '2026-11-22T00:00:00.000Z', to: '2026-11-22T23:59:59.999Z' };
+    const view = { type: 'all' as const, status: null };
+    expect(callLogEmptyState(today, view, { where: 'account', campaignChosen: false }))
+      .toMatchObject({ kind: 'dates', title: 'No calls in this account for these dates.' });
+    expect(callLogEmptyState(today, view, { where: 'account', campaignChosen: true }).kind).toBe('filtered');
+    expect(callLogEmptyState({}, { type: 'to_follow_up', status: null }, { where: 'account', campaignChosen: false }).title)
+      .toBe('Nobody is waiting for a call back in this account.');
+    // The campaign's own words are unchanged.
+    expect(callLogEmptyState(today, view).title).toBe('No calls on this campaign for these dates.');
   });
 });
 

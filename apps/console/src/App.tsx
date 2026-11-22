@@ -91,7 +91,8 @@ const CampaignManualCallsRedirect = lazy(() => import('./pages/agency/AgencyCamp
 const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
 const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
 const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPage'));
-const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
+const AllCallsPage = lazy(() => import('./pages/agency/AllCallsPage'));
+const SoftphoneCallsRedirect = lazy(() => import('./pages/agency/AllCallsPage').then((m) => ({ default: m.SoftphoneCallsRedirect })));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
 const CallsSettingsPage = lazy(() => import('./pages/settings/CallsSettingsPage'));
@@ -723,7 +724,7 @@ export default function App() {
                   */}
                   <Route
                     path="softphone"
-                    element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallsPage /></RequireFlag>}
+                    element={<SoftphoneCallsRedirect />}
                   />
                   <Route
                     path="softphone/calls/:callId"

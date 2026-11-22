@@ -2697,6 +2697,20 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/calls",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "the account’s All calls (every call of the account, of the three types), served by the public API layer at the console path (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-calls",
+      "source": "apps/console/src/api/myCalls.ts",
+      "status": "served",
+      "reason": "the agent’s own My calls (their calls of the three types, numbers masked where the campaign hides them), served by the public API layer at the console path (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/inbound-default-routes",
       "source": "apps/console/src/api/callSettings.ts",
       "status": "served",

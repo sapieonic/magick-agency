@@ -513,6 +513,24 @@
       "feature_disabled"
     ]
   },
+  "call_log_types": {
+    "source": "packages/contracts/src/api/agency/call-log.ts#AGENCY_CALL_LOG_TYPES",
+    "values": [
+      "dialler",
+      "soft_phone",
+      "inbound"
+    ]
+  },
+  "my_calls_type_filters": {
+    "source": "packages/contracts/src/api/agency/call-log.ts#AGENCY_MY_CALLS_TYPE_FILTERS",
+    "values": [
+      "to_follow_up",
+      "all",
+      "dialler",
+      "soft_phone",
+      "inbound"
+    ]
+  },
   "customer_search_bys": {
     "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_SEARCH_BYS",
     "values": [

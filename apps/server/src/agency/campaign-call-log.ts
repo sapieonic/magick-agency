@@ -100,7 +100,7 @@ export type CampaignDiallerLogRow = AgencyAttemptRow & { source: 'dialler' };
 export interface CampaignSoftphoneLogRow {
   source: 'soft_phone';
   id: string;
-  campaign_id: string;
+  campaign_id: string | null;
   contact_id: string | null;
   attempt_number: null;
   phone_e164: string;
@@ -148,7 +148,7 @@ export interface CampaignSoftphoneLogRow {
 
 /** What only an inbound call has ({@link CampaignInboundLogRow.inbound}). */
 export interface CampaignInboundFacts {
-  campaign_source: AgencyInboundCampaignSource;
+  campaign_source: AgencyInboundCampaignSource | null;
   route_name: string | null;
   /** Whole seconds from arrival to the agent's answer, else to the end. */
   wait_seconds: number;
@@ -180,7 +180,7 @@ export interface CampaignInboundFacts {
 export interface CampaignInboundLogRow {
   source: 'inbound';
   id: string;
-  campaign_id: string;
+  campaign_id: string | null;
   /** The roster contact the caller matched, else null. */
   contact_id: string | null;
   attempt_number: null;

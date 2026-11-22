@@ -122,6 +122,9 @@ export function holdsHomePermission(role: Role | undefined): boolean {
  * Gated as Live floor is, because it reads the same board's supervisor-only parts.
  */
 export const CALLBACKS_PATH = '/agency/callbacks';
+
+/** The account's All calls (`docs/call-log.md` §7), where the account's Soft-phone calls list was. */
+export const ALL_CALLS_PATH = '/agency/calls';
 export const CALLBACKS_GATE: Gate = HOME_GATE;
 
 /**
@@ -184,6 +187,11 @@ export interface SectionTab {
   to: string;
   gate: Gate;
   subPage?: SubPage;
+  /**
+   * A path outside `to` whose pages are this tab's sub-pages all the same: a page that kept its
+   * URL when its list moved (a soft-phone call's page, under All calls).
+   */
+  subPagesAlsoUnder?: string;
 }
 
 export interface ConsoleSection {
@@ -211,7 +219,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'campaigns',
     label: 'Campaigns',
-    paths: ['/agency/campaigns', '/agency/softphone', '/agency/live', '/agency/listening-history'],
+    paths: ['/agency/campaigns', '/agency/calls', '/agency/live', '/agency/listening-history'],
     tabs: [
       {
         id: 'campaigns',
@@ -220,14 +228,17 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         gate: agencyGate({ permission: 'agency.campaigns.read' }),
         subPage: { label: 'Campaign', named: { new: 'New campaign', archived: 'Archived campaigns' } },
       },
-      /* The server scopes `GET /softphone/calls` to the whole account only for
-         `agency.supervise` (`docs/softphone.md` §7); behind the soft-phone flag. */
+      /* The account's calls of every type (`docs/call-log.md` §7), where Soft-phone calls was:
+         `GET /calls` floors at `agency.supervise`, the floor that list had. Behind no type's flag:
+         the dialler's calls are always there. A soft-phone call's page kept its URL
+         (`/agency/softphone/calls/:id`, behind the soft phone's flag at its route). */
       {
-        id: 'softphone',
-        label: 'Soft-phone calls',
-        to: '/agency/softphone',
-        gate: agencyGate({ permission: 'agency.supervise', flags: [SOFTPHONE_FLAG] }),
+        id: 'calls',
+        label: 'All calls',
+        to: ALL_CALLS_PATH,
+        gate: agencyGate({ permission: 'agency.supervise' }),
         subPage: { label: 'Soft-phone call' },
+        subPagesAlsoUnder: '/agency/softphone',
       },
       /* `docs/listening.md` §9: the account's calls in progress. The list floors at
          `agency.supervise` (the Listen action needs `agency.calls.listen` as well), behind the
@@ -355,7 +366,7 @@ export type ActiveNavId = ConsoleSectionId | 'settings';
 export function activeNavId(pathname: string): ActiveNavId | null {
   const path = trimTrailingSlash(pathname);
   if (pathWithin(path, '/settings')) return 'settings';
-  return CONSOLE_SECTIONS.find((s) => s.paths.some((p) => pathWithin(path, p)))?.id ?? null;
+  return CONSOLE_SECTIONS.find((s) => sectionHolds(s, path))?.id ?? null;
 }
 
 export interface TabBar {
@@ -392,6 +403,12 @@ export function isAgencyPath(pathname: string): boolean {
  */
 export function productSurfaceForPath(pathname: string): ProductSurface {
   return isAgencyPath(pathname) ? 'agency' : 'ai';
+}
+
+/** Whether `path` is one of the section's pages: under one of its `paths`, or a tab's sub-page that kept another URL. */
+function sectionHolds(section: ConsoleSection, path: string): boolean {
+  return section.paths.some((p) => pathWithin(path, p))
+    || section.tabs.some((t) => t.subPagesAlsoUnder !== undefined && pathWithin(path, t.subPagesAlsoUnder));
 }
 
 export interface Crumb {
@@ -478,7 +495,7 @@ function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null): Crumb[]
   }
   if (pathWithin(path, '/agency/customers')) return [{ label: 'Customer history' }];
 
-  const section = CONSOLE_SECTIONS.find((s) => s.paths.some((p) => pathWithin(path, p)));
+  const section = CONSOLE_SECTIONS.find((s) => sectionHolds(s, path));
   /* Outside every section (a page not found, say) only what the page names itself. */
   if (!section) return [...(supplied ?? [])];
   const home: Crumb = { label: section.label, to: section.tabs[0]!.to };
@@ -487,7 +504,7 @@ function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null): Crumb[]
   if (tab) return tab.label === section.label ? [{ label: section.label }] : [home, { label: tab.label }];
 
   /* A sub-page of a tab that is not the section's own name (one report under Exports). */
-  const parentTab = section.tabs.find((t) => pathWithin(path, t.to));
+  const parentTab = section.tabs.find((t) => pathWithin(path, t.to) || (t.subPagesAlsoUnder && pathWithin(path, t.subPagesAlsoUnder)));
   const trail: Crumb[] = parentTab && parentTab.label !== section.label
     ? [home, { label: parentTab.label, to: parentTab.to }]
     : [home];

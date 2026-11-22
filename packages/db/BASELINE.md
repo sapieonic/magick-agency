@@ -1944,6 +1944,22 @@ CHECK both ways, the trigger, the route column, the index's definition and a sta
 lock timeout, down then up), `inbound-migration.test.ts` (the route's column inventory) and the down → up
 inventory suite.
 
+### 0070 — `migrations/0070_attempts_account_created_index.sql`
+
+One call log per campaign, P5 (docs/call-log.md §7).
+**`idx_agency_attempts_account_created`** `(tenant_id, account_id, created_at DESC, id DESC)` on
+`agency_call_attempts`: an account's dialler attempts, newest first, the dialler branch of the account's
+All calls and the agent's My calls (`listCallLog` at the account's and an agent's scope), a keyset range
+as `idx_agency_attempts_keyset` is within one campaign. Not partial: an attempt that never dialled is a
+row of the list. The other two types already had theirs (`idx_agency_manual_calls_account`,
+`idx_agency_manual_calls_agent`, `idx_agency_inbound_calls_account_arrived`,
+`idx_agency_inbound_calls_missed_assignee`). One more index written on every dial, the size of
+`idx_agency_attempts_keyset`. `CREATE INDEX IF NOT EXISTS`, so a large table can have it built
+`CONCURRENTLY` before the deploy (`db-hygiene.md` §2); Up refuses an invalid index left under the name.
+`SET LOCAL lock_timeout = '10s'`. **Down** drops the index. **Tests**:
+`test/integration/db/attempts-account-index-migration.test.ts` (the definition, an account's keyset page
+planned on it with no sort, the invalid-index refusal, down then up).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

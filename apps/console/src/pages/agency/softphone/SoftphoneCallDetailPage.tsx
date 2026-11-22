@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useParams } from 'react-router-dom';
 import { formatPromise } from '../../../utils/format/promise';
 import { usePageCrumbs } from '../../../components/layout/PageCrumbs';
+import { ALL_CALLS_PATH } from '../../../utils/consoleNav';
 import { Info, Lock, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -264,13 +265,13 @@ export default function SoftphoneCallDetailPage() {
   }, [detail, bootstrap]);
 
   /*
-    The trail back, in the top bar: "Campaigns / Soft-phone calls / <campaign> / <when>". The
+    The trail back, in the top bar: "Campaigns / All calls / <campaign> / <when>". The
     campaign the call was logged to leads to that campaign's Call log, with the Soft phone chip on.
   */
   const current = detail && detail.call.id === callId ? detail : null;
   const tag = current?.call.tag ?? null;
   usePageCrumbs([
-    { label: 'Soft-phone calls', to: '/agency/softphone' },
+    { label: 'All calls', to: ALL_CALLS_PATH },
     ...(tag ? [{ label: tag.campaign_name, to: campaignCallLogPath(tag.campaign_id, 'soft_phone') }] : []),
     { label: current ? formatSpineTimestamp(current.call.created_at) : 'Call' },
   ]);

@@ -6,6 +6,14 @@ import {
   AGENCY_CALL_LOG_TYPES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
   AGENCY_CALL_LOG_TYPE_LABELS,
+  AGENCY_CALLS_BEFORE_THE_RULE_LABEL,
+  AGENCY_CALLS_NO_CAMPAIGN,
+  AGENCY_CALLS_NO_CAMPAIGN_LABEL,
+  AGENCY_CALLS_TYPE_FILTER_LABELS,
+  AGENCY_MY_CALLS_NOTHING_TO_FOLLOW_UP,
+  AGENCY_MY_CALLS_TYPE_FILTERS,
+  agencyCallbackDueLabel,
+  agencyNoCampaignLabel,
   AGENCY_CALLS_BY_TYPE_NO_RATE,
   AGENCY_CALLS_BY_TYPE_RATE_LABELS,
   AGENCY_OUTBOUND_CONNECT_RATE_LABEL,
@@ -95,5 +103,46 @@ describe('the call log', () => {
       );
       expect(agencyCallsByTypeFootnote(['dialler', 'soft_phone'])).not.toContain('inbound');
     });
+  });
+});
+
+/** The account's All calls and the agent's My calls (docs/call-log.md §7, CL31 onwards). */
+describe('All calls and My calls', () => {
+  it('My calls puts To follow up first, then All and the three types: the same values as the Call log', () => {
+    expect([...AGENCY_MY_CALLS_TYPE_FILTERS]).toEqual(['to_follow_up', 'all', 'dialler', 'soft_phone', 'inbound']);
+    expect([...AGENCY_MY_CALLS_TYPE_FILTERS].sort()).toEqual([...AGENCY_CALL_LOG_TYPE_FILTERS].sort());
+    expect(AGENCY_MY_CALLS_TYPE_FILTERS.map((f) => AGENCY_CALLS_TYPE_FILTER_LABELS[f]))
+      .toEqual(['To follow up', 'All', 'Dialler', 'Soft phone', 'Inbound']);
+    for (const type of AGENCY_CALL_LOG_TYPES) expect(AGENCY_CALLS_TYPE_FILTER_LABELS[type]).toBe(AGENCY_CALL_LOG_TYPE_LABELS[type]);
+    expect(AGENCY_MY_CALLS_NOTHING_TO_FOLLOW_UP).toBe('Nobody is waiting for a call from you.');
+  });
+
+  it('a call filed under no campaign is "No campaign", or "Before the rule" when it is older than the switch-on', () => {
+    expect(AGENCY_CALLS_NO_CAMPAIGN).toBe('none');
+    const since = '2026-11-20T10:00:00.000Z';
+    const on = { require_campaign: true, require_campaign_since: since };
+    expect(agencyNoCampaignLabel('2026-11-19T10:00:00.000Z', on)).toBe(AGENCY_CALLS_BEFORE_THE_RULE_LABEL);
+    expect(agencyNoCampaignLabel('2026-11-20T10:00:00.000Z', on)).toBe(AGENCY_CALLS_NO_CAMPAIGN_LABEL);
+    expect(agencyNoCampaignLabel('2026-11-21T10:00:00.000Z', on)).toBe('No campaign');
+    // The rule off (or never on): every such call is "No campaign", however old.
+    expect(agencyNoCampaignLabel('2020-01-01T00:00:00.000Z', { require_campaign: false, require_campaign_since: null })).toBe('No campaign');
+    expect(agencyNoCampaignLabel('2020-01-01T00:00:00.000Z', { require_campaign: false, require_campaign_since: since })).toBe('No campaign');
+    expect(agencyNoCampaignLabel('2020-01-01T00:00:00.000Z', null)).toBe('No campaign');
+    expect(AGENCY_CALLS_BEFORE_THE_RULE_LABEL).toBe('Before the rule');
+  });
+
+  it('a callback is due at a time, or late by how long', () => {
+    const now = new Date('2026-11-22T15:48:00.000Z');
+    const label = (dueAt: string) => agencyCallbackDueLabel(dueAt, now, '4:00 PM');
+    expect(label('2026-11-22T16:00:00.000Z')).toBe('Due 4:00 PM');
+    expect(label('2026-11-22T15:48:00.000Z')).toBe('Due 4:00 PM');
+    expect(label('2026-11-22T15:47:30.000Z')).toBe('Late by less than a minute');
+    expect(label('2026-11-22T15:47:00.000Z')).toBe('Late by 1 minute');
+    expect(label('2026-11-22T15:28:00.000Z')).toBe('Late by 20 minutes');
+    expect(label('2026-11-22T14:48:00.000Z')).toBe('Late by 1 hour');
+    expect(label('2026-11-22T13:45:00.000Z')).toBe('Late by 2 hours');
+    expect(label('2026-11-21T15:48:00.000Z')).toBe('Late by 1 day');
+    expect(label('2026-11-19T10:00:00.000Z')).toBe('Late by 3 days');
+    expect(label('not a time')).toBe('Due 4:00 PM');
   });
 });

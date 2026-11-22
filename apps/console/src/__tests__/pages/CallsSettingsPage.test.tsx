@@ -94,6 +94,7 @@ describe('Settings → Calls', () => {
     expect(screen.getByTestId('calls-check-inbound').getAttribute('data-kind')).toBe('ready');
     expect(screen.queryByTestId('calls-check-agents')).toBeNull();
     expect(screen.getByTestId('calls-unfiled-count').textContent).toBe('In the last 30 days, every call was filed under a campaign.');
+    expect(screen.queryByTestId('calls-unfiled-link')).toBeNull();
     expect(mocks.getCallSettings).toHaveBeenCalledWith('t-1', 'a-1');
   });
 
@@ -158,6 +159,10 @@ describe('Settings → Calls', () => {
     );
     expect(theSwitch().disabled).toBe(false);
     expect(screen.getByTestId('calls-unfiled-count').textContent).toBe('In the last 30 days, 41 calls were not filed under a campaign.');
+    // The count leads to those calls: All calls, the calls filed under no campaign, the same days.
+    const link = screen.getByTestId('calls-unfiled-link');
+    expect(link.textContent).toBe('See them in All calls');
+    expect(link.getAttribute('href')).toMatch(/^\/agency\/calls\?from=.+&to=.+&campaign_id=none$/);
   });
 
   it('more agents than are named: "and N more"; one agent and one number read in the singular', async () => {

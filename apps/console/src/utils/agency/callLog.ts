@@ -1,4 +1,5 @@
 import {
+  AGENCY_CALLS_NO_CAMPAIGN,
   AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS,
   AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS,
   AGENCY_CALL_LOG_STATUSES,
@@ -41,6 +42,33 @@ import { missedReasonLabel } from '../inbound/missedCopy';
 export const CALL_LOG_DESCRIPTION =
   'Every call on this campaign, newest first: dialled, made from the soft phone and received, '
   + 'including the dials that never reached an agent.';
+
+/** What the account's All calls says under its title (`docs/call-log.md` §7). */
+export const ALL_CALLS_DESCRIPTION =
+  'Every call in this account, newest first: dialled, made from the soft phone and received, '
+  + 'on every campaign and on none.';
+
+/** `?campaign_id=` on All calls: a campaign's id, or `none` for the calls filed under no campaign. */
+export const ALL_CALLS_CAMPAIGN_PARAM = 'campaign_id';
+
+/** The account's All calls, with a chip on and a campaign chosen. */
+export function allCallsPath(options: { type?: AgencyCallLogTypeFilter; campaign?: string } = {}): string {
+  const params = new URLSearchParams();
+  if (options.type && options.type !== 'all') params.set(CALL_LOG_TYPE_PARAM, options.type);
+  if (options.campaign) params.set(ALL_CALLS_CAMPAIGN_PARAM, options.campaign);
+  const qs = params.toString();
+  return qs ? `/agency/calls?${qs}` : '/agency/calls';
+}
+
+/**
+ * Where `/agency/softphone` lands: All calls with the Soft phone chip on, and whatever query the
+ * old link carried kept (its own `type`, if any, replaced).
+ */
+export function softphoneCallsRedirectPath(search: string): string {
+  const params = new URLSearchParams(search);
+  params.set(CALL_LOG_TYPE_PARAM, 'soft_phone');
+  return `/agency/calls?${params.toString()}`;
+}
 
 // ─── The view in the URL ────────────────────────────────────────────────────
 
@@ -181,6 +209,18 @@ export function lastSevenDays(now: Date = new Date()): { from?: string; to?: str
   return attemptDateRange(localDay(start), localDay(now));
 }
 
+/**
+ * All calls on the calls of the last `days` days that are filed under no campaign: where
+ * Settings › Calls' "N calls were not filed under a campaign" leads (the same window, the same
+ * rows).
+ */
+export function unfiledCallsPath(days: number, now: Date = new Date()): string {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 12);
+  const params = callLogParams(attemptDateRange(localDay(start), localDay(now)), { type: 'all', allDates: false, status: null });
+  params.set(ALL_CALLS_CAMPAIGN_PARAM, AGENCY_CALLS_NO_CAMPAIGN);
+  return `/agency/calls?${params.toString()}`;
+}
+
 /** Whether only the created-date range narrows the list (so an empty list is about the dates). */
 export function onlyDatesNarrow(filters: AgencyAttemptFilters, view: Pick<CallLogView, 'status'>): boolean {
   const { from, to, ...rest } = filters;
@@ -301,17 +341,25 @@ const EMPTY_TYPE_WORDS: Record<AgencyCallLogTypeFilter, string> = {
   to_follow_up: 'missed calls to follow up',
 };
 
-/** What an empty list says, and what it offers. `filters` are the ones the list was read with. */
+/**
+ * What an empty list says, and what it offers. `filters` are the ones the list was read with.
+ * `scope` is the account's All calls (the default is a campaign's Call log): its words say
+ * "in this account", and a campaign chosen there is a filter like any other.
+ */
 export function callLogEmptyState(
   filters: AgencyAttemptFilters,
   view: Pick<CallLogView, 'type' | 'status'>,
+  scope: { where: 'account'; campaignChosen: boolean } | { where: 'campaign' } = { where: 'campaign' },
 ): { kind: CallLogEmptyKind; title: string; description: string } {
   const { type } = view;
+  const account = scope.where === 'account';
+  const here = account ? 'in this account' : 'on this campaign';
+  const campaignChosen = scope.where === 'account' && scope.campaignChosen;
   // To follow up is not narrowed by the dates: an empty one is never about them.
   if (type === 'to_follow_up') {
     const { from: _from, to: _to, ...rest } = filters;
     void _from; void _to;
-    return isCallLogFiltered(rest, view)
+    return isCallLogFiltered(rest, view) || campaignChosen
       ? {
         kind: 'filtered',
         title: 'Nothing matches those filters',
@@ -319,18 +367,18 @@ export function callLogEmptyState(
       }
       : {
         kind: 'none',
-        title: 'Nobody is waiting for a call back on this campaign.',
+        title: `Nobody is waiting for a call back ${here}.`,
         description: 'A missed call stays here until the customer is reached or someone marks it handled.',
       };
   }
-  if (onlyDatesNarrow(filters, view)) {
+  if (onlyDatesNarrow(filters, view) && !campaignChosen) {
     return {
       kind: 'dates',
-      title: `No ${EMPTY_TYPE_WORDS[type]} on this campaign for these dates.`,
+      title: `No ${EMPTY_TYPE_WORDS[type]} ${here} for these dates.`,
       description: 'Widen the dates to see earlier calls.',
     };
   }
-  if (isCallLogFiltered(filters, view)) {
+  if (isCallLogFiltered(filters, view) || campaignChosen) {
     return {
       kind: 'filtered',
       title: 'Nothing matches those filters',
@@ -341,13 +389,16 @@ export function callLogEmptyState(
     ? {
       kind: 'none',
       title: 'No calls were placed',
-      description: 'This campaign has not dialled anyone yet. Calls appear here as they are placed, '
-        + 'including the ones that never reach an agent.',
+      description: account
+        ? 'Nobody in this account has made or taken a call yet. Calls appear here as they are placed, '
+          + 'including the ones that never reach an agent.'
+        : 'This campaign has not dialled anyone yet. Calls appear here as they are placed, '
+          + 'including the ones that never reach an agent.',
     }
     : {
       kind: 'none',
-      title: `No ${EMPTY_TYPE_WORDS[type]} on this campaign`,
-      description: 'Choose All to see every call on this campaign.',
+      title: `No ${EMPTY_TYPE_WORDS[type]} ${here}`,
+      description: `Choose All to see every call ${here}.`,
     };
 }
 

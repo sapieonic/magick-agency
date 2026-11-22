@@ -85,18 +85,20 @@ describe('the console navigation', () => {
   const settings = (role: string | undefined, flagOn: boolean) =>
     visibleSettingsGroups(gates(role, flagOn)).flatMap((g) => g.entries.map((e) => e.label));
 
-  it('adds Soft-phone calls beside Campaigns and the Soft phone setting for an account admin with the flag on', () => {
-    // The Listening history is a supervisor's whatever the listening flag (off here; LS19 as amended).
-    expect(campaignTabs('account_admin', true)).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
+  it('adds the Soft phone setting for an account admin with the flag on; All calls is there either way', () => {
+    // The account's soft-phone calls are in All calls (CL34), which holds the dialler's calls too
+    // and so follows no call type's flag. The Listening history is a supervisor's whatever the
+    // listening flag (off here; LS19 as amended).
+    expect(campaignTabs('account_admin', true)).toEqual(['Campaigns', 'All calls', 'Listening history']);
+    expect(campaignTabs('account_admin', false)).toEqual(['Campaigns', 'All calls', 'Listening history']);
     expect(settings('account_admin', true)).toContain('Soft phone');
   });
 
-  it('adds nothing with the flag off', () => {
-    expect(campaignTabs('account_admin', false)).not.toContain('Soft-phone calls');
+  it('adds no Soft phone setting with the flag off', () => {
     expect(settings('account_admin', false)).not.toContain('Soft phone');
   });
 
-  it('offers an agent no Soft-phone calls, flag or not', () => {
+  it('offers an agent no All calls, flag or not', () => {
     expect(campaignTabs('agent', true)).toEqual([]);
   });
 });
@@ -150,9 +152,9 @@ describe('the routes', () => {
   });
 
   it('puts every supervisor surface and the settings behind the flag', () => {
-    for (const path of ['softphone', 'softphone/calls/:callId']) {
-      expect(routeBlock(path)).toContain('flag="agency_softphone_enabled"');
-    }
+    expect(routeBlock('softphone/calls/:callId')).toContain('flag="agency_softphone_enabled"');
+    // The account's Soft-phone calls list is All calls now (CL34): the old URL only redirects there.
+    expect(routeBlock('softphone')).toContain('<SoftphoneCallsRedirect');
     // A campaign's soft-phone calls are in its Call log (CL11): the old URL only redirects there.
     expect(routeBlock('campaigns/:id/manual-calls')).toContain('<CampaignManualCallsRedirect');
     const settings = routeBlock('softphone', app.indexOf('<Route path="/settings"'));

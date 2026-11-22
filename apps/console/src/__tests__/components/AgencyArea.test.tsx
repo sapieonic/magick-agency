@@ -51,12 +51,12 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('the section tab bar', () => {
-  it('links Campaigns and Soft-phone calls for a supervisor, marking the page it is on', async () => {
-    await renderAt('/agency/softphone');
+  it('links Campaigns and All calls for a supervisor, marking the page it is on', async () => {
+    await renderAt('/agency/calls');
     // The Listening history is a supervisor's whatever the listening flag (off here; LS19 as amended).
-    expect(tabLabels()).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
+    expect(tabLabels()).toEqual(['Campaigns', 'All calls', 'Listening history']);
     expect(screen.getByTestId('section-tab-campaigns').getAttribute('href')).toBe('/agency/campaigns');
-    expect(screen.getByTestId('section-tab-softphone').getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('section-tab-calls').getAttribute('aria-current')).toBe('page');
     expect(screen.getByTestId('page')).toBeTruthy();
   });
 

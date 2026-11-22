@@ -1,5 +1,5 @@
 /// Wire types for the Magick Agency agent app: the station socket, the
-/// session and action routes, the soft phone, the agent's own reads, customer
+/// session and action routes, the soft phone, the agent's own reads, My calls, customer
 /// history (with its search-box number rule), the platform shapes, and Mode B's
 /// push devices and ring routes, floor assist (Need help, a supervisor's
 /// messages), and the agent station redesign's additions (tile icons, the
@@ -23,6 +23,7 @@ export 'src/fact_rules.dart';
 export 'src/floor_assist.dart';
 export 'src/inbound.dart';
 export 'src/json.dart' show WireFormatException;
+export 'src/my_calls.dart';
 export 'src/platform.dart';
 export 'src/push_devices.dart';
 export 'src/reads.dart';

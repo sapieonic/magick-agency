@@ -100,7 +100,8 @@ const ROUTES: RouteRule[] = [
   [/^\/agency\/live$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
   // Not behind the listening flag (LS19, amended 2026-11-17): past listens stay visible.
   [/^\/agency\/listening-history$/, (r) => dialer(r) && can(r, 'agency.supervise')],
-  [/^\/agency\/softphone$/, (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
+  // `AllCallsPage` checks `agency.supervise` (the server's floor on `GET /calls`); behind no call type's flag (CL34).
+  [/^\/agency\/calls$/, (r) => dialer(r) && can(r, 'agency.supervise')],
   [/^\/agency\/inbound\/missed$/, (r) => dialer(r) && r.missed && can(r, 'agency.campaigns.read')],
   [/^\/agency\/inbound\/summary$/, (r) => dialer(r) && r.missed && can(r, 'agency.supervise')],
   [/^\/agency\/analytics$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
@@ -209,7 +210,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
-      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/softphone', '/agency/inbound/missed',
+      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/calls', '/agency/inbound/missed',
       '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',

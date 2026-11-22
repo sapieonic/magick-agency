@@ -339,6 +339,15 @@ const VOCABULARIES = {
     'api/agency/assignment.ts#AGENCY_AGENT_RETRY_ERROR_CODES',
     () => constList('api/agency/assignment.ts', 'AGENCY_AGENT_RETRY_ERROR_CODES'),
   ],
+  // The agent's My calls (docs/call-log.md §7): a row's type, and the chips the app sends as `type=`.
+  call_log_types: [
+    'api/agency/call-log.ts#AGENCY_CALL_LOG_TYPES',
+    () => constList('api/agency/call-log.ts', 'AGENCY_CALL_LOG_TYPES'),
+  ],
+  my_calls_type_filters: [
+    'api/agency/call-log.ts#AGENCY_MY_CALLS_TYPE_FILTERS',
+    () => constList('api/agency/call-log.ts', 'AGENCY_MY_CALLS_TYPE_FILTERS'),
+  ],
   // Customer history: one number across the tenant's campaigns (docs/customer-history.md).
   customer_search_bys: [
     'api/agency/customer-history.ts#CUSTOMER_SEARCH_BYS',

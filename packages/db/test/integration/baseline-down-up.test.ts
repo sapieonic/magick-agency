@@ -109,6 +109,7 @@ const ALL_MIGRATIONS = [
   '0067_call_log_inbound_campaign',
   '0068_call_log_inbound_indexes',
   '0069_call_settings',
+  '0070_attempts_account_created_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

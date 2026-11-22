@@ -111,7 +111,8 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'home:home': ['home', 'attention', 'needs attention', 'needs you now', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue', 'dashboard'],
   'callbacks:callbacks': ['callbacks', 'call-backs', 'call backs', 'follow-ups', 'late callbacks', 'overdue callbacks'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
-  'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
+  // "Soft-phone calls" until it became All calls (CL34): the old name still finds it.
+  'campaigns:calls': ['all calls', 'calls', 'soft phone', 'softphone', 'soft-phone calls', 'manual calls', 'no campaign'],
   'campaigns:live': ['live', 'live calls', 'in progress', 'listen', 'listen in', 'monitor', 'calls'],
   'campaigns:listen-history': ['listening history', 'listened', 'who listened', 'listens', 'monitoring log', 'audit', 'supervisor'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],

@@ -260,6 +260,9 @@ final Map<String, Map<String, Decoder>> decoders = {
     'my_contacts_last_page': decodeMyContactsPage,
     'my_day': MyDay.fromJson,
     'my_day_pool_no_target': MyDay.fromJson,
+    'my_calls': MyCallsPage.fromJson,
+    'my_calls_to_follow_up': MyCallsPage.fromJson,
+    'my_calls_last_page': MyCallsPage.fromJson,
   },
   'platform.json': {
     'session_request': (j) => SessionRequest(idToken: j['id_token']! as String),

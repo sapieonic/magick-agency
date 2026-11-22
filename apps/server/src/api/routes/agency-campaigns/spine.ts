@@ -34,15 +34,8 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
-import {
-  CAMPAIGN_CALL_LOG_SOURCE_FILTERS,
-  inboundJourney,
-  isCallLogStatus,
-  isCampaignCallLogSourceFilter,
-  splitCallLogOutcomes,
-  type CampaignInboundLogRow,
-} from '../../../agency/campaign-call-log.js';
-import { AGENCY_CALL_LOG_STATUSES } from '@magick-agency/contracts/api/agency/call-log';
+import { inboundJourney, type CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
+import { parseCallLogQuery } from '../../../agency/call-lists.js';
 
 /*
  * Route params reaching a `::uuid` cast are shape-checked first, against the shared
@@ -176,29 +169,12 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     if (!owned) return reply;
 
     const query = (request.query ?? {}) as Record<string, unknown>;
-    // `outcome` holds two vocabularies here: the attempt list's, and what only an inbound call
-    // can have happened to it (Missed, Voicemail, Abandoned). The attempt parser knows its own.
-    const happened = splitCallLogOutcomes(query['outcome']);
-    const { outcome: _outcome, ...withoutOutcome } = query;
-    void _outcome;
-    const parsed = parseAttemptFilters({ ...withoutOutcome, ...(happened.attempt !== undefined ? { outcome: happened.attempt } : {}) });
-    if (!parsed.ok) return replyValidationFailed(reply, parsed.issues);
-    if (parsed.filters.agentUserId !== undefined && !UUID_RE.test(parsed.filters.agentUserId)) {
-      return replyValidationFailed(reply, [{ param: 'agent_user_id', message: 'must be an agent id' }]);
-    }
-    const inboundOutcomes = happened.inbound.length > 0 ? { inboundOutcomes: happened.inbound } : {};
-    const rawSource = query['source'];
-    if (rawSource !== undefined && !isCampaignCallLogSourceFilter(rawSource)) {
-      return replyValidationFailed(reply, [{ param: 'source', message: `must be one of: ${CAMPAIGN_CALL_LOG_SOURCE_FILTERS.join(', ')}` }]);
-    }
-    const rawStatus = query['status'];
-    if (rawStatus !== undefined && !isCallLogStatus(rawStatus)) {
-      return replyValidationFailed(reply, [{ param: 'status', message: `must be one of: ${AGENCY_CALL_LOG_STATUSES.join(', ')}` }]);
-    }
-    const softphoneStatus = rawStatus === undefined ? {} : { softphoneStatus: rawStatus };
-    const countsFlag: FilterIssue[] = [];
-    const includeCounts = parseFlagParam('include_counts', query['include_counts'], countsFlag) === true;
-    if (countsFlag.length > 0) return replyValidationFailed(reply, countsFlag);
+    // One parse for every scope the log is read at (`agency/call-lists.ts`).
+    const parsedQuery = parseCallLogQuery(query);
+    if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
+    const { filters, source, includeCounts } = parsedQuery.value;
+    const softphoneStatus = parsedQuery.value.softphoneStatus ? { softphoneStatus: parsedQuery.value.softphoneStatus } : {};
+    const inboundOutcomes = parsedQuery.value.inboundOutcomes ? { inboundOutcomes: parsedQuery.value.inboundOutcomes } : {};
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
@@ -209,8 +185,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       agencyAttemptRepository.listCallLogForCampaign({
         campaignId: owned.id,
         tenantId,
-        filters: parsed.filters,
-        source: rawSource === undefined ? null : rawSource,
+        filters,
+        source,
         ...softphoneStatus,
         ...inboundOutcomes,
         ...(cursor ? { after: cursor } : {}),
@@ -218,7 +194,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       }),
       includeCounts
         ? agencyAttemptRepository.countCallLogForCampaign({
-          campaignId: owned.id, tenantId, filters: parsed.filters, ...softphoneStatus, ...inboundOutcomes,
+          campaignId: owned.id, tenantId, filters, ...softphoneStatus, ...inboundOutcomes,
         })
         : Promise.resolve(null),
     ]);

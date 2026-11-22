@@ -22,7 +22,7 @@ const CLOCK_SECONDS: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-
 const clock = (iso: string) => upperDayPeriod(dateFormatter(CLOCK_SECONDS).format(new Date(iso)));
 
 /** Why the call is in this campaign's log, said under the page's title. */
-const FILED_UNDER: Record<AgencyCallLogInboundRow['campaign_source'], string> = {
+const FILED_UNDER: Record<NonNullable<AgencyCallLogInboundRow['campaign_source']>, string> = {
   contact: 'filed under this campaign because the number is on its list',
   route: 'filed under this campaign because the number they rang sends unknown callers here',
   agent: 'filed under this campaign by the agent who took the call',
@@ -31,7 +31,9 @@ const FILED_UNDER: Record<AgencyCallLogInboundRow['campaign_source'], string> = 
 
 /** The line under the title: "Inbound · 22 Nov 2026, 3:42 PM · filed under this campaign because …". */
 export function inboundCallHeadline(row: AgencyCallLogInboundRow): string {
-  return `Inbound · ${formatCallTimestamp(row.created_at)} · ${FILED_UNDER[row.campaign_source]}`;
+  // A call on a campaign's page always has a source; one filed under none says only what it is.
+  const why = row.campaign_source ? ` · ${FILED_UNDER[row.campaign_source]}` : '';
+  return `Inbound · ${formatCallTimestamp(row.created_at)}${why}`;
 }
 
 /** Who rang, as the page's title: the number, or that it was withheld. */

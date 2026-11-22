@@ -135,6 +135,8 @@ export const AGENCY_SYSTEM_OUTCOME_LABELS: Readonly<Record<string, string>> = {
 /** A dialler row: the attempt list's own row (`AgencyAttempt`), marked with its type. */
 export interface AgencyCallLogDiallerRow extends AgencyAttempt {
   type: 'dialler';
+  /** The campaign's name, on the account's All calls only ({@link AgencyAccountCallsPage}). */
+  campaign_name?: string | null;
 }
 
 /**
@@ -146,7 +148,13 @@ export interface AgencyCallLogSoftphoneRow {
   type: 'soft_phone';
   /** The soft-phone call's id (`agency_manual_calls.id`): what its detail page is keyed on. */
   id: string;
-  campaign_id: string;
+  /**
+   * The campaign the call was logged to. Never null on a campaign's Call log; null on the
+   * account's All calls for a call logged to no campaign.
+   */
+  campaign_id: string | null;
+  /** The campaign's name, on the account's All calls only ({@link AgencyAccountCallsPage}). */
+  campaign_name?: string | null;
   /** The roster contact the number matched, or null: the number is not on the campaign's list. */
   contact_id: string | null;
   /** E.164, as dialled. */
@@ -217,9 +225,15 @@ export interface AgencyCallLogInboundRow {
   type: 'inbound';
   /** The inbound call's id (`agency_inbound_calls.id`): what its Call page is keyed on. */
   id: string;
-  campaign_id: string;
+  /**
+   * The campaign the call is filed under. Never null on a campaign's Call log; null on the
+   * account's All calls for a call filed under none (and then `campaign_source` is null too).
+   */
+  campaign_id: string | null;
+  /** The campaign's name, on the account's All calls only ({@link AgencyAccountCallsPage}). */
+  campaign_name?: string | null;
   /** How the call came by this campaign: `contact`, its number is on the campaign's list. */
-  campaign_source: AgencyInboundCampaignSource;
+  campaign_source: AgencyInboundCampaignSource | null;
   /** The roster contact the caller's number matched, or null. */
   contact_id: string | null;
   /** The caller's number, E.164; null when withheld. */
@@ -347,4 +361,223 @@ export interface AgencyInboundCallLogDetail {
   call_availability: AgencyAttemptCallDetail['call_availability'];
   /** Who listened to the call live (docs/listening.md LS13); absent when nobody could have. */
   listen_sessions?: AgencyAttemptCallDetail['listen_sessions'];
+}
+
+// ─── The account's All calls and the agent's My calls (docs/call-log.md §7, CL31–CL38) ────────
+
+/**
+ * `?campaign_id=` on All calls and My calls: a campaign's id, or this word for the calls filed
+ * under no campaign (a soft-phone call logged to none, an inbound call from a number on no list
+ * whose route files unknown callers nowhere). A dialler call always has a campaign, so with
+ * `none` no dialler call matches.
+ */
+export const AGENCY_CALLS_NO_CAMPAIGN = 'none';
+
+/** What a list of calls says in its Campaign column for a call filed under no campaign (CL10). */
+export const AGENCY_CALLS_NO_CAMPAIGN_LABEL = 'No campaign';
+
+/**
+ * The same, for a call older than the account's switch-on of "Every call must belong to a
+ * campaign" (`require_campaign_since`): it was allowed when it was made, and is never given a
+ * campaign afterwards (CL10).
+ */
+export const AGENCY_CALLS_BEFORE_THE_RULE_LABEL = 'Before the rule';
+
+/**
+ * `GET /proxy/agency/calls` query (`agency.supervise`): the campaign Call log's
+ * ({@link AgencyCallLogQuery}), at the account's scope, plus the campaign.
+ */
+export interface AgencyAccountCallsQuery extends AgencyCallLogQuery {
+  /** A campaign's id, or {@link AGENCY_CALLS_NO_CAMPAIGN}. */
+  campaign_id?: string;
+}
+
+/** A row of the account's All calls: the Call log's row, with its campaign named. */
+export type AgencyAccountCallRow = AgencyCallLogRow;
+
+/**
+ * `GET /proxy/agency/calls` (`agency.supervise`): every call of the account, of the three
+ * types, newest first on one keyset. `to_follow_up` is the account's open Missed rows. `rule`
+ * is the account's "Every call must belong to a campaign" setting, for the Campaign column's
+ * {@link AGENCY_CALLS_BEFORE_THE_RULE_LABEL}.
+ */
+export interface AgencyAccountCallsPage extends AgencyKeysetPage<AgencyAccountCallRow> {
+  counts?: AgencyCallLogCounts;
+  rule: { require_campaign: boolean; require_campaign_since: string | null };
+}
+
+/** Which label a call filed under no campaign carries in the Campaign column (CL10). */
+export function agencyNoCampaignLabel(
+  createdAt: string,
+  rule: { require_campaign: boolean; require_campaign_since: string | null } | null | undefined,
+): string {
+  if (!rule?.require_campaign || !rule.require_campaign_since) return AGENCY_CALLS_NO_CAMPAIGN_LABEL;
+  const since = Date.parse(rule.require_campaign_since);
+  const at = Date.parse(createdAt);
+  return Number.isFinite(since) && Number.isFinite(at) && at < since
+    ? AGENCY_CALLS_BEFORE_THE_RULE_LABEL
+    : AGENCY_CALLS_NO_CAMPAIGN_LABEL;
+}
+
+/**
+ * `?type=` on My calls, in chip order: To follow up first (CL9), then All and the three types.
+ * The same values as {@link AGENCY_CALL_LOG_TYPE_FILTERS}.
+ */
+export const AGENCY_MY_CALLS_TYPE_FILTERS = [
+  'to_follow_up', 'all', 'dialler', 'soft_phone', 'inbound',
+] as const satisfies readonly AgencyCallLogTypeFilter[];
+
+/** The chips' words on My calls and All calls. */
+export const AGENCY_CALLS_TYPE_FILTER_LABELS: Readonly<Record<AgencyCallLogTypeFilter, string>> = {
+  to_follow_up: 'To follow up',
+  all: 'All',
+  dialler: 'Dialler',
+  soft_phone: 'Soft phone',
+  inbound: 'Inbound',
+};
+
+/** What My calls says under To follow up when the agent owes nobody a call. */
+export const AGENCY_MY_CALLS_NOTHING_TO_FOLLOW_UP = 'Nobody is waiting for a call from you.';
+
+/** The Missed part of an inbound row on My calls ({@link AgencyMyCallRow.follow_up}). */
+export interface AgencyMyCallFollowUp {
+  status: AgencyInboundFollowUpStatus;
+  reason: AgencyInboundMissedReason;
+  closed_cause: AgencyInboundClosedCause | null;
+  /** `marked` by a person or `reached` (the customer was spoken to afterwards). NULL while open. */
+  handled_reason: AgencyInboundHandledReason | null;
+}
+
+/**
+ * One call on the agent's own My calls (`GET /proxy/agency/my-calls`). One shape for the three
+ * types, with what only one type has null on the others. It carries NO media: no leg id, no
+ * recording, no summary (an agent does not hear recordings, their own included).
+ *
+ * **The number is as this agent may see it.** `phone` is the customer's number in full (E.164)
+ * when the call's campaign shows numbers in full or the call has no campaign, and the masked
+ * text (`98••• ••210`, the domain's `maskFactPhone`) when the campaign hides them
+ * (`phone_display: 'masked'`, AS9); `phone_masked` says which. The server masks: a hidden
+ * number is never sent on this route, on any type of row.
+ */
+export interface AgencyMyCallRow {
+  type: AgencyCallLogType;
+  /** The attempt's, the soft-phone call's or the inbound call's id. */
+  id: string;
+  /** When the call began: the dial's row for a dialler or soft-phone call, the arrival for an inbound one. */
+  created_at: string;
+  campaign_id: string | null;
+  /** Null: no campaign, or its row is gone. */
+  campaign_name: string | null;
+  contact_id: string | null;
+  /** The roster contact's name by the station card's rule (AS19 S1); null: none, or no contact. */
+  customer_name: string | null;
+  /** See the interface note. Null: the caller withheld their number. */
+  phone: string | null;
+  phone_masked: boolean;
+  /** The call's own state (`ended` on every inbound row). */
+  state: string;
+  /** What happened, in the type's own vocabulary; null while the call is on or before it has one. */
+  outcome: string | null;
+  disposition_code: string | null;
+  /** The saved outcome in the campaign's own words; null when its list no longer has the code, or there is no campaign. */
+  disposition_label: string | null;
+  /** Dialler: the campaign's automatic outcome for an unanswered call. */
+  auto_disposition_code: string | null;
+  callback_at: string | null;
+  promise_date: string | null;
+  promise_amount: string | null;
+  talk_seconds: number | null;
+  /** The agent's own notes on the call. */
+  notes: string | null;
+  /** Dialler: "Try 2". Null on the other types. */
+  attempt_number: number | null;
+  /** Dialler: a wrap-up redial. */
+  redial: boolean;
+  /** Dialler and soft phone: when the dial was sent; null: it never was (SR2), and on inbound. */
+  dialed_at: string | null;
+  /** Soft phone and inbound: the call was answered and still waits for its outcome. */
+  requires_disposition: boolean;
+  /** Soft phone: the Missed inbound call it rang back (CL1). */
+  callback_of: { inbound_call_id: string; arrived_at: string | null } | null;
+  /** Inbound: how long the caller waited, whole seconds. Null on the other types. */
+  wait_seconds: number | null;
+  /** Inbound: the caller was put in the queue. */
+  queued: boolean;
+  /** Inbound: the voicemail's length; null: none. */
+  voicemail_seconds: number | null;
+  /** Inbound: its Missed row; null for an answered call and on the other types. */
+  follow_up: AgencyMyCallFollowUp | null;
+  /** Inbound: the latest soft-phone call dialled from its Call back. */
+  called_back: { call_id: string; at: string } | null;
+}
+
+/**
+ * A callback the agent booked that is due today or already late (To follow up's second part):
+ * My day's call-later rule (`AgencyMyCallLaterRow`), across the campaigns the agent is on.
+ */
+export interface AgencyMyCallbackDue {
+  contact_id: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  customer_name: string | null;
+  due_at: string;
+  /** Due before now. */
+  overdue: boolean;
+}
+
+/**
+ * What the agent still owes, for the To follow up chip's badge: `to_follow_up` is their open
+ * Missed rows PLUS the callbacks due today or late; `missed_open` the Missed rows alone (the
+ * Missed calls badge's own count, capped as that badge is); `callbacks_due` the callbacks. The
+ * other chips carry no number on My calls.
+ */
+export interface AgencyMyCallsCounts {
+  to_follow_up: number;
+  missed_open: number;
+  callbacks_due: number;
+}
+
+/**
+ * `GET /proxy/agency/my-calls` query (`agency.station.connect`). The subject is the session's
+ * user: nothing here can name another agent.
+ */
+export interface AgencyMyCallsQuery {
+  type?: AgencyCallLogTypeFilter;
+  /** A campaign's id, or {@link AGENCY_CALLS_NO_CAMPAIGN}. */
+  campaign_id?: string;
+  /** Inclusive, ISO-8601, on when the call began. Not applied to To follow up (CL14). */
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+  /** `1`: add `counts`. */
+  include_counts?: string;
+}
+
+/**
+ * `GET /proxy/agency/my-calls`: the agent's own calls of the three types (inbound: the calls
+ * they answered, and their open Missed rows), newest first on one keyset. With
+ * `type=to_follow_up` the rows are the agent's open Missed rows and `callbacks_due` (first page
+ * only) the callbacks they booked that are due today or late, soonest due first.
+ */
+export interface AgencyMyCallsPage extends AgencyKeysetPage<AgencyMyCallRow> {
+  counts?: AgencyMyCallsCounts;
+  callbacks_due?: AgencyMyCallbackDue[];
+}
+
+/**
+ * When a callback is due, in the words To follow up uses: "Due 4:00 PM" for one still to come
+ * today, "Late by 2 hours" (or "Late by 20 minutes", "Late by 3 days") for one that has passed.
+ * `time` is the due time already formatted for the reader ("4:00 PM").
+ */
+export function agencyCallbackDueLabel(dueAt: string, now: Date, time: string): string {
+  const lateMs = now.getTime() - Date.parse(dueAt);
+  if (!Number.isFinite(lateMs) || lateMs <= 0) return `Due ${time}`;
+  const minutes = Math.floor(lateMs / 60_000);
+  if (minutes < 1) return 'Late by less than a minute';
+  if (minutes < 60) return `Late by ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Late by ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  const days = Math.floor(hours / 24);
+  return `Late by ${days} ${days === 1 ? 'day' : 'days'}`;
 }
