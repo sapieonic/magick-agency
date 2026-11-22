@@ -82,29 +82,10 @@ import { changedSettings, samePool, type CampaignSettingsForm } from '../../../u
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import {
-  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
-  type AgencyCampaignTemplateEffective,
-  type AgencyCampaignTemplateSectionKey,
-  type AgencyCampaignTemplateSectionSource,
-} from '@magick-agency/contracts/api/agency/campaign-templates';
-import { trackAgencyCampaignTemplateStartedFrom } from '../../../analytics/events';
-import { CAMPAIGN_TEMPLATES_PATH, campaignTemplatePath } from '../../../utils/consoleNav';
-import {
-  campaignFieldsOfForm,
-  formOfConfig,
-  sameSection,
-  withSectionFrom,
-  type TemplateForm,
-} from '../../../utils/agency/campaignTemplates/templateForm';
-import {
-  SOURCE_CHIP_LABELS,
-  sectionSummary,
-  wrapupSummary,
-} from '../../../utils/agency/campaignTemplates/templateCopy';
-import { BUILT_IN_START, useStartFrom } from '../../../components/agency/campaignTemplates/useStartFrom';
+import type { AgencyCampaignTemplateSectionSource } from '@magick-agency/contracts/api/agency/campaign-templates';
+import { SOURCE_CHIP_LABELS, sectionSummary, wrapupSummary } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { useBuilderTemplate } from '../../../components/agency/campaignTemplates/useBuilderTemplate';
 import { StartFromPanel } from '../../../components/agency/campaignTemplates/StartFromPanel';
-import { useTemplatesAccess } from '../../../components/agency/campaignTemplates/useTemplatesAccess';
 import templateStyles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
 import styles from './CampaignBuilderPage.module.css';
 
@@ -172,22 +153,6 @@ export default function CampaignBuilderPage() {
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
-  /** The config the page opened with: still this object, nothing on the form has been edited. */
-  const openingConfigRef = useRef(config);
-
-  /*
-    Campaign templates (`docs/campaign-templates.md` §7). With the flag on and the right to create
-    campaigns, the form opens filled in from the account's default chain and "Start from" switches
-    it; the create names the template (`template_id`, CT8). With the flag off, or either read
-    failing, nothing here runs and the page is as it was before templates.
-  */
-  const templatesAccess = useTemplatesAccess();
-  const startFromRead = useStartFrom(templatesAccess.use);
-  /** The filled-in settings the form was last filled from; null without templates. */
-  const [startFrom, setStartFrom] = useState<AgencyCampaignTemplateEffective | null>(null);
-  /** A "Start from" choice waiting on "replace your changes?". */
-  const [pendingStart, setPendingStart] = useState<string | null>(null);
-  const [switchingStart, setSwitchingStart] = useState(false);
   /**
    * Bumped when the Collections set replaces the outcomes (AS4): the behaviour editors remount, so
    * no row keeps state from the list it replaced (which added rows follow their label, which mapped
@@ -292,129 +257,42 @@ export default function CampaignBuilderPage() {
   const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
 
   /*
-    The form as a template's sections see it (the parts New campaign does not edit, the break
-    limits, what agents see and the summary profile, are the filled-in template's), and where each
-    section now comes from: the filled-in source while it is unchanged, `campaign` once changed
-    (compared by the domain's normalisation, as the server records it, CT9).
+    Campaign templates (`docs/campaign-templates.md` §7). With the flag on and the right to create
+    campaigns, the form opens filled in from the account's default chain and "Start from" switches
+    it; the create names the template (`template_id`, CT8). With the flag off, or either read
+    failing, nothing of it runs and the page is as it was before templates.
   */
-  const startForm = useMemo(() => (startFrom ? formOfConfig(startFrom.config) : null), [startFrom]);
-  const builderForm = useMemo<TemplateForm | null>(
-    () => (startForm
-      ? { ...startForm, config, recording: { ...startForm.recording, record: recordCalls }, callerIds, carrier }
-      : null),
-    [startForm, config, recordCalls, callerIds, carrier],
-  );
-  const builderFields = useMemo(() => (builderForm ? campaignFieldsOfForm(builderForm) : null), [builderForm]);
-  const sectionSource = useCallback(
-    (key: AgencyCampaignTemplateSectionKey): AgencyCampaignTemplateSectionSource | null => {
-      if (!startFrom || !builderFields) return null;
-      return sameSection(key, builderFields, startFrom.config) ? startFrom.sources[key] : 'campaign';
-    },
-    [startFrom, builderFields],
-  );
-  const changedSections = startFrom
-    ? AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter((k) => sectionSource(k) === 'campaign')
-    : [];
-
-  /*
-    With a template in play the create names it (`template_id`, null for the built-in settings) and
-    carries every section New campaign shows, when they pass their checks, plus the filled-in break
-    limits, agent screen and summary profile: so the server records each section's source as it is
-    at the create (CT9), and nothing is left to a default chain the picker moved away from. Sections
-    still being fixed are left out and filled in from the template; Save campaign sends them.
-  */
-  const templateCreateFields = useMemo(() => {
-    if (!startFrom || !builderFields) return {};
-    if (Object.keys(validateConfig(config)).length > 0) return { template_id: startFrom.template?.id ?? null };
-    const { record_calls } = recordingPayload({ recordingEnabled, analyticsEnabled: false, next: builderRecording(recordCalls) });
-    return {
-      template_id: startFrom.template?.id ?? null,
-      ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
-      ...(record_calls !== undefined ? { record_calls, analysis_profile_id: builderFields.analysis_profile_id ?? null } : {}),
-      break_reasons: builderFields.break_reasons,
-      agent_script: builderFields.agent_script,
-      phone_display: builderFields.phone_display,
-      daily_target_calls: builderFields.daily_target_calls,
-    };
-  }, [startFrom, builderFields, config, recordingEnabled, recordCalls, assignmentEnabled]);
-
-  /** Fill the form from `effective`: every section New campaign edits, as if it had been typed. */
-  const fillFrom = useCallback(
-    (effective: AgencyCampaignTemplateEffective, preselected: boolean) => {
-      const form = formOfConfig(effective.config);
-      setConfig(form.config);
-      openingConfigRef.current = form.config;
-      setRecordCalls(form.recording.record);
-      // A template's numbers when it sets them; the built-in "none yet" otherwise (Basics asks).
-      const ownNumbers = effective.sources.numbers !== 'builtin';
-      const nextCallerIds = ownNumbers ? form.callerIds : [];
-      const nextCarrier = ownNumbers ? form.carrier : null;
-      setCallerIds(nextCallerIds);
-      setChosenCarrier(nextCarrier);
-      initialDispositionOrderRef.current = form.config.dispositions.map((d) => d.code);
-      setCatalogEpoch((n) => n + 1);
+  const template = useBuilderTemplate({
+    campaignId,
+    config,
+    recordCalls,
+    callerIds,
+    chosenCarrier,
+    carrier,
+    recordingEnabled,
+    assignmentEnabled,
+    apply: (next, how) => {
+      if (next.config) setConfig(next.config);
+      if (next.recordCalls !== undefined) setRecordCalls(next.recordCalls);
+      if (next.callerIds) setCallerIds(next.callerIds);
+      if ('chosenCarrier' in next) setChosenCarrier(next.chosenCarrier ?? null);
+      if (how.outcomes) setCatalogEpoch((n) => n + 1);
       setConfigSaved(false);
-      setStartFrom(effective);
-      // Before a draft exists, what the template fills in is the starting point, not an edit.
-      setSavedForm((saved) => ({
-        ...saved,
-        callerIds: nextCallerIds,
-        carrier: nextCarrier,
-        recording: builderRecording(form.recording.record),
-        config: form.config,
-      }));
-      trackAgencyCampaignTemplateStartedFrom({
-        source: effective.template?.scope ?? 'builtin',
-        preselected,
-        note_count: effective.notes.length,
-      });
-    },
-    [],
-  );
-
-  // Open on the default chain, unless something was typed into the settings first.
-  const filledInitialRef = useRef(false);
-  useEffect(() => {
-    if (filledInitialRef.current || startFromRead.status !== 'ready' || !startFromRead.initial) return;
-    filledInitialRef.current = true;
-    if (campaignId !== null || config !== openingConfigRef.current || recordCalls || callerIds.length > 0) return;
-    fillFrom(startFromRead.initial, true);
-  }, [startFromRead.status, startFromRead.initial, campaignId, config, recordCalls, callerIds, fillFrom]);
-
-  const switchStart = useCallback(
-    async (choice: string) => {
-      setPendingStart(null);
-      setSwitchingStart(true);
-      try {
-        fillFrom(await startFromRead.read(choice), false);
-        setError(null);
-      } catch {
-        setError('Could not read that template. The form still holds what it had.');
-      } finally {
-        setSwitchingStart(false);
+      const baseline = how.baseline;
+      if (baseline) {
+        initialDispositionOrderRef.current = baseline.config.dispositions.map((d) => d.code);
+        // Before a draft exists, what the template fills in is the starting point, not an edit.
+        setSavedForm((saved) => ({
+          ...saved,
+          callerIds: baseline.callerIds,
+          carrier: baseline.chosenCarrier,
+          recording: builderRecording(baseline.recordCalls),
+          config: baseline.config,
+        }));
       }
     },
-    // `setError` comes from the upload hook below; it is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [fillFrom, startFromRead],
-  );
-
-  /** Put section `key` back as the template filled it in (Review's Reset). */
-  const resetSection = useCallback(
-    (key: AgencyCampaignTemplateSectionKey) => {
-      if (!startFrom || !startForm || !builderForm) return;
-      const next = withSectionFrom(builderForm, startForm, key);
-      setConfig(next.config);
-      setRecordCalls(next.recording.record);
-      if (key === 'numbers') {
-        setCallerIds(next.callerIds);
-        setChosenCarrier(startFrom.sources.numbers === 'builtin' ? null : next.carrier);
-      }
-      if (key === 'outcomes') setCatalogEpoch((n) => n + 1);
-      setConfigSaved(false);
-    },
-    [startFrom, startForm, builderForm],
-  );
+    onReadFailed: (message) => setError(message),
+  });
 
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
@@ -434,7 +312,7 @@ export default function CampaignBuilderPage() {
           telephony_provider: carrier.telephony_provider,
           telephony_credential_id: carrier.telephony_credential_id,
           abandonment_ceiling_pct: ceilingForCreate,
-          ...templateCreateFields,
+          ...template.createFields,
         },
         tenantId ?? undefined,
         accountId ?? undefined,
@@ -449,7 +327,7 @@ export default function CampaignBuilderPage() {
     // The draft has the basics now; the rest is saved by Save campaign.
     setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
-  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, templateCreateFields, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, tenantId, accountId]);
 
   const {
     limits,
@@ -767,18 +645,6 @@ export default function CampaignBuilderPage() {
       savedOnce ? 'the settings it was last saved with' : 'the default settings'
     }; Cancel keeps you here to save them.`;
 
-  /** A Review row's source chip and Reset, for the section it shows; nothing without templates. */
-  const sourceProps = (key: AgencyCampaignTemplateSectionKey) =>
-    startFrom ? { source: sectionSource(key), onReset: () => resetSection(key) } : {};
-  /** "View template": the template's editor, or the list where the reader may read it; null when neither. */
-  const templateViewPath = (() => {
-    const t = startFrom?.template;
-    if (!t) return null;
-    if (t.scope === 'account') return templatesAccess.manage ? campaignTemplatePath('account', t.id) : null;
-    if (templatesAccess.manageOrganisation) return campaignTemplatePath('organisation', t.id);
-    return templatesAccess.manage ? CAMPAIGN_TEMPLATES_PATH : null;
-  })();
-
   /** A Review row's button: "Fix" lands on the first field with an error, "Edit" on the step. */
   const editRow = (row: ReviewRowId, target: BuilderStepId) => () =>
     rowFindings.has(row) ? goToFinding(target) : goTo(target);
@@ -795,21 +661,7 @@ export default function CampaignBuilderPage() {
         </p>
       </header>
 
-      {startFrom && startFromRead.status === 'ready' ? (
-        <StartFromPanel
-          templates={startFromRead.templates}
-          effective={startFrom}
-          value={startFrom.template?.id ?? BUILT_IN_START}
-          onChange={(choice) => {
-            if (choice === (startFrom.template?.id ?? BUILT_IN_START)) return;
-            if (changedSections.length > 0) setPendingStart(choice);
-            else void switchStart(choice);
-          }}
-          disabled={campaignId !== null || switchingStart}
-          lockedNote={campaignId !== null ? 'The draft is made. Change its settings in the steps below.' : null}
-          viewPath={templateViewPath}
-        />
-      ) : null}
+      {template.panel ? <StartFromPanel {...template.panel} /> : null}
 
       <BuilderStepper
         current={step}
@@ -1157,7 +1009,7 @@ export default function CampaignBuilderPage() {
                     }
                     errors={rowFindings.get('callFrom')}
                     onEdit={editRow('callFrom', 'basics')}
-                    {...sourceProps('numbers')}
+                    {...template.sourceProps('numbers')}
                   />
                   <ReviewRow
                     label="Contacts"
@@ -1174,14 +1026,14 @@ export default function CampaignBuilderPage() {
                     value={callingWindowEcho(config.window)}
                     errors={rowFindings.get('hours')}
                     onEdit={editRow('hours', 'hours')}
-                    {...sourceProps('hours')}
+                    {...template.sourceProps('hours')}
                   />
                   <ReviewRow
                     label="Outcomes"
                     value={config.dispositions.map((entry) => entry.label || entry.code).join(', ')}
                     errors={rowFindings.get('outcomes')}
                     onEdit={editRow('outcomes', 'behaviour')}
-                    {...sourceProps('outcomes')}
+                    {...template.sourceProps('outcomes')}
                   />
                   <ReviewRow
                     label="Unanswered calls"
@@ -1189,12 +1041,12 @@ export default function CampaignBuilderPage() {
                     errors={rowFindings.get('unanswered')}
                     onEdit={editRow('unanswered', 'behaviour')}
                   />
-                  {startFrom ? (
+                  {template.startFrom ? (
                     <ReviewRow
                       label="Retries"
-                      value={sectionSummary('retries', builderFields ?? {})}
+                      value={sectionSummary('retries', template.builderFields ?? {})}
                       onEdit={() => goTo('behaviour')}
-                      {...sourceProps('retries')}
+                      {...template.sourceProps('retries')}
                     />
                   ) : null}
                   <ReviewRow
@@ -1202,7 +1054,7 @@ export default function CampaignBuilderPage() {
                     value={wrapupSummary(config.wrapupSeconds, config.autoReturn, config.allowWrapupRedial)}
                     errors={rowFindings.get('wrapup')}
                     onEdit={editRow('wrapup', 'behaviour')}
-                    {...sourceProps('wrapup')}
+                    {...template.sourceProps('wrapup')}
                   />
                   {assignmentEnabled ? (
                     <ReviewRow
@@ -1214,7 +1066,7 @@ export default function CampaignBuilderPage() {
                       }`}
                       errors={rowFindings.get('assignment')}
                       onEdit={editRow('assignment', 'behaviour')}
-                      {...sourceProps('assignment')}
+                      {...template.sourceProps('assignment')}
                     />
                   ) : null}
                   <ReviewRow
@@ -1223,28 +1075,28 @@ export default function CampaignBuilderPage() {
                     warning={ceilingAboveReference(config.abandonmentCeilingPct)}
                     errors={rowFindings.get('abandonment')}
                     onEdit={editRow('abandonment', 'behaviour')}
-                    {...sourceProps('safety')}
+                    {...template.sourceProps('safety')}
                   />
                   <ReviewRow
                     label="Recording"
                     value={recordCalls ? 'Every call is recorded' : 'Off'}
                     errors={rowFindings.get('recording')}
                     onEdit={editRow('recording', 'behaviour')}
-                    {...sourceProps('recording')}
+                    {...template.sourceProps('recording')}
                   />
-                  {startFrom && builderFields ? (
+                  {template.builderFields ? (
                     <>
                       {inboundEnabled ? (
                         <ReviewRow
                           label="Customers who ring in"
-                          value={sectionSummary('inbound', builderFields)}
+                          value={sectionSummary('inbound', template.builderFields)}
                           onEdit={() => goTo('behaviour')}
-                          {...sourceProps('inbound')}
+                          {...template.sourceProps('inbound')}
                         />
                       ) : null}
                       {/* Not edited in New campaign: as the template fills them in; change them in the campaign's Settings. */}
-                      <ReviewRow label="Breaks" value={sectionSummary('breaks', builderFields)} {...sourceProps('breaks')} />
-                      <ReviewRow label="What agents see" value={sectionSummary('agent_screen', builderFields)} {...sourceProps('agent_screen')} />
+                      <ReviewRow label="Breaks" value={sectionSummary('breaks', template.builderFields)} {...template.sourceProps('breaks')} />
+                      <ReviewRow label="What agents see" value={sectionSummary('agent_screen', template.builderFields)} {...template.sourceProps('agent_screen')} />
                     </>
                   ) : null}
                   <p className={styles.reviewNote}>
@@ -1349,14 +1201,12 @@ export default function CampaignBuilderPage() {
 
       <LeaveUnsavedDialog guard={leaveGuard} message={leaveMessage} />
       <ConfirmDialog
-        open={pendingStart !== null}
+        open={template.confirm.open}
         title="Replace your changes?"
-        message={`You changed ${changedSections.length === 1 ? 'a section' : `${changedSections.length} sections`} of these settings. Starting from another template replaces ${
-          changedSections.length === 1 ? 'it' : 'them'
-        } with that template’s.`}
+        message={template.confirm.message}
         confirmLabel="Start from it"
-        onConfirm={() => void switchStart(pendingStart!)}
-        onCancel={() => setPendingStart(null)}
+        onConfirm={template.confirm.onConfirm}
+        onCancel={template.confirm.onCancel}
       />
     </div>
   );
