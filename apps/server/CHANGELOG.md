@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/sapieonic/magick-agency/compare/server-v0.32.0...server-v0.33.0) (2026-11-22)
+
+
+### Features
+
+* **server,console:** end agent sessions forgotten offline after 2 hours (OS9) ([#116](https://github.com/sapieonic/magick-agency/issues/116)) ([8b2210e](https://github.com/sapieonic/magick-agency/commit/8b2210ecd7282118c0a4b6bfe1b5d2df8cc97700))
+
 ## [0.32.0](https://github.com/sapieonic/magick-agency/compare/server-v0.31.0...server-v0.32.0) (2026-11-21)
 
 
