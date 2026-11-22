@@ -1760,7 +1760,7 @@ describe('every time on the Call log reads with AM / PM in capitals', () => {
     expect(screen.getByTestId('call-facts-manual-cb').textContent).toBe('Call back · to the 3:12 PM missed call');
     expect(screen.getByText('Dialled from 17 Aug 2026, 09:00 AM, up to 17 Aug 2026, 06:00 PM')).toBeTruthy();
     // Not one lower-case period anywhere in the list or its chips.
-    expect(document.body.textContent).not.toMatch(/\d (am|pm)\b/);
+    expect(document.body.textContent).not.toMatch(/\d ?(am|pm)(?![a-z])/);
   });
 });
 

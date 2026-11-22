@@ -253,7 +253,10 @@ describe('every time on the page reads with AM / PM in capitals', () => {
     expect(screen.getByTestId('call-fact-Saved').textContent).toContain('03:47 PM');
     // The shared call card's own instants (created, answered, ended) and the listen's span.
     expect(text).toMatch(/03:43 PM–03:45 PM/);
-    expect(text).not.toMatch(/\d ?(am|pm)\b/);
+    expect(text).toContain('Created22 Nov 2026, 03:42 PM');
+    expect(text).toContain('Ended22 Nov 2026, 03:46 PM');
+    // No lower-case period after a time, whatever text runs on after it.
+    expect(text).not.toMatch(/\d ?(am|pm)(?![a-z])/);
   });
 });
 
