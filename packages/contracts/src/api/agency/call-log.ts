@@ -122,6 +122,16 @@ export function agencyCallsByTypeFootnote(types: readonly AgencyCallLogType[]): 
   return `All calls adds the ${howMany ? `${howMany} ` : ''}types. Each call is counted once, under the type it was. Rates are not added together: ${list}.`;
 }
 
+/**
+ * The words for an outcome code no campaign's list can hold, where a table of outcomes would
+ * otherwise print the raw code. `no_disposition` is what the server stamps on a call whose
+ * outcome window ran out with none saved; it is not "no outcome written" (a call closed with no
+ * code at all), so it has its own row and its own words, Compare agents' "No outcome chosen".
+ */
+export const AGENCY_SYSTEM_OUTCOME_LABELS: Readonly<Record<string, string>> = {
+  no_disposition: 'No outcome chosen',
+};
+
 /** A dialler row: the attempt list's own row (`AgencyAttempt`), marked with its type. */
 export interface AgencyCallLogDiallerRow extends AgencyAttempt {
   type: 'dialler';

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { AGENCY_SYSTEM_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/call-log';
+import { AUTO_DISPOSITION_CODE } from '../../../src/agency/disposition.js';
 import { outcomesByType } from '../../../src/agency/insights/activity.js';
 import {
   inboundCampaignCountsStatement,
@@ -56,6 +58,30 @@ describe('outcomesByType', () => {
   });
 });
 
+describe('a system code in the outcomes by type', () => {
+  it('reads "No outcome chosen" for no_disposition, on every type, apart from a call with no code at all', () => {
+    const rows = outcomesByType(
+      [{ code: 'no_disposition', count: 5 }, { code: null, count: 2 }],
+      [{ source: 'soft_phone', code: 'no_disposition', count: 3 }, { source: 'inbound', code: 'no_disposition', count: 1 }],
+      labels,
+      success,
+    );
+    expect(rows).toEqual([
+      { code: 'no_disposition', label: 'No outcome chosen', is_success: false, dialler: 5, soft_phone: 3, inbound: 1, total: 9 },
+      { code: null, label: null, is_success: false, dialler: 2, soft_phone: 0, inbound: 0, total: 2 },
+    ]);
+  });
+
+  it('names the code the server stamps, not a spelling of its own', () => {
+    expect(Object.keys(AGENCY_SYSTEM_OUTCOME_LABELS)).toEqual([AUTO_DISPOSITION_CODE]);
+  });
+
+  it('keeps a catalog\'s own label for a code, and leaves a retired code with none', () => {
+    const own = outcomesByType([{ code: 'no_disposition', count: 1 }, { code: 'retired', count: 1 }], [], new Map([['no_disposition', 'Ran out of time']]), success);
+    expect(own.map((r) => [r.code, r.label])).toEqual([['no_disposition', 'Ran out of time'], ['retired', null]]);
+  });
+});
+
 describe('the inbound figures\' statement', () => {
   const q = { campaignId: '11111111-1111-4111-8111-111111111111', tenantId: '22222222-2222-4222-8222-222222222222' };
   const from = new Date('2026-11-22T00:00:00Z');
@@ -87,6 +113,9 @@ describe('the inbound figures\' statement', () => {
     const openHalf = text.slice(text.indexOf('(SELECT count(*)::int'), text.indexOf('AS open_follow_ups'));
     expect(openHalf).toContain(inboundMissedOpenSql('i'));
     expect(openHalf).not.toContain('arrived_at');
+    // Named by the campaign's own account, so it reads the account's open Missed rows
+    // (`idx_agency_inbound_calls_missed`) and not every call the campaign ever had.
+    expect(openHalf).toContain('i.account_id = (SELECT c.account_id FROM agency_campaigns c WHERE c.id = $1::uuid)');
   });
 
   it('with no range reads the campaign\'s whole life, and with no tenant takes the campaign\'s own', () => {

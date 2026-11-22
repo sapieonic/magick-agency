@@ -789,3 +789,26 @@ describe('Do Not Call from a call that is only filed under a campaign (CL6)', ()
     expect(await dnc(matched.phone)).toEqual([{ campaign_id: staffed, account_id: null }]);
   });
 });
+
+describe('a call is filed under a campaign of its own account', () => {
+  // The campaign's inbound figures read its open Missed rows by the campaign's account
+  // (`inbound-campaign-sql.ts`, the Missed list's index). That removes no row only while every
+  // path that files a call (the arrival, a route's default, the agent's or supervisor's choice)
+  // keeps to the call's own account. This file ran them all, so it checks what they left.
+  it('holds for every call this file filed, by route, agent, supervisor and match', async () => {
+    const { rows } = await q(
+      `SELECT i.campaign_source, count(*)::int AS calls,
+              count(*) FILTER (WHERE c.id IS NULL OR c.account_id IS DISTINCT FROM i.account_id
+                                  OR c.tenant_id IS DISTINCT FROM i.tenant_id)::int AS elsewhere
+         FROM agency_inbound_calls i
+         LEFT JOIN agency_campaigns c ON c.id = i.campaign_id
+        WHERE i.campaign_id IS NOT NULL
+        GROUP BY i.campaign_source`);
+    const bySource = new Map(rows.map((r) => [r.campaign_source as string, r]));
+    // Not vacuous: each way of filing left calls behind.
+    for (const source of ['contact', 'route', 'agent', 'supervisor']) {
+      expect(bySource.get(source)?.calls ?? 0, source).toBeGreaterThan(0);
+      expect(bySource.get(source)?.elsewhere, source).toBe(0);
+    }
+  });
+});

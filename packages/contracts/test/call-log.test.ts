@@ -9,6 +9,7 @@ import {
   AGENCY_CALLS_BY_TYPE_NO_RATE,
   AGENCY_CALLS_BY_TYPE_RATE_LABELS,
   AGENCY_OUTBOUND_CONNECT_RATE_LABEL,
+  AGENCY_SYSTEM_OUTCOME_LABELS,
   agencyCallsByTypeFootnote,
   type AgencyCallLogCounts,
   type AgencyCallLogRow,
@@ -76,6 +77,10 @@ describe('the call log', () => {
 
     it('calls the dialler and the soft phone together Outbound, never All calls (CL7)', () => {
       expect(AGENCY_OUTBOUND_CONNECT_RATE_LABEL).toBe('Outbound connect rate');
+    });
+
+    it('has words for the outcome code no catalog lists, the ones Compare agents uses', () => {
+      expect(AGENCY_SYSTEM_OUTCOME_LABELS).toEqual({ no_disposition: 'No outcome chosen' });
     });
 
     it('says the proposal\'s footnote for three types, and names only the types shown', () => {

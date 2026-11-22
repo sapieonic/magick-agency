@@ -80,9 +80,22 @@ function scope(q: CampaignRange): { values: unknown[]; tenant: string; range: st
 }
 
 /**
+ * The account of the campaign bound as `$1`. An inbound call is filed under a campaign of its
+ * OWN account and no other (the arrival files it under its matched contact's campaign or its
+ * route's, both the call's account's; the end of the call only under a campaign the actor may
+ * log to there: `insertArrival`, `fileUnderCampaign`), so naming the account removes no row. It
+ * is there for the plan: `open_follow_ups` is asked on every `/stats` poll and every Insights
+ * read whatever the range, and with the account it is a range of the account's OPEN Missed rows
+ * (`idx_agency_inbound_calls_missed (tenant_id, account_id, follow_up_status, …)`, the Missed
+ * list's own index), a few thousand rows at most, instead of every inbound call the campaign
+ * ever had.
+ */
+const CAMPAIGN_ACCOUNT_SQL = '(SELECT c.account_id FROM agency_campaigns c WHERE c.id = $1::uuid)';
+
+/**
  * The campaign's inbound counts over `[from, to)` on `arrived_at`, or its whole life when both
  * are absent (`/stats`). The windowed counts are one range of `idx_agency_inbound_calls_campaign`;
- * `open_follow_ups` is the campaign's whole range of it, as the Call log's To follow up count is.
+ * `open_follow_ups` is read from the account's open Missed rows ({@link CAMPAIGN_ACCOUNT_SQL}).
  */
 export function inboundCampaignCountsStatement(q: CampaignRange): { text: string; values: unknown[] } {
   const { values, tenant, range } = scope(q);
@@ -94,6 +107,7 @@ export function inboundCampaignCountsStatement(q: CampaignRange): { text: string
                 FROM agency_inbound_calls i
                WHERE i.campaign_id = $1::uuid
                  AND i.tenant_id = ${tenant}
+                 AND i.account_id = ${CAMPAIGN_ACCOUNT_SQL}
                  AND ${row}
                  AND ${inboundMissedOpenSql('i')}) AS open_follow_ups
         FROM (SELECT count(*)::int AS received,

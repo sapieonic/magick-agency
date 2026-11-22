@@ -43,6 +43,7 @@ import type {
   AgencyInsightsAgentActivityRow,
   AgencyInsightsOutcomeByTypeRow,
 } from '@magick-agency/contracts/api/agency/insights';
+import { AGENCY_SYSTEM_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/call-log';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import {
@@ -72,7 +73,8 @@ export function outcomesByType(
     if (!r) {
       r = {
         code,
-        label: code === null ? null : labels.get(code) ?? null,
+        // The catalog's label; for a system code no catalog lists (`no_disposition`), its words.
+        label: code === null ? null : labels.get(code) ?? AGENCY_SYSTEM_OUTCOME_LABELS[code] ?? null,
         is_success: code !== null && success.has(code),
         dialler: 0,
         soft_phone: 0,

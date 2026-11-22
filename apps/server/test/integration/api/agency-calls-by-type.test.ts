@@ -22,6 +22,15 @@ import { randomUUID } from 'node:crypto';
  *  - **The report.** The campaign report's dataset carries the same counts, and the renderer
  *    draws the table from them.
  *
+ * ── Where a figure and the Call log's chip differ, on purpose ────────────────
+ * The seed has a row on each side of every one, so neither can move without a test going red:
+ *  - the window: a figure's is half-open `[from, to)`; the log's `from` / `to` are inclusive. A
+ *    call at exactly `to` (Z, s5) is in the log's count and in no figure;
+ *  - Dials: placed dials, by when they were dialled. The Dialler chip under plain dates also
+ *    lists an attempt that was never dialled (d7). Under the figure's own link they are equal;
+ *  - Connected: the dialler's leaves wrap-up redials out (d6); the log's `outcome=connected`
+ *    lists every connected row, and equals the figure with `redial=0`.
+ *
  * The seed (every instant relative to BASE, three hours ago on a 15-minute boundary):
  *
  * | Row | Type | What | In the window's figures |
@@ -29,6 +38,9 @@ import { randomUUID } from 'node:crypto';
  * | d1 | dialler | connected, `interested`, 40 s of talk | a dial, connected, a person reached |
  * | d2 | dialler | stopped: the customer rang us (`canceled`, `inbound_call`) | a dial; nothing else |
  * | d3 | dialler | no answer | a dial |
+ * | d5 | dialler | connected, then redialled from wrap-up (`redialed`), 10 s | a dial, connected; its conversation is d6's |
+ * | d6 | dialler | d5's wrap-up redial, connected, `call_later`, 25 s | a dial (a redial), NOT in Connected; the conversation, a person reached |
+ * | d7 | dialler | cancelled before it was ever dialled | nothing: not a dial. A row of the Call log all the same |
  * | A | inbound | d2's customer, answered, `will_pay`, 252 s | received, answered |
  * | B | inbound | nobody free, voicemail; open | received, missed, to follow up |
  * | C | inbound | out of hours; open | received, missed, to follow up; NOT open hours |
@@ -38,6 +50,8 @@ import { randomUUID } from 'node:crypto';
  * | s2 | soft phone | connected, `interested`, 45 s | placed, connected, reached |
  * | s3 | soft phone | B's call back that never dialled | nothing: not a call |
  * | s4 | soft phone | dialled, no answer | placed |
+ * | Z | inbound | arrived at the window's very end (`to`), answered, `will_pay`, 30 s | nothing: the window is half-open. `/stats` only |
+ * | s5 | soft phone | created at the window's very end, connected, `call_later`, 20 s | nothing, the same. `/stats` only |
  * | J | inbound | open Missed row from two days ago | to follow up only |
  * | K | inbound | answered yesterday, 60 s | `/stats` (lifetime) only |
  * | live, rejected, unfiled, sibling, other tenant | inbound | | never |
@@ -82,6 +96,14 @@ const at = (minutes: number, seconds = 0) => new Date(BASE.getTime() + minutes *
 /** The window: `[BASE, BASE + 2 h)`. Every "in the window" row of the seed is well inside it. */
 const WINDOW = { from: at(0), to: at(120) };
 const windowQuery = `from=${encodeURIComponent(WINDOW.from.toISOString())}&to=${encodeURIComponent(WINDOW.to.toISOString())}`;
+/**
+ * The same window as the Call log spells it. Its `to` is INCLUSIVE and a figure's is not, so the
+ * log's window that holds exactly the figure's calls ends one millisecond earlier (the seed's
+ * instants are whole milliseconds).
+ */
+const logWindow = `from=${encodeURIComponent(WINDOW.from.toISOString())}&to=${encodeURIComponent(new Date(WINDOW.to.getTime() - 1).toISOString())}`;
+/** The log's window with its `to` on the figure's `to`: one instant wider. */
+const logWindowToInclusive = windowQuery;
 const RUNG = '+919000000009';
 const CALLER_B = '+919812307730';
 const id = new Map<string, string>();
@@ -195,19 +217,28 @@ beforeAll(async () => {
   const contactA = await contact('+919700004821');
   const contactD = await contact('+919700002210');
   const contactX = await contact('+919700009999');
-  const attempt = async (label: string, contactId: string, created: Date, outcome: string, code: string | null, talk: number | null) => {
+  const attempt = async (label: string, contactId: string, created: Date, outcome: string, code: string | null, talk: number | null,
+    o: { redialOf?: string; neverDialled?: boolean } = {}) => {
     const bridged = talk === null ? null : new Date(created.getTime() + 5000);
     const ended = new Date(created.getTime() + 5000 + (talk ?? 20) * 1000);
     const { rows: [row] } = await q(
       `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id,
-              state, outcome, disposition_code, dialed_at, answered_at, bridged_at, ended_at, redial_number, created_at)
-       VALUES ($1, $2, $3, $4, 1, '+919000000001', $5, 'ended', $6, $7, $8, $9, $9, $10, 0, $8) RETURNING id`,
-      [campaignId, contactId, floor.tenant, floor.account, session.id, outcome, code, created, bridged, ended]);
+              state, outcome, disposition_code, dialed_at, answered_at, bridged_at, ended_at, redial_number, redial_of_attempt_id, created_at)
+       VALUES ($1, $2, $3, $4, $12, '+919000000001', $5, 'ended', $6, $7, $8, $9, $9, $10, $13, $14, $11) RETURNING id`,
+      [campaignId, contactId, floor.tenant, floor.account, session.id, outcome, code, o.neverDialled ? null : created, bridged, ended, created,
+        o.redialOf ? 2 : 1, o.redialOf ? 1 : 0, o.redialOf ?? null]);
     id.set(label, row.id as string);
   };
   await attempt('d1', contactD, at(10), 'connected', 'interested', 40);
   await attempt('d2', contactA, at(41), 'canceled', 'inbound_call', null);
   await attempt('d3', contactX, at(20), 'no_answer', null, null);
+  // A conversation that took a wrap-up redial: the first leg is closed `redialed`, and the
+  // redial carries the write-up. Two dials, one conversation, and Connected counts the first leg only.
+  const contactR = await contact('+919700007777');
+  await attempt('d5', contactR, at(70), 'connected', 'redialed', 10);
+  await attempt('d6', contactR, at(72), 'connected', 'call_later', 25, { redialOf: id.get('d5')! });
+  // Cancelled before it was dialled: an attempt row, never a dial.
+  await attempt('d7', await contact('+919700006666'), at(75), 'canceled', null, null, { neverDialled: true });
 
   // ── Inbound, filed under the campaign, in the window. ──
   // A: the customer d2 was ringing rang us instead, and an agent answered.
@@ -221,6 +252,8 @@ beforeAll(async () => {
   });
   // E: on no list, filed by its route; its outcome is from the campaign's catalog, stored `route` (CL20).
   await inbound('E', { arrived: at(60), bridgedAfter: 10, answeredBy: agent1, endedAfter: 130, talk: 100, code: 'interested' });
+  // Z arrived at the window's `to`, to the millisecond: outside a half-open window.
+  await inbound('Z', { arrived: WINDOW.to, bridgedAfter: 5, answeredBy: agent0, endedAfter: 40, talk: 30, code: 'will_pay' });
   // ── Outside the window. ──
   await inbound('J', { arrived: at(-2 * 24 * 60), outcome: 'overflow_no_capacity', followUp: { status: 'open', reason: 'overflow_no_capacity' } });
   await inbound('K', { arrived: at(-24 * 60), bridgedAfter: 5, answeredBy: agent0, endedAfter: 80, talk: 60, code: 'call_later' });
@@ -252,6 +285,8 @@ beforeAll(async () => {
   await manual('s2', at(40), '+919811000040', 'connected', 'interested', 45, null);
   await manual('s3', at(34), CALLER_B, 'never_dialled', null, null, id.get('B')!);
   await manual('s4', at(44), '+919811000044', 'no_answer', null, null, null);
+  // Created at the window's `to`, to the millisecond.
+  await manual('s5', WINDOW.to, '+919811000120', 'connected', 'call_later', 20, null);
 
   await rollUp();
 }, 180_000);
@@ -265,8 +300,9 @@ describe('a campaign\'s inbound figures (calls.inbound)', () => {
     const a = await activityOf();
     expect(a.range).toMatchObject({ from: WINDOW.from.toISOString(), to: WINDOW.to.toISOString() });
     expect(a.calls.inbound).toEqual({
-      // A, B, C, D, E. Not J or K (before the window), not the live or the rejected call, not
-      // the unfiled one, the sibling campaign's or the other tenant's.
+      // A, B, C, D, E. Not J or K (before the window), not Z (at `to`: the window is half-open),
+      // not the live or the rejected call, not the unfiled one, the sibling campaign's or the
+      // other tenant's.
       received: 5,
       // A and E.
       answered: 2,
@@ -296,44 +332,82 @@ describe('a campaign\'s inbound figures (calls.inbound)', () => {
 
   it('/stats serves the campaign\'s whole life, beside the dialler\'s and the soft phone\'s', async () => {
     const stats = await get(`/proxy/agency/campaigns/${campaignId}/stats`) as { inbound: Inbound; softphone: Soft; first_dials_placed: number; human_connects: number; connect_rate_pct: number };
-    // The window's five, and J and K before it.
-    expect(stats.inbound).toEqual({ received: 7, answered: 3, missed: 4, open_follow_ups: 3, talk_seconds: 252 + 100 + 60, open_hours: 6 });
-    expect(stats.softphone).toEqual({ placed: 3, connected: 2, human_connects: 2, talk_seconds: 75 });
-    // The dialler's connect rate is the dialler's alone: one person reached of three first dials.
-    expect(stats.first_dials_placed).toBe(3);
-    expect(stats.human_connects).toBe(1);
-    expect(stats.connect_rate_pct).toBeCloseTo(100 / 3, 9);
+    // The window's five, J and K before it, and Z at its end.
+    expect(stats.inbound).toEqual({ received: 8, answered: 4, missed: 4, open_follow_ups: 3, talk_seconds: 252 + 100 + 60 + 30, open_hours: 7 });
+    // s1, s2, s4, and s5 at the window's end.
+    expect(stats.softphone).toEqual({ placed: 4, connected: 3, human_connects: 3, talk_seconds: 95 });
+    // The dialler's connect rate is the dialler's alone: two people reached (d1, and the
+    // conversation d6 carries) of four first dials (d1, d2, d3, d5; d6 is a redial, d7 never dialled).
+    expect(stats.first_dials_placed).toBe(4);
+    expect(stats.human_connects).toBe(2);
+    expect(stats.connect_rate_pct).toBeCloseTo(50, 9);
   });
 });
 
 describe('Calls by type agrees with the Call log\'s chips for the same campaign and window', () => {
-  it('every type\'s calls, All calls, and the calls still to follow up', async () => {
+  it('soft-phone and inbound calls, and the calls still to follow up: the chips\' numbers are the table\'s', async () => {
     const { calls } = await activityOf();
-    const counts = await logCounts(windowQuery);
-    expect(counts).toEqual({ all: 11, dialler: 3, soft_phone: 3, inbound: 5, to_follow_up: 3 });
-    // The table's Calls row, column by column, is the chips.
-    expect(calls.dials).toBe(counts.dialler);
+    const counts = await logCounts(logWindow);
+    expect(calls.softphone.placed).toBe(3);
+    expect(calls.inbound.received).toBe(5);
     expect(calls.softphone.placed).toBe(counts.soft_phone);
     expect(calls.inbound.received).toBe(counts.inbound);
-    expect(calls.dials + calls.softphone.placed + calls.inbound.received).toBe(counts.all);
     expect(calls.inbound.open_follow_ups).toBe(counts.to_follow_up);
+    expect(counts.to_follow_up).toBe(3);
   });
 
-  it('the Dialler column is the Dials figure, so it is also the list its own link opens', async () => {
+  it('the window is half-open on a figure and inclusive on the log: a call at exactly `to` is in the log\'s count alone', async () => {
     const { calls } = await activityOf();
+    const inclusive = await logCounts(logWindowToInclusive);
+    // Z arrived and s5 was created at `to`, to the millisecond.
+    expect(inclusive.inbound).toBe(calls.inbound.received + 1);
+    expect(inclusive.soft_phone).toBe(calls.softphone.placed + 1);
+    // To follow up ignores the dates on both sides.
+    expect(inclusive.to_follow_up).toBe(calls.inbound.open_follow_ups);
+    // And they are counted: over the campaign's life, where no window cuts them.
+    const stats = await get(`/proxy/agency/campaigns/${campaignId}/stats`) as { inbound: Inbound; softphone: Soft };
+    expect(stats.inbound.received).toBe(inclusive.inbound + 2);
+    expect(stats.softphone.placed).toBe(inclusive.soft_phone);
+  });
+
+  it('the Dialler column is the Dials figure: the list its own link opens, not every attempt the chip lists', async () => {
+    const { calls } = await activityOf();
+    // d1, d2, d3, d5 and the redial d6. Not d7, which was never dialled.
+    expect(calls.dials).toBe(5);
     // The Insights dials link: placed dials, the range half-open on `dialed_at`, the Dialler chip.
     const linked = await logCounts(`type=dialler&placed=1&dialed_from=${encodeURIComponent(WINDOW.from.toISOString())}&dialed_to=${encodeURIComponent(WINDOW.to.toISOString())}`);
     expect(linked.dialler).toBe(calls.dials);
+    // Under plain dates the chip also lists the attempt that was never dialled: one more row,
+    // which no figure counts.
+    const plain = await logCounts(logWindow);
+    expect(plain.dialler).toBe(calls.dials + 1);
+    const { rows: [never] } = await q('SELECT dialed_at FROM agency_call_attempts WHERE id = $1', [id.get('d7')]);
+    expect(never.dialed_at).toBeNull();
+    // So All calls is the chips' All less that one row.
+    expect(calls.dials + calls.softphone.placed + calls.inbound.received).toBe(plain.all - 1);
+    expect(plain).toEqual({ all: 14, dialler: 6, soft_phone: 3, inbound: 5, to_follow_up: 3 });
   });
 
-  it('Connected and Missed by us are the Call log\'s own filters on the inbound rows', async () => {
+  it('Connected: inbound\'s and the soft phone\'s are the log\'s own filter; the dialler\'s leaves wrap-up redials out', async () => {
     const { calls } = await activityOf();
-    expect((await logCounts(`${windowQuery}&outcome=connected`)).inbound).toBe(calls.inbound.answered);
-    expect((await logCounts(`${windowQuery}&outcome=missed`)).inbound).toBe(calls.inbound.missed);
-    // And connected, across the three types, is the table's All calls: d1, s1, s2, A, E.
-    const connected = await logCounts(`${windowQuery}&outcome=connected`);
-    expect(connected.all).toBe(calls.connected + calls.softphone.connected + calls.inbound.answered);
-    expect(connected.all).toBe(5);
+    const connected = await logCounts(`${logWindow}&outcome=connected`);
+    expect(connected.inbound).toBe(calls.inbound.answered);
+    expect(connected.soft_phone).toBe(calls.softphone.connected);
+    // The log lists the connected redial d6 as its own row; the Connected figure counts the
+    // conversation's first leg only (`redial_number = 0`).
+    expect(calls.connected).toBe(2);
+    expect(connected.dialler).toBe(calls.connected + 1);
+    expect(connected.dialler).toBe(calls.by_outcome['connected']);
+    // With the figure's own filter (the Connected tile's link sends `redial=0`) they are equal.
+    expect((await logCounts(`${logWindow}&outcome=connected&redial=0`)).dialler).toBe(calls.connected);
+    // So the table's All calls · Connected is d1, d5, s1, s2, A, E.
+    expect(calls.connected + calls.softphone.connected + calls.inbound.answered).toBe(6);
+    expect(connected.all).toBe(7);
+  });
+
+  it('Missed by us is the log\'s Missed filter on the inbound rows', async () => {
+    const { calls } = await activityOf();
+    expect((await logCounts(`${logWindow}&outcome=missed`)).inbound).toBe(calls.inbound.missed);
   });
 
   it('holds over the campaign\'s whole life too (/stats beside the Call log with no dates)', async () => {
@@ -366,15 +440,19 @@ describe('one row, one call, one type', () => {
 
   it('a dial the customer\'s own call stopped is a dialler dial that reached nobody; the conversation counts once, under Inbound', async () => {
     const a = await activityOf();
-    // d2 was placed and rang, so it is a dial, under `canceled` (docs/insights.md "System dispositions").
-    expect(a.calls.dials).toBe(3);
+    // d2 was placed and rang, so it is one of the five dials, under `canceled` (docs/insights.md
+    // "System dispositions"). d7, cancelled before it was dialled, is not.
+    expect(a.calls.dials).toBe(5);
     expect(a.calls.by_outcome['canceled']).toBe(1);
-    // It is no connect, no conversation, no person reached and no outcome row: only d1 is.
-    expect(a.calls.connected).toBe(1);
-    expect(a.calls.conversations).toBe(1);
-    expect(a.calls.human_connects).toBe(1);
-    expect(a.outcomes.map((o) => o.code)).toEqual(['interested']);
+    // It is no connect, no conversation, no person reached and no outcome row: the two
+    // conversations are d1's and the one d5 began and d6 carries.
+    expect(a.calls.connected).toBe(2);
+    expect(a.calls.conversations).toBe(2);
+    expect(a.calls.human_connects).toBe(2);
+    expect(a.outcomes.map((o) => o.code).sort()).toEqual(['call_later', 'interested']);
+    // Neither system code is an outcome on any type.
     expect(a.outcomes_by_type.find((r) => r.code === 'inbound_call')).toBeUndefined();
+    expect(a.outcomes_by_type.find((r) => r.code === 'redialed')).toBeUndefined();
     // The customer's own call is A: answered, with its outcome, under Inbound and nowhere else.
     expect(a.outcomes_by_type.find((r) => r.code === 'will_pay')).toMatchObject({ dialler: 0, soft_phone: 0, inbound: 1, total: 1 });
     // Across the types that customer is one connected call and one person reached, not two.
@@ -387,9 +465,9 @@ describe('one row, one call, one type', () => {
     expect(a.outcomes_by_type).toEqual([
       // d1, s2, E.
       { code: 'interested', label: 'Interested', is_success: true, dialler: 1, soft_phone: 1, inbound: 1, total: 3 },
-      // s1.
-      { code: 'call_later', label: 'Call later', is_success: false, dialler: 0, soft_phone: 1, inbound: 0, total: 1 },
-      // A.
+      // d6 (the redial carries the conversation's outcome), s1. Not s5, created at `to`.
+      { code: 'call_later', label: 'Call later', is_success: false, dialler: 1, soft_phone: 1, inbound: 0, total: 2 },
+      // A. Not Z, which arrived at `to`.
       { code: 'will_pay', label: 'Will pay', is_success: true, dialler: 0, soft_phone: 0, inbound: 1, total: 1 },
     ]);
     // The dialler's column is the dialler's own outcome table, untouched.
@@ -418,17 +496,20 @@ describe('one row, one call, one type', () => {
 describe('no rate blends outbound and inbound', () => {
   it('the dialler\'s figures are what they are with no soft-phone or inbound call at all', async () => {
     const a = await activityOf();
-    // Three placed first dials, one person reached: 33.3%, whatever the other eight calls did.
-    expect(a.calls.dials - a.calls.redials.placed).toBe(3);
-    expect(a.calls.human_connects).toBe(1);
-    expect(a.calls.talk_seconds).toBe(40);
-    // Not vacuous: blended with the soft phone it would be 3 of 6, with inbound 5 of 11.
-    expect(a.calls.human_connects).not.toBe(a.calls.human_connects + a.calls.softphone.human_connects);
+    // Four placed first dials, two people reached: 50%, whatever the other eight calls did.
+    expect(a.calls.redials.placed).toBe(1);
+    expect(a.calls.dials - a.calls.redials.placed).toBe(4);
+    expect(a.calls.human_connects).toBe(2);
+    // Every bridged leg: d1, d5 and its redial d6.
+    expect(a.calls.talk_seconds).toBe(40 + 10 + 25);
+    // Not vacuous: the soft phone and inbound reached four more people between them.
+    expect(a.calls.softphone.human_connects + a.calls.inbound.answered).toBe(4);
     // The trend buckets, the dialler's own series, hold the three dials and nothing else.
     insightsCache.clear();
     const trends = await get(`/proxy/agency/campaigns/${campaignId}/insights/trends?${windowQuery}&bucket=hour`) as { buckets: Array<{ dials: number; human_connects: number; first_dials: number }> };
-    expect(trends.buckets.reduce((s, b) => s + b.dials, 0)).toBe(3);
-    expect(trends.buckets.reduce((s, b) => s + b.human_connects, 0)).toBe(1);
+    expect(trends.buckets.reduce((s, b) => s + b.dials, 0)).toBe(5);
+    expect(trends.buckets.reduce((s, b) => s + b.first_dials, 0)).toBe(4);
+    expect(trends.buckets.reduce((s, b) => s + b.human_connects, 0)).toBe(2);
   });
 
   it('the wire carries counts only: no rate, blended or not', async () => {
@@ -462,20 +543,26 @@ describe('the campaign report', () => {
     const calls = dataset.activity.calls;
     // The Call log over the same instants. C was marked handled by the test above.
     const counts = await logCounts(`from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`);
-    expect(calls.inbound).toEqual({ received: 7, answered: 3, missed: 4, open_follow_ups: 2, talk_seconds: 412, open_hours: 6 });
+    // Every seeded call is days inside this window, so no edge is in play: the chips are the figures.
+    expect(calls.inbound).toEqual({ received: 8, answered: 4, missed: 4, open_follow_ups: 2, talk_seconds: 442, open_hours: 7 });
     expect(calls.inbound.received).toBe(counts.inbound);
     expect(calls.softphone.placed).toBe(counts.soft_phone);
-    expect(calls.dials).toBe(counts.dialler);
+    // Dials, less the attempt that was never dialled, which the chip lists under plain dates.
+    expect(calls.dials).toBe(5);
+    expect(counts.dialler).toBe(calls.dials + 1);
     expect(calls.inbound.open_follow_ups).toBe(counts.to_follow_up);
     expect(dataset.definitions.map((d) => d.key)).toEqual(expect.arrayContaining(['outbound_connect_rate', 'inbound_calls', 'calls_by_type']));
     expect(dataset.activity.outcomes_by_type.find((r) => r.code === 'interested')).toMatchObject({ dialler: 1, soft_phone: 1, inbound: 1, total: 3 });
+    // The whole seed, the two calls at the short window's end included.
+    expect(dataset.activity.outcomes_by_type.find((r) => r.code === 'call_later')).toMatchObject({ dialler: 1, soft_phone: 2, inbound: 1, total: 4 });
 
     const html = (await renderer()).renderReportHtml(dataset, { fonts: { css: '', embedded: false } });
     const table = html.slice(html.indexOf('data-testid="calls-by-type"'), html.indexOf('data-testid="calls-by-type-note"'));
     const cells = (row: string) => [...table.split(`data-row="${row}"`)[1]!.split('</tr>')[0]!.matchAll(/<td[^>]*>(.*?)<\/td>/gs)]
       .map((m) => m[1]!.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
     // Dialler, Soft phone, Inbound, All calls: the chips' numbers, and All calls their sum.
-    expect(cells('calls')).toEqual(['Calls', `${counts.dialler} dialled`, `${counts.soft_phone} dialled`, `${counts.inbound} received`, String(counts.all)]);
+    expect(cells('calls')).toEqual(['Calls', '5 dialled', `${counts.soft_phone} dialled`, `${counts.inbound} received`, String(counts.all - 1)]);
+    expect(counts.all - 1).toBe(5 + 4 + 8);
     expect(cells('missed')).toEqual(['Missed by us', '—', '—', '4 (2 to follow up)', '4']);
     expect(cells('rate').at(-1)).toBe('not added');
     expect(html).toContain('Outbound connect rate');
@@ -498,10 +585,11 @@ describe('the inbound figures\' own statement', () => {
     const { text, values } = inboundCampaignCountsStatement({ campaignId: siblingCampaignId, tenantId: floor.tenant, from: at(-60), to: at(240) });
     const { rows } = await getTestPool().query<{ 'QUERY PLAN': string }>(`EXPLAIN ${text}`, values);
     const plan = rows.map((row) => row['QUERY PLAN']).join('\n');
-    // The window's counts are a range of the campaign's index. The open Missed rows are an index
-    // read too (the tenant's open rows when those are few, else the campaign's range).
+    // The window's counts are a range of the campaign's index; the open Missed rows are read
+    // from the account's Missed rows (the Missed list's index), not from every call the
+    // campaign ever had.
     expect(plan, plan).toContain('idx_agency_inbound_calls_campaign');
-    expect(plan.match(/Index (Only )?Scan/g)?.length, plan).toBe(2);
+    expect(plan, plan).toMatch(/idx_agency_inbound_calls_missed/);
     expect(plan).not.toContain('Seq Scan');
   });
 });
