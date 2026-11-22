@@ -151,8 +151,8 @@ Build notes (step 1, the calls the rulings left open):
   section's absent fields are built-in too (CT8's "kept as sent").
 - The built-in settings are the column defaults (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS` and its
   neighbours, pinned to the DEFAULTs by the repository's integration test), with the seeded
-  catalog: so the hours are 09:00–20:00, Monday to Friday, in **UTC** (the column default; New
-  campaign's own form starts at Asia/Kolkata today). `retries` built-in is `{}`, "no rule stored":
+  catalog, except the time zone: the hours are 09:00–20:00, Monday to Friday, in `Asia/Kolkata`,
+  New campaign's start, not the column's `UTC` (CT18). `retries` built-in is `{}`, "no rule stored":
   the retry engine applies `DEFAULT_RETRY_POLICY` per outcome at run time, so it is not copied.
   `numbers` built-in is an empty pool on the service's own carrier.
 - Comparison: times as `HH:MM:SS`, days sorted once, object keys in any order, and inside an
@@ -199,8 +199,9 @@ stored (it used to be dropped). Apply writes drafts through the campaign PATCH p
 `template_source`, with refusals per campaign; a campaign started between the status read and
 the write is still written (an accepted race). The soft-phone settings answer `outcomes_template`
 (CT11). Audit: `campaign_template.created|updated|archived|restored|default_set|default_cleared|applied`,
-resource `campaign_template`. Smaller calls: an empty `numbers.caller_ids` sets the carrier
-only; `analysis_profile_unavailable` is noted when the profile fails its check or the account
+resource `campaign_template`, filed under the request's account (an apply of an organisation
+template included). A PUT checks its body, the size cap included, before it reads the template.
+Smaller calls: `analysis_profile_unavailable` is noted when the profile fails its check or the account
 does not analyse calls; a description is trimmed, blank is null.
 
 ## 7. Console
