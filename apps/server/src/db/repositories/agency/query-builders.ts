@@ -517,7 +517,9 @@ export function softphoneLogFilterConditions(f: AgencyAttemptFilters, bind: Retu
  * leaves inbound calls out (`FALSE`), as the soft-phone status leaves the dialler's out:
  *
  *  - agent: who ANSWERED (`answered_by_user_id`). A call nobody answered has no agent, so with
- *    an agent chosen no missed call matches.
+ *    an agent chosen no missed call matches. `agentIs: 'assignee'` (the To follow up view) reads
+ *    who the Missed row is ASSIGNED to instead (`follow_up_assignee_user_id`, the Missed list's
+ *    own assignee): "what does Arjun still owe" is the question that view is asked.
  *  - outcome code: the outcome the agent saved (`disposition_code`).
  *  - what happened (`outcomes` and `inboundOutcomes`, one OR-ed set): `connected` is a call an
  *    agent answered; `missed` any call with a Missed row; `voicemail` one that left a voicemail;
@@ -534,6 +536,7 @@ export function inboundLogFilterConditions(
   f: AgencyAttemptFilters,
   inboundOutcomes: readonly string[],
   bind: ReturnType<typeof params>,
+  agentIs: 'answerer' | 'assignee' = 'answerer',
 ): string[] {
   const conditions: string[] = [];
   if (f.states?.length && !f.states.includes('ended')) conditions.push('FALSE');
@@ -548,7 +551,10 @@ export function inboundLogFilterConditions(
   if (f.dispositionCodes?.length) {
     conditions.push(`i.disposition_code = ANY(${bind.add(f.dispositionCodes)}::varchar[])`);
   }
-  if (f.agentUserId) conditions.push(`i.answered_by_user_id = ${bind.add(f.agentUserId)}::uuid`);
+  if (f.agentUserId) {
+    const column = agentIs === 'assignee' ? 'i.follow_up_assignee_user_id' : 'i.answered_by_user_id';
+    conditions.push(`${column} = ${bind.add(f.agentUserId)}::uuid`);
+  }
   if (f.contactId) conditions.push(`i.matched_contact_id = ${bind.add(f.contactId)}::uuid`);
   if (f.phone) {
     const digits = "regexp_replace(i.from_e164, '[^0-9]', '', 'g')";

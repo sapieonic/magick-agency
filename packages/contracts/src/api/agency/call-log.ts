@@ -198,7 +198,9 @@ export interface AgencyCallLogInboundRow {
   talk_seconds: number | null;
   /**
    * How long the caller was with us before an agent answered, or before the call ended when
-   * nobody did: whole seconds from arrival, the greeting included.
+   * nobody did: whole seconds from arrival, the greeting included. On a missed call that left a
+   * voicemail it runs to the end of the call, the voicemail included: no column records when the
+   * wait gave way to the voicemail prompt.
    */
   wait_seconds: number;
   /** Whether the caller was put in the queue (waited for an agent), rather than only played a message. */

@@ -144,7 +144,8 @@ const SOFTPHONE_LOG_EXTRA_SQL = `CASE WHEN m.callback_of_inbound_call_id IS NOT 
  * soft-phone branch (NULL where an inbound call has no such thing), `arrived_at` as the list's
  * `created_at`. What only an inbound call has is one JSON object (`extra`, read by
  * `projectInboundLogRow`): how it came by the campaign, the route, the wait (arrival to the
- * agent's answer, else to the end), whether it queued, whether the agent who answered is the
+ * agent's answer, else to the end: on a missed call that includes a voicemail, since nothing
+ * records when the wait gave way to its prompt), whether it queued, whether the agent who answered is the
  * caller's sticky agent, the voicemail while the row names one, the Missed row, and the latest
  * soft-phone call DIALLED from its Call back (`idx_agency_manual_calls_callback_of`). Names the
  * inbound call `i`.
@@ -185,8 +186,9 @@ const INBOUND_LOG_SELECT_SQL = `'inbound'::text AS source, i.id, i.campaign_id, 
  * page's read so all three mean one thing by "an inbound call on this campaign": filed under it
  * (`campaign_id`, 0067) in the tenant, ENDED, and served (never `rejected`); then the filters
  * (`inboundLogFilterConditions`). `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`,
- * the Missed list's rule) and drops the dates: a caller still owed a call is owed it whatever
- * day they rang.
+ * the Missed list's rule), drops the dates (a caller still owed a call is owed it whatever day
+ * they rang), and reads the agent filter as the row's ASSIGNEE: nobody answered a missed call, and
+ * "who still owes these" is what that view is asked.
  */
 function inboundLogConditions(
   q: {
@@ -207,7 +209,9 @@ function inboundLogConditions(
     // NULL compares.
     "i.state = 'ended'",
     "i.outcome IS DISTINCT FROM 'rejected'",
-    ...inboundLogFilterConditions(q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind),
+    ...inboundLogFilterConditions(
+      q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer',
+    ),
     ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
   ];
 }

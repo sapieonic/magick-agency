@@ -316,8 +316,13 @@ describe('the chips: Inbound and To follow up', () => {
 describe('how a filter reads on each type', () => {
   it('agent is who answered an inbound call; a missed call has no agent', async () => {
     expect(await counts(`agent_user_id=${floor.agents[0]!.id}`)).toEqual({ all: 3, dialler: 2, soft_phone: 0, inbound: 1, to_follow_up: 0 });
-    // Assigned to agent 1, answered by nobody: not agent 1's call.
-    expect(await counts(`agent_user_id=${floor.agents[1]!.id}`)).toEqual({ all: 2, dialler: 0, soft_phone: 2, inbound: 0, to_follow_up: 0 });
+    // Assigned to agent 1, answered by nobody: not agent 1's call (Inbound 0)...
+    expect(await counts(`agent_user_id=${floor.agents[1]!.id}`)).toEqual({ all: 2, dialler: 0, soft_phone: 2, inbound: 0, to_follow_up: 1 });
+    expect((await logPage(`type=inbound&agent_user_id=${floor.agents[1]!.id}`)).rows).toEqual([]);
+    // ...but theirs to follow up: under To follow up the agent is who the Missed row is assigned to.
+    expect(labels((await logPage(`type=to_follow_up&agent_user_id=${floor.agents[1]!.id}`)).rows)).toEqual(['B']);
+    // Agent 0 answered A and holds no open row.
+    expect((await logPage(`type=to_follow_up&agent_user_id=${floor.agents[0]!.id}`)).rows).toEqual([]);
   });
 
   it('What happened: connected is an answered inbound call; Missed, Voicemail and Abandoned match inbound calls only', async () => {

@@ -1367,9 +1367,10 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(await place(caller, randomUUID())).toBeNull();
     // No link asked for.
     expect(await place(caller, undefined)).toBeNull();
-    // Not an id: refused at the edge, nothing placed.
-    const bad = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: caller, callback_of_inbound_call_id: 'nope' });
-    expect(bad.statusCode).toBe(400);
+    // Not an id at all: dropped like any link that does not hold, never a refusal (CL15).
+    expect(await place(caller, 'nope')).toBeNull();
+    expect(await place(caller, '')).toBeNull();
+    expect(await place(caller, null)).toBeNull();
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 60_000);
 
