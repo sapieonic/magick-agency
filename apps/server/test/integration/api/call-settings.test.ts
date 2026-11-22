@@ -37,6 +37,7 @@ import {
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+import { getPacingInvalidationBus } from '../../../src/agency/pacing/invalidation-bus.js';
 import { agencyCallSettingsRepository, agencyInboundCallRepository } from '../../../src/db/repositories/agency.repository.js';
 import { insertAgencyContact } from '../agency/agency-factories.js';
 
@@ -153,8 +154,14 @@ afterAll(async () => {
 
 describe('Settings › Calls: the setting and what stands in its way', () => {
   it('is an account admin`s: an agent is refused the read and the write; off by default', async () => {
-    expect((await request('GET', '/call-settings', agent(0))).statusCode).toBe(403);
-    expect((await request('PUT', '/call-settings', agent(0), { require_campaign: true })).statusCode).toBe(403);
+    // The refusal names the permission each route asks for: its own, not `agency.supervise`
+    // (the two share a floor today, so only the name tells them apart).
+    const read403 = await request('GET', '/call-settings', agent(0));
+    expect(read403.statusCode).toBe(403);
+    expect(read403.json().message).toBe('Insufficient permissions. Required: agency.calls.manage');
+    const write403 = await request('PUT', '/call-settings', agent(0), { require_campaign: true });
+    expect(write403.statusCode).toBe(403);
+    expect(write403.json().message).toBe('Insufficient permissions. Required: agency.calls.manage');
     expect(await agencyCallSettingsRepository.find(floor.tenant, floor.account)).toBeNull();
 
     const read = await request('GET', '/call-settings', sup());
@@ -256,6 +263,147 @@ describe('Settings › Calls: the setting and what stands in its way', () => {
   });
 });
 
+describe('what counts as a route in the way (CL18)', () => {
+  it('a route whose campaign was archived since counts as missing, and is not saved again until another is chosen', async () => {
+    const route = await createRoute('Sales line', { default_campaign_id: draft });
+    expect(route.statusCode, route.body).toBe(201);
+    const id = route.json().route.id as string;
+    expect((await request('GET', '/call-settings', sup())).json().readiness.routes_missing_default).toEqual([]);
+
+    await q(`UPDATE agency_campaigns SET archived_at = now() WHERE id = $1`, [draft]);
+    try {
+      expect((await request('GET', '/call-settings', sup())).json().readiness.routes_missing_default)
+        .toEqual([{ route_id: id, name: 'Sales line' }]);
+      const refused = await request('PUT', '/call-settings', sup(), { require_campaign: true });
+      expect(refused.statusCode, refused.body).toBe(422);
+      expect(refused.json()).toMatchObject({ code: 'default_campaign_required', routes: [{ route_id: id, name: 'Sales line' }] });
+
+      // A save that leaves the campaign alone is refused too: the route would keep an archived one.
+      const renamed = await request('PATCH', `/inbound/routes/${id}`, sup(), { name: 'Sales' });
+      expect(renamed.statusCode, renamed.body).toBe(400);
+      expect(renamed.json()).toMatchObject({
+        code: 'inbound_route_invalid', details: [{ path: 'default_campaign_id', message: expect.stringMatching(/archived/) }],
+      });
+      expect((await request('PATCH', `/inbound/routes/${id}`, sup(), { name: 'Sales', default_campaign_id: unstaffed })).statusCode).toBe(200);
+      expect((await request('PUT', '/call-settings', sup(), { require_campaign: true })).statusCode).toBe(200);
+    } finally {
+      await q(`UPDATE agency_campaigns SET archived_at = NULL WHERE id = $1`, [draft]);
+    }
+  });
+
+  it('with inbound off for the account its routes do not count: the switch goes on; with inbound on they do', async () => {
+    const bare = await createRoute('Leftover line');
+    expect(bare.statusCode, bare.body).toBe(201);
+    const inbound = async (on: boolean) => {
+      await q(`UPDATE feature_flag_overrides SET value = $2::jsonb WHERE flag_key = 'agency_inbound_enabled' AND tenant_id = $1`, [floor.tenant, JSON.stringify(on)]);
+      await getFeatureFlagService().invalidate({ tenantId: floor.tenant });
+    };
+    await inbound(false);
+    try {
+      // The route editor is closed, so the route could not be given a campaign.
+      expect((await request('GET', '/inbound/routes', sup())).statusCode).toBe(403);
+      expect((await request('GET', '/call-settings', sup())).json().readiness.routes_missing_default).toEqual([]);
+      const on = await request('PUT', '/call-settings', sup(), { require_campaign: true });
+      expect(on.statusCode, on.body).toBe(200);
+      expect(on.json().settings.require_campaign).toBe(true);
+    } finally {
+      await inbound(true);
+    }
+    // Inbound back on, the setting still on: the page names the route, and it is saved only with a campaign.
+    expect((await request('GET', '/call-settings', sup())).json().readiness.routes_missing_default)
+      .toEqual([{ route_id: bare.json().route.id, name: 'Leftover line' }]);
+    expect((await request('PATCH', `/inbound/routes/${bare.json().route.id}`, sup(), { name: 'Leftover' })).json())
+      .toMatchObject({ code: 'default_campaign_required' });
+    // And a call that arrives on it under no campaign is still refused its outcome.
+    const c = await takenCall(agent(0));
+    expect((await request('POST', `/inbound/calls/${c.id}/disposition`, agent(0), { code: 'voicemail' })).json()).toMatchObject({ code: 'campaign_required' });
+
+    // Switched off and on again with inbound on: refused, naming it.
+    await setRule(false);
+    const refused = await request('PUT', '/call-settings', sup(), { require_campaign: true });
+    expect(refused.statusCode, refused.body).toBe(422);
+    expect(refused.json().routes).toEqual([{ route_id: bare.json().route.id, name: 'Leftover line' }]);
+  });
+});
+
+describe('the switch-on and a route save wait for each other (the account`s lock)', () => {
+  const pending = async (p: Promise<unknown>, ms = 400) => {
+    let done = false;
+    void p.then(() => { done = true; }, () => { done = true; });
+    await new Promise((r) => setTimeout(r, ms));
+    return !done;
+  };
+
+  it('a route save waits for a switch-on that has not committed, and is refused once it has', async () => {
+    const holder = await getTestPool().connect();
+    try {
+      await holder.query('BEGIN');
+      await agencyCallSettingsRepository.lockAccount(holder, floor.tenant, floor.account);
+      // The switch-on, as `setRequireCampaign` writes it, not committed yet.
+      await holder.query(
+        `INSERT INTO agency_call_settings (tenant_id, account_id, require_campaign, require_campaign_since, updated_by)
+         VALUES ($1, $2, true, now(), $3)`, [floor.tenant, floor.account, sup().id]);
+
+      const create = createRoute('Raced line');
+      // Without the lock it would read the setting as off and be saved with no campaign.
+      expect(await pending(create)).toBe(true);
+      await holder.query('COMMIT');
+      const res = await create;
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json()).toMatchObject({ code: 'default_campaign_required' });
+      expect((await q(`SELECT count(*)::int AS n FROM agency_inbound_routes WHERE name = 'Raced line'`)).rows[0]!.n).toBe(0);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+  });
+
+  it('a route change waits the same way', async () => {
+    const kept = await createRoute('Kept line', { default_campaign_id: unstaffed });
+    const holder = await getTestPool().connect();
+    try {
+      await holder.query('BEGIN');
+      await agencyCallSettingsRepository.lockAccount(holder, floor.tenant, floor.account);
+      await holder.query(
+        `INSERT INTO agency_call_settings (tenant_id, account_id, require_campaign, require_campaign_since, updated_by)
+         VALUES ($1, $2, true, now(), $3)`, [floor.tenant, floor.account, sup().id]);
+      const patch = request('PATCH', `/inbound/routes/${kept.json().route.id}`, sup(), { default_campaign_id: null });
+      expect(await pending(patch)).toBe(true);
+      await holder.query('COMMIT');
+      const res = await patch;
+      expect(res.statusCode, res.body).toBe(422);
+      expect((await q('SELECT default_campaign_id FROM agency_inbound_routes WHERE id = $1', [kept.json().route.id])).rows[0]!.default_campaign_id).toBe(unstaffed);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+  });
+
+  it('a switch-on waits for a route save that has not committed, and is refused once it has, naming the route', async () => {
+    const kept = await createRoute('Kept line', { default_campaign_id: unstaffed });
+    const id = kept.json().route.id as string;
+    const holder = await getTestPool().connect();
+    try {
+      await holder.query('BEGIN');
+      await agencyCallSettingsRepository.lockAccount(holder, floor.tenant, floor.account);
+      // A route save that takes the campaign off, not committed yet.
+      await holder.query('UPDATE agency_inbound_routes SET default_campaign_id = NULL WHERE id = $1', [id]);
+
+      const put = request('PUT', '/call-settings', sup(), { require_campaign: true });
+      // Without the lock it would see the route with its campaign and switch on.
+      expect(await pending(put)).toBe(true);
+      await holder.query('COMMIT');
+      const res = await put;
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json()).toMatchObject({ code: 'default_campaign_required', routes: [{ route_id: id, name: 'Kept line' }] });
+      expect((await agencyCallSettingsRepository.requireCampaign(floor.tenant, floor.account)).on).toBe(false);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+  });
+});
+
 describe('an inbound route`s campaign for unknown callers', () => {
   it('is one of the account`s campaigns that is not archived, in any status', async () => {
     const foreign = await createRoute('Foreign', { default_campaign_id: other.campaigns[0] });
@@ -292,6 +440,31 @@ describe('an inbound route`s campaign for unknown callers', () => {
     expect((await request('GET', `/campaigns/${unstaffed}/inbound-default-routes`, agent(0))).statusCode).toBe(403);
     expect((await request('GET', `/campaigns/${other.campaigns[0]}/inbound-default-routes`, sup())).statusCode).toBe(404);
     expect((await request('GET', '/campaigns/not-an-id/inbound-default-routes', sup())).statusCode).toBe(404);
+  });
+
+  // CL8: a drained campaign held open as a route's default is parked in pacing until an event;
+  // a route taking or dropping it is one, so it is looked at again on the next round.
+  it('tells pacing when a route takes or drops a campaign as its default', async () => {
+    const woken: string[] = [];
+    const unsubscribe = getPacingInvalidationBus().subscribe((event) => {
+      if (event.type === 'campaign_changed') woken.push(event.campaignId);
+    });
+    const take = () => woken.splice(0).sort();
+    try {
+      const made = await createRoute('Sales line', { default_campaign_id: unstaffed });
+      const id = made.json().route.id as string;
+      expect(take()).toEqual([unstaffed]);
+      expect((await request('PATCH', `/inbound/routes/${id}`, sup(), { name: 'Sales' })).statusCode).toBe(200);
+      expect(take()).toEqual([]);
+      expect((await request('PATCH', `/inbound/routes/${id}`, sup(), { default_campaign_id: paused })).statusCode).toBe(200);
+      expect(take()).toEqual([paused, unstaffed].sort());
+      expect((await loaded.app.inject({ method: 'DELETE', url: `/proxy/agency/inbound/routes/${id}`, headers: headersFor(sup(), floor) })).statusCode).toBeLessThan(300);
+      expect(take()).toEqual([paused]);
+      expect((await createRoute('No default')).statusCode).toBe(201);
+      expect(take()).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('is REQUIRED on a create and on a change while the setting is on, and not while it is off', async () => {
@@ -445,6 +618,81 @@ describe('the outcome of an inbound call while every call must belong to a campa
     // With the setting off again, a call under no campaign is saved against the route's own catalog as before.
     await setRule(false);
     expect((await request('POST', `/inbound/calls/${after.id}/disposition`, agent(0), { code: 'voicemail' })).statusCode).toBe(200);
+  });
+});
+
+describe('filing and the outcome save under each other (the repository`s guards)', () => {
+  it('fileUnderCampaign never moves a matched caller`s call, nor one whose outcome is saved', async () => {
+    const matched = await takenCall(agent(0), { match: true });
+    expect(await agencyInboundCallRepository.fileUnderCampaign(
+      { id: matched.id, tenantId: floor.tenant, campaignId: unstaffed, source: 'supervisor' })).toBeNull();
+    expect(await filing(matched.id)).toMatchObject({ campaign_id: staffed, campaign_source: 'contact' });
+
+    const settled = await takenCall(agent(0), { routeDefault: staffed });
+    expect((await request('POST', `/inbound/calls/${settled.id}/disposition`, agent(0), { code: 'interested' })).statusCode).toBe(200);
+    expect(await agencyInboundCallRepository.fileUnderCampaign(
+      { id: settled.id, tenantId: floor.tenant, campaignId: unstaffed, source: 'supervisor' })).toBeNull();
+    expect(await filing(settled.id)).toMatchObject({ campaign_id: staffed, campaign_source: 'route', disposition_code: 'interested' });
+
+    // Another tenant's id names no call; an open unknown caller's call is filed.
+    const open = await takenCall(agent(0), { routeDefault: staffed });
+    expect(await agencyInboundCallRepository.fileUnderCampaign(
+      { id: open.id, tenantId: other.tenant, campaignId: unstaffed, source: 'supervisor' })).toBeNull();
+    expect(await agencyInboundCallRepository.fileUnderCampaign(
+      { id: open.id, tenantId: floor.tenant, campaignId: unstaffed, source: 'supervisor' })).toMatchObject({ campaign_id: unstaffed, campaign_source: 'supervisor' });
+  });
+
+  it('saveDisposition refuses `campaign_changed` when the call is no longer under the campaign the code was judged against', async () => {
+    const c = await takenCall(agent(0), { routeDefault: staffed });
+    const save = (expectedCampaignId: string | null | undefined) => agencyInboundCallRepository.saveDisposition({
+      id: c.id, code: 'interested', source: 'route', notes: null, callbackAt: null, actorUserId: agent(0).id, onBehalf: false,
+      ...(expectedCampaignId !== undefined ? { expectedCampaignId } : {}),
+    });
+    expect(await save(unstaffed)).toMatchObject({ ok: false, reason: 'campaign_changed' });
+    expect(await save(null)).toMatchObject({ ok: false, reason: 'campaign_changed' });
+    expect(await filing(c.id)).toMatchObject({ disposition_code: null, settled_at: null });
+    expect(await save(staffed)).toMatchObject({ ok: true, replay: false });
+  });
+
+  // A supervisor's Change lands between the agent's Save reading the call and writing it.
+  const refileUnderTheSave = (callId: string, to: string) => {
+    const real = agencyInboundCallRepository.saveDisposition.bind(agencyInboundCallRepository);
+    return vi.spyOn(agencyInboundCallRepository, 'saveDisposition').mockImplementationOnce(async (input, deps) => {
+      const moved = await agencyInboundCallRepository.fileUnderCampaign({ id: callId, tenantId: floor.tenant, campaignId: to, source: 'supervisor' });
+      expect(moved).not.toBeNull();
+      return real(input, deps);
+    });
+  };
+
+  it('a code of the old campaign`s catalog is not kept on a call refiled under the save: refused with the new campaign`s codes', async () => {
+    await q(`UPDATE agency_campaigns SET disposition_catalog = $2::jsonb WHERE id = $1`, [paused, JSON.stringify([
+      { code: 'query', label: 'Query', terminal: true },
+    ])]);
+    const c = await takenCall(agent(0), { routeDefault: staffed });
+    const spy = refileUnderTheSave(c.id, paused);
+    try {
+      const res = await request('POST', `/inbound/calls/${c.id}/disposition`, agent(0), { code: 'interested' });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'inbound_disposition_invalid', reason: 'unknown_code', allowed_codes: ['query'] });
+      expect(await filing(c.id)).toMatchObject({ campaign_id: paused, campaign_source: 'supervisor', disposition_code: null, settled_at: null });
+      // The new campaign's own code is then saved.
+      expect((await request('POST', `/inbound/calls/${c.id}/disposition`, agent(0), { code: 'query' })).statusCode).toBe(200);
+    } finally {
+      spy.mockRestore();
+      await q(`UPDATE agency_campaigns SET disposition_catalog = $2::jsonb WHERE id = $1`, [paused, JSON.stringify(CATALOG)]);
+    }
+  });
+
+  it('a code both campaigns have is saved under the campaign the call is under now', async () => {
+    const c = await takenCall(agent(0), { routeDefault: staffed });
+    const spy = refileUnderTheSave(c.id, unstaffed);
+    try {
+      const res = await request('POST', `/inbound/calls/${c.id}/disposition`, agent(0), { code: 'interested' });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await filing(c.id)).toMatchObject({ campaign_id: unstaffed, campaign_source: 'supervisor', disposition_code: 'interested' });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

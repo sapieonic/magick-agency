@@ -68,6 +68,7 @@ import {
   type InboundRouteIssue,
 } from '../../../agency/inbound/route-config.js';
 import type { SoftphoneActor } from '../../../agency/softphone/types.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { sendRefusal } from '../helpers/refusal.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
@@ -228,6 +229,18 @@ async function numberRefusal(refusal: AgencyInboundAttachRefusal, tenantId: stri
   }
 }
 
+/**
+ * A route took or dropped these campaigns as its campaign for unknown callers: pacing looks at
+ * each again (CL8). A drained campaign held open as a route's default is parked until an event
+ * (`PacingEngine.runTick`); one a route no longer names is then completed on the next round, not
+ * at the safety tick. A hint only, after the write committed.
+ */
+function wakeDefaultCampaigns(...campaignIds: Array<string | null | undefined>): void {
+  for (const campaignId of new Set(campaignIds)) {
+    if (campaignId) publishPacingInvalidation({ type: 'campaign_changed', campaignId });
+  }
+}
+
 type WriteOutcome<T> = { ok: true; value: T } | { ok: false; refusal: InboundRefusal };
 
 // ─── The routes ─────────────────────────────────────────────────────────────
@@ -294,6 +307,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
       return { ok: true, value: { routeId: created.route.id, added } };
     }, { pool: getPool() });
     if (!out.ok) return sendInboundRefusal(reply, out.refusal);
+    wakeDefaultCampaigns(parsed.config.default_campaign_id);
 
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, out.value.routeId);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
@@ -308,6 +322,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     const id = routeIdOr404(request, reply);
     if (!id) return reply;
 
+    let priorDefault = null as string | null;
     const out = await withTransaction<WriteOutcome<InboundRouteUpdatedAudit>>(async (client, tx) => {
       const refuse = async (refusal: InboundRefusal): Promise<WriteOutcome<InboundRouteUpdatedAudit>> => {
         await tx.rollback();
@@ -315,11 +330,16 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
       };
       const current = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id, { client, lock: true });
       if (!current) return refuse({ code: 'inbound_route_not_found' });
+      priorDefault = current.default_campaign_id;
       const parsed = parseInboundRouteUpdate(request.body, inboundRouteConfigOf(inboundRouteToWire(current)));
       if (!parsed.ok) return refuse({ code: 'inbound_route_invalid', details: parsed.issues });
       const issues = [
         ...unavailableActionIssues(parsed.config),
-        ...await referenceIssues(parsed.patch, actor.tenantId, actor.accountId),
+        // The campaign for unknown callers is checked as the route will hold it, changed or
+        // not: a route whose campaign was archived since is not saved until another is chosen.
+        ...await referenceIssues(
+          { ...parsed.patch, default_campaign_id: parsed.config.default_campaign_id }, actor.tenantId, actor.accountId,
+        ),
       ];
       if (issues.length > 0) return refuse({ code: 'inbound_route_invalid', details: issues });
       // Judged as the route it makes: a patch that leaves the campaign out keeps the stored one.
@@ -350,6 +370,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
 
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    if (route.default_campaign_id !== priorDefault) wakeDefaultCampaigns(priorDefault, route.default_campaign_id);
     return sendInboundAnswer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: routeWithWarnings(route) }, out.value);
   });
 
@@ -361,6 +382,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     if (!id) return reply;
     const deleted = await agencyInboundRouteRepository.softDelete(actor.tenantId, actor.accountId, id, actor.userId);
     if (!deleted) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    wakeDefaultCampaigns(deleted.route.default_campaign_id);
     const audit: InboundRouteDeletedAudit = { route_id: id, numbers_removed: deleted.detachedPhoneNumberIds };
     return sendInboundAnswer(reply, 200, null, audit);
   });

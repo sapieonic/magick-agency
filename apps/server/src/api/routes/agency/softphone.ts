@@ -599,10 +599,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaign_id: campaignId,
       disposition_code: saved.response.call.disposition_code ?? body.code,
       replay: saved.replay,
-      // The scope the mark was written at (CL6): the campaign's only when the number is on its list.
-      dnc_entry: saved.dncEntry
-        ? { ...saved.dncEntry, scope: campaignId && saved.response.call.contact ? 'campaign' : 'account' }
-        : null,
+      // With the scope the mark was written at (CL6), as the service that wrote it says.
+      dnc_entry: saved.dncEntry,
     };
     return answer(reply, 200, saved.response, audit);
   });

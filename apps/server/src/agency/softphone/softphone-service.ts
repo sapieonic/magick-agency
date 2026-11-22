@@ -141,8 +141,11 @@ export interface DispositionSuccess {
   onBehalf: boolean;
   /** The same code again: notes/callback updated, nothing settled a second time. */
   replay: boolean;
-  /** A suppress code's DNC row; null when the code does not suppress, or on a replay. */
-  dncEntry: DncEntryWritten | null;
+  /**
+   * A suppress code's DNC row, with the scope it was written at ({@link manualDncScope}, the
+   * one rule the write and its audit share); null when the code does not suppress, or on a replay.
+   */
+  dncEntry: (DncEntryWritten & { scope: 'campaign' | 'account' }) | null;
 }
 
 export interface DncSuccess {
@@ -613,7 +616,7 @@ export class SoftphoneService {
 
     const client = await getPool().connect();
     let recorded: { call: AgencyManualCallRecord; replay: boolean };
-    let dncEntry: DncEntryWritten | null = null;
+    let dncEntry: DispositionSuccess['dncEntry'] = null;
     let contactState: AgencyManualCallDispositionResponse['contact_state'] = contact?.state ?? null;
     let nextAt: Date | null = null;
     try {
@@ -646,7 +649,7 @@ export class SoftphoneService {
             reason: `disposition:${entry.code}`,
             addedBy: actor.userId,
           }, { client });
-          if (marked.written) dncEntry = { id: marked.written.id, created: !marked.alreadyPresent };
+          if (marked.written) dncEntry = { id: marked.written.id, created: !marked.alreadyPresent, scope: manualDncScope(row) };
         }
         const settled = await agencyContactRepository.settleFromManual({
           manualCallId: row.id,

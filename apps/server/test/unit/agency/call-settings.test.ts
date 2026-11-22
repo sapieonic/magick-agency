@@ -23,8 +23,9 @@ describe('agentsWithoutCampaign: who the rule would stop from dialling', () => {
     }
   });
 
-  it('anyone below a supervisor who may dial: a viewer and an operator hold the soft phone\'s dial too', () => {
-    expect(agentsWithoutCampaign([member(['viewer'], false), member(['operator'], false)]).map((m) => m.user_id)).toEqual(['viewer', 'operator']);
+  it('only a member who holds the agent role: a viewer and an operator may dial too, and are not the floor`s agents', () => {
+    expect(agentsWithoutCampaign([member(['viewer'], false), member(['operator'], false)])).toEqual([]);
+    expect(agentsWithoutCampaign([member(['agent', 'viewer'], false)]).map((m) => m.user_id)).toEqual(['agent+viewer']);
   });
 
   it('never someone with no role the server knows', () => {

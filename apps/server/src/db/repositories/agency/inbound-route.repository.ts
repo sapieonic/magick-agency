@@ -520,14 +520,21 @@ export class AgencyInboundRouteRepository {
   }
 
   /**
-   * The account's live routes with no campaign for unknown callers, oldest first: what stands in
-   * the way of "Every call must belong to a campaign" (docs/call-log.md §5, CL3).
+   * The account's live routes with no usable campaign for unknown callers, oldest first: what
+   * stands in the way of "Every call must belong to a campaign" (docs/call-log.md §5, CL3, CL18).
+   * No campaign named, or one that can no longer be chosen for a route: archived, or no longer a
+   * campaign of the route's account (the rule a route save applies, `referenceIssues`). Any
+   * status else counts: a call is filed under a stopped or completed campaign as a matched
+   * caller's is.
    */
   async listMissingDefaultCampaign(tenantId: string, accountId: string, db: Db = getPool()): Promise<Array<{ id: string; name: string }>> {
     const { rows } = await db.query<{ id: string; name: string }>(
       `SELECT r.id, r.name FROM agency_inbound_routes r
         WHERE r.tenant_id = $1::uuid AND r.account_id = $2::uuid AND r.deleted_at IS NULL
-          AND r.default_campaign_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM agency_campaigns c
+             WHERE c.id = r.default_campaign_id AND c.tenant_id = r.tenant_id
+               AND c.account_id = r.account_id AND c.archived_at IS NULL)
         ORDER BY r.created_at, r.id`,
       [tenantId, accountId],
     );

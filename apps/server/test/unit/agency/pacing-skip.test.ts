@@ -45,6 +45,8 @@ const { repos, settings } = vi.hoisted(() => ({
     },
     // No dedicated caller IDs (DN1) unless a case says so: every contact dials from the rotation.
     callerIds: { mapForCampaign: vi.fn(async () => new Map<string, string>()) },
+    // The inbound routes that file unknown callers under a campaign (CL8): none unless a case says so.
+    inboundRoutes: { listDefaultingTo: vi.fn().mockResolvedValue([]) },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(5) },
 }));
@@ -54,6 +56,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
   agencyAgentCallerIdRepository: repos.callerIds,
+  agencyInboundRouteRepository: repos.inboundRoutes,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -179,6 +182,7 @@ beforeEach(() => {
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
   repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
   repos.callerIds.mapForCampaign.mockImplementation(async () => new Map());
+  repos.inboundRoutes.listDefaultingTo.mockResolvedValue([]);
 });
 
 const engines: PacingEngine[] = [];
@@ -402,6 +406,46 @@ describe('PacingEngine rounds: skipping a quiescent campaign', () => {
     for (let i = 0; i < 4; i++) { await r.e.runRound(); r.clock.t += 250; states.s1 = 'available'; }
     expect(r.ticks.map((t) => t.mode)).toEqual(['full', 'full', 'full', 'full']);
     expect(r.ticks.slice(1).every((t) => t.mode === 'full' && t.cause === 'active')).toBe(true);
+  });
+
+  // CL8: a campaign an inbound route files unknown callers under stays running when its list
+  // runs out. With an agent available it would otherwise claim, count and ask the routes every
+  // round for as long as it runs.
+  it('a drained campaign kept running as a route`s default is skipped, and contacts arriving wake it', async () => {
+    const states: Record<string, string> = { s1: 'available' };
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents(states) }));
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.inboundRoutes.listDefaultingTo.mockResolvedValue([{ id: 'route-1', name: 'Sales line', account_id: 'a1' }]);
+    lead(r.e);
+
+    await r.e.runRound();
+    expect(r.ticks).toEqual([expect.objectContaining({ mode: 'full', cause: 'first', quiescent: true })]);
+    expect(repos.campaign.transitionStatus).not.toHaveBeenCalled();
+    const db = dbCalls() + repos.inboundRoutes.listDefaultingTo.mock.calls.length;
+
+    for (let i = 0; i < 3; i++) { r.clock.t += 250; states.s1 = 'available'; await r.e.runRound(); }
+    expect(r.ticks.slice(1).map((t) => t.mode)).toEqual(['skipped', 'skipped', 'skipped']);
+    expect(dbCalls() + repos.inboundRoutes.listDefaultingTo.mock.calls.length).toBe(db);
+
+    // A roster chunk lands: the next round dials it.
+    repos.campaign.countOutstanding.mockResolvedValue(1);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    r.bus.publish({ type: 'contacts_changed', campaignId: 'camp-1' });
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.at(-1)).toMatchObject({ mode: 'full', cause: 'event' });
+    expect(r.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a drained campaign that is no route`s default is completed, not parked', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents({ s1: 'available' }) }));
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
+    lead(r.e);
+    await r.e.runRound();
+    expect(repos.campaign.transitionStatus).toHaveBeenCalledWith('camp-1', ['running'], 'completed');
   });
 
   it('an event that lands DURING a full tick wakes the next round', async () => {

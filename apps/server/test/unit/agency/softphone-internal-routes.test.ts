@@ -207,7 +207,7 @@ describe('the call actions', () => {
       .toEqual({ on_behalf: false, campaign_id: null, hung_up: false });
 
     runtime.softphone.submitDisposition.mockResolvedValue({
-      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true },
+      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true, scope: 'campaign' },
       response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, contact: { contact_id: 'contact-1' }, disposition_code: 'sold' } },
     });
     const disposed = await post(`/softphone/calls/${CALL}/disposition`, { agent_user_id: AGENT, code: 'sold', callback_at: 'x', notes: 'n' });
@@ -222,7 +222,7 @@ describe('the call actions', () => {
     // CL6: a call logged to a campaign whose number is on no list has that campaign only as a
     // filing choice, so its suppress outcome's mark is the account's, and the audit says so.
     runtime.softphone.submitDisposition.mockResolvedValue({
-      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1b', created: true },
+      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1b', created: true, scope: 'account' },
       response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, contact: null, disposition_code: 'dnc' } },
     });
     const filedOnly = await post(`/softphone/calls/${CALL}/disposition`, { agent_user_id: AGENT, code: 'dnc' });

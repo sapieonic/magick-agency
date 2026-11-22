@@ -234,6 +234,8 @@ export class InboundCallService {
       /** File an unknown caller's call under this campaign with the outcome (CL4). */
       campaignId?: string;
     },
+    /** Internal: this is the one retry after the call was refiled under the save (see below). */
+    retried = false,
   ): Promise<InboundCallResult<{
     response: AgencyInboundCallDispositionResponse;
     onBehalf: boolean;
@@ -317,7 +319,7 @@ export class InboundCallService {
     let dncEntry = null as InboundDncEntryWritten | null;
     let contactState: AgencyContactState | null = contact?.state ?? null;
     let nextAt = null as Date | null;
-    const saved = await withTransaction(async (client, tx): Promise<{ call: AgencyInboundCallRecord; replay: boolean } | { refusal: InboundCallRefusal }> => {
+    const saved = await withTransaction(async (client, tx): Promise<{ call: AgencyInboundCallRecord; replay: boolean } | { refusal: InboundCallRefusal } | { refiled: true }> => {
       if (filing) {
         // Filed first, in this transaction: a save refused below rolls the filing back with it.
         const filed = await agencyInboundCallRepository.fileUnderCampaign({
@@ -333,9 +335,13 @@ export class InboundCallService {
         id: row.id, code: entry.code, source: stored, notes, callbackAt,
         promiseDate: promise?.date ?? null, promiseAmount: promise?.amount ?? null,
         actorUserId: actor.userId, onBehalf: found.onBehalf,
+        // The code was validated against this campaign's catalog, read before the transaction:
+        // the save holds only while the call is still filed under it.
+        expectedCampaignId: filing ? filing.campaign.id : row.campaign_id,
       }, { client });
       if (!result.ok) {
         await tx.rollback();
+        if (result.reason === 'campaign_changed') return { refiled: true };
         if (result.reason === 'not_found') return { refusal: { code: 'inbound_call_not_found' } };
         if (result.reason === 'live' || result.reason === 'not_bridged') return { refusal: { code: 'inbound_call_not_dispositionable' } };
         return { refusal: { code: 'inbound_outcome_already_saved' } };
@@ -379,6 +385,15 @@ export class InboundCallService {
       }
       return { call: result.call, replay: result.replay };
     }, { pool: getPool() });
+    if ('refiled' in saved) {
+      // The call was filed under another campaign between the read and the save (a supervisor's
+      // Change while the agent pressed Save): nothing was written. Judge the code once more,
+      // against the campaign the call is under now; it is saved there or refused with that
+      // campaign's codes, never kept from the other's catalog. Once: a second refile in the
+      // same instant is refused, and the panel's next frame carries the outcomes to choose from.
+      if (retried) return refuse({ code: 'inbound_disposition_invalid', reason: 'unknown_code' });
+      return this.submitDisposition(actor, callId, req, true);
+    }
     if ('refusal' in saved) return refuse(saved.refusal);
 
     if (!saved.replay) await this.returnAgent(saved.call);

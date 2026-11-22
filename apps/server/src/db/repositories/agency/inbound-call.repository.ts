@@ -106,6 +106,8 @@ export type AgencyInboundDispositionRefusal =
   | 'not_bridged'
   /** Another code is already saved. */
   | 'different_code'
+  /** The call is filed under another campaign than the one the code was validated against. */
+  | 'campaign_changed'
   /** The lapse sweep closed it `no_disposition`. */
   | 'lapsed';
 
@@ -277,6 +279,13 @@ export interface AgencyInboundDispositionInput {
   promiseAmount?: string | null;
   actorUserId: string;
   onBehalf: boolean;
+  /**
+   * The campaign the call was filed under when `code` was validated against its catalog (null:
+   * none). The save is refused `campaign_changed` when the call is under another by now (a
+   * refile between the read and this write): the code may not be in that campaign's catalog.
+   * Absent: not checked.
+   */
+  expectedCampaignId?: string | null;
 }
 
 /** The filters of the Missed list, already parsed and validated by the API layer. */
@@ -855,10 +864,12 @@ export class AgencyInboundCallRepository {
           AND c.bridged_at IS NOT NULL
           AND c.disposition_code IS DISTINCT FROM '${AUTO_DISPOSITION_CODE}'
           AND ((c.disposition_code IS NULL AND c.settled_at IS NULL) OR c.disposition_code = $2::varchar)
+          AND (NOT $10::boolean OR c.campaign_id IS NOT DISTINCT FROM $11::uuid)
         RETURNING ${CALL_COLUMNS}, prev.disposition_code AS prev_code`,
       [
         input.id, input.code, input.source, input.notes, input.callbackAt, input.actorUserId, input.onBehalf,
         input.promiseDate ?? null, input.promiseAmount ?? null,
+        input.expectedCampaignId !== undefined, input.expectedCampaignId ?? null,
       ],
     );
     const row = rows[0];
@@ -871,6 +882,10 @@ export class AgencyInboundCallRepository {
     if (call.state !== 'ended') return { ok: false, reason: 'live', call };
     if (call.disposition_code === AUTO_DISPOSITION_CODE) return { ok: false, reason: 'lapsed', call };
     if (call.bridged_at === null) return { ok: false, reason: 'not_bridged', call };
+    if (
+      input.expectedCampaignId !== undefined && call.campaign_id !== input.expectedCampaignId
+      && call.settled_at === null && call.disposition_code === null
+    ) return { ok: false, reason: 'campaign_changed', call };
     return { ok: false, reason: 'different_code', call };
   }
 

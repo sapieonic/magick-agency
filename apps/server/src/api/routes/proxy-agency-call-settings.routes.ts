@@ -23,6 +23,7 @@ import {
   type AccountMemberRoles,
   type AgencyCallSettingsRecord,
 } from '../../db/repositories/agency.repository.js';
+import { getFeatureFlagService, FLAGS } from '../../feature-flags/index.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { inboundRefusalBody } from './agency/inbound-answer.js';
 import { accountOrRefuse } from './helpers/account-scope.js';
@@ -41,8 +42,11 @@ import { parseOr400 } from './helpers/parse-or-400.js';
  *  - `GET /call-settings` (`agency.calls.manage`): the setting and its readiness.
  *  - `PUT /call-settings` (`agency.calls.manage`): `{ require_campaign }`. Switching it on is
  *    refused `422 default_campaign_required`, naming the routes, while a live inbound route of the
- *    account has no campaign for unknown callers (CL3); checked under the account's call-settings
- *    lock, which every route write takes too, so a route cannot be saved without one in between.
+ *    account has no usable campaign for unknown callers (CL3; none, or an archived one); checked
+ *    under the account's call-settings lock, which every route write takes too, so a route
+ *    cannot be saved without one in between. Routes are not counted while inbound is off for the
+ *    account (`agency_inbound_enabled`, CL18): the route editor is closed then, so a leftover
+ *    route could not be fixed, and a call filed under no campaign is still refused its outcome.
  *    Switching it off, or saving what it already is, is never refused. Audited
  *    `agency_call_settings.updated` when the switch changed.
  *  - `GET /campaigns/:id/inbound-default-routes` (`agency.supervise`): the live inbound routes
@@ -67,22 +71,27 @@ const toRouteRefs = (routes: ReadonlyArray<{ id: string; name: string }>): Agenc
   routes.map((r) => ({ route_id: r.id, name: r.name }));
 
 /**
- * The members the rule would stop from dialling: someone who may dial from the soft phone, whose
- * every role in the account is below `agency.supervise` (a supervisor may log a call to any
- * campaign of the account), and who is staffed on no campaign a call can be logged to.
+ * "Agents on no running campaign" (CL24): a member who holds the `agent` role in the account,
+ * none of whose roles there holds `agency.supervise` (a supervisor may log a call to any campaign
+ * of the account), and who is staffed on no campaign a call can be logged to. A viewer or an
+ * operator is not counted: they are not the floor's agents, and are not staffed on campaigns
+ * as a rule, so listing them would bury the agents a supervisor has to act on.
  */
 export function agentsWithoutCampaign(members: readonly AccountMemberRoles[]): AccountMemberRoles[] {
   return members.filter((m) => {
     const roles = m.roles as MembershipRole[];
-    const dials = roles.some((role) => hasPermission(role, 'agency.softphone.dial'));
     const supervises = roles.some((role) => hasPermission(role, 'agency.supervise'));
-    return dials && !supervises && !m.on_taggable_campaign;
+    return roles.includes('agent') && !supervises && !m.on_taggable_campaign;
   });
 }
 
+/** `agency_inbound_enabled` for the account: its routes count only while it is on (CL18). */
+const inboundOn = (tenantId: string, accountId: string): Promise<boolean> =>
+  getFeatureFlagService().isEnabled(FLAGS.agency_inbound_enabled, { tenantId, accountId });
+
 async function readiness(tenantId: string, accountId: string): Promise<AgencyCallSettingsReadiness> {
   const [missing, members, unfiled] = await Promise.all([
-    agencyInboundRouteRepository.listMissingDefaultCampaign(tenantId, accountId),
+    inboundOn(tenantId, accountId).then((on) => (on ? agencyInboundRouteRepository.listMissingDefaultCampaign(tenantId, accountId) : [])),
     agencyCallSettingsRepository.listMembersWithStaffing(tenantId, accountId, SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES),
     agencyCallSettingsRepository.countUnfiledCalls(tenantId, accountId, AGENCY_CALL_SETTINGS_UNFILED_DAYS),
   ]);
@@ -123,10 +132,13 @@ export async function proxyAgencyCallSettingsRoutes(app: FastifyInstance): Promi
     const userId = request.user?.id;
     if (!userId) return reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'This action must be attributed to a user.' });
 
+    // Read before the lock is taken (a flag read, cached): with inbound off its routes do not count.
+    const countRoutes = parsed.data.require_campaign && await inboundOn(tenantId, accountId);
     const written = await agencyCallSettingsRepository.setRequireCampaign(
       { tenantId, accountId, on: parsed.data.require_campaign, userId },
       // Under the account's lock: no live route without a campaign for unknown callers (CL3).
       async (client) => {
+        if (!countRoutes) return null;
         const missing = await agencyInboundRouteRepository.listMissingDefaultCampaign(tenantId, accountId, client);
         return missing.length > 0 ? missing : null;
       },
@@ -166,8 +178,9 @@ export async function proxyAgencyCallSettingsRoutes(app: FastifyInstance): Promi
       const campaignId = request.params.id.toLowerCase();
       const campaign = await agencyCampaignRepository.findById(campaignId);
       if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) return notFound();
-      const routes = (await agencyInboundRouteRepository.listDefaultingTo(tenantId, campaignId))
-        .filter((r) => r.account_id === accountId);
+      // The campaign is the account's (above), and a route names only a campaign of its own
+      // account (checked on every route save), so every route found is the account's.
+      const routes = await agencyInboundRouteRepository.listDefaultingTo(tenantId, campaignId);
       const body: AgencyCampaignInboundDefaultRoutesResponse = { routes: toRouteRefs(routes) };
       return reply.send(body);
     },
