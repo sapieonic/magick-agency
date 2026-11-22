@@ -368,7 +368,10 @@ describe('every state keeps the way back to the campaign', () => {
     renderPage();
 
     await screen.findByTestId('call-fact-Agent');
-    expect(suppliedCrumbs()).toBe(`Campaign→/agency/campaigns/camp-1 / ${CRUMB_CALL_LOG} / Attempt 3`);
+    // The crumbs are supplied from an effect, so they settle a tick after the call renders; the
+    // campaign's own read is still pending, so the slot must hold the placeholder all the while.
+    await waitFor(() => expect(suppliedCrumbs())
+      .toBe(`Campaign→/agency/campaigns/camp-1 / ${CRUMB_CALL_LOG} / Attempt 3`));
 
     releaseCampaign({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
     await waitFor(() => expect(suppliedCrumbs())
