@@ -285,6 +285,37 @@ describe('campaign report', () => {
     expect(page).not.toContain('data-testid="outcomes-by-type"');
   });
 
+  it('prints a dash for a talk time the dataset does not carry, and adds it to nothing', () => {
+    const older = structuredClone(d) as unknown as { activity: { calls: { softphone: Record<string, unknown> } } };
+    delete older.activity.calls.softphone.talk_seconds;
+    const rows = byTypeRows(renderReportHtml(older as unknown as typeof d, NO_FONTS));
+    // Dialler, Soft phone (unknown), Inbound, All calls: the two that are known.
+    expect(rows.talk).toEqual(['Talk time', duration(calls.talk_seconds), '—', duration(10500), duration(calls.talk_seconds + 10500)]);
+  });
+
+  it('draws the Inbound column for a window with no inbound call while callers are still owed a call back', () => {
+    const owed = structuredClone(d);
+    noSoft(owed);
+    owed.activity.calls.inbound = { received: 0, answered: 0, missed: 0, open_follow_ups: 4, talk_seconds: 0, open_hours: 0 };
+    const page = renderReportHtml(owed, NO_FONTS);
+    expect(byTypeHead(page)).toEqual(['Dialler', 'Inbound', 'All calls']);
+    expect(byTypeRows(page).calls?.[2]).toBe('0 received');
+    expect(byTypeRows(page).missed).toEqual(['Missed by us', '—', '0 (4 to follow up)', '0']);
+    // And with none owed either, the report is the dialler's alone.
+    owed.activity.calls.inbound.open_follow_ups = 0;
+    expect(renderReportHtml(owed, NO_FONTS)).not.toContain('data-testid="calls-by-type"');
+  });
+
+  it('heads the Outcomes table with what it holds: every type\'s conversations, the share the dialler\'s', () => {
+    const total = d.activity.outcomes_by_type.reduce((sum, o) => sum + o.total, 0);
+    const head = text(block(html, 'data-block', 'outcomes')).split('Outcome ')[0]!;
+    expect(head).toContain(`${count(total)} conversations across the call types; share is of the dialler’s ${count(calls.conversations)}`);
+    const plain = structuredClone(d);
+    noSoft(plain);
+    noInbound(plain);
+    expect(text(block(renderReportHtml(plain, NO_FONTS), 'data-block', 'outcomes'))).toContain(`over ${count(calls.conversations)} conversations`);
+  });
+
   it('draws trends, best hours, agents, callbacks and health', () => {
     for (const id of ['headline', 'outcomes', 'trends', 'best-hours', 'agents', 'callbacks', 'stalls', 'caller-ids']) expect(html).toContain(`data-block="${id}"`);
     expect(text(block(html, 'data-block', 'agents'))).toContain('Arjun Mehta');

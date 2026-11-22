@@ -378,6 +378,50 @@ describe('calls and outcomes', () => {
       expect(cell('rate', 'Inbound')).toBe('Not enough calls yetAnswer rate, open hours');
     });
 
+    it('keeps the Inbound column for a range with no inbound call while callers are still owed a call back, inbound off', () => {
+      // A quiet week: nothing received, four missed calls from before still open.
+      const owed = { received: 0, answered: 0, missed: 0, open_follow_ups: 4, talk_seconds: 0, open_hours: 0 };
+      const view = show(<CallsSection ctx={{ ...ctx, inboundEnabled: false }} activity={withTypes({ inbound: owed })} />);
+      expect(columnHeaders()).toContain('Inbound');
+      expect(cell('calls', 'Inbound')).toBe('0 received');
+      expect(cell('missed', 'Inbound')).toBe('0 (4 to follow up)');
+      expect(within(screen.getByTestId('calls-by-type-follow-ups')).getByRole('link').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts?type=to_follow_up');
+      view.unmount();
+      // None owed either, inbound off: no column.
+      show(<CallsSection ctx={{ ...ctx, inboundEnabled: false }} activity={withTypes({ inbound: { ...owed, open_follow_ups: 0 } })} />);
+      expect(columnHeaders()).not.toContain('Inbound');
+    });
+
+    it('shows a dash for a talk time an older server did not serve, and adds it to nothing', () => {
+      const a = withTypes();
+      const { talk_seconds: _gone, ...softphone } = a.calls.softphone;
+      show(<CallsSection ctx={ctx} activity={{ ...a, calls: { ...a.calls, softphone: softphone as typeof a.calls.softphone } }} />);
+      expect(cell('talk', 'Soft phone')).toBe('—');
+      // The dialler's 400 × 178 s and inbound's 10,500 s: 81,700 s.
+      expect(cell('talk', 'All calls')).toBe('22h 41m');
+    });
+
+    it('draws the split above the table: a segment per type that has calls, the counts as text', () => {
+      show(<CallsSection ctx={ctx} activity={withTypes()} />);
+      const bar = screen.getByRole('img', { name: '1,337 calls: 1,240 dialler, 40 soft phone, 57 inbound' });
+      expect([...bar.children].map((el) => [el.getAttribute('data-type'), (el as HTMLElement).style.flexGrow])).toEqual([
+        ['dialler', '1240'], ['soft_phone', '40'], ['inbound', '57'],
+      ]);
+      expect(screen.getByTestId('calls-by-type-bar').textContent).toBe('Dialler 1,240Soft phone 40Inbound 57All calls 1,337');
+    });
+
+    it('draws no segment for a type with no call, and no bar with no call at all', () => {
+      const none = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 };
+      const view = show(<CallsSection ctx={{ ...ctx, inboundEnabled: true }} activity={withTypes({ inbound: none })} />);
+      expect([...screen.getByRole('img', { name: /calls:/ }).children].map((el) => el.getAttribute('data-type'))).toEqual(['dialler', 'soft_phone']);
+      // The legend still names the type, at zero.
+      expect(screen.getByTestId('calls-by-type-bar').textContent).toContain('Inbound 0');
+      view.unmount();
+      const a = withTypes({ inbound: none, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } });
+      show(<CallsSection ctx={{ ...ctx, inboundEnabled: true }} activity={{ ...a, calls: { ...a.calls, dials: 0 } }} />);
+      expect(screen.queryByRole('img', { name: /calls:/ })).toBeNull();
+    });
+
     it('shows inbound with the soft phone off and unused: two types, and no Outbound rate', () => {
       show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withTypes({ softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 } })} />);
       expect(columnHeaders()).toEqual(['Today', 'Dialler', 'Inbound', 'All calls']);

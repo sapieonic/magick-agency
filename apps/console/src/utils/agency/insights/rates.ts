@@ -187,12 +187,13 @@ export type InboundCounts = AgencyInsightsCalls['inbound'];
 /**
  * Whether a campaign surface shows inbound figures (SR5's rule on inbound): while inbound is on
  * for the account (`agency_inbound_enabled`), or whenever the range holds an inbound call (a
- * campaign keeps the calls filed under it when the flag goes off). Never when the counts were
- * not served (an older server).
+ * campaign keeps the calls filed under it when the flag goes off), or while the campaign has
+ * missed calls still to follow up: those are owed whatever the dates (CL27), so a range with no
+ * inbound call must not hide them. Never when the counts were not served (an older server).
  */
 export function showInboundFigures(enabled: boolean, counts: InboundCounts | null | undefined): counts is InboundCounts {
   if (!counts) return false;
-  return enabled || counts.received > 0;
+  return enabled || counts.received > 0 || counts.open_follow_ups > 0;
 }
 
 /**
@@ -214,7 +215,8 @@ export interface CallsByTypeColumn {
   callsWord: 'dialled' | 'received';
   connected: number;
   reached: number;
-  talk_seconds: number;
+  /** Null when the server did not serve the type's talk time (an older server): a dash. */
+  talk_seconds: number | null;
   /** Only inbound has calls we missed, and calls still to follow up (as of now, whatever the range). */
   missed: number | null;
   open_follow_ups: number | null;
@@ -269,7 +271,7 @@ export function callsByType(
       callsWord: 'dialled',
       connected: softphone.connected,
       reached: softphone.human_connects,
-      talk_seconds: softphone.talk_seconds ?? 0,
+      talk_seconds: typeof softphone.talk_seconds === 'number' ? softphone.talk_seconds : null,
       missed: null,
       open_follow_ups: null,
       rate: softphoneConnectRate(softphone),
@@ -298,7 +300,8 @@ export function callsByType(
       calls: sum((c) => c.calls),
       connected: sum((c) => c.connected),
       reached: sum((c) => c.reached),
-      talk_seconds: sum((c) => c.talk_seconds),
+      // The types whose talk time is known: an unknown one is a dash in its column, not a 0 here.
+      talk_seconds: sum((c) => c.talk_seconds ?? 0),
       missed: inbound ? inbound.missed : null,
     },
     outbound: softphone ? outboundCounts(calls, softphone) : null,

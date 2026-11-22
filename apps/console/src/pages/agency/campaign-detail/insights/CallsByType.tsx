@@ -65,7 +65,7 @@ function lines(table: CallsByType, campaignId: string): Line[] {
     {
       key: 'talk',
       label: 'Talk time',
-      cell: (c) => durationWords(c.talk_seconds),
+      cell: (c) => (c.talk_seconds === null ? NA : durationWords(c.talk_seconds)),
       csv: (c) => c.talk_seconds,
       all: durationWords(table.all.talk_seconds),
       allCsv: table.all.talk_seconds,
@@ -117,6 +117,37 @@ function lines(table: CallsByType, campaignId: string): Line[] {
   return out;
 }
 
+/**
+ * The split at a glance, above the table: one bar, a segment per type in the Call log's own
+ * type colours, and the counts beside their names. A type with no call has no segment (a
+ * zero-width one would still leave its gap), and with no call at all there is no bar. The
+ * figures are in the legend as text, so the colours carry nothing on their own.
+ */
+function CallsByTypeBar({ table }: { table: CallsByType }) {
+  const total = table.all.calls;
+  const summary = `${formatCount(total)} calls: ${table.columns.map((c) => `${formatCount(c.calls)} ${c.label.toLowerCase()}`).join(', ')}`;
+  return (
+    <div className={styles.typeStack} data-testid="calls-by-type-bar">
+      {total > 0 ? (
+        <div className={styles.typeStackBar} role="img" aria-label={summary}>
+          {table.columns.filter((c) => c.calls > 0).map((c) => (
+            <div key={c.type} className={styles.typeStackSegment} data-type={c.type} style={{ flexGrow: c.calls }} />
+          ))}
+        </div>
+      ) : null}
+      <ul className={styles.typeStackLegend}>
+        {table.columns.map((c) => (
+          <li key={c.type}>
+            <span className={styles.typeStackSwatch} data-type={c.type} aria-hidden="true" />
+            {c.label} <strong>{formatCount(c.calls)}</strong>
+          </li>
+        ))}
+        <li>All calls <strong>{formatCount(total)}</strong></li>
+      </ul>
+    </div>
+  );
+}
+
 export function CallsByTypeTable({
   table,
   campaignId,
@@ -145,6 +176,7 @@ export function CallsByTypeTable({
   return (
     <div className={styles.subSection} data-testid="calls-by-type">
       {heading ? <h4 className={styles.subTitle}>Calls by type</h4> : null}
+      <CallsByTypeBar table={table} />
       <InsightsTable
         caption="Calls by type: dialler, soft phone and inbound, and all calls added"
         columns={columns}

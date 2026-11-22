@@ -83,7 +83,15 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           ]}
         />
       </Section>
-      <Section title="Outcomes" aside={`over ${count(conversations)} conversations`} id="outcomes">
+      <Section
+        title="Outcomes"
+        // With the types' columns the table holds more than the dialler's conversations: say
+        // how many across the types, and whose the share is.
+        aside={typed
+          ? `${count(outcomeRows.reduce((sum, o) => sum + typed.columns.reduce((n, c) => n + o[c.key], 0), 0))} conversations across the call types; share is of the dialler’s ${count(conversations)}`
+          : `over ${count(conversations)} conversations`}
+        id="outcomes"
+      >
         {typed ? (
           // One outcome list for the campaign, so one table: each outcome on every call type the
           // report shows (CL28). Share stays the dialler's, of its conversations.
@@ -217,7 +225,7 @@ function CallsByType({ t }: { t: CampaignCallsByType }) {
           </tr>
           <tr data-row="talk">
             <td>Talk time</td>
-            {t.columns.map((c) => <td key={c.key} className="num">{duration(c.talkSeconds)}</td>)}
+            {t.columns.map((c) => <td key={c.key} className="num">{c.talkSeconds === null ? NA : duration(c.talkSeconds)}</td>)}
             <td className="num">{duration(t.all.talkSeconds)}</td>
           </tr>
           {t.all.missed !== null ? (

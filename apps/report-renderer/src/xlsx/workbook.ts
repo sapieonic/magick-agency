@@ -395,18 +395,23 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
     // Calls by type, last (`docs/call-log.md` §6): the soft-phone calls logged to the campaign
-    // (SR1-SR3), the inbound calls filed under it, and All calls, the counts added. Beside the
-    // dialler's figures above and in none of them; each block only when the window holds such a
-    // call, as the PDF (`campaignCallsByType`). No rate is added across types (CL7): the
-    // Outbound connect rate is the dialler and the soft phone alone. A dataset from a server
-    // that predates either block carries none.
+    // (SR1-SR3), the dialler and the soft phone together (Outbound), the inbound calls filed
+    // under it, and the call types added. Beside the dialler's figures above and in none of
+    // them; each block only when the report shows that type, as the PDF (`campaignCallsByType`).
+    // No rate is added across types (CL7). The Outbound rows are the figures the Summary called
+    // "All calls placed / connected / connect rate" before inbound calls joined it: the names
+    // "All calls ..." are not reused for the three-type sums, so a lookup on an old name finds
+    // nothing rather than a different number (CL29). A dataset from a server that predates a
+    // block carries none.
     ...(soft
       ? [
         { metric: 'Soft-phone calls placed', value: soft.placed, type: 'int' as const, definition: def(d, 'softphone_calls') },
         { metric: 'Soft-phone calls connected', value: soft.connected, type: 'int' as const },
         { metric: 'People reached on the soft phone', value: soft.humanConnects, type: 'int' as const },
         { metric: 'Soft-phone connect rate', value: rateCell(soft.connect), type: 'percent' as const },
-        { metric: 'Soft-phone talk time', value: soft.talkSeconds, type: 'duration_s' as const },
+        { metric: 'Soft-phone talk time', value: soft.talkSeconds ?? '—', type: 'duration_s' as const },
+        { metric: 'Outbound calls placed', value: soft.outbound.placed, type: 'int' as const },
+        { metric: 'Outbound calls connected', value: soft.outbound.connected, type: 'int' as const },
         { metric: AGENCY_OUTBOUND_CONNECT_RATE_LABEL, value: rateCell(soft.outbound.connect), type: 'percent' as const, definition: def(d, 'outbound_connect_rate') },
       ]
       : []),
@@ -422,10 +427,10 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
       : []),
     ...(byType
       ? [
-        { metric: 'All calls', value: byType.all.calls, type: 'int' as const, definition: def(d, 'calls_by_type') },
-        { metric: 'All calls connected', value: byType.all.connected, type: 'int' as const },
-        { metric: 'All calls: people reached', value: byType.all.reached, type: 'int' as const },
-        { metric: 'All calls talk time', value: byType.all.talkSeconds, type: 'duration_s' as const },
+        { metric: 'All call types: calls', value: byType.all.calls, type: 'int' as const, definition: def(d, 'calls_by_type') },
+        { metric: 'All call types: connected', value: byType.all.connected, type: 'int' as const },
+        { metric: 'All call types: people reached', value: byType.all.reached, type: 'int' as const },
+        { metric: 'All call types: talk time', value: byType.all.talkSeconds, type: 'duration_s' as const },
       ]
       : []),
   ]);
@@ -472,10 +477,12 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
       { header: 'Outcome', type: 'text' },
       { header: 'Code', type: 'text' },
       { header: 'Success', type: 'bool' },
-      { header: 'Conversations', type: 'int' },
-      { header: 'Share', type: 'percent' },
+      // The dialler's conversations and their share of the dialler's. Named as the dialler's
+      // where the other types' columns follow, as the PDF's table.
+      { header: typed ? 'Dialler' : 'Conversations', type: 'int' },
+      { header: typed ? 'Share of dialler' : 'Share', type: 'percent' },
       // By type, where the report shows more than the dialler (CL28): the same outcome on the
-      // soft-phone and inbound calls, and the three added. Conversations and Share stay the dialler's.
+      // soft-phone and inbound calls, and the columns added.
       ...(typed ? typed.columns.filter((c) => c.key !== 'dialler').map((c) => ({ header: c.label, type: 'int' as const })) : []),
       ...(typed ? [{ header: 'Total', type: 'int' as const }] : []),
     ],

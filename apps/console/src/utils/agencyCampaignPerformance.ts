@@ -444,7 +444,7 @@ export function outboundConnectRateReadout(stats: AgencyCampaignStats | null): P
 export function showsInbound(stats: AgencyCampaignStats | null, inboundEnabled: boolean): boolean {
   const inbound = stats?.inbound;
   if (!inbound) return false;
-  return inboundEnabled || inbound.received > 0;
+  return inboundEnabled || inbound.received > 0 || inbound.open_follow_ups > 0;
 }
 
 /**

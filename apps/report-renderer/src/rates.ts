@@ -91,8 +91,8 @@ export interface CampaignSoftphoneFigures {
   placed: number;
   connected: number;
   humanConnects: number;
-  /** Talk time of the placed calls; 0 from a dataset that predates it. */
-  talkSeconds: number;
+  /** Talk time of the placed calls; null from a dataset that predates it (printed as a dash, added to nothing). */
+  talkSeconds: number | null;
   /** People reached ÷ placed: every soft-phone call is a first dial (SR2). */
   connect: Rate;
   /**
@@ -123,7 +123,7 @@ export function campaignSoftphoneFigures(d: CampaignReportDataset): CampaignSoft
     placed: soft.placed,
     connected: soft.connected,
     humanConnects: soft.human_connects,
-    talkSeconds: soft.talk_seconds ?? 0,
+    talkSeconds: typeof soft.talk_seconds === 'number' ? soft.talk_seconds : null,
     connect: rate(soft.human_connects, soft.placed, floor),
     outbound: {
       placed: calls.dials + soft.placed,
@@ -138,7 +138,9 @@ export function campaignSoftphoneFigures(d: CampaignReportDataset): CampaignSoft
 /**
  * The inbound calls filed under the campaign (`docs/call-log.md` §6); `null` when the report
  * shows none. Shown when the window holds an inbound call (the soft phone's gate, SR8: a report
- * has no flag to read) and never when the dataset predates them.
+ * has no flag to read), or when the campaign has missed calls still to follow up: a week with no
+ * inbound call must not hide the callers still owed a call back. Never when the dataset predates
+ * them.
  */
 export interface CampaignInboundFigures {
   received: number;
@@ -154,7 +156,7 @@ export interface CampaignInboundFigures {
 
 export function campaignInboundFigures(d: CampaignReportDataset): CampaignInboundFigures | null {
   const inbound = d.activity.calls.inbound;
-  if (!inbound || inbound.received <= 0) return null;
+  if (!inbound || (inbound.received <= 0 && inbound.open_follow_ups <= 0)) return null;
   return {
     received: inbound.received,
     answered: inbound.answered,
@@ -176,7 +178,8 @@ export interface CallsByTypeColumn {
   callsWord: 'dialled' | 'received';
   connected: number;
   reached: number;
-  talkSeconds: number;
+  /** Null when the dataset does not carry the type's talk time (an older server): a dash. */
+  talkSeconds: number | null;
   /** Only inbound has calls we missed. */
   missed: number | null;
   openFollowUps: number | null;
@@ -187,11 +190,12 @@ export interface CallsByTypeColumn {
 /**
  * The campaign's calls by type (`docs/call-log.md` §6): one column per type the report shows,
  * and All calls, the counts added. `null` when only the dialler has calls to show: the report
- * is then exactly what it was. Counts, people reached and talk time add up; **no rate is added**
+ * then prints the figures it always did. Counts, people reached and talk time add up; **no rate is added**
  * (CL7): each type's rate measures a different thing. One gate for the PDF and the workbook.
  */
 export interface CampaignCallsByType {
   columns: CallsByTypeColumn[];
+  /** The counts added. `talkSeconds` adds the types whose talk time is known. */
   all: { calls: number; connected: number; reached: number; talkSeconds: number; missed: number | null };
   soft: CampaignSoftphoneFigures | null;
   inbound: CampaignInboundFigures | null;
@@ -255,7 +259,7 @@ export function campaignCallsByType(d: CampaignReportDataset): CampaignCallsByTy
       calls: sum((c) => c.calls),
       connected: sum((c) => c.connected),
       reached: sum((c) => c.reached),
-      talkSeconds: sum((c) => c.talkSeconds),
+      talkSeconds: sum((c) => c.talkSeconds ?? 0),
       missed: inbound ? inbound.missed : null,
     },
     soft,

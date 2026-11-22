@@ -386,4 +386,10 @@ describe('inbound calls beside both (call log P4, CL7)', () => {
     expect(within(screen.getByTestId('connect-rate-readout')).getByText('Dialler connect rate')).toBeTruthy();
     expect(screen.queryByTestId('outbound-rate-readout')).toBeNull();
   });
+
+  it('shows the card while callers are still owed a call back, inbound off', () => {
+    const owed = { received: 3, answered: 0, missed: 3, open_follow_ups: 2, talk_seconds: 0, open_hours: 3 };
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 }, inbound: { ...owed, received: 0 } })} />);
+    expect(screen.getByTestId('inbound-rate-readout')).toBeTruthy();
+  });
 });
