@@ -183,6 +183,23 @@ Errors are typed codes in `packages/contracts/src/errors.ts`: `campaign_template
 field details), `campaign_template_archived`, and (added in step 1) `campaign_template_invalid`
 for a bad name, description or body.
 
+Build notes (step 2): every route answers 403 `feature_disabled` with the flag off. Organisation
+writes need `tenant_admin` with an organisation-wide seat (AA1's `tenant_wide_membership_required`,
+one helper shared with `POST /accounts`); a supervisor writes their account's. A template the
+caller cannot see, or a malformed id, is 404. `effective` needs `X-Account-Id`. A create's
+`template_id`: an id is that template, `null` the built-in settings alone, absent the default
+chain; an unknown one 404 and an archived one 409 (the contract's statuses). A section sent keeps
+its absent fields built-in, and `template_source` is always the server's (a client's is dropped).
+With the flag off a create is as before, except that `break_reasons` sent on a create is now
+stored (it used to be dropped). Apply writes drafts through the campaign PATCH path
+(`helpers/campaign-patch.ts`, its checks and its `config_changed` audit) and then
+`template_source`, with refusals per campaign; a campaign started between the status read and
+the write is still written (an accepted race). The soft-phone settings answer `outcomes_template`
+(CT11). Audit: `campaign_template.created|updated|archived|restored|default_set|default_cleared|applied`,
+resource `campaign_template`. Smaller calls: an empty `numbers.caller_ids` sets the carrier
+only; `analysis_profile_unavailable` is noted when the profile fails its check or the account
+does not analyse calls; a description is trimmed, blank is null.
+
 ## 7. Console
 
 - **Settings › Campaign templates**: listed in the account group and the organisation group of
@@ -200,11 +217,21 @@ for a bad name, description or body.
   for the soft phone" (CT11).
 - Copy is Indian English with British spelling, "organisation" never "tenant" (AA7).
 
+Build notes (step 3): `/settings/campaign-templates` and `/settings/organisation-campaign-templates`
+(the second only for tenant admins and owners on an organisation-wide seat: `Gate.organisationSeat`,
+`TenantContext.organisationRole`). One wire↔form mapping, `utils/agency/campaignTemplates/templateForm.ts`,
+reads through the existing campaign readers; comparisons are the domain's. New campaign sends
+`template_id` (`null` for the built-in settings) with the sections as on the form, so their
+sources are recorded at the create; the picker is locked once a roster upload has made the draft.
+Breaks and the agent screen, which New campaign has no step for, show on Review as read-only rows
+with their chip. The script editor in a template offers the fixed placeholders only (a template
+has no customer card). With the flag off or the read failing, New campaign is unchanged.
+
 ## 8. Build plan and status
 
 | Step | What | State |
 |---|---|---|
 | 1 Foundation | Contract (sections, wire types, errors, flag, permission), `0067_campaign_templates.sql` and `BASELINE.md`, the domain rules with their table tests, the repository on real Postgres | Built (2026-11-22): `campaign-template-sections.ts`, `api/agency/campaign-templates.ts`, `packages/domain/src/campaign-templates.ts`, `campaign-template.repository.ts`; their tests green, the repository's and the migration's on real Postgres |
-| 2 Server | Routes, effective fill-in, create path (CT8, CT9), soft phone (CT11), numbers (CT15), apply (CT16), audit, route-table guards, integration in both lanes | Not started |
-| 3 Console | Settings pages, New campaign, campaign Settings, soft phone settings, analytics events, tests | Not started |
+| 2 Server | Routes, effective fill-in, create path (CT8, CT9), soft phone (CT11), numbers (CT15), apply (CT16), audit, route-table guards, integration in both lanes | Built (2026-11-22): the route family, `agency/campaign-templates/`, `agency/softphone/untagged-outcomes.ts`, the shared PATCH and seat helpers; unit and integration green in both lanes |
+| 3 Console | Settings pages, New campaign, campaign Settings, soft phone settings, analytics events, tests | Built (2026-11-22): Settings list and editor (history, copy from a campaign, apply to drafts), New campaign's Start from with Review chips and Reset, campaign Settings' Started from, comparison and Save as template, the soft phone's Follow/Set; console tests green |
 | 4 Review | Independent review of the whole diff, fixes with tests that fail without them | Not started |
