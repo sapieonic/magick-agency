@@ -420,13 +420,16 @@ describe('the dialler branch at the account\'s scope and 0070', () => {
        con AS (
          INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164)
          SELECT camp.id, $1, camp.account_id, '+91' || (7100000000 + row_number() OVER ())::text
-           FROM camp, generate_series(1, 2500) g RETURNING id, campaign_id, account_id)
+           FROM camp, generate_series(1, 6000) g RETURNING id, campaign_id, account_id)
        INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, created_at)
        SELECT con.campaign_id, con.id, $1, con.account_id, 1, '+912200000000', 'ended', now() - interval '30 days' - (row_number() OVER () || ' seconds')::interval
          FROM con`,
       [floor.tenant, floor.account]);
     await q(`SET session_replication_role = origin`);
+    // Every table the statement joins: an un-analysed one leaves the plan to chance.
     await q('ANALYZE agency_call_attempts');
+    await q('ANALYZE agency_contacts');
+    await q('ANALYZE agency_agent_sessions');
     const pool = getPool();
     const spy = vi.spyOn(pool, 'query');
     let statement: { text: string; values: unknown[] };
