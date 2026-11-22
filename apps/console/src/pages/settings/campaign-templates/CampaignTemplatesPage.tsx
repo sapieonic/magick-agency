@@ -28,6 +28,7 @@ import { actorLabel, changedLine, formatStamp, templateRefusal } from '../../../
 import { trackAgencyCampaignTemplateAction } from '../../../analytics/events';
 import { useTemplatesAccess } from '../../../components/agency/campaignTemplates/useTemplatesAccess';
 import { NewTemplateDialog, type NewTemplateStart } from '../../../components/agency/campaignTemplates/NewTemplateDialog';
+import { useTemplateSectionKeys } from '../../../components/agency/campaignTemplates/useTemplateSectionKeys';
 import styles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
 
 type View = 'live' | 'archived';
@@ -47,6 +48,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
   const access = useTemplatesAccess();
   const allowed = scope === 'organisation' ? access.manageOrganisation : access.manage;
   const [view, setView] = useState<View>('live');
+  const sections = useTemplateSectionKeys(scope);
   const [newOpen, setNewOpen] = useState(false);
   const [archiving, setArchiving] = useState<AgencyCampaignTemplateSummary | null>(null);
   const [busy, setBusy] = useState(false);
@@ -272,6 +274,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
         onClose={() => setNewOpen(false)}
         scope={scope}
         templates={scope === 'organisation' ? mine : list.data}
+        sections={sections}
         onStart={start}
       />
       <ConfirmDialog

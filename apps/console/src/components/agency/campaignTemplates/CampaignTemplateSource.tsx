@@ -1,15 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
-import {
-  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
-  type AgencyCampaignTemplateSummary,
-} from '@magick-agency/contracts/api/agency/campaign-templates';
+import type { AgencyCampaignTemplateSummary } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { diffSections, sectionsFromCampaign, type TemplateSectionDiff } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
-import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
 import { getCampaignTemplate, getEffectiveCampaignTemplate, listCampaignTemplates } from '../../../api/campaignTemplates';
-import { CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
-import { INBOUND_FLAG } from '../../../utils/inbound/inboundFlag';
 import { noteSentence, templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
 import { formatDayMonth } from '../../../utils/format/date';
 import { errorCode } from '../../../utils/agencyErrors';
@@ -18,6 +12,7 @@ import { SectionDiffList } from './SectionDiffList';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 import { builtinEffective } from './useStartFrom';
 import { useTemplatesAccess } from './useTemplatesAccess';
+import { useTemplateSectionKeys } from './useTemplateSectionKeys';
 import styles from './CampaignTemplates.module.css';
 
 /**
@@ -32,8 +27,6 @@ import styles from './CampaignTemplates.module.css';
 export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign }) {
   const { tenantId, accountId } = useTenant();
   const access = useTemplatesAccess();
-  const assignmentOn = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
-  const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
   const source = campaign.template_source ?? null;
   const started = source?.template ?? null;
   const [comparing, setComparing] = useState(false);
@@ -42,10 +35,7 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
   const [saveOpen, setSaveOpen] = useState(false);
 
   /** The sections shown and compared: those whose feature is on for the account. */
-  const sections = useMemo(
-    () => AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter((k) => !(k === 'assignment' && !assignmentOn) && !(k === 'inbound' && !inboundOn)),
-    [assignmentOn, inboundOn],
-  );
+  const sections = useTemplateSectionKeys('account');
 
   // The template as it is now: has it moved on, or been archived?
   const fetchNow = useCallback(
@@ -144,6 +134,7 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
           templates={replaceable}
           sections={sections}
           organisation={access.manageOrganisation}
+          onReload={list.reload}
         />
       ) : null}
     </section>

@@ -21,7 +21,7 @@ export function TemplateSectionCard({
   section: AgencyCampaignTemplateSectionKey;
   set: boolean;
   onSetChange: (set: boolean) => void;
-  /** "Use Collections (organisation)", "Use organisation's default", "Built-in". */
+  /** "Use Collections", "Use the organisation's default", "Use built-in settings". */
   inheritLabel: string;
   /** The section's values in plain words: the template's when set, else what it inherits. */
   summary: string;

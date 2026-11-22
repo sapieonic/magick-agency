@@ -154,8 +154,9 @@ export function TemplateSectionEditors({
               error={fieldErrors['telephony_credential_id'] ?? fieldErrors['telephony_provider']}
             />
           ) : null}
-          <div className="form-group">
-            <label htmlFor="template-caller-ids">Numbers to call from</label>
+          {/* The picker is a list of checkboxes, each with its own label: the group is named, not a field. */}
+          <fieldset className={styles.checks}>
+            <legend className={styles.heading}>Numbers to call from</legend>
             <CallerIdPicker
               selected={form.callerIds}
               onChange={(callerIds) => onChange({ ...form, callerIds })}
@@ -168,7 +169,7 @@ export function TemplateSectionEditors({
                 {fieldErrors['caller_ids']}
               </p>
             ) : null}
-          </div>
+          </fieldset>
         </div>
       );
     default:

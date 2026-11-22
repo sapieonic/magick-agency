@@ -18,7 +18,10 @@ import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency
  */
 
 const mocks = vi.hoisted(() => ({
-  tenant: { tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined as string | undefined },
+  tenant: {
+    tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined as string | undefined,
+    accounts: [{ id: 'a-1', name: 'Pune', tenant_id: 't-1' }],
+  },
   flags: { agency_campaign_templates_enabled: true } as Record<string, boolean>,
   showToast: vi.fn(),
   listCampaignTemplates: vi.fn(),
@@ -131,7 +134,9 @@ const apiError = (status: number, body: Record<string, unknown>) =>
   Object.assign(new Error(String(body.message ?? 'refused')), { statusCode: status, details: body });
 
 beforeEach(() => {
-  mocks.tenant = { tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined };
+  mocks.tenant = {
+    tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined, accounts: [{ id: 'a-1', name: 'Pune', tenant_id: 't-1' }],
+  };
   mocks.flags = { agency_campaign_templates_enabled: true };
   mocks.listCampaignTemplates.mockImplementation(async (_t: string, _a: string, o?: { archived?: boolean }) =>
     o?.archived ? [summary({ id: 'acc-9', name: 'Old Diwali', archived_at: '2026-11-10T08:00:00Z', archived_by: PRIYA })] : [ACCOUNT, SPARE, ORG]);
@@ -289,7 +294,7 @@ describe('the editor', () => {
     expect(within(hours).getByRole('radiogroup', { name: 'Calling hours: where it comes from' })).toBeTruthy();
     expect((within(hours).getByRole('radio', { name: 'Set in this template' }) as HTMLInputElement).checked).toBe(true);
     const wrapup = screen.getByTestId('template-section-wrapup');
-    expect((within(wrapup).getByRole('radio', { name: 'Use organisation’s default' }) as HTMLInputElement).checked).toBe(true);
+    expect((within(wrapup).getByRole('radio', { name: 'Use the organisation’s default' }) as HTMLInputElement).checked).toBe(true);
     // Nothing changed: no Save.
     expect((screen.getByRole('button', { name: 'Save template' }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -301,7 +306,7 @@ describe('the editor', () => {
     // Set, the card opens on the existing editors, starting from what it inherited.
     expect((within(wrapup).getByLabelText(/Wrap-up seconds/) as HTMLInputElement).value).toBe('45');
     const hours = screen.getByTestId('template-section-hours');
-    fireEvent.click(within(hours).getByRole('radio', { name: 'Use organisation’s default' }));
+    fireEvent.click(within(hours).getByRole('radio', { name: 'Use the organisation’s default' }));
     expect(screen.getByTestId('template-summary-hours').textContent).toBe('9:00 AM–8:00 PM · Mon to Fri · Asia/Kolkata');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
@@ -342,6 +347,49 @@ describe('the editor', () => {
     await act(async () => {});
     expect(screen.getByTestId('template-section-hours').getAttribute('data-invalid')).toBe('true');
     expect(screen.getByTestId('template-section-hours').textContent).toContain('The end must differ from the start.');
+  });
+
+  it('re-inherits the unset sections when “Based on” changes, and names what they use', async () => {
+    const RECOVERY = summary({ id: 'org-2', scope: 'organisation', account_id: null, name: 'Recovery', version: 3, sections_set: ['wrapup'] });
+    mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, SPARE, ORG, RECOVERY]);
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1'
+        ? DETAIL
+        : { ...RECOVERY, sections: { wrapup: { wrapup_seconds: 120, wrapup_auto_return: false, allow_wrapup_redial: true } }, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('45s, then agents return on their own');
+    fireEvent.change(screen.getByLabelText('Based on'), { target: { value: 'org-2' } });
+    await act(async () => {});
+    expect(mocks.getCampaignTemplate).toHaveBeenCalledWith('org-2', 't-1', 'a-1');
+    expect(screen.getByTestId('template-summary-wrapup').textContent).toBe(
+      '120s, then agents mark themselves ready · Redial from wrap-up allowed',
+    );
+    const wrapup = screen.getByTestId('template-section-wrapup');
+    expect((within(wrapup).getByRole('radio', { name: 'Use Recovery' }) as HTMLInputElement).checked).toBe(true);
+    // The set section keeps its own values.
+    expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const body = mocks.replaceCampaignTemplate.mock.calls[0]![2];
+    expect(body.based_on_template_id).toBe('org-2');
+    expect(Object.keys(body.sections)).toEqual(['hours']);
+  });
+
+  it('asks before leaving with unsaved changes, and not once they are saved', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'For Pune' } });
+    fireEvent.click(screen.getByRole('link', { name: 'All templates' }));
+    const dialog = screen.getByRole('dialog', { name: 'Leave without saving?' });
+    expect(dialog.textContent).toContain('Your changes to this template are not saved.');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Cancel|Stay/ }));
+    expect(screen.getByRole('heading', { name: 'Pune collections' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('link', { name: 'All templates' }));
+    await act(async () => {});
+    expect(screen.queryByRole('dialog', { name: 'Leave without saving?' })).toBeNull();
+    expect(screen.getByTestId('template-row-acc-1')).toBeTruthy();
   });
 
   it('says the server’s sentence when what is archived is the template it is based on (C5)', async () => {
@@ -422,7 +470,7 @@ describe('the editor', () => {
 
   it('fills every section from a campaign with “Copy from a campaign…”', async () => {
     mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
-    mocks.getAgencyCampaign.mockResolvedValue({ id: 'c-1', name: 'Diwali renewals', status: 'running', wrapup_seconds: 90, record_calls: true });
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'c-1', name: 'Diwali renewals', status: 'running', wrapup_seconds: 90, record_calls: true, caller_ids: ['+912200000001'] });
     await renderAt('/settings/campaign-templates/acc-1');
     fireEvent.click(screen.getByRole('button', { name: 'Copy from a campaign…' }));
     await act(async () => {});
@@ -432,6 +480,213 @@ describe('the editor', () => {
     expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('90s, then agents return on their own');
     expect(screen.getByTestId('template-section-recording').getAttribute('data-set')).toBe('true');
     expect(screen.getByTestId('template-summary-recording').textContent).toBe('Every call is recorded');
+    // Only the sections shown are set: contact assignment and inbound are off here (C6).
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const keys = Object.keys(mocks.replaceCampaignTemplate.mock.calls[0]![2].sections);
+    expect(keys).not.toContain('assignment');
+    expect(keys).not.toContain('inbound');
+    expect(keys).toContain('numbers');
+  });
+
+  it('names the numbers group, and lists the current version once in History (C12)', async () => {
+    mocks.listCampaignTemplateVersions.mockResolvedValue([
+      { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
+      { version: 3, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-10T09:00:00Z', saved_by: null },
+    ]);
+    mocks.getCampaignTemplateVersion.mockResolvedValue({
+      template_id: 'acc-1', version: 3, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'],
+      saved_at: '2026-11-10T09:00:00Z', saved_by: null, sections: { hours: HOURS },
+    });
+    await renderAt('/settings/campaign-templates/acc-1');
+    const numbers = screen.getByTestId('template-section-numbers');
+    fireEvent.click(within(numbers).getByRole('radio', { name: 'Set in this template' }));
+    expect(within(numbers).getByRole('group', { name: 'Numbers to call from' })).toBeTruthy();
+    expect(numbers.querySelector('label[for="template-caller-ids"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await act(async () => {});
+    await act(async () => {});
+    const options = [...(screen.getByLabelText('With') as HTMLSelectElement).options].map((o) => o.textContent);
+    expect(options).toEqual(['Now (version 4)', 'Version 3']);
+  });
+});
+
+describe('apply to draft campaigns (C7)', () => {
+  const DRAFT = { id: 'c-1', name: 'Diwali renewals', status: 'draft' };
+  const effective = () => {
+    const resolved = resolveTemplateSections({ chosen: { scope: 'account', sections: DETAIL.sections }, basedOn: { sections: ORG_SECTIONS }, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true } });
+    return { template: { id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, based_on: null, config: resolved.config, sources: resolved.sources, notes: [] };
+  };
+
+  beforeEach(() => {
+    mocks.getAgencyCampaign.mockResolvedValue(DRAFT);
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue(effective());
+  });
+
+  const openApply = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to draft campaigns…' }));
+    await act(async () => {});
+    return screen.getByRole('dialog');
+  };
+
+  it('says the drafts could not be read, with Retry, rather than that there are none', async () => {
+    mocks.listAgencyCampaigns.mockRejectedValueOnce(new Error('down')).mockResolvedValue([DRAFT]);
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    expect(dialog.textContent).toContain('Could not load the draft campaigns.');
+    expect(dialog.textContent).not.toContain('has no draft campaigns');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Retry|Try again/ }));
+    await act(async () => {});
+    expect(within(screen.getByRole('dialog')).getByRole('checkbox', { name: 'Diwali renewals' })).toBeTruthy();
+  });
+
+  it('starts on the sections the template sets each time it opens, after a save changed them', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    mocks.replaceCampaignTemplate.mockImplementation(async (_id: string, _scope: string, body: { sections: object }) => ({
+      ...DETAIL, version: 5, sections: body.sections, sections_set: Object.keys(body.sections),
+    }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    let dialog = await openApply();
+    expect((within(dialog).getByRole('checkbox', { name: 'Calling hours' }) as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByRole('checkbox', { name: 'Wrap-up' }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    const wrapup = screen.getByTestId('template-section-wrapup');
+    fireEvent.click(within(wrapup).getByRole('radio', { name: 'Set in this template' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    dialog = await openApply();
+    expect((within(dialog).getByRole('checkbox', { name: 'Calling hours' }) as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByRole('checkbox', { name: 'Wrap-up' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('reloads the latest version after a 409 and applies it, keeping the dialog open', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([DRAFT]);
+    mocks.applyCampaignTemplate
+      .mockRejectedValueOnce(apiError(409, { code: 'campaign_template_changed', message: 'Changed', current_version: 5 }))
+      .mockResolvedValue({ template: { id: 'acc-1', name: 'Pune collections', version: 5 }, results: [{ campaign_id: 'c-1', result: 'applied', changed_sections: [], template_source: { template: null, based_on: null, sections: {} } }] });
+    await renderAt('/settings/campaign-templates/acc-1');
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Diwali renewals' }));
+    fireEvent.click(within(dialog).getByTestId('apply-preview'));
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId('apply-confirm'));
+    await act(async () => {});
+    expect(screen.getByTestId('apply-stale').textContent).toContain('Nothing was applied.');
+    mocks.getCampaignTemplate.mockResolvedValue({ ...DETAIL, version: 5 });
+    fireEvent.click(within(screen.getByTestId('apply-stale')).getByRole('button', { name: 'Reload the latest version' }));
+    await act(async () => {});
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByTestId('apply-reloaded').textContent).toBe('Now on version 5. Check what changes again before you apply.');
+    fireEvent.click(screen.getByTestId('apply-preview'));
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId('apply-confirm'));
+    await act(async () => {});
+    expect(mocks.applyCampaignTemplate).toHaveBeenLastCalledWith(
+      'acc-1', { campaign_ids: ['c-1'], sections: ['hours'], expected_version: 5 }, 't-1', 'a-1',
+    );
+    expect(screen.getByTestId('apply-results')).toBeTruthy();
+  });
+
+  it('says which account’s drafts change on the organisation’s page', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    mocks.listAgencyCampaigns.mockResolvedValue([]);
+    await renderAt('/settings/organisation-campaign-templates/org-1');
+    const dialog = await openApply();
+    expect(within(dialog).getByRole('heading', { name: 'Apply “Standard” to draft campaigns of Pune' })).toBeTruthy();
+    expect(dialog.textContent).toContain('Pune has no draft campaigns.');
+  });
+});
+
+describe('new template (C6, C12)', () => {
+  const openNew = async (path = '/settings/campaign-templates') => {
+    await renderAt(path);
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    await act(async () => {});
+  };
+  const startedWith = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await act(async () => {});
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    return mocks.createCampaignTemplate.mock.calls[0]![0] as { sections: Record<string, Record<string, unknown>> };
+  };
+
+  it('copies a campaign’s shown sections only: none whose feature is off', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'c-1', name: 'Diwali renewals', status: 'running', wrapup_seconds: 90, assignment_mode: 'sticky', inbound_sticky_enabled: true, caller_ids: ['+912200000001'] });
+    await openNew();
+    fireEvent.click(screen.getByRole('radio', { name: /A copy of a campaign/ }));
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText('Campaign to copy'), { target: { value: 'c-1' } });
+    const body = await startedWith();
+    expect(body.sections.wrapup!.wrapup_seconds).toBe(90);
+    expect(body.sections).not.toHaveProperty('assignment');
+    expect(body.sections).not.toHaveProperty('inbound');
+  });
+
+  it('copies an account template into an organisation one without the account’s parts', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) => (id === 'acc-1'
+      ? {
+        ...DETAIL,
+        sections: {
+          hours: HOURS,
+          recording: { record_calls: true, analysis_profile_id: 'prof-1' },
+          numbers: { caller_ids: ['+912200000001'], telephony_provider: 'voicelink', telephony_credential_id: null },
+        },
+      }
+      : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    mocks.listCampaignTemplates.mockResolvedValue([ORG]);
+    await openNew('/settings/organisation-campaign-templates');
+    // The organisation page offers its own templates; the account template is copied through the same rule.
+    fireEvent.click(screen.getByRole('radio', { name: /A copy of a template/ }));
+    const select = screen.getByLabelText('Template to copy') as HTMLSelectElement;
+    const option = document.createElement('option');
+    option.value = 'acc-1';
+    select.appendChild(option);
+    fireEvent.change(select, { target: { value: 'acc-1' } });
+    const body = await startedWith();
+    expect(Object.keys(body.sections).sort()).toEqual(['hours', 'recording']);
+    expect(body.sections.recording).toEqual({ record_calls: true });
+  });
+
+  it('forgets the choice and any error when closed', async () => {
+    mocks.getAgencyCampaign.mockRejectedValue(new Error('down'));
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    await openNew();
+    fireEvent.click(screen.getByRole('radio', { name: /A copy of a campaign/ }));
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText('Campaign to copy'), { target: { value: 'c-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await act(async () => {});
+    expect(within(screen.getByRole('dialog')).getByRole('alert')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    await act(async () => {});
+    const dialog = screen.getByRole('dialog');
+    expect((within(dialog).getByRole('radio', { name: /Built-in settings/ }) as HTMLInputElement).checked).toBe(true);
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+  });
+
+  it('“Copy from a campaign…” forgets its choice and error when closed', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    mocks.getAgencyCampaign.mockRejectedValue(new Error('down'));
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy from a campaign…' }));
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText('Campaign'), { target: { value: 'c-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy settings' }));
+    await act(async () => {});
+    expect(within(screen.getByRole('dialog')).getByRole('alert').textContent).toBe('down');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy from a campaign…' }));
+    await act(async () => {});
+    expect((screen.getByLabelText('Campaign') as HTMLSelectElement).value).toBe('');
+    expect(within(screen.getByRole('dialog')).queryByRole('alert')).toBeNull();
   });
 });
 
@@ -453,13 +708,13 @@ describe('who sees it', () => {
     expect(mocks.getCampaignTemplate).not.toHaveBeenCalled();
   });
 
-  it('gives an organisation-wide tenant admin the organisation’s editor, with Built-in as what a section follows', async () => {
+  it('gives an organisation-wide tenant admin the organisation’s editor, with the built-in settings as what a section follows', async () => {
     mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
     await renderAt('/settings/organisation-campaign-templates/org-1');
     await waitFor(() => expect(screen.getByTestId('template-section-wrapup')).toBeTruthy());
     expect(screen.queryByTestId('template-section-numbers')).toBeNull();
     const hours = screen.getByTestId('template-section-hours');
-    expect(within(hours).getByRole('radio', { name: 'Built-in' })).toBeTruthy();
+    expect(within(hours).getByRole('radio', { name: 'Use built-in settings' })).toBeTruthy();
     expect(screen.queryByLabelText('Based on')).toBeNull();
   });
 
