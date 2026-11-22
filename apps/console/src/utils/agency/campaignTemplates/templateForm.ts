@@ -356,6 +356,6 @@ export function templateFormErrors(
     if (target) errors['daily_target_calls'] = target;
     Object.assign(errors, templateScriptErrors(form.station.script));
   }
-  if (set.has('numbers') && form.callerIds.length === 0) errors['caller_ids'] = 'Pick at least one number, or use the inherited numbers.';
+  if (set.has('numbers') && form.callerIds.length === 0) errors['caller_ids'] = 'Pick at least one number, or let each new campaign pick its own.';
   return errors;
 }

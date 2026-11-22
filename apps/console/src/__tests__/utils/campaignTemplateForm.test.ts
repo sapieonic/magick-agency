@@ -101,7 +101,7 @@ describe('the words', () => {
       hours: { calling_window_start: '10:00', calling_window_end: '20:00', calling_days: [1, 2, 3, 4, 5, 6], default_timezone: 'Asia/Kolkata' },
       agent_screen: { daily_target_calls: 80, agent_script: { steps: [{ text: 'Greet' }, { text: 'Ask' }] } },
     }, null);
-    expect(sectionSummary('hours', config)).toBe('10:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
+    expect(sectionSummary('hours', config)).toBe('10:00 AM–8:00 PM · Mon to Sat · India time (IST)');
     expect(sectionSummary('agent_screen', config)).toBe('Full number · Target 80 calls a day · Script with 2 steps');
     expect(sectionSummary('retries', config)).toBe('The built-in retry rules');
     expect(sectionSummary('breaks', config)).toBe('The built-in break reasons, no limits');

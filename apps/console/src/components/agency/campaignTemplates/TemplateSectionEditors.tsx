@@ -158,7 +158,8 @@ export function TemplateSectionEditors({
           ) : null}
           {/* The picker is a list of checkboxes, each with its own label: the group is named, not a field. */}
           <fieldset className={styles.checks}>
-            <legend className={styles.heading}>Numbers to call from</legend>
+            {/* The card's heading says it; the group still has its name (U8). */}
+            <legend className={styles.srOnly}>Numbers to call from</legend>
             <CallerIdPicker
               selected={form.callerIds}
               onChange={(callerIds) => onChange({ ...form, callerIds })}

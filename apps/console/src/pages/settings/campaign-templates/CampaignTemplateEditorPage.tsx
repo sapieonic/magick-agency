@@ -31,6 +31,10 @@ import styles from '../../../components/agency/campaignTemplates/CampaignTemplat
  * reads are `useTemplateEditorData`), and around them the header, the conflict banner ("Reload the
  * latest version", CT6), History, Copy from a campaign, Apply to draft campaigns and the
  * unsaved-changes guard. This page only composes them.
+ *
+ * A template of the other scope (an organisation template opened from an account's "View", L4,
+ * or by its URL, N7) opens read-only: its summaries and where each comes from, History, and a
+ * link to its own editor for a reader who may change it there.
  */
 export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCampaignTemplateScope }) {
   const { id = 'new' } = useParams<{ id: string }>();
@@ -46,8 +50,13 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
   // What a new template starts from, handed over by the list's "New template" (router state).
   const [start] = useState(() => (location.state as { start?: NewTemplateStart } | null)?.start ?? null);
   const visible = useTemplateSectionKeys(scope);
+  const organisationVisible = useTemplateSectionKeys('organisation');
   const editor = useTemplateEditor({ scope, id, enabled: allowed, start, visible });
   const { template } = editor.data;
+  const { readOnly, ownScope } = editor;
+  /** The cards shown: those of the template's own scope. */
+  const shown = ownScope === 'organisation' ? organisationVisible : visible;
+  const canEditThere = ownScope === 'organisation' ? access.manageOrganisation : access.manage;
 
   const [copyOpen, setCopyOpen] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
@@ -89,27 +98,41 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
         subtitle={template ? changedLine(template) : undefined}
         actions={
           <div className={styles.toolbar}>
-            <button type="button" className="btn-secondary" onClick={() => setCopyOpen(true)}>
-              Copy from a campaign…
-            </button>
+            {readOnly ? null : (
+              <button type="button" className="btn-secondary" onClick={() => setCopyOpen(true)}>
+                Copy from a campaign…
+              </button>
+            )}
             {template ? (
               <>
                 <button type="button" className="btn-secondary" onClick={() => setHistoryOpen((v) => !v)} aria-expanded={historyOpen}>
                   History
                 </button>
-                <button type="button" className="btn-secondary" onClick={() => setApplyOpen(true)} disabled={editor.dirty}>
-                  Apply to draft campaigns…
-                </button>
+                {readOnly ? null : (
+                  <button type="button" className="btn-secondary" onClick={() => setApplyOpen(true)} disabled={editor.dirty}>
+                    Apply to draft campaigns…
+                  </button>
+                )}
               </>
             ) : null}
           </div>
         }
       />
       <p className={styles.muted}>
-        {scope === 'organisation'
-          ? 'Every account can start new campaigns from this template. A section left on the built-in settings uses them.'
-          : 'New campaigns of this account can start from this template. A section you do not set comes from the organisation template it is based on, or the built-in settings.'}{' '}
+        {readOnly
+          ? `${ownScope === 'organisation' ? 'An organisation template' : 'An account template'}, shown read-only. `
+          : scope === 'organisation'
+            ? 'Every account can start new campaigns from this template. A section left on the built-in settings uses them. '
+            : 'New campaigns of this account can start from this template. A section you do not set comes from the organisation template it is based on, or the built-in settings. '}
         Changing a template never changes a campaign that already exists. <Link to={listPath}>All templates</Link>
+        {readOnly && template && canEditThere ? (
+          <>
+            {' · '}
+            <Link to={campaignTemplatePath(ownScope, template.id)} data-testid="template-edit-there">
+              {ownScope === 'organisation' ? 'Change it in Organisation campaign templates' : 'Change it in Campaign templates'}
+            </Link>
+          </>
+        ) : null}
       </p>
 
       {editor.conflict ? (
@@ -123,6 +146,10 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
         </div>
       ) : editor.saveError ? (
         <ErrorAlert message={editor.saveError} />
+      ) : null}
+
+      {editor.data.inheritedError ? (
+        <ErrorAlert message={editor.data.inheritedError} onRetry={editor.data.retryInherited} />
       ) : null}
 
       {editor.notice ? (
@@ -140,8 +167,9 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
 
       <TemplateEditorForm
         editor={editor}
-        scope={scope}
-        visible={visible}
+        scope={ownScope}
+        visible={shown}
+        readOnly={readOnly}
         recordingEnabled={isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY)}
         analyticsEnabled={isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY)}
         carriers={carriers}
@@ -158,7 +186,7 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
         }}
         note="Every section shown here is set from the campaign’s settings. Nothing is saved until you save the template."
       />
-      {template ? (
+      {template && !readOnly ? (
         <ApplyToDraftsDialog
           open={applyOpen}
           onClose={() => setApplyOpen(false)}

@@ -170,13 +170,15 @@ describe('the list', () => {
     expect(screen.getByTestId('template-row-acc-2').textContent).toContain('Based on Recovery');
   });
 
-  it('lists the organisation’s templates read-only, under “From the organisation”', async () => {
+  it('lists the organisation’s templates read-only, under “From the organisation”, each with View (L4)', async () => {
     await renderAt('/settings/campaign-templates');
     const section = screen.getByRole('region', { name: 'From the organisation' });
     const row = within(section).getByTestId('template-row-org-1');
     expect(row.textContent).toContain('Standard');
     expect(within(row).queryByRole('button')).toBeNull();
-    expect(within(row).queryByRole('link')).toBeNull();
+    expect(within(row).getAllByRole('link').map((a) => [a.getAttribute('aria-label'), a.getAttribute('href')])).toEqual([
+      ['View Standard', '/settings/campaign-templates/org-1'],
+    ]);
     // Its default is the organisation's, not this account's (C4).
     expect(within(row).getByText('Organisation default')).toBeTruthy();
     expect(within(row).queryByText('Account default')).toBeNull();
@@ -289,7 +291,7 @@ describe('the editor', () => {
       'template-section-breaks', 'template-section-recording', 'template-section-agent_screen', 'template-section-safety',
       'template-section-numbers',
     ]);
-    expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
+    expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · India time (IST)');
     const hours = screen.getByTestId('template-section-hours');
     expect(within(hours).getByRole('radiogroup', { name: 'Calling hours: where it comes from' })).toBeTruthy();
     expect((within(hours).getByRole('radio', { name: 'Set in this template' }) as HTMLInputElement).checked).toBe(true);
@@ -307,7 +309,7 @@ describe('the editor', () => {
     expect((within(wrapup).getByLabelText(/Wrap-up seconds/) as HTMLInputElement).value).toBe('45');
     const hours = screen.getByTestId('template-section-hours');
     fireEvent.click(within(hours).getByRole('radio', { name: 'Use the organisation’s default' }));
-    expect(screen.getByTestId('template-summary-hours').textContent).toBe('9:00 AM–8:00 PM · Mon to Fri · Asia/Kolkata');
+    expect(screen.getByTestId('template-summary-hours').textContent).toBe('9:00 AM–8:00 PM · Mon to Fri · India time (IST)');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
@@ -354,6 +356,79 @@ describe('the editor', () => {
     expect(body.sections.agent_screen.agent_script).toEqual(script);
   });
 
+  it('keeps the name, description and Based on at the top, and only Discard and Save in the bar (U4)', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    const bar = screen.getByRole('region', { name: 'Save the template' });
+    expect(within(bar).queryAllByRole('textbox')).toEqual([]);
+    expect(within(bar).queryAllByRole('combobox')).toEqual([]);
+    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Discard', 'Save template']);
+    const about = screen.getByRole('region', { name: 'About this template' });
+    expect(within(about).getByLabelText(/^Name/)).toBeTruthy();
+    expect(within(about).getByLabelText('Description (optional)')).toBeTruthy();
+    expect(within(about).getByLabelText('Based on')).toBeTruthy();
+    // Above the first section's card, so it scrolls away with the page.
+    expect(about.compareDocumentPosition(screen.getByTestId('template-section-outcomes')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('marks a section with a field to fix in words, and takes the person to the field from the bar (U13)', async () => {
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1'
+        ? { ...DETAIL, sections: { ...DETAIL.sections, agent_screen: { agent_script: { opening: 'Your EMI {emi} is due' } } } }
+        : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    const card = screen.getByTestId('template-section-agent_screen');
+    expect(card.getAttribute('data-invalid')).toBe('true');
+    expect(within(card).getByText('Needs a fix')).toBeTruthy();
+    expect(screen.getByTestId('template-section-hours').getAttribute('data-invalid')).toBeNull();
+    fireEvent.click(screen.getByTestId('template-show-problem'));
+    expect(document.activeElement?.tagName).toBe('TEXTAREA');
+    expect(card.contains(document.activeElement)).toBe(true);
+  });
+
+  it('leaves unset numbers to each new campaign, and says so (U8)', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    const numbers = screen.getByTestId('template-section-numbers');
+    expect((within(numbers).getByRole('radio', { name: 'Pick them in each campaign' }) as HTMLInputElement).checked).toBe(true);
+    expect(within(numbers).queryByRole('radio', { name: /organisation/ })).toBeNull();
+    expect(screen.getByTestId('template-summary-numbers').textContent).toBe('Each new campaign picks its own numbers');
+    fireEvent.click(within(numbers).getByRole('radio', { name: 'Set in this template' }));
+    expect(numbers.textContent).toContain('Pick at least one number, or let each new campaign pick its own.');
+  });
+
+  it('says when what it follows cannot be read, rather than showing built-in values under its name (U9)', async () => {
+    const RECOVERY = summary({ id: 'org-2', scope: 'organisation', account_id: null, name: 'Recovery', version: 3, sections_set: ['wrapup'] });
+    mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, SPARE, ORG, RECOVERY]);
+    let recoveryReads = 0;
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) => {
+      if (id === 'acc-2') return { ...SPARE, sections: {}, follows: null };
+      recoveryReads += 1;
+      if (recoveryReads === 1) throw new Error('down');
+      return { ...RECOVERY, sections: { wrapup: { wrapup_seconds: 120, wrapup_auto_return: false, allow_wrapup_redial: true } }, follows: null };
+    });
+    await renderAt('/settings/campaign-templates/acc-2');
+    await act(async () => {});
+    expect(screen.getByText('Could not read Recovery, so the values it gives are not shown.')).toBeTruthy();
+    expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('Not shown: what it follows could not be read');
+    fireEvent.click(screen.getByRole('button', { name: /Retry|Try again/ }));
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.queryByText('Could not read Recovery, so the values it gives are not shown.')).toBeNull();
+    expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('120s, then agents mark themselves ready · Redial from wrap-up allowed');
+  });
+
+  it('puts a name the server refused under the Name field (N9)', async () => {
+    mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(400, {
+      code: 'campaign_template_invalid', message: 'This template cannot be saved.', details: { name: 'The name has a character that cannot be shown. Take it out.' },
+    }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Pune\u200b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const about = screen.getByRole('region', { name: 'About this template' });
+    expect(within(about).getByRole('alert').textContent).toBe('The name has a character that cannot be shown. Take it out.');
+    expect(screen.queryByText('This template cannot be saved.')).toBeNull();
+  });
+
   it('puts a section refusal on its card', async () => {
     mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(400, {
       code: 'campaign_template_section_invalid', message: 'Invalid', sections: ['hours'], details: { calling_window_end: 'The end must differ from the start.' },
@@ -384,7 +459,7 @@ describe('the editor', () => {
     const wrapup = screen.getByTestId('template-section-wrapup');
     expect((within(wrapup).getByRole('radio', { name: 'Use Recovery' }) as HTMLInputElement).checked).toBe(true);
     // The set section keeps its own values.
-    expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
+    expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · India time (IST)');
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
     const body = mocks.replaceCampaignTemplate.mock.calls[0]![2];
@@ -441,8 +516,8 @@ describe('the editor', () => {
     expect(mocks.getCampaignTemplateVersion).toHaveBeenCalledWith('acc-1', 3, 't-1', 'a-1');
     const row = within(screen.getByTestId('history-diff')).getByText('Calling hours').closest('li')!;
     expect(row.textContent).toContain('Changed: the start time');
-    expect(row.textContent).toContain('9:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
-    expect(row.textContent).toContain('10:00 AM–8:00 PM · Mon to Sat · Asia/Kolkata');
+    expect(row.textContent).toContain('9:00 AM–8:00 PM · Mon to Sat · India time (IST)');
+    expect(row.textContent).toContain('10:00 AM–8:00 PM · Mon to Sat · India time (IST)');
   });
 
   it('applies to chosen drafts after a preview, then says each campaign’s result', async () => {
@@ -835,6 +910,33 @@ describe('new template (C6, C12)', () => {
     await act(async () => {});
     expect((screen.getByLabelText('Campaign') as HTMLSelectElement).value).toBe('');
     expect(within(screen.getByRole('dialog')).queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('an organisation template from an account’s page (L4, N7)', () => {
+  it('opens read-only: each section’s summary and where it comes from, no choices, no Save', async () => {
+    await renderAt('/settings/campaign-templates/org-1');
+    expect(screen.getByRole('heading', { name: 'Standard' })).toBeTruthy();
+    expect(screen.queryAllByRole('radio')).toEqual([]);
+    expect(screen.queryByRole('region', { name: 'Save the template' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy from a campaign…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Apply to draft campaigns…' })).toBeNull();
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    // An organisation template's own sections: no numbers; unset ones are the built-in settings.
+    expect(screen.queryByTestId('template-section-numbers')).toBeNull();
+    expect(screen.getByTestId('template-from-wrapup').textContent).toBe('Set in this template');
+    expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('45s, then agents return on their own');
+    expect(screen.getByTestId('template-from-hours').textContent).toBe('Built-in settings');
+    expect(screen.getByTestId('template-summary-hours').textContent).toBe('9:00 AM–8:00 PM · Mon to Fri · India time (IST)');
+    // A supervisor cannot change it elsewhere either.
+    expect(screen.queryByTestId('template-edit-there')).toBeNull();
+    expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
+  });
+
+  it('links an organisation admin to its own editor', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    await renderAt('/settings/campaign-templates/org-1');
+    expect(screen.getByTestId('template-edit-there').getAttribute('href')).toBe('/settings/organisation-campaign-templates/org-1');
   });
 });
 

@@ -30,6 +30,13 @@ import type { AgencyCampaign } from '../../../types/agency-campaign';
 import type { NewTemplateStart } from './NewTemplateDialog';
 import { useTemplateEditorData } from './useTemplateEditorData';
 
+/** The server's word on the name, when a `campaign_template_invalid` refusal is about it (N9). */
+function nameDetail(err: unknown): string | null {
+  const details = (err as { details?: { details?: Record<string, unknown> } } | null)?.details?.details;
+  const name = details?.['name'];
+  return typeof name === 'string' && name.trim() !== '' ? name : null;
+}
+
 /** The editor's saved state: what Discard puts back and what "unsaved" is measured against. */
 interface Baseline {
   name: string;
@@ -46,6 +53,9 @@ interface Baseline {
  * inherits (CT2), the saved baseline with Discard, the checks, and Save with the version it opened
  * (CT6; a save in between is a conflict, offered as "Reload the latest version"). The reads are
  * `useTemplateEditorData`'s; the page draws it (`TemplateEditorForm`) and holds the dialogs.
+ *
+ * A template is read by its own scope once loaded: one of another scope than the page's (an
+ * organisation template opened from an account's page) is `readOnly` (L4).
  */
 export function useTemplateEditor({
   scope,
@@ -99,9 +109,12 @@ export function useTemplateEditor({
     },
   });
   const { template, inherited, inheritedReady, loading, loadError } = data;
+  /** The template's own scope: the page's, unless it opened one of the other scope (read-only). */
+  const ownScope = template?.scope ?? scope;
+  const readOnly = template !== null && template.scope !== scope;
 
   /** What every unset section shows and gives: the followed template, then built-in. Worked out once per inheritance. */
-  const inheritedConfig = useMemo(() => filledConfig(scope, {}, inherited), [scope, inherited]);
+  const inheritedConfig = useMemo(() => filledConfig(ownScope, {}, inherited), [ownScope, inherited]);
   const inheritedForm = useMemo(() => formOfConfig(inheritedConfig), [inheritedConfig]);
 
   // The form, once its inheritance is known; then kept in step with "Based on".
@@ -109,18 +122,18 @@ export function useTemplateEditor({
   useEffect(() => {
     if (loading || loadError || !inheritedReady) return;
     if (form === null) {
-      let next = formOfConfig(filledConfig(scope, sourceSections, inherited));
-      if (scope === 'organisation') next = { ...next, recording: organisationRecording(next.recording) };
+      let next = formOfConfig(filledConfig(ownScope, sourceSections, inherited));
+      if (ownScope === 'organisation') next = { ...next, recording: organisationRecording(next.recording) };
       const keys = sectionKeysSet(sourceSections);
       setForm(next);
       setBaseline({
         name: template?.name ?? '',
         description: template?.description ?? '',
-        basedOnId: scope === 'account' ? template?.based_on?.id ?? null : null,
+        basedOnId: ownScope === 'account' ? template?.based_on?.id ?? null : null,
         setKeys: keys,
         form: next,
         // A new template's saved state is nothing at all: whatever it starts from is unsaved.
-        sections: template ? sectionsOfForm(next, scope, keys) : {},
+        sections: template ? sectionsOfForm(next, ownScope, keys) : {},
       });
       return;
     }
@@ -131,7 +144,7 @@ export function useTemplateEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, loadError, inheritedReady, inheritedForm]);
 
-  const sections = useMemo(() => (form ? sectionsOfForm(form, scope, setKeys) : {}), [form, scope, setKeys]);
+  const sections = useMemo(() => (form ? sectionsOfForm(form, ownScope, setKeys) : {}), [form, ownScope, setKeys]);
   const dirty = baseline !== null && form !== null && (
     name.trim() !== baseline.name
     || description.trim() !== (baseline.description ?? '')
@@ -149,9 +162,17 @@ export function useTemplateEditor({
     return out;
   }, [liveErrors, fieldErrors]);
 
-  /** Section `key`'s values in one line: the template's when set, else what it inherits. */
-  const summaryOf = (key: AgencyCampaignTemplateSectionKey) =>
-    (setKeys.includes(key) ? sectionSummary(key, sections) : sectionSummary(key, inheritedConfig));
+  /**
+   * Section `key`'s values in one line: the template's when set, else what it inherits. Unset
+   * numbers are no template's: each new campaign picks its own (U8). Nothing is said for an
+   * inheritance that could not be read (U9).
+   */
+  const summaryOf = (key: AgencyCampaignTemplateSectionKey) => {
+    if (setKeys.includes(key)) return sectionSummary(key, sections);
+    if (key === 'numbers') return 'Each new campaign picks its own numbers';
+    if (data.inheritedError) return 'Not shown: what it follows could not be read';
+    return sectionSummary(key, inheritedConfig);
+  };
 
   const setSection = useCallback(
     (key: AgencyCampaignTemplateSectionKey, set: boolean) => {
@@ -240,6 +261,7 @@ export function useTemplateEditor({
       const code = errorCode(err);
       if (code === 'campaign_template_changed') setConflict(true);
       if (code === 'campaign_template_name_taken') setNameError(templateRefusal(err, ''));
+      else if (code === 'campaign_template_invalid' && nameDetail(err)) setNameError(nameDetail(err));
       else if (code === 'campaign_template_section_invalid') {
         const details = (err as { details?: { details?: Record<string, string> } }).details?.details ?? {};
         setFieldErrors(details);
@@ -255,13 +277,22 @@ export function useTemplateEditor({
     What a section left unset uses (C12): the next level's name. An account template based on an
     organisation template uses that one; one that follows the organisation's default uses whichever
     that is when a campaign is made (CT10); an organisation template uses the built-in settings.
+    Numbers are never an organisation template's (CT5, CT15): unset, each new campaign picks its
+    own (U8).
   */
   const basedOn = data.organisationTemplates.find((t) => t.id === basedOnId) ?? null;
-  const inheritLabel = scope === 'organisation'
-    ? 'Use built-in settings'
-    : basedOnId !== null
-      ? `Use ${basedOn?.name ?? template?.based_on?.name ?? 'the organisation template'}`
-      : 'Use the organisation’s default';
+  const followedName = basedOn?.name ?? template?.based_on?.name ?? 'the organisation template';
+  const inheritLabelOf = (key: AgencyCampaignTemplateSectionKey) => {
+    if (ownScope === 'organisation') return 'Use built-in settings';
+    if (key === 'numbers') return 'Pick them in each campaign';
+    return basedOnId !== null ? `Use ${followedName}` : 'Use the organisation’s default';
+  };
+  /** Where an unset section comes from, as a read-only card says it. */
+  const inheritedFromOf = (key: AgencyCampaignTemplateSectionKey) => {
+    if (ownScope === 'organisation') return 'Built-in settings';
+    if (key === 'numbers') return 'Picked in each campaign';
+    return basedOnId !== null ? `From ${followedName}` : 'From the organisation’s default';
+  };
 
   return {
     isNew,
@@ -282,11 +313,16 @@ export function useTemplateEditor({
     setSection,
     sections,
     summaryOf,
-    inheritLabel,
+    inheritLabelOf,
+    inheritedFromOf,
+    ownScope,
+    readOnly,
     epoch,
     notice,
     dirty,
     blocked: Object.keys(liveErrors).length > 0,
+    /** The server refused fields of the last save (shown on their cards). */
+    hasFieldErrors: Object.keys(fieldErrors).length > 0,
     shownErrors: { ...liveErrors, ...fieldErrors },
     invalidSections,
     saving,

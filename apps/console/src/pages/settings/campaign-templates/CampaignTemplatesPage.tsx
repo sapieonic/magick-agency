@@ -156,6 +156,14 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
             : changedLine(t)}
         </p>
       </div>
+      {!editable && view === 'live' ? (
+        // An organisation template opens read-only from an account's page (L4).
+        <div className={styles.actions}>
+          <Link className="btn-secondary" to={campaignTemplatePath('account', t.id)} aria-label={`View ${t.name}`}>
+            View
+          </Link>
+        </div>
+      ) : null}
       {editable ? (
         <div className={styles.actions}>
           {view === 'archived' ? (

@@ -10,6 +10,7 @@ import {
 import { normaliseSection, type TemplateSectionDiff } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 import { describeIsoDays } from '../../format/weekdays';
+import { currentZoneName } from '../../format/date';
 import { ASSIGNMENT_MODE_COPY } from '../../agencyAssignmentCopy';
 import { ceilingSummary } from '../abandonmentCeiling';
 import { PHONE_DISPLAY_LABELS } from '../stationSettings';
@@ -54,6 +55,14 @@ export function changedLine(template: Pick<AgencyCampaignTemplateSummary, 'updat
   return `${who ? `Changed by ${who}` : 'Changed'} on ${formatStamp(template.updated_at)} · version ${template.version}`;
 }
 
+/**
+ * A calling zone in a summary: India's by its everyday name, `India time (IST)` (N2), whichever
+ * name it is stored by (`Asia/Calcutta` too); any other as stored, the name the hours editor shows.
+ */
+export function zoneLabel(zone: string): string {
+  return currentZoneName(zone) === 'Asia/Kolkata' ? 'India time (IST)' : zone;
+}
+
 /** Days as a phrase: `Mon to Sat`, `Every day`, `Mon, Wed`. */
 function daysPhrase(days: readonly number[]): string {
   return (describeIsoDays(days) ?? 'No days').replace('–', ' to ');
@@ -82,7 +91,7 @@ export function sectionSummary(
     case 'hours':
       return `${clockTime(String(values.calling_window_start))}–${clockTime(String(values.calling_window_end))} · ${daysPhrase(
         values.calling_days as number[],
-      )} · ${String(values.default_timezone)}`;
+      )} · ${zoneLabel(String(values.default_timezone))}`;
     case 'wrapup':
       return wrapupSummary(Number(values.wrapup_seconds), values.wrapup_auto_return === true, values.allow_wrapup_redial === true);
     case 'breaks': {
