@@ -447,5 +447,7 @@ describe('the dialler branch at the account\'s scope and 0070', () => {
     const plan = rows.map((row) => row['QUERY PLAN']).join('\n');
     expect(plan).toContain('idx_agency_attempts_account_created');
     expect(plan).not.toContain('Seq Scan on agency_call_attempts');
+    // In the index's own order: the branch's rows are not gathered and sorted.
+    expect(plan).not.toContain('Sort Key: a.created_at');
   });
 });
