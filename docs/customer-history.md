@@ -126,7 +126,8 @@ call row is shipped to build it (`loadCustomerSummary`).
 - **open**:
   - callbacks: a contact waiting on one (state `pending`, its last call connected, its
     `last_disposition` a callback code of the campaign's catalog), due at `next_attempt_at`, with
-    its owner and who booked it;
+    its owner and who booked it (the contact's latest call with a callback: a campaign call, a
+    soft-phone call, or an inbound call that matched it);
   - overrides: a grant that still grants something (`isOverrideUnspent`, the dialer's own rule:
     `override_disposition` set and extra attempts left or a waiver on), with `follow_up_at`, the
     contact's `next_attempt_at` while it is `pending`, else null ("Follow-up <time>" or "No
@@ -161,7 +162,11 @@ Kinds:
 in a visible account, that has ended and was not `rejected`: the campaign Call log's row rule
 (CL16) without its campaign, so a call filed under no campaign is a row here ("No campaign").
 A live call is in the summary's live calls instead; a withheld number, and a call that never had
-an account, are never found. Inbound's own flag hides nothing. The entry carries the Call log's
+an account, are never found. "Found however it is typed" is about what the reader types: a call
+is stored under the caller the carrier sent, with only a missing `+` added
+(`plivoNumberToE164`), so one sent in national format or with a trunk 0 is not found
+([`call-log.md`](call-log.md) §8; the carrier's form is one of the live Plivo checks,
+[`inbound.md`](inbound.md) §12). Inbound's own flag hides nothing. The entry carries the Call log's
 inbound row facts (who answered, the outcome and code, the wait, the voicemail's length, the
 Missed row and when it was rung back, the number rung). Under CH8 its notes go to
 `agency.campaigns.read` or the agent who answered, its Call page to `agency.supervise` and only

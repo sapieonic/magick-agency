@@ -1970,7 +1970,9 @@ newest first, the customer history's inbound reads (`CUSTOMER_HISTORY_SQL.pageIn
 inbound arms of `callStats` and `pageCallbacks`), walked per visible account in keyset order as
 `idx_agency_manual_calls_destination` (0016) is. Partial: a withheld number is never searched for.
 `idx_agency_inbound_calls_answered_from` (0033: the same keys, answered calls only) is a subset of it
-and is left in place; a statement that asks for a caller's answered calls may be planned on either.
+and is left in place: on analysed calls, answered and missed, a statement that asks for a caller's
+answered calls is still planned on 0033's (smaller, and it needs no filter); with every call answered
+the planner takes this one. Whether 0033's is still worth its write is open (docs/call-log.md §9).
 One more index written on every inbound arrival. `CREATE INDEX IF NOT EXISTS`, so a large table can
 have it built `CONCURRENTLY` before the deploy (`db-hygiene.md` §2); Up refuses an invalid index left
 under the name. `SET LOCAL lock_timeout = '10s'`. **Down** drops the index. **Tests**:

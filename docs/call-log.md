@@ -1161,10 +1161,19 @@ term taken away: the campaign.
 inbound calls it holds, as a campaign's Call log does (SR5). The family is behind the dialler
 flag alone, as before.
 
-**Found by the caller's number, as typed.** The search already turns what is typed into one
-E.164 (`parseSearchNumber`, CH4, CH5) and matches it exactly. An inbound call's caller is stored
-through `plivoNumberToE164`, the same form, so "+91 98765 43210", "098765-43210", "98765 43210"
-and "9876543210" all find it.
+**Found however the reader types the number.** The search already turns what is typed into one
+E.164 (`parseSearchNumber`, CH4, CH5) and matches it exactly, so "+91 98765 43210",
+"098765-43210", "98765 43210" and "9876543210" all look for `+919876543210`.
+
+**That is about what the reader types, not what the carrier sends.** What an inbound call is
+stored under depends on the `From` the carrier sent. The arrival (`plivoNumberToE164`) only adds
+a missing `+`: it knows no default country and drops no trunk 0. A caller sent in full with its
+country code (`919876543210`, what Plivo is documented to send) is stored as `+919876543210` and
+is found. A caller sent in national format would be stored as `+9876543210`, and one sent with
+a leading 0 or with punctuation as withheld (no number); neither would be found by any way of
+typing the customer's number. P6 does not change the arrival. That a live line sends the full
+number is one of the live Plivo checks (`inbound.md` §12, P0), and
+`search-number-agreement.test.ts` pins today's arrival for each form, so a change shows.
 
 ### The row
 
@@ -1194,7 +1203,7 @@ filed under and how it came by it.
 - **The export** has a line per inbound call ("Inbound call"): Outcome is the inbound call's own
   wire outcome (`answered`, `voicemail`, …), and what only it has is in Details ("Rang …",
   "Waited 18 seconds", "Came through their agent", "Voicemail 22 seconds", "Missed: overflow",
-  "Follow-up: open", "Assigned to: …", "Called back …").
+  "Follow-up: open", "Assigned to: …", "Called back … (UTC)").
 
 The console's history page now reads every time with AM / PM in capitals (`formatWhen`), as the
 Call log does (§4): its inbound rows say "Called back 3:31 PM", and a page does not mix the two.
@@ -1251,7 +1260,8 @@ WHERE from_e164 IS NOT NULL` on `agency_inbound_calls`: an account's inbound cal
 number, newest first. It was measured before it was added (the numbers are in the migration's
 header). The only index by caller until now held the answered calls alone (0033, the sticky
 agent's), so a number's missed calls were found by reading every ended call of the account.
-0033's index is a subset of the new one and is left in place. `db-hygiene.md` §2 has the
+0033's index is a subset of the new one and is left in place; whether to drop it is open (§9).
+`db-hygiene.md` §2 has the
 statement to build it `CONCURRENTLY` before the deploy on a large table.
 
 Roster rows are capped at 2,000 a number (CH14). Inbound calls are not: they are found by the
@@ -1284,11 +1294,13 @@ the index.
   row's facts; what a supervisor, the agent who answered and another agent are each sent; no
   recording or voicemail link in any body for any role; one order and keyset pages with a tie
   across three kinds and between two inbound calls; every filter; the totals; a callback booked
-  on an inbound call; the audit's count; the export; inbound's flag and the dialler's; every
-  inbound statement planned on 0071's index.
+  on an inbound call, and the summary's open callback naming who booked it there; a live call in
+  another account, gone with that account's dialler off; the audit's count; the export; inbound's
+  flag and the dialler's; every inbound statement planned on 0071's index.
 - `apps/server/test/unit/agency/customer-history/assemble.test.ts` (the entry, CH8 on it, the
-  merge with a sixth source, the CSV line) and `search-number-agreement.test.ts` (the search's
-  form is the form an arrival stores).
+  merge with a sixth source, the CSV line) and `search-number-agreement.test.ts` (the form the
+  search looks for is the form an arrival stores for a caller sent in full; today's arrival pinned
+  for the forms that are not found).
 - `packages/contracts/test/agent-fixtures.test.ts`, `errors.test.ts`: the sample and the lists.
 - Console: `pages/CustomerHistoryPage.test.tsx`. App:
   `test/features/customers/customer_history_screens_test.dart`; `agency_wire`'s
@@ -1330,6 +1342,14 @@ the outcomes, and not of the **Calls** row of Calls by type, where the stopped d
 call and the customer's call an Inbound one (§6). To follow the proposal's words exactly, either
 the Dialler column stops equalling the dialler's Dials figure, or what counts as a dial changes
 for the dialler's own connect rate. He has to choose.
+
+**One open item on the schema (CL41): 0033's index.** `idx_agency_inbound_calls_answered_from`
+(a caller's answered calls, for the sticky agent) is now a subset of 0071's
+`idx_agency_inbound_calls_from`. It is kept. On seeded, analysed calls, answered and missed, the
+planner still takes 0033's for the sticky read (smaller, no filter); with every call answered it
+takes 0071's. So it is not known to be dead, and it costs a write on every answered call. To
+decide: measure on real data which of the two the sticky read uses and what it costs without
+0033's, then drop it in a change of its own, or keep it. Nothing in P6 depends on the answer.
 
 **Every ruling is a default he has not ruled on one by one.** He approved the proposal as a
 whole; CL1–CL12 came with it, and CL13–CL42 were made while building. Each stands until he says
@@ -1377,7 +1397,7 @@ otherwise. In full in [`decisions.md`](decisions.md):
 | CL38 | The app's My calls is one list of cards; the attempts and soft-phone lists, their filters and detail sheets are removed; the Missed calls list is one tap from To follow up | **P5, built** |
 | CL39 | A number's history holds every call it made to us that ended and that we served, in the accounts the caller can see, filed under a campaign or under none; never a rejected call, a withheld number or a call with no account; a live call is in the summary's live calls; inbound's flag hides nothing | **P6, built** |
 | CL40 | On an inbound call the history's filters read the call's own columns (`connected` is answered, the agent is who answered, the campaign is where it is filed); calls received are counted apart from calls placed; a callback booked on an inbound call is a callback entry; the page says "Inbound call" beside "Campaign call" and "Soft-phone call" | **P6, built** |
-| CL41 | One index for an account's inbound calls by caller (0071), measured first; 0033's answered-only index left in place; the number's inbound calls are not capped | **P6, built** |
+| CL41 | One index for an account's inbound calls by caller (0071), measured first; 0033's answered-only index kept, and whether to drop it open (above); the number's inbound calls are not capped | **P6, built** |
 | CL42 | No floor moved. Notes to `agency.campaigns.read` or the agent who answered; the Call page to `agency.supervise` and only for a call filed under a campaign; no media through the history, for anyone; the number is not masked (the reader typed it) | **P6, built** |
 
 ### Left out of scope
