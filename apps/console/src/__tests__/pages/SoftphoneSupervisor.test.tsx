@@ -218,5 +218,8 @@ describe('a soft-phone call’s detail', () => {
     mocks.getManualCall.mockRejectedValue(Object.assign(new Error('Not found'), { statusCode: 404, details: { code: 'call_not_found' } }));
     await renderDetail();
     expect(screen.getByText('We can’t show this call')).toBeTruthy();
+    // Back is All calls with the Soft phone chip on: the Soft-phone calls page is gone (CL35).
+    const back = screen.getByRole('link', { name: 'Back to All calls' });
+    expect(back.getAttribute('href')).toBe('/agency/calls?type=soft_phone');
   });
 });

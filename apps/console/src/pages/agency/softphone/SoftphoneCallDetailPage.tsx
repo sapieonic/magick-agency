@@ -22,7 +22,7 @@ import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../../utils
 import { fieldLabel, formatFieldValue } from '../../../utils/softphone/callFields';
 import { callEndSummary } from '../../../utils/softphone/callState';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
-import { campaignCallLogPath } from '../../../utils/agency/callLog';
+import { allCallsPath, campaignCallLogPath } from '../../../utils/agency/callLog';
 import { dncEntryFacts, dncEntryReach } from '../../../utils/softphone/overrides';
 import type {
   AgencyCallField,
@@ -292,7 +292,7 @@ export default function SoftphoneCallDetailPage() {
             icon={<SearchX size={28} />}
             title="We can’t show this call"
             description={error}
-            action={<Link to="/agency/softphone" className="btn-secondary">Back to soft-phone calls</Link>}
+            action={<Link to={allCallsPath({ type: 'soft_phone' })} className="btn-secondary">Back to All calls</Link>}
           />
         ) : (
           <ErrorAlert message={error} onRetry={() => void load()} />

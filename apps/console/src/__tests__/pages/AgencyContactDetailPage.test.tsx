@@ -547,6 +547,17 @@ describe('the soft-phone calls that touched the contact (SP6)', () => {
     expect(screen.getByTestId('contact-attempt-attempt-1')).toBeTruthy();
   });
 
+  it('with more than it shows, points at All calls with the Soft phone chip on', async () => {
+    mocks.softphoneOn = true;
+    mocks.listManualCalls.mockResolvedValue({ rows: [manualCall({ id: 'mc-8' })], next_cursor: 'more', limit: 50 });
+    renderPage();
+    const section = await screen.findByTestId('contact-softphone-calls');
+    const link = await within(section).findByRole('link', { name: 'All calls' });
+    // The account's Soft-phone calls page is gone (CL35): its place is All calls.
+    expect(link.getAttribute('href')).toBe('/agency/calls?type=soft_phone');
+    expect(within(section).queryByText(/All soft-phone calls/)).toBeNull();
+  });
+
   it('says when there are none, and a failure stays in its section', async () => {
     mocks.softphoneOn = true;
     mocks.listManualCalls.mockResolvedValueOnce({ rows: [], next_cursor: null, limit: 50 });
