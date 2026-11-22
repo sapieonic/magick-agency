@@ -246,8 +246,10 @@ attempts and the soft-phone calls, and the campaign's missed calls that are stil
   `(campaign_id, arrived_at DESC, id DESC) WHERE campaign_id IS NOT NULL` (the inbound branch's
   keyset range) and `idx_agency_manual_calls_callback_of` (a page's call backs). Both are
   `CREATE INDEX IF NOT EXISTS` and refuse an invalid index left by a failed concurrent build.
-  Neither can be built before the release that adds 0067 (the columns are new); on that release
-  the call-backs index is empty and the inbound one holds the calls 0067 filed.
+  On the release that adds them the call-backs index is empty and cannot be built beforehand
+  (its column is 0067's own); the inbound one holds the calls 0067 filed, and on a large table
+  it can be built `CONCURRENTLY` before the deploy once 0067's two columns are added by hand and
+  its batches run (`DEPLOYMENT.md` 12 has the order).
 
 ### The read
 
@@ -642,6 +644,13 @@ their behalf, and never behind inbound's flag.
   supervisor files it from the console first.
 - **A missed call from an unknown caller** cannot be moved to another campaign; its route files
   it.
+- **Live calls and the supervisor's close of an owed inbound outcome** read
+  `matched_campaign_id` until the final review (2026-11-22), so an unknown caller filed by its
+  route showed on Live calls with no campaign and was absent from that campaign's Live view.
+  Both now read the campaign the call is filed under (`COALESCE(campaign_id,
+  matched_campaign_id)`: `live-call.repository.ts`, the `agency_inbound_call.closed` audit row).
+  Who may listen never read the campaign ([`listening.md`](listening.md)), so access is as it
+  was; a listen to such a call is now recorded on the filed campaign's History.
 - **Reports and Insights** had no inbound figures for a campaign; P4 added them (§6), counted
   by `campaign_id`, never by `disposition_source`. That column says `campaign` only when the
   caller matched a campaign's list; a call filed by its route, an agent or a supervisor stores
@@ -1064,7 +1073,11 @@ was switched on.
   its URL and is All calls' sub-page; its "Back to All calls" and a roster contact's "All calls"
   link open All calls with the Soft phone chip on.
 - **Settings › Calls** links its count of unfiled calls to All calls on those calls
-  (`unfiledCallsPath`: no campaign, the same 30 days).
+  (`unfiledCallsPath`: no campaign, the last 30 days). The two windows are close, not equal: the
+  count is the server's rolling 30 × 24 hours, the list is whole calendar days on the reader's
+  clock (its date fields are days), so it starts up to a day earlier; and the list also shows
+  soft-phone calls that never dialled, greyed, which the count leaves out. The list can hold a
+  few more calls than the number, never fewer.
 - **No export**: a campaign's file is its Call log's.
 
 ### The routes
@@ -1399,6 +1412,65 @@ otherwise. In full in [`decisions.md`](decisions.md):
 | CL40 | On an inbound call the history's filters read the call's own columns (`connected` is answered, the agent is who answered, the campaign is where it is filed); calls received are counted apart from calls placed; a callback booked on an inbound call is a callback entry; the page says "Inbound call" beside "Campaign call" and "Soft-phone call" | **P6, built** |
 | CL41 | One index for an account's inbound calls by caller (0071), measured first; 0033's answered-only index kept, and whether to drop it open (above); the number's inbound calls are not capped | **P6, built** |
 | CL42 | No floor moved. Notes to `agency.campaigns.read` or the agent who answered; the Call page to `agency.supervise` and only for a call filed under a campaign; no media through the history, for anyone; the number is not masked (the reader typed it) | **P6, built** |
+
+### What changes for every account on deploy, with the setting off
+
+The setting "Every call must belong to a campaign" is off unless an admin switches it on. These
+change all the same, for every account, the day the release is deployed:
+
+- **Do Not Call from a tagged soft-phone call to a number that is not on that campaign's list is
+  written for the whole account**, not for the campaign (CL6, `manualDncScope`). Before, it was
+  the campaign's. An inbound call's mark was already scoped by its match and is unchanged.
+- **Every past inbound call whose caller matched a campaign's list appears in that campaign.**
+  0067 files them (`campaign_id` from the match), so they are in the campaign's Call log, in its
+  export (new rows with `source=inbound`, and three new columns at the end of every row:
+  `wait_seconds`, `missed_reason`, `callback_of`) and in its Insights and report figures (Calls by
+  type, Outcomes by type), for past dates too.
+- **"All calls connect rate" reads "Outbound connect rate"** everywhere; the number is the same.
+  The campaign report's workbook renames its Summary rows to match ("Outbound calls placed",
+  "Outbound calls connected", "Outbound connect rate") and adds rows; a spreadsheet that looks a
+  row up by its old "All calls …" name finds nothing (§6).
+- **Campaigns › Soft-phone calls is All calls**, listing every call type. It has no export, no
+  stats strip and no Summary column, which the old list had (§7). The campaign Call log is one
+  list with type chips; its old Soft-phone calls view redirects to it.
+- **My calls is one list.** In the console it lost its filters by what happened, by outcome and
+  by number, and its soft-phone rows no longer show the override badges; in the app the three
+  segments are chips and the two detail sheets are gone (§7). Numbers a campaign hides from
+  agents are no longer sent to My calls at all.
+- **Customer history lists the calls a number made to us** (§8), and its times read with AM / PM
+  in capitals.
+- **Live calls names the campaign an inbound call is filed under** (§5).
+
+Two things that do **not** change until somebody acts, both checked:
+
+- **No unknown caller is filed under a campaign** until an admin sets a route's Campaign for
+  unknown callers (`default_campaign_id` is NULL on every existing route).
+- **No account has the rule on**: no `agency_call_settings` row is the setting off, and the
+  migration writes none.
+
+### Known risks
+
+- **The app ahead of its server.** The new app's My calls needs the new server's `/my-calls`.
+  Deploy the server first. Against an older server the tab says so in words
+  (`MyCallsCopy.serverTooOld`) and the rest of the app works (`DEPLOYMENT.md` 12).
+- **Rolling back.** No `migrate:down`. While an older image runs: inbound calls are not filed
+  (one batch repairs the matched ones afterwards), the setting is not enforced, a campaign kept
+  running only for unknown callers completes itself and cannot be restarted, and a console or
+  app not rolled back with the server loses the pages that read the new routes. All of it, with
+  the steps, is in `DEPLOYMENT.md` 12, "Going back past this release".
+- **The carrier's number format.** An inbound call is found in a customer's history, and filed
+  under its contact's campaign, only if the carrier sends the caller in full with its country
+  code. A national-format caller would be stored as a different number and one with a trunk 0
+  as withheld (§8). Pinned by a test, not changed; confirming what Plivo sends on a live line is
+  one of the live checks ([`inbound.md`](inbound.md) §12, P0).
+- **What has not been run.** Nothing in this work was used in a real browser, on a real phone or
+  over a real carrier call. What ran here is recorded per phase: the server's, console's and
+  packages' test suites, the app's `flutter analyze`, `flutter test` and `agency_wire`'s
+  `dart test`. iOS does not build ([`mobile.md`](mobile.md) "Not verified yet").
+- **0033's index and the older suite.** Once 0071 exists, the older code's own IQ49 plan check
+  (a handful of unanalysed rows, strict on 0033's index) can pick 0071's index and go red; the
+  read is correct on either, and this branch's version of the check seeds and analyses (CL41).
+  Whether 0033's index is still worth keeping is the open item above.
 
 ### Left out of scope
 

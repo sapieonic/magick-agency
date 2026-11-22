@@ -22,7 +22,11 @@ locally: `apps/mobile/README.md`. As of 2026-11-10.
   away from the app (IQ58–IQ74). See "Ringing while away (Mode B)" below; iOS is designed only;
 - the soft phone (manual dialling, decision M2): the Phone tab, and in place on the station after
   "Switch to soft phone" (SP7). See "The soft phone" below;
-- My performance and My calls (one list of the agent's calls of every type, with chips; "My calls"
+- My performance and My calls (one list of the agent's calls of every type, with chips; the app
+  needs a server that has `GET /proxy/agency/my-calls`: **deploy the server before handing out
+  the APK**, and against an older or rolled-back server the tab says "My calls needs a newer
+  version of the server. Ask your admin to update it." while the rest of the app works,
+  `DEPLOYMENT.md` 12; "My calls"
   below and [`call-log.md`](call-log.md) §7);
 - customer history: search one full number (the search icon on My calls) and see its contacts,
   DNC status, open items and timeline across the accounts the agent belongs to, with the console's

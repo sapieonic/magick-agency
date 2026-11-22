@@ -917,73 +917,105 @@ do `0054_analysis_vendor_answers.sql` and `0055_analysis_vendor_answer_indexes.s
 ignores the nullable `vendor_refused_at` and `completed_at` and has no summary delay at all, so every
 pending call shows the ordinary pending copy again.
 
-**Before deploying the release with `0067_call_log_inbound_campaign.sql`** (inbound calls in the
-campaign Call log). 0067 files every existing inbound call under its matched campaign
-(`agency_inbound_calls.campaign_id`) inside its own transaction, with the server down. If
-`agency_inbound_calls` holds more than about a million rows, do that work first, with the server
-running; the migration is written to find it done (its header gives the same steps). Add the two
-columns, which the running server ignores, then run the batch until it reports `UPDATE 0`, each
-batch as its own transaction:
+**Before deploying the call log release (`0067` to `0071`)** ("One call log per campaign",
+`docs/call-log.md`). Five migrations ship together. On a small database nothing is needed before
+the deploy: they run in seconds with the server down. Where `agency_inbound_calls` or
+`agency_call_attempts` holds more than about a million rows, do the steps below first, **in this
+order, with the server running**; each migration is written to find its work done. Check the
+sizes first (`db-hygiene.md` §2 has the query).
 
-```sql
-ALTER TABLE agency_inbound_calls
-  ADD COLUMN IF NOT EXISTS campaign_id UUID,
-  ADD COLUMN IF NOT EXISTS campaign_source VARCHAR(16);
-```
+**The order of the release itself: the server first, then the console, then the app.** The new
+agent app reads `GET /proxy/agency/my-calls`, which only the new server has. An APK handed out
+before the server is deployed shows "My calls needs a newer version of the server. Ask your admin
+to update it." in its My calls tab until the server is updated (the rest of the app works). So
+deploy the server, then distribute the APK.
 
-```sql
-BEGIN;
-SET LOCAL lock_timeout = '5s';
-ALTER TABLE agency_inbound_calls DISABLE TRIGGER trg_agency_inbound_calls_updated_at;
-UPDATE agency_inbound_calls
-   SET campaign_id = matched_campaign_id, campaign_source = 'contact'
- WHERE id IN (SELECT id FROM agency_inbound_calls
-               WHERE matched_campaign_id IS NOT NULL AND campaign_id IS NULL
-               LIMIT 10000);
-ALTER TABLE agency_inbound_calls ENABLE TRIGGER trg_agency_inbound_calls_updated_at;
-COMMIT;
-```
+1. **Add 0067's two columns** (only if `agency_inbound_calls` is large). The running server
+   ignores them.
 
-The trigger is switched off inside each batch so the calls' `updated_at` is kept, as the migration
-keeps it. `DISABLE TRIGGER` holds a lock that makes the server's own writes to this table wait
-until the batch commits (well under a second at 10,000 rows), so keep the batches that size and
-never leave one open; a batch that fails rolls back with the trigger still on. Then deploy: 0067
-finds the columns (`ADD COLUMN IF NOT EXISTS`; it fails, changing nothing, if they were added
-with other types) and files only the calls that arrived since the last batch.
-`0068_call_log_inbound_indexes.sql` validates 0067's CHECK (one read of the table, writes
-proceed) and adds one index on `agency_inbound_calls` and one on `agency_manual_calls`; neither
-index can be built before 0067 (their columns are new), and the one on `agency_manual_calls` is
-empty on that release, so its build is one read of the table.
+   ```sql
+   ALTER TABLE agency_inbound_calls
+     ADD COLUMN IF NOT EXISTS campaign_id UUID,
+     ADD COLUMN IF NOT EXISTS campaign_source VARCHAR(16);
+   ```
 
-**Going back past 0067 and 0068** needs no `migrate:down`: an older image ignores the nullable
-columns and reads `matched_campaign_id` as before. But the older image does not file the calls
-that arrive while it runs (`campaign_id` stays NULL), and nothing files them later, so they would
-be missing from their campaign's Call log. **After rolling forward again, run the batch above
-until it reports `UPDATE 0`**: it files exactly those calls.
+2. **File the existing matched calls in batches**, each batch its own transaction, until one
+   reports `UPDATE 0`. 0067 does this inside its own transaction with the server down; on a large
+   table that is the long part, so it is done here instead.
 
-**`0071_inbound_calls_from_index.sql`** (inbound calls in customer history, `docs/call-log.md` §8)
-adds one index on `agency_inbound_calls`. If that table holds more than about a million rows, build
-it `CONCURRENTLY` before the deploy (`db-hygiene.md` §2 has the statement); the migration then finds
-it. Otherwise it needs nothing. **Going back past 0071** needs no `migrate:down`: an older image
-ignores the index, and does not read inbound calls into a customer's history at all.
+   ```sql
+   BEGIN;
+   SET LOCAL lock_timeout = '5s';
+   ALTER TABLE agency_inbound_calls DISABLE TRIGGER trg_agency_inbound_calls_updated_at;
+   UPDATE agency_inbound_calls
+      SET campaign_id = matched_campaign_id, campaign_source = 'contact'
+    WHERE id IN (SELECT id FROM agency_inbound_calls
+                  WHERE matched_campaign_id IS NOT NULL AND campaign_id IS NULL
+                  LIMIT 10000);
+   ALTER TABLE agency_inbound_calls ENABLE TRIGGER trg_agency_inbound_calls_updated_at;
+   COMMIT;
+   ```
 
-**`0070_attempts_account_created_index.sql`** (All calls and My calls, `docs/call-log.md` §7) adds one
-index on `agency_call_attempts`. If that table holds more than about a million rows, build it
-`CONCURRENTLY` before the deploy (`db-hygiene.md` §2 has the statement); the migration then finds
-it. Otherwise it needs nothing. **Going back past 0070** needs no `migrate:down`: an older image
-ignores the index.
+   The trigger is switched off inside each batch so the calls' `updated_at` is kept, as the
+   migration keeps it. `DISABLE TRIGGER` holds a lock that makes the server's own writes to this
+   table wait until the batch commits (well under a second at 10,000 rows), so keep the batches
+   that size and never leave one open; a batch that fails rolls back with the trigger still on.
 
-**`0069_call_settings.sql`** ("Every call must belong to a campaign", `docs/call-log.md` §5) needs
-nothing before the deploy: a new, empty table, and one nullable column with a small partial index
-on `agency_inbound_routes` (a few rows per account), under a 10-second lock timeout.
-**Going back past 0069** needs no `migrate:down` either; an older image ignores the table and the
-column. While it runs, three things lapse, and they come back with the newer image: the setting is
-not enforced (a soft-phone call can be dialled, and an inbound outcome saved, with no campaign);
-an unknown caller is not filed under their route's campaign (such calls stay under no campaign,
-and nothing files them later, CL10); and **a running campaign that exists only to receive unknown
-callers completes itself within seconds**, because the older pacing leader completes any running
-campaign with nothing left to dial. A completed campaign cannot be restarted: after rolling
-forward, point the route at another campaign (or a new one) and start that.
+3. **Build the three large indexes `CONCURRENTLY`**, each statement on its own
+   (`db-hygiene.md` §2 has them and the check that each is valid):
+   - 0068's `idx_agency_inbound_calls_campaign` on `agency_inbound_calls`. It can be built now
+     because step 1 added its column; build it after step 2, so it is built once over the filed
+     calls. 0068 creates it `IF NOT EXISTS` and refuses an invalid one.
+   - 0070's `idx_agency_attempts_account_created` on `agency_call_attempts`.
+   - 0071's `idx_agency_inbound_calls_from` on `agency_inbound_calls`.
+
+   0068's other index, `idx_agency_manual_calls_callback_of`, cannot be built beforehand (its
+   column is added by 0067 itself). It needs no pre-build: it is partial on a column that is
+   empty on this release, so its build is one read of `agency_manual_calls` and writes nothing.
+
+4. **Deploy.** What still runs with the server down, and what it costs:
+   - 0067 finds the columns (`ADD COLUMN IF NOT EXISTS`; it fails, changing nothing, if they
+     were added with other types), files only the calls that arrived since the last batch, adds
+     `agency_manual_calls.callback_of_inbound_call_id` (a nullable column, no rewrite) and its
+     CHECK `NOT VALID` (no read).
+   - 0068 finds its inbound index, builds the empty call-backs index (one read of
+     `agency_manual_calls`), and **validates 0067's CHECK: one read of `agency_inbound_calls`**.
+     That read is the one thing here that grows with the table and cannot be done beforehand; it
+     takes a lock that lets reads and writes through, and on 2 million rows it is seconds.
+   - 0069 creates an empty table and adds one nullable column with a small partial index to
+     `agency_inbound_routes` (a few rows per account).
+   - 0070 and 0071 find their indexes and only add their comments.
+
+   Every one of them starts with a 10-second `lock_timeout`.
+
+**Going back past this release** needs no `migrate:down`, and none should be run: an image from
+before it ignores the new columns, the new table and the indexes. While the older image runs,
+this lapses, and all of it comes back with the newer image unless a line says otherwise:
+
+- **Inbound calls are not filed.** The older image does not write `campaign_id`, so the calls that
+  arrive while it runs are in no campaign's Call log. **After rolling forward again, run step 2's
+  batch until it reports `UPDATE 0`**: it files the calls whose caller matched a campaign's list.
+  A call from an unknown caller that arrived meanwhile stays under no campaign; nothing files it
+  later (CL10).
+- **The setting is not enforced**: a soft-phone call can be dialled, and an inbound outcome
+  saved, with no campaign.
+- **A running campaign that exists only to receive unknown callers completes itself within
+  seconds**, because the older pacing leader completes any running campaign with nothing left to
+  dial. This one does not come back: a completed campaign cannot be restarted. After rolling
+  forward, point the route at another campaign (or a new one) and start that.
+- **Clients that were not rolled back with the server break where they read the new routes.**
+  The new agent app's My calls tab shows "My calls needs a newer version of the server…" (the
+  older server has no `/my-calls`); the rest of the app works. A console that is not rolled back
+  cannot load All calls, the campaign Call log (its combined read), the inbound Call page or
+  Settings › Calls. Roll the console back with the server; the app cannot be recalled, so its My
+  calls stays down until the server is rolled forward.
+- **Customer history shows no inbound calls**, and Insights and the campaign report no inbound
+  figures.
+- **One test of the older code goes red on the newer schema**, which matters only to somebody
+  running the older suite against a migrated database: its IQ49 plan check
+  (`inbound-follow-up.test.ts`) expects `idx_agency_inbound_calls_answered_from`, and on its
+  handful of unanalysed rows the planner may now take 0071's `idx_agency_inbound_calls_from`
+  instead. The read itself is correct on either index.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is

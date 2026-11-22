@@ -1911,7 +1911,10 @@ NOT NULL` on `agency_inbound_calls`: the campaign Call log's inbound branch
 **`idx_agency_manual_calls_callback_of`** `(callback_of_inbound_call_id) WHERE
 callback_of_inbound_call_id IS NOT NULL` on `agency_manual_calls`: the call backs of a page's missed
 calls. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`; an invalid index left
-under either name by a failed concurrent build fails the migration. **Down** drops both.
+under either name by a failed concurrent build fails the migration. On a large table the inbound
+index can be built `CONCURRENTLY` before the deploy once 0067's two columns are added by hand and its
+backfill batches run (`DEPLOYMENT.md` 12); the call-backs one cannot (its column is 0067's own) and
+needs none, being empty on that release. **Down** drops both.
 **Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (both definitions and comments,
 the invalid-index refusal, down then up), the server's
 `test/integration/api/agency-call-log-inbound.test.ts` (the inbound branch is planned on the

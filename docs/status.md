@@ -2547,7 +2547,7 @@ the 2 h cutoff is a default (open decisions, below).
 ### One call log per campaign, P1 2026-11-22 (CL1–CL12, [`call-log.md`](call-log.md))
 
 Manas approved the proposal on 2026-11-22: a call's type and campaign are columns of one list,
-built in six phases. P1 is built; P2 to P6 are not ([`call-log.md`](call-log.md) §2).
+built in six phases. P1 is built; P2 to P6 were not when this was written, and have all been built since (the entries below; [`call-log.md`](call-log.md) §2 and §9).
 
 - **The campaign Call log is one list.** Its dialler attempts and the soft-phone calls logged to
   it, newest first, with type chips "All · Dialler · Soft phone" and their counts; columns When,
@@ -2574,7 +2574,7 @@ dialler's count is a range of `idx_agency_attempts_keyset` (the attempt list's e
 
 ### One call log per campaign, P2: inbound in the log 2026-11-22 (CL13–CL16, [`call-log.md`](call-log.md) §4)
 
-P2 of six is built; P3 to P6 are not.
+P2 of six is built; P3 to P6 were not when this was written, and have all been built since (below).
 
 - **Inbound calls carry a campaign.** `0067_call_log_inbound_campaign.sql` adds
   `agency_inbound_calls.campaign_id` and `campaign_source` (the arrival files a matched call under

@@ -469,7 +469,11 @@ cannot be read is `503 listen_unavailable` on every route, which the console ret
 (owner `none`; `?campaign_id=`, `?call_id=`): `AgencyLiveCallRepository.listLive`, the three spines
 on their live indexes joined to `agency_calls` (the spine's `webrtc_call_id`), the session, the
 campaign, the inbound route and the contact, tenant and account scoped in each spine and again on
-the leg; the account's open sessions of those calls (`listOpenForCalls`); each campaign's AHT, both read together. The public layer
+the leg (an inbound call's campaign is the one it is **filed under**, `campaign_id`, else its
+matched one: since 2026-11-22 an unknown caller filed by its route is listed under that campaign
+and in its Live view, `docs/call-log.md` §5; who may listen does not read the campaign, only
+`agency.supervise` in the account, so nothing about access changed, and the listen session and
+its audit rows are put on the filed campaign's History); the account's open sessions of those calls (`listOpenForCalls`); each campaign's AHT, both read together. The public layer
 adds the agent's and the listeners' names (`agentNamesOrNone`), masks the number (`maskPhone`) and
 computes `listenable` / `not_listenable_reason` for the caller (`notListenableReason`: their own
 call, LS4, the per-call cap not counting their own listen), and says a withheld number so
