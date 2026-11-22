@@ -337,6 +337,23 @@ describe('the editor', () => {
     expect((screen.getByLabelText('Description (optional)') as HTMLInputElement).value).toBe('');
   });
 
+  it('saves a rename of a template whose script uses {amount_due} and {due_date}, which the server takes (U1)', async () => {
+    const script = { opening: 'Your EMI of {amount_due} is due on {due_date}.' };
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1' ? { ...DETAIL, sections: { ...DETAIL.sections, agent_screen: { agent_script: script } } } : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    const screenCard = screen.getByTestId('template-section-agent_screen');
+    expect(screenCard.getAttribute('data-invalid')).toBeNull();
+    expect(screenCard.textContent).not.toMatch(/not a fact on the card/);
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Pune EMI' } });
+    expect(screen.queryByText('Fix the marked settings to save.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const [, , body] = mocks.replaceCampaignTemplate.mock.calls[0]!;
+    expect(body.name).toBe('Pune EMI');
+    expect(body.sections.agent_screen.agent_script).toEqual(script);
+  });
+
   it('puts a section refusal on its card', async () => {
     mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(400, {
       code: 'campaign_template_section_invalid', message: 'Invalid', sections: ['hours'], details: { calling_window_end: 'The end must differ from the start.' },

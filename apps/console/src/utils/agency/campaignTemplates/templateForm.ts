@@ -35,9 +35,10 @@ import {
   sameBreakLimits,
   type BreakReasonsForm,
 } from '../breakLimits';
+import { scriptPlaceholdersFor } from '@magick-agency/domain/fact-fields';
 import {
-  cardKeys,
   dailyTargetError,
+  listed,
   dailyTargetPayload,
   scriptErrors,
   scriptPayload,
@@ -133,12 +134,27 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   telephony_credential_id: 'the carrier account',
 };
 
-/** A template's script editor has no customer card: only the fixed keys may be used. */
+/** A template's script editor has no customer card (no facts to name a key by). */
 export const TEMPLATE_FACTS: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {} }) as FactsForm;
 
-/** The keys a template's script may use (the fixed ones: a template holds no card). */
+/**
+ * The keys a template's script may use: the server's rule for a script with no card
+ * (`scriptPlaceholdersFor(null)`, the legacy six, `AGENCY_SCRIPT_PLACEHOLDERS`), so the editor
+ * takes what a save takes (CT4). New campaign fits it to the roster's card later (C10).
+ */
 export function templateScriptKeys(): string[] {
-  return cardKeys(TEMPLATE_FACTS);
+  return scriptPlaceholdersFor(null);
+}
+
+/** What a template's script is told of a key it may not use: the keys it may, never a card. */
+export function templateUnknownKeysMessage(tokens: readonly string[]): string {
+  const keys = listed(templateScriptKeys().map((key) => `{${key}}`));
+  return `The script uses ${listed(tokens)}, which a template cannot fill in. Use only ${keys}.`;
+}
+
+/** What would stop a template's script saving, keyed by its field path. */
+export function templateScriptErrors(script: ScriptForm): Record<string, string> {
+  return scriptErrors(script, templateScriptKeys(), templateUnknownKeysMessage);
 }
 
 /** The campaign field `path` names (`disposition_catalog[2].code` → `disposition_catalog`). */
@@ -304,7 +320,7 @@ export function templateFormErrors(
   if (set.has('agent_screen')) {
     const target = dailyTargetError(form.station.dailyTarget);
     if (target) errors['daily_target_calls'] = target;
-    Object.assign(errors, scriptErrors(form.station.script, templateScriptKeys()));
+    Object.assign(errors, templateScriptErrors(form.station.script));
   }
   if (set.has('numbers') && form.callerIds.length === 0) errors['caller_ids'] = 'Pick at least one number, or use the inherited numbers.';
   return errors;

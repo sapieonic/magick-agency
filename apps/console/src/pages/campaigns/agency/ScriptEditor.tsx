@@ -93,6 +93,7 @@ export function ScriptEditor({
   onPutBack,
   onAddFact,
   legacy = false,
+  keysHint = 'The script can use only what the agent sees on the card.',
 }: {
   value: ScriptForm;
   onChange: (next: ScriptForm) => void;
@@ -122,6 +123,8 @@ export function ScriptEditor({
    * left out, not "not given".
    */
   legacy?: boolean;
+  /** What the script may use, said under the hint (a campaign's card by default; a template has none). */
+  keysHint?: string;
 }) {
   const id = useId();
   const [target, setTarget] = useState<Target>('opening');
@@ -488,7 +491,7 @@ export function ScriptEditor({
       {!readOnly ? (
         <p className={styles.hint}>
           Type <code className={styles.key}>{'{'}</code> to pick one of this campaign’s keys, or press a key below to add it where the cursor is.
-          The script can use only what the agent sees on the card.
+          {keysHint}
         </p>
       ) : null}
 

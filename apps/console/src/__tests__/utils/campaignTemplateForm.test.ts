@@ -9,8 +9,10 @@ import {
   sectionOfPath,
   sectionsOfForm,
   templateFormErrors,
+  templateScriptKeys,
   withSectionFrom,
 } from '../../utils/agency/campaignTemplates/templateForm';
+import { AGENCY_SCRIPT_PLACEHOLDERS } from '@magick-agency/contracts/agency';
 import { clockTime, formatStamp, noteSentence, sectionSummary } from '../../utils/agency/campaignTemplates/templateCopy';
 
 /**
@@ -69,6 +71,27 @@ describe('the form round trip', () => {
     expect(Object.keys(found).map(sectionOfPath)).toEqual(expect.arrayContaining(['hours', 'numbers']));
     expect(sectionOfPath('disposition_catalog[2].code')).toBe('outcomes');
     expect(sectionOfPath('name')).toBeNull();
+  });
+});
+
+describe('a template’s script (U1)', () => {
+  const withScript = (opening: string) => {
+    const form = formOfConfig(filledConfig('account', { agent_screen: { agent_script: { opening } } }, null));
+    return templateFormErrors(form, ['agent_screen']);
+  };
+
+  it('may use every key the server lets a template’s script use: the legacy six', () => {
+    expect(templateScriptKeys()).toEqual([...AGENCY_SCRIPT_PLACEHOLDERS]);
+    expect(withScript('Your EMI of {amount_due} is due on {due_date}, {name}. I am {agent_name} from {campaign_name}, {place}.')).toEqual({});
+  });
+
+  it('refuses any other key, without sending the operator to a card a template does not have', () => {
+    const errors = withScript('Your EMI {emi} is due');
+    expect(Object.keys(errors)).toEqual(['agent_script.opening']);
+    expect(errors['agent_script.opening']).toBe(
+      'The script uses {emi}, which a template cannot fill in. Use only {name}, {place}, {amount_due}, {due_date}, {agent_name} and {campaign_name}.',
+    );
+    expect(errors['agent_script.opening']).not.toMatch(/card|fact/i);
   });
 });
 

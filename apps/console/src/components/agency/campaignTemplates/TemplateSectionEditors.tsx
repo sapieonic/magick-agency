@@ -14,9 +14,10 @@ import { CampaignCarrierField } from '../CampaignCarrierField';
 import { CampaignRecordingField } from '../CampaignRecordingField';
 import { CallSummaryProfileField } from '../CallSummaryProfileField';
 import { carrierActive, carrierOptions, sameCarrier } from '../../../utils/agencyCarriers';
-import { dailyTargetError, scriptErrors } from '../../../utils/agency/stationSettings';
+import { dailyTargetError } from '../../../utils/agency/stationSettings';
 import {
   TEMPLATE_FACTS,
+  templateScriptErrors,
   templateScriptKeys,
   type TemplateForm,
 } from '../../../utils/agency/campaignTemplates/templateForm';
@@ -66,7 +67,7 @@ export function TemplateSectionEditors({
 }: TemplateSectionEditorsProps) {
   const behaviour = BEHAVIOUR_EDITOR[section];
   const stationErrors = useMemo(() => {
-    const live: Record<string, string> = { ...scriptErrors(form.station.script, templateScriptKeys()) };
+    const live: Record<string, string> = { ...templateScriptErrors(form.station.script) };
     const target = dailyTargetError(form.station.dailyTarget);
     if (target) live['daily_target_calls'] = target;
     return { ...live, ...fieldErrors };
@@ -140,6 +141,7 @@ export function TemplateSectionEditors({
             offered={scriptKeys}
             allowed={scriptKeys}
             phoneDisplay={form.station.phoneDisplay}
+            keysHint="A template has no customer card, so its script can use only the keys below. Each campaign fills them in from its contacts."
           />
         </div>
       );
