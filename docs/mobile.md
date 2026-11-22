@@ -31,7 +31,10 @@ locally: `apps/mobile/README.md`. As of 2026-11-10.
   loads or when it cannot be read). The page has the console's content: a copy button, every
   console filter (the channel and "Connected calls only" on the page, campaign, days, outcome,
   outcome code and agent in a "Filters (N)" sheet), redial chains, the follow-up of an open
-  override, and the console's empty-state rule. Two differences: no CSV export (the console's only,
+  override, and the console's empty-state rule. Since 2026-11-22 the timeline holds the calls the
+  number made to us too (an "Inbound call" entry with an Answered, Missed or To follow up pill,
+  an **Inbound calls** chip, "N calls received · M answered" in the summary;
+  [`call-log.md`](call-log.md) §8). Two differences: no CSV export (the console's only,
   CH13), and the app never opens a call page (CH8). The empty box and "too short" refusals show
   when Search is pressed, the others as typed. Recent searches (last five) stay on the device
   until Clear or any route to the signed-out state (sign-out, a refused session, start-up with
@@ -1550,7 +1553,7 @@ packages/
   - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (75: the soft phone's, customer history's, inbound calls' and floor assist's included, with `station_capabilities`, and one number, `help_expiry_ms`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
-  - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
+  - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet"). Call log P6 (2026-11-22) added `CustomerTimelineInboundCall` with `CustomerTimelineFollowUp` (`kind: inbound_call`; its `call_page` is not decoded, the app opens none), `CustomerHistoryInboundTotals` (`totals.inbound`, null from an older server), and `inbound` in `CustomerTimelineChannel`; `dart test` and `flutter test` ran on them.
 
 ## Performance and UX rules the code keeps
 

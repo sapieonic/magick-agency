@@ -2679,7 +2679,7 @@ table. `/stats` now runs one more statement per read.
 
 ### One call log per campaign, P5: My calls and All calls 2026-11-22 (CL9, CL31–CL38, [`call-log.md`](call-log.md) §7)
 
-P5 of six is built; P6 (inbound calls in customer history) is not.
+P5 of six is built; P6 (inbound calls in customer history) is not (P6 since: below).
 
 - **One read, three scopes.** The campaign Call log's read (`listCallLog`) also serves the
   account and one agent: the same branches, keyset, filters and inbound row rule (CL31).
@@ -2723,6 +2723,41 @@ in full to the agent a row is assigned to; My calls has no filter by outcome or 
 its soft-phone rows no longer show "DNC override" and "Hours override"; the app has no page for
 one soft-phone call; All calls has no export, stats strip or Summary column ([`call-log.md`](call-log.md) §7 "What P5
 left as it was").
+
+### One call log per campaign, P6: inbound calls in customer history 2026-11-22 (CL39–CL42, [`call-log.md`](call-log.md) §8)
+
+P6 of six is built: the work the proposal named is done. What waits for Manas, and what was
+left out, is [`call-log.md`](call-log.md) §9.
+
+- **A number's history holds the calls it made to us.** Customer history's timeline gains
+  `inbound_call` entries: every call from the number, in the accounts the reader can see, that
+  ended and that we served, **filed under a campaign or under none** (CL39). A rejected call, a
+  withheld number and a call with no account are never rows; a live call is under Open now.
+  Inbound's own flag hides nothing. The number is found however it is typed.
+- **The row is the Call log's inbound row**, by the same SQL and the same words: answered or
+  missed and why, the wait, who answered or who it is assigned to, the voicemail's length, To
+  follow up, "Called back 3:31 PM", the number rung. Console and app.
+- **Counted apart.** "Calls received 3 · 2 answered" beside Calls placed and Connected; the last
+  contact is still the last call we placed (CL40). The Channel filter and the app's chips offer
+  inbound calls; a callback booked on an inbound call is a callback entry; the export has a line
+  per inbound call.
+- **Who sees what did not widen** (CL42). Still `agency.customer_history.read` with the search's
+  audit, whose count now includes the inbound entries. Notes go to `agency.campaigns.read` or
+  the agent who answered; the Call page to `agency.supervise`, and only for a call filed under
+  a campaign; no recording or voicemail link is sent to anyone.
+- **One index.** `0071_inbound_calls_from_index.sql`: an account's inbound calls by caller,
+  measured before it was added (CL41). On a table of more than about a million inbound calls,
+  build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
+- **Still open for Manas:** CL30's question (a dial stopped because the customer rang us is two
+  calls in the Calls row of Calls by type), and every CL ruling, each a default he has not
+  ruled on. **Not built:** filing old calls with no campaign by hand, and "Customers reached".
+
+**Not verified:** not run in a real browser or on a phone. The lookup was timed on a throwaway
+copy of the test database (2 million inbound calls in 10 accounts), not on production data.
+Left as they were: the last contact is the newest call we placed; the history has no Call back
+or Mark handled, and no Missed, Voicemail or Abandoned in its outcome filter; an older app build
+shows an inbound entry as one it cannot show yet ([`call-log.md`](call-log.md) §8 "What P6 left
+as it was").
 
 ## Not built
 

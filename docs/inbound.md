@@ -1751,7 +1751,10 @@ Inventory: `packages/db/BASELINE.md` "0032", "0033".
   lapse sweep (NULL: 30 s); existing calls were backfilled from their route.
 - **`idx_agency_inbound_calls_answered_from`** (`tenant_id, account_id, from_e164, arrived_at DESC,
   id DESC` WHERE `bridged_at IS NOT NULL AND from_e164 IS NOT NULL`): the caller's answered inbound
-  calls for the sticky signal (IQ49, §4.1).
+  calls for the sticky signal (IQ49, §4.1). Since `0071_inbound_calls_from_index.sql` the table
+  also has **`idx_agency_inbound_calls_from`** (the same keys WHERE `from_e164 IS NOT NULL`: every
+  call of the caller, for the inbound calls in customer history, `docs/call-log.md` §8); this one
+  is a subset of it, and the sticky read may be planned on either.
 
 ### 9.4 Mode B (built: `0036_inbound_ring.sql`, `0037_away_ring_sessions_index.sql`)
 
