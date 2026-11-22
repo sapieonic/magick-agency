@@ -169,7 +169,18 @@ export function noteSentence(note: AgencyCampaignTemplateNote): string {
   }
 }
 
-/** What a template refusal says, by its code; the server's sentence for anything else. */
+/** The sentence the server's refusal body carries, or null. */
+function serverSentence(err: unknown): string | null {
+  const details = (err as { details?: unknown } | null)?.details;
+  const message = details && typeof details === 'object' ? (details as { message?: unknown }).message : undefined;
+  return typeof message === 'string' && message.trim() !== '' ? message : null;
+}
+
+/**
+ * What a template refusal says, by its code; the server's sentence for anything else. A template
+ * that is archived or not found may be the one named or the organisation template it is based
+ * on, which only the server's sentence tells apart (C5), so those keep it.
+ */
 export function templateRefusal(err: unknown, fallback: string): string {
   switch (errorCode(err)) {
     case 'campaign_template_changed':
@@ -179,9 +190,9 @@ export function templateRefusal(err: unknown, fallback: string): string {
     case 'campaign_template_in_use':
       return 'Account templates are based on this template, so it cannot be archived yet.';
     case 'campaign_template_archived':
-      return 'This template has been archived. Restore it first.';
+      return serverSentence(err) ?? 'This template has been archived. Restore it first.';
     case 'campaign_template_not_found':
-      return 'This template no longer exists.';
+      return serverSentence(err) ?? 'This template no longer exists.';
     case 'tenant_wide_membership_required':
       return 'Only an organisation admin with access to every account can change organisation templates.';
     default:

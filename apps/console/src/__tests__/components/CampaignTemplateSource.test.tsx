@@ -148,6 +148,32 @@ describe('campaign Settings’ template line', () => {
     expect(body.sections.hours.calling_window_start).toBe('11:00:00');
   });
 
+  it('offers “Reload the latest version” when the template was saved in between, and replaces with that version (C7)', async () => {
+    mocks.replaceCampaignTemplate.mockRejectedValueOnce(Object.assign(new Error('Changed'), {
+      statusCode: 409,
+      details: { code: 'campaign_template_changed', message: 'Changed', current_version: 6 },
+    }));
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+    await act(async () => {});
+    let dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'The settings of an existing template' }));
+    fireEvent.change(within(dialog).getByLabelText('Template'), { target: { value: 'tp-1' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace its settings' }));
+    await act(async () => {});
+    const stale = screen.getByTestId('save-as-template-stale');
+    expect(stale.textContent).toContain('Nothing was replaced.');
+    mocks.listCampaignTemplates.mockResolvedValue([{ ...SUMMARY, version: 6 }]);
+    fireEvent.click(within(stale).getByRole('button', { name: 'Reload the latest version' }));
+    await act(async () => {});
+    dialog = screen.getByRole('dialog');
+    expect(screen.queryByTestId('save-as-template-stale')).toBeNull();
+    expect(dialog.textContent).toContain('as version 7');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace its settings' }));
+    await act(async () => {});
+    expect(mocks.replaceCampaignTemplate.mock.calls[1]![2].expected_version).toBe(6);
+  });
+
   it('shows nothing to a role that cannot create campaigns (`agency.campaigns.write`)', async () => {
     mocks.tenant = { ...mocks.tenant, role: 'operator' };
     await renderIt();
@@ -162,10 +188,50 @@ describe('campaign Settings’ template line', () => {
     expect(mocks.getCampaignTemplate).not.toHaveBeenCalled();
   });
 
-  it('says a campaign made without a template was not, and still offers Save as template', async () => {
+  it('says nothing of a template for a campaign with no record, and still offers Save as template (C12)', async () => {
     await renderIt({ ...CAMPAIGN, template_source: null });
-    expect(screen.getByTestId('campaign-template-source').textContent).toContain('This campaign was not made from a template.');
+    expect(screen.getByTestId('campaign-template-source').textContent).toBe('Save as template…');
     expect(screen.queryByRole('button', { name: /See what’s different/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Save as template…' })).toBeTruthy();
+  });
+
+  it('says when the campaign was created, and why a section is not as the template says (its notes)', async () => {
+    await renderIt({
+      ...CAMPAIGN,
+      created_at: '2026-11-02T10:30:00Z',
+      template_source: {
+        ...CAMPAIGN.template_source!,
+        notes: [
+          { code: 'recording_not_allowed', section: 'recording' },
+          { code: 'numbers_unavailable', section: 'numbers', numbers: ['+912200000009'] },
+        ],
+      },
+    } as AgencyCampaign);
+    expect(screen.getByTestId('campaign-template-started').textContent).toBe('Started from Pune collections, version 3 · created 2 Nov.');
+    expect([...screen.getByTestId('campaign-template-notes').querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'Recording is off for this account, so this campaign starts with recording off.',
+      'These numbers of the template can no longer be used by this account, so they are left out: +912200000009.',
+    ]);
+  });
+
+  it('says an archived template has since been archived, and offers no comparison with it (C5)', async () => {
+    mocks.getCampaignTemplate.mockResolvedValue({ ...SUMMARY, archived_at: '2026-11-20T10:00:00Z', sections: TEMPLATE_SECTIONS, follows: null });
+    await renderIt();
+    expect(screen.getByTestId('campaign-template-moved').textContent).toBe(
+      'Pune collections has since been archived (this campaign is not affected).',
+    );
+    expect(screen.queryByRole('button', { name: /See what’s different/ })).toBeNull();
+    expect(screen.queryByText(/Restore it first/)).toBeNull();
+  });
+
+  it('says the template was archived, not “restore it”, when it is archived between the read and the comparison', async () => {
+    mocks.getEffectiveCampaignTemplate.mockRejectedValue(Object.assign(new Error('This template is archived. Restore it first.'), {
+      statusCode: 409,
+      details: { code: 'campaign_template_archived', message: 'This template is archived. Restore it first.' },
+    }));
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'See what’s different from the template now' }));
+    await act(async () => {});
+    expect(screen.getByText('Pune collections has since been archived, so there is nothing to compare with.')).toBeTruthy();
   });
 });

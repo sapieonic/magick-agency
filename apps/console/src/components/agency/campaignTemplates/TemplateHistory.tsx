@@ -65,7 +65,8 @@ export function TemplateHistory({
   const options = (
     <>
       <option value={CURRENT}>{`Now (version ${current.version})`}</option>
-      {versions.data.map((v) => (
+      {/* The current version is "Now"; it is not offered twice. */}
+      {versions.data.filter((v) => v.version !== current.version).map((v) => (
         <option key={v.version} value={String(v.version)}>
           {`Version ${v.version}`}
         </option>

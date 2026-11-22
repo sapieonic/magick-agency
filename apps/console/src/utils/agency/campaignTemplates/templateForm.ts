@@ -1,4 +1,6 @@
 import {
+  AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS,
+  AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   type AgencyCampaignTemplateConfig,
@@ -82,6 +84,22 @@ export const SECTION_LABELS: Readonly<Record<AgencyCampaignTemplateSectionKey, s
   inbound: 'Customers who ring in',
   numbers: 'Numbers to call from',
 };
+
+/**
+ * The sections a template of `scope` can show and hold here: without the account-only ones on an
+ * organisation template (CT5, CT15), and without those whose feature is off (`on`, by the gated
+ * section's key; CT5). What the editor shows, and all that a copy of a campaign or of another
+ * template may set (C6), so nothing is set that the editor cannot show or unset.
+ */
+export function templateSectionKeys(
+  scope: AgencyCampaignTemplateScope,
+  on: Readonly<Record<keyof typeof AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS, boolean>>,
+): AgencyCampaignTemplateSectionKey[] {
+  const accountOnly: readonly AgencyCampaignTemplateSectionKey[] = AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS;
+  return AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter(
+    (key) => !(scope === 'organisation' && accountOnly.includes(key)) && !(key in on && !on[key as keyof typeof on]),
+  );
+}
 
 /** Each field's name in a comparison, in plain words. */
 export const FIELD_LABELS: Readonly<Record<string, string>> = {

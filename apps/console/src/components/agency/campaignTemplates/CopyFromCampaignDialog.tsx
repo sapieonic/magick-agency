@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { useTenant } from '../../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
@@ -28,6 +28,13 @@ export function CopyFromCampaignDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
+
+  // Closed: the next opening starts afresh.
+  useEffect(() => {
+    if (open) return;
+    setChosen('');
+    setError(null);
+  }, [open]);
 
   const copy = async () => {
     if (!chosen) return;

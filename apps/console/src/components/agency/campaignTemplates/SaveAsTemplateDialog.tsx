@@ -13,6 +13,7 @@ import { useTenant } from '../../../contexts/TenantContext';
 import { createCampaignTemplate, replaceCampaignTemplate } from '../../../api/campaignTemplates';
 import { trackAgencyCampaignSavedAsTemplate } from '../../../analytics/events';
 import { templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { errorCode } from '../../../utils/agencyErrors';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import styles from './CampaignTemplates.module.css';
 
@@ -20,7 +21,9 @@ import styles from './CampaignTemplates.module.css';
  * Campaign Settings' "Save as template…": the campaign's saved settings as a new template, or in
  * place of an existing template's sections (`sectionsFromCampaign`; an organisation template
  * leaves out the account's numbers and summary profile, CT5). The replace sends the version the
- * list showed (`expected_version`), so a save made in between is refused rather than overwritten.
+ * list showed (`expected_version`), so a save made in between is refused rather than overwritten;
+ * "Reload the latest version" then reads the list again (`onReload`) and the dialog stays open on
+ * the newer version (C7).
  */
 export function SaveAsTemplateDialog({
   open,
@@ -29,6 +32,7 @@ export function SaveAsTemplateDialog({
   templates,
   sections,
   organisation,
+  onReload,
 }: {
   open: boolean;
   onClose: () => void;
@@ -39,6 +43,8 @@ export function SaveAsTemplateDialog({
   sections: readonly AgencyCampaignTemplateSectionKey[];
   /** The reader may write organisation templates. */
   organisation: boolean;
+  /** Read the templates again (after a 409: someone saved one in between). */
+  onReload: () => Promise<unknown>;
 }) {
   const { tenantId, accountId } = useTenant();
   const { showToast } = useToast();
@@ -50,6 +56,7 @@ export function SaveAsTemplateDialog({
   const [replaceId, setReplaceId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const replacing = templates.find((t) => t.id === replaceId) ?? null;
   const ready = mode === 'new' ? name.trim().length > 0 : replacing !== null;
 
@@ -88,7 +95,18 @@ export function SaveAsTemplateDialog({
       trackAgencyCampaignSavedAsTemplate({ mode, scope: mode === 'new' ? scope : replacing!.scope });
       onClose();
     } catch (err) {
-      setError(templateRefusal(err, 'Could not save the template.'));
+      if (errorCode(err) === 'campaign_template_changed') setStale(true);
+      else setError(templateRefusal(err, 'Could not save the template.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reload = async () => {
+    setBusy(true);
+    try {
+      await onReload();
+      setStale(false);
     } finally {
       setBusy(false);
     }
@@ -105,7 +123,7 @@ export function SaveAsTemplateDialog({
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="btn-primary" onClick={() => void save()} disabled={!ready || busy}>
+          <button type="button" className="btn-primary" onClick={() => void save()} disabled={!ready || busy || stale}>
             {busy ? 'Saving…' : mode === 'new' ? 'Save template' : 'Replace its settings'}
           </button>
         </>
@@ -171,6 +189,16 @@ export function SaveAsTemplateDialog({
           ) : null}
         </div>
       )}
+      {stale && replacing ? (
+        <div className={styles.banner} role="alert" data-testid="save-as-template-stale">
+          <p>{`Someone else saved “${replacing.name}” after this list was read. Nothing was replaced.`}</p>
+          <div>
+            <button type="button" className="btn-primary" onClick={() => void reload()} disabled={busy}>
+              Reload the latest version
+            </button>
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <p className={styles.fieldError} role="alert" data-testid="save-as-template-error">
           {error}

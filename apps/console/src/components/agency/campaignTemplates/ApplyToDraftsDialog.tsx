@@ -1,4 +1,5 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import {
   AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS,
@@ -10,7 +11,8 @@ import {
 import { diffSections, sectionsFromCampaign, type TemplateSectionDiff } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
-import { applyCampaignTemplate, getEffectiveCampaignTemplate } from '../../../api/campaignTemplates';
+import { applyCampaignTemplate, getCampaignTemplate, getEffectiveCampaignTemplate } from '../../../api/campaignTemplates';
+import { errorCode } from '../../../utils/agencyErrors';
 import { trackAgencyCampaignTemplateApplied } from '../../../analytics/events';
 import { SECTION_LABELS } from '../../../utils/agency/campaignTemplates/templateForm';
 import { templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
@@ -29,28 +31,47 @@ interface Preview {
  * apply, see what would change in each (`diffSections` of the campaign against the template as
  * filled in for the account), apply, then each campaign's result. Never a running campaign: the
  * server refuses anything but a draft, for that campaign alone.
+ *
+ * The sections start as those the template sets, each time it opens (C7). A list that cannot be
+ * read says so, with Retry. When someone saved the template in between (409), "Reload the latest
+ * version" reads it again and the dialog stays open on the new version, back at the choice;
+ * `onReloaded` tells the editor once the dialog closes.
  */
 export function ApplyToDraftsDialog({
   open,
   onClose,
   template,
   sections,
+  accountName = null,
+  onReloaded,
 }: {
   open: boolean;
   onClose: () => void;
   template: { id: string; name: string; version: number; scope: AgencyCampaignTemplateScope; sections_set: readonly AgencyCampaignTemplateSectionKey[] };
   /** The sections that may be applied (the editor's visible ones). */
   sections: readonly AgencyCampaignTemplateSectionKey[];
+  /** The account whose drafts change, named where it is not plain (the organisation's page). */
+  accountName?: string | null;
+  /** Called on close when the dialog read a newer version of the template. */
+  onReloaded?: () => void;
 }) {
   const { tenantId, accountId } = useTenant();
   const id = useId();
   const drafts = useAccountCampaigns(open, ['draft']);
   const [chosen, setChosen] = useState<string[]>([]);
+  /** A newer version than the editor's, read after a 409. */
+  const [latest, setLatest] = useState<typeof template | null>(null);
+  const [stale, setStale] = useState(false);
+  const current = latest ?? template;
   const initialSections = useMemo(() => {
-    const set = sections.filter((k) => template.sections_set.includes(k));
+    const set = sections.filter((k) => current.sections_set.includes(k));
     return set.length > 0 ? set : [...sections];
-  }, [sections, template.sections_set]);
+  }, [sections, current.sections_set]);
   const [keys, setKeys] = useState<AgencyCampaignTemplateSectionKey[]>(initialSections);
+  // Each opening, and each version of the template, starts on the sections it sets.
+  useEffect(() => {
+    if (open) setKeys(initialSections);
+  }, [open, initialSections]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [results, setResults] = useState<AgencyCampaignTemplateApplyResult[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -61,9 +82,26 @@ export function ApplyToDraftsDialog({
     setPreview(null);
     setResults(null);
     setError(null);
+    setStale(false);
     setChosen([]);
-    setKeys(initialSections);
+    if (latest) onReloaded?.();
+    setLatest(null);
     onClose();
+  };
+
+  const reload = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await getCampaignTemplate(template.id, tenantId ?? undefined, accountId ?? undefined);
+      setLatest({ id: fresh.id, name: fresh.name, version: fresh.version, scope: fresh.scope, sections_set: fresh.sections_set });
+      setStale(false);
+      setPreview(null);
+    } catch (err) {
+      setError(templateRefusal(err, 'Could not read the template.'));
+    } finally {
+      setBusy(false);
+    }
   };
   const orderedKeys = sections.filter((k) => keys.includes(k));
 
@@ -72,7 +110,7 @@ export function ApplyToDraftsDialog({
     setError(null);
     try {
       const [effective, ...campaigns] = await Promise.all([
-        getEffectiveCampaignTemplate(template.id, tenantId ?? undefined, accountId ?? undefined),
+        getEffectiveCampaignTemplate(current.id, tenantId ?? undefined, accountId ?? undefined),
         ...chosen.map((cid) => getAgencyCampaign(cid, tenantId ?? undefined, accountId ?? undefined)),
       ]);
       const filled = sectionsFromCampaign((effective as AgencyCampaignTemplateEffective).config, 'account', orderedKeys);
@@ -95,8 +133,8 @@ export function ApplyToDraftsDialog({
     setError(null);
     try {
       const res = await applyCampaignTemplate(
-        template.id,
-        { campaign_ids: chosen, sections: orderedKeys, expected_version: template.version },
+        current.id,
+        { campaign_ids: chosen, sections: orderedKeys, expected_version: current.version },
         tenantId ?? undefined,
         accountId ?? undefined,
       );
@@ -109,7 +147,8 @@ export function ApplyToDraftsDialog({
         section_count: orderedKeys.length,
       });
     } catch (err) {
-      setError(templateRefusal(err, 'Could not apply the template.'));
+      if (errorCode(err) === 'campaign_template_changed') setStale(true);
+      else setError(templateRefusal(err, 'Could not apply the template.'));
     } finally {
       setBusy(false);
     }
@@ -127,7 +166,7 @@ export function ApplyToDraftsDialog({
       <button type="button" className="btn-secondary" onClick={() => setPreview(null)} disabled={busy}>
         Back
       </button>
-      <button type="button" className="btn-primary" onClick={() => void apply()} disabled={busy} data-testid="apply-confirm">
+      <button type="button" className="btn-primary" onClick={() => void apply()} disabled={busy || stale} data-testid="apply-confirm">
         {busy ? 'Applying…' : `Apply to ${chosen.length === 1 ? '1 campaign' : `${chosen.length} campaigns`}`}
       </button>
     </>
@@ -149,7 +188,28 @@ export function ApplyToDraftsDialog({
   );
 
   return (
-    <Modal open={open} onClose={close} title={`Apply “${template.name}” to draft campaigns`} size="lg" footer={footer}>
+    <Modal
+      open={open}
+      onClose={close}
+      title={`Apply “${current.name}” to draft campaigns${accountName ? ` of ${accountName}` : ''}`}
+      size="lg"
+      footer={footer}
+    >
+      {latest && !stale ? (
+        <p className={styles.muted} role="status" data-testid="apply-reloaded">
+          {`Now on version ${latest.version}. Check what changes again before you apply.`}
+        </p>
+      ) : null}
+      {stale ? (
+        <div className={styles.banner} role="alert" data-testid="apply-stale">
+          <p>Someone else saved this template after you opened it. Nothing was applied.</p>
+          <div>
+            <button type="button" className="btn-primary" onClick={() => void reload()} disabled={busy}>
+              Reload the latest version
+            </button>
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <p className={styles.fieldError} role="alert" data-testid="apply-error">
           {error}
@@ -192,8 +252,10 @@ export function ApplyToDraftsDialog({
           <fieldset className={styles.checks}>
             <legend className={styles.heading}>Draft campaigns</legend>
             {drafts.loading ? <p className={styles.muted}>Loading draft campaigns…</p> : null}
-            {!drafts.loading && drafts.data.length === 0 ? (
-              <p className={styles.muted}>This account has no draft campaigns.</p>
+            {drafts.error ? (
+              <ErrorAlert message="Could not load the draft campaigns." onRetry={() => void drafts.reload()} />
+            ) : !drafts.loading && drafts.data.length === 0 ? (
+              <p className={styles.muted}>{accountName ? `${accountName} has no draft campaigns.` : 'This account has no draft campaigns.'}</p>
             ) : null}
             {drafts.data.map((c) => (
               <label key={c.id} className={styles.option}>

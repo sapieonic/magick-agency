@@ -1,11 +1,12 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import type {
   AgencyCampaignTemplateScope,
+  AgencyCampaignTemplateSectionKey,
   AgencyCampaignTemplateSections,
   AgencyCampaignTemplateSummary,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
+import { sectionKeysSet, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
 import { getCampaignTemplate } from '../../../api/campaignTemplates';
@@ -26,14 +27,19 @@ type Choice = 'builtin' | 'collections' | 'template' | 'campaign';
 
 /**
  * "New template": start from the built-in settings (nothing set), the Collections set (AS4) on
- * the outcomes, a copy of a template, or a copy of a campaign (`sectionsFromCampaign`, which leaves
- * an organisation template without the account's numbers and summary profile, CT5).
+ * the outcomes, a copy of a template, or a copy of a campaign. A copy sets only the sections the
+ * editor shows (`sections`: none whose feature is off), read through the domain's
+ * `sectionsFromCampaign`, which leaves an organisation template without the account-only parts
+ * (CT5; the contract's `AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS` and
+ * `…_ORGANISATION_EXCLUDED_FIELDS`), so nothing is set that the editor cannot show or unset (C6).
+ * Closing it forgets the choice and any error.
  */
 export function NewTemplateDialog({
   open,
   onClose,
   scope,
   templates,
+  sections,
   onStart,
 }: {
   open: boolean;
@@ -41,6 +47,8 @@ export function NewTemplateDialog({
   scope: AgencyCampaignTemplateScope;
   /** The templates a copy may be made of. */
   templates: readonly AgencyCampaignTemplateSummary[];
+  /** The sections the editor shows for `scope` (`useTemplateSectionKeys`): all a copy may set. */
+  sections: readonly AgencyCampaignTemplateSectionKey[];
   onStart: (start: NewTemplateStart) => void;
 }) {
   const { tenantId, accountId } = useTenant();
@@ -51,6 +59,15 @@ export function NewTemplateDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const campaigns = useAccountCampaigns(open && choice === 'campaign');
+
+  // Closed: the next opening starts afresh.
+  useEffect(() => {
+    if (open) return;
+    setChoice('builtin');
+    setTemplateId('');
+    setCampaignId('');
+    setError(null);
+  }, [open]);
 
   const ready = choice === 'template' ? templateId !== '' : choice === 'campaign' ? campaignId !== '' : true;
 
@@ -70,19 +87,15 @@ export function NewTemplateDialog({
         });
       } else if (choice === 'template') {
         const source = await getCampaignTemplate(templateId, tenantId ?? undefined, accountId ?? undefined);
-        // An organisation template may not hold an account's parts (CT5): read through the same rule.
-        const sections = scope === 'organisation' && source.scope === 'account'
-          ? stripAccountOnly(source.sections)
-          : source.sections;
         onStart({
-          sections,
+          sections: copyOfSections(source.sections, scope, sections),
           name: `Copy of ${source.name}`,
           description: source.description,
           basedOnId: scope === 'account' && source.scope === 'account' ? source.based_on?.id ?? null : null,
         });
       } else {
         const campaign = await getAgencyCampaign(campaignId, tenantId ?? undefined, accountId ?? undefined);
-        onStart({ sections: sectionsFromCampaign(campaign, scope), name: campaign.name });
+        onStart({ sections: sectionsFromCampaign(campaign, scope, sections), name: campaign.name });
       }
     } catch (err) {
       setError(templateRefusal(err, 'Could not read what to copy.'));
@@ -164,10 +177,16 @@ export function NewTemplateDialog({
   );
 }
 
-/** Sections without the account-only parts (CT5): no numbers, no summary profile. */
-function stripAccountOnly(sections: AgencyCampaignTemplateSections): AgencyCampaignTemplateSections {
-  const { numbers: _numbers, recording, ...rest } = sections;
-  if (!recording) return rest;
-  const { analysis_profile_id: _profile, ...keep } = recording;
-  return { ...rest, recording: keep };
+/**
+ * A template's sections as a new `scope` template copies them: the ones it sets that are `shown`,
+ * read through the domain's rule (a section's fields are its own, so the sections flatten into the
+ * campaign fields they hold), which drops what an organisation template may not hold (CT5).
+ */
+function copyOfSections(
+  source: AgencyCampaignTemplateSections,
+  scope: AgencyCampaignTemplateScope,
+  shown: readonly AgencyCampaignTemplateSectionKey[],
+): AgencyCampaignTemplateSections {
+  const fields = Object.assign({}, ...Object.values(source)) as Parameters<typeof sectionsFromCampaign>[0];
+  return sectionsFromCampaign(fields, scope, sectionKeysSet(source).filter((key) => shown.includes(key)));
 }
