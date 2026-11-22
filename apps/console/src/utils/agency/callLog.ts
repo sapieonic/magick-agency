@@ -22,8 +22,8 @@ import {
   isCampaignAttemptFiltered,
 } from '../agencyCampaignAttemptParams';
 import { formatCount } from '../format/number';
-import { dateFormatter } from '../format/date';
-import { formatSpineTimestamp, formatTalkTime } from '../agencySpineCopy';
+import { dateFormatter, upperDayPeriod } from '../format/date';
+import { formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
 import { missedReasonLabel } from '../inbound/missedCopy';
 
@@ -208,9 +208,12 @@ export interface CallLogTypeAvailability {
 
 /** The To follow up chip's words. */
 export const TO_FOLLOW_UP_LABEL = 'To follow up';
+/** Said under the date fields while To follow up is on: why they are switched off. */
+export const TO_FOLLOW_UP_DATES_HINT = 'To follow up shows every open missed call, whatever the dates.';
 /** Said under the chips while To follow up is on: the one chip the dates do not narrow. */
 export const TO_FOLLOW_UP_NOTE =
-  'Every missed call on this campaign that is still open, whatever the dates. Call the customer back, or mark the call handled.';
+  'Every missed call on this campaign that is still open, whatever the dates. Call the customer back, or mark the call handled. '
+  + 'The Agent filter here is who a call is assigned to.';
 
 /**
  * The chips to show: "All · Dialler · Soft phone · Inbound · To follow up", each with its count.
@@ -358,7 +361,7 @@ export function callLogTypeLabel(type: AgencyCallLogType): string {
 /** `m:ss` for a wait or a voicemail (the talk-time format). */
 const duration = (seconds: number) => formatTalkTime(seconds);
 
-/** "3:12 pm", in the console's display locale: the hour without a leading zero. */
+/** "3:12 PM": the hour without a leading zero (said through `upperDayPeriod`). */
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
 
 /** Whether two instants fall on one calendar day for the reader. */
@@ -368,11 +371,11 @@ function sameLocalDay(a: string, b: string): boolean {
 }
 
 /**
- * When the other half of a pair happened, as said on this row: the clock time ("3:12 pm") when
- * both are on one day, else the day too ("21 Nov 2026, 03:12 pm").
+ * When the other half of a pair happened, as said on this row: the clock time ("3:12 PM") when
+ * both are on one day, else the day too ("21 Nov 2026, 03:12 PM").
  */
 export function pairedTime(other: string, own: string): string {
-  return sameLocalDay(other, own) ? dateFormatter(CLOCK).format(new Date(other)) : formatSpineTimestamp(other);
+  return sameLocalDay(other, own) ? upperDayPeriod(dateFormatter(CLOCK).format(new Date(other))) : formatCallTimestamp(other);
 }
 
 /**

@@ -35,7 +35,7 @@ import {
   agentCellCopy,
   dispositionLabel,
   exportTruncationNotice,
-  formatSpineTimestamp,
+  formatCallTimestamp,
   formatTalkTime,
   recordingCellCopy,
   recordingDisabledNote,
@@ -77,6 +77,7 @@ import {
   CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_HINT,
   CALL_LOG_STATUS_OPTIONS,
+  TO_FOLLOW_UP_DATES_HINT,
   TO_FOLLOW_UP_NOTE,
   callLogBadges,
   callLogCountCopy,
@@ -237,6 +238,12 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
   const awaitingOpening = opening === null && onOpeningView(urlFilters, view);
   const pinnedContact = filters.contact_id ?? null;
   const { type, status } = view;
+  /**
+   * To follow up is every open missed call whatever the dates (CL14): while that chip is on the
+   * date fields are switched off and say why, and nothing on the page claims the dates apply.
+   * The dates stay in the URL, so they are back with the next chip.
+   */
+  const datesOff = type === 'to_follow_up';
 
   /** Filters and view → the URL. The single writer. */
   const writeUrl = useCallback((next: AgencyAttemptFilters, nextView: CallLogView) => {
@@ -574,11 +581,12 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
   /** The attempt filters' chips, then the soft-phone status's. */
   const shownChips = useMemo(() => [
     // A What happened chip of an inbound choice says it in the filter's own words.
-    ...chips.filter((chip) => chip.id !== 'contact_id').map((chip) => (chip.id.startsWith('outcome:')
+    // With To follow up on the dates narrow nothing: a chip saying they are applied would mislead.
+    ...chips.filter((chip) => chip.id !== 'contact_id' && !(datesOff && chip.id === 'created')).map((chip) => (chip.id.startsWith('outcome:')
       ? { ...chip, label: `Outcome: ${callLogOutcomeFilterLabel(chip.id.slice('outcome:'.length))}` }
       : chip)),
     ...(status ? [{ id: STATUS_CHIP, label: `Soft-phone status: ${callLogStatusLabel(status)}` }] : []),
-  ], [chips, status]);
+  ], [chips, status, datesOff]);
 
   const removeChip = useCallback((chipId: string) => {
     if (chipId === STATUS_CHIP) {
@@ -611,15 +619,15 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
     if (filters.override_applied) n += 1;
     if (filters.placed) n += 1;
     if (filters.dialed_from || filters.dialed_to) n += 1;
-    if (filters.from || filters.to) n += 1;
+    if ((filters.from || filters.to) && !datesOff) n += 1;
     if (status) n += 1;
     return n;
-  }, [filters, status]);
+  }, [filters, status, datesOff]);
 
   // Caught here rather than sent: the server refuses it too (400), but telling the
   // supervisor before they press Apply is the difference between a correction
   // and a support ticket.
-  const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
+  const invertedRange = !datesOff && Boolean(draftFrom && draftTo && draftFrom > draftTo);
   // The server's rule too (a phone filter needs a digit), said here before Apply; a number
   // still being typed ("+") is said only once Apply is pressed (`phoneFilterDraftError`).
   const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
@@ -667,7 +675,10 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
             : []),
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
-          'The export follows the dates shown above. Clear the dates to export every call on the campaign.',
+          // Not with To follow up on: that view, and its export, are not narrowed by the dates.
+          ...(type === 'to_follow_up'
+            ? []
+            : ['The export follows the dates shown above. Clear the dates to export every call on the campaign.']),
           ...(exportHoldsSoftphone
             ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.']
             : []),
@@ -801,6 +812,8 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                   className={spine.fieldInput}
                   value={draftFrom}
                   onChange={(e) => setDraftFrom(e.target.value)}
+                  disabled={datesOff}
+                  aria-describedby={datesOff ? 'call-log-dates-off' : undefined}
                 />
               </span>
             </label>
@@ -813,8 +826,13 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                   className={spine.fieldInput}
                   value={draftTo}
                   onChange={(e) => setDraftTo(e.target.value)}
+                  disabled={datesOff}
+                  aria-describedby={datesOff ? 'call-log-dates-off' : undefined}
                 />
               </span>
+              {datesOff && (
+                <span className={styles.fieldHint} id="call-log-dates-off" data-testid="call-log-dates-off">{TO_FOLLOW_UP_DATES_HINT}</span>
+              )}
             </label>
             {/*
               The campaign's old Soft-phone calls view had this filter. It is the soft phone's:
@@ -968,7 +986,7 @@ function AttemptsSection({ id, campaign, campaignLoading, stats }: {
                       onFocus={pair ? () => setPairLit(pair) : undefined}
                       onBlur={pair ? () => setPairLit(null) : undefined}
                     >
-                      <td className={styles.when}>{formatSpineTimestamp(row.created_at)}</td>
+                      <td className={styles.when}>{formatCallTimestamp(row.created_at)}</td>
                       <td>
                         <span className={styles.type} data-type={row.type} data-testid={`call-type-${row.id}`}>
                           {callLogTypeLabel(row.type)}

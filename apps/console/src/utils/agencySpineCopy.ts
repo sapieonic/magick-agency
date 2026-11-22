@@ -9,7 +9,7 @@
 import type { AgencyAttempt, AgencyRosterContact } from '../types/agency-spine';
 import { suppressedReasonLabel } from '../types/agency-spine';
 import { systemDispositionLabel } from './agency/systemDisposition';
-import { dateFormatter } from './format/date';
+import { dateFormatter, upperDayPeriod } from './format/date';
 import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-campaign';
 
 /**
@@ -137,6 +137,15 @@ export function formatSpineTimestamp(iso: string | null): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return dateFormatter(SPINE_TIMESTAMP).format(date);
+}
+
+/**
+ * {@link formatSpineTimestamp} with AM / PM in capitals: `11 Nov 2026, 04:54 PM`. Every time on
+ * the campaign Call log and the inbound Call page (`docs/call-log.md` §4); the other spine
+ * surfaces keep `formatSpineTimestamp`.
+ */
+export function formatCallTimestamp(iso: string | null): string {
+  return upperDayPeriod(formatSpineTimestamp(iso));
 }
 
 /**

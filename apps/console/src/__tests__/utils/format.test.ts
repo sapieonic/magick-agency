@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { clampPercent, formatCount, pct, plural } from '../../utils/format/number';
 import { callSeconds, durationWords, formatDuration, statClock } from '../../utils/format/duration';
-import { dateFormatter, formatClockTime, formatDayMonth, formatDayMonthYear } from '../../utils/format/date';
+import { dateFormatter, formatClockTime, formatDayMonth, formatDayMonthYear, upperDayPeriod } from '../../utils/format/date';
+import { formatCallTimestamp, formatSpineTimestamp } from '../../utils/agencySpineCopy';
 import { zoneFormatter, zonedParts } from '../../utils/format/zone';
 import { describeIsoDays, hhmm } from '../../utils/format/weekdays';
 import { ratePct, ratio, stateShares } from '../../utils/agency/metrics';
@@ -154,5 +155,29 @@ describe('agency/metrics', () => {
     ]);
     expect(stateShares(undefined)).toEqual({ total: 0, shares: [] });
     expect(stateShares({ offline: 9 })).toEqual({ total: 0, shares: [] });
+  });
+});
+
+describe('AM / PM in capitals (the Call log and the inbound Call page)', () => {
+  it('upperDayPeriod raises the day period and nothing else', () => {
+    expect(upperDayPeriod('3:31 pm')).toBe('3:31 PM');
+    expect(upperDayPeriod('22 Nov 2026, 03:42 am')).toBe('22 Nov 2026, 03:42 AM');
+    expect(upperDayPeriod('3:42:01 p.m.')).toBe('3:42:01 PM');
+    expect(upperDayPeriod('3:31 PM')).toBe('3:31 PM');
+    // Words that only contain the letters, a 24-hour time, and a dash are left alone.
+    expect(upperDayPeriod('14:02–14:05')).toBe('14:02–14:05');
+    expect(upperDayPeriod('Campaign: Pamela, Sam')).toBe('Campaign: Pamela, Sam');
+    expect(upperDayPeriod('—')).toBe('—');
+  });
+
+  it('formatCallTimestamp is the spine timestamp with the period raised', () => {
+    const iso = '2026-11-22T15:42:01.000Z';
+    expect(formatSpineTimestamp(iso)).toBe('22 Nov 2026, 03:42 pm');
+    expect(formatCallTimestamp(iso)).toBe('22 Nov 2026, 03:42 PM');
+    expect(formatCallTimestamp(null)).toBe('—');
+  });
+
+  it('formatClockTime itself is unchanged: other surfaces still read it in lower case', () => {
+    expect(formatClockTime(new Date('2026-11-22T15:42:01.000Z'))).toBe('03:42 pm');
   });
 });

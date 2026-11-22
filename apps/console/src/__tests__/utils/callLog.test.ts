@@ -408,12 +408,12 @@ describe('how an inbound row reads', () => {
     expect(followUpCopy(MISSED)).toEqual({ calledBack: null, status: 'To follow up', open: true });
     const calledBack = { ...MISSED, called_back: { call_id: 'm-9', at: '2026-11-22T15:31:00.000Z' } };
     // Rung back and still open: both are said, and the row keeps its actions.
-    expect(followUpCopy(calledBack)).toEqual({ calledBack: 'Called back 3:31 pm', status: 'To follow up', open: true });
+    expect(followUpCopy(calledBack)).toEqual({ calledBack: 'Called back 3:31 PM', status: 'To follow up', open: true });
     const handled = { ...MISSED.follow_up!, status: 'handled' as const, handled_reason: 'marked' as const, handled_at: '2026-11-22T16:00:00.000Z' };
     expect(followUpCopy({ ...MISSED, follow_up: handled })).toEqual({ calledBack: null, status: 'Handled', open: false });
     expect(followUpCopy({ ...MISSED, follow_up: { ...handled, handled_reason: 'reached' } }).status).toBe('Customer reached');
     // Closed and rung back: the call back says it.
-    expect(followUpCopy({ ...calledBack, follow_up: { ...handled, handled_reason: 'reached' } })).toEqual({ calledBack: 'Called back 3:31 pm', status: null, open: false });
+    expect(followUpCopy({ ...calledBack, follow_up: { ...handled, handled_reason: 'reached' } })).toEqual({ calledBack: 'Called back 3:31 PM', status: null, open: false });
     // A call back on a later day says the day too.
     expect(followUpCopy({ ...MISSED, called_back: { call_id: 'm-9', at: '2026-11-23T09:05:00.000Z' } }).calledBack).toMatch(/^Called back 23 Nov 2026/);
   });
@@ -429,8 +429,8 @@ describe('a missed call and its call back', () => {
 
   it('the soft-phone call stays a soft-phone call, marked as the call back to the missed call (CL1)', () => {
     expect(callBack.type).toBe('soft_phone');
-    expect(callBackFact(callBack)).toBe('Call back · to the 3:12 pm missed call');
-    expect(callLogTypeFacts(callBack)).toEqual(['Call back · to the 3:12 pm missed call']);
+    expect(callBackFact(callBack)).toBe('Call back · to the 3:12 PM missed call');
+    expect(callLogTypeFacts(callBack)).toEqual(['Call back · to the 3:12 PM missed call']);
     // The missed call's row has gone (retention): still a call back, to a call we can no longer time.
     expect(callBackFact({ ...callBack, callback_of: { inbound_call_id: 'i-2', arrived_at: null } })).toBe('Call back · to a missed call');
     expect(callBackFact(SOFT_ROW)).toBeNull();

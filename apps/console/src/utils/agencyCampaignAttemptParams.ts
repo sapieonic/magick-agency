@@ -1,6 +1,6 @@
 import type { AgencyAttemptFilters, AgencyListFlag } from '../types/agency-spine';
 import { attemptOutcomeLabel, attemptStateLabel } from '../types/agency-spine';
-import { formatSpineTimestamp } from './agencySpineCopy';
+import { formatCallTimestamp } from './agencySpineCopy';
 
 /**
  * The campaign Call attempts tab's filters, in the URL — the attempts twin of
@@ -169,8 +169,8 @@ export function campaignAttemptFilterChips(
     if (value) chips.push({ id: key, label: value === '1' ? FLAG_COPY[key].on : FLAG_COPY[key].off, without: omit(filters, key) });
   }
   if (filters.dialed_from || filters.dialed_to) {
-    const from = filters.dialed_from ? formatSpineTimestamp(filters.dialed_from) : null;
-    const to = filters.dialed_to ? formatSpineTimestamp(filters.dialed_to) : null;
+    const from = filters.dialed_from ? formatCallTimestamp(filters.dialed_from) : null;
+    const to = filters.dialed_to ? formatCallTimestamp(filters.dialed_to) : null;
     const label = from && to
       ? `Dialled from ${from}, up to ${to}`
       : from ? `Dialled from ${from}` : `Dialled before ${to}`;

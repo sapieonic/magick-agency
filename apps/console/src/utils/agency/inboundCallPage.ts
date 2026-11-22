@@ -5,8 +5,8 @@ import type {
 } from '../../types/agency-call-log';
 import type { AgencyDispositionEntry } from '../../types/agency-campaign';
 import type { CallFact, CallFactCard } from '../../components/calls/CallDetailView';
-import { dispositionLabel, formatSpineTimestamp, formatTalkTime } from '../agencySpineCopy';
-import { dateFormatter } from '../format/date';
+import { dispositionLabel, formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
+import { dateFormatter, upperDayPeriod } from '../format/date';
 import { formatPromise } from '../format/promise';
 import { formatDialNumber } from '../softphone/phoneInput';
 import { missedReasonLabel } from '../inbound/missedCopy';
@@ -19,7 +19,7 @@ import { callLogWhatHappened, followUpCopy, isMissedInbound, pairedTime } from '
 
 /** "3:42:01 PM": a step of the path is told to the second. */
 const CLOCK_SECONDS: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', second: '2-digit' };
-const clock = (iso: string) => dateFormatter(CLOCK_SECONDS).format(new Date(iso));
+const clock = (iso: string) => upperDayPeriod(dateFormatter(CLOCK_SECONDS).format(new Date(iso)));
 
 /** Why the call is in this campaign's log, said under the page's title. */
 const FILED_UNDER: Record<AgencyCallLogInboundRow['campaign_source'], string> = {
@@ -31,7 +31,7 @@ const FILED_UNDER: Record<AgencyCallLogInboundRow['campaign_source'], string> = 
 
 /** The line under the title: "Inbound · 22 Nov 2026, 3:42 PM · filed under this campaign because …". */
 export function inboundCallHeadline(row: AgencyCallLogInboundRow): string {
-  return `Inbound · ${formatSpineTimestamp(row.created_at)} · ${FILED_UNDER[row.campaign_source]}`;
+  return `Inbound · ${formatCallTimestamp(row.created_at)} · ${FILED_UNDER[row.campaign_source]}`;
 }
 
 /** Who rang, as the page's title: the number, or that it was withheld. */
@@ -100,7 +100,7 @@ export function inboundIdentityFacts(row: AgencyCallLogInboundRow): CallFact[] {
 /** When the outcome was saved and by whom: "22 Nov 2026, 3:47 PM · by Priya Nair". */
 function savedLine(row: AgencyCallLogInboundRow, by: string | null): string | null {
   if (!row.dispositioned_at) return null;
-  const when = formatSpineTimestamp(row.dispositioned_at);
+  const when = formatCallTimestamp(row.dispositioned_at);
   if (row.dispositioned_on_behalf) return by ? `${when} · by ${by}, on the agent’s behalf` : `${when} · by a supervisor, on the agent’s behalf`;
   return by ? `${when} · by ${by}` : when;
 }
@@ -121,7 +121,7 @@ export function inboundOutcomeCard(
     },
     { label: 'Saved', value: savedLine(row, detail.dispositioned_by_name) },
   ];
-  if (row.callback_at) facts.push({ label: 'Call back', value: formatSpineTimestamp(row.callback_at) });
+  if (row.callback_at) facts.push({ label: 'Call back', value: formatCallTimestamp(row.callback_at) });
   if (row.promise_date) {
     facts.push({ label: 'Promise to pay', value: formatPromise({ date: row.promise_date, amount: row.promise_amount ?? null }) });
   }
@@ -148,7 +148,7 @@ export function inboundFollowUpCard(row: AgencyCallLogInboundRow): CallFactCard 
   } else if (copy.open) {
     facts.push({ label: 'Called back', value: 'Not yet', muted: true });
   }
-  if (followUp.handled_at) facts.push({ label: 'Closed', value: formatSpineTimestamp(followUp.handled_at) });
+  if (followUp.handled_at) facts.push({ label: 'Closed', value: formatCallTimestamp(followUp.handled_at) });
   return { title: 'Follow-up', facts };
 }
 
@@ -167,7 +167,7 @@ export function inboundRecordCard(row: AgencyCallLogInboundRow): CallFactCard {
     title: 'Call record',
     facts: [
       { label: 'Caller', value: inboundCallerTitle(row), mono: row.phone_e164 !== null, muted: row.phone_e164 === null },
-      { label: 'When', value: formatSpineTimestamp(row.created_at) },
+      { label: 'When', value: formatCallTimestamp(row.created_at) },
       ...inboundIdentityFacts(row),
     ],
   };

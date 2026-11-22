@@ -11,7 +11,7 @@ import {
 } from '../../utils/agency/inboundCallPage';
 import type { AgencyCallLogInboundRow, AgencyInboundJourneyStep } from '../../types/agency-call-log';
 
-/** The inbound Call page's words (docs/call-log.md §4, P2). TZ is UTC and the locale en-IN in tests. */
+/** The inbound Call page's words (docs/call-log.md §4, P2). TZ is UTC in tests; every time is said with AM / PM in capitals. */
 
 const ANSWERED = {
   type: 'inbound', id: 'i-1', campaign_id: 'c-1', campaign_source: 'contact', contact_id: 'ct-1', phone_e164: '+919876504821',
@@ -45,7 +45,7 @@ describe('the page’s title and headline', () => {
   });
 
   it('says it was an inbound call, when, and why it is in this campaign’s log', () => {
-    expect(inboundCallHeadline(ANSWERED)).toMatch(/^Inbound · 22 Nov 2026, 03:42 pm · filed under this campaign because the number is on its list$/);
+    expect(inboundCallHeadline(ANSWERED)).toMatch(/^Inbound · 22 Nov 2026, 03:42 PM · filed under this campaign because the number is on its list$/);
     expect(inboundCallHeadline(MISSED)).toContain('because the number they rang sends unknown callers here');
     expect(inboundCallHeadline({ ...ANSWERED, campaign_source: 'agent' })).toContain('by the agent who took the call');
     expect(inboundCallHeadline({ ...ANSWERED, campaign_source: 'supervisor' })).toContain('by a supervisor');
@@ -55,11 +55,11 @@ describe('the page’s title and headline', () => {
 describe('the caller’s path', () => {
   it('an answered call: rang, greeting, the wait through their own agent, who answered, the end and the talk time', () => {
     expect(inboundJourneyLines({ inbound: ANSWERED, journey: ANSWERED_PATH })).toEqual([
-      { kind: 'rang', title: 'Rang', detail: '3:42:01 pm · Sales line' },
+      { kind: 'rang', title: 'Rang', detail: '3:42:01 PM · Sales line' },
       { kind: 'greeting', title: 'Greeting', detail: 'we answered and played our message' },
       { kind: 'waited', title: 'Waited 0:18', detail: 'came through their agent' },
-      { kind: 'answered', title: 'Priya Nair answered', detail: '3:42:19 pm' },
-      { kind: 'ended', title: 'Ended', detail: '3:46:31 pm · talk 4:12' },
+      { kind: 'answered', title: 'Priya Nair answered', detail: '3:42:19 PM' },
+      { kind: 'ended', title: 'Ended', detail: '3:46:31 PM · talk 4:12' },
     ]);
   });
 
@@ -73,12 +73,12 @@ describe('the caller’s path', () => {
     ];
     const lines = inboundJourneyLines({ inbound: { ...MISSED, route_name: null }, journey });
     expect(lines.map((line) => line.title)).toEqual(['Rang', 'Waited 1:40', 'Nobody answered', 'Left a voicemail', 'Ended']);
-    expect(lines[0]!.detail).toBe('3:42:01 pm');
+    expect(lines[0]!.detail).toBe('3:42:01 PM');
     expect(lines[1]!.detail).toBeNull();
     expect(lines[2]!.detail).toBe('Nobody free to answer');
     expect(lines[3]!.detail).toBe('0:22');
     // No talk time on a call nobody answered.
-    expect(lines[4]!.detail).toBe('3:43:41 pm');
+    expect(lines[4]!.detail).toBe('3:43:41 PM');
   });
 
   it('an agent whose name is gone still answered', () => {
@@ -113,7 +113,7 @@ describe('the cards', () => {
     const rungBack = { ...MISSED, called_back: { call_id: 'm-1', at: '2026-11-22T16:31:00.000Z' },
       follow_up: { ...MISSED.follow_up!, status: 'handled' as const, handled_reason: 'reached' as const, handled_at: '2026-11-22T16:32:00.000Z', assignee_user_id: null, assignee_name: null } };
     const closed = Object.fromEntries(inboundFollowUpCard(rungBack)!.facts.map((fact) => [fact.label, fact.value]));
-    expect(closed).toMatchObject({ 'Follow-up': 'Customer reached', 'Assigned to': 'The account', 'Called back': '4:31 pm' });
+    expect(closed).toMatchObject({ 'Follow-up': 'Customer reached', 'Assigned to': 'The account', 'Called back': '4:31 PM' });
     expect(closed['Closed']).toContain('22 Nov 2026');
     expect(inboundFollowUpCard(ANSWERED)).toBeNull();
   });

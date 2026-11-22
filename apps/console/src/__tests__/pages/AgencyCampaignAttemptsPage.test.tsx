@@ -1713,9 +1713,9 @@ describe('a missed call and its call back', () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${CALL_BACK.id}`);
     expect(screen.getByTestId(`call-type-${CALL_BACK.id}`).textContent).toBe('Soft phone');
-    expect(screen.getByTestId(`call-facts-${CALL_BACK.id}`).textContent).toBe('Call back · to the 3:12 pm missed call');
+    expect(screen.getByTestId(`call-facts-${CALL_BACK.id}`).textContent).toBe('Call back · to the 3:12 PM missed call');
     const followUp = screen.getByTestId(`call-follow-up-${RUNG_BACK.id}`);
-    expect(within(followUp).getByText('Called back 3:31 pm')).toBeTruthy();
+    expect(within(followUp).getByText('Called back 3:31 PM')).toBeTruthy();
     // Rung back, and the Missed row is still open: still to follow up.
     expect(within(followUp).getByText('To follow up')).toBeTruthy();
   });
@@ -1741,5 +1741,60 @@ describe('a missed call and its call back', () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${CANCELED.id}`);
     expect(screen.getByTestId(`attempt-outcome-${CANCELED.id}`).textContent).toBe('Stopped: customer rang us');
+  });
+});
+
+describe('every time on the Call log reads with AM / PM in capitals', () => {
+  it('the When column, the pair’s times and a dialled-window chip', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled', 'agency_inbound_enabled']);
+    const rungBack = { ...INBOUND_MISSED, called_back: { call_id: 'manual-cb', at: '2026-08-17T15:31:00.000Z' } };
+    const callBack: AgencyCallLogSoftphoneRow = {
+      ...SOFT, id: 'manual-cb', created_at: '2026-08-17T15:31:00.000Z',
+      callback_of: { inbound_call_id: INBOUND_MISSED.id, arrived_at: INBOUND_MISSED.created_at },
+    };
+    mocks.getCampaignCallLog.mockResolvedValue(page([callBack, rungBack]));
+    renderWithLocation('?dialed_from=2026-08-17T09:00:00.000Z&dialed_to=2026-08-17T18:00:00.000Z');
+    const row = await screen.findByTestId(`attempt-row-${rungBack.id}`);
+    expect(within(row).getByText('17 Aug 2026, 03:12 PM')).toBeTruthy();
+    expect(within(row).getByText('Called back 3:31 PM')).toBeTruthy();
+    expect(screen.getByTestId('call-facts-manual-cb').textContent).toBe('Call back · to the 3:12 PM missed call');
+    expect(screen.getByText('Dialled from 17 Aug 2026, 09:00 AM, up to 17 Aug 2026, 06:00 PM')).toBeTruthy();
+    // Not one lower-case period anywhere in the list or its chips.
+    expect(document.body.textContent).not.toMatch(/\d (am|pm)\b/);
+  });
+});
+
+describe('with To follow up on, the dates narrow nothing and the page says so', () => {
+  beforeEach(() => {
+    mocks.flags = new Set(['agency_softphone_enabled', 'agency_inbound_enabled']);
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_MISSED], INBOUND_COUNTS));
+  });
+
+  it('switches the date fields off with the reason, drops the export’s dates tip and the dates chip, and keeps the dates in the URL', async () => {
+    renderWithLocation('?type=to_follow_up&from=2026-08-17T00:00:00.000Z&to=2026-08-17T23:59:59.999Z');
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    const [from, to] = [screen.getByLabelText('From date'), screen.getByLabelText(/^To date/)] as HTMLInputElement[];
+    expect(from!.disabled).toBe(true);
+    expect(to!.disabled).toBe(true);
+    expect(screen.getByTestId('call-log-dates-off').textContent).toBe('To follow up shows every open missed call, whatever the dates.');
+    expect(screen.queryByText(/The export follows the dates shown above/)).toBeNull();
+    expect(screen.queryByText(/^Created /)).toBeNull();
+    expect(screen.queryByText(/17 Aug 2026 to|From 17 Aug/)).toBeNull();
+
+    // Another chip: the dates were kept, the fields work again, and the tip is back.
+    mocks.getCampaignCallLog.mockResolvedValue(withCounts([INBOUND_ANSWERED], INBOUND_COUNTS));
+    fireEvent.click(screen.getByTestId('call-log-type-inbound'));
+    await screen.findByTestId(`attempt-row-${INBOUND_ANSWERED.id}`);
+    expect(currentQuery().get('from')).toBe('2026-08-17T00:00:00.000Z');
+    expect((screen.getByLabelText('From date') as HTMLInputElement).disabled).toBe(false);
+    expect(screen.queryByTestId('call-log-dates-off')).toBeNull();
+    expect(screen.getByText(/The export follows the dates shown above/)).toBeTruthy();
+  });
+
+  it('dates the wrong way round do not block Apply there', async () => {
+    renderWithLocation('?type=to_follow_up&from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
+    await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
+    expect(screen.queryByTestId('attempts-inverted-range')).toBeNull();
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(false);
   });
 });

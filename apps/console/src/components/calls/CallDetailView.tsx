@@ -179,6 +179,11 @@ export interface CallDetailViewProps {
   onReload: () => void;
   /** The analysis card's source label (`AI`), beside its title. Absent: no label. */
   analysisSource?: string;
+  /**
+   * How the card's three instants (created, answered, ended) are written. Absent: the shared
+   * `formatDate`. The inbound Call page passes its own, so every time on it reads alike.
+   */
+  formatTimestamp?: (iso: string) => string;
 }
 
 /** Adapt a transcript turn to the shared TranscriptSection's shape. */
@@ -306,6 +311,7 @@ export function CallDetailView({
   onRetryAnalysis,
   onReload,
   analysisSource,
+  formatTimestamp = formatDate,
 }: CallDetailViewProps) {
   const conversationLog = call.conversation_log ?? null;
   const transcriptEntries = useMemo(
@@ -372,12 +378,12 @@ export function CallDetailView({
         </h3>
         <div className={styles.infoGrid}>
           <InfoItem label="Created">
-            <span className={styles.infoValue}>{formatDate(call.created_at)}</span>
+            <span className={styles.infoValue}>{formatTimestamp(call.created_at)}</span>
           </InfoItem>
           <InfoItem label="Answered">
             <span className={styles.infoValue}>
               {answered ? (
-                formatDate(call.answered_at!)
+                formatTimestamp(call.answered_at!)
               ) : (
                 <span className={styles.infoValueMuted}>Not answered</span>
               )}
@@ -386,7 +392,7 @@ export function CallDetailView({
           <InfoItem label="Ended">
             <span className={styles.infoValue}>
               {call.ended_at ? (
-                formatDate(call.ended_at)
+                formatTimestamp(call.ended_at)
               ) : (
                 <span className={styles.infoValueMuted}>--</span>
               )}

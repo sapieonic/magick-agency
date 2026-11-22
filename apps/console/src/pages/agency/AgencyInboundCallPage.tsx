@@ -13,6 +13,8 @@ import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { fetchInboundCallRecordingBlobUrl, getInboundCallLogDetail } from '../../api/agencySpine';
 import { errorCode, errorStatus } from '../../utils/agencyErrors';
 import { hasPermission } from '../../utils/permissions';
+import { formatDate } from '@magick-agency/web-ui/format';
+import { upperDayPeriod } from '../../utils/format/date';
 import { AGENCY_ANALYTICS_CAPABILITY, AGENCY_RECORDING_CAPABILITY } from '../../utils/agencyCampaignRecording';
 import { ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
 import { softphonePrefillState } from '../../utils/softphone/prefill';
@@ -35,6 +37,8 @@ import attemptStyles from './AgencyAttemptCallPage.module.css';
 import styles from './AgencyInboundCallPage.module.css';
 
 const ROLE_LABELS = { agent: 'Agent', customer: 'Customer' };
+/** The shared call card's instants, with AM / PM in capitals as everywhere on this page. */
+const callCardTimestamp = (iso: string) => upperDayPeriod(formatDate(iso));
 const ANALYSIS_MESSAGES: Record<string, string> = {
   awaiting_recording: ANALYSIS_STATUS_MESSAGES.awaiting_recording!,
   pending: ANALYSIS_STATUS_MESSAGES.pending!,
@@ -223,7 +227,7 @@ export default function AgencyInboundCallPage() {
           {cards.map((card) => (
             <FactCard key={card.title} card={card} icon={<MessageSquare size={16} />} />
           ))}
-          <ListenedToBy sessions={current.listen_sessions} />
+          <ListenedToBy sessions={current.listen_sessions} upperCaseTimes />
         </div>
       </div>
     );
@@ -247,8 +251,9 @@ export default function AgencyInboundCallPage() {
         fetchRecording={fetchRecording}
         onRetryAnalysis={undefined}
         onReload={() => void load()}
+        formatTimestamp={callCardTimestamp}
       />
-      <ListenedToBy sessions={current.listen_sessions} />
+      <ListenedToBy sessions={current.listen_sessions} upperCaseTimes />
     </div>
   );
 }

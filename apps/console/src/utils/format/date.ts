@@ -62,6 +62,16 @@ export function formatTimeOrDate(iso: string, now: Date): string {
   return new Date(iso).toDateString() === now.toDateString() ? formatTime(iso) : formatDate(iso);
 }
 
+/**
+ * A formatted time with its day period in capitals: "3:31 pm" → "3:31 PM" (the house style,
+ * AS15). The display locale (`en-IN`) writes "am" / "pm" in lower case, and most of the console
+ * still shows it so; the campaign Call log and the inbound Call page say every time through this,
+ * so one page never mixes the two (`docs/call-log.md` §4).
+ */
+export function upperDayPeriod(text: string): string {
+  return text.replace(/\b([ap])\.?m\b\.?/gi, (_match, letter: string) => `${letter.toUpperCase()}M`);
+}
+
 /** `09:05 am`, on the reader's clock. */
 export function formatClockTime(date: Date): string {
   return dateFormatter(CLOCK_TIME).format(date);

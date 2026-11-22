@@ -140,18 +140,18 @@ describe('an answered inbound call', () => {
     expect((await screen.findByTestId('inbound-call-caller')).textContent).toContain('98765 04821');
     expect(mocks.getInboundCallLogDetail).toHaveBeenCalledWith('camp-1', 'inbound-1', 'tenant-1', 'account-1');
     expect(screen.getByTestId('inbound-call-headline').textContent)
-      .toBe('Inbound · 22 Nov 2026, 03:42 pm · filed under this campaign because the number is on its list');
+      .toBe('Inbound · 22 Nov 2026, 03:42 PM · filed under this campaign because the number is on its list');
   });
 
   it('tells the caller’s path in order', async () => {
     renderPage();
     const steps = within(await screen.findByTestId('inbound-call-journey')).getAllByRole('listitem');
     expect(steps.map((step) => step.textContent)).toEqual([
-      'Rang3:42:01 pm · Sales line',
+      'Rang3:42:01 PM · Sales line',
       'Greetingwe answered and played our message',
       'Waited 0:18came through their agent',
-      'Priya Nair answered3:42:19 pm',
-      'Ended3:46:31 pm · talk 4:12',
+      'Priya Nair answered3:42:19 PM',
+      'Ended3:46:31 PM · talk 4:12',
     ]);
   });
 
@@ -234,6 +234,26 @@ describe('a missed inbound call', () => {
     renderPage();
     expect((await screen.findByTestId('inbound-call-caller')).textContent).toContain('Number withheld');
     expect(screen.queryByTestId('inbound-call-back')).toBeNull();
+  });
+});
+
+describe('every time on the page reads with AM / PM in capitals', () => {
+  it('the headline, the path, the outcome card, the shared call card and who listened', async () => {
+    mocks.getInboundCallLogDetail.mockResolvedValue(detail({
+      listen_sessions: [{
+        id: 'ls-1', supervisor_user_id: 'u-anil', supervisor_name: 'Anil Kapoor',
+        started_at: '2026-11-22T15:43:00.000Z', ended_at: '2026-11-22T15:45:00.000Z',
+      }] as never,
+    }));
+    renderPage();
+    await screen.findByTestId('inbound-call-caller');
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('22 Nov 2026, 03:42 PM');
+    expect(text).toContain('3:42:19 PM');
+    expect(screen.getByTestId('call-fact-Saved').textContent).toContain('03:47 PM');
+    // The shared call card's own instants (created, answered, ended) and the listen's span.
+    expect(text).toMatch(/03:43 PM–03:45 PM/);
+    expect(text).not.toMatch(/\d ?(am|pm)\b/);
   });
 });
 
