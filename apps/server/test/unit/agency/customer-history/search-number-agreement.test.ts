@@ -120,23 +120,41 @@ describe('an unlisted platform default agrees with the roster ingest exactly', (
 
 /**
  * Inbound calls (`docs/call-log.md` §8, CL39): the history matches `agency_inbound_calls.from_e164`
- * exactly too. The arrival stores the caller as `plivoNumberToE164` reads what the carrier sent
- * (the full number, with or without its `+`), so for every number the table accepts, the form
- * the search looks for is the form an inbound call from it was stored under.
+ * exactly too. "Found however it is typed" is about what the READER types: the search turns it
+ * into one E.164. What is stored depends on what the CARRIER sent, and the arrival
+ * (`plivoNumberToE164`) only adds a missing `+`: it knows no default country and drops no trunk 0.
+ * So a call is found when the carrier sent the caller in full with its country code, which is
+ * what Plivo is documented to send; that this holds on a live line is one of the P0 checks
+ * (`docs/inbound.md` §12), not something a unit test can show. The cases below pin today's
+ * arrival for every other form, so a change to it shows up here.
  */
-describe('the search number agrees with how an inbound call\'s caller is stored', () => {
-  const accepted = TABLE.cases.filter((c) => typeof c.e164 === 'string');
+describe('how an inbound call\'s caller is stored, against what the search looks for', () => {
+  const india = resolveSearchCountry('IN', '91');
+  const searched = (typed: string) => {
+    const parsed = parseSearchNumber(typed, india);
+    return parsed.ok ? parsed.e164 : null;
+  };
 
-  it.each(accepted.map((c) => [c.input, c.e164!] as const))('%s is searched as %s, the caller an arrival stores', (_input, e164) => {
-    expect(plivoNumberToE164(e164)).toBe(e164);
-    expect(plivoNumberToE164(e164.slice(1))).toBe(e164);
+  it('a caller sent in full, with or without its +, is stored as the E.164 every typed form is searched as', () => {
+    for (const sent of ['919876543210', '+919876543210', ' 919876543210 ']) {
+      expect(plivoNumberToE164(sent), sent).toBe('+919876543210');
+    }
+    for (const typed of ['+91 98765 43210', '098765-43210', '98765 43210', '9876543210', '+919876543210']) {
+      expect(searched(typed), typed).toBe('+919876543210');
+    }
   });
 
-  it('+91, a leading 0, spaces and bare digits are one caller', () => {
-    const stored = plivoNumberToE164('919876543210');
-    expect(stored).toBe('+919876543210');
-    for (const typed of ['+91 98765 43210', '098765-43210', '98765 43210', '9876543210', '+919876543210']) {
-      expect(parseSearchNumber(typed, resolveSearchCountry('IN', '91')), typed).toMatchObject({ ok: true, e164: stored });
+  it('PINNED, not found today: a caller sent in national format is stored as if its first digits were a country code', () => {
+    // Ten national digits get a `+` and nothing else: `+9876543210`, not `+919876543210`.
+    const stored = plivoNumberToE164('9876543210');
+    expect(stored).toBe('+9876543210');
+    // No way of typing the customer's number in India's box searches for that.
+    for (const typed of ['9876543210', '09876543210', '+91 98765 43210']) expect(searched(typed), typed).not.toBe(stored);
+  });
+
+  it('PINNED, not found today: a caller sent with a trunk 0, punctuation or as text is stored as withheld (no number)', () => {
+    for (const sent of ['09876543210', '0919876543210', '+91 98765 43210', '98765-43210', 'anonymous', 'sip:9876543210@carrier', '']) {
+      expect(plivoNumberToE164(sent), sent).toBeNull();
     }
   });
 });
