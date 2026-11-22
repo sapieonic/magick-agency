@@ -154,13 +154,16 @@ export type AgencyCampaignTemplateFilledSource = Exclude<AgencyCampaignTemplateS
  *    so the numbers section is built-in (the server's judgement).
  *  - `section_flag_off`: a template set a section whose feature is off for the account
  *    (`AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS`), so it is built-in.
+ *  - `outcome_overrides_off`: the template's outcomes carry agent overrides, which need contact
+ *    assignment; it is off for the account, so the overrides were left out (the outcomes stay).
  */
 export type AgencyCampaignTemplateNoteCode =
   | 'recording_not_allowed'
   | 'analysis_profile_unavailable'
   | 'numbers_unavailable'
   | 'carrier_unavailable'
-  | 'section_flag_off';
+  | 'section_flag_off'
+  | 'outcome_overrides_off';
 
 export const AGENCY_CAMPAIGN_TEMPLATE_NOTE_CODES = [
   'recording_not_allowed',
@@ -168,6 +171,7 @@ export const AGENCY_CAMPAIGN_TEMPLATE_NOTE_CODES = [
   'numbers_unavailable',
   'carrier_unavailable',
   'section_flag_off',
+  'outcome_overrides_off',
 ] as const satisfies readonly AgencyCampaignTemplateNoteCode[];
 
 /** One note on a filled-in template: its code, the section it is about, and the numbers dropped (`numbers_unavailable` only). */

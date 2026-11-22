@@ -521,6 +521,12 @@ export interface AgencyCampaign {
   id: string;
   name: string;
   status: string;
+  /**
+   * When the campaign row was created (the row's `created_at`; `formatAgencyCampaignResponse`
+   * spreads the row, so every campaign payload has always carried it). Typed for campaign
+   * Settings' "Started from <template> · created <date>" (`docs/campaign-templates.md` §7).
+   */
+  created_at?: string;
   account_id?: string | null;
   /**
    * ⚠️ **There is no `description`, and one must not be added back here.**

@@ -164,6 +164,8 @@ export function noteSentence(note: AgencyCampaignTemplateNote): string {
       return 'The template’s carrier account is no longer active for this account, so pick the numbers to call from yourself.';
     case 'section_flag_off':
       return `${SECTION_LABELS[note.section]} is not turned on for this account, so it starts with the built-in settings.`;
+    case 'outcome_overrides_off':
+      return 'Contact assignment is not turned on for this account, so the outcomes start without their agent overrides.';
   }
 }
 

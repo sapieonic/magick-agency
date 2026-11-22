@@ -317,10 +317,12 @@ export interface AgencySoftphoneOutcomesTemplate {
 export interface AgencySoftphoneSettingsResponse {
   settings: AgencySoftphoneSettings;
   /**
-   * The settings page's "Follow campaign template (<name>)" (CT11): what untagged outcomes
-   * follow, or `null` when the soft phone sets its own (`settings.disposition_catalog` not
-   * empty) or campaign templates are off for the account ("Set for the soft phone", or the
-   * built-in outcomes as before). Always sent by this server; optional for a client of an older one.
+   * The settings page's "Follow campaign template (<name>)" (CT11): what untagged outcomes follow,
+   * or would follow, while the soft phone sets none of its own. Sent whenever campaign templates
+   * are on for the account, WHETHER OR NOT the soft phone sets its own list
+   * (`settings.disposition_catalog` not empty says it does), so the page can name what "Follow"
+   * would give before the operator chooses it; `null` only when templates are off. Carried by the
+   * `PUT /settings` answer too. Always sent by this server; optional for a client of an older one.
    */
   outcomes_template?: AgencySoftphoneOutcomesTemplate | null;
 }

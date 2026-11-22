@@ -246,13 +246,25 @@ export interface AgencyCampaignTemplateEffective {
  * name and version are copied in rather than joined.
  *
  * `template` is `null` when the campaign was made from the built-in settings with the feature on.
- * After an apply (CT16) it names the template applied, and only the applied sections' sources
- * change.
+ * After an apply (CT16) it names the template applied.
+ *
+ * ── What a section's source means (CT9 as amended 2026-11-22) ─────────────────
+ * Each section is compared with the named template version (and its based-on version) as filled in
+ * for the campaign's account, the notes' adjustments included: equal, it carries that filled-in
+ * source (`account`, `organisation` or `builtin`); different, it is `campaign`. The server
+ * recomputes every source at the create, at each settings PATCH and at an apply, so the record
+ * stays true when New campaign edits the draft after a roster upload made it, when a supervisor
+ * changes the campaign later, and for the sections an apply did not touch.
+ *
+ * `notes` are the notes of that filling-in (recording off because the account cannot record,
+ * numbers dropped, …), kept so the campaign can say why a section is not as the template says.
  */
 export interface AgencyCampaignTemplateSource {
   template: (AgencyCampaignTemplateRef & { scope: AgencyCampaignTemplateScope }) | null;
   based_on: AgencyCampaignTemplateRef | null;
   sections: Record<AgencyCampaignTemplateSectionKey, AgencyCampaignTemplateSectionSource>;
+  /** Absent on a record written before notes were kept. */
+  notes?: AgencyCampaignTemplateNote[];
 }
 
 /**
