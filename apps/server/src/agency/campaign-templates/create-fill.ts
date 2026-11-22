@@ -19,7 +19,7 @@
  *
  * The body is the caller's; it is never mutated (a new object is returned).
  */
-import { builtinTemplateSections, withBuiltinFields, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
+import { builtinTemplateSections, sectionSent, withBuiltinFields, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
 import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
@@ -56,12 +56,11 @@ export function filledCreateBody(
   const out: Record<string, unknown> = { ...sent };
   const filled = config as Record<string, unknown>;
   for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
-    const fields = AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[];
-    if (fields.some((f) => sent[f] !== undefined)) {
+    if (sectionSent(key, sent)) {
       // Sent: kept as sent, its absent fields built-in (the domain's one statement of that rule).
       Object.assign(out, withBuiltinFields(key, sent, builtin));
     } else {
-      for (const f of fields) out[f] = structuredClone(filled[f]);
+      for (const f of AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[]) out[f] = structuredClone(filled[f]);
     }
   }
   return out;

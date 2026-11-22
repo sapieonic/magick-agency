@@ -175,6 +175,14 @@ function normaliseField(field: AgencyCampaignTemplateField, value: unknown): unk
 }
 
 /**
+ * THE rule "a body sends a section when it sends any of its fields" (CT8, CT9): a field counts as
+ * sent when present and not `undefined`. The create's fill-in and its section sources both ask it.
+ */
+export function sectionSent(key: Key, body: Readonly<Record<string, unknown>>): boolean {
+  return fieldsOf(key).some((f) => body[f] !== undefined);
+}
+
+/**
  * THE rule "an absent field of a set section is its built-in value" (CT2's "whole", CT8's "kept as
  * sent"; module note): section `key`'s fields in the map's order, each as given, or a deep copy of
  * its built-in value when absent (or `undefined`). Fields outside the section are left out.
@@ -470,7 +478,7 @@ export function sectionSourcesForCreate(
   const out = {} as Record<Key, AgencyCampaignTemplateSectionSource>;
   for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
     const fields = fieldsOf(key);
-    if (!fields.some((f) => body[f] !== undefined)) {
+    if (!sectionSent(key, body)) {
       out[key] = resolved.sources[key];
       continue;
     }

@@ -22,6 +22,7 @@ import {
   resolveTemplateSections,
   sameTemplateValue,
   sectionKeysSet,
+  sectionSent,
   sectionSourcesForCreate,
   sectionsFromCampaign,
   withBuiltinFields,
@@ -414,6 +415,13 @@ describe('the small helpers', () => {
 });
 
 describe('the rules the server reuses (D13)', () => {
+  it('sectionSent: a section is sent when any of its fields is, undefined not counting', () => {
+    expect(sectionSent('wrapup', { wrapup_seconds: 5 })).toBe(true);
+    expect(sectionSent('wrapup', { wrapup_seconds: undefined, name: 'x' })).toBe(false);
+    expect(sectionSent('hours', { wrapup_seconds: 5 })).toBe(false);
+    expect(sectionSent('outcomes', { disposition_catalog: [] })).toBe(true);
+    expect(sectionSent('wrapup', { wrapup_seconds: null })).toBe(true);
+  });
   it('withBuiltinFields: an absent field of a set section is its built-in value, a copy', () => {
     const s = withBuiltinFields('wrapup', { wrapup_seconds: 5 });
     expect(s).toStrictEqual({
