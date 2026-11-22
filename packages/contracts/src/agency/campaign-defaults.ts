@@ -160,3 +160,32 @@ export const AGENCY_OUR_FAULT_RETRY_DEFAULT = Object.freeze({
  * fired on another would be invisible until an audit.
  */
 export const AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT = 3;
+
+/**
+ * The `agency_campaigns` column DEFAULTs that are a choice rather than an empty value, as a
+ * campaign create that omits the field stores them: the carrier (the service's own VoiceLink
+ * account), the calling hours (09:00 to 20:00, Monday to Friday, in UTC; `HH:MM:SS`, as Postgres
+ * renders a `TIME`), the wrap-up window and its two switches, recording, and inbound sticky
+ * routing. Campaign templates' built-in settings are read from here
+ * (`docs/campaign-templates.md` §5), so a campaign made from no template is the campaign a create
+ * makes today.
+ *
+ * One declaration: the server's create path, its config validator's base and the Insights
+ * "hours never set" check import it, and a server integration test pins every value to the
+ * column's DEFAULT (`campaign-template-repository.test.ts`). The other column defaults have their
+ * own constants: {@link AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT}, `AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`
+ * (`./assignment.ts`), `AGENCY_PHONE_DISPLAY_DEFAULT` (`./session.ts`); the JSONB columns default
+ * to empty (`[]`, `{}`) and the nullable ones to NULL.
+ */
+export const AGENCY_CAMPAIGN_COLUMN_DEFAULTS = Object.freeze({
+  telephony_provider: 'voicelink',
+  calling_window_start: '09:00:00',
+  calling_window_end: '20:00:00',
+  calling_days: Object.freeze([1, 2, 3, 4, 5] as const),
+  default_timezone: 'UTC',
+  wrapup_seconds: 30,
+  wrapup_auto_return: true,
+  allow_wrapup_redial: false,
+  record_calls: false,
+  inbound_sticky_enabled: true,
+} as const);

@@ -24,6 +24,7 @@ import {
   type AgencyAttemptOutcome,
   type AgencyAutoDispositionOutcome,
   type AgencyReservedBreakReason,
+  AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
 } from '@magick-agency/contracts/agency';
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '@magick-agency/contracts/api/agency/agency-campaign';
@@ -186,7 +187,8 @@ const MAX_TIMEZONE_LENGTH = 64;
 /**
  * The `agency_campaigns` column defaults, which are what an omitted field becomes.
  *
- * Duplicated from SQL on purpose and kept narrow: the cross-field
+ * Kept narrow, and the window's two sides are the contract's `AGENCY_CAMPAIGN_COLUMN_DEFAULTS`
+ * (one declaration, pinned to the column DEFAULTs by a server integration test). The cross-field
  * `start !== end` rule cannot be evaluated on a body that carries only one side,
  * and on a POST the other side is the column default rather than nothing. Without
  * this, `POST { calling_window_start: '20:00' }` stores 20:00–20:00 — a campaign
@@ -195,8 +197,8 @@ const MAX_TIMEZONE_LENGTH = 64;
  * configured one.
  */
 export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
-  calling_window_start: '09:00:00',
-  calling_window_end: '20:00:00',
+  calling_window_start: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start,
+  calling_window_end: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end,
   // The automatic-outcome pair's defaults, so a create's map is checked against the
   // catalog it will actually store (`validateOutcomeDispositions`): none sent ⇒ `[]`.
   disposition_catalog: [],

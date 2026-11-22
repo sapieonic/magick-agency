@@ -314,6 +314,19 @@ by the public API layer itself and have no dialer counterpart. `AgencyCompareErr
 re-exported. It reads one dialer-contract name unchanged, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, the
 floor of its rates.
 
+Campaign templates (`campaign-templates.ts`, docs/campaign-templates.md) are console-side too: the
+templates, their versions, the filled-in form (`AgencyCampaignTemplateEffective`), apply and the
+refusal bodies are served by the public API layer from its own tables (0067), with no dialer twin.
+The section map and the shapes the domain rules share (`AGENCY_CAMPAIGN_TEMPLATE_SECTIONS` and its
+key list, `AgencyCampaignTemplateSections`, `AgencyCampaignTemplateConfig`, the section sources and
+the notes) are declared once in the dialer contract (`../../agency/campaign-template-sections.ts`)
+and re-exported here unchanged (as §3), with `AGENCY_CAMPAIGN_COLUMN_DEFAULTS`
+(`../../agency/campaign-defaults.ts`). `AgencyCampaignTemplateErrorCode` /
+`AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES` / `AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS` are declared in
+`../../errors.ts` (§10) and re-exported. The campaign object gains `template_source?:
+AgencyCampaignTemplateSource | null` (the column of 0067, spread by `formatAgencyCampaignResponse`),
+and the create body is typed `AgencyCampaignCreateRequest` (the campaign's fields and `template_id`).
+
 Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live list
 (`AgencyLiveCall`, `AgencyLiveCallsResponse`, `AgencyLiveCallsQuery`, the listeners), the number
 reveal (`AgencyLiveCallNumberResponse`, its refusal `AgencyLiveCallNumberErrorResponse`), the

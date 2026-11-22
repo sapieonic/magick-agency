@@ -3,6 +3,8 @@ import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+  AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES,
+  AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS,
   AGENCY_COMPARE_ERROR_CODES,
   AGENCY_COMPARE_ERROR_STATUS,
   AGENCY_FLOOR_ASSIST_ERROR_CODES,
@@ -15,6 +17,7 @@ import {
   type AgencyActionErrorCode,
   type AgencyCampaignArchiveErrorCode,
   type AgencyCampaignLifecycleErrorCode,
+  type AgencyCampaignTemplateErrorCode,
   type AgencyCompareErrorCode,
   type AgencyFloorAssistErrorCode,
   type AgencyInboundErrorCode,
@@ -537,5 +540,55 @@ describe('compare codes', () => {
       ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_FLOOR_ASSIST_ERROR_CODES,
     ]);
     for (const code of AGENCY_COMPARE_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Campaign templates (src/errors.ts §10, re-exported by src/api/agency/campaign-templates.ts;
+// docs/campaign-templates.md §6).
+const _templateExact: Equals<(typeof AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES)[number], AgencyCampaignTemplateErrorCode> = true;
+const _consoleTemplateAgrees: Equals<AgencyApi.AgencyCampaignTemplateErrorCode, AgencyCampaignTemplateErrorCode> = true;
+const _templateStatusKeys: Equals<keyof typeof AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS, AgencyCampaignTemplateErrorCode> = true;
+void [_templateExact, _consoleTemplateAgrees, _templateStatusKeys];
+
+describe('campaign template codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES]).toEqual([
+      'campaign_template_not_found',
+      'campaign_template_changed',
+      'campaign_template_name_taken',
+      'campaign_template_in_use',
+      'campaign_template_scope_invalid',
+      'campaign_template_section_invalid',
+      'campaign_template_archived',
+      'campaign_template_invalid',
+    ]);
+    expectUnique(AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES);
+  });
+
+  it('answer these statuses (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS).toEqual({
+      campaign_template_not_found: 404,
+      campaign_template_changed: 409,
+      campaign_template_name_taken: 409,
+      campaign_template_in_use: 409,
+      campaign_template_scope_invalid: 400,
+      campaign_template_section_invalid: 400,
+      campaign_template_archived: 409,
+      campaign_template_invalid: 400,
+    });
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES).toBe(AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES);
+    expect(AgencyApi.AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS).toBe(AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS);
+  });
+
+  it('do not overlap any other agency error union (the console reads them beside campaign and compare codes)', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES,
+      ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_FLOOR_ASSIST_ERROR_CODES, ...AGENCY_COMPARE_ERROR_CODES,
+      ...AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES, ...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

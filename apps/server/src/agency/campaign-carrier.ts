@@ -25,9 +25,10 @@ import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/
 import { telephonyProviderRepository } from '../db/repositories/telephony-provider.repository.js';
 import { findCredentialSpec } from '../telephony/credentials/credential-specs.js';
 import { UUID_RE } from '../utils/uuid.js';
+import { AGENCY_CAMPAIGN_COLUMN_DEFAULTS } from '@magick-agency/contracts/agency';
 
 /** The carrier on the service's own account, and every campaign's default (the column DEFAULT). */
-export const DEFAULT_CAMPAIGN_PROVIDER = 'voicelink';
+export const DEFAULT_CAMPAIGN_PROVIDER = AGENCY_CAMPAIGN_COLUMN_DEFAULTS.telephony_provider;
 
 /** A refusal: a 400 naming fields, or a coded 404/409. */
 export type CampaignCarrierRefusal =

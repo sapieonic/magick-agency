@@ -11,6 +11,7 @@
 import type * as Core from '../../agency';
 import type { AgencyAgentState, AgencyBreakReason, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
+import type { AgencyCampaignTemplateSource } from './campaign-templates';
 import type {
   AgencyAgentScript,
   AgencyAssignmentMode,
@@ -793,6 +794,16 @@ export interface AgencyCampaign {
    * archived, and on one archived by a caller with no user id.
    */
   archived_by?: AgencyCampaignActor | null;
+
+  // ── Campaign templates (docs/campaign-templates.md, CT9) ────────────────────
+
+  /**
+   * The template this campaign was made from, as it was then, and where each section came from
+   * (`./campaign-templates.ts`). `null` on a campaign made without the feature and on a retry
+   * campaign (CT7). Written by the create path and by an apply to a draft (CT16); never sent by a
+   * client, and never read at run time (CT1).
+   */
+  template_source?: AgencyCampaignTemplateSource | null;
 }
 
 /**
