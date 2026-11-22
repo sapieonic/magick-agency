@@ -52,15 +52,13 @@ export function TemplateEditorForm({
   const basedOnGone = editor.basedOnId !== null && !organisationTemplates.some((t) => t.id === editor.basedOnId);
   const fixable = editor.blocked || editor.hasFieldErrors;
 
+  // Read-only, the page says whose template it is; the card only carries a description.
   const about = readOnly ? (
-    <section className={styles.card} aria-label="About this template" data-testid="template-about">
-      {template?.description ? <p className={styles.description}>{template.description}</p> : null}
-      <p className={styles.muted}>
-        {scope === 'organisation'
-          ? 'An organisation template. You can see what it sets here; an organisation admin changes it.'
-          : 'An account template. You can see what it sets here.'}
-      </p>
-    </section>
+    template?.description ? (
+      <section className={styles.card} aria-label="About this template" data-testid="template-about">
+        <p className={styles.description}>{template.description}</p>
+      </section>
+    ) : null
   ) : (
     <section className={styles.card} aria-label="About this template" data-testid="template-about">
       <div className={styles.aboutFields}>

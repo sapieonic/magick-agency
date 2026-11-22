@@ -272,16 +272,16 @@
 }
 
 /*
-  Only Discard and Save stick to the bottom (U4): on a phone the bar is two short rows at most,
-  the note above the buttons, so it never covers the controls it sits over.
+  Only Discard and Save stick to the bottom (U4): one row, the note beside the buttons in at most
+  two short lines, so on a phone the bar is one button high (about 58px at 375px wide) and never
+  covers the controls it sits over.
 */
 .saveBar {
   position: sticky;
   bottom: 8px;
   z-index: 5;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
   padding: 8px 12px;
@@ -292,21 +292,26 @@
 }
 
 .saveBarNote {
-  flex: 1 1 200px;
+  flex: 1 1 auto;
   min-width: 0;
   font-size: 12px;
+  line-height: 1.3;
   color: var(--text-secondary);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.saveBarNote:empty {
-  display: none;
+.saveBarNote .linkButton {
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
 }
 
 .saveBarActions {
   display: flex;
+  flex: none;
   gap: 8px;
   margin-left: auto;
 }
@@ -316,16 +321,8 @@
     padding: 6px 8px;
   }
 
-  .saveBarNote {
-    flex-basis: 100%;
-  }
-
-  .saveBarActions {
-    width: 100%;
-  }
-
   .saveBarActions > button {
-    flex: 1;
+    padding-inline: 12px;
   }
 }
 
@@ -528,15 +525,19 @@
 
 .effectiveRow {
   display: grid;
-  grid-template-columns: minmax(120px, 180px) max-content 1fr;
+  grid-template-columns: minmax(120px, 180px) 160px 1fr;
   gap: 4px 12px;
   align-items: baseline;
   font-size: 13px;
 }
 
+.effectiveRow > .source {
+  justify-self: start;
+}
+
 @media (max-width: 640px) {
   .effectiveRow {
-    grid-template-columns: 1fr max-content;
+    grid-template-columns: 1fr auto;
     padding-bottom: 6px;
     border-bottom: 1px solid var(--border);
   }
