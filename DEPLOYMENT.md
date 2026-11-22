@@ -915,15 +915,51 @@ that an inbound miss booked): if `agency_contacts` holds more than about a milli
 `CONCURRENTLY` first the same way; going back past it needs no `migrate:down` (an index only). Nor
 do `0054_analysis_vendor_answers.sql` and `0055_analysis_vendor_answer_indexes.sql`: an older image
 ignores the nullable `vendor_refused_at` and `completed_at` and has no summary delay at all, so every
-pending call shows the ordinary pending copy again. `0067_call_log_inbound_campaign.sql` (inbound
-calls in the campaign Call log) backfills `agency_inbound_calls.campaign_id` from the matched
-campaign inside its transaction: if that table holds more than about a million rows, add the two
-columns and run the same UPDATE in batches by `id` first, as its header says (the migration's own
-then writes nothing). `0068_call_log_inbound_indexes.sql` adds one index on `agency_inbound_calls`
-and one on `agency_manual_calls`; neither can be built before 0067 (their columns are new), and the
-one on `agency_manual_calls` is empty on that release, so its build is one read of the table. Going
-back past the two needs no `migrate:down`: an older image ignores the nullable columns and reads
-`matched_campaign_id` as before.
+pending call shows the ordinary pending copy again.
+
+**Before deploying the release with `0067_call_log_inbound_campaign.sql`** (inbound calls in the
+campaign Call log). 0067 files every existing inbound call under its matched campaign
+(`agency_inbound_calls.campaign_id`) inside its own transaction, with the server down. If
+`agency_inbound_calls` holds more than about a million rows, do that work first, with the server
+running; the migration is written to find it done (its header gives the same steps). Add the two
+columns, which the running server ignores, then run the batch until it reports `UPDATE 0`, each
+batch as its own transaction:
+
+```sql
+ALTER TABLE agency_inbound_calls
+  ADD COLUMN IF NOT EXISTS campaign_id UUID,
+  ADD COLUMN IF NOT EXISTS campaign_source VARCHAR(16);
+```
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE agency_inbound_calls DISABLE TRIGGER trg_agency_inbound_calls_updated_at;
+UPDATE agency_inbound_calls
+   SET campaign_id = matched_campaign_id, campaign_source = 'contact'
+ WHERE id IN (SELECT id FROM agency_inbound_calls
+               WHERE matched_campaign_id IS NOT NULL AND campaign_id IS NULL
+               LIMIT 10000);
+ALTER TABLE agency_inbound_calls ENABLE TRIGGER trg_agency_inbound_calls_updated_at;
+COMMIT;
+```
+
+The trigger is switched off inside each batch so the calls' `updated_at` is kept, as the migration
+keeps it. `DISABLE TRIGGER` holds a lock that makes the server's own writes to this table wait
+until the batch commits (well under a second at 10,000 rows), so keep the batches that size and
+never leave one open; a batch that fails rolls back with the trigger still on. Then deploy: 0067
+finds the columns (`ADD COLUMN IF NOT EXISTS`; it fails, changing nothing, if they were added
+with other types) and files only the calls that arrived since the last batch.
+`0068_call_log_inbound_indexes.sql` validates 0067's CHECK (one read of the table, writes
+proceed) and adds one index on `agency_inbound_calls` and one on `agency_manual_calls`; neither
+index can be built before 0067 (their columns are new), and the one on `agency_manual_calls` is
+empty on that release, so its build is one read of the table.
+
+**Going back past 0067 and 0068** needs no `migrate:down`: an older image ignores the nullable
+columns and reads `matched_campaign_id` as before. But the older image does not file the calls
+that arrive while it runs (`campaign_id` stays NULL), and nothing files them later, so they would
+be missing from their campaign's Call log. **After rolling forward again, run the batch above
+until it reports `UPDATE 0`**: it files exactly those calls.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is

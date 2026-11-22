@@ -1882,19 +1882,27 @@ One call log per campaign, P2 (docs/call-log.md §4).
 under, the column the campaign Call log reads; **`campaign_source`** (VARCHAR(16), nullable) says how
 it came by it: `contact` (its number is on the campaign's list), `route`, `agent`, `supervisor`
 (contract `AGENCY_INBOUND_CAMPAIGN_SOURCES`; the last three are written by a later phase).
-**`ck_agency_inbound_calls_campaign_source`**: both NULL, or both set with a source of the list.
+**`ck_agency_inbound_calls_campaign_source`**: both NULL, or both set with a source of the list;
+added `NOT VALID` here and validated by 0068 (0057 / 0058's split).
 **Backfill**: every call with a `matched_campaign_id` is filed under it (`contact`), `updated_at`
 kept (the trigger is disabled around it); an unmatched call stays NULL (CL10). The arrival writes
-both from now on (`insertArrival`).
+both from now on (`insertArrival`). **A large table** adds the columns and backfills in batches
+before the deploy (the file's header, DEPLOYMENT.md 12): the columns are `ADD COLUMN IF NOT
+EXISTS`, their types are checked (a column pre-added with another type fails the migration), and
+the UPDATE files only what is still unfiled. The same UPDATE repairs the calls that arrived
+under an older image after a rollback.
 **`agency_manual_calls.callback_of_inbound_call_id`** (UUID, nullable, no FK): the Missed inbound
 call a soft-phone call was placed from (its Call back, CL1). `SET LOCAL lock_timeout = '10s'`.
 **Down** drops the CHECK and the three columns; the call-back links are lost.
 **Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (the columns, the CHECK from
-every side, the backfill with `updated_at` kept, down then up) and the down → up inventory suite.
+every side, the backfill with `updated_at` kept, the documented pre-deploy path: columns added
+and a batch run first, then the migration; the wrong-type refusal; the CHECK `NOT VALID` after
+0067 and validated after 0068; down then up) and the down → up inventory suite.
 
 ### 0068 — `migrations/0068_call_log_inbound_indexes.sql`
 
-0067's indexes, out of its ACCESS EXCLUSIVE.
+0067's indexes and the validation of its CHECK (`VALIDATE CONSTRAINT
+ck_agency_inbound_calls_campaign_source`), out of its ACCESS EXCLUSIVE.
 **`idx_agency_inbound_calls_campaign`** `(campaign_id, arrived_at DESC, id DESC) WHERE campaign_id IS
 NOT NULL` on `agency_inbound_calls`: the campaign Call log's inbound branch
 (`listCallLogForCampaign`), a keyset range per campaign.

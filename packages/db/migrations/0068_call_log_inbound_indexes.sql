@@ -1,5 +1,11 @@
 -- 0068_call_log_inbound_indexes.sql — the campaign Call log's inbound indexes (docs/call-log.md
--- §4), built out of 0067's ACCESS EXCLUSIVE (0057 / 0058's split).
+-- §4) and the validation of 0067's CHECK, out of 0067's ACCESS EXCLUSIVE (0057 / 0058's split).
+--
+-- ── ck_agency_inbound_calls_campaign_source ───────────────────────────────────
+-- VALIDATE CONSTRAINT: every row written since 0067 was already checked, 0067's backfill wrote
+-- `contact` beside each campaign, and every other row has both columns NULL, so validation
+-- cannot fail. It reads the table once under SHARE UPDATE EXCLUSIVE (writes proceed). Afterwards
+-- pg_constraint.convalidated is true.
 --
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 -- idx_agency_inbound_calls_campaign on agency_inbound_calls
@@ -24,7 +30,8 @@
 -- a failed concurrent build leaves under the name. `SET LOCAL lock_timeout = '10s'` first.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
--- Drops both; the reads fall back to other plans (correct, slower).
+-- Drops both indexes; the reads fall back to other plans (correct, slower). A validated CHECK
+-- cannot be marked NOT VALID again, and need not be: 0067's Down drops it.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).
@@ -60,6 +67,8 @@ BEGIN
   END IF;
 END
 $$;
+
+ALTER TABLE agency_inbound_calls VALIDATE CONSTRAINT ck_agency_inbound_calls_campaign_source;
 
 -- Down Migration
 

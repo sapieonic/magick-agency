@@ -109,6 +109,90 @@ describe('0067 — the campaign an inbound call is filed under, and the call bac
   });
 });
 
+describe('0067 on a large table: the columns added and the backfill run before the deploy (its header, DEPLOYMENT.md)', () => {
+  const validated = async () =>
+    (await pool().query<{ convalidated: boolean }>('SELECT convalidated FROM pg_constraint WHERE conname = $1', [CHECK])).rows[0]?.convalidated;
+
+  it('finds the columns and the batches\' work, files only what arrived since, and keeps updated_at', async () => {
+    await migrate('down', migrationsFrom(COLUMNS_FILE));
+    try {
+      const old = new Date('2026-01-01T00:00:00Z');
+      const campaign = randomUUID();
+      const batched = await call({ matched_contact_id: randomUUID(), matched_campaign_id: campaign, updated_at: old });
+      const unmatched = await call({ updated_at: old });
+      // Step 1 of the documented procedure: the columns, on the older schema.
+      await pool().query(
+        `ALTER TABLE agency_inbound_calls
+           ADD COLUMN IF NOT EXISTS campaign_id UUID,
+           ADD COLUMN IF NOT EXISTS campaign_source VARCHAR(16)`);
+      // Step 2: one batch, exactly as written there.
+      const client = await pool().connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL lock_timeout = '5s'`);
+        await client.query('ALTER TABLE agency_inbound_calls DISABLE TRIGGER trg_agency_inbound_calls_updated_at');
+        const batch = await client.query(
+          `UPDATE agency_inbound_calls
+              SET campaign_id = matched_campaign_id, campaign_source = 'contact'
+            WHERE id IN (SELECT id FROM agency_inbound_calls
+                          WHERE matched_campaign_id IS NOT NULL AND campaign_id IS NULL
+                          LIMIT 10000)`);
+        expect(batch.rowCount).toBe(1);
+        await client.query('ALTER TABLE agency_inbound_calls ENABLE TRIGGER trg_agency_inbound_calls_updated_at');
+        await client.query('COMMIT');
+      } finally {
+        client.release();
+      }
+      // A call that arrived after the last batch, written by the older server: matched, not filed.
+      const late = await call({ matched_contact_id: randomUUID(), matched_campaign_id: campaign, updated_at: old });
+      // Step 3: the deploy.
+      await migrate('up');
+      const read = async (id: unknown) =>
+        (await pool().query('SELECT campaign_id, campaign_source, updated_at FROM agency_inbound_calls WHERE id = $1', [id])).rows[0];
+      expect(await read(batched['id'])).toEqual({ campaign_id: campaign, campaign_source: 'contact', updated_at: old });
+      expect(await read(late['id'])).toEqual({ campaign_id: campaign, campaign_source: 'contact', updated_at: old });
+      expect(await read(unmatched['id'])).toEqual({ campaign_id: null, campaign_source: null, updated_at: old });
+      // The trigger is back on for everyone else.
+      const { rows: [touched] } = await pool().query('UPDATE agency_inbound_calls SET caller_dnc = true WHERE id = $1 RETURNING updated_at', [late['id']]);
+      expect((touched.updated_at as Date).getTime()).toBeGreaterThan(old.getTime());
+      expect(await validated()).toBe(true);
+      const { rows } = await pool().query('SELECT name FROM pgmigrations WHERE name = ANY($1::text[]) ORDER BY name', [[COLUMNS_FILE, INDEX_FILE].map((f) => f.replace(/\.sql$/, ''))]);
+      expect(rows).toHaveLength(2);
+    } finally {
+      await migrate('up');
+    }
+  });
+
+  it('refuses columns added beforehand with the wrong type, and records nothing', async () => {
+    await migrate('down', migrationsFrom(COLUMNS_FILE));
+    try {
+      await pool().query('ALTER TABLE agency_inbound_calls ADD COLUMN campaign_id UUID, ADD COLUMN campaign_source TEXT');
+      await expect(migrate('up')).rejects.toThrow(/added beforehand with the wrong type/);
+      const { rows } = await pool().query('SELECT name FROM pgmigrations WHERE name = $1', [COLUMNS_FILE.replace(/\.sql$/, '')]);
+      expect(rows).toEqual([]);
+    } finally {
+      await pool().query('ALTER TABLE agency_inbound_calls DROP COLUMN IF EXISTS campaign_source, DROP COLUMN IF EXISTS campaign_id');
+      await migrate('up');
+    }
+    expect(await column('agency_inbound_calls', 'campaign_source')).toEqual({ data_type: 'character varying', is_nullable: 'YES', column_default: null });
+  });
+
+  it('the CHECK is added NOT VALID by 0067 and validated by 0068', async () => {
+    // Down past 0067, then 0067 alone: a validated CHECK is never un-validated by 0068's Down.
+    await migrate('down', migrationsFrom(COLUMNS_FILE));
+    try {
+      await migrate('up', 1);
+      expect(await column('agency_inbound_calls', 'campaign_id')).toBeDefined();
+      expect(await validated()).toBe(false);
+      // NOT VALID still checks every new row.
+      await expect(call({ campaign_id: randomUUID() })).rejects.toMatchObject(refused);
+    } finally {
+      await migrate('up');
+    }
+    expect(await validated()).toBe(true);
+  });
+});
+
 describe('0068 — the Call log\'s inbound indexes', () => {
   it('defines both exactly, with their comments', async () => {
     for (const [name, definition] of Object.entries(INDEXES)) {
