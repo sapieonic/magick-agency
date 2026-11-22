@@ -60,9 +60,9 @@ export default function SoftphoneSettingsPage() {
 
   const [saved, setSaved] = useState<AgencySoftphoneSettings | null>(null);
   /**
-   * Campaign templates on (CT11): with no list of its own the soft phone follows the account's
-   * default template's outcomes, which the read names (`outcomes_template`; null without it, and
-   * then the built-in outcomes are what it follows).
+   * Campaign templates on (CT11): what "Follow" gives the untagged outcomes, as the read and each
+   * save name it (`outcomes_template`), whether or not the soft phone sets its own list. Null
+   * without it: the built-in outcomes.
    */
   const templatesOn = useFeatureFlagEnabled(CAMPAIGN_TEMPLATES_FLAG);
   const [follows, setFollows] = useState<SoftphoneOutcomesTemplate | null>(null);
@@ -123,8 +123,10 @@ export default function SoftphoneSettingsPage() {
     const result = await putSoftphoneSettings(payloadFromDraft(draft), tenantId ?? undefined, accountId ?? undefined);
     setSaving(false);
     if (result.ok) {
-      setSaved(result.value);
-      setDraft(draftFromSettings(result.value));
+      setSaved(result.value.settings);
+      setDraft(draftFromSettings(result.value.settings));
+      // What "Follow" gives now; an answer without the field (an older server) leaves it as read.
+      if (result.value.outcomesTemplate !== undefined) setFollows(result.value.outcomesTemplate);
       setTouched(false);
       setServerErrors({});
       showToast('Soft-phone settings saved.', 'success');
@@ -499,9 +501,11 @@ export default function SoftphoneSettingsPage() {
 
 /**
  * The outcome list with campaign templates on (CT11): "Follow campaign template (<name>)" (the
- * soft phone lists none of its own; a save sends the empty list, and untagged calls use the
- * account's default template's outcomes, read at the call) or "Set for the soft phone" (its own
- * list, edited as a campaign's). Without a template to follow, "Follow the built-in outcomes".
+ * soft phone lists none of its own, `disposition_catalog: []`; untagged calls use the outcomes of
+ * the account's default template chain, read at the call) or "Set for the soft phone" (its own
+ * list, edited as a campaign's). Which one is on comes from the soft phone's own list alone;
+ * `follows` says what Follow gives, named, or the built-in outcomes when no template is in the
+ * chain or the server does not say.
  */
 function TemplateOutcomes({
   follows,
@@ -518,7 +522,7 @@ function TemplateOutcomes({
 }) {
   const following = catalog.length === 0;
   const template = follows?.template ?? null;
-  const followed = template && follows && follows.disposition_catalog.length > 0 ? follows.disposition_catalog : DEFAULT_DISPOSITIONS;
+  const followed = follows && follows.disposition_catalog.length > 0 ? follows.disposition_catalog : DEFAULT_DISPOSITIONS;
   const followLabel = template ? `Follow campaign template (${template.name})` : 'Follow the built-in outcomes';
   return (
     <>
@@ -548,7 +552,7 @@ function TemplateOutcomes({
         <>
           <p className={styles.cardLead} data-testid="softphone-outcomes-following">
             {template
-              ? `Untagged calls use the outcomes of ${template.name}, the account’s default campaign template. A change to that template reaches the soft phone at once.`
+              ? `Untagged calls use the outcomes of ${template.name}, the ${template.scope === 'organisation' ? 'organisation’s' : 'account’s'} default campaign template. A change to that template reaches the soft phone at once.`
               : 'Untagged calls use the built-in outcomes. Agents press 1–9 to pick one.'}
           </p>
           <ol className={styles.builtIn}>

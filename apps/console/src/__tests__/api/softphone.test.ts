@@ -120,7 +120,7 @@ describe('the routes, methods and bodies of §6', () => {
     expect(await getSoftphoneSettings('t', 'a')).toEqual({ record_calls: true });
     const payload = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: null };
     const saved = await putSoftphoneSettings(payload, 't', 'a');
-    expect(saved).toEqual({ ok: true, value: { record_calls: true } });
+    expect(saved).toEqual({ ok: true, value: { settings: { record_calls: true }, outcomesTemplate: undefined } });
     expect(lastRequest()).toMatchObject({ url: '/proxy/agency/softphone/settings', method: 'PUT', body: payload });
   });
 
@@ -261,5 +261,22 @@ describe('the soft phone’s settings read (CT11)', () => {
     expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
     mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: { template: null } }));
     expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
+  });
+
+  it('reads the built-in outcomes Follow gives when no template is in the chain', async () => {
+    const follows = { template: null, disposition_catalog: [{ code: 'interested', label: 'Interested' }] };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toEqual(follows);
+  });
+
+  it('keeps what the outcomes follow from the PUT answer, and says when the answer has none', async () => {
+    const follows = { template: { id: 'tp-2', name: 'Recovery', version: 1, scope: 'organisation' }, disposition_catalog: [{ code: 'paid', label: 'Paid' }] };
+    const body = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: follows } });
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: null }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: null } });
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: undefined } });
   });
 });

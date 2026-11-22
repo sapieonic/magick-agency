@@ -112,7 +112,7 @@ describe('Settings → Soft phone', () => {
   });
 
   it('saves the whole row: record, profile, default caller ID, fields', async () => {
-    mocks.putSoftphoneSettings.mockImplementation(async (body: Record<string, unknown>) => ({ ok: true, value: { ...SAVED, ...body } }));
+    mocks.putSoftphoneSettings.mockImplementation(async (body: Record<string, unknown>) => ({ ok: true, value: { settings: { ...SAVED, ...body }, outcomesTemplate: undefined } }));
     await renderPage();
     fireEvent.click(screen.getByTestId('softphone-settings-record'));
     fireEvent.change(screen.getByTestId('softphone-settings-profile'), { target: { value: 'prof-1' } });
