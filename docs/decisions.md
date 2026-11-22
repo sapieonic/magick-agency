@@ -1042,6 +1042,11 @@ five questions on 2026-11-22: override by section (CT2), API creates get the tem
 named templates (CT10), the soft phone follows the account's template (CT11), no locked sections
 (CT12). The build's and the review's own calls (CT13–CT21, among them CT18's `Asia/Kolkata`
 built-in time zone and CT9's amended record) were accepted on 2026-11-22 ("The route taken for open
-decision looks good to me."). Every ruling is decided; the full table, CT1–CT21, is in
-[`campaign-templates.md`](campaign-templates.md) §2.
+decision looks good to me."). The fresh-context review added CT22 and CT23 on 2026-11-22. Every
+ruling is decided; the full table, CT1–CT23, is in [`campaign-templates.md`](campaign-templates.md)
+§2. The two the review added:
 
+| ID | Decision | Status |
+|---|---|---|
+| CT22 | A template never holds roster-card fact keys: its script may use only the legacy six keys a script with no card takes. Copying from a campaign (Save as template, Copy from a campaign, New template › A copy of a campaign) keeps What agents see but leaves out a script that uses the card's facts, and says so | **Decided** (2026-11-22) |
+| CT23 | The task's outcome "categories" are the outcome's behaviour, which the outcome editor already sets per outcome: Success (`is_success`), Call back (`requires_datetime`), Ends the contact (`terminal`) and Do Not Call (`suppress`). There is no separate category field; a template's outcomes carry these as a campaign's do | **Decided** (2026-11-22) |
