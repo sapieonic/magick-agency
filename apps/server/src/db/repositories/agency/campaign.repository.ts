@@ -538,8 +538,9 @@ export class AgencyCampaignRepository {
    *
    * `recordAfter` (campaign templates, CT9): asked with the row as written, still under the lock;
    * a non-null answer is stored as its `template_source` in the same transaction, so a settings
-   * PATCH and the record of where its sections came from commit together or not at all.
-   * Announced after the commit, as {@link update}.
+   * PATCH and the record of where its sections came from commit together or not at all. The record
+   * write moves `updated_at` as every settings write does (the same instant within the
+   * transaction). Announced after the commit, as {@link update}.
    */
   async updateLocked<R>(
     id: string,
@@ -560,44 +561,13 @@ export class AgencyCampaignRepository {
       const record = await recordAfter(written);
       if (record === null) return { row: written };
       const { rows } = await client.query<AgencyCampaignRecord>(
-        'UPDATE agency_campaigns SET template_source = $2::jsonb WHERE id = $1 RETURNING *',
+        'UPDATE agency_campaigns SET template_source = $2::jsonb, updated_at = now() WHERE id = $1 RETURNING *',
         [id, JSON.stringify(record)],
       );
       return { row: rows[0] ?? null };
     }, { pool: getPool() });
     if ('row' in outcome) announceCampaignChanged(outcome.row);
     return outcome;
-  }
-
-  /**
-   * Campaign templates (CT16): rewrite the `template_source` (0067) of a campaign of the tenant
-   * and account, after an apply's PATCH has written its settings. `record(row)` is asked with the
-   * row locked `FOR UPDATE`, so the record is computed from the settings as they are when it is
-   * stored; a null answer leaves it as it is. Not a PATCH column: the record is the server's to
-   * write. Any status: the apply has written the settings (a campaign started since is an accepted
-   * race), and the record says where they came from. Null when no row matched. Nothing the pacing
-   * reads changes, so nothing is announced.
-   */
-  async rewriteTemplateSource(
-    id: string,
-    scope: { tenantId: string; accountId: string },
-    record: (row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>,
-  ): Promise<AgencyCampaignRecord | null> {
-    return withTransaction(async (client) => {
-      const locked = await client.query<AgencyCampaignRecord>(
-        `SELECT * FROM agency_campaigns WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid FOR UPDATE`,
-        [id, scope.tenantId, scope.accountId],
-      );
-      const row = locked.rows[0];
-      if (!row) return null;
-      const next = await record(row);
-      if (next === null) return row;
-      const { rows } = await client.query<AgencyCampaignRecord>(
-        `UPDATE agency_campaigns SET template_source = $2::jsonb, updated_at = now() WHERE id = $1::uuid RETURNING *`,
-        [id, JSON.stringify(next)],
-      );
-      return rows[0] ?? null;
-    }, { pool: getPool() });
   }
 
   /** Supervisor dashboard payload; see {@link campaignStats}. */

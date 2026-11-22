@@ -29,6 +29,19 @@ export const PROVEN_CAMPAIGN_HEADER = 'x-mgkvc-proven-campaign';
  * changed. The public route sends only the body on, so it never reaches a client.
  */
 export const CONFIG_CHANGE_HEADER = 'x-mgkvc-config-change';
+/**
+ * Internal only: the templates a campaign template's apply (CT16) writes a campaign PATCH for
+ * (`CoreCallRequest.templateApply`), so the internal PATCH handler stores the campaign's
+ * `template_source` in the same transaction as its settings. base64url JSON
+ * ({@link templateApplyHeaderValue}; read back by `templateApplyRefsOf`). Set by `callCore` from its
+ * typed argument alone, never forwarded from a caller's headers.
+ */
+export const TEMPLATE_APPLY_HEADER = 'x-mgkvc-template-apply';
+
+/** The {@link TEMPLATE_APPLY_HEADER} value: the template refs an apply names, as base64url JSON. */
+export function templateApplyHeaderValue(refs: { template: unknown; based_on: unknown }): string {
+  return Buffer.from(JSON.stringify({ template: refs.template, based_on: refs.based_on }), 'utf8').toString('base64url');
+}
 
 /**
  * The {@link PROVEN_CAMPAIGN_HEADER} value: `<tenant>:<account>:<campaign>`, the account

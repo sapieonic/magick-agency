@@ -7,7 +7,9 @@
  *
  * A campaign made from a template has its `template_source` recomputed by this path too (CT9 as
  * amended): the internal handler's write does it in the same transaction as the settings
- * (`writeCampaignPatch`), so the record and the settings cannot disagree.
+ * (`writeCampaignPatch`). An apply passes `templateApply`, the templates it applies, so the record
+ * is switched to them in that same transaction: the settings and the record commit together or
+ * not at all.
  */
 import type { FastifyRequest } from 'fastify';
 import { callCore } from '../../core-dispatch.js';
@@ -19,6 +21,7 @@ import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { decodeConfigChange } from '../../../agency/campaign-config-audit.js';
 import { validateAgencyCampaignConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
 import { ownedCoreCampaignOnce, stringField } from './core-campaign.js';
+import type { TemplateSourceRefs } from '../../../agency/campaign-templates/template-source.js';
 
 /** What the PATCH path answered: the status and body the route sends. */
 export interface CampaignPatchAnswer {
@@ -95,6 +98,7 @@ export async function patchCampaignConfig(
   request: FastifyRequest,
   campaignId: string,
   patchBody: unknown,
+  options: { templateApply?: TemplateSourceRefs } = {},
 ): Promise<CampaignPatchAnswer> {
   const configIssues = validateAgencyCampaignConfig(patchBody);
   if (configIssues.length > 0) {
@@ -147,6 +151,8 @@ export async function patchCampaignConfig(
     body: patchBody,
     tenantId: request.tenantId!,
     accountId: request.accountId,
+    // An apply: the record of the templates it applies is written with the settings.
+    ...(options.templateApply ? { templateApply: options.templateApply } : {}),
   });
 
   const modeAfter = result.status < 400 ? stringField(result.body, 'assignment_mode') : null;

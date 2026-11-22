@@ -50,6 +50,8 @@ import {
 import { insertAgencyContact } from '../agency/agency-factories.js';
 import { buildApp } from '../../../src/app.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+import { agencyCampaignRepository, agencyCampaignTemplateRepository } from '../../../src/db/repositories/agency.repository.js';
+import { templateSourceRecompute } from '../../../src/agency/campaign-templates/template-source.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -352,6 +354,55 @@ describe('the record follows the campaign (CT9 as amended)', () => {
     const after = await patch(id, { calling_window_start: '11:00' });
     expect(after.calling_window_start).toBe('11:00:00');
     expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('a settings PATCH never fails on the record: a template read that throws is logged, the record kept, the PATCH lands (D1)', async () => {
+    await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const before = await sourceOf(id);
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion').mockRejectedValue(new Error('pool exhausted'));
+    try {
+      const after = await patch(id, { calling_window_start: '11:00' });
+      expect(after.calling_window_start).toBe('11:00:00');
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await settings(id)).calling_window_start).toBe('11:00:00');
+    expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('a PATCH that names no section field reads no template and leaves the record (D1)', async () => {
+    await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const before = await sourceOf(id);
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion');
+    try {
+      expect((await patch(id, { name: 'Renamed' })).name).toBe('Renamed');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('the recompute reads nothing under the row lock: a record that names other versions by then is left as it is (D1)', async () => {
+    const tpl = await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const campaign = (await agencyCampaignRepository.findById(id))!;
+    const recordAfter = (await templateSourceRecompute(campaign))!;
+    expect(recordAfter).not.toBeNull();
+    // An apply of another version landed between the read and the lock.
+    const moved: AgencyCampaignTemplateSource = { ...campaign.template_source!, template: { ...campaign.template_source!.template!, version: 7 } };
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion');
+    try {
+      expect(await recordAfter({ ...campaign, template_source: moved, calling_window_start: '11:00:00' })).toBeNull();
+      // Same versions: computed from the fill made before the lock, still with no read.
+      expect(await recordAfter({ ...campaign, calling_window_start: '11:00:00' })).toMatchObject({ template: { id: tpl.id }, sections: { hours: 'campaign' } });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('a template\'s outcome overrides without contact assignment: left out with a note, never a 403 on a field not sent (S1)', async () => {

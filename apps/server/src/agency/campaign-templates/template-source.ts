@@ -10,12 +10,15 @@
  * The filling-in's `notes` are kept, so the campaign can say why a section is not as the template
  * says. {@link templateSourceFor} is the one computation, run:
  *  - at the create (`create-fill.ts`), on the body as it will be stored;
- *  - at every settings PATCH of a campaign that has a record, inside the PATCH's write
- *    (`writeCampaignPatch`, the campaign row locked), so the record and the settings cannot
- *    disagree: New campaign edits the draft its roster upload made, a supervisor changes the
- *    campaign later;
+ *  - at every settings PATCH of a campaign that has a record and whose body names a section
+ *    field, inside the PATCH's write (`writeCampaignPatch`, the campaign row locked): New campaign
+ *    edits the draft its roster upload made, a supervisor changes the campaign later. Best effort
+ *    ({@link templateSourceRecompute}): the record is never read at run time (CT1), so a template
+ *    read that fails is logged and the record left as it was, never a failed PATCH (a calling
+ *    window fix must land);
  *  - at an apply (CT16), which switches the record to the applied template and recomputes every
- *    section against it.
+ *    section against it, in the PATCH's own transaction ({@link templateSourceApplied}): the
+ *    settings and the record are written together or not at all.
  * The versions are read from `agency_campaign_template_versions` (the record names a saved state,
  * never "the template as it is now"). A record whose version row is gone (it should not happen:
  * versions are never deleted) is left as it is.
@@ -31,14 +34,28 @@ import {
   AGENCY_CAMPAIGN_TEMPLATE_SCOPES,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_SOURCES,
+  AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   type AgencyCampaignTemplateSource,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
+import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { sectionSourcesForCreate, type ResolvedTemplateSections } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { agencyCampaignTemplateRepository } from '../../db/repositories/agency.repository.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { fillTemplateSections, type TemplateAccountScope } from './resolve-effective.js';
+
+const log = createChildLogger({ component: 'campaign-templates' });
+
+/** Every campaign field some section holds. */
+const SECTION_FIELDS: ReadonlySet<string> = new Set(
+  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((k) => AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[k] as readonly string[]),
+);
+
+/** Whether a settings PATCH body names a field of some section: only then can the record change. */
+export function patchNamesSectionField(body: Record<string, unknown>): boolean {
+  return Object.keys(body).some((field) => SECTION_FIELDS.has(field));
+}
 
 /** The templates a record names: what {@link templateSourceFor} fills in. */
 export type TemplateSourceRefs = Pick<AgencyCampaignTemplateSource, 'template' | 'based_on'>;
@@ -94,7 +111,15 @@ export async function templateSourceFor(
   known?: TemplateSourceFill | null,
 ): Promise<AgencyCampaignTemplateSource | null> {
   const fill = known && fillFor(known, refs) ? known : await templateSourceFill(scope, refs);
-  if (!fill) return null;
+  return fill ? recordOf(config, refs, fill) : null;
+}
+
+/** The record of `config` against a fill already made of the templates `refs` names: pure, no read. */
+function recordOf(
+  config: Partial<AgencyCampaign> | AgencyCampaignRecord,
+  refs: TemplateSourceRefs,
+  fill: TemplateSourceFill,
+): AgencyCampaignTemplateSource {
   return {
     template: refs.template,
     based_on: refs.based_on,
@@ -103,24 +128,83 @@ export async function templateSourceFor(
   };
 }
 
+/** What the PATCH's write asks with the row as written, under its lock: the record to store, or null to leave it. */
+export type TemplateSourceAfterWrite = (row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>;
+
 /**
- * For the campaign PATCH's write: the recompute of the record of `campaign` (as read before the
- * write), to run inside the write's transaction on the row as written. Its templates are filled
- * in here, before the transaction, so the row is held only for the comparison. Null when the
- * campaign has no record (it was made before templates, or is a retry, CT7): nothing to recompute.
+ * For a settings PATCH (module note): the recompute of the record of `campaign` (as read before the
+ * write), to run inside the write's transaction on the row as written. Null when there is nothing
+ * to recompute: the campaign has no record (made before templates, or a retry, CT7), or the
+ * versions it names cannot be read. BEST EFFORT, and no read under the row lock:
+ *  - the templates are filled in here, before the transaction; a read that throws is logged and
+ *    the record left as it is (null), so the PATCH still lands;
+ *  - under the lock the comparison is pure: a record that names other versions by then (an apply
+ *    landed between the read and the lock) is left as that write made it, never re-read there;
+ *  - a comparison that throws is logged and leaves the record, rather than rolling the PATCH back.
  */
 export async function templateSourceRecompute(
-  campaign: Pick<AgencyCampaignRecord, 'tenant_id' | 'account_id' | 'template_source'>,
-): Promise<((row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>) | null> {
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'template_source'>,
+): Promise<TemplateSourceAfterWrite | null> {
   const record = campaign.template_source;
   if (!record) return null;
   const scope = { tenantId: campaign.tenant_id, accountId: campaign.account_id };
-  const fill = await templateSourceFill(scope, record);
+  let fill: TemplateSourceFill | null;
+  try {
+    fill = await templateSourceFill(scope, record);
+  } catch (err) {
+    log.warn({ err, campaignId: campaign.id }, 'Campaign template record not recomputed: its templates could not be read; the record is left as it was');
+    return null;
+  }
+  if (!fill) return null;
+  const known = fill;
   return async (row) => {
-    if (!row.template_source) return null;
-    const next = await templateSourceFor(scope, row, row.template_source, fill);
-    return next && !isDeepStrictEqual(next, row.template_source) ? next : null;
+    if (!row.template_source || !fillFor(known, row.template_source)) return null;
+    try {
+      const next = recordOf(row, row.template_source, known);
+      return isDeepStrictEqual(next, row.template_source) ? null : next;
+    } catch (err) {
+      log.warn({ err, campaignId: row.id }, 'Campaign template record not recomputed; the record is left as it was');
+      return null;
+    }
   };
+}
+
+/**
+ * For an apply's PATCH (CT16): the record of the row as written against the templates `refs`
+ * names, stored in the PATCH's transaction, so a campaign's settings and its record are written
+ * together or not at all. The versions are read and filled in before the transaction; unlike the
+ * plain PATCH's recompute this is NOT best effort: a read that fails, or a version row that is gone,
+ * throws, and the PATCH writes nothing (the apply reports that campaign as not changed).
+ */
+export async function templateSourceApplied(
+  campaign: Pick<AgencyCampaignRecord, 'tenant_id' | 'account_id'>,
+  refs: TemplateSourceRefs,
+): Promise<TemplateSourceAfterWrite> {
+  const fill = await templateSourceFill({ tenantId: campaign.tenant_id, accountId: campaign.account_id }, refs);
+  if (!fill) throw new Error('the template version applied could not be read');
+  return async (row) => {
+    const next = recordOf(row, refs, fill);
+    return isDeepStrictEqual(next, row.template_source) ? null : next;
+  };
+}
+
+/**
+ * The templates an apply names to the internal PATCH handler (`TEMPLATE_APPLY_HEADER`, written by
+ * `templateApplyHeaderValue` in `callCore` from its typed `templateApply`, never forwarded from a
+ * client): `null` when absent,
+ * `'invalid'` when it is not one (a wiring defect, refused rather than guessed at).
+ */
+export function templateApplyRefsOf(header: unknown): TemplateSourceRefs | null | 'invalid' {
+  if (header === undefined) return null;
+  if (typeof header !== 'string') return 'invalid';
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
+  } catch {
+    return 'invalid';
+  }
+  if (!plain(value) || refIssue(value['template'], true) || value['template'] === null || refIssue(value['based_on'], false)) return 'invalid';
+  return { template: value['template'] as TemplateSourceRefs['template'], based_on: value['based_on'] as TemplateSourceRefs['based_on'] };
 }
 
 // ── The shape ────────────────────────────────────────────────────────────────

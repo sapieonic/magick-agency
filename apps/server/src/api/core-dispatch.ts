@@ -2,8 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { isUnsafeCorePath } from '../proxy/safe-core-path.js';
 import {
-  TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER, provenCampaignProof,
+  TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER, TEMPLATE_APPLY_HEADER, provenCampaignProof,
+  templateApplyHeaderValue,
 } from './middleware/headers.js';
+import type { TemplateSourceRefs } from '../agency/campaign-templates/template-source.js';
 
 /*
  * `callCore`: how the public API layer's handlers reach the internal handler instance
@@ -66,6 +68,12 @@ export interface CoreCallRequest {
    * `test/unit/api/core-dispatch.test.ts` pins its call sites.
    */
   provenCampaignId?: string;
+  /**
+   * A campaign template's apply (CT16) only: the templates its campaign PATCH writes, sent as
+   * `x-mgkvc-template-apply` so the internal PATCH handler stores the campaign's `template_source`
+   * in the settings' own transaction. `test/unit/api/core-dispatch.test.ts` pins its one caller.
+   */
+  templateApply?: TemplateSourceRefs;
 }
 
 export interface CoreCallResult {
@@ -156,7 +164,7 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
     const lower = name.toLowerCase();
     if (
       lower === TENANT_HEADER || lower === ACCOUNT_HEADER || lower === ORIGINATOR_HEADER
-      || lower === PROVEN_CAMPAIGN_HEADER
+      || lower === PROVEN_CAMPAIGN_HEADER || lower === TEMPLATE_APPLY_HEADER
     ) continue;
     headers[name] = value;
   }
@@ -167,6 +175,7 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   if (req.provenCampaignId) {
     headers[PROVEN_CAMPAIGN_HEADER] = provenCampaignProof(req.tenantId, req.accountId, req.provenCampaignId);
   }
+  if (req.templateApply) headers[TEMPLATE_APPLY_HEADER] = templateApplyHeaderValue(req.templateApply);
 
   const sendsBody = Boolean(req.body) && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH');
   if (sendsBody) headers['content-type'] = 'application/json';
