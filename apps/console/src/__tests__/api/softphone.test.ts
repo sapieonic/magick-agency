@@ -22,6 +22,7 @@ import {
   openSoftphoneSession,
   placeManualCall,
   putSoftphoneSettings,
+  readSoftphoneSettings,
   returnFromSoftphone,
   switchToSoftphone,
   updateManualCall,
@@ -241,5 +242,24 @@ describe('refusals become typed results', () => {
     mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
     const network = await place();
     expect(!network.ok && network.refusal).toMatchObject({ code: 'unknown', status: null, message: 'Failed to fetch' });
+  });
+});
+
+// Campaign templates (CT11): the settings read with what the outcomes follow, read as optional
+// (`outcomes_template`, added by the server's templates step).
+describe('the soft phone’s settings read (CT11)', () => {
+  const SETTINGS = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null, updated_at: null };
+
+  it('reads what the outcomes follow when the answer carries it', async () => {
+    const follows = { template: { id: 'tp-1', name: 'Collections', version: 3, scope: 'account' }, disposition_catalog: [{ code: 'will_pay', label: 'Will pay' }] };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect(await readSoftphoneSettings('t-1', 'a-1')).toEqual({ settings: SETTINGS, outcomesTemplate: follows });
+  });
+
+  it('reads none when the answer has no such field, or a malformed one', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: { template: null } }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
   });
 });

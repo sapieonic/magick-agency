@@ -7,7 +7,9 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { PageDescription } from '../../components/common/PageDescription';
 import { useTenant } from '../../contexts/TenantContext';
-import { getSoftphoneSettings, putSoftphoneSettings } from '../../api/softphone';
+import { putSoftphoneSettings, readSoftphoneSettings, type SoftphoneOutcomesTemplate } from '../../api/softphone';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { CAMPAIGN_TEMPLATES_FLAG } from '../../utils/agency/campaignTemplates/templatesFlag';
 import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
 import { usePermission } from '../../hooks/usePermission';
@@ -57,6 +59,13 @@ export default function SoftphoneSettingsPage() {
   const { phoneNumbers } = usePhoneNumbers();
 
   const [saved, setSaved] = useState<AgencySoftphoneSettings | null>(null);
+  /**
+   * Campaign templates on (CT11): with no list of its own the soft phone follows the account's
+   * default template's outcomes, which the read names (`outcomes_template`; null without it, and
+   * then the built-in outcomes are what it follows).
+   */
+  const templatesOn = useFeatureFlagEnabled(CAMPAIGN_TEMPLATES_FLAG);
+  const [follows, setFollows] = useState<SoftphoneOutcomesTemplate | null>(null);
   const [draft, setDraft] = useState<SoftphoneSettingsDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -70,7 +79,8 @@ export default function SoftphoneSettingsPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const settings = await getSoftphoneSettings(tenantId, accountId);
+      const { settings, outcomesTemplate } = await readSoftphoneSettings(tenantId, accountId);
+      setFollows(outcomesTemplate);
       setSaved(settings);
       setDraft(draftFromSettings(settings));
       setTouched(false);
@@ -283,7 +293,15 @@ export default function SoftphoneSettingsPage() {
             <h2 className={styles.cardTitle} id="sp-outcomes">
               Outcomes when not logged to a campaign
             </h2>
-            {usingBuiltIn ? (
+            {templatesOn ? (
+              <TemplateOutcomes
+                follows={follows}
+                catalog={draft.catalog}
+                canEdit={canEdit}
+                onChange={(catalog) => update({ catalog })}
+                errors={errors}
+              />
+            ) : usingBuiltIn ? (
               <>
                 <p className={styles.cardLead}>The built-in outcomes are in use. Agents press 1–9 to pick one.</p>
                 <ol className={styles.builtIn}>
@@ -476,5 +494,79 @@ export default function SoftphoneSettingsPage() {
         </section>
       </PanelGrid>
     </div>
+  );
+}
+
+/**
+ * The outcome list with campaign templates on (CT11): "Follow campaign template (<name>)" (the
+ * soft phone lists none of its own; a save sends the empty list, and untagged calls use the
+ * account's default template's outcomes, read at the call) or "Set for the soft phone" (its own
+ * list, edited as a campaign's). Without a template to follow, "Follow the built-in outcomes".
+ */
+function TemplateOutcomes({
+  follows,
+  catalog,
+  canEdit,
+  onChange,
+  errors,
+}: {
+  follows: SoftphoneOutcomesTemplate | null;
+  catalog: AgencySoftphoneSettings['disposition_catalog'];
+  canEdit: boolean;
+  onChange: (catalog: AgencySoftphoneSettings['disposition_catalog']) => void;
+  errors: ReturnType<typeof useConfigFieldErrors>;
+}) {
+  const following = catalog.length === 0;
+  const template = follows?.template ?? null;
+  const followed = template && follows && follows.disposition_catalog.length > 0 ? follows.disposition_catalog : DEFAULT_DISPOSITIONS;
+  const followLabel = template ? `Follow campaign template (${template.name})` : 'Follow the built-in outcomes';
+  return (
+    <>
+      <fieldset className={styles.outcomeChoice} role="radiogroup" aria-label="Where the outcomes come from" disabled={!canEdit}>
+        <label className={styles.switch}>
+          <input
+            type="radio"
+            name="sp-outcome-source"
+            checked={following}
+            onChange={() => onChange([])}
+            data-testid="softphone-outcomes-follow"
+          />
+          {followLabel}
+        </label>
+        <label className={styles.switch}>
+          <input
+            type="radio"
+            name="sp-outcome-source"
+            checked={!following}
+            onChange={() => onChange(followed.map((d) => ({ ...d })))}
+            data-testid="softphone-outcomes-set"
+          />
+          Set for the soft phone
+        </label>
+      </fieldset>
+      {following ? (
+        <>
+          <p className={styles.cardLead} data-testid="softphone-outcomes-following">
+            {template
+              ? `Untagged calls use the outcomes of ${template.name}, the account’s default campaign template. A change to that template reaches the soft phone at once.`
+              : 'Untagged calls use the built-in outcomes. Agents press 1–9 to pick one.'}
+          </p>
+          <ol className={styles.builtIn}>
+            {followed.map((entry, index) => (
+              <li key={entry.code} className={styles.builtInItem}>
+                <span className={styles.kbd} aria-hidden="true">
+                  {index + 1}
+                </span>
+                {entry.label}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <fieldset disabled={!canEdit} style={{ border: 'none', padding: 0, margin: 0 }}>
+          <DispositionCatalogEditor dispositions={catalog} onChange={(next) => onChange(next)} errors={errors} />
+        </fieldset>
+      )}
+    </>
   );
 }

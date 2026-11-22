@@ -295,3 +295,13 @@
   font-size: 13px;
   color: var(--text-primary);
 }
+
+/* Campaign templates on (CT11): follow the account default template, or set the soft phone own list. */
+.outcomeChoice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+}

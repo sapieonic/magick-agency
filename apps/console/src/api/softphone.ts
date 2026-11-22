@@ -31,6 +31,11 @@ import {
   type AgencySoftphoneSettingsUpdateRequest,
 } from '../types/softphone';
 import type { AgencySessionStateResponse } from '../types/agency';
+import type { AgencyDispositionEntry } from '../types/agency-campaign';
+import type {
+  AgencyCampaignTemplateRef,
+  AgencyCampaignTemplateScope,
+} from '@magick-agency/contracts/api/agency/campaign-templates';
 import type { RecordingOutcome } from '../types/webrtc-call';
 
 /**
@@ -317,8 +322,38 @@ export function getManualCall(callId: string, tenantId?: string, accountId?: str
 
 /** `GET /settings`, at the agent floor. */
 export async function getSoftphoneSettings(tenantId?: string, accountId?: string): Promise<AgencySoftphoneSettings> {
-  const res = await apiFetch<AgencySoftphoneSettingsResponse>(`${SOFTPHONE_BASE}/settings`, {}, tenantId, accountId);
-  return res.settings;
+  return (await readSoftphoneSettings(tenantId, accountId)).settings;
+}
+
+/**
+ * Which campaign template the soft phone's outcomes follow while it lists none of its own (CT11,
+ * `docs/campaign-templates.md`): the account's default chain's template (`null`: the built-in
+ * outcomes) and the outcomes it gives untagged calls now.
+ *
+ * ⚠️ Read from `outcomes_template`, a field the server's campaign-templates step adds to the
+ * `GET /settings` answer beside `settings`. It is not in the contract yet, so it is read as optional
+ * here and the page says "Follow the built-in outcomes" without it; reconcile with the contract
+ * when it lands.
+ */
+export interface SoftphoneOutcomesTemplate {
+  template: (AgencyCampaignTemplateRef & { scope: AgencyCampaignTemplateScope }) | null;
+  disposition_catalog: AgencyDispositionEntry[];
+}
+
+/** `GET /settings` with what the outcomes follow (`outcomes_template`, null when the answer has none). */
+export async function readSoftphoneSettings(
+  tenantId?: string,
+  accountId?: string,
+): Promise<{ settings: AgencySoftphoneSettings; outcomesTemplate: SoftphoneOutcomesTemplate | null }> {
+  const res = await apiFetch<AgencySoftphoneSettingsResponse & { outcomes_template?: SoftphoneOutcomesTemplate | null }>(
+    `${SOFTPHONE_BASE}/settings`,
+    {},
+    tenantId,
+    accountId,
+  );
+  const follows = res.outcomes_template;
+  const usable = follows && typeof follows === 'object' && Array.isArray(follows.disposition_catalog) ? follows : null;
+  return { settings: res.settings, outcomesTemplate: usable };
 }
 
 /**

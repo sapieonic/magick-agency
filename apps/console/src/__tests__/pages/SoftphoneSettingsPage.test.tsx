@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/softphone', () => ({
   getSoftphoneSettings: mocks.getSoftphoneSettings,
+  // The page reads the settings with what their outcomes follow (campaign templates); none here.
+  readSoftphoneSettings: async (...args: unknown[]) => ({ settings: await mocks.getSoftphoneSettings(...args), outcomesTemplate: null }),
   putSoftphoneSettings: mocks.putSoftphoneSettings,
 }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({
