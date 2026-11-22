@@ -37,6 +37,7 @@ import {
 import { insertAgencyCampaign, insertManualCall, insertSoftphoneSession } from '../agency/agency-factories.js';
 import { buildApp } from '../../../src/app.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { SoftphoneService, type SoftphoneServiceDeps } from '../../../src/agency/softphone/softphone-service.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
@@ -219,6 +220,33 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
     const call = await endedCall();
     expect(await save(call, 'will_pay')).toMatchObject({ ok: false, refusal: { code: 'disposition_invalid' } });
     expect(await save(call, 'voicemail')).toMatchObject({ ok: true });
+  });
+
+  it('a template read that fails after the save still answers the save, audited, without outcomes_template (D3)', async () => {
+    await template('account', ACCOUNT_OUTCOMES);
+    const flags = getFeatureFlagService();
+    const isEnabled = flags.isEnabled.bind(flags);
+    const spy = vi.spyOn(flags, 'isEnabled').mockImplementation(async (flag, context) => {
+      if (flag.key === 'agency_campaign_templates_enabled') throw new Error('flags unreadable');
+      return isEnabled(flag, context);
+    });
+    let put;
+    try {
+      put = await as(w.sup, w.a, 'PUT', '/softphone/settings', {
+        disposition_catalog: OWN, call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json()).not.toHaveProperty('outcomes_template');
+    expect(put.json().settings.disposition_catalog).toEqual(OWN);
+    expect((await readSettings()).settings.disposition_catalog).toEqual(OWN);
+    await platformAuditLogger.flush();
+    const { rows } = await q(
+      `SELECT details FROM platform_audit_log WHERE tenant_id = $1 AND action = 'agency_softphone_settings.updated'`, [w.tenant]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].details).toMatchObject({ changed: ['disposition_catalog'] });
   });
 
   it('a tagged call keeps its campaign\'s outcomes', async () => {
