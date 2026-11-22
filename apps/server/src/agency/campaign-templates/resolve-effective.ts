@@ -39,6 +39,8 @@
  */
 import {
   builtinTemplateSections,
+  configOfSections,
+  followedBy,
   resolveTemplateSections,
   type ResolvedTemplateSections,
   type TemplateCapabilities,
@@ -50,10 +52,8 @@ import type {
   AgencyCampaignTemplateNote,
   AgencyCampaignTemplateRef,
   AgencyCampaignTemplateScope,
-  AgencyCampaignTemplateSectionKey,
   AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { createChildLogger } from '@magick-agency/observability';
@@ -247,11 +247,7 @@ async function withServerNotes(
     }
   }
 
-  const config = Object.assign(
-    {},
-    ...AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.map((k: AgencyCampaignTemplateSectionKey) => sections[k]),
-  ) as ResolvedTemplateSections['config'];
-  return { config, sections, sources, notes };
+  return { config: configOfSections(sections), sections, sources, notes };
 }
 
 /**
@@ -267,27 +263,28 @@ export async function fillTemplateSections(
   basedOn: { sections: AgencyCampaignTemplateSections } | null,
 ): Promise<ResolvedTemplateSections> {
   const can = await templateCapabilities(scope);
-  const domain = resolveTemplateSections({
-    chosen,
-    basedOn: chosen?.scope === 'account' ? basedOn : null,
-    builtin: builtinTemplateSections(),
-    can,
-  });
+  // `basedOn` is read only for an account template: the domain's `followedBy` decides.
+  const domain = resolveTemplateSections({ chosen, basedOn, builtin: builtinTemplateSections(), can });
   return withServerNotes(scope, domain, can);
+}
+
+/**
+ * A chain's rows as the domain's fill-in reads them: the chosen template's scope and sections, and
+ * the organisation row it follows (the domain's `followedBy`: an account template's based-on, else
+ * null), whose ref the effective read names. The one place a chain of rows becomes the domain's input.
+ */
+function chainInput(chain: TemplateChain): { chosen: TemplateSectionsInput | null; followed: CampaignTemplateRecord | null } {
+  const chosen = chain.chosen ? { scope: templateScopeOf(chain.chosen), sections: chain.chosen.sections } : null;
+  return { chosen, followed: followedBy(chosen, chain.basedOn) };
 }
 
 /** The effective settings of a chain already read (the apply reads its template once and pins it). */
 export async function effectiveOfChain(scope: TemplateAccountScope, chain: TemplateChain): Promise<EffectiveTemplate> {
-  const { chosen, basedOn } = chain;
-  const followed = chosen && chosen.account_id !== null ? basedOn : null;
-  const resolved = await fillTemplateSections(
-    scope,
-    chosen ? { scope: templateScopeOf(chosen), sections: chosen.sections } : null,
-    followed ? { sections: followed.sections } : null,
-  );
+  const { chosen, followed } = chainInput(chain);
+  const resolved = await fillTemplateSections(scope, chosen, followed ? { sections: followed.sections } : null);
   return {
     wire: {
-      template: chosen ? templateRefOf(chosen) : null,
+      template: chain.chosen ? templateRefOf(chain.chosen) : null,
       based_on: followed ? plainTemplateRefOf(followed) : null,
       config: resolved.config,
       sources: resolved.sources,
@@ -326,26 +323,35 @@ export interface SoftphoneTemplateOutcomes {
 }
 
 /**
+ * What a soft-phone call may have, fixed rather than read (CT11, CT20): no contact assignment (a
+ * soft-phone call has no roster contact to grant an agent override), and nothing of recording or
+ * inbound, which the outcomes section does not read.
+ */
+const SOFTPHONE_CAPABILITIES: TemplateCapabilities = { record: false, assignment: false, inbound: false };
+
+/**
  * CT11: the outcomes of the account's default chain, read live (the soft phone is an account
  * setting, not a campaign, so nothing is copied), or null while `agency_campaign_templates_enabled`
- * is off for the account (the built-in outcomes, as before). The same chain and the same domain
- * rule as a new campaign's, with no capability read: the outcomes section is gated by nothing but
- * contact assignment, which a soft-phone call never has. A flag or template read that throws
- * propagates.
+ * is off for the account (the built-in outcomes, as before). The same chain ({@link chainInput})
+ * and the same domain rule as a new campaign's, ON PURPOSE without {@link fillTemplateSections}:
+ * the capabilities are {@link SOFTPHONE_CAPABILITIES}, not the account's (the outcomes section is
+ * gated by nothing but contact assignment, which a soft-phone call never has), and the server's
+ * notes, which touch only the profile and the numbers, are not read for a catalog. A flag or
+ * template read that throws propagates.
  */
 export async function softphoneTemplateOutcomes(scope: TemplateAccountScope): Promise<SoftphoneTemplateOutcomes | null> {
   if (!(await campaignTemplatesEnabled(scope.tenantId, scope.accountId))) return null;
   const found = await resolveTemplateChain(scope);
   if (!found.ok) return null;
-  const { chosen, basedOn } = found.chain;
+  const { chosen, followed } = chainInput(found.chain);
   const resolved = resolveTemplateSections({
-    chosen: chosen ? { scope: templateScopeOf(chosen), sections: chosen.sections } : null,
-    basedOn: chosen && chosen.account_id !== null && basedOn ? { sections: basedOn.sections } : null,
+    chosen,
+    basedOn: followed ? { sections: followed.sections } : null,
     builtin: builtinTemplateSections(),
-    can: { record: false, assignment: false, inbound: false },
+    can: SOFTPHONE_CAPABILITIES,
   });
   return {
-    template: chosen ? templateRefOf(chosen) : null,
+    template: found.chain.chosen ? templateRefOf(found.chain.chosen) : null,
     catalog: resolved.config.disposition_catalog as AgencyDisposition[],
   };
 }

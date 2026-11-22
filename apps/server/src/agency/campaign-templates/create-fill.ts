@@ -10,16 +10,16 @@
  *    organisation's, built-in), for an API caller that names nothing.
  *  - A section the body leaves out (none of its fields sent) is the filled-in section, whole.
  *  - A section the body sends is kept as sent, an empty outcome list included; a field of it the
- *    body leaves out is that field's BUILT-IN value (the domain's rule: a section is won whole, and
- *    absent means built-in), so the stored row is what `template_source` says. The built-in hours
- *    are New campaign's `Asia/Kolkata` (CT18), not the column's `UTC`.
+ *    body leaves out is that field's BUILT-IN value (the domain's `withBuiltinFields`: a section is
+ *    won whole, and absent means built-in), so the stored row is what `template_source` says. The
+ *    built-in hours are New campaign's `Asia/Kolkata` (CT18), not the column's `UTC`.
  *  - `template_source` (CT9) is the record's one computation (`templateSourceFor`), on the body as
  *    the campaign will store it (`storedSettingValues`: caller IDs and script texts trimmed): per
  *    section the filled-in source, or `campaign` where it differs, and the fill-in's notes.
  *
  * The body is the caller's; it is never mutated (a new object is returned).
  */
-import { builtinTemplateSections, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
+import { builtinTemplateSections, withBuiltinFields, type CompleteTemplateSections } from '@magick-agency/domain/campaign-templates';
 import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
@@ -57,14 +57,11 @@ export function filledCreateBody(
   const filled = config as Record<string, unknown>;
   for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
     const fields = AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[];
-    const base = builtin[key] as Record<string, unknown>;
-    const sentSection = fields.some((f) => sent[f] !== undefined);
-    for (const f of fields) {
-      if (sentSection) {
-        if (sent[f] === undefined) out[f] = structuredClone(base[f]);
-      } else {
-        out[f] = structuredClone(filled[f]);
-      }
+    if (fields.some((f) => sent[f] !== undefined)) {
+      // Sent: kept as sent, its absent fields built-in (the domain's one statement of that rule).
+      Object.assign(out, withBuiltinFields(key, sent, builtin));
+    } else {
+      for (const f of fields) out[f] = structuredClone(filled[f]);
     }
   }
   return out;

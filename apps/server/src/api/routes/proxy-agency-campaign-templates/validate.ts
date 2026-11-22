@@ -37,7 +37,7 @@ import {
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { builtinTemplateSections } from '@magick-agency/domain/campaign-templates';
+import { withBuiltinFields } from '@magick-agency/domain/campaign-templates';
 import { visibleNameSchema } from '../../validators/account.validator.js';
 import { validateAgencyCampaignConfig as validatePublicConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS, validateAgencyCampaignConfig as validateStoredConfig } from '../../../agency/campaign-config.js';
@@ -169,19 +169,15 @@ function issuesOf(details: Record<string, string>): SectionIssues | null {
 
 /**
  * The campaign body the sections stand for: each section's fields as set, a field it leaves out
- * at its built-in value (the fill-in's rule, so what is checked is what a campaign gets). Sections
- * it does not set are absent, so they are not judged.
+ * at its built-in value (the domain's `withBuiltinFields`, the fill-in's rule, so what is checked is
+ * what a campaign gets; the values set are judged as sent, not normalised). Sections it does not
+ * set are absent, so they are not judged.
  */
 export function sectionsAsCampaignBody(sections: AgencyCampaignTemplateSections): Record<string, unknown> {
-  const builtin = builtinTemplateSections();
   const body: Record<string, unknown> = {};
   for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
     const values = sections[key] as Record<string, unknown> | undefined;
-    if (values === undefined) continue;
-    const base = builtin[key] as Record<string, unknown>;
-    for (const field of AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[]) {
-      body[field] = values[field] !== undefined ? values[field] : structuredClone(base[field]);
-    }
+    if (values !== undefined) Object.assign(body, withBuiltinFields(key, values));
   }
   return body;
 }
