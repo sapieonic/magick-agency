@@ -10,7 +10,9 @@ import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
 import { getCampaignTemplate, getEffectiveCampaignTemplate, listCampaignTemplates } from '../../../api/campaignTemplates';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
 import { INBOUND_FLAG } from '../../../utils/inbound/inboundFlag';
-import { templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { noteSentence, templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { formatDayMonth } from '../../../utils/format/date';
+import { errorCode } from '../../../utils/agencyErrors';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { SectionDiffList } from './SectionDiffList';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
@@ -20,9 +22,12 @@ import styles from './CampaignTemplates.module.css';
 
 /**
  * Campaign Settings' template line (`docs/campaign-templates.md` §7): "Started from <template>,
- * version n", that the template has moved on since (the campaign is not affected, CT1), "See what's
- * different from the template now" (`diffSections` of the campaign's saved settings against the
- * template as it fills in today), and "Save as template…". Nothing at all with the flag off.
+ * version n · created <date>", the notes of its filling-in as sentences, that the template has
+ * moved on since or been archived (the campaign is not affected, CT1), "See what's different from
+ * the template now" (`diffSections` of the campaign's saved settings against the template as it
+ * fills in today; not for an archived template, which no longer fills in), and "Save as
+ * template…". A campaign with no record (made before templates, or with them off) gets only Save
+ * as template. Nothing at all with the flag off.
  */
 export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign }) {
   const { tenantId, accountId } = useTenant();
@@ -57,7 +62,8 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
   });
   const replaceable = list.data.filter((t) => t.scope === 'account' || access.manageOrganisation);
 
-  if (!access.use) return null;
+  // A campaign with no record has nothing to say but Save as template.
+  if (!access.use || (source === null && !access.manage)) return null;
 
   const compare = async () => {
     setComparing(true);
@@ -72,33 +78,44 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
         config: effective.config as unknown as Record<string, unknown>,
       });
     } catch (err) {
-      setDiffError(templateRefusal(err, 'Could not read the template.'));
+      setDiffError(errorCode(err) === 'campaign_template_archived'
+        ? `${templateName} has since been archived, so there is nothing to compare with.`
+        : templateRefusal(err, 'Could not read the template.'));
     } finally {
       setComparing(false);
     }
   };
 
   const templateName = started?.name ?? 'the built-in settings';
+  const archived = Boolean(now.data?.archived_at);
+  const created = campaign.created_at ? new Date(campaign.created_at) : null;
+  const createdOn = created && !Number.isNaN(created.getTime()) ? ` · created ${formatDayMonth(created)}` : '';
+  const notes = source?.notes ?? [];
 
   return (
     <section className={styles.banner} aria-label="Campaign template" data-testid="campaign-template-source">
       {source ? (
         <p data-testid="campaign-template-started">
-          {started ? `Started from ${started.name}, version ${started.version}.` : 'Started from the built-in settings.'}
+          {started ? `Started from ${started.name}, version ${started.version}${createdOn}.` : `Started from the built-in settings${createdOn}.`}
           {source.based_on ? ` Based on ${source.based_on.name}, version ${source.based_on.version}.` : ''}
         </p>
-      ) : (
-        <p>This campaign was not made from a template.</p>
-      )}
-      {now.data && now.data.archived_at ? (
-        <p data-testid="campaign-template-moved">{`${now.data.name} has been archived since (this campaign is not affected).`}</p>
+      ) : null}
+      {notes.length > 0 ? (
+        <ul className={styles.notes} data-testid="campaign-template-notes">
+          {notes.map((note, i) => (
+            <li key={`${note.code}-${note.section}-${i}`}>{noteSentence(note)}</li>
+          ))}
+        </ul>
+      ) : null}
+      {now.data && archived ? (
+        <p data-testid="campaign-template-moved">{`${now.data.name} has since been archived (this campaign is not affected).`}</p>
       ) : now.data && started && now.data.version !== started.version ? (
         <p data-testid="campaign-template-moved">
           {`${now.data.name} is now on version ${now.data.version} (this campaign is not affected).`}
         </p>
       ) : null}
       <div className={styles.actions}>
-        {source ? (
+        {source && !archived ? (
           <button type="button" className={styles.linkButton} onClick={() => void compare()} disabled={comparing} aria-expanded={diff !== null}>
             {comparing ? 'Comparing…' : 'See what’s different from the template now'}
           </button>

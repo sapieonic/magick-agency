@@ -344,6 +344,21 @@ describe('the editor', () => {
     expect(screen.getByTestId('template-section-hours').textContent).toContain('The end must differ from the start.');
   });
 
+  it('says the server’s sentence when what is archived is the template it is based on (C5)', async () => {
+    mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(409, {
+      code: 'campaign_template_archived',
+      message: 'The organisation template this is based on is archived. Choose another, or restore it first.',
+    }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    expect(screen.getByRole('alert').textContent).toContain(
+      'The organisation template this is based on is archived. Choose another, or restore it first.',
+    );
+    expect(screen.queryByText('This template has been archived. Restore it first.')).toBeNull();
+  });
+
   it('compares two versions, section by section, in plain words', async () => {
     mocks.listCampaignTemplateVersions.mockResolvedValue([
       { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
