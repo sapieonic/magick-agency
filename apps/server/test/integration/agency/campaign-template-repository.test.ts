@@ -17,6 +17,7 @@ import {
   AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
   AGENCY_CONTACT_ASSIGNMENT_DEFAULTS,
   AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT,
+  AGENCY_NEW_CAMPAIGN_TIMEZONE,
   AGENCY_PHONE_DISPLAY_DEFAULT,
 } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -295,7 +296,7 @@ describe('the campaign side', () => {
     expect(templateFields(viaRepo)).toEqual(templateFields(raw));
   });
 
-  it('the built-in template settings are what a campaign with every setting omitted holds, but the catalog the create seeds', async () => {
+  it('the built-in template settings are what a campaign with every setting omitted holds, but the catalog the create seeds and the time zone (CT18)', async () => {
     const { rows } = await q(
       `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids) VALUES ($1, $2, 'Raw', '{}') RETURNING *`,
       [tenant, accountA]);
@@ -303,6 +304,10 @@ describe('the campaign side', () => {
     const builtin = builtinTemplateSections();
     // The column default is `[]`; the create path seeds the built-in catalog (`withCampaignConfigDefaults`).
     expect(asStored.outcomes!.disposition_catalog).toEqual([]);
-    expect({ ...asStored, outcomes: builtin.outcomes }).toEqual(builtin);
+    // The column's zone is UTC; the built-in hours are New campaign's (CT18).
+    expect(asStored.hours!.default_timezone).toBe(AGENCY_CAMPAIGN_COLUMN_DEFAULTS.default_timezone);
+    expect(builtin.hours.default_timezone).toBe(AGENCY_NEW_CAMPAIGN_TIMEZONE);
+    expect({ ...asStored, outcomes: builtin.outcomes, hours: { ...asStored.hours, default_timezone: AGENCY_NEW_CAMPAIGN_TIMEZONE } })
+      .toEqual(builtin);
   });
 });

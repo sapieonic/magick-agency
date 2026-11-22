@@ -119,6 +119,21 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
   ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
+  // Campaign templates (docs/campaign-templates.md §6), built server first (step 2). The console's
+  // calls land with step 3: each entry then moves to `console-paths.json`, `served`, with the
+  // console file that makes the call.
+  ['GET /proxy/agency/campaign-templates', 'campaign templates: the list (console caller lands in step 3)'],
+  ['GET /proxy/agency/campaign-templates/effective', 'campaign templates: New campaign\'s filled-in form (console caller lands in step 3)'],
+  ['GET /proxy/agency/campaign-templates/:_', 'campaign templates: one template (console caller lands in step 3)'],
+  ['GET /proxy/agency/campaign-templates/:_/versions', 'campaign templates: the history (console caller lands in step 3)'],
+  ['GET /proxy/agency/campaign-templates/:_/versions/:_', 'campaign templates: one saved state (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates', 'campaign templates: create (console caller lands in step 3)'],
+  ['PUT /proxy/agency/campaign-templates/:_', 'campaign templates: replace (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates/:_/default', 'campaign templates: make the default (console caller lands in step 3)'],
+  ['DELETE /proxy/agency/campaign-templates/:_/default', 'campaign templates: no default (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates/:_/archive', 'campaign templates: archive (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates/:_/restore', 'campaign templates: restore (console caller lands in step 3)'],
+  ['POST /proxy/agency/campaign-templates/:_/apply', 'campaign templates: apply to draft campaigns, CT16 (console caller lands in step 3)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

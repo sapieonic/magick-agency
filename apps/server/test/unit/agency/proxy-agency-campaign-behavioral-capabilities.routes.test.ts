@@ -88,16 +88,22 @@ vi.mock('../../../src/agency/agency-ingest.service.js', () => ({
 
 // ── The one I/O edge under the REAL settings gate ────────────────────────────
 // Deliberately NOT mocked: `campaign-behavioral-settings.js`. Its exported
-// assert is wrapped (not replaced) so a case can read the exact object it was handed.
+// assert and its reply-less twin are wrapped (not replaced) so a case can read the exact object
+// it was handed: the create asserts, the PATCH path (`helpers/campaign-patch.ts`, which a
+// template apply runs too) asks the twin.
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: { findByTenantAndAccount: mocks.findByTenantAndAccount },
 }));
 vi.mock('../../../src/agency/campaign-behavioral-settings.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/agency/campaign-behavioral-settings.js')>();
-  return { ...actual, assertBehavioralCapabilitiesForConfig: vi.fn(actual.assertBehavioralCapabilitiesForConfig) };
+  return {
+    ...actual,
+    assertBehavioralCapabilitiesForConfig: vi.fn(actual.assertBehavioralCapabilitiesForConfig),
+    behavioralCapabilityRefusal: vi.fn(actual.behavioralCapabilityRefusal),
+  };
 });
 
-import { assertBehavioralCapabilitiesForConfig } from '../../../src/agency/campaign-behavioral-settings.js';
+import { assertBehavioralCapabilitiesForConfig, behavioralCapabilityRefusal } from '../../../src/agency/campaign-behavioral-settings.js';
 import { proxyAgencyCampaignsRoutes } from '../../../src/api/routes/proxy-agency-campaigns.routes.js';
 
 const PREFIX = '/proxy/agency';
@@ -147,6 +153,16 @@ const surfaces = [
   { name: 'POST /campaigns', method: 'POST' as const, url: `${PREFIX}/campaigns` },
   { name: 'PATCH /campaigns/:id', method: 'PATCH' as const, url: `${PREFIX}/campaigns/c1` },
 ];
+
+/** The first config the surface's gate judged, and for which account. */
+function judged(surface: (typeof surfaces)[number]): { config: unknown; target: unknown } {
+  if (surface.method === 'POST') {
+    const call = vi.mocked(assertBehavioralCapabilitiesForConfig).mock.calls[0]!;
+    return { config: call[2], target: call[3] };
+  }
+  const call = vi.mocked(behavioralCapabilityRefusal).mock.calls[0]!;
+  return { config: call[0], target: call[1] };
+}
 
 describe.each(surfaces)('$name — agency.recording is enforced, not merely declared', (surface) => {
   it('REFUSES record_calls: true when agency.recording is off, and the internal handler is never called', async () => {
@@ -373,7 +389,7 @@ describe.each(surfaces)('$name — the gate judges the forwarded object, for the
 
     expect(res.statusCode).toBe(200);
     expect(mocks.findByTenantAndAccount).toHaveBeenCalledWith(TENANT, ACCOUNT);
-    expect(vi.mocked(assertBehavioralCapabilitiesForConfig).mock.calls[0]![3]).toEqual({
+    expect(judged(surface).target).toEqual({
       tenantId: TENANT,
       accountId: ACCOUNT,
     });
@@ -390,7 +406,7 @@ describe.each(surfaces)('$name — the gate judges the forwarded object, for the
       payload: { name: 'Campaign', record_calls: true, analysis_profile_id: PROFILE_ID },
     });
 
-    const asserted = vi.mocked(assertBehavioralCapabilitiesForConfig).mock.calls[0]![2];
+    const asserted = judged(surface).config;
     const forwarded = mocks.proxyToCore.mock.calls[0]![0].body;
     expect(asserted).toBe(forwarded);
     await app.close();
@@ -419,7 +435,7 @@ describe.each(surfaces)('$name — no account context (NEW)', (surface) => {
     governance({ agency: true, recording: true });
     const app = await buildApp();
     await app.inject({ method: surface.method, url: surface.url, payload: { name: 'C', record_calls: true } });
-    const asserted = vi.mocked(assertBehavioralCapabilitiesForConfig).mock.calls[0]![2];
+    const asserted = judged(surface).config;
     expect(mocks.proxyToCore.mock.calls[0]![0].body).toBe(asserted);
     await app.close();
   });

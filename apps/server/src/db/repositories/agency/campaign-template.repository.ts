@@ -252,6 +252,19 @@ export class AgencyCampaignTemplateRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * The templates of `ids` the reader may see, live or archived, in one read (an id it may not see
+   * is absent): the based-on templates a list names that the list itself does not hold.
+   */
+  async findManyVisible(reader: CampaignTemplateReader, ids: readonly string[]): Promise<CampaignTemplateRecord[]> {
+    if (ids.length === 0) return [];
+    const { rows } = await getPool().query<CampaignTemplateRecord>(
+      `SELECT ${COLUMNS} FROM agency_campaign_templates WHERE id = ANY($3::uuid[]) AND ${VISIBLE_SQL}`,
+      [reader.tenantId, reader.accountId, [...ids]],
+    );
+    return rows;
+  }
+
   /** The scope's live default template, else null (`accountId: null`: the organisation's). */
   async findDefault(scope: CampaignTemplateScope): Promise<CampaignTemplateRecord | null> {
     const { rows } = await getPool().query<CampaignTemplateRecord>(

@@ -18,6 +18,7 @@
  */
 
 import type { AgencySoftphoneErrorCode } from '../errors';
+import type { AgencyCampaignTemplateRef, AgencyCampaignTemplateScope } from '../api/agency/campaign-templates';
 import type { AllListed } from '../primitives';
 import type { AgencyActorFields } from './actions';
 import type {
@@ -297,9 +298,31 @@ export interface AgencySoftphoneSettings {
 /** `PUT /settings`: replaces the whole row. `agency.softphone.manage`. */
 export type AgencySoftphoneSettingsUpdateRequest = Omit<AgencySoftphoneSettings, 'updated_at'>;
 
+/**
+ * What untagged calls' outcomes follow while the soft phone sets none of its own
+ * (`disposition_catalog: []`) and campaign templates are on for the account
+ * (`docs/campaign-templates.md` CT11): the outcomes of the account's default template chain,
+ * read live at each call. `template` is the account's default template, else the
+ * organisation's (`scope` says which; the ref and scope New campaign's filled-in form names a
+ * template by), or `null` when neither has one: the built-in outcomes. `disposition_catalog` is
+ * the list untagged calls are saved against now (a template's empty list reads as the built-in
+ * one), the bootstrap's `untagged.disposition_catalog`.
+ */
+export interface AgencySoftphoneOutcomesTemplate {
+  template: (AgencyCampaignTemplateRef & { scope: AgencyCampaignTemplateScope }) | null;
+  disposition_catalog: AgencyDisposition[];
+}
+
 /** `GET /settings` and `PUT /settings`. */
 export interface AgencySoftphoneSettingsResponse {
   settings: AgencySoftphoneSettings;
+  /**
+   * The settings page's "Follow campaign template (<name>)" (CT11): what untagged outcomes
+   * follow, or `null` when the soft phone sets its own (`settings.disposition_catalog` not
+   * empty) or campaign templates are off for the account ("Set for the soft phone", or the
+   * built-in outcomes as before). Always sent by this server; optional for a client of an older one.
+   */
+  outcomes_template?: AgencySoftphoneOutcomesTemplate | null;
 }
 
 // ─── The manual call, on the wire ───────────────────────────────────────────
