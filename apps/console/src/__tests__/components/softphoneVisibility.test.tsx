@@ -155,6 +155,9 @@ describe('the routes', () => {
     expect(routeBlock('softphone/calls/:callId')).toContain('flag="agency_softphone_enabled"');
     // The account's Soft-phone calls list is All calls now (CL34): the old URL only redirects there.
     expect(routeBlock('softphone')).toContain('<SoftphoneCallsRedirect');
+    // … and All calls is routed, behind no call type's flag (the page checks `agency.supervise`).
+    expect(routeBlock('calls')).toContain('<AllCallsPage');
+    expect(routeBlock('calls')).not.toContain('RequireFlag');
     // A campaign's soft-phone calls are in its Call log (CL11): the old URL only redirects there.
     expect(routeBlock('campaigns/:id/manual-calls')).toContain('<CampaignManualCallsRedirect');
     const settings = routeBlock('softphone', app.indexOf('<Route path="/settings"'));

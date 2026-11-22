@@ -18,6 +18,7 @@ import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { isDedicatedAgent } from '../../utils/agencyPersona';
 import type { Role } from '../../types/auth';
+import { declaredPaths, isDeclared } from '../routing/appRoutes';
 
 /**
  * Every destination the shell offers passes the gate of the route it links to (B28), for every
@@ -217,6 +218,33 @@ describe('every offer passes the gate of the route it opens', () => {
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
     ]) {
       expect(targets, path).toContain(path);
+    }
+  });
+
+  /**
+   * The rules above are written by hand, so they cannot tell whether `App.tsx` routes a path
+   * at all: a tab whose route was never added passed them and opened "Page not found". This
+   * reads the real route table.
+   */
+  it('routes every path the shell offers, in App.tsx itself', () => {
+    const declared = declaredPaths();
+    // Not vacuous: the table really was read.
+    expect(declared).toContain('/agency/campaigns');
+    expect(declared.length).toBeGreaterThan(30);
+    const offered = new Set(READERS.flatMap((r) => offers(r).map((o) => o.to.split('#')[0]!.split('?')[0]!)));
+    expect(offered.size).toBeGreaterThan(25);
+    const unrouted = [...offered].filter((path) => !isDeclared(path, declared));
+    expect(unrouted).toEqual([]);
+  });
+
+  it('routes every path the hand-written rules name, so a rule cannot outlive its route', () => {
+    const declared = declaredPaths();
+    for (const path of [
+      '/agency/home', '/agency/callbacks', '/agency/calls', '/agency/listening-history', '/agency/live', '/agency/inbound/missed',
+      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/campaigns/c-1/manual-calls', '/agency/softphone', '/dialer', '/settings/calls', '/settings/listening',
+    ]) {
+      expect(isDeclared(path, declared), path).toBe(true);
     }
   });
 });

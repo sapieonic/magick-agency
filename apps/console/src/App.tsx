@@ -715,12 +715,17 @@ export default function App() {
                     element={<RequireFlag flag="agency_compare_enabled"><CompareAgentsPage /></RequireFlag>}
                   />
                   {/*
-                    The soft phone's supervisor surfaces (`docs/softphone.md` §7):
-                    the account's soft-phone calls and one call's detail, each
-                    behind `agency_softphone_enabled`
-                    on top of the subtree's gates. The server floors the
-                    account-wide reads at `agency.supervise`, as the sidebar entry
-                    and the campaign tab do.
+                    All calls (`docs/call-log.md` P5, CL34): every call of the account in one
+                    list, a tab of Campaigns. The page checks `agency.supervise`, the server's
+                    floor on the account-wide read, as the tab does; it is behind no call
+                    type's flag, since the list holds every type.
+                  */}
+                  <Route path="calls" element={<AllCallsPage />} />
+                  {/*
+                    The account's soft-phone calls page until All calls replaced it (CL35):
+                    redirects (replace) to All calls with its Soft phone chip on, keeping the
+                    rest of the query. One soft-phone call's detail (`docs/softphone.md` §7)
+                    stays, behind `agency_softphone_enabled` on top of the subtree's gates.
                   */}
                   <Route
                     path="softphone"
