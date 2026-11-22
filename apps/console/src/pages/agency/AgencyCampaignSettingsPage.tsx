@@ -4,6 +4,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { CallSummaryProfileField } from '../../components/agency/CallSummaryProfileField';
+import { CampaignTemplateSource } from '../../components/agency/campaignTemplates/CampaignTemplateSource';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { errorCode } from '../../utils/agencyErrors';
@@ -784,6 +785,9 @@ export function AgencyCampaignSettingsPage() {
       )}
 
       {saveError && <ErrorAlert message={saveError} />}
+
+      {/* The template it was made from, and "Save as template…" (campaign templates; nothing with the flag off). */}
+      <CampaignTemplateSource campaign={campaign} />
 
       <div className={styles.layout}>
         <SettingsSectionNav sections={sections} active={sectionNav.active} onSelect={sectionNav.select} />

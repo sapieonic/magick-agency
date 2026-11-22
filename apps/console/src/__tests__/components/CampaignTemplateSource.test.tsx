@@ -1,0 +1,171 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { AgencyCampaignTemplateSummary } from '@magick-agency/contracts/api/agency/campaign-templates';
+import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
+import type { AgencyCampaign } from '../../types/agency-campaign';
+
+/**
+ * Campaign Settings' template line (`docs/campaign-templates.md` §7): "Started from <template>,
+ * version n", that the template has moved on (the campaign is not affected), "See what's different
+ * from the template now" per section, and "Save as template…" as a new template or in place of an
+ * existing one's sections (with the version the list showed). Nothing with the flag off.
+ */
+
+const mocks = vi.hoisted(() => ({
+  tenant: { tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined as string | undefined },
+  flags: { agency_campaign_templates_enabled: true } as Record<string, boolean>,
+  showToast: vi.fn(),
+  getCampaignTemplate: vi.fn(),
+  getEffectiveCampaignTemplate: vi.fn(),
+  listCampaignTemplates: vi.fn(),
+  createCampaignTemplate: vi.fn(),
+  replaceCampaignTemplate: vi.fn(),
+}));
+
+vi.mock('../../contexts/TenantContext', () => ({ useTenant: () => mocks.tenant }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({ useFeatureFlagEnabled: (flag: string) => mocks.flags[flag] === true }));
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({ useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }) }));
+vi.mock('../../api/campaignTemplates', () => ({
+  getCampaignTemplate: mocks.getCampaignTemplate,
+  getEffectiveCampaignTemplate: mocks.getEffectiveCampaignTemplate,
+  listCampaignTemplates: mocks.listCampaignTemplates,
+  createCampaignTemplate: mocks.createCampaignTemplate,
+  replaceCampaignTemplate: mocks.replaceCampaignTemplate,
+}));
+
+import { CampaignTemplateSource } from '../../components/agency/campaignTemplates/CampaignTemplateSource';
+
+const TEMPLATE_SECTIONS = {
+  hours: { calling_window_start: '10:00', calling_window_end: '20:00', calling_days: [1, 2, 3, 4, 5, 6], default_timezone: 'Asia/Kolkata' },
+};
+const resolved = resolveTemplateSections({
+  chosen: { scope: 'account', sections: TEMPLATE_SECTIONS }, basedOn: null, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true },
+});
+
+const CAMPAIGN = {
+  ...resolved.config,
+  id: 'c-1',
+  name: 'Diwali renewals',
+  status: 'draft',
+  calling_window_start: '11:00:00',
+  calling_window_end: '20:00:00',
+  caller_ids: ['+912200000001'],
+  template_source: {
+    template: { id: 'tp-1', name: 'Pune collections', version: 3, scope: 'account' },
+    based_on: null,
+    sections: Object.fromEntries(Object.keys(resolved.sources).map((k) => [k, 'account'])),
+  },
+} as unknown as AgencyCampaign;
+
+const SUMMARY: AgencyCampaignTemplateSummary = {
+  id: 'tp-1', scope: 'account', account_id: 'a-1', name: 'Pune collections', description: 'For Pune', is_default: true, version: 5,
+  based_on: { id: 'org-1', name: 'Standard', version: 2, archived: false }, sections_set: ['hours'], created_at: '2026-11-01T00:00:00Z',
+  updated_at: '2026-11-18T16:12:00Z', updated_by: null, archived_at: null, archived_by: null,
+};
+
+async function renderIt(campaign: AgencyCampaign = CAMPAIGN) {
+  render(
+    <MemoryRouter>
+      <CampaignTemplateSource campaign={campaign} />
+    </MemoryRouter>,
+  );
+  await act(async () => {});
+}
+
+beforeEach(() => {
+  mocks.tenant = { tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined };
+  mocks.flags = { agency_campaign_templates_enabled: true };
+  mocks.getCampaignTemplate.mockResolvedValue({ ...SUMMARY, sections: TEMPLATE_SECTIONS, follows: null });
+  mocks.getEffectiveCampaignTemplate.mockResolvedValue({
+    template: { id: 'tp-1', name: 'Pune collections', version: 5, scope: 'account' }, based_on: null, config: resolved.config, sources: resolved.sources, notes: [],
+  });
+  mocks.listCampaignTemplates.mockResolvedValue([SUMMARY]);
+  mocks.createCampaignTemplate.mockImplementation(async (body: { name: string }) => ({ ...SUMMARY, id: 'tp-9', name: body.name, version: 1 }));
+  mocks.replaceCampaignTemplate.mockResolvedValue({ ...SUMMARY, version: 6 });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe('campaign Settings’ template line', () => {
+  it('says which template it started from, and that the template has moved on without it', async () => {
+    await renderIt();
+    expect(screen.getByTestId('campaign-template-started').textContent).toBe('Started from Pune collections, version 3.');
+    expect(mocks.getCampaignTemplate).toHaveBeenCalledWith('tp-1', 't-1', 'a-1');
+    expect(screen.getByTestId('campaign-template-moved').textContent).toBe(
+      'Pune collections is now on version 5 (this campaign is not affected).',
+    );
+  });
+
+  it('shows what is different from the template now, per section', async () => {
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'See what’s different from the template now' }));
+    await act(async () => {});
+    expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith('tp-1', 't-1', 'a-1');
+    const diff = screen.getByTestId('campaign-template-diff');
+    // The hours were changed here, and the numbers picked (the template sets none).
+    expect([...diff.querySelectorAll('li')].map((li) => li.getAttribute('data-section'))).toEqual(['hours', 'numbers']);
+    const row = within(diff).getByText('Calling hours').closest('li')!;
+    expect(row.textContent).toContain('Changed: the start time');
+    expect(row.textContent).toContain('11:00 AM–8:00 PM');
+  });
+
+  it('saves the campaign’s settings as a new template', async () => {
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+    await act(async () => {});
+    const dialog = screen.getByRole('dialog');
+    expect((within(dialog).getByLabelText('Name') as HTMLInputElement).value).toBe('Diwali renewals');
+    // A supervisor makes the account's templates only.
+    expect(within(dialog).queryByLabelText('For')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const [body, tenantId, accountId] = mocks.createCampaignTemplate.mock.calls[0]!;
+    expect([tenantId, accountId]).toEqual(['t-1', 'a-1']);
+    expect(body.scope).toBe('account');
+    expect(body.sections.hours.calling_window_start).toBe('11:00:00');
+    expect(body.sections.numbers.caller_ids).toEqual(['+912200000001']);
+    // Sections whose feature is off are not saved.
+    expect(body.sections).not.toHaveProperty('assignment');
+    expect(mocks.showToast).toHaveBeenCalledWith('Template “Diwali renewals” created from this campaign.', 'success');
+  });
+
+  it('replaces an existing template’s sections, sending the version the list showed', async () => {
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'Save as template…' }));
+    await act(async () => {});
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'The settings of an existing template' }));
+    fireEvent.change(within(dialog).getByLabelText('Template'), { target: { value: 'tp-1' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace its settings' }));
+    await act(async () => {});
+    const [id, scope, body] = mocks.replaceCampaignTemplate.mock.calls[0]!;
+    expect([id, scope]).toEqual(['tp-1', 'account']);
+    expect(body).toMatchObject({ name: 'Pune collections', description: 'For Pune', based_on_template_id: 'org-1', expected_version: 5 });
+    expect(body.sections.hours.calling_window_start).toBe('11:00:00');
+  });
+
+  it('shows nothing to a role that cannot create campaigns (`agency.campaigns.write`)', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'operator' };
+    await renderIt();
+    expect(screen.queryByTestId('campaign-template-source')).toBeNull();
+    expect(mocks.getCampaignTemplate).not.toHaveBeenCalled();
+  });
+
+  it('says nothing with the flag off', async () => {
+    mocks.flags = {};
+    await renderIt();
+    expect(screen.queryByTestId('campaign-template-source')).toBeNull();
+    expect(mocks.getCampaignTemplate).not.toHaveBeenCalled();
+  });
+
+  it('says a campaign made without a template was not, and still offers Save as template', async () => {
+    await renderIt({ ...CAMPAIGN, template_source: null });
+    expect(screen.getByTestId('campaign-template-source').textContent).toContain('This campaign was not made from a template.');
+    expect(screen.queryByRole('button', { name: /See what’s different/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save as template…' })).toBeTruthy();
+  });
+});
