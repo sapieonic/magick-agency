@@ -31,6 +31,7 @@ export type {
   AgencyAwayRingCandidate,
   AgencyRingableSession,
   AgencyAwayRingEnded,
+  AgencyIdleOfflineSession,
   AgencySoftphoneJoinResult,
 } from './agency/agent-session.repository.js';
 export {

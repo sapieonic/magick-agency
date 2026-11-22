@@ -177,6 +177,10 @@ the station and refuses the others `409 station_on_other_device` unless they ask
 - **Live in another organisation** (`409 session_in_other_tenant`): the join is refused with the
   server's sentence, which names the workspace. The server ends that session by itself first when
   nothing is there (no station attached, nothing in flight, OS7); a working one is left alone.
+- **Ended after 2 h offline** (OS9): a session the app left `offline` (the app killed or swiped
+  away, the phone out of signal; never Mode B's away-ring) is ended by the server after 2 h with
+  nothing in it. The next reconnect's mint is refused `session_ended` and the app shows that the
+  work here has ended; going on duty again opens a new session.
 - **A take-over is spent** by the one mint it arms, whatever that mint answers: a "Use this phone"
   whose mint fails does not carry into a later automatic reconnect.
 

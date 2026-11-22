@@ -13,6 +13,7 @@ import { startInboundCalls } from '../agency/inbound/start.js';
 import { DncRegistry } from '../agency/dnc-registry.js';
 import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 import { AWAY_RING_RECONCILE_MS } from '../agency/away-ring.js';
+import { IdleSessionSweep } from '../agency/idle-session-sweep.js';
 import { onMembershipChanged } from '../rbac/membership-changed.js';
 
 /**
@@ -159,6 +160,13 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   void agencyRuntime.floorAssist.sweep();
   agencyRuntime.floorAssist.startSweep();
 
+  // OS9: a session forgotten offline (no station, nothing in flight) is ended as Leave ends it, here
+  // in the primary only, as OS7 runs. On its timer only: nothing about a forgotten session is
+  // urgent, and a session the startup reaper just moved to `offline` is dated to the reap, so the
+  // restart itself never makes one look idle.
+  const idleSessions = new IdleSessionSweep(agencyRuntime);
+  idleSessions.start();
+
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
   // Main process only, like the rollup job: one assembler and one tick per deployment.
@@ -173,6 +181,8 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     const awayRingStopped = agencyRuntime.awayRing.stop();
     // Floor assist: no new expiry pass from here; the one in flight finishes before the runtime stops.
     const helpSweepStopped = agencyRuntime.floorAssist.stopSweep();
+    // OS9: no new idle-session pass from here; the one in flight finishes before the runtime stops.
+    const idleSweepStopped = idleSessions.stop();
     // First, synchronously: an arriving call now hears the fallback message rather than reaching
     // a stopping runtime. Its calls still held are then ended and settled (bounded) while the
     // runtime and the database are still up, before the runtime stops below.
@@ -189,6 +199,7 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
       await awayRingStopped;
       await agencyRuntime.awayRing.drain();
       await helpSweepStopped;
+      await idleSweepStopped;
       // The batch in flight commits or rolls back; marks left over are the next boot's.
       await insightsRollup.stop();
       // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

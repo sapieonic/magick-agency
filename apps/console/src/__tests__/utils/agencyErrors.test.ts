@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ApiError } from '../../api/client';
-import { errorBody, errorCode, errorStatus, retryOnStationTokenUnavailable, STATION_TOKEN_RETRY_DELAYS_MS } from '../../utils/agencyErrors';
+import { errorBody, errorCode, errorStatus, isSessionGone, retryOnStationTokenUnavailable, STATION_TOKEN_RETRY_DELAYS_MS } from '../../utils/agencyErrors';
 
 /**
  * Built from a real `ApiError`, not a hand-made `{ status, body }`: the field names
@@ -76,5 +76,15 @@ describe('retryOnStationTokenUnavailable (D9)', () => {
     await expect(retryOnStationTokenUnavailable(async () => { calls += 1; throw refusal(); }, async () => {}))
       .rejects.toBeInstanceOf(ApiError);
     expect(calls).toBe(1);
+  });
+});
+
+describe('isSessionGone', () => {
+  it('is true for 409 session_ended and for a 404, false for anything else', () => {
+    expect(isSessionGone(new ApiError(409, { error: 'Session Ended', code: 'session_ended', message: 'x' }))).toBe(true);
+    expect(isSessionGone(new ApiError(404, { error: 'Not Found', message: 'Session not found' }))).toBe(true);
+    expect(isSessionGone(new ApiError(409, { error: 'Conflict', code: 'station_on_other_device', message: 'x' }))).toBe(false);
+    expect(isSessionGone(new ApiError(500, { error: 'Internal' }))).toBe(false);
+    expect(isSessionGone(new Error('offline'))).toBe(false);
   });
 });
