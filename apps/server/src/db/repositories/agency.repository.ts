@@ -359,3 +359,24 @@ export { AgencyCompareReadRepository, agencyCompareReadRepository, ZERO_CALLBACK
 export type { CompareCallbackClasses, CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
 export { AgencyCompareViewRepository, agencyCompareViewRepository } from './agency/compare-view.repository.js';
 export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';
+// Campaign templates (0067, docs/campaign-templates.md): the templates and their versions.
+export {
+  AgencyCampaignTemplateRepository,
+  agencyCampaignTemplateRepository,
+  CAMPAIGN_TEMPLATE_SCOPE_LOCK_SQL,
+} from './agency/campaign-template.repository.js';
+export type {
+  CampaignTemplateArchiveResult,
+  CampaignTemplateBasedOnRow,
+  CampaignTemplateClearDefaultResult,
+  CampaignTemplateContent,
+  CampaignTemplateCreateResult,
+  CampaignTemplateDefaultResult,
+  CampaignTemplateReader,
+  CampaignTemplateRecord,
+  CampaignTemplateRef,
+  CampaignTemplateReplaceResult,
+  CampaignTemplateRestoreResult,
+  CampaignTemplateScope,
+  CampaignTemplateVersionRecord,
+} from './agency/campaign-template.repository.js';

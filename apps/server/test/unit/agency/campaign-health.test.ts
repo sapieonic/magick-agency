@@ -59,6 +59,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     contacts_total: 100, created_by: null,
     started_at: null, ended_at: null, stopping_at: null, completed_at: null,
     archived_at: null, archived_by_user_id: null, archived_by_name: null,
+    template_source: null,
     last_transition_by_user_id: null, last_transition_by_name: null,
     // The lineage columns. An ordinary campaign is generation 0 with
     // no parent and no frozen selector; a retry campaign's health is computed by

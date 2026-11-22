@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { AccountRecord } from '@magick-agency/db/models/account.model';
+import { nameKey } from '../../../utils/name-key.js';
 
 export type CreateTenantAccountResult =
   | { status: 'created'; account: AccountRecord }
@@ -36,14 +37,10 @@ export interface CreateTenantAccountOptions {
 const SLUG_BASE_MAX = 40;
 
 /**
- * How two names are compared for "already taken": Unicode-compatibility folded, trimmed,
- * inner whitespace collapsed, case-folded. "Sales ", "sales" and "SALES" are one name in a
- * switcher, so they are one name here. (Invisible format characters never get this far:
- * the schema refuses them.)
+ * How two account names are compared for "already taken" (`nameKey`, shared with campaign
+ * template names): "Sales ", "sales" and "SALES" are one name.
  */
-export function accountNameKey(name: string): string {
-  return name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
-}
+export const accountNameKey = nameKey;
 
 /**
  * The slug a name starts from: lower-case ASCII letters and digits joined by single dashes,

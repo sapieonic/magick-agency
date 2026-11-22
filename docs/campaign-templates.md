@@ -114,6 +114,14 @@ ALTER TABLE agency_campaigns ADD COLUMN template_source JSONB;  -- NULL: made wi
 Name uniqueness (CT13) is checked in the write's transaction, which locks the scope's rows (as
 AA3 locks the tenant row), not by an index, because the rule folds case and spaces.
 
+Build notes (step 1): the scope lock is a transaction advisory lock on (tenant, account or
+`organisation`), since an organisation scope has no row to lock; names compare by the account-name
+rule (`apps/server/src/utils/name-key.ts`). A write naming a `based_on_template_id` reads that row
+`FOR SHARE` and archive locks it `FOR UPDATE` before counting its live followers, so the two
+serialise. `updated_at` / `updated_by` move with a content save only, not with a default or archive
+change. Archiving an archived template, or restoring a live one, changes nothing; restoring checks
+the name and that its based-on is still live. A retry campaign's `template_source` is NULL (CT7).
+
 ## 5. The pure rules (`packages/domain/src/campaign-templates.ts`)
 
 A leaf module: imports only `@magick-agency/contracts`.
@@ -131,6 +139,26 @@ A leaf module: imports only `@magick-agency/contracts`.
 - `sectionSourcesForCreate(sent, resolved)` → per section `campaign` when what was sent differs
   from the filled-in section, else that section's source (CT9). Field order and absent-vs-default
   are normalised first, so an untouched section never reads as changed.
+
+Build notes (step 1, the calls the rulings left open):
+
+- Inside a set section a field that is absent is its **built-in** value, never the next level's
+  (CT2's "whole"), exactly as a create that omits a field stores the column default. So a sent
+  section's absent fields are built-in too (CT8's "kept as sent").
+- The built-in settings are the column defaults (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS` and its
+  neighbours, pinned to the DEFAULTs by the repository's integration test), with the seeded
+  catalog: so the hours are 09:00–20:00, Monday to Friday, in **UTC** (the column default; New
+  campaign's own form starts at Asia/Kolkata today). `retries` built-in is `{}`, "no rule stored":
+  the retry engine applies `DEFAULT_RETRY_POLICY` per outcome at run time, so it is not copied.
+  `numbers` built-in is an empty pool on the service's own carrier.
+- Comparison: times as `HH:MM:SS`, days sorted once, object keys in any order, and inside an
+  object value a key that is `undefined`, `null` or `false` is the same as absent; array order
+  counts (a catalog's order is the station's).
+- `section_flag_off` is noted only when a template had set the section; `recording_not_allowed`
+  only when `record_calls` was on. The server adds `analysis_profile_unavailable`,
+  `numbers_unavailable` and `carrier_unavailable`.
+- Extra helpers: `normaliseSection`, `sameTemplateValue`, `accountOnlyPartsIn` (what an
+  organisation template may not hold, for the scope refusal) and `sectionKeysSet`.
 
 ## 6. Routes (console, under `/proxy/agency`)
 
@@ -151,7 +179,8 @@ A leaf module: imports only `@magick-agency/contracts`.
 Errors are typed codes in `packages/contracts/src/errors.ts`: `campaign_template_not_found`,
 `campaign_template_changed`, `campaign_template_name_taken`, `campaign_template_in_use`,
 `campaign_template_scope_invalid`, `campaign_template_section_invalid` (with the campaign's
-field details), `campaign_template_archived`.
+field details), `campaign_template_archived`, and (added in step 1) `campaign_template_invalid`
+for a bad name, description or body.
 
 ## 7. Console
 
@@ -174,7 +203,7 @@ field details), `campaign_template_archived`.
 
 | Step | What | State |
 |---|---|---|
-| 1 Foundation | Contract (sections, wire types, errors, flag, permission), migration 0067 and `BASELINE.md`, the domain rules with their table tests, the repository on real Postgres | Not started |
+| 1 Foundation | Contract (sections, wire types, errors, flag, permission), `0067_campaign_templates.sql` and `BASELINE.md`, the domain rules with their table tests, the repository on real Postgres | Built (2026-11-22): `campaign-template-sections.ts`, `api/agency/campaign-templates.ts`, `packages/domain/src/campaign-templates.ts`, `campaign-template.repository.ts`; their tests green, the repository's and the migration's on real Postgres |
 | 2 Server | Routes, effective fill-in, create path (CT8, CT9), soft phone (CT11), numbers (CT15), apply (CT16), audit, route-table guards, integration in both lanes | Not started |
 | 3 Console | Settings pages, New campaign, campaign Settings, soft phone settings, analytics events, tests | Not started |
 | 4 Review | Independent review of the whole diff, fixes with tests that fail without them | Not started |
