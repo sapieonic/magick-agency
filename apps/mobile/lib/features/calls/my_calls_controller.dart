@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
+import '../../core/api/api_error.dart';
 import '../../core/api/decode_body.dart';
 import '../../core/auth/app_gate.dart';
 import '../missed/missed_access.dart';
@@ -40,6 +41,16 @@ class MyCallsApi {
 }
 
 final myCallsApiProvider = Provider<MyCallsApi>((ref) => MyCallsApi(ref.watch(apiClientProvider)));
+
+/// Why the list did not load, in words. A 404 with no code of ours is the
+/// route itself missing: a server from before My calls was one list (an app
+/// installed ahead of its server, or a server rolled back), which no retry
+/// cures, so it says what does. A 404 the route answers (`campaign_not_found`)
+/// carries its code and reads as any refusal.
+String myCallsLoadError(Object error) =>
+    error is ApiHttpError && error.status == 404 && error.code == null
+        ? MyCallsCopy.serverTooOld
+        : errorMessage(error, MyCallsCopy.loadFailed);
 
 /// One page, the console's size.
 const myCallsPageSize = 50;
@@ -230,7 +241,7 @@ class MyCallsController extends Notifier<MyCallsState> {
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
       reportToGate(ref, e); // a 401 here is the end of the sign-in, as anywhere
-      final message = errorMessage(e, MyCallsCopy.loadFailed);
+      final message = myCallsLoadError(e);
       state = keepRows
           // The rows on screen are still good: keep them, say the refresh failed.
           ? state.copyWith(refreshing: false, error: message)

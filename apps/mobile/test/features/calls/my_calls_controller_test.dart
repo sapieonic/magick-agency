@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/features/calls/my_calls_controller.dart';
 import 'package:magick_agency_agent/features/calls/my_calls_copy.dart';
 import 'package:magick_agency_agent/features/missed/missed_count_controller.dart';
@@ -104,6 +105,33 @@ void main() {
     expect(state().rows.single.id, 'a1');
     expect(state().error, isNotNull);
     expect(state().status, MyCallsStatus.ready);
+  });
+
+  test('a server with no /my-calls route (an older one): says the server needs updating, not a generic error', () async {
+    // What a server from before the route answers: Fastify's own 404, with no `code`.
+    const routeMissing = ApiHttpError(
+      status: 404,
+      code: null,
+      message: 'Route GET:/proxy/agency/my-calls?type=all&limit=50 not found',
+      body: {'message': 'Route GET:/proxy/agency/my-calls not found', 'error': 'Not Found', 'statusCode': 404},
+      requestId: null,
+    );
+    final first = controller().ensureLoaded();
+    api.fail(0, routeMissing);
+    await first;
+    expect(state().status, MyCallsStatus.error);
+    expect(state().error, 'My calls needs a newer version of the server. Ask your admin to update it.');
+    expect(state().error, isNot(contains('Route GET')));
+    // A 404 the route itself answers keeps its own words.
+    const refused = ApiHttpError(
+      status: 404,
+      code: 'campaign_not_found',
+      message: 'Campaign not found.',
+      body: {'code': 'campaign_not_found', 'message': 'Campaign not found.'},
+      requestId: null,
+    );
+    expect(myCallsLoadError(refused), isNot(MyCallsCopy.serverTooOld));
+    expect(myCallsLoadError(const ApiNetworkError('offline')), isNot(MyCallsCopy.serverTooOld));
   });
 
   test('a new workspace drops the rows and the chip', () async {

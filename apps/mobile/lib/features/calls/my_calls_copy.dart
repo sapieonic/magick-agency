@@ -165,6 +165,11 @@ abstract final class MyCallsCopy {
       };
 
   static const loadFailed = 'We couldn’t load your calls.';
+
+  /// The server has no `/my-calls` yet: an app build installed before its
+  /// server was updated, or a server rolled back (`DEPLOYMENT.md` 12).
+  static const serverTooOld = 'My calls needs a newer version of the server. Ask your admin to update it.';
+
   static const moreFailed = 'We couldn’t load any more calls.';
   static const loading = 'Loading your calls';
 
