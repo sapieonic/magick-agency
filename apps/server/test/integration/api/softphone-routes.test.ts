@@ -75,7 +75,7 @@ import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { StationTokenUnavailableError } from '../../../src/agency/station-token.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
-import { agencyAgentSessionRepository, agencySoftphoneSettingsRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyInboundCallRepository, agencySoftphoneSettingsRepository } from '../../../src/db/repositories/agency.repository.js';
 import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 
 const CATALOG = JSON.stringify([
@@ -1367,10 +1367,20 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(await place(caller, randomUUID())).toBeNull();
     // No link asked for.
     expect(await place(caller, undefined)).toBeNull();
-    // Not an id at all: dropped like any link that does not hold, never a refusal (CL15).
-    expect(await place(caller, 'nope')).toBeNull();
-    expect(await place(caller, '')).toBeNull();
-    expect(await place(caller, null)).toBeNull();
+    // Not an id at all: dropped like any link that does not hold, never a refusal (CL15), and
+    // dropped before the database is asked (a non-UUID at a `uuid` cast is an error, not an answer).
+    const probe = vi.spyOn(agencyInboundCallRepository, 'isMissedCallFrom');
+    try {
+      expect(await place(caller, 'nope')).toBeNull();
+      expect(await place(caller, '')).toBeNull();
+      expect(await place(caller, null)).toBeNull();
+      expect(probe).not.toHaveBeenCalled();
+      // An id is asked about.
+      expect(await place(caller, theirs)).toBe(theirs);
+      expect(probe).toHaveBeenCalledTimes(1);
+    } finally {
+      probe.mockRestore();
+    }
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 60_000);
 
