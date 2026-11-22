@@ -127,7 +127,9 @@ export interface AgencyInboundCallRecord {
   matched_campaign_id: string | null;
   /**
    * The campaign the call is filed under (0067, `docs/call-log.md`): what the campaign Call log
-   * reads. The matched contact's campaign at arrival; NULL: none.
+   * reads. At arrival the matched contact's campaign, else the route's campaign for unknown
+   * callers (0069); an agent or supervisor may file an unknown caller's call elsewhere at the end
+   * of the call. NULL: none.
    */
   campaign_id: string | null;
   /** How it came by `campaign_id`; set exactly when that is (CHECKed). */

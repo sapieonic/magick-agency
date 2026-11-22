@@ -45,7 +45,7 @@ export interface AgencyLiveCallRow {
 export interface AgencyLiveCallQuery {
   tenantId: string;
   accountId: string;
-  /** One campaign's calls (a dialler call's, a tagged soft-phone call's, a matched inbound call's). */
+  /** One campaign's calls (a dialler call's, a tagged soft-phone call's, an inbound call filed under it). */
   campaignId?: string | null;
   /** One call (`agency_calls.id`): the number reveal and the grant. */
   callId?: string | null;
@@ -69,13 +69,15 @@ export const LIVE_CALLS_SQL = `
        AND m.state <> 'ended' AND m.state = 'bridged' AND m.webrtc_call_id IS NOT NULL
        AND ($3::uuid IS NULL OR m.campaign_id = $3::uuid)
     UNION ALL
-    SELECT 'inbound'::varchar, i.id, i.webrtc_call_id, i.matched_campaign_id, i.session_id, i.matched_contact_id,
+    -- The campaign an inbound call is FILED under (0067: its contact's, else its route's campaign
+    -- for unknown callers, CL4), else the matched one for a row an older server wrote unfiled.
+    SELECT 'inbound'::varchar, i.id, i.webrtc_call_id, COALESCE(i.campaign_id, i.matched_campaign_id), i.session_id, i.matched_contact_id,
            i.bridged_at, i.route_id
       FROM agency_inbound_calls i
      WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid
        AND i.state <> 'ended' AND i.state <> 'arrived' AND i.state = 'connected'
        AND i.bridged_at IS NOT NULL AND i.webrtc_call_id IS NOT NULL AND i.session_id IS NOT NULL
-       AND ($3::uuid IS NULL OR i.matched_campaign_id = $3::uuid)
+       AND ($3::uuid IS NULL OR COALESCE(i.campaign_id, i.matched_campaign_id) = $3::uuid)
   )
   SELECT l.call_id, l.origin, l.correlation_id, l.campaign_id, cam.name AS campaign_name, r.name AS inbound_route_name,
          s.id AS agent_session_id, s.agent_user_id, s.client_kind, c.destination_phone AS customer_phone,
