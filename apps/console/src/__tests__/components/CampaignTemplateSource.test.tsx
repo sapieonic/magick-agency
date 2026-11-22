@@ -106,11 +106,47 @@ describe('campaign Settings’ template line', () => {
     await act(async () => {});
     expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith('tp-1', 't-1', 'a-1');
     const diff = screen.getByTestId('campaign-template-diff');
-    // The hours were changed here, and the numbers picked (the template sets none).
-    expect([...diff.querySelectorAll('li')].map((li) => li.getAttribute('data-section'))).toEqual(['hours', 'numbers']);
+    // The hours were changed here. The numbers were picked here too, but the template sets none:
+    // they are each campaign's own, so they are no difference (U7).
+    expect([...diff.querySelectorAll('li')].map((li) => li.getAttribute('data-section'))).toEqual(['hours']);
     const row = within(diff).getByText('Calling hours').closest('li')!;
     expect(row.textContent).toContain('Changed: the start time');
     expect(row.textContent).toContain('11:00 AM–8:00 PM');
+  });
+
+  it('compares the numbers when the template sets them (U7)', async () => {
+    const numbers = { caller_ids: ['+912200000002'], telephony_provider: 'voicelink', telephony_credential_id: null };
+    const withNumbers = resolveTemplateSections({
+      chosen: { scope: 'account', sections: { ...TEMPLATE_SECTIONS, numbers } }, basedOn: null, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true },
+    });
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue({
+      template: { id: 'tp-1', name: 'Pune collections', version: 5, scope: 'account' }, based_on: null, config: withNumbers.config, sources: withNumbers.sources, notes: [],
+    });
+    await renderIt();
+    fireEvent.click(screen.getByRole('button', { name: 'See what’s different from the template now' }));
+    await act(async () => {});
+    const diff = screen.getByTestId('campaign-template-diff');
+    expect([...diff.querySelectorAll('li')].map((li) => li.getAttribute('data-section'))).toEqual(['hours', 'numbers']);
+  });
+
+  it('keeps the comparison true to the campaign after it is saved (U7)', async () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <CampaignTemplateSource campaign={CAMPAIGN} />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'See what’s different from the template now' }));
+    await act(async () => {});
+    expect(screen.getByTestId('campaign-template-diff')).toBeTruthy();
+    // The supervisor puts the hours back to the template's and saves: the page hands the saved campaign down.
+    rerender(
+      <MemoryRouter>
+        <CampaignTemplateSource campaign={{ ...CAMPAIGN, calling_window_start: '10:00:00' } as AgencyCampaign} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('campaign-template-diff')).toBeNull();
+    expect(screen.getByTestId('campaign-template-diff-empty').textContent).toBe('This campaign has the same settings as Pune collections fills in now.');
   });
 
   it('saves the campaign’s settings as a new template', async () => {

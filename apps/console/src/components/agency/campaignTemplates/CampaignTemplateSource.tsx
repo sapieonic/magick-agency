@@ -1,7 +1,10 @@
 import { useCallback, useState } from 'react';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
-import type { AgencyCampaignTemplateSummary } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { diffSections, sectionsFromCampaign, type TemplateSectionDiff } from '@magick-agency/domain/campaign-templates';
+import type {
+  AgencyCampaignTemplateEffective,
+  AgencyCampaignTemplateSummary,
+} from '@magick-agency/contracts/api/agency/campaign-templates';
+import { diffSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { getCampaignTemplate, getEffectiveCampaignTemplate, listCampaignTemplates } from '../../../api/campaignTemplates';
 import { noteSentence, templateRefusal } from '../../../utils/agency/campaignTemplates/templateCopy';
@@ -23,6 +26,10 @@ import styles from './CampaignTemplates.module.css';
  * fills in today; not for an archived template, which no longer fills in), and "Save as
  * template…". A campaign with no record (made before templates, or with them off) gets only Save
  * as template. Nothing at all with the flag off.
+ *
+ * The comparison leaves out numbers the template leaves on built-in: those are each campaign's
+ * own, as New campaign treats them (U7). It is worked out from the campaign as it is now, so a
+ * save of the campaign shows at once.
  */
 export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign }) {
   const { tenantId, accountId } = useTenant();
@@ -30,7 +37,8 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
   const source = campaign.template_source ?? null;
   const started = source?.template ?? null;
   const [comparing, setComparing] = useState(false);
-  const [diff, setDiff] = useState<{ diffs: TemplateSectionDiff[]; config: Record<string, unknown> } | null>(null);
+  /** The template as it fills in now, read by "See what's different"; the comparison is made at render. */
+  const [filledIn, setFilledIn] = useState<Pick<AgencyCampaignTemplateEffective, 'config' | 'sources'> | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
 
@@ -62,11 +70,7 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
       const effective = started
         ? await getEffectiveCampaignTemplate(started.id, tenantId ?? undefined, accountId ?? undefined)
         : builtinEffective();
-      const filled = sectionsFromCampaign(effective.config, 'account', sections);
-      setDiff({
-        diffs: diffSections(sectionsFromCampaign(campaign, 'account', sections), filled),
-        config: effective.config as unknown as Record<string, unknown>,
-      });
+      setFilledIn({ config: effective.config, sources: effective.sources });
     } catch (err) {
       setDiffError(errorCode(err) === 'campaign_template_archived'
         ? `${templateName} has since been archived, so there is nothing to compare with.`
@@ -81,6 +85,11 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
   const created = campaign.created_at ? new Date(campaign.created_at) : null;
   const createdOn = created && !Number.isNaN(created.getTime()) ? ` · created ${formatDayMonth(created)}` : '';
   const notes = source?.notes ?? [];
+  // Numbers the template leaves on built-in are this campaign's own: not a difference (U7).
+  const compared = filledIn ? sections.filter((k) => k !== 'numbers' || filledIn.sources.numbers !== 'builtin') : [];
+  const diffs = filledIn
+    ? diffSections(sectionsFromCampaign(campaign, 'account', compared), sectionsFromCampaign(filledIn.config, 'account', compared))
+    : null;
 
   return (
     <section className={styles.banner} aria-label="Campaign template" data-testid="campaign-template-source">
@@ -106,7 +115,7 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
       ) : null}
       <div className={styles.actions}>
         {source && !archived ? (
-          <button type="button" className={styles.linkButton} onClick={() => void compare()} disabled={comparing} aria-expanded={diff !== null}>
+          <button type="button" className={styles.linkButton} onClick={() => void compare()} disabled={comparing} aria-expanded={filledIn !== null}>
             {comparing ? 'Comparing…' : 'See what’s different from the template now'}
           </button>
         ) : null}
@@ -117,11 +126,11 @@ export function CampaignTemplateSource({ campaign }: { campaign: AgencyCampaign 
         ) : null}
       </div>
       {diffError ? <p className={styles.fieldError}>{diffError}</p> : null}
-      {diff ? (
+      {filledIn && diffs ? (
         <SectionDiffList
-          diffs={diff.diffs}
-          from={{ label: 'This campaign', sections: sectionsFromCampaign(campaign, 'account', sections) }}
-          to={{ label: started ? `${templateName} now` : 'Built-in now', config: diff.config }}
+          diffs={diffs}
+          from={{ label: 'This campaign', sections: sectionsFromCampaign(campaign, 'account', compared) }}
+          to={{ label: started ? `${templateName} now` : 'Built-in now', config: filledIn.config }}
           empty={`This campaign has the same settings as ${templateName} fills in now.`}
           testId="campaign-template-diff"
         />
