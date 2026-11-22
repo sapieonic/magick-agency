@@ -1,5 +1,5 @@
 /**
- * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT18): which campaign fields
+ * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT21): which campaign fields
  * belong to which section of a template. ONE declaration; nothing else lists them (§3). The
  * server's template routes, the create path's fill-in, the domain rules
  * (`packages/domain/src/campaign-templates.ts`) and the console's editors all read this map.

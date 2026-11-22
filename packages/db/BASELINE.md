@@ -1878,7 +1878,7 @@ own statement is planned on it) and the down → up inventory suite.
 
 ### 0067 — `migrations/0067_campaign_templates.sql`
 
-Campaign templates (docs/campaign-templates.md, CT1–CT18; wire shapes in
+Campaign templates (docs/campaign-templates.md, CT1–CT21; wire shapes in
 `packages/contracts/src/api/agency/campaign-templates.ts`). **`agency_campaign_templates`** (new): `id`,
 `tenant_id`, `account_id` NULL (NULL = an organisation template, shared by the tenant's accounts; no FK on
 either, as `account_settings`, open question 2), `name` `VARCHAR(80)`, `description` `VARCHAR(280)` NULL,
@@ -1905,6 +1905,19 @@ both ways, the default index per scope including the organisation's and an archi
 versions' key and cascade, `template_source`, the lock timeout, down then up), the server's
 `test/integration/agency/campaign-template-repository.test.ts` (the repository, and the contract's column
 defaults pinned to `agency_campaigns`' DEFAULTs) and the down → up inventory suite.
+
+### 0068 — `migrations/0068_campaign_templates_archived_index.sql`
+
+Campaign templates' Archived list (docs/campaign-templates.md CT14).
+**`idx_agency_campaign_templates_archived`** `(tenant_id, account_id) WHERE archived_at IS NOT NULL` on
+`agency_campaign_templates`: the twin of 0067's live `idx_agency_campaign_templates_scope`, so
+`GET /proxy/agency/campaign-templates?archived=true` reads one scope's archive instead of scanning every
+tenant's templates. The repository's list names `archived_at IS NOT NULL` (or `IS NULL`) in its statement,
+so the planner proves which index applies. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout =
+'10s'`, so a deployment may build it `CONCURRENTLY` first; an invalid index left under the name by a failed
+concurrent build fails the migration. **Down** drops it. **Tests**:
+`test/integration/db/campaign-templates-archived-index-migration.test.ts` (the definition and comment, the
+list's statement uses it, the invalid-index refusal, down then up) and the down → up inventory suite.
 
 ## Tests
 

@@ -21,7 +21,7 @@ import type {
 // definition — see its header for why it is derived from the record rather than
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
-import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
+import { CONFIG_CHANGE_HEADER, TEMPLATE_APPLY_HEADER } from '../../middleware/headers.js';
 import { campaignConfigChange, encodeConfigChange, withCarrierAccountLabels } from '../../../agency/campaign-config-audit.js';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
@@ -35,7 +35,14 @@ import { contextColumnsRejected } from './guards.js';
 import { normalizeAgentScript } from '../../../agency/agent-script.js';
 import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
-import { templateSourceIssue, templateSourceRecompute } from '../../../agency/campaign-templates/template-source.js';
+import {
+  patchNamesSectionField,
+  templateApplyRefsOf,
+  templateSourceApplied,
+  templateSourceIssue,
+  templateSourceRecompute,
+  type TemplateSourceRefs,
+} from '../../../agency/campaign-templates/template-source.js';
 import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 
@@ -140,15 +147,24 @@ export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly st
  * dropped, and never silently reactivates when it is added back.
  *
  * A campaign made from a template (`template_source`, CT9) has its record recomputed from the row
- * as written, in the same transaction (`templateSourceRecompute`): a section changed away from the
- * template reads `campaign`, one changed back reads the template's source again. Every settings
- * PATCH comes here, the public one and a template's apply alike. Without either, the plain update.
+ * as written, in the same transaction (`templateSourceRecompute`), when the body names a section
+ * field: a section changed away from the template reads `campaign`, one changed back reads the
+ * template's source again. Best effort: a template read that fails leaves the record, never fails
+ * the PATCH (the record is never read at run time, CT1). A body that names no section field (a
+ * rename) cannot change it and reads no template. A template's apply (CT16) names the templates it
+ * applies (`applied`): the record is switched to them in the same transaction, and a failure to read
+ * them fails the PATCH, so the settings and the record are written together or not at all. Every
+ * settings PATCH comes here, the public one and an apply alike. Without any of these, the plain
+ * update.
  */
 export async function writeCampaignPatch(
   campaign: AgencyCampaignRecord,
   body: Record<string, unknown>,
+  applied: TemplateSourceRefs | null = null,
 ): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] }> {
-  const recordAfter = await templateSourceRecompute(campaign);
+  const recordAfter = applied
+    ? await templateSourceApplied(campaign, applied)
+    : patchNamesSectionField(body) ? await templateSourceRecompute(campaign) : null;
   if (!('caller_ids' in body) && !recordAfter) return { row: await agencyCampaignRepository.update(campaign.id, body) };
   const next = 'caller_ids' in body ? body.caller_ids as string[] : null;
   return agencyCampaignRepository.updateLocked(campaign.id, body, async (row, client) => {
@@ -347,6 +363,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     const campaign = campaignOf(request);
 
     const body = { ...(request.body as Record<string, unknown> | undefined) };
+    // A template's apply (CT16) names the templates whose record the write stores with the settings.
+    const applied = templateApplyRefsOf(request.headers[TEMPLATE_APPLY_HEADER]);
+    if (applied === 'invalid') {
+      return replyValidationFailed(reply, { template_source: 'the applied template is not one' });
+    }
     if ('status' in body) {
       return replyValidationFailed(reply, { status: 'status is not editable — use /start, /pause, /resume or /stop' });
     }
@@ -405,7 +426,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       && await analysisProfileRejected(request, reply, body.analysis_profile_id)) return reply;
     // DN6: never drop a dedicated caller ID. Checked at the write, under the campaign row's
     // lock (`writeCampaignPatch`), so after every other refusal.
-    const written = await writeCampaignPatch(campaign, body);
+    const written = await writeCampaignPatch(campaign, body, applied);
     if ('refused' in written) return replyCallerIdDedicated(reply, written.refused);
     const updated = written.row;
     // `update` can only return null if the row vanished between the ownership

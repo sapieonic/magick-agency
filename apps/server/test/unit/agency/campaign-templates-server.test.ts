@@ -22,7 +22,8 @@ import {
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
 import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
 import { filledCreateBody, withoutTemplateKeys } from '../../../src/agency/campaign-templates/create-fill.js';
-import { templateSourceFor, templateSourceIssue } from '../../../src/agency/campaign-templates/template-source.js';
+import { patchNamesSectionField, templateApplyRefsOf, templateSourceFor, templateSourceIssue } from '../../../src/agency/campaign-templates/template-source.js';
+import { templateApplyHeaderValue } from '../../../src/api/middleware/headers.js';
 import {
   sectionConfigIssues,
   sectionOfPath,
@@ -160,5 +161,24 @@ describe('templateSourceFor (CT9 as amended): the record of stored settings', ()
     });
     // Back to the template's value: its source again.
     expect((await templateSourceFor(scope, fill.resolved.config, refs, fill))!.sections.hours).toBe('builtin');
+  });
+});
+
+describe('the apply\'s header to the internal PATCH, and which PATCH bodies can change the record (D1, D5)', () => {
+  const refs = { template: { id: '11111111-2222-4333-8444-555555555555', name: 'T', version: 3, scope: 'account' as const }, based_on: null };
+
+  it('round-trips the refs; absent is none; anything else is invalid, never guessed at', () => {
+    expect(templateApplyRefsOf(templateApplyHeaderValue(refs))).toEqual(refs);
+    expect(templateApplyRefsOf(undefined)).toBeNull();
+    for (const bad of ['forged', ['a'], templateApplyHeaderValue({ template: null, based_on: null }),
+      templateApplyHeaderValue({ template: { ...refs.template, id: 'x' }, based_on: null })]) {
+      expect(templateApplyRefsOf(bad)).toBe('invalid');
+    }
+  });
+
+  it('a body names a section field or not', () => {
+    expect(patchNamesSectionField({ wrapup_seconds: 30 })).toBe(true);
+    expect(patchNamesSectionField({ caller_ids: ['+919000000001'] })).toBe(true);
+    expect(patchNamesSectionField({ name: 'Renamed', context_display: [] })).toBe(false);
   });
 });

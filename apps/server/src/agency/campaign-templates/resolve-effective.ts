@@ -65,6 +65,7 @@ import {
 import { getFeatureFlagService, FLAGS } from '../../feature-flags/index.js';
 import { resolveBehavioralSettings } from '../campaign-behavioral-settings.js';
 import { preflightAnalysisProfile } from '../../analysis/profile-preflight.js';
+import { UUID_RE } from '../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'campaign-templates' });
 
@@ -208,7 +209,8 @@ async function withServerNotes(
 
   const profileId = sections.recording.analysis_profile_id;
   if (profileId) {
-    const refused = !can.analyze
+    // A malformed id (a template saved before the route checked it) is unusable, never a `22P02`.
+    const refused = !can.analyze || !UUID_RE.test(profileId)
       || await preflightAnalysisProfile(profileId, scope.tenantId, scope.accountId, 'agency') !== null;
     if (refused) {
       sections.recording.analysis_profile_id = null;

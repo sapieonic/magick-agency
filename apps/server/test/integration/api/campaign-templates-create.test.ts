@@ -50,6 +50,8 @@ import {
 import { insertAgencyContact } from '../agency/agency-factories.js';
 import { buildApp } from '../../../src/app.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+import { agencyCampaignRepository, agencyCampaignTemplateRepository } from '../../../src/db/repositories/agency.repository.js';
+import { templateSourceRecompute } from '../../../src/agency/campaign-templates/template-source.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -283,6 +285,60 @@ describe('the flag on: filled in from a template (CT8, CT9)', () => {
     expect((before.template_source as AgencyCampaignTemplateSource).template).toMatchObject({ name: tpl.name, version: 1 });
   });
 
+  it('CT1: a campaign made after the template is edited gets the new values; the earlier one keeps its own (L14)', async () => {
+    const tpl = await template('account', { outcomes: OUTCOMES, wrapup: WRAPUP }, { make_default: true });
+    const earlier = await create(BASE);
+    const put = await sup('PUT', `/campaign-templates/${tpl.id}`, {
+      name: tpl.name, description: null, based_on_template_id: null,
+      sections: { outcomes: { disposition_catalog: [{ code: 'other', label: 'Other' }] }, wrapup: { wrapup_seconds: 10 } },
+      expected_version: 1,
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    const later = await create(BASE);
+    expect(await settings(later)).toMatchObject({
+      disposition_catalog: [{ code: 'other', label: 'Other' }], wrapup_seconds: 10,
+      template_source: { template: { id: tpl.id, version: 2 } },
+    });
+    expect(await settings(earlier)).toMatchObject({
+      disposition_catalog: OUTCOMES.disposition_catalog, wrapup_seconds: 60,
+      template_source: { template: { id: tpl.id, version: 1 } },
+    });
+  });
+
+  it('CT1: nothing that reads a campaign at run time sees the template: the GET, findById and the pacing read (findActive)', async () => {
+    const tpl = await template('account', { outcomes: OUTCOMES, wrapup: WRAPUP }, { make_default: true });
+    const id = await create(BASE);
+    // Started, so the pacing loop's own read returns it.
+    await q(`UPDATE agency_campaigns SET status = 'running', started_at = now() WHERE id = $1`, [id]);
+    const put = await sup('PUT', `/campaign-templates/${tpl.id}`, {
+      name: tpl.name, description: null, based_on_template_id: null,
+      sections: { outcomes: { disposition_catalog: [{ code: 'other', label: 'Other' }] }, wrapup: { wrapup_seconds: 10, allow_wrapup_redial: false } },
+      expected_version: 1,
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    const stored = { disposition_catalog: OUTCOMES.disposition_catalog, wrapup_seconds: 60, wrapup_auto_return: false, allow_wrapup_redial: true };
+    const viaGet = await sup('GET', `/campaigns/${id}`);
+    expect(viaGet.statusCode, viaGet.body).toBe(200);
+    expect(viaGet.json()).toMatchObject(stored);
+    expect(await agencyCampaignRepository.findById(id)).toMatchObject(stored);
+    const active = (await agencyCampaignRepository.findActive()).filter((c) => c.id === id);
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject(stored);
+  });
+
+  it('a campaign PATCH never changes the template it was made from (L14)', async () => {
+    const tpl = await template('account', { outcomes: OUTCOMES, wrapup: WRAPUP }, { make_default: true });
+    const before = (await sup('GET', `/campaign-templates/${tpl.id}`)).json() as AgencyCampaignTemplate;
+    const id = await create(BASE);
+    const res = await sup('PATCH', `/campaigns/${id}`, { wrapup_seconds: 15, disposition_catalog: [{ code: 'x', label: 'X' }] });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = (await sup('GET', `/campaign-templates/${tpl.id}`)).json() as AgencyCampaignTemplate;
+    expect(after).toEqual(before);
+    expect(after).toMatchObject({ version: 1, sections: { outcomes: OUTCOMES, wrapup: WRAPUP } });
+    const { rows } = await q(`SELECT count(*)::int AS n FROM agency_campaign_template_versions WHERE template_id = $1`, [tpl.id]);
+    expect(rows[0].n).toBe(1);
+  });
+
   it('CT7: a retry campaign copies its parent\'s settings, never a template', async () => {
     const tpl = await template('account', { wrapup: WRAPUP }, { make_default: true });
     const parent = await create(BASE);
@@ -354,6 +410,55 @@ describe('the record follows the campaign (CT9 as amended)', () => {
     expect(await sourceOf(id)).toEqual(before);
   });
 
+  it('a settings PATCH never fails on the record: a template read that throws is logged, the record kept, the PATCH lands (D1)', async () => {
+    await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const before = await sourceOf(id);
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion').mockRejectedValue(new Error('pool exhausted'));
+    try {
+      const after = await patch(id, { calling_window_start: '11:00' });
+      expect(after.calling_window_start).toBe('11:00:00');
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await settings(id)).calling_window_start).toBe('11:00:00');
+    expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('a PATCH that names no section field reads no template and leaves the record (D1)', async () => {
+    await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const before = await sourceOf(id);
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion');
+    try {
+      expect((await patch(id, { name: 'Renamed' })).name).toBe('Renamed');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await sourceOf(id)).toEqual(before);
+  });
+
+  it('the recompute reads nothing under the row lock: a record that names other versions by then is left as it is (D1)', async () => {
+    const tpl = await template('account', { hours: HOURS }, { make_default: true });
+    const id = await create(BASE);
+    const campaign = (await agencyCampaignRepository.findById(id))!;
+    const recordAfter = (await templateSourceRecompute(campaign))!;
+    expect(recordAfter).not.toBeNull();
+    // An apply of another version landed between the read and the lock.
+    const moved: AgencyCampaignTemplateSource = { ...campaign.template_source!, template: { ...campaign.template_source!.template!, version: 7 } };
+    const spy = vi.spyOn(agencyCampaignTemplateRepository, 'findVersion');
+    try {
+      expect(await recordAfter({ ...campaign, template_source: moved, calling_window_start: '11:00:00' })).toBeNull();
+      // Same versions: computed from the fill made before the lock, still with no read.
+      expect(await recordAfter({ ...campaign, calling_window_start: '11:00:00' })).toMatchObject({ template: { id: tpl.id }, sections: { hours: 'campaign' } });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('a template\'s outcome overrides without contact assignment: left out with a note, never a 403 on a field not sent (S1)', async () => {
     const catalog = [{ code: 'will_pay', label: 'Will pay', override: { extra_attempts: 1 } }, { code: 'refused', label: 'Refused' }];
     const org = await template('organisation', { outcomes: { disposition_catalog: catalog, outcome_dispositions: {} } }, { make_default: true });
@@ -370,6 +475,29 @@ describe('the record follows the campaign (CT9 as amended)', () => {
     await setFlag('agency_contact_assignment_enabled', true);
     const withAssignment = await create(BASE);
     expect((await settings(withAssignment)).disposition_catalog).toEqual(catalog);
+  });
+});
+
+describe('hours sent without a time zone (D6, CT8 and CT18 as decided)', () => {
+  const HOURS_ONLY = { calling_window_start: '09:00', calling_window_end: '18:00' };
+
+  it('the flag on: the hours section sent is kept, its absent time zone the built-in Asia/Kolkata', async () => {
+    const id = await create({ ...BASE, ...HOURS_ONLY });
+    expect(await settings(id)).toMatchObject({
+      calling_window_start: '09:00:00', calling_window_end: '18:00:00', default_timezone: 'Asia/Kolkata',
+    });
+    // Also when the default template sets other hours: a section sent is won whole.
+    await template('account', { hours: { calling_window_start: '10:00', calling_window_end: '19:00', default_timezone: 'Asia/Dubai' } }, { make_default: true });
+    const withTemplate = await create({ ...BASE, ...HOURS_ONLY });
+    expect(await settings(withTemplate)).toMatchObject({ calling_window_end: '18:00:00', default_timezone: 'Asia/Kolkata' });
+  });
+
+  it('the flag off: the column default, UTC, as before', async () => {
+    await setFlag('agency_campaign_templates_enabled', false);
+    const id = await create({ ...BASE, ...HOURS_ONLY });
+    expect(await settings(id)).toMatchObject({
+      calling_window_start: '09:00:00', calling_window_end: '18:00:00', default_timezone: 'UTC', template_source: null,
+    });
   });
 });
 

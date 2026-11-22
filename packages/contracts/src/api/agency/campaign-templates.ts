@@ -1,5 +1,5 @@
 /**
- * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT18): the console wire shapes of
+ * Campaign templates (`docs/campaign-templates.md`, rulings CT1–CT21): the console wire shapes of
  * `/proxy/agency/campaign-templates/*` (§6) and what a campaign records of the template it was
  * made from (`template_source`, CT9).
  *
@@ -11,15 +11,17 @@
  *
  * Who: listing, reading one, its versions and the filled-in form need `agency.campaigns.write`;
  * writing needs `agency.campaign_templates.manage` (an organisation template also an
- * organisation-wide seat, CT3); apply needs both. Every route answers `403 feature_disabled` while
- * `agency_campaign_templates_enabled` is off (CT17). Refusals: `AgencyCampaignTemplateErrorCode`
- * (`../../errors.ts` §10), re-exported below.
+ * organisation-wide seat, CT3); apply needs both. `effective` and apply need `X-Account-Id`
+ * (`400 account_scope_required`: a campaign belongs to one account). Every route answers
+ * `403 feature_disabled` while `agency_campaign_templates_enabled` is off (CT17). Refusals:
+ * `AgencyCampaignTemplateErrorCode` (`../../errors.ts` §10), re-exported below.
  *
  * Words on screen are "organisation", never "tenant" (AA7); the wire's scope literal says
  * `organisation` for the same reason.
  */
 
 import type { AgencyCampaignActor } from '../../agency';
+import type { AllListed } from '../../primitives';
 import type {
   AgencyCampaignTemplateConfig,
   AgencyCampaignTemplateFilledSource,
@@ -65,6 +67,8 @@ export {
 export type AgencyCampaignTemplateScope = 'organisation' | 'account';
 
 export const AGENCY_CAMPAIGN_TEMPLATE_SCOPES = ['organisation', 'account'] as const satisfies readonly AgencyCampaignTemplateScope[];
+const _scopesListed: AllListed<AgencyCampaignTemplateScope, typeof AGENCY_CAMPAIGN_TEMPLATE_SCOPES> = true;
+void _scopesListed;
 
 /** A template's name: trimmed, 1 to this many characters (CT13; the column is `VARCHAR(80)`). */
 export const AGENCY_CAMPAIGN_TEMPLATE_NAME_MAX = 80;
@@ -78,6 +82,16 @@ export const AGENCY_CAMPAIGN_TEMPLATE_APPLY_MAX_CAMPAIGNS = 50;
  * the template's history, so the cap bounds each one.
  */
 export const AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES = 256 * 1024;
+/**
+ * The most LIVE templates one scope keeps (the organisation's, or one account's): a create or a
+ * restore past it is refused `400 campaign_template_invalid` with `details.templates`. Archived
+ * templates do not count.
+ */
+export const AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX = 200;
+/** How many versions `GET …/versions` answers when no `limit` is sent: the newest ones. */
+export const AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE = 50;
+/** The largest `limit` `GET …/versions` takes. */
+export const AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX = 100;
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
@@ -209,7 +223,23 @@ export interface AgencyCampaignTemplateVersionSummary {
   saved_by: AgencyCampaignActor | null;
 }
 
-/** `GET /proxy/agency/campaign-templates/:id/versions`: newest first. */
+/**
+ * `GET /proxy/agency/campaign-templates/:id/versions` query: one page of the history, newest first.
+ * `limit` (1 to `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX`, default
+ * `AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE`) versions older than `before` (a version number; absent:
+ * from the newest). A malformed value is `400 campaign_template_invalid`.
+ */
+export interface AgencyCampaignTemplateVersionsQuery {
+  before?: number;
+  limit?: number;
+}
+
+/**
+ * `GET /proxy/agency/campaign-templates/:id/versions`: newest first, one page
+ * ({@link AgencyCampaignTemplateVersionsQuery}). Versions are numbered from 1 with no gaps and never
+ * deleted, so older ones exist while the last row's `version` is above 1: the next page is
+ * `before` that version.
+ */
 export interface AgencyCampaignTemplateVersionsResponse {
   template_id: string;
   versions: AgencyCampaignTemplateVersionSummary[];
@@ -229,7 +259,8 @@ export interface AgencyCampaignTemplateEffectiveQuery {
 }
 
 /**
- * `GET /proxy/agency/campaign-templates/effective`: the settings a new campaign starts from.
+ * `GET /proxy/agency/campaign-templates/effective`: the settings a new campaign starts from, for
+ * the context account (without `X-Account-Id`, `400 account_scope_required`).
  * `template` is the template it starts from (the one named, else the account's default, else the
  * organisation's default), `null` for the built-in settings; `based_on` the organisation template
  * that account template follows, if any. `config` holds every section's fields, `sources` where
@@ -296,7 +327,8 @@ export interface AgencyCampaignCreateRequest extends Omit<Partial<AgencyCampaign
 /**
  * `POST /proxy/agency/campaign-templates/:id/apply`: write `sections` of the template, as filled
  * in for the account, to each of `campaign_ids` (drafts of the context account) through the
- * campaign PATCH path, its checks and audit included. `expected_version`, when sent, is the
+ * campaign PATCH path, its checks and audit included. Needs `X-Account-Id` (without it,
+ * `400 account_scope_required`). `expected_version`, when sent, is the
  * version the preview showed: a template saved since is refused `409 campaign_template_changed`
  * before any campaign is touched.
  */
@@ -326,6 +358,8 @@ export const AGENCY_CAMPAIGN_TEMPLATE_APPLY_REFUSAL_CODES = [
   'campaign_archived',
   'campaign_rejected',
 ] as const satisfies readonly AgencyCampaignTemplateApplyRefusalCode[];
+const _applyRefusalsListed: AllListed<AgencyCampaignTemplateApplyRefusalCode, typeof AGENCY_CAMPAIGN_TEMPLATE_APPLY_REFUSAL_CODES> = true;
+void _applyRefusalsListed;
 
 /** One campaign's result of an apply. */
 export type AgencyCampaignTemplateApplyResult =

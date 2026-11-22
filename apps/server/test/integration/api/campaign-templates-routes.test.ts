@@ -41,6 +41,9 @@ import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES,
+  AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX,
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE,
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX,
   type AgencyCampaignTemplate,
   type AgencyCampaignTemplateEffective,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -247,6 +250,21 @@ describe('who may read and write (CT3)', () => {
     expect((await agencyCampaignTemplateRepository.findVisible({ tenantId: w.tenant, accountId: null }, org.id))!.version).toBe(1);
   });
 
+  it('a supervisor on an organisation-wide seat holds the seat but not the role: refused by the tenant_admin floor alone', async () => {
+    // The schema allows a role below tenant_admin with no account (a super-admin can add one): the
+    // seat check (AA1) passes for it, so only the role floor stands between it and the write.
+    const wideSupervisor = await person(w.tenant, null, 'account_admin', 'Wide Supervisor');
+    const create = await call(wideSupervisor, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Wide', sections: {} });
+    expect(create.statusCode, create.body).toBe(403);
+    expect(create.json().code).toBeUndefined();
+    expect(create.json()).toMatchObject({ error: 'Forbidden', message: expect.stringMatching(/kept by organisation admins/) });
+    const org = await orgTemplate();
+    const archive = await call(wideSupervisor, null, 'POST', `/campaign-templates/${org.id}/archive`);
+    expect(archive.statusCode, archive.body).toBe(403);
+    expect(archive.json().code).toBeUndefined();
+    expect((await q(`SELECT count(*)::int AS n FROM agency_campaign_templates WHERE tenant_id = $1 AND archived_at IS NULL`, [w.tenant])).rows[0].n).toBe(1);
+  });
+
   it('an account-scoped tenant admin is refused an organisation write: 403 tenant_wide_membership_required (AA1)', async () => {
     const res = await call(w.scopedAdmin, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Scoped', sections: {} });
     expect(res.statusCode).toBe(403);
@@ -412,6 +430,19 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     expect(blank.json().details).toEqual({ caller_ids: 'every caller ID must be a non-empty string' });
   });
 
+  it('a malformed call summary profile id is the section refusal keyed on the field, never a generic 400 (D9)', async () => {
+    // With call analysis on, the profile is looked up: a non-id must be refused before it reaches the uuid cast.
+    await setFlag(w.tenant, 'agency_call_analysis', true);
+    for (const bad of ['not-an-id', `${randomUUID()}x`]) {
+      const res = await call(w.supA, w.a, 'POST', '/campaign-templates', {
+        scope: 'account', name: `P ${bad.slice(0, 4)}`, sections: { recording: { record_calls: false, analysis_profile_id: bad } },
+      });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'campaign_template_section_invalid', sections: ['recording'] });
+      expect(Object.keys(res.json().details)).toEqual(['analysis_profile_id']);
+    }
+  });
+
   it('a set numbers section names at least one number, as a campaign does (S9)', async () => {
     for (const numbers of [{ caller_ids: [] }, { telephony_provider: 'voicelink' }]) {
       const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Carrier only', sections: { numbers } });
@@ -491,6 +522,23 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     const fits = { breaks: { break_reasons: [{ code: 'tea', label: 'Tea' }] } };
     await accountTemplate({ sections: fits });
   });
+
+  it('a template a campaign would accept, but over the size cap, is refused on the cap alone (CT19)', async () => {
+    // Outcomes every campaign check accepts: only their number makes them large.
+    const catalog = (n: number) => Array.from({ length: n }, (_, i) => ({ code: `outcome_${i}`, label: `Outcome number ${i} ${'·'.repeat(40)}` }));
+    const sections = (n: number) => ({ outcomes: { disposition_catalog: catalog(n), outcome_dispositions: {} } });
+    const bytes = (n: number) => Buffer.byteLength(JSON.stringify(sections(n)), 'utf8');
+    let n = 100;
+    while (bytes(n) <= AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES) n += 100;
+    // Valid as a campaign: a smaller list of the same outcomes is saved.
+    await accountTemplate({ name: 'Under the cap', sections: sections(100) });
+    const before = (await q(`SELECT count(*)::int AS n FROM agency_campaign_templates`)).rows[0].n;
+    const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Over the cap', sections: sections(n) });
+    expect(res.statusCode, res.body.slice(0, 300)).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'campaign_template_invalid' });
+    expect(Object.keys(res.json().details)).toEqual(['sections']);
+    expect((await q(`SELECT count(*)::int AS n FROM agency_campaign_templates`)).rows[0].n).toBe(before);
+  });
 });
 
 // ── Versions, names, defaults, archive (CT6, CT13, CT14) ───────────────────
@@ -530,6 +578,46 @@ describe('versions and the stale save (CT6)', () => {
     });
   });
 
+  it('the history a page at a time: the newest by default, older ones before a version; a bad query is 400 (D4)', async () => {
+    const tpl = await accountTemplate();
+    for (let v = 1; v <= 3; v++) {
+      const res = await call(w.supA, w.a, 'PUT', `/campaign-templates/${tpl.id}`, {
+        name: tpl.name, description: null, based_on_template_id: null,
+        sections: v === 2 ? { hours: HOURS, outcomes: OUTCOMES } : { outcomes: OUTCOMES }, expected_version: v,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    const page = async (query: string) => {
+      const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions${query}`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { versions: Array<{ version: number; sections_set: string[] }> }).versions;
+    };
+    expect((await page('')).map((v) => v.version)).toEqual([4, 3, 2, 1]);
+    // `sections_set` in the section map's order, read without the sections.
+    expect((await page('?limit=2')).map((v) => [v.version, v.sections_set])).toEqual([[4, ['outcomes']], [3, ['outcomes', 'hours']]]);
+    expect((await page('?before=3&limit=5')).map((v) => v.version)).toEqual([2, 1]);
+    expect(await page('?before=1')).toEqual([]);
+    for (const bad of ['?limit=0', `?limit=${AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX + 1}`, '?limit=x', '?before=0', '?before=-1']) {
+      const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions${bad}`);
+      expect(res.statusCode, bad).toBe(400);
+      expect(res.json().code).toBe('campaign_template_invalid');
+    }
+  });
+
+  it('the history answers at most AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE versions when no limit is sent (D4)', async () => {
+    const tpl = await accountTemplate();
+    // Older saved states, written straight to the history.
+    await q(
+      `INSERT INTO agency_campaign_template_versions (template_id, version, name, sections)
+       SELECT $1::uuid, n, 'Old', '{}'::jsonb FROM generate_series(2, $2::int + 5) n`,
+      [tpl.id, AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE],
+    );
+    const res = await call(w.supA, w.a, 'GET', `/campaign-templates/${tpl.id}/versions`);
+    const versions = (res.json() as { versions: Array<{ version: number }> }).versions;
+    expect(versions).toHaveLength(AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE);
+    expect(versions[0]!.version).toBe(AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE + 5);
+  });
+
   it('an archived template is not edited (409 campaign_template_archived)', async () => {
     const tpl = await accountTemplate();
     await call(w.supA, w.a, 'POST', `/campaign-templates/${tpl.id}/archive`);
@@ -549,6 +637,27 @@ describe('names (CT13)', () => {
     expect(clash.json()).toMatchObject({ code: 'campaign_template_name_taken', template: { id: first.id, name: 'Collections  Default' } });
     await orgTemplate({ name: 'Collections Default' });
     await accountTemplate({ name: 'Collections Default' }, w.b, w.supB);
+  });
+});
+
+describe('the cap on live templates (D4)', () => {
+  it('a create or a restore past AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX is 400 campaign_template_invalid on templates', async () => {
+    const archived = await accountTemplate({ name: 'Old one' });
+    await call(w.supA, w.a, 'POST', `/campaign-templates/${archived.id}/archive`);
+    await q(
+      `INSERT INTO agency_campaign_templates (tenant_id, account_id, name)
+       SELECT $1::uuid, $2::uuid, 'Filler ' || n FROM generate_series(1, $3::int) n`,
+      [w.tenant, w.a, AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX],
+    );
+    const create = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'One too many', sections: {} });
+    expect(create.statusCode).toBe(400);
+    expect(create.json()).toMatchObject({ code: 'campaign_template_invalid', details: { templates: expect.stringContaining(`${AGENCY_CAMPAIGN_TEMPLATE_LIVE_MAX} templates`) } });
+    expect(create.json().message).toBe(create.json().details.templates);
+    const restore = await call(w.supA, w.a, 'POST', `/campaign-templates/${archived.id}/restore`);
+    expect(restore.statusCode).toBe(400);
+    expect(restore.json().code).toBe('campaign_template_invalid');
+    // The organisation has its own cap.
+    expect((await call(w.orgAdmin, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Org', sections: {} })).statusCode).toBe(201);
   });
 });
 

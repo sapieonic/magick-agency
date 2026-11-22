@@ -60,6 +60,7 @@ type ContentRefusal =
   | { ok: false; reason: 'archived' }
   | { ok: false; reason: 'changed'; current_version: number }
   | { ok: false; reason: 'name_taken'; template: { id: string; name: string } }
+  | { ok: false; reason: 'limit_reached'; limit: number }
   | { ok: false; reason: 'based_on_not_found' }
   | { ok: false; reason: 'based_on_archived' };
 
@@ -77,6 +78,10 @@ function sendContentRefusal(reply: FastifyReply, refusal: ContentRefusal): Fasti
         message: `There is already a template called "${refusal.template.name}" here. Choose another name.`,
         extra: { template: refusal.template },
       });
+    case 'limit_reached': {
+      const message = `There are already ${refusal.limit} templates here. Archive one you no longer use first.`;
+      return sendTemplateRefusal(reply, 'campaign_template_invalid', { message, details: { templates: message } });
+    }
     case 'based_on_not_found':
       return sendTemplateRefusal(reply, 'campaign_template_not_found', {
         message: 'The organisation template this is based on was not found.',

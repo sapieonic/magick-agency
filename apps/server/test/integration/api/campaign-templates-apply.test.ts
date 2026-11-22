@@ -45,6 +45,7 @@ import { builtinTemplateSections, diffSections, sectionsFromCampaign } from '@ma
 import { buildApp } from '../../../src/app.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+import { setCoreInjector } from '../../../src/api/core-dispatch.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -216,18 +217,127 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
   });
 
   it('the PATCH path\'s refusal is the campaign\'s, as a PATCH of that body answers it', async () => {
-    // A row whose numbers name none (saved before a set numbers section had to name one): the
-    // PATCH path refuses an empty pool.
-    const tpl = await template({ numbers: { caller_ids: ['+919000000001'] }, wrapup: WRAPUP });
-    await q(`UPDATE agency_campaign_templates SET sections = jsonb_set(sections, '{numbers,caller_ids}', '[]'::jsonb) WHERE id = $1`, [tpl.id]);
+    // A row whose hours never dial (hand-edited: a save would refuse it): the PATCH path refuses it.
+    const hours = { calling_window_start: '10:00:00', calling_window_end: '18:00:00', calling_days: [1, 2, 3, 4, 5], default_timezone: 'Asia/Kolkata' };
+    const tpl = await template({ hours, wrapup: WRAPUP });
+    await q(`UPDATE agency_campaign_templates SET sections = jsonb_set(sections, '{hours,calling_window_end}', '"10:00:00"'::jsonb) WHERE id = $1`, [tpl.id]);
     const draft = await campaign();
-    const res = await apply(tpl.id, { campaign_ids: [draft], sections: ['numbers', 'wrapup'] });
+    const res = await apply(tpl.id, { campaign_ids: [draft], sections: ['hours', 'wrapup'] });
     const result = (res.json() as AgencyCampaignTemplateApplyResponse).results[0]!;
-    const patch = await as(w.sup, w.a, 'PATCH', `/campaigns/${draft}`, { caller_ids: [], telephony_provider: 'voicelink', telephony_credential_id: null });
+    const patch = await as(w.sup, w.a, 'PATCH', `/campaigns/${draft}`, { ...hours, calling_window_end: '10:00:00' });
     expect(patch.statusCode).toBe(400);
     expect(result).toMatchObject({ result: 'refused', code: 'campaign_rejected', status: 400, details: patch.json().details });
     // Nothing of it was written.
     expect((await stored(draft))).toMatchObject({ wrapup_seconds: 30, template_source: null });
+  });
+
+  it('a campaign whose record cannot be written keeps its settings too: one transaction (D5)', async () => {
+    const tpl = await template({ wrapup: WRAPUP });
+    const [first, failing, last] = [await campaign(), await campaign(), await campaign()];
+    // The database refuses the record of one campaign, inside the PATCH's write.
+    await q(`CREATE FUNCTION test_refuse_template_record() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = '${failing}'::uuid AND NEW.template_source IS DISTINCT FROM OLD.template_source THEN
+          RAISE EXCEPTION 'record refused';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await q(`CREATE TRIGGER test_refuse_template_record BEFORE UPDATE ON agency_campaigns
+      FOR EACH ROW EXECUTE FUNCTION test_refuse_template_record()`);
+    let res;
+    try {
+      res = await apply(tpl.id, { campaign_ids: [first, failing, last], sections: ['wrapup'] });
+    } finally {
+      await q(`DROP TRIGGER test_refuse_template_record ON agency_campaigns`);
+      await q(`DROP FUNCTION test_refuse_template_record()`);
+    }
+    expect(res.statusCode, res.body).toBe(200);
+    const results = (res.json() as AgencyCampaignTemplateApplyResponse).results;
+    expect(results.map((r) => [r.campaign_id, r.result])).toEqual([[first, 'applied'], [failing, 'refused'], [last, 'applied']]);
+    expect(results[1]).toMatchObject({ code: 'campaign_rejected', status: 500 });
+    // Neither its settings nor its record: never the template's settings under no record.
+    expect(await stored(failing)).toMatchObject({ wrapup_seconds: 30, wrapup_auto_return: true, template_source: null });
+    expect(await stored(last)).toMatchObject({ wrapup_seconds: 75, template_source: { template: { id: tpl.id } } });
+    await platformAuditLogger.flush();
+    const applied = await q(`SELECT details FROM platform_audit_log WHERE action = 'campaign_template.applied' AND resource_id = $1`, [tpl.id]);
+    expect(applied.rows).toHaveLength(1);
+    expect(applied.rows[0].details).toMatchObject({ applied: [first, last], refused: [{ campaign_id: failing, code: 'campaign_rejected' }] });
+  });
+
+  it('a campaign whose apply throws is its own error result; the others apply and the audit row is written (D5)', async () => {
+    const tpl = await template({ wrapup: WRAPUP });
+    const [first, failing, last] = [await campaign(), await campaign(), await campaign()];
+    // The internal call for one campaign fails outright (as a lost media worker would).
+    setCoreInjector(async (args, local) => {
+      if (args.method === 'PATCH' && args.url.includes(failing)) throw new Error('internal call lost');
+      return local(args);
+    });
+    let res;
+    try {
+      res = await apply(tpl.id, { campaign_ids: [first, failing, last], sections: ['wrapup'] });
+    } finally {
+      setCoreInjector(null);
+    }
+    expect(res.statusCode, res.body).toBe(200);
+    const results = (res.json() as AgencyCampaignTemplateApplyResponse).results;
+    expect(results.map((r) => [r.campaign_id, r.result])).toEqual([[first, 'applied'], [failing, 'refused'], [last, 'applied']]);
+    expect(results[1]).toMatchObject({
+      code: 'campaign_rejected', status: 500, message: 'Something went wrong while changing this campaign. Try again.',
+    });
+    expect(await stored(failing)).toMatchObject({ wrapup_seconds: 30, template_source: null });
+    await platformAuditLogger.flush();
+    const applied = await q(`SELECT details FROM platform_audit_log WHERE action = 'campaign_template.applied' AND resource_id = $1`, [tpl.id]);
+    expect(applied.rows).toHaveLength(1);
+    expect(applied.rows[0].details).toMatchObject({ applied: [first, last], refused: [{ campaign_id: failing, code: 'campaign_rejected' }] });
+  });
+
+  it('numbers chosen from a template that sets none are refused up front, and no campaign is touched (D2)', async () => {
+    const admin = await insertUser({ display_name: 'Olga Admin' });
+    await insertMembership({ user_id: admin.id, tenant_id: w.tenant, account_id: null, role: 'tenant_admin' });
+    const org = await app.inject({
+      method: 'POST', url: '/proxy/agency/campaign-templates',
+      headers: { authorization: `Bearer tok:${admin.firebase_uid}`, 'x-tenant-id': w.tenant },
+      payload: { scope: 'organisation', name: 'Collections', sections: { outcomes: OUTCOMES } },
+    });
+    expect(org.statusCode, org.body).toBe(201);
+    const unset = await template({ outcomes: OUTCOMES });
+    // Numbers that name none (hand-edited: a save would refuse it) give no caller IDs either.
+    const empty = await template({ numbers: { caller_ids: ['+919000000001'] }, outcomes: OUTCOMES });
+    await q(`UPDATE agency_campaign_templates SET sections = jsonb_set(sections, '{numbers,caller_ids}', '[]'::jsonb) WHERE id = $1`, [empty.id]);
+    const drafts = [await campaign(), await campaign()];
+    for (const id of [org.json().id as string, unset.id, empty.id]) {
+      const res = await apply(id, { campaign_ids: drafts, sections: ['outcomes', 'numbers'] });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'campaign_template_invalid', details: { 'sections.numbers': expect.any(String) } });
+    }
+    for (const id of drafts) {
+      expect(await stored(id)).toMatchObject({ template_source: null, caller_ids: ['+919000000001'] });
+      expect((await stored(id)).disposition_catalog).not.toEqual(OUTCOMES.disposition_catalog);
+    }
+    await platformAuditLogger.flush();
+    expect((await q(`SELECT 1 FROM platform_audit_log WHERE tenant_id = $1 AND action IN ('campaign_template.applied', 'agency_campaign.config_changed')`, [w.tenant])).rows).toEqual([]);
+    // Without numbers, the same apply goes through.
+    const res = await apply(org.json().id, { campaign_ids: drafts, sections: ['outcomes'] });
+    expect(res.json().results.map((r: { result: string }) => r.result)).toEqual(['applied', 'applied']);
+  });
+
+  it('a template\'s outcome overrides without contact assignment: applied without them, with the note, never refused (CT20)', async () => {
+    const catalog = [{ code: 'will_pay', label: 'Will pay', override: { extra_attempts: 1 } }, { code: 'refused', label: 'Refused' }];
+    // Saved while contact assignment was on, applied after it was turned off for the tenant.
+    await q(`INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, value) VALUES ('agency_contact_assignment_enabled', 'tenant', $1, 'true'::jsonb)`, [w.tenant]);
+    await getFeatureFlagService().invalidate({ tenantId: w.tenant });
+    const tpl = await template({ outcomes: { disposition_catalog: catalog, outcome_dispositions: {} } });
+    await q(`DELETE FROM feature_flag_overrides WHERE flag_key = 'agency_contact_assignment_enabled' AND tenant_id = $1`, [w.tenant]);
+    await getFeatureFlagService().invalidate({ tenantId: w.tenant });
+    const draft = await campaign();
+    const res = await apply(tpl.id, { campaign_ids: [draft], sections: ['outcomes'] });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().results[0]).toMatchObject({ result: 'applied' });
+    const row = await stored(draft);
+    expect(row.disposition_catalog).toEqual([{ code: 'will_pay', label: 'Will pay' }, { code: 'refused', label: 'Refused' }]);
+    expect(row.template_source).toMatchObject({
+      template: { id: tpl.id }, sections: { outcomes: 'account' }, notes: [{ code: 'outcome_overrides_off', section: 'outcomes' }],
+    });
   });
 
   it('a stale expected_version, an archived template: refused before any campaign is touched', async () => {

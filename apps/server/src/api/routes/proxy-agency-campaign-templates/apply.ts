@@ -21,14 +21,21 @@
  *    (`campaign_archived`), a draft (`campaign_not_draft`: a running campaign is never changed by a
  *    template). The status is read just before the write; a campaign started in between is
  *    written as its PATCH would be (an accepted race: starting takes a supervisor's own press).
- *  - Then its `template_source` (CT9 as amended) names this template and its based-on, and every
- *    section is recomputed against them (`templateSourceFor`), the row locked: a section the apply
- *    did not choose reads the template's source only where it already equals it, else `campaign`.
- *    The answer carries the record as stored.
- *  - Refusals are per campaign, in the order sent; the others still apply. One
- *    `campaign_template.applied` row for the request, filed under the request's account (an
- *    organisation template's too: the drafts it changed are that account's), naming the campaigns
- *    applied and refused.
+ *  - Its `template_source` (CT9 as amended) names this template and its based-on, and every
+ *    section is recomputed against them, in the PATCH's own transaction (`templateApply`, through
+ *    `callCore` to `writeCampaignPatch`): the settings and the record are written together or not at
+ *    all. A section the apply did not choose reads the template's source only where it already
+ *    equals it, else `campaign`. The answer carries the record as stored.
+ *  - Numbers (CT15): a template that leaves `numbers` on the built-in settings (an organisation
+ *    template always does), or none of whose numbers the account can use now, has no caller IDs to
+ *    write; choosing that section is refused up front, `400 campaign_template_invalid` with
+ *    `details['sections.numbers']`, before any campaign is touched (the PATCH would refuse every
+ *    campaign, and none would get its other sections).
+ *  - Refusals are per campaign, in the order sent; the others still apply. A campaign whose write
+ *    fails outright (a throw, not a refusal) is reported as not changed (`campaign_rejected`,
+ *    status 500) and the loop goes on. One `campaign_template.applied` row for the request, written
+ *    whatever happened in the loop, filed under the request's account (an organisation template's
+ *    too: the drafts it changed are that account's), naming the campaigns applied and refused.
  */
 import type { FastifyInstance } from 'fastify';
 import {
@@ -40,14 +47,14 @@ import {
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { diffSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
-import { agencyCampaignRepository, agencyCampaignTemplateRepository } from '../../../db/repositories/agency.repository.js';
+import { createChildLogger } from '@magick-agency/observability';
+import { agencyCampaignTemplateRepository } from '../../../db/repositories/agency.repository.js';
 import {
   effectiveOfChain,
   followedTemplate,
   plainTemplateRefOf,
   type EffectiveTemplate,
 } from '../../../agency/campaign-templates/resolve-effective.js';
-import { templateSourceFor } from '../../../agency/campaign-templates/template-source.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { patchCampaignConfig } from '../helpers/campaign-patch.js';
@@ -60,6 +67,8 @@ import {
   templateIdOf,
 } from './shared.js';
 import { applyTemplateSchema, zodDetails } from './validate.js';
+
+const log = createChildLogger({ component: 'campaign-templates' });
 
 type Refused = Extract<AgencyCampaignTemplateApplyResult, { result: 'refused' }>;
 
@@ -111,69 +120,88 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
     // pinned for every campaign: the version checked is the version applied (module note).
     const effective = await effectiveOfChain(scope, { chosen: row, basedOn: await followedTemplate(readerOf(request), row) });
     const refs = { template: effective.wire.template, based_on: effective.wire.based_on };
-    const fill = { ...refs, resolved: effective.resolved };
     // The map's order, whatever order they were sent in.
     const sections = AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.filter((k) => body.sections.includes(k));
+    const numbersRefusal = sections.includes('numbers') ? numbersNotApplicable(effective) : null;
+    if (numbersRefusal) {
+      return sendTemplateRefusal(reply, 'campaign_template_invalid', {
+        message: numbersRefusal, details: { 'sections.numbers': numbersRefusal },
+      });
+    }
     const patch = applyPatchBody(effective.resolved.config, sections);
 
-    const results: AgencyCampaignTemplateApplyResult[] = [];
-    for (const raw of body.campaign_ids) {
-      if (!UUID_RE.test(raw)) {
-        results.push(refused(raw, 'campaign_not_found'));
-        continue;
-      }
+    /** One campaign's apply: its checks, then the PATCH path with the record (module note). */
+    const applyToCampaign = async (raw: string): Promise<AgencyCampaignTemplateApplyResult> => {
+      if (!UUID_RE.test(raw)) return refused(raw, 'campaign_not_found');
       const campaignId = raw;
       // The internal handler's own read: its ownership rule (tenant AND account) and its gate.
       const probe = await fetchOwnedCoreCampaign(request, campaignId, accountId);
       if (!probe.ok) {
-        results.push(probe.status === 404
+        return probe.status === 404
           ? refused(campaignId, 'campaign_not_found')
-          : refused(campaignId, 'campaign_rejected', rejection(probe.status, probe.body)));
-        continue;
+          : refused(campaignId, 'campaign_rejected', rejection(probe.status, probe.body));
       }
       const before = probe.body as AgencyCampaign;
-      if (before.archived_at) {
-        results.push(refused(campaignId, 'campaign_archived'));
-        continue;
-      }
-      if (before.status !== 'draft') {
-        results.push(refused(campaignId, 'campaign_not_draft'));
-        continue;
-      }
-      // A fresh copy per campaign: the PATCH path may normalise what it is handed.
-      const answer = await patchCampaignConfig(request, campaignId, structuredClone(patch));
-      if (answer.status >= 400) {
-        results.push(refused(campaignId, 'campaign_rejected', rejection(answer.status, answer.body)));
-        continue;
-      }
+      if (before.archived_at) return refused(campaignId, 'campaign_archived');
+      if (before.status !== 'draft') return refused(campaignId, 'campaign_not_draft');
+      // A fresh copy per campaign: the PATCH path may normalise what it is handed. The record of the
+      // templates applied is written in the PATCH's own transaction.
+      const answer = await patchCampaignConfig(request, campaignId, structuredClone(patch), { templateApply: refs });
+      if (answer.status >= 400) return refused(campaignId, 'campaign_rejected', rejection(answer.status, answer.body));
       const after = answer.body as AgencyCampaign;
-      const recorded = await agencyCampaignRepository.rewriteTemplateSource(
-        campaignId, scope, (current) => templateSourceFor(scope, current, refs, fill),
-      );
-      if (!recorded?.template_source) {
-        // The row went between the PATCH and here (a campaign is never deleted; not expected).
-        results.push(refused(campaignId, 'campaign_not_found'));
-        continue;
-      }
-      results.push({
+      if (!after.template_source) throw new Error('the apply PATCH answered a campaign with no template record');
+      return {
         campaign_id: campaignId,
         result: 'applied',
         changed_sections: diffSections(
           sectionsFromCampaign(before, 'account', sections),
           sectionsFromCampaign(after, 'account', sections),
         ).map((d) => d.section),
-        template_source: recorded.template_source,
-      });
-    }
+        template_source: after.template_source,
+      };
+    };
 
-    auditTemplate(request, 'campaign_template.applied', row, {
-      sections,
-      applied: results.filter((r) => r.result === 'applied').map((r) => r.campaign_id),
-      refused: results.filter((r): r is Refused => r.result === 'refused').map((r) => ({ campaign_id: r.campaign_id, code: r.code })),
-    }, { accountId });
+    const results: AgencyCampaignTemplateApplyResult[] = [];
+    try {
+      for (const raw of body.campaign_ids) {
+        try {
+          results.push(await applyToCampaign(raw));
+        } catch (err) {
+          // A failure, not a refusal: this campaign is reported and the others still apply. Its
+          // settings and record are one transaction, so a write that failed left neither.
+          log.error({ err, templateId: row.id, campaignId: raw }, 'Campaign template apply failed for one campaign');
+          results.push(refused(raw, 'campaign_rejected', { status: 500, message: APPLY_FAILED_MESSAGE }));
+        }
+      }
+    } finally {
+      // Always, so an apply that changed campaigns is never without its row.
+      auditTemplate(request, 'campaign_template.applied', row, {
+        sections,
+        applied: results.filter((r) => r.result === 'applied').map((r) => r.campaign_id),
+        refused: results.filter((r): r is Refused => r.result === 'refused').map((r) => ({ campaign_id: r.campaign_id, code: r.code })),
+      }, { accountId });
+    }
     const response: AgencyCampaignTemplateApplyResponse = { template: plainTemplateRefOf(row), results };
     return reply.send(response);
   });
+}
+
+/** A campaign whose apply failed outright (not a refusal of its settings). */
+const APPLY_FAILED_MESSAGE = 'Something went wrong while changing this campaign. Try again.';
+
+/**
+ * Why the `numbers` section of this fill-in cannot be applied (module note), else null: the
+ * template leaves numbers on the built-in settings (no caller IDs), or none of its numbers can be
+ * used by the account now.
+ */
+export function numbersNotApplicable(effective: Pick<EffectiveTemplate, 'resolved'>): string | null {
+  if (effective.resolved.sources.numbers === 'builtin') {
+    return 'This template does not set numbers, so they cannot be applied. Leave Numbers out, or set them in an account template.';
+  }
+  if (effective.resolved.config.caller_ids.length === 0) {
+    return 'None of this template’s numbers can be used by this account now, so they cannot be applied. Leave Numbers out.';
+  }
+  return null;
 }
 
 /** A PATCH path refusal as an apply result's `status`, `rejection_code`, `message` and `details`. */

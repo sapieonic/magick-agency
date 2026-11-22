@@ -657,10 +657,16 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const audit: SoftphoneSettingsAudit = {
       changed: SETTINGS_KEYS.filter((key) => JSON.stringify(before[key]) !== JSON.stringify(settings[key])),
     };
-    const body: AgencySoftphoneSettingsResponse = {
-      settings,
-      outcomes_template: await followedOutcomesTemplate({ tenantId, accountId }),
-    };
+    // The settings are saved: the answer (and with it the public layer's audit row) must follow.
+    // What Follow gives is display only, so a template read that fails here leaves it out (the
+    // console reads an answer without it as "not known"), never turns the save into a 500.
+    let followed: AgencySoftphoneSettingsResponse['outcomes_template'];
+    try {
+      followed = await followedOutcomesTemplate({ tenantId, accountId });
+    } catch (err) {
+      log.warn({ err, tenantId, accountId }, 'Soft-phone settings saved; what the outcomes follow could not be read');
+    }
+    const body: AgencySoftphoneSettingsResponse = { settings, ...(followed !== undefined ? { outcomes_template: followed } : {}) };
     return answer(reply, 200, body, audit);
   });
 

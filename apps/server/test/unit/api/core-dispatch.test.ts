@@ -115,6 +115,15 @@ const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
 /** The one file that passes `provenCampaignId` (the spine CSV export's page loop). */
 const PROVEN_CAMPAIGN_CALLER = 'api/routes/proxy-agency-campaigns/spine.ts';
 
+/**
+ * The files that pass `templateApply` (the internal PATCH then writes that template's record): the
+ * campaign PATCH path, which forwards it, and a campaign template's apply, its one caller.
+ */
+const TEMPLATE_APPLY_CALLERS = [
+  'api/routes/helpers/campaign-patch.ts',
+  'api/routes/proxy-agency-campaign-templates/apply.ts',
+];
+
 /** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
   ['GET /api/v1/agency-campaigns/:_/attempts/:_/recording-url',
@@ -221,6 +230,14 @@ describe('callCore — static resolution against the private internal handler in
     expect(readFileSync(join(SRC, PROVEN_CAMPAIGN_CALLER), 'utf8').match(/provenCampaignId\s*:/g)).toHaveLength(1);
   });
 
+  it('templateApply (the internal PATCH writes that template\'s record) is passed only by the PATCH path and the apply', () => {
+    const passing = walk(SRC)
+      .filter((file) => !file.endsWith('core-dispatch.ts'))
+      .filter((file) => /templateApply\s*:/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file));
+    expect(passing.sort()).toEqual([...TEMPLATE_APPLY_CALLERS].sort());
+  });
+
   it('every internal route is reached by a call site, or listed as unreached with its reason', () => {
     const reached = (r: { method: string; url: string }) =>
       sites.some((s) => s.method === r.method && toRegex(r.url).test(`/api/v1${s.path.split('?')[0]}`));
@@ -294,6 +311,22 @@ describe('callCore — tenancy and transport', () => {
       provenCampaignId: 'c1', headers: { 'x-mgkvc-proven-campaign': 'c9' },
     });
     expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('t1:a1:c1');
+  });
+
+  it('sets x-mgkvc-template-apply only from templateApply, never from a forwarded header', async () => {
+    setCoreHandlers(stub);
+    await callCore({
+      method: 'PATCH', path: '/agency-campaigns/c1', tenantId: 't1', accountId: 'a1', body: { wrapup_seconds: 40 },
+      headers: { 'X-Mgkvc-Template-Apply': 'forged' },
+    });
+    expect(seen!.headers['x-mgkvc-template-apply']).toBeUndefined();
+    const refs = { template: { id: '11111111-2222-4333-8444-555555555555', name: 'T', version: 2, scope: 'account' as const }, based_on: null };
+    await callCore({
+      method: 'PATCH', path: '/agency-campaigns/c1', tenantId: 't1', accountId: 'a1', body: { wrapup_seconds: 40 },
+      templateApply: refs, headers: { 'x-mgkvc-template-apply': 'forged' },
+    });
+    const sent = seen!.headers['x-mgkvc-template-apply'] as string;
+    expect(JSON.parse(Buffer.from(sent, 'base64url').toString('utf8'))).toEqual(refs);
   });
 
   // The proof carries the tenant and account it was made under, from the same typed

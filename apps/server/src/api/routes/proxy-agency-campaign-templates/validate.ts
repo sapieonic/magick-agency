@@ -33,6 +33,7 @@ import {
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES,
+  AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX,
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
@@ -107,6 +108,14 @@ export const applyTemplateSchema = z.object({
 /** `GET /campaign-templates?archived=true`. */
 export const listQuerySchema = z.object({
   archived: z.enum(['true', 'false']).optional(),
+}).strip();
+
+/** `GET /campaign-templates/:id/versions?before=&limit=` (`AgencyCampaignTemplateVersionsQuery`). */
+export const versionsQuerySchema = z.object({
+  before: z.string().regex(/^[1-9]\d{0,8}$/, 'must be a version number').transform(Number).optional(),
+  limit: z.string().regex(/^[1-9]\d{0,2}$/, `must be 1 to ${AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX}`).transform(Number)
+    .refine((n) => n <= AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX, `must be 1 to ${AGENCY_CAMPAIGN_TEMPLATE_VERSIONS_PAGE_MAX}`)
+    .optional(),
 }).strip();
 
 /** `GET /campaign-templates/effective?template_id=`. */
@@ -237,7 +246,8 @@ export async function sectionAccountIssues(
 
   if (sections.recording !== undefined && body['analysis_profile_id'] != null) {
     const value = body['analysis_profile_id'];
-    if (typeof value !== 'string' || value.trim() === '') {
+    // A non-id never reaches the profile read's uuid cast (`22P02`, a generic 400).
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
       details['analysis_profile_id'] = 'must be a call-analysis profile id, or null to clear it';
     } else {
       const err = await preflightAnalysisProfile(value, scope.tenantId, scope.accountId, 'agency');
