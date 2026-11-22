@@ -433,6 +433,24 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     return reply.send(body);
   });
 
+  // ── GET /inbound/missed/:id — one Missed row, by its id ───────────────────
+  // The list's own row, for a caller that knows which one it wants (My calls' Call back reads the
+  // caller's number from it). The list's rules, as the voicemail's below: the account's row, and
+  // without `agency.supervise` only one assigned to the caller or (IQ49) an open one assigned to
+  // nobody. A row the caller may not read is the same 404 as one that is not there.
+  sub.get<{ Params: { id: string } }>('/inbound/missed/:id', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const row = await agencyInboundCallRepository.findMissed(actor.tenantId, actor.accountId, request.params.id);
+    const agentMayRead = row !== null && (row.follow_up_assignee_user_id === actor.userId
+      || (row.follow_up_assignee_user_id === null && row.follow_up_status === 'open'));
+    if (!row || (!actor.supervise && !agentMayRead)) {
+      return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    }
+    return reply.send(inboundMissedToWire(row));
+  });
+
   // ── GET /inbound/missed/:id/voicemail — where a Missed row's voicemail is ──
   // The object's key and length, for the public route to stream from the bucket (bytes do not
   // travel through `callCore`, which buffers). The list's rules: the account's row, and without

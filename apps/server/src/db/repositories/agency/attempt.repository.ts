@@ -285,6 +285,16 @@ function scopedAttemptConditions(
     // No attempt of theirs is older than their first session here. Without the bound, somebody
     // who never dialled (a supervisor opening My calls) walks the account's whole range to find
     // nothing: measured 361 ms on 2 million attempts, against 0 with it.
+    //
+    // Why the bound cannot drop a row of theirs: `reserved_agent_id` is written once, by the two
+    // INSERTs of this file (`create` and the redial), and no UPDATE sets it; it references
+    // `agency_agent_sessions(id)`, so the session row was committed before the attempt was
+    // inserted. Neither INSERT sets `created_at` (DEFAULT now()), and a session's `joined_at`
+    // is DEFAULT now() at its INSERT and never written again: a rejoin reuses the row through an
+    // upsert that leaves `joined_at`, `account_id` and `agent_user_id` alone (`upsertLiveSession`, and
+    // `sql-fragments.ts` on the session events, which rests on the same fact). So an attempt's
+    // `created_at` is at or after its own session's `joined_at`, which is at or after the
+    // earliest of that agent's sessions in the account. Both clocks are the database's.
     ...(user ? [`a.created_at >= ${accountAgentFirstSessionSql(tenant, account, user)}`] : []),
     ...attemptFilterConditions(f, bind, () => (user ? accountAgentAttemptSql(tenant, account, user) : null)),
   ];

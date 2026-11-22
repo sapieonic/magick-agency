@@ -62,6 +62,7 @@ import {
 } from '../../agency/campaign-call-log.js';
 import {
   callListLabelIds,
+  unfiledInboundIds,
   contactNameMap,
   mergeCallbacksDue,
   parseCallLogQuery,
@@ -322,11 +323,13 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     ]);
 
     const ids = callListLabelIds(page.rows);
+    // An inbound row filed under no campaign is masked by its matched contact's campaign, when it has one.
+    const matchedCampaignIds = await agencyCallListRepository.inboundMatchedCampaigns(tenantId, accountId, unfiledInboundIds(page.rows));
     const [campaigns, contacts] = await Promise.all([
-      agencyCallListRepository.campaigns(tenantId, accountId, ids.campaignIds),
+      agencyCallListRepository.campaigns(tenantId, accountId, [...new Set([...ids.campaignIds, ...matchedCampaignIds.values()])]),
       agencyCallListRepository.contactNames(tenantId, accountId, ids.contactIds),
     ]);
-    const labels = { campaigns, contactNames: contactNameMap(contacts) };
+    const labels = { campaigns, contactNames: contactNameMap(contacts), matchedCampaignIds };
     const body: AgencyMyCallsPage = {
       rows: page.rows.map((row) => toMyCallRow(row, labels)),
       next_cursor: page.next_cursor,

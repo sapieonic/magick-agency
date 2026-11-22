@@ -172,6 +172,8 @@ const EXPECTED_AGENT_REACHABLE = [
   // their rows (another's answers `inbound_missed_call_not_found`); the routes themselves are
   // `agency.inbound.write` (account admin) and refuse an agent.
   'GET /proxy/agency/inbound/missed',
+  // One row of that list by its id, under the list's rules (My calls' Call back reads the number from it).
+  'GET /proxy/agency/inbound/missed/:id',
   'POST /proxy/agency/inbound/missed/:id/handled',
   'POST /proxy/agency/inbound/missed/:id/reopen',
   'GET /proxy/agency/inbound/missed/:id/voicemail',

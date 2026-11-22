@@ -2592,6 +2592,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/missed/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "one Missed row by its id, under the list's permission and rules; My calls' Call back reads the caller's number from it (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/missed/:id/voicemail",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",

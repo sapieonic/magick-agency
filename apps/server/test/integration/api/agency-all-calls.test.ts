@@ -328,6 +328,23 @@ describe('My calls: the agent\'s own calls', () => {
     expect(rows.get('i-mine-unfiled')).toMatchObject({ phone: '+919500000007', phone_masked: false });
   });
 
+  it('masks an inbound call filed under no campaign by the campaign of the contact it matched', async () => {
+    // A row written while an older server ran: the matched contact's campaign, and no `campaign_id`.
+    const call = id.get('i-mine-masked')!;
+    const { rows: [before] } = await q(`SELECT from_e164, campaign_source, matched_campaign_id FROM agency_inbound_calls WHERE id = $1`, [call]);
+    await q(`UPDATE agency_inbound_calls SET campaign_id = NULL, campaign_source = NULL, matched_campaign_id = $2 WHERE id = $1`, [call, masked]);
+    try {
+      const res = await get('/proxy/agency/my-calls?type=inbound', me);
+      const row = res.json<Page>().rows.find((r) => r.id === call)!;
+      expect(row).toMatchObject({ campaign_id: null, campaign_name: null, phone: '97••• ••821', phone_masked: true });
+      expect(res.body.includes(before.from_e164 as string)).toBe(false);
+      expect(res.body.includes((before.from_e164 as string).slice(3))).toBe(false);
+    } finally {
+      await q(`UPDATE agency_inbound_calls SET campaign_id = $2, campaign_source = $3, matched_campaign_id = $4 WHERE id = $1`,
+        [call, masked, before.campaign_source, before.matched_campaign_id]);
+    }
+  });
+
   it('a campaign that starts hiding numbers hides them on the calls already made', async () => {
     await q(`UPDATE agency_campaigns SET phone_display = 'masked' WHERE id = $1`, [full]);
     try {
@@ -394,6 +411,22 @@ describe('My calls: the agent\'s own calls', () => {
     // Both callbacks are on the open campaign: the masked one's filter leaves none, as "No campaign" does.
     expect(await dueOn(masked)).toEqual([]);
     expect(await dueOn('none')).toEqual([]);
+  });
+
+  it('one Missed row by its id, for Call back: my own and the account’s unassigned, never a colleague’s', async () => {
+    const one = (label: string, actor: typeof me, status = 200) => get(`/proxy/agency/inbound/missed/${id.get(label)}`, actor, status);
+    // My own open row, on the campaign that hides numbers: the number in full, as the Missed list gives it.
+    const mine = (await one('m-mine-masked', me)).json<Record<string, unknown>>();
+    expect(mine).toMatchObject({ id: id.get('m-mine-masked'), from_e164: HIDDEN[3], status: 'open', assignee_user_id: me.id });
+    // The list's rule: an open row nobody has is readable (IQ49); a colleague's is as absent as one that is not there.
+    expect((await one('m-account-unfiled', me)).json<Record<string, unknown>>()).toMatchObject({ assignee_user_id: null });
+    expect((await one('m-theirs', me, 404)).json<{ code: string }>().code).toBe('inbound_missed_call_not_found');
+    expect((await get(`/proxy/agency/inbound/missed/${randomUUID()}`, me, 404)).json<{ code: string }>().code).toBe('inbound_missed_call_not_found');
+    await get('/proxy/agency/inbound/missed/not-an-id', me, 404);
+    // A supervisor reads any row of the account.
+    expect((await one('m-theirs', floor.supervisors[0]!)).json<Record<string, unknown>>()).toMatchObject({ assignee_user_id: colleague.id });
+    // An answered call is no Missed row.
+    await one('i-mine-masked', me, 404);
   });
 
   it('To follow up follows Mark handled', async () => {

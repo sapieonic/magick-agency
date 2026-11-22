@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentPhone,
+  unfiledInboundIds,
   callListLabelIds,
   contactNameMap,
   mergeCallbacksDue,
@@ -62,21 +63,45 @@ const MISSED = {
 
 describe('the number an agent may see', () => {
   it('is masked where the campaign hides numbers, in full where it shows them', () => {
-    expect(agentPhone('+919876543210', 'c-1', MASKED)).toEqual({ phone: '98••• ••210', phone_masked: true });
-    expect(agentPhone('+919876543210', 'c-2', FULL)).toEqual({ phone: '+919876543210', phone_masked: false });
+    expect(agentPhone('+919876543210', [MASKED])).toEqual({ phone: '98••• ••210', phone_masked: true });
+    expect(agentPhone('+919876543210', [FULL])).toEqual({ phone: '+919876543210', phone_masked: false });
   });
 
   it('is masked when the row names a campaign the read did not return (fail closed)', () => {
-    expect(agentPhone('+919876543210', 'c-gone', undefined)).toEqual({ phone: '98••• ••210', phone_masked: true });
+    expect(agentPhone('+919876543210', [undefined])).toEqual({ phone: '98••• ••210', phone_masked: true });
   });
 
-  it('is in full for a call filed under no campaign, and absent for a withheld caller', () => {
-    expect(agentPhone('+919876543210', null, undefined)).toEqual({ phone: '+919876543210', phone_masked: false });
-    expect(agentPhone(null, 'c-1', MASKED)).toEqual({ phone: null, phone_masked: false });
+  it('is in full for a call that names no campaign, and absent for a withheld caller', () => {
+    expect(agentPhone('+919876543210', [])).toEqual({ phone: '+919876543210', phone_masked: false });
+    expect(agentPhone(null, [MASKED])).toEqual({ phone: null, phone_masked: false });
   });
 
-  it('reads an unexpected stored setting as full, as the station does', () => {
-    expect(agentPhone('+919876543210', 'c-1', { ...MASKED, phone_display: 'whatever' }).phone_masked).toBe(false);
+  it('is masked on a stored setting it does not know: only exactly "full" shows the number', () => {
+    for (const phone_display of ['whatever', 'FULL', '', null]) {
+      expect(agentPhone('+919876543210', [{ ...FULL, phone_display }]).phone_masked, String(phone_display)).toBe(true);
+    }
+  });
+
+  it('is masked when any campaign the row names hides numbers', () => {
+    expect(agentPhone('+919876543210', [FULL, MASKED]).phone_masked).toBe(true);
+    expect(agentPhone('+919876543210', [FULL, undefined]).phone_masked).toBe(true);
+    expect(agentPhone('+919876543210', [FULL, FULL]).phone_masked).toBe(false);
+  });
+
+  it('masks an inbound row filed under no campaign by the campaign of the contact it matched', () => {
+    const unfiled = { ...MISSED, id: 'i-unfiled', campaign_id: null } as unknown as CampaignCallLogRow;
+    const campaigns = new Map([['c-1', MASKED], ['c-2', FULL]]);
+    const row = (matched?: string) => toMyCallRow(unfiled, {
+      campaigns, contactNames: new Map(), ...(matched ? { matchedCampaignIds: new Map([['i-unfiled', matched]]) } : {}),
+    });
+    expect(row('c-1')).toMatchObject({ campaign_id: null, campaign_name: null, phone_masked: true });
+    expect(row('c-1').phone).not.toBe(unfiled.phone_e164);
+    expect(row('c-2')).toMatchObject({ phone: unfiled.phone_e164, phone_masked: false });
+    // Matched to a campaign the label read did not return: masked.
+    expect(row('c-gone').phone_masked).toBe(true);
+    // Matched to nothing: no setting hides it.
+    expect(row()).toMatchObject({ phone: unfiled.phone_e164, phone_masked: false });
+    expect(unfiledInboundIds([unfiled, MISSED as unknown as CampaignCallLogRow])).toEqual(['i-unfiled']);
   });
 });
 

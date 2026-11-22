@@ -12,7 +12,7 @@
  */
 import { maskFactPhone } from '@magick-agency/domain/fact-phone';
 import type { CustomerNameDisplay } from '@magick-agency/domain/customer-name';
-import type { AgencyDisposition } from '@magick-agency/contracts/agency';
+import type { AgencyDisposition, AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import {
   AGENCY_CALL_LOG_STATUSES,
   type AgencyCallLogInboundOutcomeFilter,
@@ -31,7 +31,6 @@ import {
   type CampaignCallLogSourceFilter,
 } from './campaign-call-log.js';
 import { matchName } from './inbound/match-name.js';
-import { phoneDisplayOf } from './station-tiles.js';
 import { UUID_RE } from '../utils/uuid.js';
 
 /** The Call log's query, parsed ({@link parseCallLogQuery}). */
@@ -111,20 +110,42 @@ export function contactNameMap(
 }
 
 /**
- * The customer's number as an agent may see it on a row of `campaign`.
+ * The customer's number as an agent may see it on a row that names `campaigns`: the campaign
+ * the call is filed under and, for an inbound call filed under none, the campaign of the
+ * contact it matched (`matched_campaign_id`: a row written while an older server ran has that
+ * and no `campaign_id`). One entry per campaign the row names; `undefined` for one the label
+ * read did not return.
  *
- * Masked when the campaign hides numbers. **A row that names a campaign the read did not
- * return is masked too** (fail closed: the campaign's setting is unknown, so the number is not
- * shown). A call filed under no campaign has no setting to hide it by, and is shown in full.
+ * Shown in full only when every campaign named says exactly `full`. **Anything else masks**
+ * (fail closed): a campaign that hides numbers, one the read did not return, and a stored
+ * setting this code does not know. A call that names no campaign has no setting to hide it by,
+ * and is shown in full.
  */
 export function agentPhone(
   phone: string | null,
-  campaignId: string | null,
-  campaign: CallListCampaignLabel | undefined,
+  campaigns: ReadonlyArray<CallListCampaignLabel | undefined>,
 ): { phone: string | null; phone_masked: boolean } {
   if (phone === null) return { phone: null, phone_masked: false };
-  const masked = campaignId !== null && (campaign === undefined || phoneDisplayOf(campaign.phone_display) === 'masked');
+  const full: AgencyPhoneDisplay = 'full';
+  const masked = campaigns.some((campaign) => campaign?.phone_display !== full);
   return masked ? { phone: maskFactPhone(phone), phone_masked: true } : { phone, phone_masked: false };
+}
+
+/** What {@link toMyCallRow} labels a page of rows with. */
+export interface MyCallLabels {
+  campaigns: ReadonlyMap<string, CallListCampaignLabel>;
+  contactNames: ReadonlyMap<string, string>;
+  /**
+   * Inbound call id → the campaign of the contact it matched, for the inbound rows filed under
+   * no campaign (`AgencyCallListRepository.inboundMatchedCampaigns`). Read for the mask alone:
+   * the row still says it has no campaign.
+   */
+  matchedCampaignIds?: ReadonlyMap<string, string>;
+}
+
+/** The inbound rows of a page that are filed under no campaign: the ones whose matched campaign the mask needs. */
+export function unfiledInboundIds(rows: readonly CampaignCallLogRow[]): string[] {
+  return rows.filter((r) => r.source === 'inbound' && r.campaign_id === null).map((r) => r.id);
 }
 
 /**
@@ -134,9 +155,14 @@ export function agentPhone(
  */
 export function toMyCallRow(
   row: CampaignCallLogRow,
-  labels: { campaigns: ReadonlyMap<string, CallListCampaignLabel>; contactNames: ReadonlyMap<string, string> },
+  labels: MyCallLabels,
 ): AgencyMyCallRow {
   const campaign = row.campaign_id ? labels.campaigns.get(row.campaign_id) : undefined;
+  const matchedId = row.source === 'inbound' && row.campaign_id === null ? labels.matchedCampaignIds?.get(row.id) : undefined;
+  const named = [
+    ...(row.campaign_id ? [campaign] : []),
+    ...(matchedId ? [labels.campaigns.get(matchedId)] : []),
+  ];
   const inbound = row.source === 'inbound' ? row.inbound : null;
   const followUp = inbound?.follow_up ?? null;
   return {
@@ -147,7 +173,7 @@ export function toMyCallRow(
     campaign_name: campaign?.name ?? null,
     contact_id: row.contact_id,
     customer_name: row.contact_id ? labels.contactNames.get(row.contact_id) ?? null : null,
-    ...agentPhone(row.phone_e164, row.campaign_id, campaign),
+    ...agentPhone(row.phone_e164, named),
     state: row.state,
     outcome: row.outcome,
     disposition_code: row.disposition_code,

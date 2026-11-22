@@ -39,6 +39,24 @@ export class AgencyCallListRepository {
   }
 
   /**
+   * Of the account's inbound calls among `ids`, the ones filed under no campaign whose caller
+   * matched a campaign's contact: call id → that campaign. A call is filed under its matched
+   * contact's campaign when it is written (0067), so these are rows from while an older server
+   * ran; an agent's list still masks their number as that campaign says.
+   */
+  async inboundMatchedCampaigns(tenantId: string, accountId: string, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; matched_campaign_id: string }>(
+      `SELECT id, matched_campaign_id
+         FROM agency_inbound_calls
+        WHERE id = ANY($3::uuid[]) AND tenant_id = $1::uuid AND account_id = $2::uuid
+          AND campaign_id IS NULL AND matched_campaign_id IS NOT NULL`,
+      [tenantId, accountId, [...ids]],
+    );
+    return new Map(rows.map((r) => [r.id, r.matched_campaign_id]));
+  }
+
+  /**
    * The name columns of the account's roster contacts among `ids` (`contactNameContextSql`:
    * only the columns a name can be read from leave the database), with each one's campaign's
    * `context_display`.
