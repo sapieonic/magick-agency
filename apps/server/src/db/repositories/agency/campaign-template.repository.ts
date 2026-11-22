@@ -166,6 +166,17 @@ const IN_SCOPE_SQL = `tenant_id = $1::uuid AND account_id IS NOT DISTINCT FROM $
 const CAMPAIGN_TEMPLATE_SCOPE_LOCK_SQL =
   `SELECT pg_advisory_xact_lock(hashtextextended('agency_campaign_templates:scope:' || $1::text || ':' || COALESCE($2::text, 'organisation'), 0))`;
 
+/**
+ * The list's statement ({@link AgencyCampaignTemplateRepository.list}): $1 tenant, $2 account or NULL.
+ * The archive predicate is written out in the indexes' own words, so the planner proves its
+ * partial index applies (0067's live index, 0068's archived one); exported for the plan test.
+ */
+export function campaignTemplateListSql(archived: boolean): string {
+  return `SELECT ${COLUMNS} FROM agency_campaign_templates
+        WHERE ${VISIBLE_SQL} AND ${archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL'}
+        ORDER BY (account_id IS NULL), is_default DESC, lower(name), id`;
+}
+
 function json(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -239,16 +250,11 @@ export class AgencyCampaignTemplateRepository {
   /**
    * The reader's templates (module note: an account's and the organisation's), live ones or, with
    * `archived`, archived ones. The account's first, then the organisation's; each scope's default
-   * first, then by name, the id last so the order is total. The archive predicate is written out,
-   * never a parameter, so the planner proves its partial index applies: 0067's
-   * `idx_agency_campaign_templates_scope` for the live ones, 0068's `…_archived` for the archive.
+   * first, then by name, the id last so the order is total ({@link campaignTemplateListSql}).
    */
   async list(reader: CampaignTemplateReader, options: { archived?: boolean } = {}): Promise<CampaignTemplateRecord[]> {
-    const archived = options.archived === true ? 'archived_at IS NOT NULL' : 'archived_at IS NULL';
     const { rows } = await getPool().query<CampaignTemplateRecord>(
-      `SELECT ${COLUMNS} FROM agency_campaign_templates
-        WHERE ${VISIBLE_SQL} AND ${archived}
-        ORDER BY (account_id IS NULL), is_default DESC, lower(name), id`,
+      campaignTemplateListSql(options.archived === true),
       [reader.tenantId, reader.accountId],
     );
     return rows;
