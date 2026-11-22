@@ -1043,11 +1043,14 @@ export default function CampaignBuilderPage() {
                     onEdit={editRow('outcomes', 'behaviour')}
                     {...template.sourceProps('outcomes')}
                   />
+                  {/* Part of the Outcomes section: its chip, and Outcomes' Reset puts both back (N8). */}
                   <ReviewRow
                     label="Unanswered calls"
                     value={outcomeDispositionsSummary(config.outcomeDispositions, config.dispositions)}
                     errors={rowFindings.get('unanswered')}
                     onEdit={editRow('unanswered', 'behaviour')}
+                    source={template.sourceProps('outcomes').source}
+                    note={template.startFrom ? 'Goes with Outcomes: Reset there puts both back.' : undefined}
                   />
                   {template.startFrom ? (
                     <ReviewRow
@@ -1238,9 +1241,12 @@ function ReviewRow({
   onEdit,
   source,
   onReset,
+  note,
 }: {
   label: string;
   value: string;
+  /** A line under the value: how the row goes with another. */
+  note?: string;
   warning?: boolean;
   errors?: readonly string[];
   /** Absent: the setting is not edited in New campaign (it is the template's). */
@@ -1271,6 +1277,7 @@ function ReviewRow({
           ) : null}
         </p>
         <p className={styles.reviewValue}>{value}</p>
+        {note ? <p className={styles.reviewValue} data-testid={`review-note-${label}`}>{note}</p> : null}
         {fixing ? (
           <ul className={styles.reviewErrors} id={errorsId} data-testid="review-row-errors">
             {errors.map((line, index) => (

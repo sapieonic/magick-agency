@@ -173,6 +173,9 @@ describe('New campaign starts from a template', () => {
     expect(chip('Wrap-up')).toBe('Organisation template');
     expect(chip('Retries')).toBe('Built-in');
     expect(chip('Call from')).toBe('Account template');
+    // Unanswered calls are part of Outcomes, and say so (N8).
+    expect(chip('Unanswered calls')).toBe(chip('Outcomes'));
+    expect(screen.getByTestId('review-note-Unanswered calls').textContent).toBe('Goes with Outcomes: Reset there puts both back.');
     expect(screen.queryByRole('button', { name: 'Reset Hours to the template' })).toBeNull();
 
     goToStep('When to call');
@@ -189,6 +192,9 @@ describe('New campaign starts from a template', () => {
   it('re-fills the form from another template, asking first when something was changed', async () => {
     await renderPage();
     fireEvent.change(screen.getByTestId('start-from-select'), { target: { value: 'org-1' } });
+    // Choosing in the list starts nothing by itself (U12): the button does.
+    expect(mocks.getEffectiveCampaignTemplate).not.toHaveBeenCalledWith('org-1', 't1', 'a1');
+    fireEvent.click(screen.getByTestId('start-from-use'));
     await act(async () => {});
     // Nothing was changed: no question.
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -203,6 +209,7 @@ describe('New campaign starts from a template', () => {
 
     fireEvent.change(screen.getByLabelText('Start'), { target: { value: '07:00' } });
     fireEvent.change(screen.getByTestId('start-from-select'), { target: { value: '__builtin__' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use the built-in settings' }));
     await act(async () => {});
     const dialog = screen.getByRole('dialog');
     // The hours only: the number picked on Basics is kept, since the built-in settings leave numbers alone.
@@ -271,6 +278,7 @@ const ticked = (number: string) =>
   (screen.getByRole('checkbox', { name: new RegExp(number.replace('+', '\\+')) }) as HTMLInputElement).checked;
 const pickStart = async (value: string) => {
   fireEvent.change(screen.getByTestId('start-from-select'), { target: { value } });
+  fireEvent.click(screen.getByTestId('start-from-use'));
   await act(async () => {});
 };
 
@@ -534,6 +542,8 @@ describe('a template script that uses keys the roster’s card does not have (C1
 
     goToStep('Review & save');
     const problem = screen.getByTestId('review-script-problem');
+    // Said as a status: it changes as the script is typed, and an alert would be read out at each key (U12).
+    expect(problem.getAttribute('role')).toBe('status');
     expect(problem.textContent).toContain(
       'The script uses {amount_due} and {due_date}, which are not facts on the card. Add them as facts or take them out.',
     );

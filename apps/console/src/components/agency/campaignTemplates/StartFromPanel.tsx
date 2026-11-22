@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   AgencyCampaignTemplateEffective,
@@ -12,6 +12,10 @@ import styles from './CampaignTemplates.module.css';
  * New campaign's "Start from" picker and the violet banner under it: the account's templates
  * first, then the organisation's, then the built-in settings; then where the form was filled in
  * from, that changes here are this campaign's alone, and the notes on the filling-in as sentences.
+ *
+ * Choosing in the list does nothing by itself; "Use this template" starts from the one chosen (U12):
+ * in Chromium on Windows and Linux an arrow key on a closed list changes it at once, which would
+ * otherwise start a read on every press and take the focus away.
  */
 export function StartFromPanel({
   templates,
@@ -33,6 +37,9 @@ export function StartFromPanel({
   viewPath: string | null;
 }) {
   const id = useId();
+  const [picked, setPicked] = useState(value);
+  // What is in use moved (a switch done, or held back by Cancel): the list shows it again.
+  useEffect(() => setPicked(value), [value]);
   const account = templates.filter((t) => t.scope === 'account');
   const organisation = templates.filter((t) => t.scope === 'organisation');
   const label = (t: AgencyCampaignTemplateSummary) =>
@@ -46,8 +53,8 @@ export function StartFromPanel({
         <label htmlFor={`${id}-start`}>Start from</label>
         <select
           id={`${id}-start`}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={picked}
+          onChange={(e) => setPicked(e.target.value)}
           disabled={disabled}
           aria-describedby={lockedNote ? `${id}-locked` : undefined}
           data-testid="start-from-select"
@@ -72,6 +79,15 @@ export function StartFromPanel({
           ) : null}
           <option value={BUILT_IN_START}>Built-in settings</option>
         </select>
+        {picked !== value && !disabled ? (
+          <button type="button" className="btn-secondary" onClick={() => {
+              // The list shows what is in use until the switch is made (a Cancel keeps it).
+              setPicked(value);
+              onChange(picked);
+            }} data-testid="start-from-use">
+            {picked === BUILT_IN_START ? 'Use the built-in settings' : 'Use this template'}
+          </button>
+        ) : null}
         {lockedNote ? (
           <span className={styles.muted} id={`${id}-locked`}>
             {lockedNote}

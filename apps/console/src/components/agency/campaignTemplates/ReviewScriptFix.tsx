@@ -27,7 +27,8 @@ export function ReviewScriptFix({
   return (
     <div className={styles.banner} data-testid="review-script-fix">
       {problems.length > 0 ? (
-        <div role="alert" data-testid="review-script-problem">
+        // A status, not an alert: it changes with each key typed, and is read out when it does, not each time (U12).
+        <div role="status" data-testid="review-script-problem">
           <p>
             The template’s script does not fit the card your contacts gave this campaign, so the draft has no script
             yet. Change the script here, then save the campaign.
