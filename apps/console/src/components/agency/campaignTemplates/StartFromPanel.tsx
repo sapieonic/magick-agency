@@ -35,7 +35,8 @@ export function StartFromPanel({
   const id = useId();
   const account = templates.filter((t) => t.scope === 'account');
   const organisation = templates.filter((t) => t.scope === 'organisation');
-  const label = (t: AgencyCampaignTemplateSummary) => (t.is_default ? `${t.name} (default)` : t.name);
+  const label = (t: AgencyCampaignTemplateSummary) =>
+    (t.is_default ? `${t.name} (${t.scope === 'organisation' ? 'organisation default' : 'account default'})` : t.name);
   const chosen = effective.template ? templates.find((t) => t.id === effective.template!.id) ?? null : null;
   const who = chosen ? actorLabel(chosen.updated_by) : null;
 

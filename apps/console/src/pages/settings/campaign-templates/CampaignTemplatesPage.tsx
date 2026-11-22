@@ -74,14 +74,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
       if (action === 'restore') await restoreCampaignTemplate(template.id, scope, tenantId ?? undefined, accountId ?? undefined);
       else await setCampaignTemplateDefault(template.id, scope, action === 'make_default', tenantId ?? undefined, accountId ?? undefined);
       trackAgencyCampaignTemplateAction({ scope, action });
-      showToast(
-        action === 'restore'
-          ? `“${template.name}” restored.`
-          : action === 'make_default'
-            ? `New campaigns now start from “${template.name}”.`
-            : `“${template.name}” is no longer the default.`,
-        'success',
-      );
+      showToast(defaultToast(scope, action, template.name), 'success');
       await list.reload();
     } catch (err) {
       setActionError(templateRefusal(err, 'Could not change the template.'));
@@ -99,7 +92,9 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
       trackAgencyCampaignTemplateAction({ scope, action: 'archive' });
       showToast(
         res.default_cleared
-          ? `“${archiving.name}” archived. New campaigns no longer start from it.`
+          ? `“${archiving.name}” archived. ${scope === 'organisation'
+            ? 'The organisation has no default now, so accounts with no default of their own start new campaigns from the built-in settings.'
+            : 'This account has no default now, so its new campaigns start from the organisation default, or the built-in settings.'}`
           : `“${archiving.name}” archived.`,
         'success',
       );
@@ -130,7 +125,9 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
       <div className={styles.rowText}>
         <p className={styles.name}>
           {t.name}
-          {t.is_default && view === 'live' ? <span className={styles.badge}>Default for new campaigns</span> : null}
+          {t.is_default && view === 'live' ? (
+            <span className={styles.badge}>{t.scope === 'organisation' ? 'Organisation default' : 'Account default'}</span>
+          ) : null}
         </p>
         {t.description ? <p className={styles.description}>{t.description}</p> : null}
         {t.scope === 'account' ? (
@@ -214,13 +211,13 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
         }
       />
 
-      <div className={styles.toolbar} role="tablist" aria-label="Which templates">
+      {/* A filter of one list, as the campaign list's status filter: pressed buttons, not tabs (C9). */}
+      <div className={styles.toolbar} role="group" aria-label="Which templates">
         {(['live', 'archived'] as const).map((v) => (
           <button
             key={v}
             type="button"
-            role="tab"
-            aria-selected={view === v}
+            aria-pressed={view === v}
             className={view === v ? 'btn-primary' : 'btn-secondary'}
             onClick={() => setView(v)}
           >
@@ -291,4 +288,20 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
       />
     </div>
   );
+}
+
+/**
+ * What Make default, Stop using as default and Restore change, said exactly (CT10's chain: the
+ * account's default, else the organisation's, else the built-in settings).
+ */
+function defaultToast(scope: AgencyCampaignTemplateScope, action: 'make_default' | 'clear_default' | 'restore', name: string): string {
+  if (action === 'restore') return `“${name}” restored.`;
+  if (scope === 'organisation') {
+    return action === 'make_default'
+      ? `“${name}” is now the organisation default. New campaigns start from it in accounts with no default of their own.`
+      : `“${name}” is no longer the organisation default. Accounts with no default of their own now start new campaigns from the built-in settings.`;
+  }
+  return action === 'make_default'
+    ? `“${name}” is now this account’s default. New campaigns in this account start from it.`
+    : `“${name}” is no longer this account’s default. New campaigns in this account start from the organisation default, or the built-in settings.`;
 }

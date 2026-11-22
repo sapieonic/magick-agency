@@ -139,6 +139,12 @@ describe('New campaign starts from a template', () => {
     await renderPage();
     expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith(null, 't1', 'a1');
     expect((screen.getByTestId('start-from-select') as HTMLSelectElement).value).toBe('acc-1');
+    // Which default is which (C4): the account's is the one New campaign opens on.
+    expect([...(screen.getByTestId('start-from-select') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
+      'Pune collections (account default)',
+      'Standard (organisation default)',
+      'Built-in settings',
+    ]);
     const banner = screen.getByTestId('start-from-banner');
     expect(banner.textContent).toContain(
       'Filled in from Pune collections (version 4, changed by Priya on 18 Nov, 4:12 PM). Changes you make here apply to this campaign only.',

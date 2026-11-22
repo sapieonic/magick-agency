@@ -157,7 +157,7 @@ describe('the list', () => {
     await renderAt('/settings/campaign-templates');
     const row = screen.getByTestId('template-row-acc-1');
     expect(row.textContent).toContain('Pune collections');
-    expect(within(row).getByText('Default for new campaigns')).toBeTruthy();
+    expect(within(row).getByText('Account default')).toBeTruthy();
     expect(row.textContent).toContain('Follows the organisation’s default');
     expect(within(row).getByRole('list', { name: 'Sections it sets' }).textContent).toBe('Calling hours');
     expect(row.textContent).toContain('Changed by Priya on 18 Nov, 4:12 PM · version 4');
@@ -172,6 +172,9 @@ describe('the list', () => {
     expect(row.textContent).toContain('Standard');
     expect(within(row).queryByRole('button')).toBeNull();
     expect(within(row).queryByRole('link')).toBeNull();
+    // Its default is the organisation's, not this account's (C4).
+    expect(within(row).getByText('Organisation default')).toBeTruthy();
+    expect(within(row).queryByText('Account default')).toBeNull();
   });
 
   it('makes a template the default, then reads the list again', async () => {
@@ -179,9 +182,32 @@ describe('the list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Make Weekend push the default' }));
     await act(async () => {});
     expect(mocks.setCampaignTemplateDefault).toHaveBeenCalledWith('acc-2', 'account', true, 't-1', 'a-1');
-    expect(mocks.showToast).toHaveBeenCalledWith('New campaigns now start from “Weekend push”.', 'success');
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      '“Weekend push” is now this account’s default. New campaigns in this account start from it.',
+      'success',
+    );
     expect(mocks.listCampaignTemplates).toHaveBeenCalledTimes(2);
     expect(mocks.track).toHaveBeenCalledWith('action', { scope: 'account', action: 'make_default' });
+  });
+
+  it('says what making an organisation template the default changes: accounts with no default of their own', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    mocks.listCampaignTemplates.mockResolvedValue([ORG, summary({ id: 'org-2', scope: 'organisation', account_id: null, name: 'Recovery' })]);
+    await renderAt('/settings/organisation-campaign-templates');
+    expect(within(screen.getByTestId('template-row-org-1')).getByText('Organisation default')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Make Recovery the default' }));
+    await act(async () => {});
+    expect(mocks.setCampaignTemplateDefault).toHaveBeenCalledWith('org-2', 'organisation', true, 't-1', 'a-1');
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      '“Recovery” is now the organisation default. New campaigns start from it in accounts with no default of their own.',
+      'success',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Stop using as default' }));
+    await act(async () => {});
+    expect(mocks.showToast).toHaveBeenLastCalledWith(
+      '“Standard” is no longer the organisation default. Accounts with no default of their own now start new campaigns from the built-in settings.',
+      'success',
+    );
   });
 
   it('archives after asking, and says which account templates stop an organisation template being archived', async () => {
@@ -203,8 +229,14 @@ describe('the list', () => {
 
   it('lists archived templates with Restore', async () => {
     await renderAt('/settings/campaign-templates');
-    fireEvent.click(screen.getByRole('tab', { name: 'Archived' }));
+    // A filter of one list: two pressed buttons in a group, not tabs without panels (C9).
+    const which = screen.getByRole('group', { name: 'Which templates' });
+    expect(within(which).queryByRole('tab')).toBeNull();
+    expect(within(which).getByRole('button', { name: 'Templates' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(within(which).getByRole('button', { name: 'Archived' }));
     await act(async () => {});
+    expect(within(which).getByRole('button', { name: 'Archived' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(which).getByRole('button', { name: 'Templates' }).getAttribute('aria-pressed')).toBe('false');
     expect(mocks.listCampaignTemplates).toHaveBeenLastCalledWith('t-1', 'a-1', { archived: true });
     const row = screen.getByTestId('template-row-acc-9');
     expect(row.textContent).toContain('Archived by Priya on 10 Nov, 8:00 AM');
