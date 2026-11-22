@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
-import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
+import { CallSummaryProfileField } from '../../components/agency/CallSummaryProfileField';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { errorCode } from '../../utils/agencyErrors';
@@ -37,14 +37,11 @@ import {
 import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
-  NO_ANALYSIS_PROFILE,
-  analysisGate,
   campaignSaveRefusal,
   payloadSetsProfile,
   recordingPayload,
   recordingStateFromCampaign,
   resolveProfileId,
-  storedProfileStatus,
   type CampaignRecordingState,
 } from '../../utils/agencyCampaignRecording';
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
@@ -228,13 +225,6 @@ export function AgencyCampaignSettingsPage() {
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
   const analyticsEnabled = isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY);
-  // The profile list is gated on a permission only, so `agency.analytics` alone
-  // decides — see `utils/agencyCampaignRecording.ts`.
-  const {
-    profiles: analysisProfiles,
-    loading: profilesLoading,
-    error: profilesError,
-  } = useCallAnalysisProfiles({ enabled: analyticsEnabled });
 
   // Fire once per mount per gate, not on every render — these mirror
   // `RequireCapability`'s own pattern for the same event.
@@ -757,28 +747,13 @@ export function AgencyCampaignSettingsPage() {
   const carrierChoices = carriers ? carrierOptions(carriers, carrierOfCampaign(campaign)) : [];
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
 
-  const summaryGate = analysisGate({ enabled: analyticsEnabled, current: recording.profileId });
-  const storedProfileId = resolveProfileId(recording.profileId);
-  const canPickProfile = analyticsEnabled;
   // Visible when the capability is on (picker, or a notice saying why the list
   // is unreadable) — and also when it is OFF but a profile is already set, so
   // the clearing path the server allows is reachable. Keyed on the LOADED campaign,
   // not on form state: keyed on state, pressing "Remove summary profile" would
-  // make the whole block vanish before the operator had saved it.
+  // make the whole block vanish before the operator had saved it. The field itself
+  // (`CallSummaryProfileField`) keeps a stored profile the list no longer has.
   const summaryVisible = analyticsEnabled || (campaign.analysis_profile_id ?? null) !== null;
-  // A profile set by an earlier save (or by curl) may not be in the fetched
-  // list — deactivated, deleted, or belonging to a page we didn't fetch. Kept as
-  // an option either way so the round trip stays lossless instead of silently
-  // re-saving as "no summary". `storedProfileStatus` is what decides whether
-  // that absence is a verdict ("no longer listed") or just an in-flight/failed
-  // fetch that has not answered the question yet — see the option
-  // rendering below.
-  const profileStatus = storedProfileStatus({
-    storedProfileId,
-    profiles: analysisProfiles,
-    loading: profilesLoading,
-    error: profilesError,
-  });
 
   return (
     /*
@@ -935,74 +910,13 @@ export function AgencyCampaignSettingsPage() {
                 />
 
                 {summaryVisible && (
-                  <div className="form-group">
-                    <label htmlFor="campaign-analysis-profile">Call summary</label>
-                    {canPickProfile ? (
-                      <>
-                        <select
-                          id="campaign-analysis-profile"
-                          value={recording.profileId}
-                          disabled={!canEdit || profilesLoading}
-                          onChange={(event) =>
-                            setRecording({ ...recording, profileId: event.target.value })
-                          }
-                        >
-                          <option value={NO_ANALYSIS_PROFILE}>No summary</option>
-                          {profileStatus !== 'found' && storedProfileId !== null && (
-                            <option value={storedProfileId}>
-                              {profileStatus === 'unlisted'
-                                ? 'Current profile (no longer listed)'
-                                : 'Current profile'}
-                            </option>
-                          )}
-                          {analysisProfiles.map((profile) => (
-                            <option key={profile.id} value={profile.id}>
-                              {profile.is_default ? `${profile.name} (default)` : profile.name}
-                            </option>
-                          ))}
-                        </select>
-                        <p className={styles.hint}>
-                          {storedProfileId === null
-                            ? 'No summary is written for this campaign’s calls.'
-                            : 'Every connected call is summarised against this profile once it ends. ' +
-                              'A summary needs a recording, so leave recording on above.'}
-                        </p>
-                        {profilesError && (
-                          <p className={styles.gateNotice} role="note">
-                            Could not load your summary profiles ({profilesError}). Saving without
-                            changing this field leaves the campaign’s current profile alone.
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <p className={styles.hint}>
-                          {storedProfileId === null
-                            ? 'No summary profile is set for this campaign.'
-                            : 'A summary profile is set for this campaign.'}
-                        </p>
-                        {summaryGate.notice && (
-                          <p className={styles.gateNotice} role="note">
-                            {summaryGate.notice}
-                          </p>
-                        )}
-                        {storedProfileId !== null && canEdit && (
-                          <button
-                            type="button"
-                            className={styles.linkButton}
-                            onClick={() =>
-                              setRecording({ ...recording, profileId: NO_ANALYSIS_PROFILE })
-                            }
-                          >
-                            Remove summary profile
-                          </button>
-                        )}
-                      </>
-                    )}
-                    {fieldErrors['analysis_profile_id'] && (
-                      <p className={styles.fieldError}>{fieldErrors['analysis_profile_id']}</p>
-                    )}
-                  </div>
+                  <CallSummaryProfileField
+                    profileId={recording.profileId}
+                    onChange={(profileId) => setRecording({ ...recording, profileId })}
+                    analyticsEnabled={analyticsEnabled}
+                    readOnly={!canEdit}
+                    error={fieldErrors['analysis_profile_id']}
+                  />
                 )}
               </div>
             </ComposerSection>

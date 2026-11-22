@@ -81,8 +81,14 @@ import { InboundStickyField } from './InboundStickyField';
  * wrap-up) and `agents` (contact assignment and putting inbound callers through to their
  * agent, each only while its flag is on). The catalog and the unanswered-call map share a
  * group because a code edit in one is followed into the other.
+ *
+ * A campaign template's editor (`docs/campaign-templates.md` §3) cuts them by template section
+ * instead, one editor each: `outcomeList` (the catalog with the unanswered-call map, which follows
+ * its code edits), `retryRules`, `wrapup`, `ceiling`, `assignment` and `sticky`.
  */
-export type BehaviourSectionId = 'hours' | 'behaviour' | 'retries' | 'outcomes' | 'agents';
+export type BehaviourSectionId =
+  | 'hours' | 'behaviour' | 'retries' | 'outcomes' | 'agents'
+  | 'outcomeList' | 'retryRules' | 'wrapup' | 'ceiling' | 'assignment' | 'sticky';
 
 export interface CampaignBehaviourSectionProps {
   state: CampaignConfigState;
@@ -248,6 +254,12 @@ export function CampaignBehaviourSection({
       {include.includes('retries') ? <>{retryTable}{ceiling}</> : null}
       {include.includes('outcomes') ? <>{catalog}{outcomeMap}{wrapup}</> : null}
       {include.includes('agents') ? <>{assignmentFields}{sticky}</> : null}
+      {include.includes('outcomeList') ? <>{catalog}{outcomeMap}</> : null}
+      {include.includes('retryRules') ? retryTable : null}
+      {include.includes('wrapup') ? wrapup : null}
+      {include.includes('ceiling') ? ceiling : null}
+      {include.includes('assignment') ? assignmentFields : null}
+      {include.includes('sticky') ? sticky : null}
     </>
   );
 

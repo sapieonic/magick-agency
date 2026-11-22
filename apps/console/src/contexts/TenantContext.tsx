@@ -95,6 +95,13 @@ interface TenantContextValue {
   membership: Membership | null;
   role: Role | undefined;
   /**
+   * The role of the reader's organisation-wide seat in this tenant (`account_id` NULL), or
+   * undefined when every seat they hold here is scoped to one account. Organisation-only settings
+   * (organisation campaign templates, CT3) need it: the server refuses an account-scoped seat
+   * (`tenant_wide_membership_required`) whatever its role.
+   */
+  organisationRole?: Role;
+  /**
    * `'ready'` means an authoritative account list came back — **including an empty
    * one**, which is a legitimate answer for a tenant with no accounts and must not
    * be reported as a failure. `'degraded'` means we are showing the caller's own
@@ -407,6 +414,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     ? memberships.find(m => m.tenant_id === activeTenantId && m.account_id === activeAccountId && m.status === 'active')
     : null;
   const role = tenantMembership?.role ?? accountMembership?.role;
+  const organisationRole = tenantMembership?.role;
 
   /**
    * Whether a switch should reload the console: the page is an app page rather
@@ -550,6 +558,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       accounts,
       membership,
       role,
+      organisationRole,
       accountResolution,
       accountError,
       setActiveTenantId,
@@ -563,6 +572,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       accounts,
       membership,
       role,
+      organisationRole,
       accountResolution,
       accountError,
       setActiveTenantId,
