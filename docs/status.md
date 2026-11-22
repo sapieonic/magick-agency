@@ -2707,11 +2707,21 @@ P5 of six is built; P6 (inbound calls in customer history) is not.
   soft-phone calls list, their filters and detail sheets were removed (CL38). An older build
   keeps its segments on the old routes, which are still served, and still shows numbers in full.
 
+- **After review, the same day.** The `/agency/calls` route was not declared in `App.tsx`, so
+  every link to All calls opened "Page not found"; it is declared, and a test now checks every
+  path the shell offers against the routes `App.tsx` declares. To follow up's callbacks follow
+  the Campaign filter. My calls shows a number only where the campaign says exactly `full`, and
+  masks an inbound call filed under no campaign by its matched contact's campaign. Call back
+  reads its Missed row by id (`GET /proxy/agency/inbound/missed/:id`), not from the list's first
+  100 rows. To follow up's badge follows the live Missed count. The console no longer reads
+  `my-attempts`, which sends numbers in full.
+
 **Not verified:** not run in a real browser or on a phone. The account read was timed on a
 throwaway copy of the test database (2.2 million attempts, 200,000 soft-phone calls, 300,000
 inbound calls), not on production data. Left as they were: the Missed list still sends numbers
-in full to the agent a row is assigned to; My calls has no filter by outcome or by number; All
-calls has no export, stats strip or Summary column ([`call-log.md`](call-log.md) §7 "What P5
+in full to the agent a row is assigned to; My calls has no filter by outcome or by number, and
+its soft-phone rows no longer show "DNC override" and "Hours override"; the app has no page for
+one soft-phone call; All calls has no export, stats strip or Summary column ([`call-log.md`](call-log.md) §7 "What P5
 left as it was").
 
 ## Not built

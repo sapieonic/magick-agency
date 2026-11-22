@@ -717,13 +717,22 @@ One list of the agent's own calls of every type (CL9, [`call-log.md`](call-log.m
   handled** (the Missed list's own action), then **Callbacks due**: "Callback due", "Due 4:00 PM"
   or "Late by 2 hours", the customer, and "campaign · you booked it for 1:45 PM". Empty: "Nobody
   is waiting for a call from you." **Missed calls list** under it opens the Missed list (below).
-- **Call back** reads the Missed row from the Missed list when it is pressed (the number is not
-  in My calls' rows where the campaign hides it) and is the Missed list's own Call back from
-  there (`startCallBack`): nothing is dialled until the agent presses Call.
+- **Call back** reads that one Missed row by its id when it is pressed
+  (`MissedCallsApi.one`, `GET /inbound/missed/:id`; the number is not in My calls' rows where the
+  campaign hides it) and is the Missed list's own Call back from there (`startCallBack`):
+  nothing is dialled until the agent presses Call. By id, so it works however many rows the
+  agent has open.
+- **The badges agree.** To follow up's badge and the My calls tab's badge count the same open
+  Missed rows. When the tab's count moves to a number the list did not read
+  (`MyCallsController.missedCountChanged`), the list is read again under To follow up, and the
+  counts alone (a one-row read) under another chip, so the cards and pages on screen stay. Mark
+  handled here reads the list itself and is not followed twice.
 - **Paging:** keyset pages of 50, the next one fetched about 20 cards before the end; a chip
   restarts from the first page, and a page that belongs to a chip no longer on is dropped.
 - **Gone with the segments (CL38):** the attempts list's filters (day, outcome, campaign, number)
-  and detail sheet, and the soft-phone calls list's filters and detail sheet.
+  and detail sheet, and the soft-phone calls list's filters and detail sheet. So the app has no
+  read-only page for one soft-phone call: its call fields, its override note and who saved its
+  outcome are not shown in the app.
 
 ## Missed calls
 
