@@ -74,18 +74,20 @@ export const PREAMBLE_QUERY_PARAMS = ['preamble'] as const;
 /**
  * The campaign call export's own filter (decision SR6): `source=dialler|soft_phone` keeps one
  * of the two sources of the campaign's call log; absent, the file carries both. Forwarded to
- * the call log's internal read, which validates it. Not on the JSON attempt list, whose rows
- * are the dialler's alone (the soft phone's are Call log's other view).
+ * the call log's internal read, which validates it. `status=live|awaiting_outcome|settled` is
+ * the Call log's soft-phone status filter (CL11, `docs/call-log.md`): the soft-phone calls in
+ * that status, and no dialler row; absent, the file is as it was. Neither is on the JSON
+ * attempt list, whose rows are the dialler's alone.
  */
-export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source'] as const;
+export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source', 'status'] as const;
 
 /**
  * The Call log's own params on its JSON route (`GET /proxy/agency/campaigns/:id/call-log`,
  * CL11): `type=all|dialler|soft_phone`, the chip, and `include_counts=1`, the chips' counts.
- * Both are read by the route: `type` becomes the internal read's `source`, and
- * `include_counts` is forwarded by name. Neither is on the export, which keeps `source`.
+ * `type` becomes the internal read's `source`; `include_counts` and `status` (the soft-phone
+ * status filter, below) are forwarded by name. The export keeps `source` and takes `status` too.
  */
-export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts'] as const;
+export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts', 'status'] as const;
 
 /**
  * The outcome of narrowing a query down to the params a route forwards.

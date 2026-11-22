@@ -41,6 +41,7 @@ import type { AgencyManualCallRecord } from '../../models/agency.model.js';
 // owed an outcome gets the same one, so "auto-closed" reads the same on both spines.
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
+import { softphoneStatusSql } from './softphone-campaign-sql.js';
 import { projectManualCallRow, type AgencyManualCallJoinedRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
@@ -697,9 +698,7 @@ export class AgencyManualCallRepository {
     if (f.agentUserId) conditions.push(`m.agent_user_id = ${bind.add(f.agentUserId)}::uuid`);
     if (f.campaign === 'untagged') conditions.push('m.campaign_id IS NULL');
     else if (f.campaign) conditions.push(`m.campaign_id = ${bind.add(f.campaign.campaignId)}::uuid`);
-    if (f.status === 'live') conditions.push("m.state <> 'ended'");
-    else if (f.status === 'awaiting_outcome') conditions.push("m.state = 'ended' AND m.settled_at IS NULL");
-    else if (f.status === 'settled') conditions.push('m.settled_at IS NOT NULL');
+    if (f.status) conditions.push(softphoneStatusSql(f.status));
     if (f.outcome) conditions.push(`m.outcome = ${bind.add(f.outcome)}::varchar`);
     if (f.dispositionCode) conditions.push(`m.disposition_code = ${bind.add(f.dispositionCode)}::varchar`);
     if (f.contactId) conditions.push(`m.contact_id = ${bind.add(f.contactId)}::uuid`);

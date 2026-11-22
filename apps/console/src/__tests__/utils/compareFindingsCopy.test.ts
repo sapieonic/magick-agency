@@ -226,11 +226,11 @@ describe('next steps link to pages that exist', () => {
     // The window is 15–21 Nov in Asia/Kolkata; the links are exactly the ones Insights builds.
     const recent = on(WILL_PAY, { code: 'clear_gap', next_step: 'listen_recent' });
     expect(findingAction(recent.f, ctx({ ...recent.response, campaign_id: 'camp 1' }))!.to).toBe(
-      '/agency/campaigns/camp%201/attempts?agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z',
+      '/agency/campaigns/camp%201/attempts?agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z&type=dialler',
     );
     const best = on(builtin('success_rate'), { code: 'stands_out', next_step: 'share_best_call' });
     expect(findingAction(best.f, ctx(best.response))!.to).toBe(
-      '/agency/campaigns/camp-1/attempts?disposition_code=will_pay&disposition_code=part_paid&agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z',
+      '/agency/campaigns/camp-1/attempts?disposition_code=will_pay&disposition_code=part_paid&agent_user_id=u-priya&placed=1&dialed_from=2026-11-14T18%3A30%3A00.000Z&dialed_to=2026-11-21T18%3A30%3A00.000Z&type=dialler',
     );
   });
 

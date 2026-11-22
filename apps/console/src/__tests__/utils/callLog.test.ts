@@ -1,24 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CALL_LOG_STATUS_OPTIONS,
   callLogBadges,
   callLogCountCopy,
   callLogEmptyState,
+  callLogOpening,
   callLogOutcomePlaceholder,
   callLogParams,
   callLogRowPath,
+  callLogStatusLabel,
   callLogTypeFacts,
   callLogViewFromParams,
   callLogWhatHappened,
   campaignCallLogPath,
   effectiveCallLogFilters,
+  isCallLogFiltered,
   isNotDialled,
   lastSevenDays,
   localDay,
+  manualCallsRedirectPath,
+  onOpeningView,
   onlyDatesNarrow,
-  opensOnToday,
   selectedCallLogCount,
   visibleCallLogChips,
+  type CallLogView,
 } from '../../utils/agency/callLog';
+import { SOFTPHONE_CALL_STATUS_OPTIONS } from '../../utils/softphone/callStats';
 import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
 import type { AgencyCallLogDiallerRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
 
@@ -39,27 +46,34 @@ const SOFT = {
 /** 22 Nov 2026, 3:42 PM, on the reader's calendar (UTC in this suite). */
 const NOW = new Date(2026, 10, 22, 15, 42);
 
+const V = (over: Partial<CallLogView> = {}): CallLogView => ({ type: 'all', allDates: false, status: null, ...over });
+const TODAY = '2026-11-22';
+
 describe('the view in the URL', () => {
-  it('reads the chip and the every-date marker, and treats anything else as All and today', () => {
-    expect(callLogViewFromParams(new URLSearchParams(''))).toEqual({ type: 'all', allDates: false });
-    expect(callLogViewFromParams(new URLSearchParams('type=soft_phone&dates=all'))).toEqual({ type: 'soft_phone', allDates: true });
-    expect(callLogViewFromParams(new URLSearchParams('type=dialler'))).toEqual({ type: 'dialler', allDates: false });
-    // A type this build does not know (a link from a newer one) and a mangled marker.
-    expect(callLogViewFromParams(new URLSearchParams('type=inbound&dates=some'))).toEqual({ type: 'all', allDates: false });
+  it('reads the chip, the every-date marker and the status, and treats anything else as All, the opening dates and no status', () => {
+    expect(callLogViewFromParams(new URLSearchParams(''))).toEqual(V());
+    expect(callLogViewFromParams(new URLSearchParams('type=soft_phone&dates=all&status=awaiting_outcome')))
+      .toEqual({ type: 'soft_phone', allDates: true, status: 'awaiting_outcome' });
+    expect(callLogViewFromParams(new URLSearchParams('type=dialler'))).toEqual(V({ type: 'dialler' }));
+    // A type or status this build does not know (a link from a newer one) and a mangled marker.
+    expect(callLogViewFromParams(new URLSearchParams('type=inbound&dates=some&status=done'))).toEqual(V());
   });
 
   it('writes the chip only when it is not All, and every-date only when no filter says more', () => {
-    expect(callLogParams({}, { type: 'all', allDates: false }).toString()).toBe('');
-    expect(callLogParams({}, { type: 'soft_phone', allDates: false }).toString()).toBe('type=soft_phone');
-    expect(callLogParams({}, { type: 'all', allDates: true }).toString()).toBe('dates=all');
-    expect(callLogParams({ outcome: ['busy'] }, { type: 'dialler', allDates: true }).toString()).toBe('outcome=busy&type=dialler');
+    expect(callLogParams({}, V()).toString()).toBe('');
+    expect(callLogParams({}, V({ type: 'soft_phone' })).toString()).toBe('type=soft_phone');
+    expect(callLogParams({}, V({ allDates: true })).toString()).toBe('dates=all');
+    expect(callLogParams({ outcome: ['busy'] }, V({ type: 'dialler', allDates: true })).toString()).toBe('outcome=busy&type=dialler');
+    // The status is a filter: it is written, and beside it every-date says nothing more.
+    expect(callLogParams({}, V({ status: 'live', allDates: true })).toString()).toBe('status=live');
   });
 
-  it('round-trips, and the view’s keys are not filters', () => {
-    const params = callLogParams({ phone: '98765', placed: '1' }, { type: 'soft_phone', allDates: false });
+  it('round-trips, and the view’s keys are not attempt filters', () => {
+    const view = V({ type: 'soft_phone', status: 'settled' });
+    const params = callLogParams({ phone: '98765', placed: '1' }, view);
     expect(campaignAttemptFiltersFromParams(params)).toEqual({ phone: '98765', placed: '1' });
-    expect(callLogViewFromParams(params)).toEqual({ type: 'soft_phone', allDates: false });
-    expect(campaignAttemptFiltersFromParams(new URLSearchParams('type=soft_phone&dates=all'))).toEqual({});
+    expect(callLogViewFromParams(params)).toEqual(view);
+    expect(campaignAttemptFiltersFromParams(new URLSearchParams('type=soft_phone&dates=all&status=live'))).toEqual({});
   });
 
   it('builds the Call log’s path for a chip: where a campaign’s Soft-phone calls now live', () => {
@@ -67,25 +81,69 @@ describe('the view in the URL', () => {
     expect(campaignCallLogPath('c-1', 'all')).toBe('/agency/campaigns/c-1/attempts');
     expect(campaignCallLogPath('c-1', 'soft_phone')).toBe('/agency/campaigns/c-1/attempts?type=soft_phone');
   });
+
+  it('the old Soft-phone calls URL keeps its query and gains the chip', () => {
+    expect(manualCallsRedirectPath('c-1', '')).toBe('/agency/campaigns/c-1/attempts?type=soft_phone');
+    expect(manualCallsRedirectPath('c-1', '?phone=98765&dates=all')).toBe('/agency/campaigns/c-1/attempts?phone=98765&dates=all&type=soft_phone');
+    // A `type` of its own cannot land it on another chip.
+    expect(manualCallsRedirectPath('c-1', '?type=dialler&outcome=busy')).toBe('/agency/campaigns/c-1/attempts?type=soft_phone&outcome=busy');
+  });
 });
 
-describe('the day the list opens on', () => {
-  it('is today when the URL carries no filter, whatever chip is on', () => {
-    expect(opensOnToday({}, { type: 'all', allDates: false })).toBe(true);
-    expect(opensOnToday({}, { type: 'soft_phone', allDates: false })).toBe(true);
-    expect(localDay(NOW)).toBe('2026-11-22');
-    expect(effectiveCallLogFilters({}, { type: 'all', allDates: false }, NOW)).toEqual({
+describe('the soft-phone status filter', () => {
+  it('offers the Soft-phone calls list’s three statuses, in its words', () => {
+    expect(CALL_LOG_STATUS_OPTIONS).toEqual([
+      { value: 'live', label: 'On a call now' },
+      { value: 'awaiting_outcome', label: 'Waiting for an outcome' },
+      { value: 'settled', label: 'Done' },
+    ]);
+    // The same words as the account's Soft-phone calls list, which still has the filter.
+    expect(CALL_LOG_STATUS_OPTIONS).toEqual(SOFTPHONE_CALL_STATUS_OPTIONS);
+    expect(callLogStatusLabel('awaiting_outcome')).toBe('Waiting for an outcome');
+  });
+
+  it('counts as a filter', () => {
+    expect(isCallLogFiltered({}, { status: 'live' })).toBe(true);
+    expect(isCallLogFiltered({}, { status: null })).toBe(false);
+    expect(isCallLogFiltered({ phone: '9' }, { status: null })).toBe(true);
+  });
+});
+
+describe('the dates the list opens on', () => {
+  it('a live campaign opens on today; a finished or archived one on every date', () => {
+    for (const status of ['draft', 'running', 'paused', 'stopping']) expect(callLogOpening({ status }), status).toBe('today');
+    for (const status of ['stopped', 'completed']) expect(callLogOpening({ status }), status).toBe('all');
+    expect(callLogOpening({ status: 'draft', archived_at: '2026-11-20T10:00:00.000Z' })).toBe('all');
+    expect(callLogOpening({ status: 'running', archived_at: null })).toBe('today');
+  });
+
+  it('the opening view is a URL with no filter, whatever chip is on', () => {
+    expect(onOpeningView({}, V())).toBe(true);
+    expect(onOpeningView({}, V({ type: 'soft_phone' }))).toBe(true);
+    expect(onOpeningView({}, V({ allDates: true }))).toBe(false);
+    expect(onOpeningView({}, V({ status: 'live' }))).toBe(false);
+    expect(onOpeningView({ contact_id: 'c-1' }, V())).toBe(false);
+  });
+
+  it('reads today on a live campaign’s opening view, and every date on a finished one’s', () => {
+    expect(localDay(NOW)).toBe(TODAY);
+    expect(effectiveCallLogFilters({}, V(), 'today', TODAY)).toEqual({
       from: '2026-11-22T00:00:00.000Z', to: '2026-11-22T23:59:59.999Z',
     });
+    expect(effectiveCallLogFilters({}, V({ type: 'soft_phone' }), 'today', TODAY)).toEqual({
+      from: '2026-11-22T00:00:00.000Z', to: '2026-11-22T23:59:59.999Z',
+    });
+    expect(effectiveCallLogFilters({}, V(), 'all', TODAY)).toEqual({});
+    // The day is the caller's to hold: the next one gives the next day's range.
+    expect(effectiveCallLogFilters({}, V(), 'today', '2026-11-23').from).toBe('2026-11-23T00:00:00.000Z');
   });
 
   it('is never forced on a link that carries a filter, or one that asked for every date', () => {
-    const view = { type: 'all', allDates: false } as const;
     for (const filters of [{ contact_id: 'c-1' }, { outcome: ['abandoned'] }, { dialed_from: '2026-08-17T00:00:00.000Z' }, { placed: '1' as const }]) {
-      expect(opensOnToday(filters, view)).toBe(false);
-      expect(effectiveCallLogFilters(filters, view, NOW)).toBe(filters);
+      expect(effectiveCallLogFilters(filters, V(), 'today', TODAY)).toBe(filters);
     }
-    expect(effectiveCallLogFilters({}, { type: 'all', allDates: true }, NOW)).toEqual({});
+    expect(effectiveCallLogFilters({}, V({ allDates: true }), 'today', TODAY)).toEqual({});
+    expect(effectiveCallLogFilters({}, V({ status: 'awaiting_outcome' }), 'today', TODAY)).toEqual({});
   });
 
   it('the last seven days end today and start six days back, across a month', () => {
@@ -94,11 +152,13 @@ describe('the day the list opens on', () => {
   });
 
   it('knows when only the dates narrow the list', () => {
-    expect(onlyDatesNarrow({ from: 'a', to: 'b' })).toBe(true);
-    expect(onlyDatesNarrow({ to: 'b' })).toBe(true);
-    expect(onlyDatesNarrow({})).toBe(false);
-    expect(onlyDatesNarrow({ from: 'a', outcome: ['busy'] })).toBe(false);
-    expect(onlyDatesNarrow({ dialed_from: 'a' })).toBe(false);
+    const none = { status: null };
+    expect(onlyDatesNarrow({ from: 'a', to: 'b' }, none)).toBe(true);
+    expect(onlyDatesNarrow({ to: 'b' }, none)).toBe(true);
+    expect(onlyDatesNarrow({}, none)).toBe(false);
+    expect(onlyDatesNarrow({ from: 'a', outcome: ['busy'] }, none)).toBe(false);
+    expect(onlyDatesNarrow({ dialed_from: 'a' }, none)).toBe(false);
+    expect(onlyDatesNarrow({ from: 'a' }, { status: 'live' })).toBe(false);
   });
 });
 
@@ -149,21 +209,25 @@ describe('the chips', () => {
 });
 
 describe('the empty list', () => {
+  const view = (type: CallLogView['type'], status: CallLogView['status'] = null) => ({ type, status });
+
   it('is about the dates when only the dates narrow it, naming the chip’s type', () => {
     const dates = { from: 'a', to: 'b' };
-    expect(callLogEmptyState(dates, 'all')).toMatchObject({ kind: 'dates', title: 'No calls on this campaign for these dates.' });
-    expect(callLogEmptyState(dates, 'dialler').title).toBe('No dialler calls on this campaign for these dates.');
-    expect(callLogEmptyState(dates, 'soft_phone').title).toBe('No soft-phone calls on this campaign for these dates.');
+    expect(callLogEmptyState(dates, view('all'))).toMatchObject({ kind: 'dates', title: 'No calls on this campaign for these dates.' });
+    expect(callLogEmptyState(dates, view('dialler')).title).toBe('No dialler calls on this campaign for these dates.');
+    expect(callLogEmptyState(dates, view('soft_phone')).title).toBe('No soft-phone calls on this campaign for these dates.');
   });
 
-  it('is about the filters when anything else narrows it', () => {
-    expect(callLogEmptyState({ from: 'a', outcome: ['busy'] }, 'all')).toMatchObject({ kind: 'filtered', title: 'Nothing matches those filters' });
-    expect(callLogEmptyState({ contact_id: 'c-1' }, 'soft_phone').kind).toBe('filtered');
+  it('is about the filters when anything else narrows it, the status included', () => {
+    expect(callLogEmptyState({ from: 'a', outcome: ['busy'] }, view('all'))).toMatchObject({ kind: 'filtered', title: 'Nothing matches those filters' });
+    expect(callLogEmptyState({ contact_id: 'c-1' }, view('soft_phone')).kind).toBe('filtered');
+    expect(callLogEmptyState({ from: 'a', to: 'b' }, view('all', 'awaiting_outcome')).kind).toBe('filtered');
+    expect(callLogEmptyState({}, view('dialler', 'live')).kind).toBe('filtered');
   });
 
   it('is about the campaign only with every date and no filter', () => {
-    expect(callLogEmptyState({}, 'all')).toMatchObject({ kind: 'none', title: 'No calls were placed' });
-    expect(callLogEmptyState({}, 'soft_phone')).toMatchObject({ kind: 'none', title: 'No soft-phone calls on this campaign' });
+    expect(callLogEmptyState({}, view('all'))).toMatchObject({ kind: 'none', title: 'No calls were placed' });
+    expect(callLogEmptyState({}, view('soft_phone'))).toMatchObject({ kind: 'none', title: 'No soft-phone calls on this campaign' });
   });
 });
 

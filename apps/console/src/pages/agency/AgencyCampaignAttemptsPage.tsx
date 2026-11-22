@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Calendar,
@@ -41,7 +41,7 @@ import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import { ATTEMPT_OUTCOME_LABELS, type AgencyAttemptFilters } from '../../types/agency-spine';
-import type { AgencyCallLogCounts, AgencyCallLogRow, AgencyCallLogTypeFilter } from '../../types/agency-call-log';
+import type { AgencyCallLogCounts, AgencyCallLogRow, AgencyCallLogStatus, AgencyCallLogTypeFilter } from '../../types/agency-call-log';
 import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
@@ -59,20 +59,27 @@ import {
 import { formatCount } from '../../utils/format/number';
 import {
   CALL_LOG_DESCRIPTION,
+  CALL_LOG_STATUS_HINT,
+  CALL_LOG_STATUS_OPTIONS,
   callLogBadges,
   callLogCountCopy,
   callLogEmptyState,
+  callLogOpening,
   callLogOutcomePlaceholder,
   callLogParams,
   callLogRowPath,
+  callLogStatusLabel,
   callLogTypeFacts,
   callLogTypeLabel,
   callLogViewFromParams,
   callLogWhatHappened,
-  campaignCallLogPath,
   effectiveCallLogFilters,
+  isCallLogFiltered,
   isNotDialled,
   lastSevenDays,
+  localDay,
+  manualCallsRedirectPath,
+  onOpeningView,
   selectedCallLogCount,
   softphoneAgentCopy,
   visibleCallLogChips,
@@ -82,6 +89,8 @@ import styles from './AgencyCampaignAttemptsPage.module.css';
 import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
 
 const PAGE_SIZE = 50;
+/** The applied-filter chip of the soft-phone status (the attempt filters' chips have their own ids). */
+const STATUS_CHIP = 'softphone_status';
 
 /**
  * The campaign's Call log: one row per call, whatever placed it (decision CL11,
@@ -89,10 +98,12 @@ const PAGE_SIZE = 50;
  * are one list on one keyset, with type chips ("All · Dialler · Soft phone") over it; a row
  * opens the detail page of its own type.
  *
- * ── It opens on today ───────────────────────────────────────────────────────
- * With no filter in the URL the list shows today's calls, and an empty day offers the last
- * seven. Any filter in the URL (an Insights number, one contact) means exactly what it says
- * and is never narrowed to today; `?dates=all` asks for every date (`utils/agency/callLog.ts`).
+ * ── What it opens on ────────────────────────────────────────────────────────
+ * With no filter in the URL a live campaign's list shows today's calls, and an empty day
+ * offers the last seven and every date. A finished or archived campaign opens on every date:
+ * "what did this campaign do" is asked after the run, and today would be an empty page. Any
+ * filter in the URL (an Insights number, one contact) means exactly what it says and is never
+ * narrowed to today; `?dates=all` asks for every date (`utils/agency/callLog.ts`).
  *
  * ── Why this is built on attempts, not calls ───────────────────────────────
  * Agency legs do land in `agency_calls`, so a call list could show the ones that
@@ -130,7 +141,9 @@ export function AgencyCampaignAttemptsPage() {
   */
   return (
     <CampaignWorkspace campaignId={id} active="attempts">
-      {(campaign, section) => <AttemptsSection id={id} campaign={campaign} stats={section.stats} />}
+      {(campaign, section) => (
+        <AttemptsSection id={id} campaign={campaign} campaignLoading={section.loading} stats={section.stats} />
+      )}
     </CampaignWorkspace>
   );
 }
@@ -140,7 +153,13 @@ export function AgencyCampaignAttemptsPage() {
  * only: the export's file, the dispositions, the recording note; and the workspace's stats,
  * for whether the campaign holds soft-phone calls.
  */
-function AttemptsSection({ id, campaign, stats }: { id: string; campaign: AgencyCampaign | null; stats: AgencyCampaignStats | null }) {
+function AttemptsSection({ id, campaign, campaignLoading, stats }: {
+  id: string;
+  campaign: AgencyCampaign | null;
+  /** The workspace is still reading the campaign: what the list opens on is not known yet. */
+  campaignLoading: boolean;
+  stats: AgencyCampaignStats | null;
+}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
@@ -171,13 +190,27 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   /** The chip that is on, and whether every date was asked for: beside the filters, in the URL. */
   const view = useMemo(() => callLogViewFromParams(searchParams), [searchParams]);
   /**
-   * What the list is read with: the URL's filters, or today when the URL carries none (the
-   * opening view). The form, the chips, the export and every page use this one set, so what
-   * is on screen is what was asked for.
+   * What a URL with no filter opens on: today for a campaign that is live, every date for one
+   * that has finished or is archived (`callLogOpening`). A value, not the campaign object: the
+   * workspace hands over a new object on every poll, and the list must not be read again for it.
+   * Null while the campaign is still being read; if it cannot be read, today.
    */
-  const filters = useMemo(() => effectiveCallLogFilters(urlFilters, view), [urlFilters, view]);
+  const opening = campaign ? callLogOpening(campaign) : campaignLoading ? null : 'today';
+  /** The reader's day the opening view shows. Taken again on Refresh, so it moves on past midnight. */
+  const [today, setToday] = useState(() => localDay());
+  /**
+   * What the list is read with: the URL's filters, or on the opening view of a live campaign,
+   * today. The form, the chips, the export and every page use this one set, so what is on
+   * screen is what was asked for.
+   */
+  const filters = useMemo(
+    () => effectiveCallLogFilters(urlFilters, view, opening ?? 'today', today),
+    [urlFilters, view, opening, today],
+  );
+  /** The opening view of a campaign not read yet: nothing is asked for until it is known. */
+  const awaitingOpening = opening === null && onOpeningView(urlFilters, view);
   const pinnedContact = filters.contact_id ?? null;
-  const { type } = view;
+  const { type, status } = view;
 
   /** Filters and view → the URL. The single writer. */
   const writeUrl = useCallback((next: AgencyAttemptFilters, nextView: CallLogView) => {
@@ -189,13 +222,13 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
    * filter at all asked for every date, and the URL says so (`dates=all`); without that an
    * emptied form would spring back to today.
    */
-  const applyToUrl = useCallback((next: AgencyAttemptFilters) => {
-    writeUrl(next, { type, allDates: true });
-  }, [writeUrl, type]);
+  const applyToUrl = useCallback((next: AgencyAttemptFilters, nextStatus: AgencyCallLogStatus | null = status) => {
+    writeUrl(next, { type, allDates: true, status: nextStatus });
+  }, [writeUrl, type, status]);
 
   const chooseType = useCallback((next: AgencyCallLogTypeFilter) => {
-    writeUrl(urlFilters, { type: next, allDates: view.allDates });
-  }, [writeUrl, urlFilters, view.allDates]);
+    writeUrl(urlFilters, { type: next, allDates: view.allDates, status });
+  }, [writeUrl, urlFilters, view.allDates, status]);
 
   // Draft vs applied, so typing does not fire a request per keystroke and the
   // export is guaranteed to match exactly what is on screen.
@@ -206,6 +239,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
   const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
   const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
+  const [draftStatus, setDraftStatus] = useState<AgencyCallLogStatus | ''>(() => status ?? '');
 
   // A link (or the back button) changes the applied set: the form follows it, or
   // the panel shows controls that disagree with the list and Apply silently
@@ -216,7 +250,8 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     setDraftAgent(filters.agent_user_id ?? '');
     setDraftFrom(dayOf(filters.from));
     setDraftTo(dayOf(filters.to));
-  }, [filters]);
+    setDraftStatus(status ?? '');
+  }, [filters, status]);
 
   const canExport = hasPermission(role, 'agency.supervise');
   /**
@@ -239,21 +274,39 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
    * rather than as a race.
    */
   const requestSeq = useRef(0);
+  /**
+   * What the counts on screen were counted for (campaign, filters, status). The chip is not in
+   * it: the counts are of every type whatever chip is on, so choosing a chip reads the rows
+   * again and keeps the counts.
+   */
+  const countedFor = useRef<string | null>(null);
 
-  const load = useCallback(async (active: AgencyAttemptFilters, chip: AgencyCallLogTypeFilter) => {
+  const load = useCallback(async (
+    active: AgencyAttemptFilters,
+    chip: AgencyCallLogTypeFilter,
+    activeStatus: AgencyCallLogStatus | null,
+    recount = false,
+  ) => {
     if (!id || !tenantId || !accountId) return;
     const seq = ++requestSeq.current;
+    const countKey = JSON.stringify([id, tenantId, accountId, active, activeStatus]);
+    const includeCounts = recount || countedFor.current !== countKey;
     setLoading(true);
     setError(null);
     setFilterRefused(false);
     try {
       const page = await getCampaignCallLog(
-        id, active, { limit: PAGE_SIZE, type: chip, includeCounts: true }, tenantId, accountId,
+        id, active,
+        { limit: PAGE_SIZE, type: chip, ...(activeStatus ? { status: activeStatus } : {}), ...(includeCounts ? { includeCounts: true } : {}) },
+        tenantId, accountId,
       );
       if (seq !== requestSeq.current) return;
       setRows(page.rows);
       setNextCursor(page.next_cursor);
-      setCounts(page.counts ?? null);
+      if (includeCounts) {
+        setCounts(page.counts ?? null);
+        countedFor.current = page.counts ? countKey : null;
+      }
     } catch (err: unknown) {
       if (seq !== requestSeq.current) return;
       /*
@@ -264,6 +317,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       setRows([]);
       setNextCursor(null);
       setCounts(null);
+      countedFor.current = null;
       const refusal = campaignAttemptFilterRefusal(err);
       setFilterRefused(refusal !== null);
       setError(refusal ?? getErrorMessage(err, 'Could not load this campaign’s call log.'));
@@ -291,8 +345,23 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
-    void load(filters, type);
-  }, [load, filters, type]);
+    if (awaitingOpening) return;
+    void load(filters, type, status);
+  }, [load, filters, type, status, awaitingOpening]);
+
+  /**
+   * Refresh: the list and its counts again. On the opening view the day is taken again first,
+   * so a list left open past midnight shows the new day (the changed filters are the reload).
+   */
+  const refresh = useCallback(() => {
+    const now = localDay();
+    if (now !== today) {
+      countedFor.current = null;
+      setToday(now);
+      if (onOpeningView(urlFilters, view) && opening === 'today') return;
+    }
+    void load(filters, type, status, true);
+  }, [today, urlFilters, view, opening, load, filters, type, status]);
 
   const onLoadMore = useCallback(async () => {
     if (!id || !nextCursor || loadingMore) return;
@@ -300,7 +369,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     setLoadingMore(true);
     try {
       const page = await getCampaignCallLog(
-        id, filters, { cursor: nextCursor, limit: PAGE_SIZE, type },
+        id, filters, { cursor: nextCursor, limit: PAGE_SIZE, type, ...(status ? { status } : {}) },
         tenantId ?? undefined, accountId ?? undefined,
       );
       // A filter change mid-request would make these rows belong to a different
@@ -313,16 +382,17 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     } finally {
       setLoadingMore(false);
     }
-  }, [id, nextCursor, loadingMore, filters, type, tenantId, accountId, showErrorToast]);
+  }, [id, nextCursor, loadingMore, filters, type, status, tenantId, accountId, showErrorToast]);
 
   const onExport = useCallback(async () => {
     if (!id) return;
     setExporting(true);
     try {
-      // The file is what the list shows: its filters, and its chip as the export's `source`.
+      // The file is what the list shows: its filters (the dates among them), its soft-phone
+      // status, and its chip as the export's `source`.
       const result = await downloadSpineCsv(
         id, 'attempts',
-        { ...filters, ...(type !== 'all' ? { source: type } : {}) } as Record<string, string | string[] | undefined>,
+        { ...filters, ...(status ? { status } : {}), ...(type !== 'all' ? { source: type } : {}) } as Record<string, string | string[] | undefined>,
         tenantId ?? undefined, accountId ?? undefined,
       );
       const url = URL.createObjectURL(result.blob);
@@ -353,7 +423,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     } finally {
       setExporting(false);
     }
-  }, [id, filters, type, campaign, tenantId, accountId, showToast, showErrorToast]);
+  }, [id, filters, type, status, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
     // A phone filter with no digit is refused by the server: said under the field, not sent.
@@ -377,20 +447,27 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       // (`attemptDateRange`): "to 3 August" means the end of the 3rd, and the
       // off-by-one silently drops a whole day of a compliance window.
       ...attemptDateRange(draftFrom, draftTo),
-    });
-  }, [filters, applyToUrl, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo]);
+    }, draftStatus === '' ? null : draftStatus);
+  }, [filters, applyToUrl, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo, draftStatus]);
 
-  /** Clear: back to the opening view (today, or the pinned contact), the chip kept. */
+  /** Clear: back to the opening view (or the pinned contact), the chip kept. */
   const clearFilters = useCallback(() => {
-    writeUrl(pinnedContact ? { contact_id: pinnedContact } : {}, { type, allDates: false });
+    writeUrl(pinnedContact ? { contact_id: pinnedContact } : {}, { type, allDates: false, status: null });
   }, [writeUrl, pinnedContact, type]);
 
-  /** The empty day's way out: the last seven days, today included. */
+  /** An empty day's first way out: the last seven days, today included. */
   const showLastSevenDays = useCallback(() => {
     const { from: _from, to: _to, ...kept } = filters;
     void _from; void _to;
-    writeUrl({ ...kept, ...lastSevenDays() }, { type, allDates: false });
-  }, [writeUrl, filters, type]);
+    writeUrl({ ...kept, ...lastSevenDays() }, { type, allDates: false, status });
+  }, [writeUrl, filters, type, status]);
+
+  /** Its second: every date (the dates dropped, and the URL saying so). */
+  const showAllDates = useCallback(() => {
+    const { from: _from, to: _to, ...kept } = filters;
+    void _from; void _to;
+    writeUrl(kept, { type, allDates: true, status });
+  }, [writeUrl, filters, type, status]);
 
   // `contact_id` counts, and leaving it out was a real defect: arriving from a
   // contact with no attempts on a campaign that dialled thousands, the empty
@@ -398,10 +475,15 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   // An empty result taken as a fact about the campaign rather than about the
   // query is the exact failure this surface exists to prevent. Every URL key
   // counts, by construction.
-  const filtered = useMemo(() => isCampaignAttemptFiltered(urlFilters) || view.allDates, [urlFilters, view.allDates]);
+  const filtered = useMemo(() => isCallLogFiltered(urlFilters, view) || view.allDates, [urlFilters, view]);
   const typeChips = useMemo(() => visibleCallLogChips(counts, type, availability), [counts, type, availability]);
   const total = selectedCallLogCount(counts, type);
-  const empty = useMemo(() => callLogEmptyState(filters, type), [filters, type]);
+  const empty = useMemo(() => callLogEmptyState(filters, { type, status }), [filters, type, status]);
+  /**
+   * The Status filter is the soft phone's: offered while the soft phone is on, while the
+   * filters match soft-phone calls, or while one is applied (so it can be seen and removed).
+   */
+  const offersStatus = softphoneOn || (counts?.soft_phone ?? 0) > 0 || status !== null;
   /** Whether the list is already on the last seven days: the empty state then offers nothing it has done. */
   const onLastSevenDays = useMemo(() => {
     const week = lastSevenDays();
@@ -417,11 +499,20 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     dispositionLabel: (code) => dispositionLabel(code, campaign?.disposition_catalog),
     agentName: (userId) => agentOptions.find((option) => option.id === userId)?.name ?? null,
   }), [filters, campaign, agentOptions]);
+  /** The attempt filters' chips, then the soft-phone status's. */
+  const shownChips = useMemo(() => [
+    ...chips.filter((chip) => chip.id !== 'contact_id'),
+    ...(status ? [{ id: STATUS_CHIP, label: `Soft-phone status: ${callLogStatusLabel(status)}` }] : []),
+  ], [chips, status]);
 
   const removeChip = useCallback((chipId: string) => {
+    if (chipId === STATUS_CHIP) {
+      applyToUrl(filters, null);
+      return;
+    }
     const chip = chips.find((c) => c.id === chipId);
     if (chip) applyToUrl(chip.without);
-  }, [chips, applyToUrl]);
+  }, [chips, applyToUrl, filters]);
 
   // How many independent filter groups are APPLIED (not merely drafted), for
   // the small badge on the filter panel — a supervisor scanning back to this
@@ -446,8 +537,9 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     if (filters.placed) n += 1;
     if (filters.dialed_from || filters.dialed_to) n += 1;
     if (filters.from || filters.to) n += 1;
+    if (status) n += 1;
     return n;
-  }, [filters]);
+  }, [filters, status]);
 
   // Caught here rather than sent: the server refuses it too (400), but telling the
   // supervisor before they press Apply is the difference between a correction
@@ -468,7 +560,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
-            onClick={() => void load(filters, type)}
+            onClick={refresh}
             disabled={loading}
             aria-label="Refresh call log"
           >
@@ -497,6 +589,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
           'A dialler call with no agent is a real row: the call was abandoned, failed, or never answered.',
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
+          'The export follows the dates shown above. Clear the dates to export every call on the campaign.',
           ...(exportHoldsSoftphone
             ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.']
             : []),
@@ -506,7 +599,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       {pinnedContact && (
         <p className={styles.pinnedNote} data-testid="attempts-pinned-contact">
           Showing only this contact’s calls.{' '}
-          <Link to={`/agency/campaigns/${id}/attempts${withQuery(callLogParams({ ...filters, contact_id: undefined }, { type, allDates: true }))}`}>
+          <Link to={`/agency/campaigns/${id}/attempts${withQuery(callLogParams({ ...filters, contact_id: undefined }, { type, allDates: true, status }))}`}>
             Show the whole campaign
           </Link>
         </p>
@@ -628,6 +721,31 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
                 />
               </span>
             </label>
+            {/*
+              The campaign's old Soft-phone calls view had this filter. It is the soft phone's:
+              a dialler call has no such status, so with one chosen only soft-phone calls are
+              listed, and the hint says so before it is applied.
+            */}
+            {offersStatus && (
+              <label className={spine.field}>
+                <span className={spine.fieldLabel}>Soft-phone status</span>
+                <span className={spine.inputWrap}>
+                  <select
+                    className={spine.fieldInput}
+                    value={draftStatus}
+                    onChange={(e) => setDraftStatus(e.target.value as AgencyCallLogStatus | '')}
+                    aria-describedby="call-log-status-hint"
+                    data-testid="call-log-status-filter"
+                  >
+                    <option value="">Any</option>
+                    {CALL_LOG_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </span>
+                <span className={styles.fieldHint} id="call-log-status-hint">{CALL_LOG_STATUS_HINT}</span>
+              </label>
+            )}
           </div>
 
           <div className={spine.filterFooter}>
@@ -656,12 +774,12 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
 
       {/* The pinned contact has its own note above, so it is not a chip twice. */}
       <AppliedFilterChips
-        chips={chips.filter((chip) => chip.id !== 'contact_id')}
+        chips={shownChips}
         onRemove={removeChip}
         testIdPrefix="attempts"
       />
 
-      {error && <ErrorAlert message={error} onRetry={filterRefused ? undefined : () => void load(filters, type)} />}
+      {error && <ErrorAlert message={error} onRetry={filterRefused ? undefined : () => void load(filters, type, status, true)} />}
 
       {/*
         Mounted UNCONDITIONALLY. A screen reader only announces an `aria-live`
@@ -679,18 +797,25 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
         )}
       </p>
 
-      {loading && <LoadingSpinner />}
+      {(loading || awaitingOpening) && <LoadingSpinner />}
 
-      {!loading && rows.length === 0 && !error && (
+      {!loading && !awaitingOpening && rows.length === 0 && !error && (
         <EmptyState
           icon={<PhoneOutgoing size={32} />}
           title={empty.title}
           description={empty.description}
           action={
-            empty.kind === 'dates' && !onLastSevenDays ? (
-              <button type="button" className="btn-secondary" onClick={showLastSevenDays} data-testid="call-log-last-7-days">
-                Show last 7 days
-              </button>
+            empty.kind === 'dates' ? (
+              <span className={styles.emptyActions}>
+                {!onLastSevenDays && (
+                  <button type="button" className="btn-secondary" onClick={showLastSevenDays} data-testid="call-log-last-7-days">
+                    Show last 7 days
+                  </button>
+                )}
+                <button type="button" className="btn-secondary" onClick={showAllDates} data-testid="call-log-all-dates">
+                  Show all dates
+                </button>
+              </span>
             ) : empty.kind === 'filtered' && filtered ? (
               <button type="button" className="btn-secondary" onClick={clearFilters} data-testid="call-log-empty-clear">
                 Clear
@@ -700,7 +825,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
         />
       )}
 
-      {!loading && rows.length > 0 && (
+      {!loading && !awaitingOpening && rows.length > 0 && (
         <>
           <div className={spine.tableWrap}>
             <table className={spine.table}>
@@ -852,10 +977,12 @@ function withQuery(params: URLSearchParams): string {
 /**
  * `/agency/campaigns/:id/manual-calls`: the campaign's Soft-phone calls view until the Call log
  * became one list (CL11). Its links and bookmarks land on the Call log with the Soft phone chip
- * on, replacing the entry so Back does not bounce.
+ * on and their query kept, replacing the entry so Back does not bounce.
  */
 export function CampaignManualCallsRedirect() {
   const { id } = useParams<{ id: string }>();
+  const { search } = useLocation();
   if (!id) return null;
-  return <Navigate to={campaignCallLogPath(id, 'soft_phone')} replace />;
+  // Whatever the old link carried is kept, so a bookmarked filter survives the move.
+  return <Navigate to={manualCallsRedirectPath(id, search)} replace />;
 }

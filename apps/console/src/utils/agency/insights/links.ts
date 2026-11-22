@@ -87,7 +87,15 @@ export function contactsLink(campaignId: string, filter: InsightsContactsFilter 
   return withQuery(`${campaignBase(campaignId)}/contacts`, params);
 }
 
-/** `/agency/campaigns/:id/attempts?…`: placed dials, the range half-open on `dialed_at`. */
+/**
+ * `/agency/campaigns/:id/attempts?…`: placed dials, the range half-open on `dialed_at`.
+ *
+ * Always `type=dialler`. The page is the campaign's Call log, every call type in one list
+ * (CL11, `docs/call-log.md`), and every Insights and Compare figure that links here counts the
+ * DIALLER's dials alone (SR1). Without the chip the list would also hold the soft-phone calls
+ * logged to the campaign that match the same filters (a window, an agent, an outcome, a caller
+ * ID), and its count would not be the number that was clicked.
+ */
 export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter = {}): string {
   const params = new URLSearchParams();
   const outcomes = filter.outcome === undefined ? [] : Array.isArray(filter.outcome) ? filter.outcome : [filter.outcome];
@@ -103,6 +111,7 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   params.set('placed', '1');
   if (filter.from) params.set('dialed_from', filter.from);
   if (filter.to) params.set('dialed_to', filter.to);
+  params.set('type', 'dialler');
   return withQuery(`${campaignBase(campaignId)}/attempts`, params);
 }
 

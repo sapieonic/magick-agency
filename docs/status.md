@@ -2551,9 +2551,17 @@ built in six phases. P1 is built; P2 to P6 are not ([`call-log.md`](call-log.md)
 
 - **The campaign Call log is one list.** Its dialler attempts and the soft-phone calls logged to
   it, newest first, with type chips "All · Dialler · Soft phone" and their counts; columns When,
-  Type, Customer, Agent, What happened, Outcome, Talk time, Call. It opens on today, and an empty
-  day offers the last seven. The Soft-phone calls view is gone: `/manual-calls` redirects to
-  `/attempts?type=soft_phone`.
+  Type, Customer, Agent, What happened, Outcome, Talk time, Call. A live campaign opens on today
+  (an empty day offers the last seven days and every date); a finished or archived one on every
+  date. The Soft-phone calls view is gone: `/manual-calls` redirects to
+  `/attempts?type=soft_phone`, its query kept, and its Status filter is the Call log's
+  Soft-phone status.
+- **Review fixes (same day, an independent review of the first commit):** every Insights and
+  Compare agents drill-down lands on the Dialler chip, so its count is the figure clicked (SR1),
+  held by the drill-down parity test against the Call log's own count; the opening dates by the
+  campaign's state; Show all dates; the Status filter restored; a page boundary across the two
+  tables on one `created_at` pinned; the counts not asked for again when only the chip changed;
+  the day taken again on Refresh.
 - **The route.** `GET /proxy/agency/campaigns/:id/call-log` (`agency.supervise`), over the read
   the export has drained since SR6, with `type` and the chips' counts. No migration. The export,
   its columns and `source` are unchanged.

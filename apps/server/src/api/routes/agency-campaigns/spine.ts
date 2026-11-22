@@ -34,7 +34,8 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
-import { CAMPAIGN_CALL_SOURCES, isCampaignCallSource } from '../../../agency/campaign-call-log.js';
+import { CAMPAIGN_CALL_SOURCES, isCallLogStatus, isCampaignCallSource } from '../../../agency/campaign-call-log.js';
+import { AGENCY_CALL_LOG_STATUSES } from '@magick-agency/contracts/api/agency/call-log';
 
 /*
  * Route params reaching a `::uuid` cast are shape-checked first, against the shared
@@ -159,6 +160,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   // one of the two. What the campaign call export drains, and what the console's Call log reads
   // (CL11, `docs/call-log.md`): for it, `include_counts=1` adds `counts`, how many rows of each
   // source the filters match across every page, `source` and cursor not applied (the chips).
+  // `status=live|awaiting_outcome|settled` keeps the soft-phone calls in that status; an attempt
+  // has none, so with a status no dialler row matches (rows and counts alike).
   app.get<{ Params: { id: string } }>('/:id/call-log', async (request, reply) => {
     const owned = await spinePageCampaign(request, reply);
     if (!owned) return reply;
@@ -173,6 +176,11 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     if (rawSource !== undefined && !isCampaignCallSource(rawSource)) {
       return replyValidationFailed(reply, [{ param: 'source', message: `must be one of: ${CAMPAIGN_CALL_SOURCES.join(', ')}` }]);
     }
+    const rawStatus = query['status'];
+    if (rawStatus !== undefined && !isCallLogStatus(rawStatus)) {
+      return replyValidationFailed(reply, [{ param: 'status', message: `must be one of: ${AGENCY_CALL_LOG_STATUSES.join(', ')}` }]);
+    }
+    const softphoneStatus = rawStatus === undefined ? {} : { softphoneStatus: rawStatus };
     const countsFlag: FilterIssue[] = [];
     const includeCounts = parseFlagParam('include_counts', query['include_counts'], countsFlag) === true;
     if (countsFlag.length > 0) return replyValidationFailed(reply, countsFlag);
@@ -188,11 +196,12 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         tenantId,
         filters: parsed.filters,
         source: rawSource === undefined ? null : rawSource,
+        ...softphoneStatus,
         ...(cursor ? { after: cursor } : {}),
         limit: clampLimit((query as { limit?: unknown }).limit),
       }),
       includeCounts
-        ? agencyAttemptRepository.countCallLogForCampaign({ campaignId: owned.id, tenantId, filters: parsed.filters })
+        ? agencyAttemptRepository.countCallLogForCampaign({ campaignId: owned.id, tenantId, filters: parsed.filters, ...softphoneStatus })
         : Promise.resolve(null),
     ]);
     return reply.send(counts === null ? page : { ...page, counts });

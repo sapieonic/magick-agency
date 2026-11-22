@@ -1,11 +1,14 @@
 import {
+  AGENCY_CALL_LOG_STATUSES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
   AGENCY_CALL_LOG_TYPE_LABELS,
   type AgencyCallLogCounts,
   type AgencyCallLogRow,
+  type AgencyCallLogStatus,
   type AgencyCallLogType,
   type AgencyCallLogTypeFilter,
 } from '../../types/agency-call-log';
+import { isTerminalCampaignStatus } from '../agencyCampaignControls';
 import type { AgencyAttemptFilters } from '../../types/agency-spine';
 import { attemptOutcomeLabel } from '../../types/agency-spine';
 import { attemptDateRange } from '../agencyAttemptFilters';
@@ -19,7 +22,8 @@ import { formatCount } from '../format/number';
  * The campaign Call log's rules (`docs/call-log.md`, decision CL11): one list of the campaign's
  * calls with type chips, pure. The filters themselves are the attempt list's
  * (`agencyCampaignAttemptParams.ts`); this adds what the combined list has on top of them:
- * the type in the URL, the day the list opens on, the chips, and how a row of each type reads.
+ * the type and the soft-phone status in the URL, the dates the list opens on, the chips, and
+ * how a row of each type reads.
  *
  * A LEAF: no React, no fetch.
  */
@@ -33,25 +37,40 @@ export const CALL_LOG_DESCRIPTION =
 
 /** `?type=`: the chip that is on. Absent is All. */
 export const CALL_LOG_TYPE_PARAM = 'type';
-/** `?dates=all`: every date, said out loud. Without it a URL with no filter opens on today. */
+/** `?dates=all`: every date, said out loud. Without it a live campaign's URL with no filter opens on today. */
 export const CALL_LOG_DATES_PARAM = 'dates';
+/** `?status=`: where a soft-phone call stands ({@link CALL_LOG_STATUS_OPTIONS}). */
+export const CALL_LOG_STATUS_PARAM = 'status';
 const ALL_DATES = 'all';
 
-/** What the URL says beside the filters: the chip, and whether every date was asked for. */
+/**
+ * What the URL says beside the attempt list's filters: the chip, whether every date was asked
+ * for, and the soft-phone status filter.
+ */
 export interface CallLogView {
   type: AgencyCallLogTypeFilter;
   allDates: boolean;
+  status: AgencyCallLogStatus | null;
 }
 
-export const DEFAULT_CALL_LOG_VIEW: CallLogView = { type: 'all', allDates: false };
+export const DEFAULT_CALL_LOG_VIEW: CallLogView = { type: 'all', allDates: false, status: null };
 
-/** URL → view. An unknown type is All, as an unknown filter key is ignored. */
+/** URL → view. An unknown type is All and an unknown status none, as an unknown filter key is ignored. */
 export function callLogViewFromParams(params: URLSearchParams): CallLogView {
-  const raw = params.get(CALL_LOG_TYPE_PARAM);
-  const type = (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(raw ?? '')
-    ? (raw as AgencyCallLogTypeFilter)
+  const rawType = params.get(CALL_LOG_TYPE_PARAM);
+  const type = (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(rawType ?? '')
+    ? (rawType as AgencyCallLogTypeFilter)
     : 'all';
-  return { type, allDates: params.get(CALL_LOG_DATES_PARAM) === ALL_DATES };
+  const rawStatus = params.get(CALL_LOG_STATUS_PARAM);
+  const status = (AGENCY_CALL_LOG_STATUSES as readonly string[]).includes(rawStatus ?? '')
+    ? (rawStatus as AgencyCallLogStatus)
+    : null;
+  return { type, allDates: params.get(CALL_LOG_DATES_PARAM) === ALL_DATES, status };
+}
+
+/** Whether anything narrows the list: an attempt filter or the soft-phone status. Not the chip. */
+export function isCallLogFiltered(filters: AgencyAttemptFilters, view: Pick<CallLogView, 'status'>): boolean {
+  return view.status !== null || isCampaignAttemptFiltered(filters);
 }
 
 /**
@@ -60,8 +79,9 @@ export function callLogViewFromParams(params: URLSearchParams): CallLogView {
  */
 export function callLogParams(filters: AgencyAttemptFilters, view: CallLogView): URLSearchParams {
   const params = campaignAttemptFiltersToParams(filters);
+  if (view.status) params.set(CALL_LOG_STATUS_PARAM, view.status);
   if (view.type !== 'all') params.set(CALL_LOG_TYPE_PARAM, view.type);
-  if (view.allDates && !isCampaignAttemptFiltered(filters)) params.set(CALL_LOG_DATES_PARAM, ALL_DATES);
+  if (view.allDates && !isCallLogFiltered(filters, view)) params.set(CALL_LOG_DATES_PARAM, ALL_DATES);
   return params;
 }
 
@@ -71,7 +91,37 @@ export function campaignCallLogPath(campaignId: string, type: AgencyCallLogTypeF
   return type === 'all' ? base : `${base}?${CALL_LOG_TYPE_PARAM}=${type}`;
 }
 
-// ─── The day the list opens on ──────────────────────────────────────────────
+/**
+ * Where `/agency/campaigns/:id/manual-calls` lands: the Call log with the Soft phone chip on,
+ * and whatever query the old link carried kept (its own `type`, if any, replaced).
+ */
+export function manualCallsRedirectPath(campaignId: string, search: string): string {
+  const params = new URLSearchParams(search);
+  params.set(CALL_LOG_TYPE_PARAM, 'soft_phone');
+  return `/agency/campaigns/${campaignId}/attempts?${params.toString()}`;
+}
+
+// ─── The soft-phone status filter ───────────────────────────────────────────
+
+/**
+ * The Status filter's choices, in the Soft-phone calls list's words (the campaign's old
+ * Soft-phone calls view had it). A dialler call has no such status: with one chosen the list
+ * holds soft-phone calls only, and every chip's count follows it.
+ */
+export const CALL_LOG_STATUS_OPTIONS: ReadonlyArray<{ value: AgencyCallLogStatus; label: string }> = [
+  { value: 'live', label: 'On a call now' },
+  { value: 'awaiting_outcome', label: 'Waiting for an outcome' },
+  { value: 'settled', label: 'Done' },
+];
+
+/** Said under the Status control. */
+export const CALL_LOG_STATUS_HINT = 'Soft-phone calls only. A dialler call has no status.';
+
+export function callLogStatusLabel(status: AgencyCallLogStatus): string {
+  return CALL_LOG_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+// ─── The dates the list opens on ────────────────────────────────────────────
 
 /** `YYYY-MM-DD` on the reader's calendar. */
 export function localDay(now: Date = new Date()): string {
@@ -79,23 +129,40 @@ export function localDay(now: Date = new Date()): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/** What a URL with no filter shows: today's calls, or every call. */
+export type CallLogOpening = 'today' | 'all';
+
 /**
- * Whether the list is on its opening view: today. So when the URL carries no filter and has
- * not asked for every date. A link that carries any filter (an Insights number, one contact)
- * means exactly what it says and is never narrowed to today behind the reader's back.
+ * The dates a campaign's Call log opens on. A campaign that is dialling, or could again, opens
+ * on **today**: "what happened on my campaign today". A finished one (stopped or completed) or
+ * an archived one opens on **every date**: its calls are all in the past, and today would be an
+ * empty list on the page built to answer "what did this campaign do".
  */
-export function opensOnToday(filters: AgencyAttemptFilters, view: CallLogView): boolean {
-  return !view.allDates && !isCampaignAttemptFiltered(filters);
+export function callLogOpening(campaign: { status: string; archived_at?: string | null }): CallLogOpening {
+  return isTerminalCampaignStatus(campaign.status) || Boolean(campaign.archived_at) ? 'all' : 'today';
 }
 
-/** The filters the list is read with: the URL's, or today when it {@link opensOnToday}. */
+/**
+ * Whether the list is on its opening view: the URL carries no filter and has not asked for
+ * every date. A link that carries any filter (an Insights number, one contact) means exactly
+ * what it says and is never narrowed to today behind the reader's back.
+ */
+export function onOpeningView(filters: AgencyAttemptFilters, view: CallLogView): boolean {
+  return !view.allDates && !isCallLogFiltered(filters, view);
+}
+
+/**
+ * The filters the list is read with: the URL's, or on the opening view of a campaign that
+ * opens on today, `today` (a {@link localDay}; the page holds it and takes it again on Refresh,
+ * so a list left open past midnight moves on).
+ */
 export function effectiveCallLogFilters(
   filters: AgencyAttemptFilters,
   view: CallLogView,
-  now: Date = new Date(),
+  opening: CallLogOpening,
+  today: string,
 ): AgencyAttemptFilters {
-  if (!opensOnToday(filters, view)) return filters;
-  const today = localDay(now);
+  if (opening === 'all' || !onOpeningView(filters, view)) return filters;
   return attemptDateRange(today, today);
 }
 
@@ -106,9 +173,9 @@ export function lastSevenDays(now: Date = new Date()): { from?: string; to?: str
 }
 
 /** Whether only the created-date range narrows the list (so an empty list is about the dates). */
-export function onlyDatesNarrow(filters: AgencyAttemptFilters): boolean {
+export function onlyDatesNarrow(filters: AgencyAttemptFilters, view: Pick<CallLogView, 'status'>): boolean {
   const { from, to, ...rest } = filters;
-  return Boolean(from || to) && !isCampaignAttemptFiltered(rest);
+  return Boolean(from || to) && !isCallLogFiltered(rest, view);
 }
 
 // ─── The chips ──────────────────────────────────────────────────────────────
@@ -171,7 +238,7 @@ export function callLogCountCopy(shown: number, total: number | null, more: bool
 // ─── The empty list ─────────────────────────────────────────────────────────
 
 export type CallLogEmptyKind =
-  /** Only the dates narrow it: say so, and offer the last seven days. */
+  /** Only the dates narrow it: say so, and offer the last seven days and every date. */
   | 'dates'
   /** Something else narrows it: "Nothing matches those filters", with Clear. */
   | 'filtered'
@@ -187,16 +254,17 @@ const EMPTY_TYPE_WORDS: Record<AgencyCallLogTypeFilter, string> = {
 /** What an empty list says, and what it offers. `filters` are the ones the list was read with. */
 export function callLogEmptyState(
   filters: AgencyAttemptFilters,
-  type: AgencyCallLogTypeFilter,
+  view: Pick<CallLogView, 'type' | 'status'>,
 ): { kind: CallLogEmptyKind; title: string; description: string } {
-  if (onlyDatesNarrow(filters)) {
+  const { type } = view;
+  if (onlyDatesNarrow(filters, view)) {
     return {
       kind: 'dates',
       title: `No ${EMPTY_TYPE_WORDS[type]} on this campaign for these dates.`,
       description: 'Widen the dates to see earlier calls.',
     };
   }
-  if (isCampaignAttemptFiltered(filters)) {
+  if (isCallLogFiltered(filters, view)) {
     return {
       kind: 'filtered',
       title: 'Nothing matches those filters',

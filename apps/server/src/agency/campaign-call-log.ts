@@ -20,7 +20,9 @@ import type {
   AgencyManualCallState,
 } from '@magick-agency/contracts/agency';
 import {
+  AGENCY_CALL_LOG_STATUSES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
+  type AgencyCallLogStatus,
   type AgencyCallLogCounts,
   type AgencyCallLogRow,
   type AgencyCallLogTypeFilter,
@@ -110,6 +112,11 @@ export interface CampaignCallLogPage {
 
 export function isCallLogTypeFilter(value: unknown): value is AgencyCallLogTypeFilter {
   return typeof value === 'string' && (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(value);
+}
+
+/** `?status=`: the soft-phone status filter (`softphoneStatusSql`). */
+export function isCallLogStatus(value: unknown): value is AgencyCallLogStatus {
+  return typeof value === 'string' && (AGENCY_CALL_LOG_STATUSES as readonly string[]).includes(value);
 }
 
 /** `?type=` → the internal read's `source`: `all` (or absent) is no source at all. */

@@ -39,7 +39,7 @@ import {
 import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow, projectSoftphoneLogRow, type SoftphoneLogRaw } from './projections.js';
 import type { CampaignCallLogCounts, CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
-import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
+import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
@@ -785,19 +785,24 @@ export class AgencyAttemptRepository {
    * `idx_agency_manual_calls_campaign`), and the outer sort takes the newest `n + 1` of the at
    * most `2n + 2`. The filters mean on a soft-phone call what they mean on an attempt
    * (`softphoneLogFilterConditions`). An untagged soft-phone call belongs to no campaign (SR4).
+   *
+   * `softphoneStatus` (the Call log's Status filter) keeps the soft-phone calls in that status
+   * (`softphoneStatusSql`). A dialler attempt has no such status, so with one set no attempt
+   * matches: the dialler branch is left out, and `source: 'dialler'` with a status is no rows.
    */
   async listCallLogForCampaign(input: {
     campaignId: string;
     tenantId: string;
     filters: AgencyAttemptFilters;
     source: CampaignCallSource | null;
+    softphoneStatus?: SoftphoneCallStatus;
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
     const bind = params();
     const limit = bind.add(input.limit + 1);
     const branches: string[] = [];
-    if (input.source !== 'soft_phone') {
+    if (input.source !== 'soft_phone' && !input.softphoneStatus) {
       const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
       if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
       branches.push(`(
@@ -817,6 +822,7 @@ export class AgencyAttemptRepository {
         `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
         ...softphoneLogFilterConditions(input.filters, bind),
       ];
+      if (input.softphoneStatus) conditions.push(softphoneStatusSql(input.softphoneStatus));
       if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
       // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
       // Then the soft phone's own three (overrides, settled), which the dialler branch fills with
@@ -839,6 +845,8 @@ export class AgencyAttemptRepository {
          ORDER BY m.created_at DESC, m.id DESC
          LIMIT ${limit})`);
     }
+    // A status with `source: 'dialler'`: nothing can match, and there is no branch to read.
+    if (branches.length === 0) return { rows: [], next_cursor: null, limit: input.limit };
     const sql = `
       SELECT * FROM (${branches.join('\n        UNION ALL\n        ')}) log
        ORDER BY log.created_at DESC, log.id DESC
@@ -861,19 +869,23 @@ export class AgencyAttemptRepository {
    *
    * `dialler` is {@link countListed}'s count. `soft_phone` counts the tagged calls whose dial was
    * sent (`SOFTPHONE_PLACED_SQL`, the campaign figures' definition of a soft-phone call, SR2): a
-   * row that failed before it dialled is listed, greyed, and is not a call.
+   * row that failed before it dialled is listed, greyed, and is not a call. With a
+   * `softphoneStatus` no attempt matches (see {@link listCallLogForCampaign}): `dialler` is 0.
    */
   async countCallLogForCampaign(input: {
     campaignId: string;
     tenantId: string;
     filters: AgencyAttemptFilters;
+    softphoneStatus?: SoftphoneCallStatus;
   }): Promise<CampaignCallLogCounts> {
     const bind = params();
     const attempt = campaignAttemptConditions(input.campaignId, input.filters, bind);
+    if (input.softphoneStatus) attempt.push('FALSE');
     const soft = [
       `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
       `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
       ...softphoneLogFilterConditions(input.filters, bind),
+      ...(input.softphoneStatus ? [softphoneStatusSql(input.softphoneStatus)] : []),
       SOFTPHONE_PLACED_SQL,
     ];
     const { rows } = await getPool().query<{ dialler: string; soft_phone: string }>(

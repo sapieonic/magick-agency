@@ -289,11 +289,6 @@ export function exportTruncationNotice(
 export const SPINE_PRIVACY_NOTE =
   'Phone numbers are shown in full. Exports contain them too — treat the file as personal data.';
 
-/** What the attempts view is, in one line, for the page description. */
-export const ATTEMPTS_DESCRIPTION =
-  'Every dial this campaign placed, newest first — including the ones that never reached an agent. '
-  + 'This is the operational record: what was dialled, to whom, and what happened.';
-
 /**
  * ── "Never dialed because they were suppressed" ─────────────────────────────
  *

@@ -50,6 +50,20 @@ export const SOFTPHONE_HUMAN_CONNECT_SQL = `m.bridged_at IS NOT NULL
            AND m.disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'
            AND m.disposition_code <> '${AUTO_DISPOSITION_CODE}'`;
 
+/** Where a soft-phone call stands: the Soft-phone calls list's and the campaign Call log's Status filter. */
+export type SoftphoneCallStatus = 'live' | 'awaiting_outcome' | 'settled';
+
+/**
+ * A soft-phone call in one status. `live`: not ended; `awaiting_outcome`: ended and not
+ * settled; `settled`: outcome saved, lapsed, or closed with none owed. One spelling for the
+ * account's Soft-phone calls list and the campaign Call log. Names the manual call `m`.
+ */
+export function softphoneStatusSql(status: SoftphoneCallStatus): string {
+  if (status === 'live') return "m.state <> 'ended'";
+  if (status === 'awaiting_outcome') return "m.state = 'ended' AND m.settled_at IS NULL";
+  return 'm.settled_at IS NOT NULL';
+}
+
 /** A soft-phone campaign count: placed, connected and reached a person. */
 export interface SoftphoneCampaignCounts {
   placed: number;

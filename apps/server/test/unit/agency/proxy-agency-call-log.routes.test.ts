@@ -57,6 +57,7 @@ vi.mock('@magick-agency/db/repositories/user.repository', () => ({
 import { proxyAgencyCampaignsRoutes } from '../../../src/api/routes/proxy-agency-campaigns.routes.js';
 import {
   callLogSourceForType,
+  isCallLogStatus,
   isCallLogTypeFilter,
   toCallLogWireRow,
   type CampaignDiallerLogRow,
@@ -182,13 +183,14 @@ describe('GET /campaigns/:id/call-log', () => {
     await app.close();
   });
 
-  it('forwards every attempt filter, the paging and include_counts by name', async () => {
+  it('forwards every attempt filter, the paging, include_counts and status by name', async () => {
     mocks.proxyToCore.mockResolvedValue(page([]));
     const app = await buildApp();
     const filters = Object.fromEntries(ATTEMPT_QUERY_PARAMS.map((key) => [key, `v-${key}`]));
-    const qs = new URLSearchParams({ ...filters, cursor: 'c1', limit: '25', include_counts: '1', type: 'soft_phone' });
+    const qs = new URLSearchParams({ ...filters, cursor: 'c1', limit: '25', include_counts: '1', type: 'soft_phone', status: 'awaiting_outcome' });
     await app.inject({ method: 'GET', url: `${URL}?${qs.toString()}` });
-    expect(coreQuery().query).toEqual({ ...filters, cursor: 'c1', limit: '25', include_counts: '1', source: 'soft_phone' });
+    // `status` (the soft-phone status filter) goes by name: the handler validates and applies it.
+    expect(coreQuery().query).toEqual({ ...filters, cursor: 'c1', limit: '25', include_counts: '1', source: 'soft_phone', status: 'awaiting_outcome' });
     await app.close();
   });
 
@@ -252,6 +254,8 @@ describe('the call log\'s vocabulary', () => {
     expect(callLogSourceForType('all')).toBeNull();
     expect(callLogSourceForType('dialler')).toBe('dialler');
     expect(callLogSourceForType('soft_phone')).toBe('soft_phone');
+    for (const ok of ['live', 'awaiting_outcome', 'settled']) expect(isCallLogStatus(ok), ok).toBe(true);
+    for (const bad of ['done', 'ended', '', undefined, ['live']]) expect(isCallLogStatus(bad), String(bad)).toBe(false);
   });
 
   it('projects a soft-phone row with no name to agent_name: null, never an absent key', () => {

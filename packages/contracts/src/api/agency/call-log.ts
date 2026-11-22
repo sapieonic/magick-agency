@@ -92,12 +92,23 @@ export interface AgencyCallLogSoftphoneRow {
   created_at: string;
 }
 
+/**
+ * `?status=`: where a SOFT-PHONE call stands, the campaign's old Soft-phone calls view's Status
+ * filter. `live`: not ended; `awaiting_outcome`: ended and not settled; `settled`: outcome
+ * saved, lapsed, or closed with none owed. A dialler call has no such status, so with a status
+ * chosen only soft-phone calls match, and the counts follow it like every other filter.
+ */
+export type AgencyCallLogStatus = 'live' | 'awaiting_outcome' | 'settled';
+
+/** Every {@link AgencyCallLogStatus}, in the filter's order. */
+export const AGENCY_CALL_LOG_STATUSES = ['live', 'awaiting_outcome', 'settled'] as const satisfies readonly AgencyCallLogStatus[];
+
 /** One row of the Call log, discriminated by `type`. */
 export type AgencyCallLogRow = AgencyCallLogDiallerRow | AgencyCallLogSoftphoneRow;
 
 /**
- * How many calls of each type the chosen filters match, across every page: the chips'
- * numbers. The `type` filter is NOT applied (each chip says what choosing it would list), nor
+ * How many calls of each type the chosen filters match (`status` among them), across every
+ * page: the chips' numbers. The `type` filter is NOT applied (each chip says what choosing it would list), nor
  * is the cursor. `dialler` counts every attempt listed; `soft_phone` counts the calls whose
  * dial was sent (a row that never dialled is listed and not counted, SR2); `all` is their sum.
  */
@@ -106,6 +117,8 @@ export type AgencyCallLogCounts = { all: number } & Record<AgencyCallLogType, nu
 /** `GET /proxy/agency/campaigns/:id/call-log` query: the attempt list's filters, plus the type. */
 export interface AgencyCallLogQuery extends AgencyAttemptFilters {
   type?: AgencyCallLogTypeFilter;
+  /** Soft-phone calls in this status only; no dialler call matches. */
+  status?: AgencyCallLogStatus;
 }
 
 /** `GET /proxy/agency/campaigns/:id/call-log`. `counts` only when asked for (`include_counts=1`). */

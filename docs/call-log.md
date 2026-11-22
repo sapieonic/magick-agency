@@ -66,8 +66,8 @@ page boundary neither drops nor repeats a row of either type. The attempt list's
 the same on a soft-phone call (`softphoneLogFilterConditions`). P1 adds no SQL shape to it, only
 three columns a soft-phone row carries for the list (overrides, settled) and a count:
 
-- `countCallLogForCampaign` counts each type for the chosen filters in one statement, with the
-  list's own WHERE terms and no keyset, limit or type. **Dialler** counts every attempt the list
+- `countCallLogForCampaign` counts each type for the chosen filters (the soft-phone status
+  among them) in one statement, with the list's own WHERE terms and no keyset, limit or type. **Dialler** counts every attempt the list
   shows. **Soft phone** counts the calls whose dial was sent (`dialed_at` set, SR2's definition
   of a soft-phone call); a row that failed before it dialled is listed, greyed, and counted
   nowhere. **All** is their sum.
@@ -76,9 +76,17 @@ three columns a soft-phone row carries for the list (overrides, settled) and a c
 
 | Route | Floor | What |
 |---|---|---|
-| `GET /proxy/agency/campaigns/:id/call-log` | `agency.supervise` | The Call log's JSON: the attempt list's filters and paging (`cursor`, `limit`), `type=all\|dialler\|soft_phone`, `include_counts=1` |
-| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | The export. Unchanged: same read, same columns, `source=dialler\|soft_phone` |
-| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | What both read. Takes `source`; `include_counts=1` adds `counts` |
+| `GET /proxy/agency/campaigns/:id/call-log` | `agency.supervise` | The Call log's JSON: the attempt list's filters and paging (`cursor`, `limit`), `type=all\|dialler\|soft_phone`, `status`, `include_counts=1` |
+| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | The export. Same read, same columns, `source=dialler\|soft_phone`; it takes `status` too, so the file can be the list on screen. Without `status` it is as it was |
+| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | What both read. Takes `source` and `status`; `include_counts=1` adds `counts` |
+
+**The soft-phone status filter.** `status=live|awaiting_outcome|settled` is the Status filter
+the campaign's old Soft-phone calls view had ("On a call now", "Waiting for an outcome",
+"Done"), with the account list's own SQL (`softphoneStatusSql`): not ended; ended and not
+settled; settled. A dialler attempt has no such status. The rule is the simplest honest one:
+**with a status chosen, only soft-phone calls match.** The dialler branch is left out of the
+read, the Dialler count is 0, and the Dialler chip lists nothing. The counts follow it like
+every other filter.
 
 The public JSON route (`apps/server/src/api/routes/proxy-agency-campaigns/spine.ts`) validates
 `type`, forwards it as the internal `source`, names the agents, and serves the contract's rows
@@ -101,6 +109,7 @@ was widened. An agent is refused; another tenant's campaign is a 404.
   (`dnc_overridden`, `hours_overridden`, `requires_disposition`, `settled_at`).
 - `AgencyCallLogCounts` is `{ all, dialler, soft_phone }`. The `type` filter is not applied to
   it: each chip says what choosing it would list.
+- `AgencyCallLogStatus` (`live`, `awaiting_outcome`, `settled`) is the soft-phone status filter.
 - `AgencyCallLogPage` is a keyset page with `counts` only when asked for.
 
 P2 adds a third member to the union, `inbound` to `AGENCY_CALL_LOG_TYPES`, and its count; the
@@ -132,18 +141,37 @@ The mobile app does not read this route, so its Dart wire types are unchanged
   with the flag off a soft-phone row has no link.
 - **A soft-phone row that never dialled** (`dialed_at` NULL and ended, SR2) is greyed and says
   "Not dialled". It is in no chip's count.
-- **It opens on today.** With no filter in the URL the list reads today (the reader's calendar),
-  and the date fields show it. Any filter in the URL (an Insights number, one contact) means
-  exactly what it says and is never narrowed to today. Emptying the dates writes `?dates=all`,
-  so the list does not spring back; Clear returns to the opening view.
-- **Empty states:** "No calls on this campaign for these dates." with **Show last 7 days** when
-  only the dates narrow the list (the words name the chip's type when one is on); "Nothing
-  matches those filters" with **Clear** otherwise; "No calls were placed" only with every date
-  and no filter.
+- **What it opens on** (`callLogOpening`). With no filter in the URL:
+  - a campaign that is dialling or could again (draft, running, paused, stopping) opens on
+    **today**, the reader's calendar day, and the date fields show it;
+  - a **finished** campaign (stopped or completed) or an **archived** one opens on **every
+    date**. Its calls are all in the past, and "what did this campaign do" is the question the
+    page is opened with.
+
+  The list waits for the campaign before reading its opening view, so it is never read twice
+  for a guess; if the campaign cannot be read it opens on today. Any filter in the URL (an
+  Insights number, one contact, a status) means exactly what it says and is never narrowed to
+  today. Emptying the dates writes `?dates=all`, so the list does not spring back; Clear returns
+  to the opening view. Refresh takes the day again, so a list left open past midnight moves on.
+- **Empty states:** "No calls on this campaign for these dates." with **Show last 7 days** and
+  **Show all dates** when only the dates narrow the list (the words name the chip's type when
+  one is on); "Nothing matches those filters" with **Clear** otherwise; "No calls were placed"
+  only with every date and no filter.
 - **Filters:** every filter the attempt list had (what happened, phone, agent, dates, and the
   ones only a link sets: state, outcome code, caller ID, the dialled window, the redial and
-  override flags, one contact). **Export CSV** and its tip are unchanged; with a chip on, the
-  file is that type's (`source`).
+  override flags, one contact), and the old Soft-phone calls view's Status as **Soft-phone
+  status**, with "Soft-phone calls only. A dialler call has no status." under it. It is offered
+  while the soft phone is on, while the filters match soft-phone calls, or while one is applied.
+- **Export CSV** downloads what the list shows: its filters, **its dates** (a tip says so: the
+  file of a live campaign's opening view is today's calls), its status, and with a chip on that
+  type (`source`).
+- **Drill-downs land on the Dialler chip.** Every Insights and Compare agents figure that opens
+  this page counts the dialler's dials alone (SR1), so `attemptsLink`
+  (`utils/agency/insights/links.ts`) always sets `type=dialler`. Without it the list would also
+  hold the soft-phone calls that match the same filters, and its count would not be the number
+  clicked. A contact's "all calls" link sets no type: that list is every call to the contact.
+- **The counts are asked for when they could have changed** (a filter, a status, Refresh), not
+  when only the chip did: they are of every type whatever chip is on.
 - `/agency/campaigns/:id/manual-calls` redirects (replace) to `/attempts?type=soft_phone`. The
   segmented "Dialler calls | Soft-phone calls" control and `CALL_LOG_VIEWS` are gone. Search
   still finds a campaign's "Soft-phone calls" (the `manual` row of `CAMPAIGN_TABS`, now that
@@ -152,10 +180,9 @@ The mobile app does not read this route, so its Dart wire types are unchanged
 ### What P1 left as it was
 
 - The account's **Soft-phone calls** list (`/agency/softphone`) and the agent's My calls are
-  unchanged until P5. The campaign's old Soft-phone calls view had three things the Call log
-  does not: the Status filter (On a call now, Waiting for an outcome, Done), the stats strip
-  over the rows on screen, and the Summary column. The account list still has all three, and
-  Insights carries the campaign's soft-phone figures.
+  unchanged until P5. The campaign's old Soft-phone calls view had two things the Call log does
+  not: the stats strip over the rows on screen, and the Summary column. The account list still
+  has both, and Insights carries the campaign's soft-phone figures.
 - The mockup's "placed by … (supervisor)" line is not shown: a soft-phone call is placed by its
   own agent, and nothing records a second person placing it. An outcome saved by someone else
   shows "on behalf", as on a dialler row.
@@ -165,9 +192,14 @@ The mobile app does not read this route, so its Dart wire types are unchanged
 ### Tests
 
 - `apps/server/test/integration/api/agency-softphone-campaign-results.test.ts` (real Postgres):
-  both types once each across page boundaries in the export's order, each type's fields, the
-  overrides and the outcome still owed, `type`, the counts by the filters and never by the chip
-  or the page, the floor and the tenant boundary.
+  both types once each across page boundaries in the export's order, a page boundary between an
+  attempt and a soft-phone call created at the same instant, each type's fields, the overrides
+  and the outcome still owed, `type`, the status filter on rows, counts and the export, the
+  counts by the filters and never by the chip or the page, the floor and the tenant boundary.
+- `apps/server/test/integration/api/agency-insights-drilldowns.test.ts`: every Insights dials
+  figure equals the count the Call log shows for its link (`test/fixtures/insights-drilldowns.json`,
+  which the console holds `attemptsLink` to), with soft-phone calls seeded inside the range so a
+  link without `type=dialler` goes red.
 - `apps/server/test/unit/agency/proxy-agency-call-log.routes.test.ts`: `type` to `source`, the
   row projection, the refusals, the counts passed through.
 - `packages/contracts/test/call-log.test.ts`: the vocabulary and its words.

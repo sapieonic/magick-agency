@@ -14,7 +14,7 @@ import type {
   AgencyContactFilters,
   AgencyRosterContactsPage,
 } from '../types/agency-spine';
-import type { AgencyCallLogPage, AgencyCallLogTypeFilter } from '../types/agency-call-log';
+import type { AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter } from '../types/agency-call-log';
 
 /**
  * The attempt spine, through the server's `/proxy/agency`.
@@ -107,6 +107,8 @@ export interface CallLogListOptions {
   limit?: number;
   /** The chip: one type, or `all` (sent as no `type` at all). */
   type?: AgencyCallLogTypeFilter;
+  /** The soft-phone status filter: soft-phone calls in that status, and no dialler call. */
+  status?: AgencyCallLogStatus | null;
   /**
    * Ask for `counts`: how many calls of each type the filters match, across every page and
    * whatever chip is on (`?include_counts=1`). Asked on the first page only; later pages keep it.
@@ -129,6 +131,7 @@ export async function getCampaignCallLog(
   if (options.cursor) extra['cursor'] = options.cursor;
   if (options.limit !== undefined) extra['limit'] = String(options.limit);
   if (options.type && options.type !== 'all') extra['type'] = options.type;
+  if (options.status) extra['status'] = options.status;
   if (options.includeCounts) extra['include_counts'] = '1';
   return apiFetch<AgencyCallLogPage>(
     `${AGENCY_BASE}/campaigns/${campaignId}/call-log${toQuery({ ...filters }, extra)}`,

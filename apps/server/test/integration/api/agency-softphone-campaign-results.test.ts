@@ -431,6 +431,89 @@ describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
     expect((await walkLog('placed=1&type=soft_phone', 50))).toHaveLength(placed);
   });
 
+  it('a page boundary between an attempt and a soft-phone call created at the same instant drops and repeats neither', async () => {
+    // One row of each table on ONE created_at, alone in their second: the keyset has only the id
+    // to tell them apart, and the two ids come from different tables.
+    const instant = at(50);
+    const { rows: [contact] } = await q(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state)
+       VALUES ($1, $2, $3, '+919400000001', '{}'::jsonb, 'completed') RETURNING id`, [campaignId, floor.tenant, floor.account]);
+    const { rows: [attempt] } = await q(
+      `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, outcome, dialed_at, ended_at, created_at)
+       VALUES ($1, $2, $3, $4, 1, '+919000000001', 'ended', 'no_answer', $5, $5, $5) RETURNING id`,
+      [campaignId, contact.id, floor.tenant, floor.account, instant]);
+    const { rows: [manual] } = await q(
+      `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, campaign_id, destination_e164, caller_id,
+                                        state, outcome, dialed_at, ended_at, settled_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, '+919400000002', '+919000000002', 'ended', 'no_answer', $6, $6, $6, $6) RETURNING id`,
+      [floor.tenant, floor.account, softSession, floor.agents[1]!.id, campaignId, instant]);
+    try {
+      const window = `from=${encodeURIComponent(instant.toISOString())}&to=${encodeURIComponent(instant.toISOString())}`;
+      const ids = [attempt.id as string, manual.id as string];
+      // Newest first, the id breaking the tie: uuid order, as Postgres compares it.
+      const { rows: ordered } = await q(`SELECT u::text AS id FROM unnest($1::uuid[]) u ORDER BY u DESC`, [ids]);
+      const expected = ordered.map((r) => r.id as string);
+
+      const first = await logPage(`${window}&limit=1`);
+      expect(first.rows.map((r) => r.id)).toEqual([expected[0]]);
+      expect(first.next_cursor).toEqual(expect.any(String));
+      const second = await logPage(`${window}&limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`);
+      expect(second.rows.map((r) => r.id)).toEqual([expected[1]]);
+      expect(second.next_cursor).toBeNull();
+      // One of each type, whichever came first.
+      expect([first.rows[0]!.type, second.rows[0]!.type].sort()).toEqual(['dialler', 'soft_phone']);
+      expect(first.rows[0]!.created_at).toBe(second.rows[0]!.created_at);
+    } finally {
+      await q(`DELETE FROM agency_manual_calls WHERE id = $1`, [manual.id]);
+      await q(`DELETE FROM agency_call_attempts WHERE id = $1`, [attempt.id]);
+      await q(`DELETE FROM agency_contacts WHERE id = $1`, [contact.id]);
+    }
+  });
+
+  it('status keeps the soft-phone calls in that status and no dialler call: rows, counts and the export alike', async () => {
+    const ids = (rows: LogRow[]) => new Set(rows.map((r) => r.id));
+    const labels = (...l: string[]) => new Set(l.map((x) => softId.get(x)));
+    // As seeded: one call still ringing; every ended call is settled.
+    const live = await walkLog('status=live', 50);
+    expect(ids(live)).toEqual(labels('ringing'));
+    expect(live.every((r) => r.type === 'soft_phone')).toBe(true);
+    const settled = TAGGED.filter((s) => s.label !== 'ringing');
+    expect(ids(await walkLog('status=settled', 50))).toEqual(new Set(settled.map((s) => softId.get(s.label))));
+    expect(await walkLog('status=awaiting_outcome', 50)).toEqual([]);
+
+    // The counts follow it like any filter: no dialler call has a status, and a row that never
+    // dialled is still counted nowhere.
+    expect((await logPage('include_counts=1&status=live')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1 });
+    const placedSettled = settled.filter((s) => s.placed).length;
+    expect((await logPage('include_counts=1&status=settled&type=dialler')).counts).toEqual({ all: placedSettled, dialler: 0, soft_phone: placedSettled });
+    // The Dialler chip with a status on lists nothing.
+    expect((await logPage('status=settled&type=dialler')).rows).toEqual([]);
+    // It ANDs with the other filters.
+    expect(ids(await walkLog('status=settled&outcome=no_answer', 50))).toEqual(labels('no-answer'));
+
+    // A call that ended bridged and is not settled waits for its outcome.
+    const awaiting = softId.get('awaiting')!;
+    const ringing = softId.get('ringing')!;
+    try {
+      await q(`UPDATE agency_manual_calls SET state = 'ended', ended_at = created_at, settled_at = created_at WHERE id = $1`, [ringing]);
+      await q(`UPDATE agency_manual_calls SET settled_at = NULL WHERE id = $1`, [awaiting]);
+      expect(ids(await walkLog('status=awaiting_outcome', 50))).toEqual(labels('awaiting'));
+      expect((await logPage('include_counts=1&status=awaiting_outcome')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1 });
+      // The export is the same list.
+      const file = await exportRows('&status=awaiting_outcome');
+      expect(file.map((r) => r.attempt_id)).toEqual([awaiting]);
+      expect(file[0]!.source).toBe('soft_phone');
+    } finally {
+      await q(`UPDATE agency_manual_calls SET settled_at = ended_at WHERE id = $1`, [awaiting]);
+      await q(`UPDATE agency_manual_calls SET state = 'ringing', ended_at = NULL, settled_at = NULL WHERE id = $1`, [ringing]);
+    }
+    // No status, the file and the list as they were; an unknown one is refused on both.
+    expect(await exportRows()).toHaveLength(DIALLER.length + TAGGED.length);
+    for (const path of ['call-log?status=done', 'attempts.csv?status=done']) {
+      expect((await call(loaded.app, 'GET', `/proxy/agency/campaigns/${campaignId}/${path}`, floor.supervisors[0]!, floor)).statusCode, path).toBe(400);
+    }
+  });
+
   it('is the supervisor\'s: an agent is refused, and another tenant finds no such campaign', async () => {
     const path = `/proxy/agency/campaigns/${campaignId}/call-log`;
     expect((await call(loaded.app, 'GET', path, floor.agents[0]!, floor)).statusCode).toBe(403);

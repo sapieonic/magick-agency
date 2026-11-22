@@ -271,3 +271,19 @@
 .notDialled .phoneLink {
   color: var(--text-muted);
 }
+
+/* Under a filter control: what it does that its label cannot say. */
+.fieldHint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* An empty list's ways out, side by side. */
+.emptyActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
