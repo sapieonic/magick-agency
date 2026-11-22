@@ -591,10 +591,14 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
     [`call-log.md`](call-log.md) §5): "Log to (required)", no "Not logged to a campaign", Call
     off with "Choose a campaign to log this call to." until one is chosen; a redial of a call
     logged to none leaves Log to empty and says "This call was not logged to a campaign. Choose
-    one to call again."; an agent on no running campaign gets "You are not on any running
+    one to call again.", and so does a Missed call's Call back whose campaign cannot be chosen;
+    an agent on no running campaign gets "You are not on any running
     campaign, so you cannot dial. Ask your supervisor to add you to one." in place of the pad.
     The server refuses a dial with no campaign whatever the app shows (`campaign_required`), and
-    an older build shows that refusal's message;
+    an older build shows that refusal's message. The app's **inbound** wrap-up has no
+    Change-campaign control: a call arrives filed by its route, and one that did arrive under
+    no campaign while the setting is on is refused its outcome (`campaign_required`) and closes
+    with none when its window ends, unless a supervisor files it from the console;
   - call fields are never sent before the field set has loaded, and autosave 700 ms after the
     last edit; unsent notes are kept on the phone under `manual:<id>`;
   - notes the agent cleared go with the outcome as `''`, notes never touched are left out;

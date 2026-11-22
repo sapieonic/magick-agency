@@ -492,6 +492,14 @@ campaign before you dial. Every call in this account must belong to a campaign."
 lock on the account (`AgencyCallSettingsRepository.lockAccount`) before they check: the switch
 reads the routes under it, a route write reads the setting under it.
 
+**Which routes stand in the way (CL18).** Every live route of the account with no usable
+campaign for unknown callers: none chosen, or one that was archived since (or is no longer the
+account's). A stopped or completed campaign still counts as chosen. **While inbound is off for
+the account (`agency_inbound_enabled`) no route is counted**: the route editor is closed then,
+so a leftover route could not be fixed. The outcome-time `campaign_required` still covers a
+call that arrives under no campaign, and with inbound on again the page names the route and its
+next save needs a campaign.
+
 **Calls that began before the switch (CL19).** An inbound call that arrived before
 `require_campaign_since` takes its outcome with no campaign. A soft-phone call is checked once,
 at the dial, so one placed with no campaign before the switch is written up as any other. The
@@ -518,6 +526,12 @@ lapse of an owed outcome is never held back.
   campaign is refused (`inbound_campaign_fixed`), a campaign the actor may not log to is refused
   (`inbound_campaign_not_allowed`), and a call still on the line is not at wrap-up
   (`inbound_call_not_dispositionable`).
+- **A Change under a Save.** An outcome is judged against the campaign the call was under when
+  it was read, and saved only while the call is still under it (`saveDisposition`'s
+  `expectedCampaignId`). If a Change landed in between, nothing is written and the code is
+  judged once more against the campaign the call is under now: saved, or refused
+  `inbound_disposition_invalid` with that campaign's codes. A code of one campaign's catalog is
+  never left on a call under another.
 
 ### Do Not Call from a call that is only filed under a campaign (CL6)
 
@@ -544,10 +558,19 @@ running until a supervisor stops it. Without the rule, Start refused an empty ro
 running campaign with nothing outstanding completed itself within a tick; a completed campaign
 cannot be chosen on the soft phone.
 
+**The same holds for a real dialling campaign chosen as a route's default:** it stays running
+after its last contact is dialled, until a supervisor stops it or the route names another
+campaign. The route editor says so under the field. It does not cost pacing anything while it
+waits: a drained campaign held open this way is quiescent (skipped between safety ticks), and
+is woken by contacts arriving or reopened, a change to the campaign, or a route taking or
+dropping it as its default (`PacingEngine.runTick`, `wakeDefaultCampaigns`).
+
 **Stopping or archiving it asks first (CL21).** The Stop and Archive confirmations name the
 inbound numbers that file callers under the campaign and say to choose another campaign for
 them first. They do not refuse: Stop is the off switch, and a call goes on being filed under the
-campaign whatever its status. An archived campaign is refused the next time the route is saved.
+campaign whatever its status. A route whose campaign was archived counts as having none
+(Settings › Calls lists it, and the switch is refused while it stands), and it is refused the
+next time the route is saved, whatever the change, until another campaign is chosen.
 
 ### The routes
 
@@ -570,14 +593,19 @@ their behalf, and never behind inbound's flag.
 - **Settings › Calls** (`/settings/calls`, `CallsSettingsPage.tsx`; in the Settings hub under
   This account). The switch, the proposal's help text, and what it needs: the soft phone (always
   ready), the inbound numbers with no campaign for unknown callers (each a link to its route;
-  while there is one the switch is off and says why), and the agents on no running campaign (for
-  information). Switching on asks first ("Switch on for Acme Collections? From now, no call can
+  while there is one the switch is off and says why; with inbound off for the account it says
+  the inbound numbers are not checked), and the agents on no running campaign (members with
+  the agent role, CL24; for information). Switching on asks first ("Switch on for Acme Collections? From now, no call can
   be made or saved without a campaign."); switching off does not. Under it: "In the last 30
   days, 41 calls were not filed under a campaign."
 - **The soft phone (console station and `/dialer/phone`).** With the setting on the box reads
   "Save this call to (required)", "Not in any work" is not a choice, and Call stays off with
   "Choose the work to save this call to." until one is chosen. A redial of a call saved to none
-  leaves the box empty and says "This call was not saved to any work. Choose one to call again."
+  leaves the box empty and says "This call was not saved to any work. Choose one to call again.",
+  and so does a Missed call's Call back whose campaign cannot be chosen. With nothing to save a
+  call to, the pad gives way to "You are not in any work that is running, so you cannot dial.
+  Ask your supervisor to add you to one."; a supervisor reads "No work is running in this
+  account, so no call can be made."
   An agent in no running work sees, in place of the pad, "You are not in any work that is
   running, so you cannot dial. Ask your supervisor to add you to one." The station's words are
   AS15's ("work", never "campaign"): CL22.
@@ -602,11 +630,19 @@ their behalf, and never behind inbound's flag.
 
 - **"See them in All calls"** under the count on Settings › Calls: All calls is P5.
 - **The agent app's inbound call screen** does not offer Change. It is not needed for the
-  setting to hold (a call arrives filed), and the app refuses nothing the server allows.
+  setting to hold (a call arrives filed), and the app refuses nothing the server allows. A call
+  that did arrive under no campaign while the setting is on (inbound was off when the route
+  was last saved, CL18) cannot be given one from the app: its outcome is refused
+  (`campaign_required`) and the call closes with none when its window ends, unless a
+  supervisor files it from the console first.
 - **A missed call from an unknown caller** cannot be moved to another campaign; its route files
   it.
 - **Reports and Insights** still read the match (`matched_campaign_id`) for inbound figures; P4
-  moves them to `campaign_id`.
+  moves them to `campaign_id`. **For P4:** count an inbound call by campaign from `campaign_id`
+  (and `campaign_source` for how it got there), never from `disposition_source`. That column
+  says `campaign` only when the caller matched a campaign's list; a call filed by its route, an
+  agent or a supervisor stores `route` there while its outcome is from the campaign's catalog
+  (CL20).
 - **A call to a number on no route** has no account, so no campaign. It is an operator
   exception, as the proposal says.
 
@@ -623,7 +659,15 @@ their behalf, and never behind inbound's flag.
   supervisor, and saved once the request names one; only a campaign the actor may log to; a
   matched caller's campaign fixed; a call that arrived before the switch; Change, the new
   outcomes and the audit row; Do Not Call at the account's scope from a call filed by route,
-  agent and supervisor; the Missed list's campaign.
+  agent and supervisor; the Missed list's campaign. After the review: the permission each
+  settings route asks for, by name; a route whose campaign was archived counted as missing and
+  not saved again; routes not counted while inbound is off, and counted again once it is on;
+  the account's lock held on a second connection (a route create, a route change and the
+  switch-on each wait, and are refused once the other side commits); `fileUnderCampaign`
+  refusing a matched and a settled call; `saveDisposition`'s `campaign_changed`; a Change
+  landing under a Save (refused with the new campaign's codes, or saved under it).
+- `apps/server/test/unit/agency/pacing-skip.test.ts`: a drained campaign held open as a route's
+  default is skipped with no reads, and woken by contacts arriving.
 - `apps/server/test/integration/api/softphone-routes.test.ts` ("every call must belong to a
   campaign"): through HTTP with a real station, an untagged dial refused for an agent and a
   supervisor, before the fields; the bootstrap's flag; a call owing its outcome when the setting
@@ -662,7 +706,7 @@ CL1–CL24, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL5 | Supervisors are not exempt | **P3, built** |
 | CL6 | Do Not Call from a filing-only campaign is written for the whole account | **P3, built** |
 | CL7 | "All calls connect rate" becomes "Outbound connect rate"; inbound is never blended into a rate | P4 |
-| CL8 | A catch-all campaign is an ordinary campaign. An empty campaign does complete itself, so a campaign a live route files unknown callers under may start with nothing to dial and is not completed when its list runs out | **P3, built** |
+| CL8 | A catch-all campaign is an ordinary campaign. An empty campaign does complete itself, so a campaign a live route files unknown callers under may start with nothing to dial and is not completed when its list runs out; drained, it is quiescent in pacing | **P3, built** |
 | CL9 | The agent's My calls tabs merge into one list with chips | P5 |
 | CL10 | No backfill of old calls with no campaign; they show as "No campaign" | **P3, built**; P5 |
 | CL11 | The campaign Call log's JSON view is one combined source (amends SR6 and IN14) | **P1, built** |
@@ -672,13 +716,13 @@ CL1–CL24, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL15 | A call back's link is kept only for a Missed row of the account from the number dialled; any other is dropped and the call still placed | **P2, built** |
 | CL16 | An inbound row is an ended, served call filed under the campaign (`campaign_id`), ordered by when it arrived; matched calls were backfilled, in the migration | **P2, built** |
 | CL17 | The setting has its own table (`agency_call_settings`) and its own permission (`agency.calls.manage`, account admin); behind neither the soft phone's flag nor inbound's | **P3, built** |
-| CL18 | Every live inbound route of the account stands in the way of switching on, numbers or none; the switch and a route's save share one lock; a route's campaign for unknown callers is any campaign of the account that is not archived | **P3, built** |
+| CL18 | Every live inbound route of the account stands in the way of switching on, numbers or none; the switch and a route's save share one lock; a route's campaign for unknown callers is any campaign of the account that is not archived (one archived since counts as none); routes are not counted while inbound is off for the account | **P3, built** |
 | CL19 | Calls that began before the switch finish as they are (`require_campaign_since`) | **P3, built** |
 | CL20 | A call filed under a campaign its caller is not on uses that campaign's outcomes, without the promise ones; everything about the customer stays with the match; stored `disposition_source = 'route'` | **P3, built** |
 | CL21 | Stopping or archiving a campaign that receives unknown callers asks first, and does not refuse | **P3, built** |
 | CL22 | The console's agent station says "work" (AS15); the app and the admin pages use the proposal's words; "Open Team" is Open campaigns, "See them in All calls" waits for P5 | **P3, built** |
 | CL23 | An unknown caller's call can be moved at the end of the call only, by its agent to a campaign they may log to, or by a supervisor to any running or paused one; a missed call is filed by its route alone | **P3, built** |
-| CL24 | What Settings › Calls counts: the agents on no running campaign, and the last 30 days' calls filed under none | **P3, built** |
+| CL24 | What Settings › Calls counts: the members with the agent role on no running campaign, and the last 30 days' calls filed under none | **P3, built** |
 
 Checked while building P3: the console's agent station never said "Log to" (its label is "Save
 this call to", with "Not in any work": CL22); and a campaign with no contacts does complete

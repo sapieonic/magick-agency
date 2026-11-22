@@ -290,7 +290,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 90 |
 | `apps/server/test/unit/agency/pacing-round.test.ts` | ~31 |
-| `apps/server/test/unit/agency/pacing-skip.test.ts` (with `inbound_waiting` holding agents back for waiting inbound callers, only stations that can take them: an older phone never held back, preferred or not, nor one with no capability known) | 61 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` (a drained campaign held open as an inbound route's default (CL8) is skipped and woken by `contacts_changed`; with `inbound_waiting` holding agents back for waiting inbound callers, only stations that can take them: an older phone never held back, preferred or not, nor one with no capability known) | 61 |
 | `apps/server/test/unit/agency/pre-dial-gates-hours-override.test.ts` | 13 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
