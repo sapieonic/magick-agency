@@ -1002,6 +1002,18 @@ describe('new template (C6, C12)', () => {
     expect(body.sections.recording).toEqual({ record_calls: true });
   });
 
+  it('says the campaigns could not be read, with Retry, rather than an empty list (N5)', async () => {
+    mocks.listAgencyCampaigns.mockRejectedValueOnce(new Error('The campaigns could not be read.')).mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);
+    await openNew();
+    fireEvent.click(screen.getByRole('radio', { name: /A copy of a campaign/ }));
+    await act(async () => {});
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('The campaigns could not be read.');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Retry|Try again/ }));
+    await act(async () => {});
+    expect(within(screen.getByRole('dialog')).getByRole('option', { name: 'Diwali renewals' })).toBeTruthy();
+  });
+
   it('forgets the choice and any error when closed', async () => {
     mocks.getAgencyCampaign.mockRejectedValue(new Error('down'));
     mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]);

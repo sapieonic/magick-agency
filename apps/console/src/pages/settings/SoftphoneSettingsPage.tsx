@@ -552,8 +552,8 @@ function TemplateOutcomes({
         <>
           <p className={styles.cardLead} data-testid="softphone-outcomes-following">
             {template
-              ? `Untagged calls use the outcomes of ${template.name}, the ${template.scope === 'organisation' ? 'organisation’s' : 'account’s'} default campaign template. A change to that template reaches the soft phone at once.`
-              : 'Untagged calls use the built-in outcomes. Agents press 1–9 to pick one.'}
+              ? `Calls not logged to a campaign use the outcomes of ${template.name}, the ${template.scope === 'organisation' ? 'organisation’s' : 'account’s'} default campaign template. A change to that template reaches the soft phone at once.`
+              : 'Calls not logged to a campaign use the built-in outcomes. Agents press 1–9 to pick one.'}
           </p>
           <ol className={styles.builtIn}>
             {followed.map((entry, index) => (

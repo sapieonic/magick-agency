@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import type {
   AgencyCampaignTemplateScope,
   AgencyCampaignTemplateSectionKey,
@@ -169,6 +170,8 @@ export function NewTemplateDialog({
                 </option>
               ))}
             </select>
+            {/* An unread list is not an empty one (N5). */}
+            {campaigns.error ? <ErrorAlert message={campaigns.error} onRetry={() => void campaigns.reload()} /> : null}
           </div>
         ) : null}
       </fieldset>

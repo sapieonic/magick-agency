@@ -98,7 +98,7 @@ describe('Settings → Soft phone, with campaign templates', () => {
     const outcomes = screen.getByTestId('softphone-settings-outcomes');
     const group = within(outcomes).getByRole('radiogroup', { name: 'Where the outcomes come from' });
     expect((within(group).getByRole('radio', { name: 'Follow campaign template (Collections)' }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Untagged calls use the outcomes of Collections');
+    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Calls not logged to a campaign use the outcomes of Collections');
     expect(within(outcomes).getByRole('list').textContent).toBe('1Will pay2Call later');
   });
 
@@ -123,21 +123,21 @@ describe('Settings → Soft phone, with campaign templates', () => {
     expect((screen.getByRole('radio', { name: 'Set for the soft phone' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Outcome 1 label') as HTMLInputElement).value).toBe('Sold');
     fireEvent.click(screen.getByRole('radio', { name: 'Follow campaign template (Collections)' }));
-    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Untagged calls use the outcomes of Collections');
+    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Calls not logged to a campaign use the outcomes of Collections');
     expect(within(screen.getByTestId('softphone-settings-outcomes')).getByRole('list').textContent).toBe('1Will pay2Call later');
   });
 
   it('names the built-in outcomes when no template is in the chain, with the list the server gives', async () => {
     await renderPage(BUILT_IN, { ...SAVED, disposition_catalog: [{ code: 'sold', label: 'Sold' }] });
     fireEvent.click(screen.getByRole('radio', { name: 'Follow the built-in outcomes' }));
-    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Untagged calls use the built-in outcomes.');
+    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Calls not logged to a campaign use the built-in outcomes.');
     expect(within(screen.getByTestId('softphone-settings-outcomes')).getByRole('list').textContent).toBe('1Interested');
   });
 
   it('follows the built-in outcomes when the read does not say (an older server)', async () => {
     await renderPage(NOT_SENT);
     expect(screen.getByRole('radio', { name: 'Follow the built-in outcomes' })).toBeTruthy();
-    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Untagged calls use the built-in outcomes.');
+    expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain('Calls not logged to a campaign use the built-in outcomes.');
   });
 
   it('keeps what the save’s answer says Follow gives', async () => {
@@ -149,7 +149,7 @@ describe('Settings → Soft phone, with campaign templates', () => {
     });
     fireEvent.click(screen.getByRole('radio', { name: 'Follow campaign template (Recovery)' }));
     expect(screen.getByTestId('softphone-outcomes-following').textContent).toContain(
-      'Untagged calls use the outcomes of Recovery, the organisation’s default campaign template.',
+      'Calls not logged to a campaign use the outcomes of Recovery, the organisation’s default campaign template.',
     );
   });
 
