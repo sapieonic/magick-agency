@@ -1,0 +1,95 @@
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.chip[data-tone='success'] {
+  background: var(--success-subtle);
+}
+
+.chip[data-tone='warning'] {
+  background: var(--warning-subtle);
+}
+
+.chip[data-tone='info'] {
+  background: var(--info-subtle);
+}
+
+.chip[data-tone='danger'] {
+  background: var(--danger-subtle);
+}
+
+.chip[data-tone='muted'] {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.chip[data-tone='success'] .icon {
+  color: var(--success);
+}
+
+.chip[data-tone='warning'] .icon {
+  color: var(--warning);
+}
+
+.chip[data-tone='info'] .icon {
+  color: var(--info);
+}
+
+.chip[data-tone='danger'] .icon {
+  color: var(--danger);
+}
+
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-strong);
+  font-weight: 600;
+}
+
+.action :is(a, button) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.action :is(a, button):hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}

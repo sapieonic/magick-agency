@@ -1,0 +1,167 @@
+.root {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: choicecards;
+}
+
+.legend {
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(var(--choice-columns, 1), minmax(0, 1fr));
+}
+
+.grid[data-columns='auto'] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+}
+
+/* Narrow: three or more across becomes two; a phone gets one. */
+@container choicecards (max-width: 640px) {
+  .grid[data-columns='3'],
+  .grid[data-columns='4'],
+  .grid[data-columns='5'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container choicecards (max-width: 400px) {
+  .grid:not([data-columns='auto']) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: border-color var(--transition), background-color var(--transition),
+    box-shadow var(--transition);
+}
+
+.card[data-size='lg'] {
+  padding: 18px;
+  border-radius: var(--radius-xl);
+}
+
+.card:hover:not([data-disabled='true']) {
+  border-color: var(--border-strong);
+}
+
+.card[data-selected='true'],
+.card[data-selected='true']:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.card:has(input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--border-focus);
+}
+
+.card[data-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.card[data-disabled='true'] input {
+  cursor: not-allowed;
+}
+
+.control {
+  margin-top: 2px;
+}
+
+.card[data-size='lg'] .control {
+  margin-top: 4px;
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.card[data-size='lg'] .icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-lg);
+}
+
+.card[data-selected='true'] .icon {
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.title {
+  min-width: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.card[data-size='lg'] .title {
+  font-size: 15px;
+}
+
+.aside {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.description {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.reason {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
