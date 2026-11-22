@@ -346,8 +346,11 @@ void main() {
       expect(h.view.tagCampaignId, isNull);
       expect(h.view.canDial, isFalse);
       expect(h.view.dialUnavailableReason, 'Choose a campaign to log this call to.');
+      // And says why it is empty, as a redial does.
+      expect(h.view.setupNote, 'This call was not logged to a campaign. Choose one to call again.');
       h.actions.callBack('+918765432109', campaignId: 'camp-1');
       expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.setupNote, isNull);
       expect(h.view.canDial, isTrue);
     });
   });

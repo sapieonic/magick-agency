@@ -1655,6 +1655,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       _tagDraft = tag;
       _callerDraft = null;
     }
+    // The missed call was logged to no campaign, or to one that cannot be chosen here: with
+    // every call needing one, "Log to" says why it is empty, as after a redial.
+    _setupNote = _campaignRequired && _tagDraft == null ? softphoneRedialNoCampaignCopy : null;
     _entry = 'inbound_callback';
     _dialError = null;
     // An open override prompt was for another number: "Call anyway" must never
