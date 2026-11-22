@@ -184,7 +184,7 @@ describe('campaign Settings’ template line', () => {
     expect(body.sections.hours.calling_window_start).toBe('11:00:00');
   });
 
-  it('offers “Reload the latest version” when the template was saved in between, and replaces with that version (C7)', async () => {
+  it('offers “Reload the latest version” when the template was saved in between, and replaces with that version (CTC7)', async () => {
     mocks.replaceCampaignTemplate.mockRejectedValueOnce(Object.assign(new Error('Changed'), {
       statusCode: 409,
       details: { code: 'campaign_template_changed', message: 'Changed', current_version: 6 },
@@ -274,7 +274,7 @@ describe('campaign Settings’ template line', () => {
     expect(mocks.getCampaignTemplate).not.toHaveBeenCalled();
   });
 
-  it('says nothing of a template for a campaign with no record, and still offers Save as template (C12)', async () => {
+  it('says nothing of a template for a campaign with no record, and still offers Save as template (CTC12)', async () => {
     await renderIt({ ...CAMPAIGN, template_source: null });
     expect(screen.getByTestId('campaign-template-source').textContent).toBe('Save as template…');
     expect(screen.queryByRole('button', { name: /See what’s different/ })).toBeNull();
@@ -300,7 +300,7 @@ describe('campaign Settings’ template line', () => {
     ]);
   });
 
-  it('says an archived template has since been archived, and offers no comparison with it (C5)', async () => {
+  it('says an archived template has since been archived, and offers no comparison with it (CTC5)', async () => {
     mocks.getCampaignTemplate.mockResolvedValue({ ...SUMMARY, archived_at: '2026-11-20T10:00:00Z', sections: TEMPLATE_SECTIONS, follows: null });
     await renderIt();
     expect(screen.getByTestId('campaign-template-moved').textContent).toBe(

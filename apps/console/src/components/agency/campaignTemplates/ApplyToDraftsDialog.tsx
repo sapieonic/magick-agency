@@ -54,7 +54,7 @@ function resultSummary(results: readonly AgencyCampaignTemplateApplyResult[]): s
  * (the refusal's `details`, as sentences). Never a running campaign: the server refuses anything
  * but a draft, for that campaign alone.
  *
- * The sections start as those the template sets, each time it opens (C7); none when it sets none.
+ * The sections start as those the template sets, each time it opens (CTC7); none when it sets none.
  * Numbers are offered only when the template sets them: unset, the template has no numbers to
  * give, and the server refuses such an apply. A list that cannot be read says so, with Retry.
  * When someone saved the template in between (409), "Reload the latest version" reads it again

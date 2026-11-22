@@ -174,7 +174,7 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
     expect(res.json().results[0].template_source).toEqual(source);
   });
 
-  it('an organisation template\'s apply: the audit row is filed under the request\'s account (S7)', async () => {
+  it('an organisation template\'s apply: the audit row is filed under the request\'s account (CTS7)', async () => {
     const admin = await insertUser({ display_name: 'Olga Admin' });
     await insertMembership({ user_id: admin.id, tenant_id: w.tenant, account_id: null, role: 'tenant_admin' });
     const org = await app.inject({
@@ -366,7 +366,7 @@ describe('POST /campaign-templates/:id/apply (CT16)', () => {
       { campaign_ids: [draft], sections: [] },
       { campaign_ids: [draft], sections: ['lunch'] },
       { campaign_ids: [draft, draft], sections: ['wrapup'] },
-      // One campaign named in two cases is named twice (S13).
+      // One campaign named in two cases is named twice (CTS13).
       { campaign_ids: [draft, draft.toUpperCase()], sections: ['wrapup'] },
       { campaign_ids: Array.from({ length: 51 }, () => randomUUID()), sections: ['wrapup'] },
     ]) {

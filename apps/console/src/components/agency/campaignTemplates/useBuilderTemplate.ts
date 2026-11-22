@@ -85,7 +85,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   */
   const startForm = useMemo(() => (startFrom ? formOfConfig(startFrom.config) : null), [startFrom]);
   /**
-   * The script, which Review can change when the roster's card lacks a key it uses (C10); the
+   * The script, which Review can change when the roster's card lacks a key it uses (CTC10); the
    * filled-in template's until then.
    */
   const [script, setScript] = useState<ScriptForm | null>(null);
@@ -106,7 +106,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const sectionSource = useCallback(
     (key: AgencyCampaignTemplateSectionKey): AgencyCampaignTemplateSectionSource | null => {
       if (!startFrom || !builderFields) return null;
-      // Numbers a start leaves built-in are the operator's to pick: not the template's, and not a change (C2).
+      // Numbers a start leaves built-in are the operator's to pick: not the template's, and not a change (CTC2).
       if (key === 'numbers' && leavesNumbers(startFrom)) return null;
       return sameSection(key, builderFields, startFrom.config) ? startFrom.sources[key] : 'campaign';
     },
@@ -152,7 +152,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   /**
    * Fill the form from `effective`, as if it had been typed: every section New campaign edits,
    * except those in `keep`, which stay as the operator left them. The numbers follow their own
-   * rule (C2): a start that sets them puts its own, unless `keepNumbers`; a start that leaves
+   * rule (CTC2): a start that sets them puts its own, unless `keepNumbers`; a start that leaves
    * them built-in keeps the operator's when they picked some, and otherwise leaves Basics empty.
    */
   const fill = useCallback(
@@ -185,7 +185,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   );
 
   /*
-    Open on the default chain. When the read lands after the operator has started (C8), the
+    Open on the default chain. When the read lands after the operator has started (CTC8), the
     sections they have touched stay as typed (their chips then read "Changed for this
     campaign"), the rest are filled in, and the picker is offered all the same, so the create
     names the template it was filled from. Nothing typed is overwritten. A draft already made
@@ -315,7 +315,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     startFrom ? { source: sectionSource(key), onReset: () => resetSection(key) } : {};
 
   /*
-    The script and the roster's card (C10, AS19). A template's script may use `{amount_due}` and
+    The script and the roster's card (CTC10, AS19). A template's script may use `{amount_due}` and
     `{due_date}`, which a campaign without a card allows (the legacy keys, so the create takes
     it), but the card the import saves has its own keys: a card without those facts would be
     refused for taking away keys the draft's script uses, and the import with it. So the card's
@@ -383,7 +383,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
 type Numbers = Pick<BuilderTemplateValues, 'callerIds' | 'chosenCarrier'>;
 const NO_NUMBERS: Numbers = { callerIds: [], chosenCarrier: null };
 
-/** The sections New campaign's own steps edit: what a late filling-in keeps when typed (C8). */
+/** The sections New campaign's own steps edit: what a late filling-in keeps when typed (CTC8). */
 const TYPED_SECTIONS: readonly AgencyCampaignTemplateSectionKey[] = [
   'outcomes', 'retries', 'hours', 'wrapup', 'recording', 'safety', 'assignment', 'inbound',
 ];

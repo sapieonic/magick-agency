@@ -35,7 +35,7 @@ type Choice = 'builtin' | 'collections' | 'template' | 'campaign';
  * editor shows (`sections`: none whose feature is off), read through the domain's
  * `sectionsFromCampaign`, which leaves an organisation template without the account-only parts
  * (CT5; the contract's `AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS` and
- * `…_ORGANISATION_EXCLUDED_FIELDS`), so nothing is set that the editor cannot show or unset (C6).
+ * `…_ORGANISATION_EXCLUDED_FIELDS`), so nothing is set that the editor cannot show or unset (CTC6).
  * Closing it forgets the choice and any error.
  */
 export function NewTemplateDialog({

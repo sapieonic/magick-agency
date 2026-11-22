@@ -371,7 +371,7 @@ export default function CampaignBuilderPage() {
       if (display.facts) {
         await updateAgencyCampaign(
           id,
-          // A template's script that uses keys this card lacks is held back (C10): Review says so.
+          // A template's script that uses keys this card lacks is held back (CTC10): Review says so.
           { context_display: display, ...template.draft.cardFields(display) } as never,
           tenantId ?? undefined,
           accountId ?? undefined,
@@ -627,7 +627,7 @@ export default function CampaignBuilderPage() {
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
     { name, callerIds, carrier, recording: builderRecording(recordCalls), config },
   ).length > 0
-    // A script changed on Review that the draft does not hold yet (C10).
+    // A script changed on Review that the draft does not hold yet (CTC10).
     || (campaignId !== null && template.draft.saveFields().agent_script !== undefined);
   const unsaved = settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
   const leaveGuard = useUnsavedChangesGuard(unsaved);

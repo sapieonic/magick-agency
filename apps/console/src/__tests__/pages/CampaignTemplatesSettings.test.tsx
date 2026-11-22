@@ -182,7 +182,7 @@ describe('the list', () => {
     expect(within(row).getAllByRole('link').map((a) => [a.getAttribute('aria-label'), a.getAttribute('href')])).toEqual([
       ['View Standard', '/settings/campaign-templates/org-1'],
     ]);
-    // Its default is the organisation's, not this account's (C4).
+    // Its default is the organisation's, not this account's (CTC4).
     expect(within(row).getByText('Organisation default')).toBeTruthy();
     expect(within(row).queryByText('Account default')).toBeNull();
   });
@@ -307,7 +307,7 @@ describe('the list', () => {
 
   it('lists archived templates with Restore', async () => {
     await renderAt('/settings/campaign-templates');
-    // A filter of one list: two pressed buttons in a group, not tabs without panels (C9).
+    // A filter of one list: two pressed buttons in a group, not tabs without panels (CTC9).
     const which = screen.getByRole('group', { name: 'Which templates' });
     expect(within(which).queryByRole('tab')).toBeNull();
     expect(within(which).getByRole('button', { name: 'Templates' }).getAttribute('aria-pressed')).toBe('true');
@@ -555,7 +555,7 @@ describe('the editor', () => {
     expect(screen.getByTestId('template-row-acc-1')).toBeTruthy();
   });
 
-  it('says the server’s sentence when what is archived is the template it is based on (C5)', async () => {
+  it('says the server’s sentence when what is archived is the template it is based on (CTC5)', async () => {
     mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(409, {
       code: 'campaign_template_archived',
       message: 'The organisation template this is based on is archived. Choose another, or restore it first.',
@@ -643,7 +643,7 @@ describe('the editor', () => {
     expect(screen.getByTestId('template-summary-wrapup').textContent).toBe('90s, then agents return on their own');
     expect(screen.getByTestId('template-section-recording').getAttribute('data-set')).toBe('true');
     expect(screen.getByTestId('template-summary-recording').textContent).toBe('Every call is recorded');
-    // Only the sections shown are set: contact assignment and inbound are off here (C6).
+    // Only the sections shown are set: contact assignment and inbound are off here (CTC6).
     fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
@@ -677,7 +677,7 @@ describe('the editor', () => {
     expect(saved.agent_script ?? {}).toEqual({});
   });
 
-  it('names the numbers group, and lists the current version once in History (C12)', async () => {
+  it('names the numbers group, and lists the current version once in History (CTC12)', async () => {
     mocks.listCampaignTemplateVersions.mockResolvedValue([
       { version: 4, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-18T16:12:00Z', saved_by: PRIYA },
       { version: 3, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'], saved_at: '2026-11-10T09:00:00Z', saved_by: null },
@@ -754,7 +754,7 @@ describe('the editor', () => {
   });
 });
 
-describe('apply to draft campaigns (C7)', () => {
+describe('apply to draft campaigns (CTC7)', () => {
   const DRAFT = { id: 'c-1', name: 'Diwali renewals', status: 'draft' };
   const effective = () => {
     const resolved = resolveTemplateSections({ chosen: { scope: 'account', sections: DETAIL.sections }, basedOn: { sections: ORG_SECTIONS }, builtin: builtinTemplateSections(), can: { record: true, assignment: true, inbound: true } });
@@ -928,7 +928,7 @@ describe('apply to draft campaigns (C7)', () => {
   });
 });
 
-describe('new template (C6, C12)', () => {
+describe('new template (CTC6, CTC12)', () => {
   const openNew = async (path = '/settings/campaign-templates') => {
     await renderAt(path);
     fireEvent.click(screen.getByRole('button', { name: /New template/ }));

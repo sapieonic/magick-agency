@@ -6,7 +6,7 @@ import styles from './CampaignTemplates.module.css';
 
 /**
  * New campaign's Review, when the template's script uses a key the roster's card has no fact for
- * (C10, AS19): what is wrong, in the server's words, and the script editor on the card's keys.
+ * (CTC10, AS19): what is wrong, in the server's words, and the script editor on the card's keys.
  * Nothing while the script fits and the editor has not been opened.
  */
 export function ReviewScriptFix({

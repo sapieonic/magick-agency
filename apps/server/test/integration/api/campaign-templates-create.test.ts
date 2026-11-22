@@ -17,7 +17,7 @@ import type { FastifyInstance } from 'fastify';
  *  - CT9 (as amended): `template_source` records the template, its based-on, each section's
  *    source (`campaign` where the stored settings differ from what was filled in) and the
  *    filling-in's notes; every settings PATCH recomputes it against the versions it names.
- *  - S1: a template's outcome overrides are left out, with a note, where contact assignment is off.
+ *  - CTS1: a template's outcome overrides are left out, with a note, where contact assignment is off.
  *  - CT1: editing, then archiving, the template after the create leaves the campaign's row byte
  *    for byte the same.
  *  - CT7: a retry campaign copies its parent, never a template.
@@ -459,7 +459,7 @@ describe('the record follows the campaign (CT9 as amended)', () => {
     }
   });
 
-  it('a template\'s outcome overrides without contact assignment: left out with a note, never a 403 on a field not sent (S1)', async () => {
+  it('a template\'s outcome overrides without contact assignment: left out with a note, never a 403 on a field not sent (CTS1)', async () => {
     const catalog = [{ code: 'will_pay', label: 'Will pay', override: { extra_attempts: 1 } }, { code: 'refused', label: 'Refused' }];
     const org = await template('organisation', { outcomes: { disposition_catalog: catalog, outcome_dispositions: {} } }, { make_default: true });
     // Contact assignment is off for the account (the flag's default).

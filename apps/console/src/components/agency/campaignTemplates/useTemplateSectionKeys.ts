@@ -9,7 +9,7 @@ import { templateSectionKeys } from '../../../utils/agency/campaignTemplates/tem
 
 /**
  * The sections a `scope` template shows and may set for this reader (`templateSectionKeys`, with
- * the account's flags): the editor's cards, and what a copy may set (C6).
+ * the account's flags): the editor's cards, and what a copy may set (CTC6).
  */
 export function useTemplateSectionKeys(scope: AgencyCampaignTemplateScope): AgencyCampaignTemplateSectionKey[] {
   const assignment = useFeatureFlagEnabled(AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS.assignment);

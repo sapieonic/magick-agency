@@ -274,7 +274,7 @@ export function useTemplateEditor({
   };
 
   /*
-    What a section left unset uses (C12): the next level's name. An account template based on an
+    What a section left unset uses (CTC12): the next level's name. An account template based on an
     organisation template uses that one; one that follows the organisation's default uses whichever
     that is when a campaign is made (CT10); an organisation template uses the built-in settings.
     Numbers are never an organisation template's (CT5, CT15): unset, each new campaign picks its

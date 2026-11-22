@@ -90,7 +90,7 @@ export const SECTION_LABELS: Readonly<Record<AgencyCampaignTemplateSectionKey, s
  * The sections a template of `scope` can show and hold here: without the account-only ones on an
  * organisation template (CT5, CT15), and without those whose feature is off (`on`, by the gated
  * section's key; CT5). What the editor shows, and all that a copy of a campaign or of another
- * template may set (C6), so nothing is set that the editor cannot show or unset.
+ * template may set (CTC6), so nothing is set that the editor cannot show or unset.
  */
 export function templateSectionKeys(
   scope: AgencyCampaignTemplateScope,
@@ -140,7 +140,7 @@ export const TEMPLATE_FACTS: FactsForm = Object.freeze({ name: '', place: null, 
 /**
  * The keys a template's script may use: the server's rule for a script with no card
  * (`scriptPlaceholdersFor(null)`, the legacy six, `AGENCY_SCRIPT_PLACEHOLDERS`), so the editor
- * takes what a save takes (CT4). New campaign fits it to the roster's card later (C10).
+ * takes what a save takes (CT4). New campaign fits it to the roster's card later (CTC10).
  */
 export function templateScriptKeys(): string[] {
   return scriptPlaceholdersFor(null);

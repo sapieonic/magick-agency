@@ -48,7 +48,7 @@ export function TemplateEditorForm({
   const { form, data } = editor;
   if (!form) return null;
   const { organisationTemplates, organisationDefault, template } = data;
-  // A based-on that is no longer live (archived through a race) still shows as what it is (C5).
+  // A based-on that is no longer live (archived through a race) still shows as what it is (CTC5).
   const basedOnGone = editor.basedOnId !== null && !organisationTemplates.some((t) => t.id === editor.basedOnId);
   const fixable = editor.blocked || editor.hasFieldErrors;
 

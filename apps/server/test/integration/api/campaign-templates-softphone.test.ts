@@ -190,7 +190,7 @@ describe('untagged soft-phone outcomes follow the account\'s template (CT11)', (
     expect((await readSettings()).outcomes_template).toMatchObject({ disposition_catalog: ACCOUNT_OUTCOMES });
   });
 
-  it('the followed catalog is one the soft phone would accept: no override, no promise, the outcomes kept (S8)', async () => {
+  it('the followed catalog is one the soft phone would accept: no override, no promise, the outcomes kept (CTS8)', async () => {
     await setFlag('agency_contact_assignment_enabled', true);
     await template('account', [
       { code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true, promise_follow_up_days: 2 },

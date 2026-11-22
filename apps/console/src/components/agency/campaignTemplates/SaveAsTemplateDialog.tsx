@@ -24,7 +24,7 @@ import styles from './CampaignTemplates.module.css';
  * card's facts, U2, which the dialog says). The replace sends the version the
  * list showed (`expected_version`), so a save made in between is refused rather than overwritten;
  * "Reload the latest version" then reads the list again (`onReload`) and the dialog stays open on
- * the newer version (C7).
+ * the newer version (CTC7).
  */
 export function SaveAsTemplateDialog({
   open,

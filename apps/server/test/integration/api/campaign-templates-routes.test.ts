@@ -22,9 +22,9 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
  *    following its based-on or the organisation's default, a named template), its refusals, and
  *    the notes (recording, the call summary profile, numbers, carrier).
  *  - CT9: the audit rows, a default, archive or restore sent twice at once audited once.
- *  - The review's fixes: a set numbers section names a number (S9); `null` only on a nullable
- *    column's field, the list pinned to the schema (S4); sections stored as a campaign stores them
- *    (S5); the size cap (S6).
+ *  - The review's fixes: a set numbers section names a number (CTS9); `null` only on a nullable
+ *    column's field, the list pinned to the schema (CTS4); sections stored as a campaign stores them
+ *    (CTS5); the size cap (CTS6).
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -443,7 +443,7 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     }
   });
 
-  it('a set numbers section names at least one number, as a campaign does (S9)', async () => {
+  it('a set numbers section names at least one number, as a campaign does (CTS9)', async () => {
     for (const numbers of [{ caller_ids: [] }, { telephony_provider: 'voicelink' }]) {
       const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Carrier only', sections: { numbers } });
       expect(res.statusCode, JSON.stringify(numbers)).toBe(400);
@@ -453,7 +453,7 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     }
   });
 
-  it('null only where a campaign column may hold it, keyed by the field (S4)', async () => {
+  it('null only where a campaign column may hold it, keyed by the field (CTS4)', async () => {
     for (const [section, field] of [
       ['wrapup', 'wrapup_seconds'], ['wrapup', 'wrapup_auto_return'], ['recording', 'record_calls'],
       ['breaks', 'break_reasons'], ['numbers', 'telephony_provider'], ['hours', 'default_timezone'],
@@ -470,7 +470,7 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     expect(saved.sections).toEqual({ agent_screen: { daily_target_calls: null }, recording: { record_calls: false, analysis_profile_id: null } });
   });
 
-  it('the section fields declared nullable are exactly the nullable campaign columns (S4)', async () => {
+  it('the section fields declared nullable are exactly the nullable campaign columns (CTS4)', async () => {
     const fields = AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((k) => [...AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[k]] as string[]);
     const { rows } = await q(
       `SELECT column_name FROM information_schema.columns
@@ -489,7 +489,7 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     expect(rows.map((r: { column_name: string }) => r.column_name)).toEqual([...AGENCY_CAMPAIGN_TEMPLATE_NULLABLE_FIELDS].sort());
   });
 
-  it('sections are saved as a campaign stores them: caller IDs and script texts trimmed (S5)', async () => {
+  it('sections are saved as a campaign stores them: caller IDs and script texts trimmed (CTS5)', async () => {
     const res = await call(w.supA, w.a, 'POST', '/campaign-templates', {
       scope: 'account', name: 'Untrimmed',
       sections: {
@@ -505,7 +505,7 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     expect(version).toEqual(stored);
   });
 
-  it('sections over the size cap are refused before anything is read: 400 campaign_template_invalid on sections (S6)', async () => {
+  it('sections over the size cap are refused before anything is read: 400 campaign_template_invalid on sections (CTS6)', async () => {
     const big = { outcomes: { disposition_catalog: [{ code: 'x', label: 'x'.repeat(AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES) }] } };
     const created = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Big', sections: big });
     expect(created.statusCode).toBe(400);
@@ -715,7 +715,7 @@ describe('archive and restore (CT14)', () => {
     expect((await auditRows('campaign_template.restored')).map((r) => r.resource_id)).toEqual([org.id]);
   });
 
-  it('a default, an archive or a restore sent twice at once is audited once (S12)', async () => {
+  it('a default, an archive or a restore sent twice at once is audited once (CTS12)', async () => {
     const tpl = await accountTemplate();
     const twice = (path: string, method: Method = 'POST') => Promise.all([
       call(w.supA, w.a, method, `/campaign-templates/${tpl.id}${path}`),

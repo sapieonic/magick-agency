@@ -190,7 +190,7 @@ function serverSentence(err: unknown): string | null {
 /**
  * What a template refusal says, by its code; the server's sentence for anything else. A template
  * that is archived or not found may be the one named or the organisation template it is based
- * on, which only the server's sentence tells apart (C5), so those keep it.
+ * on, which only the server's sentence tells apart (CTC5), so those keep it.
  */
 export function templateRefusal(err: unknown, fallback: string): string {
   switch (errorCode(err)) {

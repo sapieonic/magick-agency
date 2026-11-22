@@ -143,7 +143,7 @@ describe('New campaign starts from a template', () => {
     await renderPage();
     expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith(null, 't1', 'a1');
     expect((screen.getByTestId('start-from-select') as HTMLSelectElement).value).toBe('acc-1');
-    // Which default is which (C4): the account's is the one New campaign opens on.
+    // Which default is which (CTC4): the account's is the one New campaign opens on.
     expect([...(screen.getByTestId('start-from-select') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
       'Pune collections (account default)',
       'Standard (organisation default)',
@@ -288,7 +288,7 @@ const FROM_OTHER = effective({ id: 'acc-2', name: 'Mumbai sales', version: 1, sc
   numbers: { caller_ids: ['+912200000001'], telephony_provider: 'voicelink', telephony_credential_id: null },
 }, ORG_SECTIONS);
 
-describe('the numbers picked on Basics (C2)', () => {
+describe('the numbers picked on Basics (CTC2)', () => {
   beforeEach(() => {
     mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, OTHER, ORG]);
     mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) =>
@@ -374,7 +374,7 @@ describe('the numbers picked on Basics (C2)', () => {
   });
 });
 
-describe('the default chain read landing late (C8)', () => {
+describe('the default chain read landing late (CTC8)', () => {
   it('still offers Start from, fills only what was not touched and names the template on the create', async () => {
     let land: (value: AgencyCampaignTemplateEffective) => void = () => {};
     mocks.getEffectiveCampaignTemplate.mockImplementation((id: string | null) =>
@@ -434,7 +434,7 @@ async function importRoster(onCard: string | null = null) {
   await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
 }
 
-describe('the draft a roster upload makes (C1)', () => {
+describe('the draft a roster upload makes (CTC1)', () => {
   beforeEach(() => {
     mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'r.csv', dedupe_columns: [], file_size_bytes: 10 });
     mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
@@ -491,13 +491,13 @@ describe('the built-in settings', () => {
 });
 
 /*
-  C10: a template whose script uses card keys (`{amount_due}`, `{due_date}`) passes the template's
+  CTC10: a template whose script uses card keys (`{amount_due}`, `{due_date}`) passes the template's
   check (the legacy keys) and New campaign's create (no card yet: the legacy keys), but the card
   the roster import then saves has its own keys (AS19). The mock below refuses as the server does
   (`apps/server/src/agency/agent-script.ts`): a card that takes away a key the stored script uses,
   and a script with a key its card has no fact for.
 */
-describe('a template script that uses keys the roster’s card does not have (C10)', () => {
+describe('a template script that uses keys the roster’s card does not have (CTC10)', () => {
   const SCRIPTED = effective({ id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, {
     ...ACCOUNT_SECTIONS,
     agent_screen: { agent_script: { opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' } },

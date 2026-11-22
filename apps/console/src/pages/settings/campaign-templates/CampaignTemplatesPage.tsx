@@ -245,7 +245,7 @@ export default function CampaignTemplatesPage({ scope }: { scope: AgencyCampaign
 
       {scope === 'account' ? <EffectiveStartCard version={chainVersion} /> : null}
 
-      {/* A filter of one list, as the campaign list's status filter: pressed buttons, not tabs (C9). */}
+      {/* A filter of one list, as the campaign list's status filter: pressed buttons, not tabs (CTC9). */}
       <div className={styles.toolbar} role="group" aria-label="Which templates">
         {(['live', 'archived'] as const).map((v) => (
           <button

@@ -88,7 +88,7 @@ export default function CampaignTemplateEditorPage({ scope }: { scope: AgencyCam
     const saved = await editor.save();
     if (saved && editor.isNew) setGoTo(campaignTemplatePath(scope, saved.id));
   };
-  // Apply writes this account's drafts: on the organisation's page, say which account that is (C7).
+  // Apply writes this account's drafts: on the organisation's page, say which account that is (CTC7).
   const accountName = accounts.find((a) => a.id === accountId)?.name ?? null;
 
   return (
