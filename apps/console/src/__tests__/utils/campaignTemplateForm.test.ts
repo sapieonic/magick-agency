@@ -48,6 +48,46 @@ describe('the form round trip', () => {
       .toEqual([{ section: 'wrapup', change: 'changed', fields: ['wrapup_seconds'] }]);
   });
 
+  it('round-trips every one of the 11 sections set to values other than the built-in ones', () => {
+    const sections = {
+      outcomes: {
+        disposition_catalog: [
+          { code: 'voicemail', label: 'Voicemail', retry: { delay_minutes: 90, max_attempts: 2 } },
+          { code: 'callback', label: 'Call back', requires_datetime: true },
+          { code: 'do_not_call', label: 'Do not call', suppress: true },
+          { code: 'will_pay', label: 'Will pay', is_success: true, requires_promise: true, promise_follow_up_days: 3, icon: 'rupee' },
+          { code: 'dispute', label: 'Dispute', requires_note: true, override: { extra_attempts: 2, calling_hours: true } },
+        ],
+        outcome_dispositions: { no_answer: 'voicemail' },
+      },
+      retries: { retry_policy: { no_answer: { delay_minutes: 45, max_attempts: 4 }, busy: { delay_minutes: 10, max_attempts: 2 } } },
+      hours: { calling_window_start: '08:30:00', calling_window_end: '21:00:00', calling_days: [7, 1, 3], default_timezone: 'Asia/Dubai' },
+      wrapup: { wrapup_seconds: 75, wrapup_auto_return: false, allow_wrapup_redial: true },
+      breaks: { break_reasons: [{ code: 'lunch', label: 'Lunch', limit_minutes: 40 }, { code: 'tea', label: 'Tea' }] },
+      recording: { record_calls: true, analysis_profile_id: 'profile-7' },
+      agent_screen: { agent_script: { opening: 'Hello {name}', steps: [{ text: 'Ask about {amount_due}' }] }, phone_display: 'masked' as const, daily_target_calls: null },
+      // A ceiling the form shows rounded keeps its stored value (`abandonmentCeilingStoredPct`).
+      safety: { abandonment_ceiling_pct: 7.25 },
+      assignment: {
+        assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 120, callback_fallback: 'wait',
+        allow_agent_retry: true, agent_retry_rounds: 3, agent_retry_cooldown_minutes: 15,
+      },
+      inbound: { inbound_sticky_enabled: false },
+      // Several numbers, in their order, on a carrier account of the tenant's own.
+      numbers: { caller_ids: ['+912200000003', '+912200000001', '+912200000002'], telephony_provider: 'plivo', telephony_credential_id: 'cred-9' },
+    } as const;
+    const keys = AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS;
+    expect(Object.keys(sections).sort()).toEqual([...keys].sort());
+    const form = formOfConfig(filledConfig('account', sections as never, null));
+    const back = sectionsOfForm(form, 'account', keys);
+    expect(diffSections(sections as never, back)).toEqual([]);
+    // Each one really differs from the built-in settings, so the round trip proves something.
+    expect(diffSections(builtinTemplateSections(), back).map((d) => d.section).sort()).toEqual([...keys].sort());
+    expect((back.safety as { abandonment_ceiling_pct: number }).abandonment_ceiling_pct).toBe(7.25);
+    expect((back.numbers as { caller_ids: string[] }).caller_ids).toEqual(['+912200000003', '+912200000001', '+912200000002']);
+    expect((back.agent_screen as { daily_target_calls: number | null }).daily_target_calls).toBeNull();
+  });
+
   it('takes a section whole from another form, and nothing else', () => {
     const mine = formOfConfig(filledConfig('account', { wrapup: { wrapup_seconds: 90 } }, null));
     const theirs = formOfConfig(filledConfig('account', { hours: { calling_window_start: '11:00' }, wrapup: { wrapup_seconds: 10 } }, null));
