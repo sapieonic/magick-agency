@@ -250,6 +250,21 @@ describe('who may read and write (CT3)', () => {
     expect((await agencyCampaignTemplateRepository.findVisible({ tenantId: w.tenant, accountId: null }, org.id))!.version).toBe(1);
   });
 
+  it('a supervisor on an organisation-wide seat holds the seat but not the role: refused by the tenant_admin floor alone', async () => {
+    // The schema allows a role below tenant_admin with no account (a super-admin can add one): the
+    // seat check (AA1) passes for it, so only the role floor stands between it and the write.
+    const wideSupervisor = await person(w.tenant, null, 'account_admin', 'Wide Supervisor');
+    const create = await call(wideSupervisor, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Wide', sections: {} });
+    expect(create.statusCode, create.body).toBe(403);
+    expect(create.json().code).toBeUndefined();
+    expect(create.json()).toMatchObject({ error: 'Forbidden', message: expect.stringMatching(/kept by organisation admins/) });
+    const org = await orgTemplate();
+    const archive = await call(wideSupervisor, null, 'POST', `/campaign-templates/${org.id}/archive`);
+    expect(archive.statusCode, archive.body).toBe(403);
+    expect(archive.json().code).toBeUndefined();
+    expect((await q(`SELECT count(*)::int AS n FROM agency_campaign_templates WHERE tenant_id = $1 AND archived_at IS NULL`, [w.tenant])).rows[0].n).toBe(1);
+  });
+
   it('an account-scoped tenant admin is refused an organisation write: 403 tenant_wide_membership_required (AA1)', async () => {
     const res = await call(w.scopedAdmin, null, 'POST', '/campaign-templates', { scope: 'organisation', name: 'Scoped', sections: {} });
     expect(res.statusCode).toBe(403);
@@ -506,6 +521,23 @@ describe('a template is checked as a campaign (CT4) and its scope (CT5)', () => 
     // A template within the cap is saved.
     const fits = { breaks: { break_reasons: [{ code: 'tea', label: 'Tea' }] } };
     await accountTemplate({ sections: fits });
+  });
+
+  it('a template a campaign would accept, but over the size cap, is refused on the cap alone (CT19)', async () => {
+    // Outcomes every campaign check accepts: only their number makes them large.
+    const catalog = (n: number) => Array.from({ length: n }, (_, i) => ({ code: `outcome_${i}`, label: `Outcome number ${i} ${'·'.repeat(40)}` }));
+    const sections = (n: number) => ({ outcomes: { disposition_catalog: catalog(n), outcome_dispositions: {} } });
+    const bytes = (n: number) => Buffer.byteLength(JSON.stringify(sections(n)), 'utf8');
+    let n = 100;
+    while (bytes(n) <= AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES) n += 100;
+    // Valid as a campaign: a smaller list of the same outcomes is saved.
+    await accountTemplate({ name: 'Under the cap', sections: sections(100) });
+    const before = (await q(`SELECT count(*)::int AS n FROM agency_campaign_templates`)).rows[0].n;
+    const res = await call(w.supA, w.a, 'POST', '/campaign-templates', { scope: 'account', name: 'Over the cap', sections: sections(n) });
+    expect(res.statusCode, res.body.slice(0, 300)).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'campaign_template_invalid' });
+    expect(Object.keys(res.json().details)).toEqual(['sections']);
+    expect((await q(`SELECT count(*)::int AS n FROM agency_campaign_templates`)).rows[0].n).toBe(before);
   });
 });
 
