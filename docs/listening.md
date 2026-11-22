@@ -709,7 +709,7 @@ listening* row charts each series above.
 ## 9. The console and the agent
 
 British English throughout. **Live calls** at `/agency/live`, a nav entry in the Campaigns section
-beside "Soft-phone calls" (gated by `agency.supervise` and the flag); a campaign's
+beside "All calls" (gated by `agency.supervise` and the flag); a campaign's
 `/agency/campaigns/:id/calls/live` with a "Summary | Live" control on its Calls tab. The table:
 "Live calls", "N in progress", "Updated N s ago"; filters for campaign (account page only), agent
 and type (All, Dialler, Soft phone, Inbound), with Clear filters while any is in force; columns
@@ -1286,8 +1286,8 @@ On with why, not the reason dialog; the tenant tab's dialog already shows the wa
   `agency.supervise` in the page and the nav entry's gate, and no flag (LS19, amended 2026-11-17),
   so the tab, the route and search's words "listened", "who listened", "monitoring log" stay while
   listening is off (`navRouteGates.test.ts`; `ListenHistoryPage.test.tsx` pins the route in
-  `App.tsx` free of `RequireFlag`). With Live calls hidden the bar is Campaigns and Listening
-  history (and Soft-phone calls when its flag is on): every supervisor has Campaigns, so the tab
+  `App.tsx` free of `RequireFlag`). With Live calls hidden the bar is Campaigns, All calls and
+  Listening history: every supervisor has Campaigns, so the tab
   never stands alone. Columns Supervisor, Agent, Call type ("Dialler", "Soft phone", "Inbound: <route>"),
   Customer (the name as the live table words it, "Unknown caller" and "No name" included, over the
   masked number or "Withheld"), Started, Time listened ("2m 10s", "Listening now" while open), How it

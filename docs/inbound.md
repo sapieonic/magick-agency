@@ -775,8 +775,9 @@ paths:
   offer lands. A paused campaign's station says "no campaign calls for now" and that customers who
   ring in can still reach the agent: the search never reads the campaign's status (§4.3), so an
   available agent on a paused campaign is still offered callers (the console says the same). iOS reports the call to
-  CallKit as an outgoing call, as it does a campaign call. Missed calls is a segment of My calls
-  (the agent's own rows, `assignee=me`) with Call back into the soft phone. Only with the app on
+  CallKit as an outgoing call, as it does a campaign call. Missed calls are My calls' To follow
+  up chip (the agent's own open rows, with Call back into the soft phone), and the Missed list is
+  one tap from it ([`call-log.md`](call-log.md) §7; a segment of My calls until 2026-11-22). Only with the app on
   screen: a phone in the background is paused (`device_away`) and offered nothing, unless the
   agent opted in to having it rung (Mode B, `away_ring`, §6.1).
 
@@ -1570,7 +1571,9 @@ hours ("Inbound switched off", "Number not on a route", "Phone line not active")
 answer" means one thing on the list, its guide and the summary: the caller waited as long as the
 line allows, the queue was full, or nobody in the team could take calls (`overflow`); every line
 busy is its own reason. With the flag off and rows to read, the page says so: callers hear the
-closed message and are still listed here. The nav entry (the
+closed message and are still listed here. An agent's own open rows are also the **To follow
+up** chip of their My calls (`/dialer/attempts`, [`call-log.md`](call-log.md) §7), with the same
+two actions and, there, the number as the call's campaign allows; this page is unchanged. The nav entry (the
 agency sidebar and the agent's nav) carries the open count as a badge ("99+" past the cap), read
 once for every reader of the tab, polled every minute while inbound is on and on the reader's
 return, and re-read after a Mark handled or a reassign. **Inbound summary** (`/agency/inbound/summary`,

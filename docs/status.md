@@ -2643,7 +2643,7 @@ timed on a large account.
 
 ### One call log per campaign, P4: reports and Insights by type 2026-11-22 (CL7, CL25–CL30, [`call-log.md`](call-log.md) §6)
 
-P4 of six is built; P5 and P6 are not.
+P4 of six is built; P5 and P6 are not (P5 since: below).
 
 - **A campaign's inbound calls are in its figures.** Insights' activity serves `calls.inbound`
   (received, answered, missed, the calls still to follow up, talk time, open-hours calls) and
@@ -2676,6 +2676,43 @@ P4 of six is built; P5 and P6 are not.
 and looked at (the report stays four pages). The inbound statement's plan was read on the test
 database (the window on `idx_agency_inbound_calls_campaign`); nothing was timed on a large
 table. `/stats` now runs one more statement per read.
+
+### One call log per campaign, P5: My calls and All calls 2026-11-22 (CL9, CL31–CL38, [`call-log.md`](call-log.md) §7)
+
+P5 of six is built; P6 (inbound calls in customer history) is not.
+
+- **One read, three scopes.** The campaign Call log's read (`listCallLog`) also serves the
+  account and one agent: the same branches, keyset, filters and inbound row rule (CL31).
+- **My calls is one list** (console `/dialer/attempts`, the app's My calls tab): the agent's
+  dials, soft-phone calls, the inbound calls they answered and their open missed calls, with
+  chips, To follow up first. To follow up is their open missed calls, then the callbacks they
+  booked that are due today or late ("Due 4:00 PM", "Late by 2 hours"); empty, "Nobody is
+  waiting for a call from you." `GET /proxy/agency/my-calls` (`agency.station.connect`).
+- **Numbers are masked by the server on My calls.** A number its campaign hides from agents
+  (`phone_display: masked`) is never sent on that route, on any type of row, and the rows carry
+  no media (CL32). Before this, My calls masked only in the console's browser, on dialler rows.
+  The Missed list, the soft phone and the station still receive numbers, as AS9 says.
+- **All calls** (`/agency/calls`, `GET /proxy/agency/calls`, `agency.supervise`) took the
+  account's Soft-phone calls' place: the Call log's table over the whole account, with a
+  Campaign column and a Campaign filter, "No campaign" among its choices. A call filed under
+  none that is older than the account's switch-on of the rule reads "Before the rule" (CL35).
+  `/agency/softphone` redirects there with the Soft phone chip on. Settings › Calls links its
+  count of unfiled calls to them.
+- **One index.** `0070_attempts_account_created_index.sql`: an account's dialler attempts by
+  when they were created, measured before it was added (CL37). On a table of more than about a
+  million attempts, build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
+- **Old URLs.** `?view=softphone` on My calls opens the Soft phone chip; `/dialer/missed` and
+  its badge are unchanged.
+- **The app.** The three segments are chips over one list of cards; the attempts list, the
+  soft-phone calls list, their filters and detail sheets were removed (CL38). An older build
+  keeps its segments on the old routes, which are still served, and still shows numbers in full.
+
+**Not verified:** not run in a real browser or on a phone. The account read was timed on a
+throwaway copy of the test database (2.2 million attempts, 200,000 soft-phone calls, 300,000
+inbound calls), not on production data. Left as they were: the Missed list still sends numbers
+in full to the agent a row is assigned to; My calls has no filter by outcome or by number; All
+calls has no export, stats strip or Summary column ([`call-log.md`](call-log.md) §7 "What P5
+left as it was").
 
 ## Not built
 

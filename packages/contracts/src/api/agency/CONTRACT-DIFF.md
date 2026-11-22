@@ -196,6 +196,13 @@ share), with `AgencyCallLogType` / `AGENCY_CALL_LOG_TYPES`, the `?type=` filter
 (`counts` only with `?include_counts=1`). The public API layer builds the rows from the dialer
 runtime's call-log read (`apps/server/src/agency/campaign-call-log.ts`, whose rows say `source`
 and stay attempt-shaped for the CSV export); that read is not in the dialer contract.
+The same file holds the account's All calls (`AgencyAccountCallsPage`: the Call log's rows with
+`campaign_name`, `campaign_id` null on a soft-phone or inbound row filed under none, and the
+account's `rule`) and the agent's own My calls (`AgencyMyCallRow`, `AgencyMyCallsPage`,
+`AgencyMyCallbackDue`, `AgencyMyCallsCounts`; docs/call-log.md §7). `AgencyMyCallRow` is one
+shape for the three types, with the number as the agent may see it (`phone`, `phone_masked`) and
+no media; it has no dialer-contract twin. The mobile app decodes it (`agency_wire`'s
+`my_calls.dart`, fixtures `reads.json` `my_calls*`).
 
 The account's call settings (`call-settings.ts`, docs/call-log.md §5) are console-side only:
 `AgencyCallSettings` (`require_campaign`, the setting "Every call must belong to a campaign"),

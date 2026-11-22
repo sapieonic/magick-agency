@@ -4,11 +4,11 @@ A campaign's calls used to be listed in several places, by what placed them: the
 Dialler calls, its Soft-phone calls view, the account's Soft-phone calls, Missed calls, and
 answered inbound calls nowhere at all. This work makes them one list. Manas approved the
 proposal on 2026-11-22 ("go ahead and build this end-to-end"); it is built in six phases, each
-shippable alone. **P1, P2, P3 and P4 are built (2026-11-22). P5 and P6 are not.**
+shippable alone. **P1, P2, P3, P4 and P5 are built (2026-11-22). P6 is not.**
 
-The decisions are CL1–CL30 in [`decisions.md`](decisions.md) ("One call log per campaign (CL)"),
+The decisions are CL1–CL38 in [`decisions.md`](decisions.md) ("One call log per campaign (CL)"),
 all **default, pending Manas**: he accepted CL1–CL12 with the proposal as a whole, not one by one,
-CL13–CL16 are P2's build rulings, CL17–CL24 are P3's and CL25–CL30 are P4's.
+CL13–CL16 are P2's build rulings, CL17–CL24 are P3's, CL25–CL30 are P4's and CL31–CL38 are P5's.
 
 ## 1. The model
 
@@ -35,8 +35,8 @@ campaign's missed inbound calls that are still open (§4).
 |---|---|
 | What happened on my campaign today? | Campaign › Call log. Today is the opening range |
 | Who is still owed a call back? | The same page, To follow up. Across campaigns: Inbound › Missed calls |
-| Is anything not filed under a campaign? | Campaigns › All calls › Campaign: No campaign (P5) |
-| Who did I talk to? Who do I owe a call? | My calls, To follow up first (P5) |
+| Is anything not filed under a campaign? | Campaigns › All calls › Campaign: No campaign (§7) |
+| Who did I talk to? Who do I owe a call? | My calls, To follow up first (§7) |
 | Are we keeping every call on a campaign? | Settings › Calls (§5) |
 
 ## 2. Phases
@@ -47,7 +47,7 @@ campaign's missed inbound calls that are still open (§4).
 | P2 | Inbound in the log: a campaign on inbound calls, the third type, To follow up, the missed call and its call back linked, the inbound call page, the export's inbound rows | **Built 2026-11-22** (§4) |
 | P3 | The setting "Every call must belong to a campaign": per account, a default campaign per inbound route, enforcement on the soft phone and inbound wrap-up, Settings › Calls, the app | **Built 2026-11-22** (§5) |
 | P4 | Reports and Insights by type: inbound figures, the Calls by type table, outcomes by type, "Outbound connect rate" | **Built 2026-11-22** (§6) |
-| P5 | The agent's My calls as one list (console and app), and the account's All calls in place of Soft-phone calls | Not built |
+| P5 | The agent's My calls as one list (console and app), and the account's All calls in place of Soft-phone calls | **Built 2026-11-22** (§7) |
 | P6 | Inbound calls in customer history | Not built |
 
 Not in any phase (needs Manas): filing old calls with no campaign under one by hand, and a
@@ -181,10 +181,10 @@ The mobile app does not read this route, so its Dart wire types are unchanged
 
 ### What P1 left as it was
 
-- The account's **Soft-phone calls** list (`/agency/softphone`) and the agent's My calls are
-  unchanged until P5. The campaign's old Soft-phone calls view had two things the Call log does
-  not: the stats strip over the rows on screen, and the Summary column. The account list still
-  has both, and Insights carries the campaign's soft-phone figures.
+- The account's **Soft-phone calls** list (`/agency/softphone`) and the agent's My calls were
+  left for P5, which replaced both (§7). The campaign's old Soft-phone calls view had two things
+  the Call log does not: the stats strip over the rows on screen, and the Summary column. All
+  calls has neither either; Insights carries the campaign's soft-phone figures.
 - The mockup's "placed by … (supervisor)" line is not shown: a soft-phone call is placed by its
   own agent, and nothing records a second person placing it. An outcome saved by someone else
   shows "on behalf", as on a dialler row.
@@ -385,8 +385,8 @@ why from `call_availability` and shows the record alone.
 
 ### What P2 left as it was
 
-- **Customer history, the agent's My calls and the account's lists** do not show inbound calls
-  by type yet (P5, P6). Their reads keep `matched_campaign_id`. Insights and the campaign report
+- **Customer history** does not show inbound calls yet (P6); its read keeps
+  `matched_campaign_id`. The agent's My calls and the account's All calls list them since P5 (§7). Insights and the campaign report
   do since P4 (§6), counted by `campaign_id`.
 - **Filing an unknown caller** under a campaign was P3's (§5): since it, a call from an unknown
   number is filed under its route's campaign for unknown callers when the route has one, and is
@@ -629,7 +629,8 @@ their behalf, and never behind inbound's flag.
 
 ### What P3 left as it was
 
-- **"See them in All calls"** under the count on Settings › Calls: All calls is P5.
+- **"See them in All calls"** under the count on Settings › Calls waited for All calls: P5 added
+  the link (§7).
 - **The agent app's inbound call screen** does not offer Change. It is not needed for the
   setting to hold (a call arrives filed), and the app refuses nothing the server allows. A call
   that did arrive under no campaign while the setting is on (inbound was off when the route
@@ -885,9 +886,202 @@ columns). Three definitions were added: `outbound_connect_rate`, `inbound_calls`
   Outcomes table) still print `no_disposition` as its code where the catalog has no label; only
   the by-type tables read "No outcome chosen".
 
-## 7. Decisions
+## 7. P5: My calls and All calls (built)
 
-CL1–CL30, in full in [`decisions.md`](decisions.md). All default, pending Manas.
+The campaign Call log's read at two more scopes: one agent's own calls, and the whole account's.
+Nothing about what a row is, how the types interleave or how a filter reads on each type is
+restated: it is §3 and §4's, because it is the same statement.
+
+### The read (CL31)
+
+`AgencyAttemptRepository.listCallLog` and `countCallLog` take a **scope**
+(`CallLogScope`), and `listCallLogForCampaign` / `countCallLogForCampaign` are that read with the
+campaign's scope. The three branches, the one keyset, the filters and the inbound row rule are
+shared; only the term that says whose calls differs.
+
+| Scope | Dialler | Soft phone | Inbound | To follow up |
+|---|---|---|---|---|
+| A campaign | its attempts | the calls logged to it | the ended, served calls filed under it | its open Missed rows |
+| The account | every attempt of the account | every soft-phone call of the account | every ended, served call of the account | the account's open Missed rows |
+| An agent | the attempts of their sessions in the account | the calls they placed | the calls they **answered**, and their **open Missed rows** | their open Missed rows |
+
+- **An agent's inbound rows are two index ranges**, never the same row twice (a missed call has
+  no answerer): `answered_by_user_id = me`, and `follow_up_assignee_user_id = me` while the row
+  is open. "Mine" for a Missed row is the Missed list's own rule for an agent: assigned to them.
+  A row assigned to the account (the Team view) is nobody's until it is claimed. Once a Missed
+  row is handled it is no longer one of the agent's calls: they did not take it.
+- **"No campaign"** (`campaign: 'none'`) keeps the soft-phone calls logged to none and the
+  inbound calls filed under none. A dialler call always has a campaign, so none matches.
+- **One campaign at the account's scope is the campaign's own scope**: the route checks the
+  campaign is the account's and reads the campaign Call log's statement, on its own indexes.
+- **Somebody who never dialled** costs nothing: an agent's attempts are bounded below by their
+  first session in the account, so with no session the range is empty.
+
+### The index (`0070_attempts_account_created_index.sql`, CL37)
+
+`idx_agency_attempts_account_created (tenant_id, account_id, created_at DESC, id DESC)` on
+`agency_call_attempts`: the dialler branch's keyset range within an account, as
+`idx_agency_attempts_keyset` is within a campaign. The other two tables already had theirs.
+It was measured before it was added (the numbers are in the migration's header); it is one more
+index written on every dial, and `db-hygiene.md` §2 has the statement to build it
+`CONCURRENTLY` before the deploy on a large table. Nothing else was added: "No campaign" on the
+soft-phone and inbound branches, and an agent's answered calls, are a filter over the account's
+existing range.
+
+### My calls (CL9, CL32, CL33, CL36)
+
+`GET /proxy/agency/my-calls` (`agency.station.connect`): the caller's own calls, newest first.
+The subject is the session's user. Nothing in the query can name another agent: `agent_user_id`
+is not a parameter the route takes (a 400).
+
+- **The number is masked by the server (CL32).** A row carries `phone` and `phone_masked`: the
+  number in full when the row's campaign shows numbers to agents or the call has no campaign,
+  and the masked text (`98••• ••210`, the domain's `maskFactPhone`) when the campaign's
+  `phone_display` is `masked`. This holds on every type of row, and a row that names a campaign
+  the read did not return is masked too. The setting is read when the list is read, so a campaign
+  that starts hiding numbers hides them on the calls already made.
+- **The row carries no media**: no leg id, no recording, no summary, no other agent's name
+  (`toMyCallRow` builds it field by field, never by spreading the read's row).
+- **To follow up (CL33)** (`type=to_follow_up`) is the caller's open Missed rows, whatever the
+  dates (CL14), then `callbacks_due` on the first page: the callbacks they booked that are due
+  today or already late, soonest first. The callbacks are My day's call-later read
+  (`myCallLaterStatement`, with its rule for whose a callback is under each assignment mode) on
+  every campaign of the account the caller is actively on, to the end of each campaign's own
+  day; an archived campaign is left out.
+- **`counts`** (`include_counts=1`) is what the agent still owes: `to_follow_up` (the open Missed
+  rows and the callbacks due), `missed_open` (the Missed calls badge's own count) and
+  `callbacks_due`. The other chips carry no number.
+- **Filters:** `type`, `campaign_id` (a campaign or `none`), `from`, `to`. There is no search by
+  number: on a campaign that hides numbers it would let the hidden digits be found a few at a
+  time (CL36).
+
+**Call back from a hidden number.** The number is not in My calls' payload, so the row's Call
+back reads it from the Missed list (`GET /inbound/missed`, the caller's own open rows) at the
+moment it is pressed, and hands it to the soft phone with the missed call's id (CL1). The pad
+shows the number, as the pad shows any number the agent dials (AS19 S3(b)).
+
+**What was true before P5** (the check the proposal asked for): the server sent every number in
+full with the campaign's `phone_display` beside it (AS9). The console's My calls masked from that
+on its Campaign calls tab only; its Soft-phone calls tab, the Missed list and the app's My calls
+showed every number in full. **What is still true:** the Missed list (`/dialer/missed`, the
+app's Missed calls list), the soft phone's own reads and the station's frames still carry the
+number, as AS9 says (hiding it there is BE-7 step 2, not built).
+
+#### The console (`/dialer/attempts`)
+
+`AgentAttemptsPage.tsx` with `components/agency/MyCallsList.tsx` and `utils/agency/myCalls.ts`.
+
+- **Chips:** "To follow up N · All · Dialler · Soft phone · Inbound". To follow up is first, in
+  the warning colour, with what the agent still owes. The page opens on All. Soft phone shows
+  where the agent may dial from the soft phone, Inbound and To follow up where Missed calls show
+  for them, To follow up also whenever something is owed, and any chip while it is on.
+- **Columns:** When · Type · Customer · Campaign · What happened · Outcome · Talk time. Type
+  carries what only that type has ("Dialler · Try 2", "Soft phone · Call back" with "to the 3:12
+  PM missed call" under it, "Inbound · missed"). Customer is the name with the number under it.
+  Outcome is the saved outcome in the campaign's own words with its day ("Will pay · 25 Nov"),
+  and the agent's notes. No Call column and no link to a call's page.
+- **To follow up:** the missed calls with **Call back** and **Mark handled** (the Missed list's
+  own action), then **Callbacks due**: the customer, "Due 4:00 PM" or "Late by 2 hours", and
+  "Diwali EMI Collections · you booked it for 1:45 PM". Empty: "Nobody is waiting for a call
+  from you."
+- **Old URLs:** `?view=softphone` (the Soft-phone calls tab) opens the Soft phone chip.
+  `/dialer/missed` and the Missed calls entry of the agent's nav are unchanged, with their badge:
+  the Team view, claiming, voicemails and the handled rows are there.
+- The page says "campaign", as it always did: it is the agent's history, not the station (AS15's
+  "work" is the station's word, CL22).
+
+#### The app (My calls tab)
+
+`features/calls/calls_screen.dart`, `my_calls_controller.dart`, `my_calls_copy.dart`,
+`widgets/my_call_card.dart`; the wire types are `agency_wire`'s `my_calls.dart`.
+
+- The three segments are **chips** in the same order, wrapped so all five are on screen. To
+  follow up carries what the agent owes as a badge.
+- A **card** per call: the type in its colour and the time ("3:42 PM"), who the call was with,
+  then "campaign · outcome · day · talk time". A missed call to follow up is a warning card with
+  **Call back** and **Mark handled**; a callback is "Callback due" with "Late by 2 hours".
+- Under To follow up, **Missed calls list** opens the list the Missed segment was (the team's
+  calls to claim, voicemails, handled rows).
+- The attempts list, the soft-phone calls list, their filter bars and their detail sheets went
+  with the segments (CL38).
+
+### All calls (CL34, CL35)
+
+`GET /proxy/agency/calls` (`agency.supervise`): the campaign Call log at the account's scope.
+Its query is the Call log's (`type`, the attempt list's filters, `status`, `include_counts`,
+`cursor`, `limit`) and `campaign_id` (a campaign, or `none`). Each row names its campaign
+(`campaign_name`); a soft-phone or inbound row filed under none has `campaign_id: null`. The
+page carries `rule`: the account's "Every call must belong to a campaign" setting and when it
+was switched on.
+
+- **The floor is the Soft-phone calls list's**: that list was the account's only for
+  `agency.supervise`. An agent is refused. Behind the dialler's flag and no call type's.
+- **The page** (`/agency/calls`, `AllCallsPage.tsx`) is the Call log's own list component
+  (`CallLogList` in `AgencyCampaignAttemptsPage.tsx`) with `scope: 'account'`: the same chips,
+  filters, rows and paging, plus a **Campaign** column and a **Campaign** filter ("All
+  campaigns", "No campaign", each campaign). It opens on today. A row opens its own page: the
+  attempt in its campaign, the soft-phone call, the inbound call in its campaign; an inbound call
+  filed under none has no Call page.
+- **"No campaign" and "Before the rule" (CL35).** A call filed under none reads "No campaign".
+  While the setting is on, one that began before it was switched on reads **"Before the rule"**:
+  it was allowed when it was made, and is never given a campaign afterwards (CL10). The filter
+  says "No campaign" either way.
+- **In the sidebar** it took Soft-phone calls' place under Campaigns. `/agency/softphone`
+  redirects to `/agency/calls?type=soft_phone` with its query kept. A soft-phone call's page kept
+  its URL and is All calls' sub-page.
+- **Settings › Calls** links its count of unfiled calls to All calls on those calls
+  (`unfiledCallsPath`: no campaign, the same 30 days).
+- **No export**: a campaign's file is its Call log's.
+
+### The routes
+
+| Route | Floor | What |
+|---|---|---|
+| `GET /proxy/agency/calls` | `agency.supervise` | The account's calls: the Call log's query and `campaign_id` (a campaign or `none`); `counts` with `include_counts=1`; `rule` |
+| `GET /proxy/agency/my-calls` | `agency.station.connect` | The caller's own calls: `type`, `campaign_id`, `from`, `to`, `cursor`, `limit`, `include_counts`; numbers masked where the campaign hides them; `callbacks_due` with To follow up |
+
+Both read the repositories from the public route (`proxy-agency-call-lists.routes.ts`), as My
+day does: neither touches per-session runtime state.
+
+### What P5 left as it was
+
+- **The Missed list still carries numbers in full** to the agent it is assigned to, on the
+  console and in the app (above). Masking it needs a Call back that does not need the number.
+- **All calls has no stats strip and no Summary column**, which the Soft-phone calls list had.
+- **My calls has no filter by what happened, by outcome or by number**, which the Campaign calls
+  tab had (CL36), and the app's My calls has no filters and no detail sheet (CL38).
+- **The supervisor's per-agent calls** (Analytics, `agents/:userId/attempts`) are still the
+  dialler's alone.
+- **`GET /proxy/agency/my-attempts` and `GET /softphone/calls`** are still served: the
+  supervisor's per-agent panel, a roster contact's soft-phone calls and older app builds read
+  them. `my-attempts` still sends numbers in full with `phone_display` (AS9).
+
+### Tests
+
+- `packages/db/test/integration/db/attempts-account-index-migration.test.ts`: the index, an
+  account's keyset page planned on it with no sort, the invalid-index refusal, down then up.
+- `apps/server/test/integration/api/agency-all-calls.test.ts` (real Postgres, the real app): All
+  calls across campaigns and types on one keyset at several page sizes; the campaign names; what
+  is never a row; the type, campaign, "none" and agent filters; the counts; the rule; the floor
+  and the tenant boundary. My calls: only the caller's rows; the filters; **no hidden number in
+  any response body, for every type, chip and page size**; a campaign that starts hiding numbers;
+  no media key on any row; the names; To follow up and the callbacks due; Mark handled; a
+  supervisor's own; the refusals. The dialler branch at the account's scope planned on 0070.
+- `apps/server/test/unit/agency/call-lists.test.ts`: `agentPhone` (masked, full, fail closed, no
+  campaign, withheld), `toMyCallRow` for each type and what it never carries, the labels, the
+  callbacks' merge, `parseCallLogQuery`.
+- `packages/contracts/test/call-log.test.ts`: the chips' order and words, "No campaign" and
+  "Before the rule", "Due …" and "Late by …". `agent-fixtures.test.ts`: the `my_calls` samples.
+- Console: `pages/AgentAttemptsPage.test.tsx`, `pages/AllCallsPage.test.tsx`,
+  `utils/myCalls.test.ts`, `utils/callLog.test.ts` ("All calls"), `pages/CallsSettingsPage.test.tsx`
+  (the link), the nav and search tests. `components/AgentAttemptsPanel.test.tsx` holds the
+  attempts panel the supervisor's view still uses.
+- App: `test/features/calls/calls_screen_test.dart`, `my_calls_controller_test.dart`,
+  `my_calls_copy_test.dart`; `agency_wire`'s `my_calls_test.dart`.
+
+## 8. Decisions
+
+CL1–CL38, in full in [`decisions.md`](decisions.md). All default, pending Manas.
 
 | ID | In short | Phase |
 |---|---|---|
@@ -899,8 +1093,8 @@ CL1–CL30, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL6 | Do Not Call from a filing-only campaign is written for the whole account | **P3, built** |
 | CL7 | "All calls connect rate" becomes "Outbound connect rate"; inbound is never blended into a rate | **P4, built** |
 | CL8 | A catch-all campaign is an ordinary campaign. An empty campaign does complete itself, so a campaign a live route files unknown callers under may start with nothing to dial and is not completed when its list runs out; drained, it is quiescent in pacing | **P3, built** |
-| CL9 | The agent's My calls tabs merge into one list with chips | P5 |
-| CL10 | No backfill of old calls with no campaign; they show as "No campaign" | **P3, built**; P5 |
+| CL9 | The agent's My calls tabs merge into one list with chips | **P5, built** |
+| CL10 | No backfill of old calls with no campaign; they show as "No campaign" | **P3 and P5, built** |
 | CL11 | The campaign Call log's JSON view is one combined source (amends SR6 and IN14) | **P1, built** |
 | CL12 | An inbound route's own outcome catalog stays for calls with no campaign | **P3, built** |
 | CL13 | A filter means on each type what that type's own column says; one with no meaning on a type leaves that type out. Agent on an inbound call is who answered | **P2, built** |
@@ -923,6 +1117,17 @@ CL1–CL30, in full in [`decisions.md`](decisions.md). All default, pending Mana
 | CL29 | Where Calls by type shows and when each column does; no table for the dialler alone; the report gates on the window's calls; the dataset stays version 1 | **P4, built** |
 | CL30 | One row, one call, one type in figures: a stopped dial stays a dial that reached nobody and the conversation counts once under Inbound; the Dialler column is the Dials figure | **P4, built** |
 
+| CL31 | One read, three scopes (a campaign, the account, an agent). An agent's inbound rows are the calls they answered and their open Missed rows, never anyone else's | **P5, built** |
+| CL32 | My calls masks on the server: a number its campaign hides from agents is never sent, on any type of row; no media on the row; Call back reads the number from the Missed list when pressed | **P5, built** |
+| CL33 | To follow up for an agent: their open Missed rows, then the callbacks due today or late by My day's own rule; its badge is the two added, the Missed badge stays the Missed rows | **P5, built** |
+| CL34 | All calls takes the account's Soft-phone calls' place: `agency.supervise`, behind no call type's flag, opens on today, no export; the old URL redirects with the Soft phone chip | **P5, built** |
+| CL35 | A call filed under none reads "No campaign", or "Before the rule" when it began before the setting was switched on; the filter says "No campaign" | **P5, built** |
+| CL36 | My calls opens on All with To follow up first; filters by campaign and dates only, and never by number; the Missed calls page and its badge stay | **P5, built** |
+| CL37 | One index for the account's dialler attempts (0070), measured first; nothing added for the other branches | **P5, built** |
+| CL38 | The app's My calls is one list of cards; the attempts and soft-phone lists, their filters and detail sheets are removed; the Missed calls list is one tap from To follow up | **P5, built** |
+
 Checked while building P3: the console's agent station never said "Log to" (its label is "Save
 this call to", with "Not in any work": CL22); and a campaign with no contacts does complete
-itself (CL8). To check in P5: whether agents see masked numbers in My calls today.
+itself (CL8). Checked while building P5: agents did not see masked numbers in My calls, except
+on the console's Campaign calls tab, which masked in the browser from a number the server had
+sent in full (§7, CL32).
