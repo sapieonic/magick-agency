@@ -390,4 +390,19 @@ describe('Insights — Refresh and Print', () => {
     // After printing, the other tabs are gone from the page again.
     await waitFor(() => expect(document.querySelector('[data-print-view]')).toBeNull());
   });
+
+  it('shows Calls by type on Overview once the activity is read, and prints the table once', async () => {
+    let tablesPrinted = -1;
+    Object.assign(window, { print: vi.fn(() => { tablesPrinted = screen.getAllByTestId('calls-by-type-table').length; }) });
+    renderPanel();
+    // The range holds soft-phone calls, so a second type shows (SR5): the panel is on Overview.
+    const panel = await screen.findByTestId('insights-calls-by-type');
+    expect(panel.textContent).toContain('Soft phone');
+    expect(panel.textContent).toContain('All calls');
+    fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+    await waitFor(() => expect(window.print).toHaveBeenCalledTimes(1));
+    // The printout is every tab: the Calls tab's table, and not the Overview's copy beside it.
+    expect(tablesPrinted).toBe(1);
+    await waitFor(() => expect(screen.getByTestId('insights-calls-by-type')).toBeTruthy());
+  });
 });

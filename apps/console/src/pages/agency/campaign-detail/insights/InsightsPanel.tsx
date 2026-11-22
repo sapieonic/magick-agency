@@ -374,13 +374,16 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             health={shownHealth}
             unavailable={unavailable}
           />
-          <OverviewCallsByType
-            campaignId={campaignId}
-            rangeLabel={served.label}
-            activity={shownActivity}
-            softphoneEnabled={softphoneEnabled}
-            inboundEnabled={inboundEnabled}
-          />
+          {/* The printout is every tab, and the Calls tab carries the same table: once is enough. */}
+          {printRequested ? null : (
+            <OverviewCallsByType
+              campaignId={campaignId}
+              rangeLabel={served.label}
+              activity={shownActivity}
+              softphoneEnabled={softphoneEnabled}
+              inboundEnabled={inboundEnabled}
+            />
+          )}
           <div className={styles.overviewGrid}>
             <AttentionPanel
               attention={campaignAttention({ summary, allocation, health: shownHealth })}
