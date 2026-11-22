@@ -77,6 +77,15 @@ const ACCOUNT_VALUES: Required<AgencyCampaignTemplateSections> = {
   numbers: { caller_ids: ['+918000000002', '+918000000003'], telephony_provider: 'voicelink', telephony_credential_id: null },
 };
 
+/** Outcomes whose first entry grants an agent override (CA9: needs contact assignment). */
+const OVERRIDE_OUTCOMES = {
+  disposition_catalog: [
+    { code: 'will_pay', label: 'Will pay', is_success: true, override: { extra_attempts: 1 } },
+    { code: 'refused', label: 'Refused' },
+  ],
+  outcome_dispositions: {},
+} as const satisfies AgencyCampaignTemplateSections['outcomes'];
+
 const only = <K extends Key>(values: Required<AgencyCampaignTemplateSections>, ...keys: K[]): AgencyCampaignTemplateSections =>
   Object.fromEntries(keys.map((k) => [k, values[k]])) as AgencyCampaignTemplateSections;
 
@@ -229,11 +238,35 @@ describe('resolveTemplateSections: the account\'s limits (CT5, CT15)', () => {
     expect(resolve(account({}), null, can).notes).toEqual([]);
   });
 
-  it('every limit at once: each note once, flags in section order, then recording', () => {
-    const chosen = account({ ...ACCOUNT_VALUES, recording: { record_calls: true } });
+  it.each([
+    { from: 'account', chosen: account({ outcomes: OVERRIDE_OUTCOMES }), basedOn: null, source: 'account' },
+    { from: 'organisation', chosen: account({}), basedOn: { outcomes: OVERRIDE_OUTCOMES }, source: 'organisation' },
+    { from: 'organisation (chosen)', chosen: organisation({ outcomes: OVERRIDE_OUTCOMES }), basedOn: null, source: 'organisation' },
+  ] as const)('outcome overrides from the $from template are left out without contact assignment, with a note', ({ chosen, basedOn, source }) => {
+    const r = resolve(chosen, basedOn, { ...ALL, assignment: false });
+    expect(r.sources.outcomes).toBe(source);
+    expect(r.config.disposition_catalog).toEqual([
+      { code: 'will_pay', label: 'Will pay', is_success: true },
+      { code: 'refused', label: 'Refused' },
+    ]);
+    expect(r.notes).toEqual([{ code: 'outcome_overrides_off', section: 'outcomes' }]);
+    // With contact assignment the overrides stay, and there is nothing to say.
+    const kept = resolve(chosen, basedOn);
+    expect(kept.config.disposition_catalog).toEqual(OVERRIDE_OUTCOMES.disposition_catalog);
+    expect(kept.notes).toEqual([]);
+    // The template's own sections are not changed.
+    expect(OVERRIDE_OUTCOMES.disposition_catalog[0]).toHaveProperty('override');
+  });
+
+  it('outcomes with no override ask nothing of an account without contact assignment: no note', () => {
+    expect(resolve(account({ outcomes: ACCOUNT_VALUES.outcomes }), null, { ...ALL, assignment: false }).notes).toEqual([]);
+  });
+
+  it('every limit at once: each note once, flags in section order, then overrides, then recording', () => {
+    const chosen = account({ ...ACCOUNT_VALUES, outcomes: OVERRIDE_OUTCOMES, recording: { record_calls: true } });
     const r = resolve(chosen, ORG_VALUES, { record: false, assignment: false, inbound: false });
     expect(r.notes.map((n) => `${n.code}:${n.section}`)).toEqual([
-      'section_flag_off:assignment', 'section_flag_off:inbound', 'recording_not_allowed:recording',
+      'section_flag_off:assignment', 'section_flag_off:inbound', 'outcome_overrides_off:outcomes', 'recording_not_allowed:recording',
     ]);
   });
 });
