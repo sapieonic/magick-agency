@@ -1033,3 +1033,12 @@ formulas, exports through the report pipeline, no Inbound lens yet, outcome metr
 supervisor as sets of outcome codes, direction from the supervisor) are in
 [`compare-agents.md`](compare-agents.md) §1. CP1–CP7, CP17 and CP18 decided by Manas on
 2026-11-21; CP8–CP16 stand as recommended.
+
+## Campaign templates (CT)
+
+Reusable campaign settings at the organisation and at each account (ClickUp "Reusable Default
+Campaign Settings at Tenant or Account Level"). Designed 2026-11-21; Manas answered the design's
+five questions on 2026-11-22: override by section (CT2), API creates get the template (CT8),
+named templates (CT10), the soft phone follows the account's template (CT11), no locked sections
+(CT12). The full table, CT1–CT17, is in [`campaign-templates.md`](campaign-templates.md) §2.
+
