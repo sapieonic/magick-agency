@@ -542,7 +542,7 @@ describe('the campaign report', () => {
 });
 
 describe('the inbound figures\' own statement', () => {
-  it('reads the window on idx_agency_inbound_calls_campaign (0068), and scans the table for neither half', async () => {
+  it('reads the window on idx_agency_inbound_calls_campaign (0070), and scans the table for neither half', async () => {
     // Many campaigns' inbound calls beside the sibling's, so the planner has a reason to choose.
     await q(
       `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider, provider_call_id, from_e164, to_e164, campaign_id, campaign_source,

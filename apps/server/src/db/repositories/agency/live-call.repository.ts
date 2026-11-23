@@ -69,7 +69,7 @@ export const LIVE_CALLS_SQL = `
        AND m.state <> 'ended' AND m.state = 'bridged' AND m.webrtc_call_id IS NOT NULL
        AND ($3::uuid IS NULL OR m.campaign_id = $3::uuid)
     UNION ALL
-    -- The campaign an inbound call is FILED under (0067: its contact's, else its route's campaign
+    -- The campaign an inbound call is FILED under (0069: its contact's, else its route's campaign
     -- for unknown callers, CL4), else the matched one for a row an older server wrote unfiled.
     SELECT 'inbound'::varchar, i.id, i.webrtc_call_id, COALESCE(i.campaign_id, i.matched_campaign_id), i.session_id, i.matched_contact_id,
            i.bridged_at, i.route_id

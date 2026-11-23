@@ -2576,10 +2576,10 @@ dialler's count is a range of `idx_agency_attempts_keyset` (the attempt list's e
 
 P2 of six is built; P3 to P6 were not when this was written, and have all been built since (below).
 
-- **Inbound calls carry a campaign.** `0067_call_log_inbound_campaign.sql` adds
+- **Inbound calls carry a campaign.** `0069_call_log_inbound_campaign.sql` adds
   `agency_inbound_calls.campaign_id` and `campaign_source` (the arrival files a matched call under
   its contact's campaign; existing matched calls backfilled, unmatched ones left unfiled, CL10)
-  and `agency_manual_calls.callback_of_inbound_call_id`; `0068_call_log_inbound_indexes.sql` adds
+  and `agency_manual_calls.callback_of_inbound_call_id`; `0070_call_log_inbound_indexes.sql` adds
   their two indexes.
 - **The Call log lists them.** A third branch on the same keyset, an inbound call placed by when
   it arrived: ended, served calls filed under the campaign. Chips "All · Dialler · Soft phone ·
@@ -2598,15 +2598,15 @@ P2 of six is built; P3 to P6 were not when this was written, and have all been b
 - **The export** gains `inbound` rows and three columns at the end (`wait_seconds`,
   `missed_reason`, `callback_of`).
 
-- **Review fixes (same day, an independent review of the two commits):** 0067 can follow a
+- **Review fixes (same day, an independent review of the two commits):** 0069 can follow a
   pre-deploy backfill on a large table (`ADD COLUMN IF NOT EXISTS`, the types checked, the CHECK
-  validated in 0068), with the steps and the repair after a rollback in `DEPLOYMENT.md`; a
+  validated in 0070), with the steps and the repair after a rollback in `DEPLOYMENT.md`; a
   malformed call-back link is dropped at the edge instead of refused; under To follow up the agent
   filter is the assignee, the date fields are switched off and the export's dates tip is hidden;
   every time on the Call log and the inbound Call page reads with AM / PM in capitals.
 
 **Not verified:** not run in a real browser, on a phone or against a carrier. The inbound branch
-is planned on 0068's index on the test database; nothing was timed on a large table. Until P3
+is planned on 0070's index on the test database; nothing was timed on a large table. Until P3
 files unknown callers, a missed call from a number on no roster is in no campaign's log (it is on
 Inbound › Missed calls).
 
@@ -2615,7 +2615,7 @@ Inbound › Missed calls).
 P3 of six is built; P4 to P6 are not (P4 since: below).
 
 - **The setting.** An account admin can switch on **Every call must belong to a campaign**
-  (Settings › Calls, `agency.calls.manage`; `0069_call_settings.sql`, its own table). Off by
+  (Settings › Calls, `agency.calls.manage`; `0071_call_settings.sql`, its own table). Off by
   default. The server enforces it: a soft-phone dial with no campaign is refused
   (`campaign_required`, agents and supervisors alike), an inbound call's outcome is refused until
   the call is filed under one, an inbound route cannot be saved without a campaign for unknown
@@ -2698,7 +2698,7 @@ P5 of six is built; P6 (inbound calls in customer history) is not (P6 since: bel
   none that is older than the account's switch-on of the rule reads "Before the rule" (CL35).
   `/agency/softphone` redirects there with the Soft phone chip on. Settings › Calls links its
   count of unfiled calls to them.
-- **One index.** `0070_attempts_account_created_index.sql`: an account's dialler attempts by
+- **One index.** `0072_attempts_account_created_index.sql`: an account's dialler attempts by
   when they were created, measured before it was added (CL37). On a table of more than about a
   million attempts, build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
 - **Old URLs.** `?view=softphone` on My calls opens the Soft phone chip; `/dialer/missed` and
@@ -2745,7 +2745,7 @@ left out, is [`call-log.md`](call-log.md) §9.
   audit, whose count now includes the inbound entries. Notes go to `agency.campaigns.read` or
   the agent who answered; the Call page to `agency.supervise`, and only for a call filed under
   a campaign; no recording or voicemail link is sent to anyone.
-- **One index.** `0071_inbound_calls_from_index.sql`: an account's inbound calls by caller,
+- **One index.** `0073_inbound_calls_from_index.sql`: an account's inbound calls by caller,
   measured before it was added (CL41). On a table of more than about a million inbound calls,
   build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
 - **Still open for Manas:** CL30's question (a dial stopped because the customer rang us is two

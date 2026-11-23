@@ -85,7 +85,7 @@ const EXPECTED_TABLES = [
   'agency_supervisor_messages',
   // Compare agents' saved views (0064, docs/compare-agents.md)
   'agency_compare_views',
-  // the account's call settings (0069, docs/call-log.md §5)
+  // the account's call settings (0071, docs/call-log.md §5)
   'agency_call_settings',
 ].sort();
 

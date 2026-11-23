@@ -227,7 +227,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_dialer_analysis_jobs_call` | `dialer_analysis_jobs` |
 | `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
 | `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
-| `uq_agency_call_settings_account` (0069) | `agency_call_settings` |
+| `uq_agency_call_settings_account` (0071) | `agency_call_settings` |
 | `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
 | `uq_agency_agent_caller_id_agent` (0018) | `agency_campaign_agent_caller_ids` |
 | `uq_agency_agent_caller_id_number` (0018) | `agency_campaign_agent_caller_ids` |
@@ -259,7 +259,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_dialer_analysis_jobs_updated_at` | BEFORE UPDATE | `dialer_analysis_jobs` | `update_updated_at()` |
 | `trg_agency_manual_calls_updated_at` (0005) | BEFORE UPDATE | `agency_manual_calls` | `update_updated_at()` |
 | `trg_agency_softphone_settings_updated_at` (0005) | BEFORE UPDATE | `agency_softphone_settings` | `update_updated_at()` |
-| `trg_agency_call_settings_updated_at` (0069) | BEFORE UPDATE | `agency_call_settings` | `update_updated_at()` |
+| `trg_agency_call_settings_updated_at` (0071) | BEFORE UPDATE | `agency_call_settings` | `update_updated_at()` |
 | `trg_agency_attempts_dial_placed_insert` (0011) | AFTER INSERT, WHEN `NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 | `trg_agency_attempts_dial_placed_update` (0011) | AFTER UPDATE OF `dialed_at`, WHEN `OLD.dialed_at IS NULL AND NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 | `trg_agency_attempts_insights_insert` (0012) | AFTER INSERT, FOR EACH STATEMENT, `NEW TABLE AS new_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
@@ -1877,7 +1877,7 @@ table; an invalid index left under the name by a failed concurrent build fails t
 down then up), the server's `test/integration/agency/compare-break-overrun-index.test.ts` (the read's
 own statement is planned on it) and the down → up inventory suite.
 
-### 0067 — `migrations/0067_call_log_inbound_campaign.sql`
+### 0069 — `migrations/0069_call_log_inbound_campaign.sql`
 
 One call log per campaign, P2 (docs/call-log.md §4).
 **`agency_inbound_calls.campaign_id`** (UUID, nullable, no FK) is the campaign the call is filed
@@ -1885,7 +1885,7 @@ under, the column the campaign Call log reads; **`campaign_source`** (VARCHAR(16
 it came by it: `contact` (its number is on the campaign's list), `route`, `agent`, `supervisor`
 (contract `AGENCY_INBOUND_CAMPAIGN_SOURCES`; the last three are written by a later phase).
 **`ck_agency_inbound_calls_campaign_source`**: both NULL, or both set with a source of the list;
-added `NOT VALID` here and validated by 0068 (0057 / 0058's split).
+added `NOT VALID` here and validated by 0070 (0057 / 0058's split).
 **Backfill**: every call with a `matched_campaign_id` is filed under it (`contact`), `updated_at`
 kept (the trigger is disabled around it); an unmatched call stays NULL (CL10). The arrival writes
 both from now on (`insertArrival`). **A large table** adds the columns and backfills in batches
@@ -1899,11 +1899,11 @@ call a soft-phone call was placed from (its Call back, CL1). `SET LOCAL lock_tim
 **Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (the columns, the CHECK from
 every side, the backfill with `updated_at` kept, the documented pre-deploy path: columns added
 and a batch run first, then the migration; the wrong-type refusal; the CHECK `NOT VALID` after
-0067 and validated after 0068; down then up) and the down → up inventory suite.
+0069 and validated after 0070; down then up) and the down → up inventory suite.
 
-### 0068 — `migrations/0068_call_log_inbound_indexes.sql`
+### 0070 — `migrations/0070_call_log_inbound_indexes.sql`
 
-0067's indexes and the validation of its CHECK (`VALIDATE CONSTRAINT
+0069's indexes and the validation of its CHECK (`VALIDATE CONSTRAINT
 ck_agency_inbound_calls_campaign_source`), out of its ACCESS EXCLUSIVE.
 **`idx_agency_inbound_calls_campaign`** `(campaign_id, arrived_at DESC, id DESC) WHERE campaign_id IS
 NOT NULL` on `agency_inbound_calls`: the campaign Call log's inbound branch
@@ -1912,15 +1912,15 @@ NOT NULL` on `agency_inbound_calls`: the campaign Call log's inbound branch
 callback_of_inbound_call_id IS NOT NULL` on `agency_manual_calls`: the call backs of a page's missed
 calls. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`; an invalid index left
 under either name by a failed concurrent build fails the migration. On a large table the inbound
-index can be built `CONCURRENTLY` before the deploy once 0067's two columns are added by hand and its
-backfill batches run (`DEPLOYMENT.md` 12); the call-backs one cannot (its column is 0067's own) and
+index can be built `CONCURRENTLY` before the deploy once 0069's two columns are added by hand and its
+backfill batches run (`DEPLOYMENT.md` 12); the call-backs one cannot (its column is 0069's own) and
 needs none, being empty on that release. **Down** drops both.
 **Tests**: `test/integration/db/call-log-inbound-migration.test.ts` (both definitions and comments,
 the invalid-index refusal, down then up), the server's
 `test/integration/api/agency-call-log-inbound.test.ts` (the inbound branch is planned on the
 index) and the down → up inventory suite.
 
-### 0069 — `migrations/0069_call_settings.sql`
+### 0071 — `migrations/0071_call_settings.sql`
 
 One call log per campaign, P3 (docs/call-log.md §5).
 **`agency_call_settings`**: the account's call settings, one optional row per (tenant, account)
@@ -1947,7 +1947,7 @@ CHECK both ways, the trigger, the route column, the index's definition and a sta
 lock timeout, down then up), `inbound-migration.test.ts` (the route's column inventory) and the down → up
 inventory suite.
 
-### 0070 — `migrations/0070_attempts_account_created_index.sql`
+### 0072 — `migrations/0072_attempts_account_created_index.sql`
 
 One call log per campaign, P5 (docs/call-log.md §7).
 **`idx_agency_attempts_account_created`** `(tenant_id, account_id, created_at DESC, id DESC)` on
@@ -1963,7 +1963,7 @@ row of the list. The other two types already had theirs (`idx_agency_manual_call
 `test/integration/db/attempts-account-index-migration.test.ts` (the definition, an account's keyset page
 planned on it with no sort, the invalid-index refusal, down then up).
 
-### 0071 — `migrations/0071_inbound_calls_from_index.sql`
+### 0073 — `migrations/0073_inbound_calls_from_index.sql`
 
 One call log per campaign, P6: inbound calls in customer history (docs/call-log.md §8,
 docs/customer-history.md).

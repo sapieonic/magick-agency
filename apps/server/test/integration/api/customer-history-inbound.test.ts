@@ -23,7 +23,7 @@ import type { PoolClient } from 'pg';
  *    a callback booked on an inbound call; the audit's count; the export's rows;
  *  - the dialer flag as the data boundary (CH2) and inbound's own flag hiding nothing;
  *  - the summary's open callback names who booked it when it was booked on an inbound call;
- *  - every inbound statement planned on `idx_agency_inbound_calls_from` (0071).
+ *  - every inbound statement planned on `idx_agency_inbound_calls_from` (0073).
  */
 
 const mocks = vi.hoisted(() => {

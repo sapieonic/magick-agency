@@ -65,7 +65,7 @@ export const AGENCY_INBOUND_MISSED_REASONS = [
 export type AgencyInboundMissedReason = (typeof AGENCY_INBOUND_MISSED_REASONS)[number];
 
 /**
- * How an inbound call came by the campaign it is filed under (`campaign_source`, 0067;
+ * How an inbound call came by the campaign it is filed under (`campaign_source`, 0069;
  * `docs/call-log.md`): `contact`, its number is on the campaign's list (the match at arrival);
  * `route`, the caller is on no list and the route files unknown callers under this campaign (its
  * `default_campaign_id`, at arrival); `agent`, the agent who took the call chose it at wrap-up;

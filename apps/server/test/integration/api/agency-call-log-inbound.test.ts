@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
  * matched call under its campaign.
  *
  * The seed is one campaign with a few calls of each type, placed so every rule has a row on each
- * side of it (below). The plan test at the end is the branch's own statement on 0068's index.
+ * side of it (below). The plan test at the end is the branch's own statement on 0070's index.
  */
 
 const mocks = vi.hoisted(() => {
@@ -478,7 +478,7 @@ describe('the arrival files a matched call under its campaign', () => {
   });
 });
 
-describe('the inbound branch\'s own statement and 0068', () => {
+describe('the inbound branch\'s own statement and 0070', () => {
   it('plans on idx_agency_inbound_calls_campaign', async () => {
     // Many campaigns' inbound calls beside this one's, so the planner has a reason to choose.
     await q(

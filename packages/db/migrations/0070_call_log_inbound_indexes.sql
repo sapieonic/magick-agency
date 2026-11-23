@@ -1,8 +1,8 @@
--- 0068_call_log_inbound_indexes.sql — the campaign Call log's inbound indexes (docs/call-log.md
--- §4) and the validation of 0067's CHECK, out of 0067's ACCESS EXCLUSIVE (0057 / 0058's split).
+-- 0070_call_log_inbound_indexes.sql — the campaign Call log's inbound indexes (docs/call-log.md
+-- §4) and the validation of 0069's CHECK, out of 0069's ACCESS EXCLUSIVE (0057 / 0058's split).
 --
 -- ── ck_agency_inbound_calls_campaign_source ───────────────────────────────────
--- VALIDATE CONSTRAINT: every row written since 0067 was already checked, 0067's backfill wrote
+-- VALIDATE CONSTRAINT: every row written since 0069 was already checked, 0069's backfill wrote
 -- `contact` beside each campaign, and every other row has both columns NULL, so validation
 -- cannot fail. It reads the table once under SHARE UPDATE EXCLUSIVE (writes proceed). Afterwards
 -- pg_constraint.convalidated is true.
@@ -22,18 +22,18 @@
 -- ── Locking and cost ──────────────────────────────────────────────────────────
 -- Its own transaction (the image's runner commits each file on its own, apps/server/src/
 -- migrate.ts). Plain CREATE INDEX, not CONCURRENTLY (refused inside a transaction): each holds
--- SHARE on its table until commit. On the release that adds 0067 the manual calls' column is all
+-- SHARE on its table until commit. On the release that adds 0069 the manual calls' column is all
 -- NULL, so that build is one read of agency_manual_calls writing an empty index; the inbound one
--- holds the calls 0067 filed. The manual calls' one cannot be built beforehand on a database
--- without 0067 (its column does not exist). The inbound one can, on the large-table path, once
--- 0067's two columns have been added by hand and its backfill batches run (0067's header,
+-- holds the calls 0069 filed. The manual calls' one cannot be built beforehand on a database
+-- without 0069 (its column does not exist). The inbound one can, on the large-table path, once
+-- 0069's two columns have been added by hand and its backfill batches run (0069's header,
 -- DEPLOYMENT.md 12): build it CONCURRENTLY then (db-hygiene.md §2) and `IF NOT EXISTS` finds it;
 -- the check at the end of Up refuses an invalid index a failed concurrent build leaves under the
 -- name. `SET LOCAL lock_timeout = '10s'` first.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Drops both indexes; the reads fall back to other plans (correct, slower). A validated CHECK
--- cannot be marked NOT VALID again, and need not be: 0067's Down drops it.
+-- cannot be marked NOT VALID again, and need not be: 0069's Down drops it.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).

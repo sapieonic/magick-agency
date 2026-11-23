@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
  *  - My calls: only the caller's own rows (their dials, their soft-phone calls, the inbound
  *    calls they answered, their open Missed rows), no media, **and no number the row's campaign
  *    hides from agents**, on any type; To follow up and the callbacks due.
- *  - The dialler branch at the account's scope planned on 0070's index.
+ *  - The dialler branch at the account's scope planned on 0072's index.
  */
 
 const mocks = vi.hoisted(() => {
@@ -443,7 +443,7 @@ describe('My calls: the agent\'s own calls', () => {
   });
 });
 
-describe('the dialler branch at the account\'s scope and 0070', () => {
+describe('the dialler branch at the account\'s scope and 0072', () => {
   it('plans on idx_agency_attempts_account_created, with no sort of the account', async () => {
     await q(`SET session_replication_role = replica`);
     // Another account's attempts beside this one's, so the planner has a reason to choose.

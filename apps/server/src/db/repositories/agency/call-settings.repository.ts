@@ -1,6 +1,6 @@
 /**
  * `AgencyCallSettingsRepository`: `agency_call_settings`, one optional row per (tenant, account)
- * (0069, docs/call-log.md §5): the account's setting "Every call must belong to a campaign". No
+ * (0071, docs/call-log.md §5): the account's setting "Every call must belong to a campaign". No
  * row reads as the defaults (off).
  *
  * ── What it guarantees ─────────────────────────────────────────────────────────

@@ -150,7 +150,7 @@ function campaignInboundScopeTerms(campaignId: string, tenantId: string, bind: R
 /**
  * The WHERE terms of the call log's inbound rows, shared by the page, the counts and the Call
  * page's read so all three mean one thing by "an inbound call": `scopeTerms` first (whose calls:
- * a campaign's, filed under it in the tenant by `campaign_id`, 0067; or the account's), then
+ * a campaign's, filed under it in the tenant by `campaign_id`, 0069; or the account's), then
  * ENDED and served (never `rejected`), then the filters (`inboundLogFilterConditions`).
  * `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`, the Missed list's rule), drops
  * the dates (a caller still owed a call is owed it whatever day they rang), and reads the agent
@@ -218,7 +218,7 @@ function accountAgentFirstSessionSql(tenantParam: string, accountParam: string, 
 /**
  * The dialler branch's WHERE terms under a scope, or null when the scope holds no dialler call
  * (the calls filed under no campaign). At the account's and the agent's scope the attempt's own
- * `tenant_id` / `account_id` lead (`idx_agency_attempts_account_created`, 0070), and the agent
+ * `tenant_id` / `account_id` lead (`idx_agency_attempts_account_created`, 0072), and the agent
  * is a set of session ids, never a join condition.
  */
 function scopedAttemptConditions(
@@ -1067,7 +1067,7 @@ export class AgencyAttemptRepository {
    * type and what an inbound row is are the same on all three.
    *
    * At the account's scope each branch is still its own index range: the attempts on
-   * `idx_agency_attempts_account_created` (0070), the soft-phone calls on
+   * `idx_agency_attempts_account_created` (0072), the soft-phone calls on
    * `idx_agency_manual_calls_account`, the inbound calls on
    * `idx_agency_inbound_calls_account_arrived`. At an agent's, the soft-phone calls on
    * `idx_agency_manual_calls_agent`, the open Missed rows on

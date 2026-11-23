@@ -106,11 +106,11 @@ const ALL_MIGRATIONS = [
   '0064_compare_views',
   '0065_session_events_offline_index',
   '0066_session_events_break_overrun_index',
-  '0067_call_log_inbound_campaign',
-  '0068_call_log_inbound_indexes',
-  '0069_call_settings',
-  '0070_attempts_account_created_index',
-  '0071_inbound_calls_from_index',
+  '0069_call_log_inbound_campaign',
+  '0070_call_log_inbound_indexes',
+  '0071_call_settings',
+  '0072_attempts_account_created_index',
+  '0073_inbound_calls_from_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

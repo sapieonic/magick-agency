@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0070_attempts_account_created_index.sql (docs/call-log.md §7): an
+// Real Postgres: migrations/0072_attempts_account_created_index.sql (docs/call-log.md §7): an
 // account's dialler attempts, newest first, which the account's All calls and the agent's My
 // calls read. globalSetup has applied every migration. Pins the index by its definition, that
 // an account's keyset page is planned on it, the invalid-index refusal, and down then up. That
@@ -18,7 +18,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const FILE = '0070_attempts_account_created_index.sql';
+const FILE = '0072_attempts_account_created_index.sql';
 const NAME = 'idx_agency_attempts_account_created';
 const DEFINITION =
   'CREATE INDEX idx_agency_attempts_account_created ON public.agency_call_attempts USING btree '
@@ -30,7 +30,7 @@ async function indexDef(): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-describe('0070 — an account\'s dialler attempts, newest first', () => {
+describe('0072 — an account\'s dialler attempts, newest first', () => {
   it('defines the index exactly', async () => {
     expect(await indexDef()).toBe(DEFINITION);
   });

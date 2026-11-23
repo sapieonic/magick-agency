@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0067_call_log_inbound_campaign.sql and 0068_call_log_inbound_indexes.sql
+// Real Postgres: migrations/0069_call_log_inbound_campaign.sql and 0070_call_log_inbound_indexes.sql
 // (docs/call-log.md §4). globalSetup has applied every migration. Pins the campaign an inbound call
 // is filed under (the two columns, the CHECK from every side, the vocabulary against the contract),
 // the soft-phone call's link to the missed call it rang back, the backfill from the match with
@@ -29,8 +29,8 @@ afterAll(async () => {
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const COLUMNS_FILE = '0067_call_log_inbound_campaign.sql';
-const INDEX_FILE = '0068_call_log_inbound_indexes.sql';
+const COLUMNS_FILE = '0069_call_log_inbound_campaign.sql';
+const INDEX_FILE = '0070_call_log_inbound_indexes.sql';
 const CHECK = 'ck_agency_inbound_calls_campaign_source';
 const refused = { code: '23514', constraint: CHECK };
 
@@ -67,7 +67,7 @@ const migrationsFrom = (file: string) => {
   return files.length - files.indexOf(file);
 };
 
-describe('0067 — the campaign an inbound call is filed under, and the call back\'s link', () => {
+describe('0069 — the campaign an inbound call is filed under, and the call back\'s link', () => {
   it('the columns: nullable, no default', async () => {
     expect(await column('agency_inbound_calls', 'campaign_id')).toEqual({ data_type: 'uuid', is_nullable: 'YES', column_default: null });
     expect(await column('agency_inbound_calls', 'campaign_source')).toEqual({ data_type: 'character varying', is_nullable: 'YES', column_default: null });
@@ -109,7 +109,7 @@ describe('0067 — the campaign an inbound call is filed under, and the call bac
   });
 });
 
-describe('0067 on a large table: the columns added and the backfill run before the deploy (its header, DEPLOYMENT.md)', () => {
+describe('0069 on a large table: the columns added and the backfill run before the deploy (its header, DEPLOYMENT.md)', () => {
   const validated = async () =>
     (await pool().query<{ convalidated: boolean }>('SELECT convalidated FROM pg_constraint WHERE conname = $1', [CHECK])).rows[0]?.convalidated;
 
@@ -177,8 +177,8 @@ describe('0067 on a large table: the columns added and the backfill run before t
     expect(await column('agency_inbound_calls', 'campaign_source')).toEqual({ data_type: 'character varying', is_nullable: 'YES', column_default: null });
   });
 
-  it('the CHECK is added NOT VALID by 0067 and validated by 0068', async () => {
-    // Down past 0067, then 0067 alone: a validated CHECK is never un-validated by 0068's Down.
+  it('the CHECK is added NOT VALID by 0069 and validated by 0070', async () => {
+    // Down past 0069, then 0069 alone: a validated CHECK is never un-validated by 0070's Down.
     await migrate('down', migrationsFrom(COLUMNS_FILE));
     try {
       await migrate('up', 1);
@@ -193,7 +193,7 @@ describe('0067 on a large table: the columns added and the backfill run before t
   });
 });
 
-describe('0068 — the Call log\'s inbound indexes', () => {
+describe('0070 — the Call log\'s inbound indexes', () => {
   it('defines both exactly, with their comments', async () => {
     for (const [name, definition] of Object.entries(INDEXES)) {
       expect(await indexDef(name)).toBe(definition);

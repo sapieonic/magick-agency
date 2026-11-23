@@ -1,4 +1,4 @@
--- 0070_attempts_account_created_index.sql — the account's All calls and the agent's My calls
+-- 0072_attempts_account_created_index.sql — the account's All calls and the agent's My calls
 -- (docs/call-log.md §7): an account's dialler attempts, newest first.
 --
 -- idx_agency_attempts_account_created on agency_call_attempts

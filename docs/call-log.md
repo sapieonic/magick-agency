@@ -218,7 +218,7 @@ An inbound call filed under a campaign is a row of that campaign's Call log, wit
 attempts and the soft-phone calls, and the campaign's missed calls that are still open are its
 **To follow up** view.
 
-### The schema (`0067_call_log_inbound_campaign.sql`, `0068_call_log_inbound_indexes.sql`)
+### The schema (`0069_call_log_inbound_campaign.sql`, `0070_call_log_inbound_indexes.sql`)
 
 - **`agency_inbound_calls.campaign_id`** (nullable, no FK) is the campaign a call is **filed
   under**, and the column the Call log reads. **`campaign_source`** says how the call came by it:
@@ -229,26 +229,26 @@ attempts and the soft-phone calls, and the campaign's missed calls that are stil
   route's default, the agent's choice), and a filed campaign is not a match: the sticky agent, the
   contact's callback and the outcome catalog keep reading `matched_campaign_id`.
 - **Backfill:** every existing call with a matched campaign is filed under it (`contact`),
-  `updated_at` untouched; an unmatched call stays unfiled (CL10). It runs inside 0067, as 0027's
+  `updated_at` untouched; an unmatched call stays unfiled (CL10). It runs inside 0069, as 0027's
   and 0032's backfills of this table did: one row per inbound call, and only the matched rows are
-  written. `db-hygiene.md` §6 asks for a batched script on a large table, so 0067 is written to
+  written. `db-hygiene.md` §6 asks for a batched script on a large table, so 0069 is written to
   find that work done: a deployment whose table has grown past about a million rows adds the two
   columns and files the matched calls in batches **before** the deploy, the trigger disabled in
-  each batch so `updated_at` is kept (the steps are in 0067's header and `DEPLOYMENT.md` 12, and
-  the migration test runs them). 0067 then adds nothing that exists (`ADD COLUMN IF NOT EXISTS`,
+  each batch so `updated_at` is kept (the steps are in 0069's header and `DEPLOYMENT.md` 12, and
+  the migration test runs them). 0069 then adds nothing that exists (`ADD COLUMN IF NOT EXISTS`,
   the types checked) and files only what arrived since. Its CHECK is added `NOT VALID` and
-  validated by 0068.
+  validated by 0070.
 - **After a rollback:** an older image does not file the calls that arrive while it runs. The
   same batch, run after rolling forward, files them (`DEPLOYMENT.md` 12).
 - **`agency_manual_calls.callback_of_inbound_call_id`** (nullable, no FK): the Missed inbound call
   a soft-phone call was placed from (CL1, below).
-- **Indexes**, in their own file out of 0067's lock: `idx_agency_inbound_calls_campaign`
+- **Indexes**, in their own file out of 0069's lock: `idx_agency_inbound_calls_campaign`
   `(campaign_id, arrived_at DESC, id DESC) WHERE campaign_id IS NOT NULL` (the inbound branch's
   keyset range) and `idx_agency_manual_calls_callback_of` (a page's call backs). Both are
   `CREATE INDEX IF NOT EXISTS` and refuse an invalid index left by a failed concurrent build.
   On the release that adds them the call-backs index is empty and cannot be built beforehand
-  (its column is 0067's own); the inbound one holds the calls 0067 filed, and on a large table
-  it can be built `CONCURRENTLY` before the deploy once 0067's two columns are added by hand and
+  (its column is 0069's own); the inbound one holds the calls 0069 filed, and on a large table
+  it can be built `CONCURRENTLY` before the deploy once 0069's two columns are added by hand and
   its batches run (`DEPLOYMENT.md` 12 has the order).
 
 ### The read
@@ -258,7 +258,7 @@ list is when it **arrived** (`arrived_at`, served as the row's `created_at`), so
 interleave by when each call began. An inbound call is a row only once it has **ended**, so a
 long call appears, when it ends, at the time it arrived: above rows already on screen or already
 paged past. Refresh picks it up; nothing is dropped or repeated within one read. Each branch is still its own index range with its own
-`LIMIT n + 1`; the plan of the inbound branch's own statement is pinned on 0068's index.
+`LIMIT n + 1`; the plan of the inbound branch's own statement is pinned on 0070's index.
 
 - **What is a row:** an **ended** call, filed under the campaign, in the tenant, that we served.
   A live call is on Live calls and has no outcome to list. A `rejected` call (we turned it away
@@ -417,13 +417,13 @@ why from `call_availability` and shows the record alone.
 - `packages/db/test/integration/db/call-log-inbound-migration.test.ts`: the columns, the CHECK
   from every side, the backfill with `updated_at` kept, the pre-deploy path for a large table
   (columns added and a batch run, then the migration), the wrong-type refusal, the CHECK's
-  validation in 0068, both indexes, the invalid-index refusal, down then up.
+  validation in 0070, both indexes, the invalid-index refusal, down then up.
 - `apps/server/test/integration/api/agency-call-log-inbound.test.ts` (real Postgres, the real
   app): the three types on one keyset across page boundaries and a tie between an inbound call
   and a soft-phone call; what is and is not a row; an inbound row's facts; the pair; the counts;
   To follow up and the dates, and that it follows Mark handled and Reopen; every filter on an
   inbound call; the export's rows and columns; the Call page's read, its 404s and its floor; that
-  the arrival files a matched call; `isMissedCallFrom`; the inbound branch planned on 0068's index.
+  the arrival files a matched call; `isMissedCallFrom`; the inbound branch planned on 0070's index.
 - `apps/server/test/integration/api/softphone-routes.test.ts` ("CL1"): a call back placed over
   HTTP keeps the link, and every link that does not hold is dropped with the call still placed.
 - `apps/server/test/unit/agency/proxy-agency-call-log.routes.test.ts`,
@@ -442,7 +442,7 @@ An account can ask that every call it makes or takes is filed under a campaign. 
 off by default. Switching it on changes nothing that already happened: no old call is given a
 campaign (CL10), and a call in progress finishes as it is (CL19).
 
-### The schema (`0069_call_settings.sql`)
+### The schema (`0071_call_settings.sql`)
 
 - **`agency_call_settings`**: one optional row per (tenant, account); no row is the setting off.
   `require_campaign` is the switch (the wire's name too), `require_campaign_since` when it was
@@ -779,7 +779,7 @@ talk time of the types that are known, never a made-up 0.
 - **Read live, no migration** (CL25). The Insights rollup is a pure function of
   `agency_call_attempts` and holds the dialler's figures alone, so the inbound counts are read
   from `agency_inbound_calls` when asked, as the soft phone's are from `agency_manual_calls`.
-  The window's counts are a range of `idx_agency_inbound_calls_campaign` (0068).
+  The window's counts are a range of `idx_agency_inbound_calls_campaign` (0070).
   `open_follow_ups`, asked on every read whatever the range, is read from the account's open
   Missed rows (`idx_agency_inbound_calls_missed`, by naming the campaign's own account), not
   from every call the campaign ever had; a call is always filed under a campaign of its own
@@ -930,7 +930,7 @@ shared; only the term that says whose calls differs.
 - **Somebody who never dialled** costs nothing: an agent's attempts are bounded below by their
   first session in the account, so with no session the range is empty.
 
-### The index (`0070_attempts_account_created_index.sql`, CL37)
+### The index (`0072_attempts_account_created_index.sql`, CL37)
 
 `idx_agency_attempts_account_created (tenant_id, account_id, created_at DESC, id DESC)` on
 `agency_call_attempts`: the dialler branch's keyset range within an account, as
@@ -1130,7 +1130,7 @@ as My day does: neither touches per-session runtime state. The third is the Miss
   no media key on any row; the names; To follow up and the callbacks due, and the callbacks under
   a Campaign filter; an inbound call filed under no campaign masked by its matched campaign; one
   Missed row by its id (the caller's own, an unassigned one, never a colleague's); Mark handled;
-  a supervisor's own; the refusals. The dialler branch at the account's scope planned on 0070.
+  a supervisor's own; the refusals. The dialler branch at the account's scope planned on 0072.
 - `apps/server/test/unit/agency/call-lists.test.ts`: `agentPhone` (masked, full, fail closed on
   a campaign not returned and on a setting it does not know, any masked campaign of two, no
   campaign, withheld), `toMyCallRow` for each type and what it never carries, the matched
@@ -1269,7 +1269,7 @@ entries with the rest.
 | The recording, the voicemail | Nobody, through the history. The entry carries no media leg, no link and no key: only that a recording exists (`recording`) and how long the voicemail is |
 | The customer's number | Not masked, as on the rest of the history (AS9). The reader typed the whole number to find the row (CH4), so the row tells them nothing they did not have |
 
-### The index (`0071_inbound_calls_from_index.sql`, CL41)
+### The index (`0073_inbound_calls_from_index.sql`, CL41)
 
 `idx_agency_inbound_calls_from (tenant_id, account_id, from_e164, arrived_at DESC, id DESC)
 WHERE from_e164 IS NOT NULL` on `agency_inbound_calls`: an account's inbound calls from one
@@ -1312,7 +1312,7 @@ the index.
   across three kinds and between two inbound calls; every filter; the totals; a callback booked
   on an inbound call, and the summary's open callback naming who booked it there; a live call in
   another account, gone with that account's dialler off; the audit's count; the export; inbound's
-  flag and the dialler's; every inbound statement planned on 0071's index.
+  flag and the dialler's; every inbound statement planned on 0073's index.
 - `apps/server/test/unit/agency/customer-history/assemble.test.ts` (the entry, CH8 on it, the
   merge with a sixth source, the CSV line) and `search-number-agreement.test.ts` (the form the
   search looks for is the form an arrival stores for a caller sent in full; today's arrival pinned
@@ -1344,8 +1344,8 @@ the index.
 All six phases, on 2026-11-22: the campaign Call log as one list of dialler, soft-phone and
 inbound calls with To follow up (§3, §4); the setting "Every call must belong to a campaign"
 (§5); calls by type in Insights and the campaign report (§6); the agent's My calls and the
-account's All calls (§7); inbound calls in customer history (§8). Five migrations: 0067 to
-0071.
+account's All calls (§7); inbound calls in customer history (§8). Five migrations: 0069 to
+0073.
 
 Not verified anywhere: nothing here has been used in a real browser or on a phone, and no real
 carrier call has gone through it. The tests are the evidence.
@@ -1360,10 +1360,10 @@ the Dialler column stops equalling the dialler's Dials figure, or what counts as
 for the dialler's own connect rate. He has to choose.
 
 **One open item on the schema (CL41): 0033's index.** `idx_agency_inbound_calls_answered_from`
-(a caller's answered calls, for the sticky agent) is now a subset of 0071's
+(a caller's answered calls, for the sticky agent) is now a subset of 0073's
 `idx_agency_inbound_calls_from`. It is kept. On seeded, analysed calls, answered and missed, the
 planner still takes 0033's for the sticky read (smaller, no filter); with every call answered it
-takes 0071's. So it is not known to be dead, and it costs a write on every answered call. To
+takes 0073's. So it is not known to be dead, and it costs a write on every answered call. To
 decide: measure on real data which of the two the sticky read uses and what it costs without
 0033's, then drop it in a change of its own, or keep it. Nothing in P6 depends on the answer.
 
@@ -1409,11 +1409,11 @@ otherwise. In full in [`decisions.md`](decisions.md):
 | CL34 | All calls takes the account's Soft-phone calls' place: `agency.supervise`, behind no call type's flag, opens on today, no export; the old URL redirects with the Soft phone chip | **P5, built** |
 | CL35 | A call filed under none reads "No campaign", or "Before the rule" when it began before the setting was switched on; the filter says "No campaign" | **P5, built** |
 | CL36 | My calls opens on All with To follow up first; filters by campaign and dates only, and never by number; the Missed calls page and its badge stay | **P5, built** |
-| CL37 | One index for the account's dialler attempts (0070), measured first; nothing added for the other branches | **P5, built** |
+| CL37 | One index for the account's dialler attempts (0072), measured first; nothing added for the other branches | **P5, built** |
 | CL38 | The app's My calls is one list of cards; the attempts and soft-phone lists, their filters and detail sheets are removed; the Missed calls list is one tap from To follow up | **P5, built** |
 | CL39 | A number's history holds every call it made to us that ended and that we served, in the accounts the caller can see, filed under a campaign or under none; never a rejected call, a withheld number or a call with no account; a live call is in the summary's live calls; inbound's flag hides nothing | **P6, built** |
 | CL40 | On an inbound call the history's filters read the call's own columns (`connected` is answered, the agent is who answered, the campaign is where it is filed); calls received are counted apart from calls placed; a callback booked on an inbound call is a callback entry; the page says "Inbound call" beside "Campaign call" and "Soft-phone call" | **P6, built** |
-| CL41 | One index for an account's inbound calls by caller (0071), measured first; 0033's answered-only index kept, and whether to drop it open (above); the number's inbound calls are not capped | **P6, built** |
+| CL41 | One index for an account's inbound calls by caller (0073), measured first; 0033's answered-only index kept, and whether to drop it open (above); the number's inbound calls are not capped | **P6, built** |
 | CL42 | No floor moved. Notes to `agency.campaigns.read` or the agent who answered; the Call page to `agency.supervise` and only for a call filed under a campaign; no media through the history, for anyone; the number is not masked (the reader typed it) | **P6, built** |
 
 ### What changes for every account on deploy, with the setting off
@@ -1425,7 +1425,7 @@ change all the same, for every account, the day the release is deployed:
   written for the whole account**, not for the campaign (CL6, `manualDncScope`). Before, it was
   the campaign's. An inbound call's mark was already scoped by its match and is unchanged.
 - **Every past inbound call whose caller matched a campaign's list appears in that campaign.**
-  0067 files them (`campaign_id` from the match), so they are in the campaign's Call log, in its
+  0069 files them (`campaign_id` from the match), so they are in the campaign's Call log, in its
   export (new rows with `source=inbound`, and three new columns at the end of every row:
   `wait_seconds`, `missed_reason`, `callback_of`) and in its Insights and report figures (Calls by
   type, Outcomes by type), for past dates too.
@@ -1470,8 +1470,8 @@ Two things that do **not** change until somebody acts, both checked:
   over a real carrier call. What ran here is recorded per phase: the server's, console's and
   packages' test suites, the app's `flutter analyze`, `flutter test` and `agency_wire`'s
   `dart test`. iOS does not build ([`mobile.md`](mobile.md) "Not verified yet").
-- **0033's index and the older suite.** Once 0071 exists, the older code's own IQ49 plan check
-  (a handful of unanalysed rows, strict on 0033's index) can pick 0071's index and go red; the
+- **0033's index and the older suite.** Once 0073 exists, the older code's own IQ49 plan check
+  (a handful of unanalysed rows, strict on 0033's index) can pick 0073's index and go red; the
   read is correct on either, and this branch's version of the check seeds and analyses (CL41).
   Whether 0033's index is still worth keeping is the open item above.
 

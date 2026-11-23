@@ -1,4 +1,4 @@
--- 0067_call_log_inbound_campaign.sql — one call log per campaign, P2 (docs/call-log.md §4): the
+-- 0069_call_log_inbound_campaign.sql — one call log per campaign, P2 (docs/call-log.md §4): the
 -- campaign an inbound call is filed under, and the missed call a soft-phone call rang back.
 --
 -- ── agency_inbound_calls ──────────────────────────────────────────────────────
@@ -58,14 +58,14 @@
 --
 -- ── ck_agency_inbound_calls_campaign_source ───────────────────────────────────
 -- Added NOT VALID here (a catalogue change: new and changed rows are checked at once) and
--- validated by 0068, out of this file's ACCESS EXCLUSIVE (0057 / 0058's split). Every row the
+-- validated by 0070, out of this file's ACCESS EXCLUSIVE (0057 / 0058's split). Every row the
 -- backfill wrote satisfies it and every other row has both columns NULL, so validation cannot fail.
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
 -- The ADD COLUMNs are catalogue-only (no default). The backfill scans agency_inbound_calls once
 -- under this file's ACCESS EXCLUSIVE; migrations run at container start, before the server
 -- listens. agency_manual_calls takes a catalogue change only. The indexes and the CHECK's
--- validation are 0068's, out of this file's locks. `SET LOCAL lock_timeout = '10s'` first: a lock
+-- validation are 0070's, out of this file's locks. `SET LOCAL lock_timeout = '10s'` first: a lock
 -- not granted in 10 s fails the migration instead of queueing every query behind it.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ ALTER TABLE agency_inbound_calls
   ) NOT VALID;
 
 COMMENT ON COLUMN agency_inbound_calls.campaign_id IS
-  'The campaign this call is filed under (docs/call-log.md): at arrival the matched contact''s campaign, else the route''s campaign for unknown callers (0069); an agent or supervisor may file an unknown caller''s call elsewhere at the end of the call. NULL: no campaign. No FK.';
+  'The campaign this call is filed under (docs/call-log.md): at arrival the matched contact''s campaign, else the route''s campaign for unknown callers (0071); an agent or supervisor may file an unknown caller''s call elsewhere at the end of the call. NULL: no campaign. No FK.';
 COMMENT ON COLUMN agency_inbound_calls.campaign_source IS
   'How the call came by campaign_id: contact (its number is on the campaign''s list), route, agent or supervisor. Set exactly when campaign_id is.';
 

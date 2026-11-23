@@ -408,7 +408,7 @@ describe('the identification reads', () => {
   });
 
   it('IQ49: the inbound arm walks idx_agency_inbound_calls_answered_from (0033), on analysed calls answered and missed', async () => {
-    // Since 0071 the table has a second index by caller, every call of the number
+    // Since 0073 the table has a second index by caller, every call of the number
     // (`idx_agency_inbound_calls_from`, the customer history's), of which 0033's answered-only one
     // is a subset. On an unanalysed handful of rows the two cost the same; on a table like a real
     // one (callers with answered and missed calls, statistics) the planner takes 0033's, the

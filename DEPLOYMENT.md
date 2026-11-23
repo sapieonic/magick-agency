@@ -917,7 +917,7 @@ do `0054_analysis_vendor_answers.sql` and `0055_analysis_vendor_answer_indexes.s
 ignores the nullable `vendor_refused_at` and `completed_at` and has no summary delay at all, so every
 pending call shows the ordinary pending copy again.
 
-**Before deploying the call log release (`0067` to `0071`)** ("One call log per campaign",
+**Before deploying the call log release (`0069` to `0073`)** ("One call log per campaign",
 `docs/call-log.md`). Five migrations ship together. On a small database nothing is needed before
 the deploy: they run in seconds with the server down. Where `agency_inbound_calls` or
 `agency_call_attempts` holds more than about a million rows, do the steps below first, **in this
@@ -930,7 +930,7 @@ before the server is deployed shows "My calls needs a newer version of the serve
 to update it." in its My calls tab until the server is updated (the rest of the app works). So
 deploy the server, then distribute the APK.
 
-1. **Add 0067's two columns** (only if `agency_inbound_calls` is large). The running server
+1. **Add 0069's two columns** (only if `agency_inbound_calls` is large). The running server
    ignores them.
 
    ```sql
@@ -940,7 +940,7 @@ deploy the server, then distribute the APK.
    ```
 
 2. **File the existing matched calls in batches**, each batch its own transaction, until one
-   reports `UPDATE 0`. 0067 does this inside its own transaction with the server down; on a large
+   reports `UPDATE 0`. 0069 does this inside its own transaction with the server down; on a large
    table that is the long part, so it is done here instead.
 
    ```sql
@@ -963,28 +963,28 @@ deploy the server, then distribute the APK.
 
 3. **Build the three large indexes `CONCURRENTLY`**, each statement on its own
    (`db-hygiene.md` §2 has them and the check that each is valid):
-   - 0068's `idx_agency_inbound_calls_campaign` on `agency_inbound_calls`. It can be built now
+   - 0070's `idx_agency_inbound_calls_campaign` on `agency_inbound_calls`. It can be built now
      because step 1 added its column; build it after step 2, so it is built once over the filed
-     calls. 0068 creates it `IF NOT EXISTS` and refuses an invalid one.
-   - 0070's `idx_agency_attempts_account_created` on `agency_call_attempts`.
-   - 0071's `idx_agency_inbound_calls_from` on `agency_inbound_calls`.
+     calls. 0070 creates it `IF NOT EXISTS` and refuses an invalid one.
+   - 0072's `idx_agency_attempts_account_created` on `agency_call_attempts`.
+   - 0073's `idx_agency_inbound_calls_from` on `agency_inbound_calls`.
 
-   0068's other index, `idx_agency_manual_calls_callback_of`, cannot be built beforehand (its
-   column is added by 0067 itself). It needs no pre-build: it is partial on a column that is
+   0070's other index, `idx_agency_manual_calls_callback_of`, cannot be built beforehand (its
+   column is added by 0069 itself). It needs no pre-build: it is partial on a column that is
    empty on this release, so its build is one read of `agency_manual_calls` and writes nothing.
 
 4. **Deploy.** What still runs with the server down, and what it costs:
-   - 0067 finds the columns (`ADD COLUMN IF NOT EXISTS`; it fails, changing nothing, if they
+   - 0069 finds the columns (`ADD COLUMN IF NOT EXISTS`; it fails, changing nothing, if they
      were added with other types), files only the calls that arrived since the last batch, adds
      `agency_manual_calls.callback_of_inbound_call_id` (a nullable column, no rewrite) and its
      CHECK `NOT VALID` (no read).
-   - 0068 finds its inbound index, builds the empty call-backs index (one read of
-     `agency_manual_calls`), and **validates 0067's CHECK: one read of `agency_inbound_calls`**.
+   - 0070 finds its inbound index, builds the empty call-backs index (one read of
+     `agency_manual_calls`), and **validates 0069's CHECK: one read of `agency_inbound_calls`**.
      That read is the one thing here that grows with the table and cannot be done beforehand; it
      takes a lock that lets reads and writes through, and on 2 million rows it is seconds.
-   - 0069 creates an empty table and adds one nullable column with a small partial index to
+   - 0071 creates an empty table and adds one nullable column with a small partial index to
      `agency_inbound_routes` (a few rows per account).
-   - 0070 and 0071 find their indexes and only add their comments.
+   - 0072 and 0073 find their indexes and only add their comments.
 
    Every one of them starts with a 10-second `lock_timeout`.
 
@@ -1014,7 +1014,7 @@ this lapses, and all of it comes back with the newer image unless a line says ot
 - **One test of the older code goes red on the newer schema**, which matters only to somebody
   running the older suite against a migrated database: its IQ49 plan check
   (`inbound-follow-up.test.ts`) expects `idx_agency_inbound_calls_answered_from`, and on its
-  handful of unanalysed rows the planner may now take 0071's `idx_agency_inbound_calls_from`
+  handful of unanalysed rows the planner may now take 0073's `idx_agency_inbound_calls_from`
   instead. The read itself is correct on either index.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,

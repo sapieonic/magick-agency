@@ -80,7 +80,7 @@ export interface AgencyInboundRouteRecord {
   disposition_catalog: AgencyDisposition[];
   /** IQ52: the wrap-up window of every call on the route (0032); captured on each call at arrival. */
   wrapup_seconds: number;
-  /** The campaign unknown callers are filed under at arrival (0069; docs/call-log.md §5), or NULL. */
+  /** The campaign unknown callers are filed under at arrival (0071; docs/call-log.md §5), or NULL. */
   default_campaign_id: string | null;
   created_by: string | null;
   updated_by: string | null;
@@ -194,7 +194,7 @@ function configColumns(config: AgencyInboundRouteConfig): Array<[string, unknown
   // without it takes the route's default rather than a NULL the column refuses.
   const out: Array<[string, unknown]> = PLAIN_FIELDS.map((f) => [f,
     f === 'wrapup_seconds' ? (config.wrapup_seconds ?? AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds)
-      // Optional on the contract's type too (a client written before 0069): none.
+      // Optional on the contract's type too (a client written before 0071): none.
       : f === 'default_campaign_id' ? (config.default_campaign_id ?? null)
         : config[f]]);
   for (const slot of Object.keys(CLIP_COLUMNS) as AgencyInboundClipSlot[]) out.push([CLIP_COLUMNS[slot], config.clips[slot]]);

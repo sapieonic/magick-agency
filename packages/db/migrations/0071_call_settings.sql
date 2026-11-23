@@ -1,6 +1,6 @@
--- 0069_call_settings.sql — one call log per campaign, P3 (docs/call-log.md §5, rulings CL2–CL6,
+-- 0071_call_settings.sql — one call log per campaign, P3 (docs/call-log.md §5, rulings CL2–CL6,
 -- CL8, CL17–CL23): the account's setting "Every call must belong to a campaign", and the campaign
--- an inbound route files its unknown callers under. 0068 is applied and is not edited.
+-- an inbound route files its unknown callers under. 0070 is applied and is not edited.
 --
 -- ── agency_call_settings ────────────────────────────────────────────────────
 -- One optional row per (tenant, account) (`uq_agency_call_settings_account`): an account with no
@@ -39,7 +39,7 @@
 --
 -- ── Down ────────────────────────────────────────────────────────────────────
 -- Drops the index, the column and the table: the setting and every route's default campaign are
--- lost. Calls already filed keep their `campaign_id` (0067's column). The server code that reads
+-- lost. Calls already filed keep their `campaign_id` (0069's column). The server code that reads
 -- them must be rolled back with it.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker

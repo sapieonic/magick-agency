@@ -13,7 +13,7 @@
  * campaign's automatic outcome, a reserved session). Untagged soft-phone calls belong to no
  * campaign and are never in it (SR4).
  *
- * An inbound row is an ENDED inbound call filed under the campaign (`campaign_id`, 0067) that
+ * An inbound row is an ENDED inbound call filed under the campaign (`campaign_id`, 0069) that
  * we served (never `rejected`); a live one is on Live calls. It carries the attempt row's field
  * names too (`phone_e164` the caller's number, `caller_id` the number rung, `agent_user_id` who
  * answered, `created_at` when it arrived, which is what the keyset orders it by), with what only

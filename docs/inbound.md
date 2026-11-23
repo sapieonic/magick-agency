@@ -1223,7 +1223,7 @@ second waits on the row lock and finds it handled). A withheld caller's rows, th
 reads as marked). The matched contact is not touched: its booked inbound callback
 (`callback_source = 'inbound'`) is settled by the conversation that reaches the contact, with the
 outcome the agent chose. The call placed from a row's Call back carries the row's id
-(`agency_manual_calls.callback_of_inbound_call_id`, 0067): it stays a soft-phone call, and the
+(`agency_manual_calls.callback_of_inbound_call_id`, 0069): it stays a soft-phone call, and the
 campaign Call log shows the pair pointing at each other ([`call-log.md`](call-log.md) §4, CL1,
 CL15); the link closes nothing by itself. Call back from a Missed row opens the soft phone logging to the matched
 campaign, so its call claims a `pending` contact (SP6) and its outcome settles it, the callback
@@ -1752,7 +1752,7 @@ Inventory: `packages/db/BASELINE.md` "0032", "0033".
   lapse sweep (NULL: 30 s); existing calls were backfilled from their route.
 - **`idx_agency_inbound_calls_answered_from`** (`tenant_id, account_id, from_e164, arrived_at DESC,
   id DESC` WHERE `bridged_at IS NOT NULL AND from_e164 IS NOT NULL`): the caller's answered inbound
-  calls for the sticky signal (IQ49, §4.1). Since `0071_inbound_calls_from_index.sql` the table
+  calls for the sticky signal (IQ49, §4.1). Since `0073_inbound_calls_from_index.sql` the table
   also has **`idx_agency_inbound_calls_from`** (the same keys WHERE `from_e164 IS NOT NULL`: every
   call of the caller, for the inbound calls in customer history, `docs/call-log.md` §8); this one
   is a subset of it. On analysed calls, answered and missed, the sticky read is still planned on
@@ -1802,9 +1802,9 @@ to an older server, but carries a break code it cannot word (below, "Going back 
   migration's comment names the search's read by its earlier name, `findRingableInAccount`), which
   otherwise scanned every session row. The down drops it.
 
-### 9.5 The campaign a call is filed under (built: `0067_call_log_inbound_campaign.sql`, `0068_call_log_inbound_indexes.sql`)
+### 9.5 The campaign a call is filed under (built: `0069_call_log_inbound_campaign.sql`, `0070_call_log_inbound_indexes.sql`)
 
-Inventory: `packages/db/BASELINE.md` "0067", "0068"; the design is [`call-log.md`](call-log.md) §4.
+Inventory: `packages/db/BASELINE.md` "0069", "0070"; the design is [`call-log.md`](call-log.md) §4.
 
 - **`agency_inbound_calls.campaign_id`** and **`campaign_source`** (`contact | route | agent |
   supervisor`, set together, CHECKed): the campaign the call is filed under, which the campaign
@@ -1816,9 +1816,9 @@ Inventory: `packages/db/BASELINE.md` "0067", "0068"; the design is [`call-log.md
 - **`idx_agency_inbound_calls_campaign`** (`campaign_id, arrived_at DESC, id DESC` WHERE
   `campaign_id IS NOT NULL`) and **`idx_agency_manual_calls_callback_of`**.
 
-### 9.6 The route's campaign for unknown callers, and the account's call settings (built: `0069_call_settings.sql`)
+### 9.6 The route's campaign for unknown callers, and the account's call settings (built: `0071_call_settings.sql`)
 
-Inventory: `packages/db/BASELINE.md` "0069"; the design is [`call-log.md`](call-log.md) §5.
+Inventory: `packages/db/BASELINE.md` "0071"; the design is [`call-log.md`](call-log.md) §5.
 
 - **`agency_inbound_routes.default_campaign_id`** (nullable, no FK): the route editor's **Campaign
   for unknown callers**. A caller on no list is filed under it when the call arrives
@@ -1886,7 +1886,7 @@ pattern), inbound in agent performance, the floor's `calls_handled`, account rep
 history.
 
 **The campaign Call log (built, one call log per campaign P2).** An ended inbound call that is
-filed under a campaign (`campaign_id`, 0067: the matched contact's campaign at arrival) is a row of
+filed under a campaign (`campaign_id`, 0069: the matched contact's campaign at arrival) is a row of
 that campaign's Call log, with its dials and soft-phone calls, and the campaign's open Missed rows
 are the log's **To follow up** view, by this section's own "open" (`inboundMissedOpenSql`). Each
 row opens the inbound Call page (the caller's path, the outcome or the follow-up, the voicemail,

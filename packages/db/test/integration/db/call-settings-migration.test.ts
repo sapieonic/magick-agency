@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0069_call_settings.sql (docs/call-log.md §5; wire shape AgencyCallSettings
+// Real Postgres: migrations/0071_call_settings.sql (docs/call-log.md §5; wire shape AgencyCallSettings
 // in packages/contracts/src/api/agency/call-settings.ts). globalSetup has applied every migration.
 // Pins agency_call_settings (columns, the one row per account, the CHECK that ties "since" to the
 // switch, the updated_at trigger), the inbound route's default_campaign_id and its partial index (by
@@ -16,7 +16,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { ACCOUNT, insertRow, insertTenant } from '../fixtures.js';
 
 const pool = () => getTestPool();
-const FILE = '0069_call_settings.sql';
+const FILE = '0071_call_settings.sql';
 const INDEX = 'idx_agency_inbound_routes_default_campaign';
 
 let tenantId: string;
@@ -56,7 +56,7 @@ function statements(part: 'up' | 'down'): string[] {
   return body.replace(/--.*$/gm, '').split(';').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
 
-describe('0069 — the account\'s call settings and the route\'s campaign for unknown callers', () => {
+describe('0071 — the account\'s call settings and the route\'s campaign for unknown callers', () => {
   it('Up and Down start with the lock timeout (agency_inbound_routes is read on every inbound arrival)', () => {
     expect(statements('up')[0]).toBe("SET LOCAL lock_timeout = '10s'");
     expect(statements('down')[0]).toBe("SET LOCAL lock_timeout = '10s'");

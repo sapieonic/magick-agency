@@ -105,7 +105,7 @@ export interface AgencyManualCallCreateInput {
   /** SP2. */
   hoursOverrideNote: string | null;
   /**
-   * The Missed inbound call this call rings back (0067, `docs/call-log.md` CL1), already checked
+   * The Missed inbound call this call rings back (0069, `docs/call-log.md` CL1), already checked
    * by the caller (the account's Missed row, from the number dialled); null: not a call back.
    */
   callbackOfInboundCallId: string | null;

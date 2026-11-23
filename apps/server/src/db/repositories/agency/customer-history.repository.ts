@@ -56,7 +56,7 @@
  * statement exactly as exported here, on analysed tables, without disabling any plan type.
  *
  *  - inbound calls: `idx_agency_inbound_calls_from (tenant_id, account_id, from_e164, arrived_at
- *    DESC, id DESC) WHERE from_e164 IS NOT NULL` (`0071_inbound_calls_from_index.sql`), walked once per visible
+ *    DESC, id DESC) WHERE from_e164 IS NOT NULL` (`0073_inbound_calls_from_index.sql`), walked once per visible
  *    account in keyset order with the cursor as an index condition (no sort), as the soft-phone calls are.
  *
  * ── Inbound calls (CL39, `docs/call-log.md` §8) ─────────────────────────────────

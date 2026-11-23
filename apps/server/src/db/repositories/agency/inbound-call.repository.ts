@@ -128,9 +128,9 @@ export interface AgencyInboundCallRecord {
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
   /**
-   * The campaign the call is filed under (0067, `docs/call-log.md`): what the campaign Call log
+   * The campaign the call is filed under (0069, `docs/call-log.md`): what the campaign Call log
    * reads. At arrival the matched contact's campaign, else the route's campaign for unknown
-   * callers (0069); an agent or supervisor may file an unknown caller's call elsewhere at the end
+   * callers (0071); an agent or supervisor may file an unknown caller's call elsewhere at the end
    * of the call. NULL: none.
    */
   campaign_id: string | null;
@@ -243,7 +243,7 @@ export interface AgencyInboundArrivalInput {
    */
   wrapupSeconds?: number | null;
   /**
-   * The route's campaign for unknown callers (`agency_inbound_routes.default_campaign_id`, 0069):
+   * The route's campaign for unknown callers (`agency_inbound_routes.default_campaign_id`, 0071):
    * a call that matched no contact is filed under it (`campaign_source = 'route'`), whether or not
    * the account's setting is on (docs/call-log.md §5, CL4). Absent or null: none. Optional only
    * for the test callers; the router always passes the route's.
@@ -386,7 +386,7 @@ export class AgencyInboundCallRepository {
    * `destination_phone` the caller's or `''` when withheld, `provider_call_id` the carrier's call
    * id so the status webhook finds it), linked both ways, in one transaction (or the caller's).
    * A matched call is filed under its contact's campaign (`campaign_id`, `campaign_source =
-   * 'contact'`, 0067): the column the campaign Call log reads (`docs/call-log.md`). An unmatched
+   * 'contact'`, 0069): the column the campaign Call log reads (`docs/call-log.md`). An unmatched
    * one is filed under the route's campaign for unknown callers when it has one (`'route'`).
    * The leg is written here rather than through `WebRtcCallRepository.create`, which refuses a
    * credential that is not `active`: a call that has already arrived is answered regardless

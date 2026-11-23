@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0071_inbound_calls_from_index.sql (docs/customer-history.md,
+// Real Postgres: migrations/0073_inbound_calls_from_index.sql (docs/customer-history.md,
 // docs/call-log.md §8): an account's inbound calls from one number, newest first, which the
 // customer history reads. globalSetup has applied every migration. Pins the index by its
 // definition, that a number's keyset page in an account is planned on it with no sort (missed
@@ -20,7 +20,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const FILE = '0071_inbound_calls_from_index.sql';
+const FILE = '0073_inbound_calls_from_index.sql';
 const NAME = 'idx_agency_inbound_calls_from';
 const DEFINITION =
   'CREATE INDEX idx_agency_inbound_calls_from ON public.agency_inbound_calls USING btree '
@@ -32,7 +32,7 @@ async function indexDef(): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-describe('0071 — an account\'s inbound calls from one number, newest first', () => {
+describe('0073 — an account\'s inbound calls from one number, newest first', () => {
   it('defines the index exactly', async () => {
     expect(await indexDef()).toBe(DEFINITION);
   });

@@ -27,7 +27,7 @@
  *
  * The range is half-open `[from, to)` on `arrived_at`, the column
  * `idx_agency_inbound_calls_campaign (campaign_id, arrived_at DESC, id DESC) WHERE campaign_id
- * IS NOT NULL` (0068) orders. Read live: the Insights rollup is a pure function of
+ * IS NOT NULL` (0070) orders. Read live: the Insights rollup is a pure function of
  * `agency_call_attempts` and holds the dialler's figures alone (CL25).
  */
 import { SOFTPHONE_PLACED_SQL, readCount } from './softphone-campaign-sql.js';

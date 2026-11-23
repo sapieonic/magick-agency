@@ -85,7 +85,7 @@ export class AgencyCallListRepository {
   /**
    * Of the account's inbound calls among `ids`, the ones filed under no campaign whose caller
    * matched a campaign's contact: call id → that campaign. A call is filed under its matched
-   * contact's campaign when it is written (0067), so these are rows from while an older server
+   * contact's campaign when it is written (0069), so these are rows from while an older server
    * ran; an agent's list still masks their number as that campaign says.
    */
   async inboundMatchedCampaigns(tenantId: string, accountId: string, ids: readonly string[]): Promise<Map<string, string>> {

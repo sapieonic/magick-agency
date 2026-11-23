@@ -1,4 +1,4 @@
--- 0071_inbound_calls_from_index.sql — inbound calls in customer history (docs/call-log.md §8,
+-- 0073_inbound_calls_from_index.sql — inbound calls in customer history (docs/call-log.md §8,
 -- docs/customer-history.md): an account's inbound calls from one number, newest first.
 --
 -- idx_agency_inbound_calls_from on agency_inbound_calls
