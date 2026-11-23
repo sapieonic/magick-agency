@@ -24,7 +24,7 @@ import {
 } from '../agencyCampaignAttemptParams';
 import { formatCount } from '../format/number';
 import { dateFormatter, localDay, upperDayPeriod } from '../format/date';
-import { formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
+import { agentCellCopy, formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
 import { missedReasonLabel } from '../inbound/missedCopy';
 
@@ -595,18 +595,27 @@ export function inboundCallPath(campaignId: string, callId: string): string {
   return `/agency/campaigns/${campaignId}/calls/inbound/${callId}`;
 }
 
+/** The Agent cell of a row of any type. */
+export function callLogAgentCell(row: AgencyCallLogRow): { text: string; muted: boolean; detail?: string } {
+  if (row.type === 'dialler') return agentCellCopy(row);
+  return row.type === 'inbound' ? inboundAgentCopy(row) : softphoneAgentCopy(row);
+}
+
 /**
  * Where a row opens: the Call page of its own type. Null when that page cannot be opened:
- * the soft-phone call detail is behind the soft phone's flag.
+ * the soft-phone call detail is behind the soft phone's flag, and a dialler or inbound call's
+ * page is its campaign's (the row's own, else `fallbackCampaignId`, the campaign whose Call log
+ * this is), so an inbound call filed under no campaign has none.
  */
 export function callLogRowPath(
-  row: Pick<AgencyCallLogRow, 'type' | 'id'>,
-  campaignId: string,
+  row: Pick<AgencyCallLogRow, 'type' | 'id' | 'campaign_id'>,
+  fallbackCampaignId: string | null,
   availability: Pick<CallLogTypeAvailability, 'softphoneEnabled'>,
 ): string | null {
-  if (row.type === 'dialler') return `/agency/campaigns/${campaignId}/attempts/${row.id}`;
-  if (row.type === 'inbound') return inboundCallPath(campaignId, row.id);
-  return availability.softphoneEnabled ? `/agency/softphone/calls/${row.id}` : null;
+  if (row.type === 'soft_phone') return availability.softphoneEnabled ? `/agency/softphone/calls/${row.id}` : null;
+  const campaignId = row.campaign_id ?? fallbackCampaignId;
+  if (!campaignId) return null;
+  return row.type === 'dialler' ? `/agency/campaigns/${campaignId}/attempts/${row.id}` : inboundCallPath(campaignId, row.id);
 }
 
 /**

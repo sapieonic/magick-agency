@@ -33,7 +33,6 @@ import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   PHONE_FILTER_PLACEHOLDER,
   SPINE_PRIVACY_NOTE,
-  agentCellCopy,
   dispositionLabel,
   exportTruncationNotice,
   formatCallTimestamp,
@@ -87,6 +86,7 @@ import {
   CALL_LOG_STATUS_OPTIONS,
   TO_FOLLOW_UP_DATES_HINT,
   TO_FOLLOW_UP_NOTE,
+  callLogAgentCell,
   callLogBadges,
   callLogCountCopy,
   callLogEmptyState,
@@ -103,7 +103,6 @@ import {
   callLogWhatHappened,
   effectiveCallLogFilters,
   followUpCopy,
-  inboundAgentCopy,
   isCallLogFiltered,
   isMissedInbound,
   isNotDialled,
@@ -112,7 +111,6 @@ import {
   onOpeningView,
   pairedRowKey,
   selectedCallLogCount,
-  softphoneAgentCopy,
   visibleCallLogChips,
   type CallLogView,
 } from '../../utils/agency/callLog';
@@ -1058,16 +1056,14 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const agent: { text: string; muted: boolean; detail?: string } = row.type === 'dialler'
-                    ? agentCellCopy(row)
-                    : row.type === 'inbound' ? inboundAgentCopy(row) : softphoneAgentCopy(row);
+                  const agent = callLogAgentCell(row);
                   const happened = callLogWhatHappened(row);
                   const facts = callLogTypeFacts(row);
                   const badges = callLogBadges(row);
                   // The row's own campaign: on All calls each row has its own, or none.
                   const rowCampaign = row.campaign_id ?? id;
                   // An inbound call filed under no campaign has no Call page (that page is a campaign's).
-                  const path = rowCampaign || row.type === 'soft_phone' ? callLogRowPath(row, rowCampaign ?? '', availability) : null;
+                  const path = callLogRowPath(row, id, availability);
                   // A dialler row with no media leg says why there is nothing to open.
                   const noRecording = row.type === 'dialler' ? recordingCellCopy(row) : null;
                   const key = callLogRowKey(row);
