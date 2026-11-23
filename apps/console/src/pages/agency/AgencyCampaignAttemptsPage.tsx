@@ -25,7 +25,7 @@ import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { listCampaignAgents } from '../../api/agency';
-import { downloadSpineCsv, getAccountCalls, getCampaignCallLog } from '../../api/agencySpine';
+import { downloadSpineCsv, getAccountCalls, getCampaignCallLog, type CallLogListOptions } from '../../api/agencySpine';
 import { listAgencyCampaigns } from '../../api/agencyCampaigns';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
@@ -51,8 +51,10 @@ import { FiltersCard } from '../../components/agency/FiltersCard';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import { ATTEMPT_OUTCOME_LABELS, type AgencyAttemptFilters } from '../../types/agency-spine';
 import type {
+  AgencyAccountCallsPage,
   AgencyCallLogCounts,
   AgencyCallLogInboundRow,
+  AgencyCallLogPage,
   AgencyCallLogRow,
   AgencyCallLogStatus,
   AgencyCallLogTypeFilter,
@@ -211,10 +213,11 @@ function CampaignCallLogCrumbs({ id, campaign }: { id: string; campaign: AgencyC
  */
 export function CallLogList({ scope }: { scope: CallLogListScope }) {
   const account = scope.kind === 'account';
-  const id = scope.kind === 'campaign' ? scope.id : null;
-  const campaign = scope.kind === 'campaign' ? scope.campaign : null;
-  const campaignLoading = scope.kind === 'campaign' ? scope.campaignLoading : false;
-  const stats = scope.kind === 'campaign' ? scope.stats : null;
+  const campaignScope = scope.kind === 'campaign' ? scope : null;
+  const id = campaignScope?.id ?? null;
+  const campaign = campaignScope?.campaign ?? null;
+  const campaignLoading = campaignScope?.campaignLoading ?? false;
+  const stats = campaignScope?.stats ?? null;
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
@@ -367,6 +370,15 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
    */
   const countedFor = useRef<string | null>(null);
 
+  /** One page at this scope: the campaign's Call log, or the account's All calls (which also says the account's rule). */
+  const fetchPage = useCallback((
+    active: AgencyAttemptFilters,
+    options: CallLogListOptions,
+  ): Promise<AgencyCallLogPage & Partial<Pick<AgencyAccountCallsPage, 'rule'>>> => (id
+    ? getCampaignCallLog(id, active, options, tenantId ?? undefined, accountId ?? undefined)
+    : getAccountCalls(active, { ...options, campaign: campaignFilter }, tenantId ?? undefined, accountId ?? undefined)
+  ), [id, campaignFilter, tenantId, accountId]);
+
   const load = useCallback(async (
     active: AgencyAttemptFilters,
     chip: AgencyCallLogTypeFilter,
@@ -382,10 +394,9 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     setFilterRefused(false);
     try {
       const options = { limit: PAGE_SIZE, type: chip, ...(activeStatus ? { status: activeStatus } : {}), ...(includeCounts ? { includeCounts: true } : {}) };
-      const accountPage = id ? null : await getAccountCalls(active, { ...options, campaign: campaignFilter }, tenantId, accountId);
-      const page = accountPage ?? await getCampaignCallLog(id!, active, options, tenantId, accountId);
+      const page = await fetchPage(active, options);
       if (seq !== requestSeq.current) return;
-      if (accountPage) setRule(accountPage.rule);
+      if (page.rule) setRule(page.rule);
       setRows(page.rows);
       setNextCursor(page.next_cursor);
       if (includeCounts) {
@@ -409,7 +420,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [id, account, campaignFilter, tenantId, accountId]);
+  }, [id, account, campaignFilter, tenantId, accountId, fetchPage]);
 
   useEffect(() => {
     // All calls: the account's campaigns, for the Campaign filter. A courtesy: the rows name theirs.
@@ -466,10 +477,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     const seq = requestSeq.current;
     setLoadingMore(true);
     try {
-      const options = { cursor: nextCursor, limit: PAGE_SIZE, type, ...(status ? { status } : {}) };
-      const page = id
-        ? await getCampaignCallLog(id, filters, options, tenantId ?? undefined, accountId ?? undefined)
-        : await getAccountCalls(filters, { ...options, campaign: campaignFilter }, tenantId ?? undefined, accountId ?? undefined);
+      const page = await fetchPage(filters, { cursor: nextCursor, limit: PAGE_SIZE, type, ...(status ? { status } : {}) });
       // A filter change mid-request would make these rows belong to a different
       // query than the ones already on screen.
       if (seq !== requestSeq.current) return;
@@ -480,7 +488,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     } finally {
       setLoadingMore(false);
     }
-  }, [id, account, campaignFilter, nextCursor, loadingMore, filters, type, status, tenantId, accountId, showErrorToast]);
+  }, [id, account, fetchPage, nextCursor, loadingMore, filters, type, status, showErrorToast]);
 
   /**
    * Mark handled: the Missed list's own action (`POST /inbound/missed/:id/handled`, idempotent).
@@ -814,17 +822,10 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
         <fieldset className={styles.outcomeFilter}>
             <legend className={spine.filterLegend}>What happened</legend>
             <div className={styles.outcomes}>
-              {Object.entries(ATTEMPT_OUTCOME_LABELS).map(([value, label]) => (
-                <FilterChip
-                  key={value}
-                  label={label}
-                  checked={draftOutcomes.includes(value)}
-                  onChange={(checked) => setDraftOutcomes((current) => (
-                    checked ? [...current, value] : current.filter((item) => item !== value)
-                  ))}
-                />
-              ))}
-              {offersInboundOutcomes && CALL_LOG_INBOUND_OUTCOME_OPTIONS.map(({ value, label }) => (
+              {[
+                ...Object.entries(ATTEMPT_OUTCOME_LABELS).map(([value, label]) => ({ value, label })),
+                ...(offersInboundOutcomes ? CALL_LOG_INBOUND_OUTCOME_OPTIONS : []),
+              ].map(({ value, label }) => (
                 <FilterChip
                   key={value}
                   label={label}
