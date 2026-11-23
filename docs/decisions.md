@@ -1054,9 +1054,11 @@ ruling is decided; the full table, CT1–CT23, is in [`campaign-templates.md`](c
 
 ## Campaign setup (CS)
 
-The rulings CS1–CS16 (four steps shared by New campaign and Settings, purpose presets, one
+The rulings CS1–CS21 (four steps shared by New campaign and Settings, purpose presets, one
 sentence per button, the agent's view beside the buttons, no languages yet, bad rows counted and
 left out, CSV only for now, the phone column found not asked, the card picked at upload, agents
 picked in the builder, hours as choices, one "doesn't pick up" rule, Advanced folded, only what
-exists, Start from the builder, Settings anchors kept) are in
+exists, Start from the builder, Settings anchors kept, and with campaign templates: Start from
+above the steps, source chips where each setting is edited, a template's script on Purpose &
+buttons, starting points not called templates, the template editor on the same steps) are in
 [`campaign-setup.md`](campaign-setup.md) §1. Asked for by Manas on 2026-11-22.
