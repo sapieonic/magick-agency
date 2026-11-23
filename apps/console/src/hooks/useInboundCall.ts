@@ -297,13 +297,6 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   const [announcement, setAnnouncement] = useState('');
   /** The agent edited the notes on this call (so blank on screen means cleared, not never typed). */
   const notesTouchedRef = useRef(false);
-  // "Filed under" (docs/call-log.md §5): the list of works, asked for when the agent opens it.
-  const [filingFor, setFilingFor] = useState<string | null>(null);
-  const [filingOptions, setFilingOptions] = useState<AgencyInboundCallCampaignOption[] | null>(null);
-  const [filingLoading, setFilingLoading] = useState(false);
-  const [filingChanging, setFilingChanging] = useState(false);
-  const [filingError, setFilingError] = useState<string | null>(null);
-  const [filingNotice, setFilingNotice] = useState<{ callId: string; text: string } | null>(null);
 
   const catalog = call && catalogOverride?.callId === call.id ? catalogOverride.catalog : (call?.disposition_catalog ?? []);
 
@@ -415,59 +408,16 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   }, []);
 
   // ── Filed under (docs/call-log.md §5) ─────────────────────────────────────
-  const filingShown = call !== null && phase === 'outcome' && !call.match
-    && (Boolean(call.campaign) || call.campaign_required === true || call.campaign_changeable === true);
-  const filingChangeable = filingShown && call?.campaign_changeable === true;
-  const filingMissing = call !== null && phase === 'outcome' && call.campaign_required === true && !call.campaign;
-  const filingChoosing = call !== null && filingFor === call.id;
-  const openFiling = useCallback(async () => {
-    const target = call;
-    if (!target || !tenantId || !accountId || filingLoading) return;
-    setFilingFor(target.id);
-    setFilingError(null);
-    setFilingLoading(true);
-    try {
-      setFilingOptions(await listInboundCallCampaigns(target.id, tenantId, accountId));
-    } catch {
-      setFilingOptions(null);
-      setFilingError(SIDE_COPY.worksDidNotLoad);
-    } finally {
-      setFilingLoading(false);
-    }
-  }, [call, tenantId, accountId, filingLoading]);
-  const closeFiling = useCallback(() => {
-    setFilingFor(null);
-    setFilingError(null);
-  }, []);
-  const chooseFiling = useCallback(async (campaignId: string) => {
-    const target = call;
-    if (!target || !tenantId || !accountId || filingChanging || !campaignId) return;
-    if (campaignId === target.campaign?.campaign_id) {
-      setFilingFor(null);
-      return;
-    }
-    setFilingChanging(true);
-    setFilingError(null);
-    const result = await setInboundCallCampaign(target.id, campaignId, tenantId, accountId);
-    setFilingChanging(false);
-    if (!result.ok) {
-      if (result.refusal.code === 'inbound_outcome_already_saved' || result.refusal.code === 'inbound_call_not_found') reconcile();
-      const text = inboundCallRefusalWords(result.refusal);
-      setFilingError(text);
-      setAnnouncement(text);
-      return;
-    }
-    adoptCall(result.value);
-    setRefiled({ callId: target.id, fromCampaignId: target.campaign?.campaign_id ?? null, call: result.value });
+  const onRefiled = useCallback((from: AgencyInboundCall, next: AgencyInboundCall) => {
+    adoptCall(next);
+    setRefiled({ callId: from.id, fromCampaignId: from.campaign?.campaign_id ?? null, call: next });
     // What could be chosen was the old work's: the choice made from it is cleared with it.
     setFormState(EMPTY_DISPOSITION_FORM);
     setCatalogOverride(null);
     setPadRejection(null);
-    setFilingFor(null);
-    const text = SIDE_COPY.choicesChanged(result.value.campaign?.campaign_name ?? '');
-    setFilingNotice({ callId: target.id, text });
-    setAnnouncement(text);
-  }, [call, tenantId, accountId, filingChanging, adoptCall, reconcile]);
+  }, [adoptCall]);
+  const filing = useInboundFiling({ call, phase, tenantId, accountId, reconcile, onRefiled, announce: setAnnouncement });
+  const filingMissing = filing.missing;
   const fullForm = useMemo(() => ({ ...form, notes }), [form, notes]);
   const saveBlockAt = useCallback(
     (now: number): InboundSaveBlock | null => {
@@ -593,22 +543,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     saveBlockAt,
     saving,
     saveOutcome: () => void saveOutcome(),
-    filing: {
-      shown: filingShown,
-      name: call?.campaign?.campaign_name || null,
-      campaignId: call?.campaign?.campaign_id ?? null,
-      changeable: filingChangeable,
-      missing: filingMissing,
-      options: filingChoosing ? filingOptions : null,
-      choosing: filingChoosing,
-      loading: filingChoosing && filingLoading,
-      changing: filingChanging,
-      error: filingChoosing || filingMissing ? filingError : null,
-      notice: call && filingNotice?.callId === call.id ? filingNotice.text : null,
-      open: () => void openFiling(),
-      close: closeFiling,
-      choose: (id: string) => void chooseFiling(id),
-    },
+    filing,
     notes,
     setNotes,
     notesEnabled,
@@ -648,6 +583,94 @@ export const INBOUND_CALL_REFUSAL_WORDS: Partial<Record<InboundRefusal['code'], 
   inbound_campaign_fixed: 'This customer is on a list already, so the call stays where it is.',
   inbound_campaign_not_allowed: 'You cannot file calls under that work. Choose another.',
 };
+
+/**
+ * "Filed under" at the end of a call from a number on no list (docs/call-log.md §5): the list of
+ * works, asked for when the agent opens it, and the change of work. `onRefiled` takes the call as
+ * it was and as the server now has it; `announce` says a refusal or the change out loud.
+ */
+function useInboundFiling({ call, phase, tenantId, accountId, reconcile, onRefiled, announce }: {
+  call: AgencyInboundCall | null;
+  phase: InboundPhase | null;
+  tenantId: string | null | undefined;
+  accountId: string | null | undefined;
+  reconcile: () => void;
+  onRefiled: (from: AgencyInboundCall, next: AgencyInboundCall) => void;
+  announce: (text: string) => void;
+}): InboundFiling {
+  const [filingFor, setFilingFor] = useState<string | null>(null);
+  const [filingOptions, setFilingOptions] = useState<AgencyInboundCallCampaignOption[] | null>(null);
+  const [filingLoading, setFilingLoading] = useState(false);
+  const [filingChanging, setFilingChanging] = useState(false);
+  const [filingError, setFilingError] = useState<string | null>(null);
+  const [filingNotice, setFilingNotice] = useState<{ callId: string; text: string } | null>(null);
+
+  const filingShown = call !== null && phase === 'outcome' && !call.match
+    && (Boolean(call.campaign) || call.campaign_required === true || call.campaign_changeable === true);
+  const filingChangeable = filingShown && call?.campaign_changeable === true;
+  const filingMissing = call !== null && phase === 'outcome' && call.campaign_required === true && !call.campaign;
+  const filingChoosing = call !== null && filingFor === call.id;
+  const openFiling = useCallback(async () => {
+    const target = call;
+    if (!target || !tenantId || !accountId || filingLoading) return;
+    setFilingFor(target.id);
+    setFilingError(null);
+    setFilingLoading(true);
+    try {
+      setFilingOptions(await listInboundCallCampaigns(target.id, tenantId, accountId));
+    } catch {
+      setFilingOptions(null);
+      setFilingError(SIDE_COPY.worksDidNotLoad);
+    } finally {
+      setFilingLoading(false);
+    }
+  }, [call, tenantId, accountId, filingLoading]);
+  const closeFiling = useCallback(() => {
+    setFilingFor(null);
+    setFilingError(null);
+  }, []);
+  const chooseFiling = useCallback(async (campaignId: string) => {
+    const target = call;
+    if (!target || !tenantId || !accountId || filingChanging || !campaignId) return;
+    if (campaignId === target.campaign?.campaign_id) {
+      setFilingFor(null);
+      return;
+    }
+    setFilingChanging(true);
+    setFilingError(null);
+    const result = await setInboundCallCampaign(target.id, campaignId, tenantId, accountId);
+    setFilingChanging(false);
+    if (!result.ok) {
+      if (result.refusal.code === 'inbound_outcome_already_saved' || result.refusal.code === 'inbound_call_not_found') reconcile();
+      const text = inboundCallRefusalWords(result.refusal);
+      setFilingError(text);
+      announce(text);
+      return;
+    }
+    onRefiled(target, result.value);
+    setFilingFor(null);
+    const text = SIDE_COPY.choicesChanged(result.value.campaign?.campaign_name ?? '');
+    setFilingNotice({ callId: target.id, text });
+    announce(text);
+  }, [call, tenantId, accountId, filingChanging, onRefiled, reconcile, announce]);
+
+  return {
+    shown: filingShown,
+    name: call?.campaign?.campaign_name || null,
+    campaignId: call?.campaign?.campaign_id ?? null,
+    changeable: filingChangeable,
+    missing: filingMissing,
+    options: filingChoosing ? filingOptions : null,
+    choosing: filingChoosing,
+    loading: filingChoosing && filingLoading,
+    changing: filingChanging,
+    error: filingChoosing || filingMissing ? filingError : null,
+    notice: call && filingNotice?.callId === call.id ? filingNotice.text : null,
+    open: () => void openFiling(),
+    close: closeFiling,
+    choose: (id: string) => void chooseFiling(id),
+  };
+}
 
 export function inboundCallRefusalWords(refusal: InboundRefusal): string {
   return INBOUND_CALL_REFUSAL_WORDS[refusal.code] ?? STATION_COPY.somethingWentWrong;
