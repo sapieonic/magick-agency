@@ -42,6 +42,15 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     loading: false, error: null, reload: vi.fn(), defaultNumber: '+912200000001',
   }),
 }));
+// Who calls (CS10): nobody on the campaign, nobody in the team; this file is not about staffing.
+vi.mock('../../api/agency', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agency')>()),
+  listCampaignAgents: async () => ({ agents: [] }),
+}));
+vi.mock('../../api/tenants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/tenants')>()),
+  listTenantMembers: async () => [],
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));

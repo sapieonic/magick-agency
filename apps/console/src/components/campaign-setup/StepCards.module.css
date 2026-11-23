@@ -1,0 +1,186 @@
+.root {
+  container-type: inline-size;
+  container-name: stepcards;
+  min-width: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.item {
+  display: flex;
+  min-width: 0;
+}
+
+.card {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font-weight: 400;
+  text-align: left;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: border-color var(--transition), background-color var(--transition);
+}
+
+.card:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.card[data-current='true'],
+.card[data-current='true']:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.badge {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.card[data-current='true'] .badge {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.card[data-complete='true'] .badge {
+  border-color: var(--success);
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+/* An unsaved change on the step (Settings): a dot on the badge's corner, ringed off the card. */
+.unsavedDot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+/* Needs fixing wins over current and complete: the mark is what the step bar is for. */
+.card[data-invalid='true'] .badge {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.title,
+.subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@container stepcards (max-width: 760px) {
+  .list {
+    gap: 6px;
+  }
+
+  .card {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .subtitle {
+    display: none;
+  }
+}
+
+/* A phone: numbers for every step, the title only on the current one, which keeps the width its
+   title needs while the bare numbers share what is left. */
+@container stepcards (max-width: 560px) {
+  .list {
+    display: flex;
+  }
+
+  .item {
+    flex: 0 0 auto;
+  }
+
+  .item[data-current='true'] {
+    flex: 1 1 auto;
+  }
+
+  .card {
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .title {
+    display: none;
+  }
+
+  .item[data-current='true'] .card {
+    justify-content: flex-start;
+    padding: 6px 10px 6px 6px;
+  }
+
+  .item[data-current='true'] .title {
+    display: inline;
+  }
+
+  .badge {
+    width: 28px;
+    height: 28px;
+  }
+}

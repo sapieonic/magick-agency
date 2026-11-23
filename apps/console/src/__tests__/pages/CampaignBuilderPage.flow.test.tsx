@@ -1,14 +1,25 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import {
+  applied,
+  currentStep,
+  fillBasics,
+  footer,
+  footerButton,
+  goToStep,
+  renderPage,
+  saveDraftButton,
+  stepCard,
+  staffingHook,
+} from './campaignBuilderFixtures';
 
 /**
- * The guided create path, at the PAGE level.
- *
- * These assertions are about sequence and orientation — can an operator walk
- * one decision at a time, skip what they do not have yet, and jump back
- * without losing what they already typed. The mapping/ingest/config contracts
- * live in the sibling page tests.
+ * New campaign's path at the PAGE level (CS1): the four step cards, one step on screen at a
+ * time, the footer that moves between them, and the leave guard. Whether an operator can walk
+ * one decision at a time, skip what they do not have yet, and jump back without losing what they
+ * typed. The upload, config and Start contracts live in the sibling page tests.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -18,16 +29,21 @@ const mocks = vi.hoisted(() => ({
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
-  cancelIngestJob: vi.fn(),
-  downloadRejectedRows: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  transitionAgencyCampaign: vi.fn(),
+  applyStaffing: vi.fn(),
+  trackStepViewed: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/GovernanceContext', () => ({
   // The recording field reads the account's capabilities; allowed here.
   useGovernance: () => ({ isEnabled: () => true, map: {}, loading: false, refresh: vi.fn() }),
+}));
+vi.mock('../../analytics/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../analytics/events')>()),
+  trackAgencyCampaignBuilderStepViewed: mocks.trackStepViewed,
 }));
 vi.mock('../../hooks/usePhoneNumbers', () => ({
   usePhoneNumbers: () => ({
@@ -47,33 +63,24 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     defaultNumber: '+912200000001',
   }),
 }));
+vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useCampaignStaffing')>()),
+  useCampaignStaffing: () => staffingHook(mocks.applyStaffing),
+}));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
   uploadRosterCsv: mocks.uploadRosterCsv,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
-  cancelIngestJob: mocks.cancelIngestJob,
-  downloadRejectedRows: mocks.downloadRejectedRows,
+  cancelIngestJob: vi.fn(),
+  downloadRejectedRows: vi.fn(),
+  downloadSkippedRows: vi.fn(),
+  importCheckedFile: vi.fn(),
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
 }));
-
-async function renderPage() {
-  const { default: CampaignBuilderPage } = await import(
-    '../../pages/campaigns/agency/CampaignBuilderPage'
-  );
-  return render(
-    <MemoryRouter>
-      <CampaignBuilderPage />
-    </MemoryRouter>,
-  );
-}
-
-function fillBasics(name = 'Collections') {
-  fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: name } });
-  fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
-}
 
 beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1' });
@@ -85,6 +92,7 @@ beforeEach(() => {
   });
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
+  mocks.applyStaffing.mockResolvedValue(applied());
 });
 
 afterEach(() => {
@@ -92,47 +100,62 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('the page', () => {
+  it('says what it is, how long it takes, and offers a way out', async () => {
+    await renderPage();
+    expect(screen.getByRole('heading', { level: 1, name: 'New campaign' })).toBeTruthy();
+    expect(screen.getByText('4 short steps · you can come back to any step')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Campaigns list')).toBeTruthy();
+  });
+
+  it('has no Review step and no summary rail: four step cards, and only the current step', async () => {
+    await renderPage();
+    const cards = within(screen.getByRole('navigation', { name: 'Campaign setup' })).getAllByRole('button');
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+      'Name & number',
+      'Customers',
+      'Purpose & buttons',
+      'Agents & timing',
+    ]);
+    expect(screen.queryByLabelText('Campaign summary')).toBeNull();
+    expect(screen.queryByText(/Review/)).toBeNull();
+    expect(screen.getByTestId('name-number-step')).toBeTruthy();
+    expect(screen.queryByTestId('customers-step')).toBeNull();
+  });
+});
+
 describe('the guided setup path', () => {
-  it('opens on name and numbers, and keeps later steps closed until those exist', async () => {
+  it('opens on Name & number, and keeps later steps closed until those exist', async () => {
     await renderPage();
 
-    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('basics');
+    expect(currentStep()).toBe('basics');
     expect(screen.getByLabelText(/Campaign name/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Who to call' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect((screen.getByRole('button', { name: 'Review & save' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy();
+    expect(stepCard('Customers').disabled).toBe(true);
+    expect(stepCard('Agents & timing').disabled).toBe(true);
+    expect(footerButton('Continue')).toBeTruthy();
+    // Nothing to go back to on the first step.
+    expect(footer().queryByRole('button', { name: 'Back' })).toBeNull();
   });
 
   it('names the missing basic on Continue rather than failing later at upload', async () => {
     await renderPage();
-    expect(screen.getByText('Name the campaign first.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(footer().getByText('Name the campaign first.')).toBeTruthy();
+    expect(footerButton('Continue').disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
-    expect(screen.getByText('Pick at least one number to call from.')).toBeTruthy();
-  });
-
-  it('keeps the summary rail to a short hours line, not the full echo', async () => {
-    await renderPage();
-    const rail = screen.getByLabelText('Campaign summary');
-    expect(rail.textContent).toContain('Mon–Fri · 09:00–20:00 · Asia/Kolkata');
-    expect(rail.textContent).not.toContain('Right now');
+    expect(footer().getByText('Pick at least one number to call from.')).toBeTruthy();
   });
 
   it('unlocks the rest of the path once basics are filled, and Continue advances', async () => {
     await renderPage();
     fillBasics();
 
-    expect((screen.getByRole('button', { name: 'Who to call' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('contacts');
+    expect(stepCard('Customers').disabled).toBe(false);
+    fireEvent.click(footerButton('Continue'));
+    expect(currentStep()).toBe('contacts');
     expect(screen.getByLabelText('CSV file')).toBeTruthy();
+    expect(stepCard('Customers').getAttribute('aria-current')).toBe('step');
   });
 
   it('clears drag feedback and accepts only one file while upload is busy', async () => {
@@ -145,7 +168,7 @@ describe('the guided setup path', () => {
 
     await renderPage();
     fillBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Who to call' }));
+    goToStep('Customers');
 
     const dropzone = screen.getByTestId('contacts-dropzone');
     const first = new File(['phone\n+912200000001\n'], 'first.csv', { type: 'text/csv' });
@@ -154,9 +177,7 @@ describe('the guided setup path', () => {
     fireEvent.dragOver(dropzone);
     expect(dropzone.getAttribute('data-drag-over')).toBe('true');
 
-    fireEvent.change(screen.getByLabelText('CSV file'), {
-      target: { files: [first] },
-    });
+    fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [first] } });
 
     await waitFor(() => {
       expect(screen.getByTestId('contacts-dropzone').getAttribute('data-drag-over')).toBeNull();
@@ -170,105 +191,127 @@ describe('the guided setup path', () => {
     expect(mocks.uploadRosterCsv).toHaveBeenCalledTimes(1);
   });
 
-  it('moves focus to the new step heading after navigation', async () => {
+  it('moves focus to the new step’s heading after navigation, and reports the step by its id', async () => {
     await renderPage();
     fillBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Who to call' }));
+    goToStep('Customers');
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Customers' }));
+    expect(mocks.trackStepViewed).toHaveBeenLastCalledWith({ step: 'contacts', step_index: 1 });
 
-    expect(document.activeElement).toBe(
-      screen.getByRole('heading', { name: 'Who to call' }),
-    );
+    fireEvent.click(footerButton('Skip for now'));
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'What is this campaign for?' }));
+    expect(mocks.trackStepViewed).toHaveBeenLastCalledWith({ step: 'purpose', step_index: 2 });
+
+    fireEvent.click(footerButton('Continue'));
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Who will call' }));
+    expect(mocks.trackStepViewed).toHaveBeenLastCalledWith({ step: 'agents', step_index: 3 });
   });
 
-  it('lets an operator skip contacts and still reach review', async () => {
+  it('lets an operator skip customers and reach the last step, whose footer reads Ready', async () => {
     await renderPage();
     fillBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
-    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('hours');
+    fireEvent.click(footerButton('Continue'));
+    fireEvent.click(footerButton('Skip for now'));
+    expect(currentStep()).toBe('purpose');
+    expect(footerButton('Back')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('behaviour');
+    fireEvent.click(footerButton('Continue'));
+    expect(currentStep()).toBe('agents');
+    // No Continue on the last step: Ready, Save as draft and Start.
+    expect(footer().queryByRole('button', { name: 'Continue' })).toBeNull();
+    expect(screen.getByTestId('ready-line').textContent).toBe('Ready: no agents · 9 AM – 8 PM · 5 days a week');
+    expect(saveDraftButton()).toBeTruthy();
+    expect(footerButton('Start campaign')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    const review = screen.getByTestId('builder-review');
-    expect(review.textContent).toContain('None imported yet — you can add a list after saving.');
-    expect(review.textContent).toContain('Collections');
-    expect(review.textContent).toContain('+912200000001');
+    fireEvent.click(footerButton('Back'));
+    expect(currentStep()).toBe('purpose');
   });
 
   it('keeps typed values when jumping back from a later step', async () => {
     await renderPage();
     fillBasics('August collections');
-    fireEvent.click(screen.getByRole('button', { name: 'How agents work' }));
-    expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('behaviour');
+    goToStep('Agents & timing');
+    expect(currentStep()).toBe('agents');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Name & numbers' }));
-    expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).value).toBe(
-      'August collections',
-    );
+    goToStep('Name & number');
+    expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).value).toBe('August collections');
   });
 
-  it('saves from review and offers a way into the draft', async () => {
+  it('saves as a draft from any step and offers a way into it', async () => {
     await renderPage();
     fillBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Review & save' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    expect(saveDraftButton().className).toContain('btn-secondary');
+    fireEvent.click(saveDraftButton());
 
     await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
     expect(await screen.findByRole('link', { name: 'Open campaign' })).toBeTruthy();
-    expect(screen.getByText('Saved.')).toBeTruthy();
+    expect(screen.getByText('Saved as a draft.', { exact: false })).toBeTruthy();
   });
 });
 
-/** Stands in for the sidebar or search: a push navigation from outside the page. */
-function JumpAway() {
-  const navigate = useNavigate();
-  return <button type="button" onClick={() => navigate('/agency/campaigns')}>Jump</button>;
-}
+describe('the footer on a phone', () => {
+  /** The body of the block opened by `head`, braces balanced. */
+  function block(css: string, head: string): string {
+    const at = css.indexOf(`${head} {`);
+    if (at < 0) throw new Error(`no block ${head}`);
+    const open = css.indexOf('{', at);
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}' && --depth === 0) return css.slice(open + 1, i);
+    }
+    throw new Error(`unbalanced block ${head}`);
+  }
 
-async function renderWithExit() {
-  const { default: CampaignBuilderPage } = await import(
-    '../../pages/campaigns/agency/CampaignBuilderPage'
-  );
-  return render(
-    <MemoryRouter initialEntries={['/agency/campaigns/new']}>
-      <Routes>
-        <Route path="/agency/campaigns/new" element={<CampaignBuilderPage />} />
-        <Route path="*" element={<p>Campaigns list</p>} />
-      </Routes>
-      <JumpAway />
-    </MemoryRouter>,
-  );
-}
+  /*
+    happy-dom applies no stylesheet and no container query, so the rule is read from the sheet:
+    the rows wrap, the Ready line takes its own row, and the buttons fill theirs at a finger's
+    height.
+  */
+  it('wraps cleanly: the Ready line on its own row, the buttons filling theirs', () => {
+    const css = readFileSync(resolve(__dirname, '../../pages/campaigns/agency/CampaignBuilderPage.module.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(block(css, '.footerMain')).toMatch(/flex-wrap:\s*wrap;/);
+    expect(block(css, '.actions')).toMatch(/flex-wrap:\s*wrap;/);
+    const phone = block(css, '@container builder (max-width: 560px)');
+    expect(block(phone, '.ready')).toMatch(/flex-basis:\s*100%;/);
+    expect(block(phone, '.footerMain > button,\n  .actions > button')).toMatch(/min-height:\s*44px;/);
+  });
+});
 
 /**
  * The builder guards what has been typed, as campaign Settings does: leaving with input not
  * yet saved asks first, and nothing is held once it is saved or while the form is untouched.
  */
 describe('leaving the builder', () => {
+  const dialog = () => screen.getByRole('dialog', { name: 'Leave without saving?' });
+
   it('lets an untouched builder go at once', async () => {
-    await renderWithExit();
+    await renderPage();
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     expect(screen.getByText('Campaigns list')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('asks before leaving what has been typed; Cancel keeps it', async () => {
-    await renderWithExit();
+  it('asks before leaving what has been typed, from the page’s own Cancel too; Cancel in the dialog keeps it', async () => {
+    await renderPage();
     fillBasics('Renewals');
 
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
-    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    expect(dialog()).toBeTruthy();
     expect(screen.getByText(/new campaign is not saved/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).value).toBe('Renewals');
+
+    // The header's Cancel is a way out like any other.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(dialog()).toBeTruthy();
   });
 
   it('leaves on "Leave without saving"', async () => {
-    await renderWithExit();
+    await renderPage();
     fillBasics('Renewals');
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
@@ -276,37 +319,51 @@ describe('leaving the builder', () => {
   });
 
   it('counts a setting changed on a later step, and nothing once all is put back', async () => {
-    await renderWithExit();
+    await renderPage();
     fillBasics('Renewals');
-    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
-    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
+    goToStep('Agents & timing');
+    fireEvent.click(screen.getByRole('radio', { name: '9 AM – 6 PM' }));
     // The basics put back as they were: only the calling window differs now.
-    fireEvent.click(screen.getByRole('button', { name: 'Name & numbers' }));
+    goToStep('Name & number');
     fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '+91 22000 00001' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
-    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(dialog()).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
 
     fillBasics('Renewals');
-    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
-    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '09:00' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Name & numbers' }));
+    goToStep('Agents & timing');
+    fireEvent.click(screen.getByRole('radio', { name: '9 AM – 8 PM' }));
+    goToStep('Name & number');
     fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '+91 22000 00001' }));
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('Campaigns list')).toBeTruthy();
   });
 
-  it('holds nothing once the campaign is saved, settings and all', async () => {
-    await renderWithExit();
+  it('counts an agent ticked and not yet saved', async () => {
+    await renderPage();
     fillBasics('Renewals');
-    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
-    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
-    await waitFor(() => expect(screen.getByText('Saved.', { exact: false })).toBeTruthy());
+    fireEvent.click(saveDraftButton());
+    await waitFor(() => expect(screen.getByText('Saved as a draft.', { exact: false })).toBeTruthy());
+    goToStep('Agents & timing');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Asha Rao' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(dialog()).toBeTruthy();
+  });
+
+  it('holds nothing once the campaign is saved, settings and all', async () => {
+    await renderPage();
+    fillBasics('Renewals');
+    goToStep('Agents & timing');
+    fireEvent.click(screen.getByRole('radio', { name: '9 AM – 6 PM' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Asha Rao' }));
+    mocks.applyStaffing.mockResolvedValue(applied({ added: ['u-asha'] }));
+    fireEvent.click(saveDraftButton());
+    await waitFor(() => expect(screen.getByText('Saved as a draft.', { exact: false })).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     expect(screen.queryByRole('dialog')).toBeNull();

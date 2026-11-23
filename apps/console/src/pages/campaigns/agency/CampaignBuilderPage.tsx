@@ -1,25 +1,18 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Upload } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { AGENCY_PHONE_DISPLAY_DEFAULT, type AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
-import { ColumnMapper } from './ColumnMapper';
-import { IngestSummary, ReviewNextSteps } from './IngestSummary';
-import { CampaignBehaviourSection } from './CampaignBehaviourSection';
-import { CallerIdPicker } from '../../agency/CallerIdPicker';
-import { CampaignCarrierField } from '../../../components/agency/CampaignCarrierField';
 import { useAgencyCarriers } from '../../../hooks/useAgencyCarriers';
 import { usePhoneNumbers } from '../../../hooks/usePhoneNumbers';
 import {
   CarrierRefusalError,
-  SERVICE_CARRIER,
   carrierOptions,
   sameCarrier,
   withCarrierRefusalCopy,
   type CarrierChoice,
 } from '../../../utils/agencyCarriers';
-import { CampaignRecordingField } from '../../../components/agency/CampaignRecordingField';
-import { CampaignCallSummaryField } from '../../../components/agency/CampaignCallSummaryField';
 import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
@@ -31,90 +24,96 @@ import {
   type CampaignRecordingState,
 } from '../../../utils/agencyCampaignRecording';
 import { useCallAnalysisProfiles } from '../../../hooks/useCallAnalysisProfiles';
-import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
-import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
+import {
+  createAgencyCampaign,
+  transitionAgencyCampaign,
+  updateAgencyCampaign,
+} from '../../../api/agencyCampaigns';
+import { buildContextDisplay } from '../../../utils/agencyColumnMapping';
 import { useRosterIngest } from '../../../hooks/useRosterIngest';
 import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
+import { useCampaignStaffing, staffingFailureMessage, type StaffingApplyResult } from '../../../hooks/useCampaignStaffing';
 import { INBOUND_FLAG } from '../../../utils/inbound/inboundFlag';
-import { ASSIGNMENT_MODE_COPY, CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
+import { CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
 import {
   trackAgencyCampaignBuilderStepViewed,
   trackAgencyCampaignConfigBlocked,
   trackAgencyCampaignConfigSaved,
+  trackAgencyCampaignLifecycleAction,
+  trackAgencyCampaignLifecycleFailed,
 } from '../../../analytics/events';
+import { ApiError } from '../../../api/client';
 import {
   emptyCampaignConfig,
   buildConfigPayload,
-  callingWindowEcho,
   ceilingStateError,
   isBuiltInCode,
-  outcomeDispositionsSummary,
   validateConfig,
   fieldErrorsFromResponse,
   type CampaignConfigState,
 } from '../../../utils/agencyCampaignConfigForm';
+import { isKnownCampaignStatus, lifecycleRefusalMessage } from '../../../utils/agencyCampaignControls';
+import { dailyTargetError, dailyTargetPayload } from '../../../utils/agency/stationSettings';
 import {
-  collectionsStarterNames,
-  collectionsStarterOutcomes,
-  isCollectionsStarter,
-  withCollectionsStarter,
-} from '../../../utils/agency/collectionsStarter';
+  breakReasonsErrors,
+  breakReasonsFormOf,
+  breakReasonsPayload,
+  sameBreakLimits,
+  type BreakReasonsForm,
+} from '../../../utils/agency/breakLimits';
+import { SETUP_STEPS, isSetupStepId, type SetupStepId } from '../../../utils/campaignSetup/setupSteps';
+import { customersContinue } from '../../../utils/campaignSetup/ingestChips';
+import { isPurposePresetId, withPreset } from '../../../utils/campaignSetup/purposePresets';
+import { isAdvancedField, readyLine } from '../../../utils/campaignSetup/agentsTiming';
+import { StepCards } from '../../../components/campaign-setup';
+import { NameNumberStep } from './setup/NameNumberStep';
+import { CustomersStep } from './setup/CustomersStep';
+import { PurposeButtonsStep } from './setup/PurposeButtonsStep';
+import { AgentsTimingStep } from './setup/AgentsTimingStep';
+import { BreakLimitsEditor } from './BreakLimitsEditor';
 import {
-  BUILDER_STEPS,
   basicsBlockReason,
   defaultBuilderCarrier,
   canVisitStep,
-  contactsContinueLabel,
   nextStep,
   prevStep,
-  stepById,
   stepIndex,
-  type BuilderStepId,
 } from './builderFlow';
 import {
   findingsByStep,
   firstOtherStepWithFindings,
   goToStepLabel,
-  reviewFindings,
   saveBlockCopy,
-  type ReviewRowId,
 } from './builderErrors';
 import { focusFirstFieldError } from './configFieldErrors';
-import { BuilderStepper } from './BuilderStepper';
-import { BuilderSummary } from './BuilderSummary';
-import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import type { AgencyCampaignTemplateSectionSource } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { SOURCE_CHIP_LABELS, sectionSummary, wrapupSummary } from '../../../utils/agency/campaignTemplates/templateCopy';
 import { useBuilderTemplate } from '../../../components/agency/campaignTemplates/useBuilderTemplate';
 import { StartFromPanel } from '../../../components/agency/campaignTemplates/StartFromPanel';
-import { ReviewScriptFix } from '../../../components/agency/campaignTemplates/ReviewScriptFix';
-import templateStyles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
+import { BuilderScriptCard } from '../../../components/agency/campaignTemplates/BuilderScriptCard';
+import { sectionSourcesOf } from '../../../components/agency/campaignTemplates/SectionSource';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
- * Guided campaign create (`/agency/campaigns/new`).
+ * New campaign (`/agency/campaigns/new`) on the four setup steps (CS1, `docs/campaign-setup.md`):
+ * Name & number, Customers, Purpose & buttons, Agents & timing. Each step is a controlled
+ * component in `./setup/`, shared with campaign Settings; this page owns the state, the draft, the
+ * saves, the staffing (CS10), Start (CS15) and the leave guard, so it is composition.
  *
- * One decision at a time, with a living summary and a stepper that can jump
- * back. The old page put every section on screen at once so a mapping mistake
- * was recoverable; that recoverability is kept (state lives on the page, the
- * contacts step is re-enterable) without making hours, retries and wrap-up
- * compete for the first look.
+ * There is no Review step: the step cards mark a step that needs fixing, the footer names the
+ * step that holds a finding with a way to it, and the last step's footer reads "Ready: …".
  *
- * Upload → map → ingest still lives inside the contacts step as a progression,
- * because you cannot map columns you have not uploaded.
- *
- * Everything the page decides is still delegated to the pure modules —
- * `agencyColumnMapping`, `agencyIngestSummary`, `agencyCampaignConfigForm`,
- * `builderFlow` — so the page is composition.
+ * With campaign templates on (`docs/campaign-templates.md` §7, CS17–CS20), "Start from" sits above
+ * the step cards and fills every step (`useBuilderTemplate`); each section's source chip and Reset
+ * sit at the block that edits it, through the steps' `sectionSources`; a template's script is on
+ * Purpose & buttons, under the buttons. With the flag off or the read failing, none of it shows.
  *
  * Leaving with input not yet saved asks first, as campaign Settings does
  * (`useUnsavedChangesGuard`): what is typed is compared with what the server has (nothing
- * at first; the name, numbers and carrier once a roster upload creates the draft; the whole
- * form once Save campaign succeeds), and a roster upload still being mapped counts too.
+ * at first; the name, numbers and carrier once a roster import creates the draft; the whole
+ * form once Save as draft succeeds), and a roster upload still being mapped counts too.
  */
 
 /**
@@ -124,20 +123,74 @@ import styles from './CampaignBuilderPage.module.css';
  */
 type BuilderForm = Omit<CampaignSettingsForm, 'carrier'> & { carrier: CarrierChoice | null };
 
+/** The agent screen's two settings step 4 offers (AS6, AS9): the daily target and the number display. */
+interface AgentScreenForm {
+  dailyTarget: string;
+  phoneDisplay: AgencyPhoneDisplay;
+}
+
 /** A new campaign records nothing and has no call summary until the operator picks them. */
 const NEW_CAMPAIGN_RECORDING: CampaignRecordingState = { record: false, profileId: NO_ANALYSIS_PROFILE };
+/** A new campaign has no daily target and shows the whole number, as the server's defaults. */
+const NEW_AGENT_SCREEN: AgentScreenForm = { dailyTarget: '', phoneDisplay: AGENCY_PHONE_DISPLAY_DEFAULT };
+/** The built-in break reasons a new campaign is offered (LF20): sent only once a limit changes. */
+const NEW_BREAK_REASONS: BreakReasonsForm = breakReasonsFormOf(undefined);
+
+/** Start's reason while no customers have been added (the server refuses an empty campaign). */
+export const START_NEEDS_CUSTOMERS =
+  'Add customers on the Customers step first: a campaign with no customers cannot start. You can save it as a draft now.';
+/** Start's reason while customers are still being added. */
+export const START_WAITS_FOR_IMPORT = 'Wait for the customers to finish being added.';
+/** Why the saves wait while a template's script does not fit (CS19, CTC10), from another step and on its own. */
+export const SCRIPT_BLOCK_ELSEWHERE = 'Change the script on Purpose & buttons before you save.';
+export const SCRIPT_BLOCK_HERE = 'Change the script below before you save.';
+
+/** A save's refusal that lives under a step's Advanced fold, so that fold is held open. */
+interface RefusedInAdvanced {
+  purpose: boolean;
+  agents: boolean;
+}
+const NOTHING_REFUSED: RefusedInAdvanced = { purpose: false, agents: false };
+
+/** The fields step 3 keeps under its Advanced fold (its full outcome editor and the automatic outcomes). */
+function isPurposeFoldField(field: string): boolean {
+  return field === 'disposition_catalog'
+    || field.startsWith('outcome_dispositions')
+    || /^disposition_catalog\[\d+\]\.(code|override(\..+)?|promise_follow_up_days)$/.test(field);
+}
+
+/** Who the server has on the campaign after an apply: what was asked for, less what failed. */
+function staffedAfter(before: readonly string[], asked: readonly string[], result: StaffingApplyResult): string[] {
+  if (result.readError) return [...before];
+  const staffed = new Set(asked);
+  for (const failure of result.failures) {
+    if (failure.action === 'add') staffed.delete(failure.userId);
+    else staffed.add(failure.userId);
+  }
+  return [...staffed];
+}
+
+/** A save that went through: the draft's id, and what staffing it could not do (null: all of it). */
+interface SavedDraft {
+  id: string;
+  staffingFailure: string | null;
+}
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
+  const navigate = useNavigate();
   // Contact assignment: the Assignment group and outcome overrides, flag-gated.
   // The builder's campaign is always a draft, so the mode is never locked here.
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
   const inboundEnabled = useFeatureFlagEnabled(INBOUND_FLAG);
 
-  const [step, setStep] = useState<BuilderStepId>('basics');
+  const [step, setStep] = useState<SetupStepId>('basics');
   const [name, setName] = useState('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [callerIds, setCallerIds] = useState<string[]>([]);
+  /** A save's refusal of the name or the numbers, said under the field on Name & number. */
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [callerIdsError, setCallerIdsError] = useState<string | null>(null);
   /**
    * The carrier account the campaign dials on. `null` until the operator picks one: the
    * campaign then takes the first listed that has a number available to this account
@@ -151,9 +204,9 @@ export default function CampaignBuilderPage() {
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
   /**
    * Recording and the call summary (the analysis profile, whose custom dimensions each
-   * connected call is summarised against), set on the behaviour step and saved with the
-   * config. The account's `agency.recording` decides whether recording can be switched on,
-   * and `agency.analytics` whether a profile can be picked (UX gating; the API's 403 is the
+   * connected call is summarised against), set on Agents & timing and saved with the config.
+   * The account's `agency.recording` decides whether recording can be switched on, and
+   * `agency.analytics` whether a profile can be picked (UX gating; the API's 403 is the
    * enforcement, and `useGovernance` fails open), as on campaign Settings.
    */
   const [recording, setRecording] = useState<CampaignRecordingState>(NEW_CAMPAIGN_RECORDING);
@@ -168,26 +221,34 @@ export default function CampaignBuilderPage() {
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
   /**
-   * Bumped when the Collections set replaces the outcomes (AS4): the behaviour editors remount, so
-   * no row keeps state from the list it replaced (which added rows follow their label, which mapped
-   * rows the automatic outcomes follow).
-   */
-  const [catalogEpoch, setCatalogEpoch] = useState(0);
-  /**
-   * Analytics-only: the disposition order the wizard started with, to detect
-   * whether the row arrows moved anything before the one save this page makes.
-   * Applying the Collections set (AS4) starts it again from the set's order.
+   * Analytics-only: the disposition order the wizard started with, to detect whether anything
+   * moved the buttons before the save. A starting point on Purpose & buttons (CS2) starts it
+   * again from that preset's order.
    */
   const initialDispositionOrderRef = useRef(config.dispositions.map((d) => d.code));
+  /**
+   * The daily target, the number display (step 4's agent screen) and the break limits (its
+   * Advanced fold). The same campaign PATCH campaign Settings saves them with takes them, so a
+   * save sends each that differs from what the draft has (the server's defaults at first).
+   */
+  const [agentScreen, setAgentScreen] = useState<AgentScreenForm>(NEW_AGENT_SCREEN);
+  const [savedAgentScreen, setSavedAgentScreen] = useState<AgentScreenForm>(NEW_AGENT_SCREEN);
+  const [breakReasons, setBreakReasons] = useState<BreakReasonsForm>(NEW_BREAK_REASONS);
+  /**
+   * Bumped when a campaign template replaced the buttons (filled in, or Reset): Purpose & buttons
+   * then forgets what it held about the old rows (`buttonsReplaced`).
+   */
+  const [buttonsReplaced, setButtonsReplaced] = useState(0);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [refusedInAdvanced, setRefusedInAdvanced] = useState<RefusedInAdvanced>(NOTHING_REFUSED);
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
-  /** Whether Save campaign has gone through at least once: what the draft holds, for the notes. */
+  /** Whether Save as draft has gone through at least once: what the draft holds, for the notes. */
   const [savedOnce, setSavedOnce] = useState(false);
   /**
    * Whether an import has been sent into the draft. Set as it starts, never by a check, and
    * kept: rows that landed stay in the draft even if the import later fails or is cancelled,
-   * and a second file being mapped does not take them out.
+   * and a second file being checked does not take them out.
    */
   const [importSent, setImportSent] = useState(false);
   /** The form as the server has it: empty until a draft is created, then as last saved. */
@@ -197,61 +258,81 @@ export default function CampaignBuilderPage() {
     carrier: null,
     recording: NEW_CAMPAIGN_RECORDING,
     config,
+    breakReasons: NEW_BREAK_REASONS,
   }));
   /**
    * The draft's basics as the server has them (null until the draft exists): the name, the
-   * caller IDs and the carrier account sent on create, then on each Save campaign. Once the
-   * draft exists the save is a PATCH, and it carries any of the three that moved since, or a
-   * rename on Basics after a roster upload would never reach the server. A ref, not state:
-   * the save reads it straight after `ensureCampaign` may have set it.
+   * caller IDs and the carrier account sent on create, then on each save. Once the draft exists
+   * the save is a PATCH, and it carries any of the three that moved since, or a rename after a
+   * roster import would never reach the server. A ref, not state: the save reads it straight
+   * after `ensureCampaign` may have set it.
    */
   const serverBasicsRef = useRef<{ name: string; callerIds: readonly string[]; carrier: CarrierChoice } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  // `phase` is render state, so two drop/change events can both observe
-  // `idle` before React commits `uploading`. This immediate lock prevents a
-  // second upload in that gap; `phase` remains the user-visible gate.
-  const acceptingFileRef = useRef(false);
-
   /**
-   * Steps the operator has actually been on.
-   *
-   * Half of "is this step complete?" — see {@link completed}. Seeded with the
-   * step the wizard opens on, because that one has been reached by definition.
+   * The agent screen and break limits a template's create sent, for the save that follows it in
+   * the same click (its state is not read yet); cleared once a save has used it.
    */
-  const [visited, setVisited] = useState<ReadonlySet<BuilderStepId>>(
-    () => new Set<BuilderStepId>(['basics']),
-  );
-
-  const goTo = useCallback((next: BuilderStepId) => {
-    setStep(next);
-    setVisited((current) => (current.has(next) ? current : new Set([...current, next])));
-    headingRef.current?.focus();
-    trackAgencyCampaignBuilderStepViewed({ step: next, step_index: stepIndex(next) });
-  }, []);
+  const createdWithRef = useRef<{ agentScreen?: AgentScreenForm; breakReasons?: BreakReasonsForm } | null>(null);
 
   /*
-    "Fix" on Review and "Go to …" beside Save land on the field, not only its step: "How
-    agents work" holds the whole outcome list, and a finding scrolled out of view is the
-    very thing these exist to solve. `goTo` focuses the step heading; once the step has
-    rendered, focus moves on to its first field with an error.
+    Who calls (CS10). The ticks are the page's; they reach the campaign when a save goes
+    through (the draft must exist first), through the assignment routes the campaign page uses.
+    `staffedIds` is who the server has after the last apply, for the leave guard.
   */
-  const cardRef = useRef<HTMLElement>(null);
+  const staffing = useCampaignStaffing(campaignId);
+  const applyStaffing = staffing.applyStaffing;
+  const [selected, setSelected] = useState<string[]>(() => staffing.assignedIds);
+  const [staffedIds, setStaffedIds] = useState<string[]>(() => staffing.assignedIds);
+  const [staffingError, setStaffingError] = useState<string | null>(null);
+
+  /** Start (CS15): in flight, and its refusal, said with a link to the draft it left. */
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
+  const [startRefusal, setStartRefusal] = useState<{ id: string; message: string } | null>(null);
+  const [startedId, setStartedId] = useState<string | null>(null);
+
+  // `phase` is render state, so two drop/change events can both observe `idle` before React
+  // commits `uploading`. This immediate lock prevents a second upload in that gap; `phase`
+  // remains the user-visible gate (the step holds a lock of its own too).
+  const acceptingFileRef = useRef(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Steps the operator has actually been on. Half of "is this step complete?" — see
+   * {@link completed}. Seeded with the step the page opens on, reached by definition.
+   */
+  const [visited, setVisited] = useState<ReadonlySet<SetupStepId>>(() => new Set<SetupStepId>(['basics']));
+
+  /*
+    A step change moves focus to the new step's heading (each step's first card heading takes
+    `tabIndex={-1}`), or, for "Go to …", on to the first field with an error. Counted, so a move
+    to the step already on screen (a refusal on Name & number) still lands.
+  */
+  const [navTick, setNavTick] = useState(0);
   const focusFindingRef = useRef(false);
+  const goTo = useCallback((next: SetupStepId) => {
+    setStep(next);
+    setVisited((current) => (current.has(next) ? current : new Set([...current, next])));
+    setNavTick((n) => n + 1);
+    trackAgencyCampaignBuilderStepViewed({ step: next, step_index: stepIndex(next) });
+  }, []);
   useEffect(() => {
-    if (!focusFindingRef.current) return;
-    focusFindingRef.current = false;
-    if (cardRef.current) focusFirstFieldError(cardRef.current);
-  }, [step]);
+    if (navTick === 0) return;
+    const body = bodyRef.current;
+    if (!body) return;
+    if (focusFindingRef.current) {
+      focusFindingRef.current = false;
+      if (focusFirstFieldError(body)) return;
+    }
+    body.querySelector<HTMLElement>('h2[tabindex="-1"]')?.focus();
+  }, [navTick]);
   const goToFinding = useCallback(
-    (target: BuilderStepId) => {
+    (target: SetupStepId) => {
       if (target === step) {
-        if (cardRef.current) focusFirstFieldError(cardRef.current);
+        if (bodyRef.current) focusFirstFieldError(bodyRef.current);
         return;
       }
-      // The same gate as the stepper: no step past Basics until its basics are in.
+      // The same gate as the step cards: no step past Name & number until its basics are in.
       if (!canVisitStep(target, name.trim().length > 0 && callerIds.length > 0)) return;
       focusFindingRef.current = true;
       goTo(target);
@@ -260,12 +341,12 @@ export default function CampaignBuilderPage() {
   );
 
   /*
-    The ceiling rides on the create, not only on the config save's PATCH: a roster
-    upload creates the draft before any config save, and a draft that is never
-    config-saved would otherwise keep the server's 3% however far the line was
-    moved. Sent only when the value passes the field's own check; an emptied box
-    (NaN) or an out-of-range value is left out, so the server's default applies
-    and the config save that follows is where the field's error is met.
+    The ceiling rides on the create, not only on the config save's PATCH: a roster import
+    creates the draft before any config save, and a draft that is never config-saved would
+    otherwise keep the server's 3% however far the line was moved. Sent only when the value
+    passes the field's own check; an emptied box (NaN) or an out-of-range value is left out, so
+    the server's default applies and the config save that follows is where the field's error is
+    met.
   */
   // `undefined` is dropped from the JSON body, so the server's default applies.
   const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
@@ -282,6 +363,8 @@ export default function CampaignBuilderPage() {
     recording,
     callerIds,
     chosenCarrier,
+    breakReasons,
+    agentScreen,
     carrier,
     recordingEnabled,
     analyticsEnabled,
@@ -292,7 +375,9 @@ export default function CampaignBuilderPage() {
       if (next.recording) setRecording(next.recording);
       if (next.callerIds) setCallerIds(next.callerIds);
       if ('chosenCarrier' in next) setChosenCarrier(next.chosenCarrier ?? null);
-      if (how.outcomes) setCatalogEpoch((n) => n + 1);
+      if (next.breakReasons) setBreakReasons(next.breakReasons);
+      if (next.agentScreen) setAgentScreen(next.agentScreen);
+      if (how.outcomes) setButtonsReplaced((n) => n + 1);
       setConfigSaved(false);
       const baseline = how.baseline;
       if (baseline) {
@@ -304,7 +389,9 @@ export default function CampaignBuilderPage() {
           carrier: baseline.chosenCarrier,
           recording: baseline.recording,
           config: baseline.config,
+          breakReasons: baseline.breakReasons,
         }));
+        setSavedAgentScreen(baseline.agentScreen);
       }
     },
     onReadFailed: (message) => setError(message),
@@ -339,54 +426,47 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
-    template.draft.created();
+    const sent: Record<string, unknown> = template.createFields;
+    template.draft.created(sent);
     serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
-    // The draft has the basics now; the rest is saved by Save campaign.
-    setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
+    /*
+      The draft has the basics now; the rest is saved by Save as draft. A template's create also
+      carried the agent screen and the break limits as on the form: the draft holds those (else it
+      holds what the template filled in, the baseline already there).
+    */
+    setSavedForm((saved) => ({
+      ...saved,
+      name,
+      callerIds,
+      carrier: chosenCarrier,
+      ...('break_reasons' in sent ? { breakReasons } : {}),
+    }));
+    if ('daily_target_calls' in sent) setSavedAgentScreen(agentScreen);
+    createdWithRef.current = {
+      ...('daily_target_calls' in sent ? { agentScreen } : {}),
+      ...('break_reasons' in sent ? { breakReasons } : {}),
+    };
     return created.id;
-  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft, tenantId, accountId]);
+  }, [
+    campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft,
+    breakReasons, agentScreen, tenantId, accountId,
+  ]);
 
-  const {
-    limits,
-    phase,
-    setPhase,
-    running,
-    finished,
-    reviewing,
-    retryable,
-    checkJob,
-    importing,
-    importChecked,
-    upload,
-    analysis,
-    mapping,
-    setMapping,
-    job,
-    error,
-    setError,
-    downloading,
-    downloadError,
-    onPickFile,
-    startIngest,
-    onCancelIngest,
-    onDownloadRejected,
-    onDownloadSkipped,
-    reset: resetUpload,
-  } = useRosterIngest(tenantId ?? undefined, accountId ?? undefined, {
+  const rosterIngest = useRosterIngest(tenantId ?? undefined, accountId ?? undefined, {
     source: 'builder',
     resolveCampaignId: ensureCampaign,
     // A check never creates the draft; once the draft exists (a second file), it is
     // compared with the draft's roster like any other campaign's.
     peekCampaignId: () => campaignId ?? undefined,
-    // The card's facts are campaign config, not ingest config (AS19): the columns picked
-    // "On the card" are what agents see on the customer card, until Settings changes them.
+    // The card's facts are campaign config, not ingest config (AS19): the columns ticked on
+    // Customers are what agents see on the customer card, until Settings changes them.
     onIngestStarted: async (id, currentMapping) => {
       setImportSent(true);
       const display = buildContextDisplay(currentMapping);
       if (display.facts) {
         await updateAgencyCampaign(
           id,
-          // A template's script that uses keys this card lacks is held back (CTC10): Review says so.
+          // A template's script that uses keys this card lacks is held back (CTC10): Purpose & buttons says so.
           { context_display: display, ...template.draft.cardFields(display) } as never,
           tenantId ?? undefined,
           accountId ?? undefined,
@@ -394,16 +474,62 @@ export default function CampaignBuilderPage() {
       }
     },
   });
+  const {
+    phase,
+    running,
+    finished,
+    checkJob,
+    importing,
+    importChecked,
+    job,
+    error,
+    setError,
+    onPickFile,
+  } = rosterIngest;
 
-  const onSaveConfig = useCallback(async () => {
-    const findings = validateConfig(config);
+  /*
+    The customers each finished import added, by job: the Ready line's count (CS15) and Start's
+    gate. A second file's import adds to the first's; a failed or stopped one counts the rows
+    that landed before it stopped.
+  */
+  const [importedByJob, setImportedByJob] = useState<Readonly<Record<string, number>>>({});
+  useEffect(() => {
+    if (!finished || !job || job.dry_run) return;
+    setImportedByJob((current) => (current[job.job_id] === job.accepted ? current : { ...current, [job.job_id]: job.accepted }));
+  }, [finished, job]);
+  const importCounts = Object.values(importedByJob);
+  const importedCount = importCounts.length === 0 ? null : importCounts.reduce((total, n) => total + n, 0);
+  const customersAdded = importedCount !== null && importedCount > 0;
+  const importRunning = running && job !== null && !job.dry_run;
+
+  /*
+    Every finding that holds the save, keyed by body path: the config's own (`validateConfig`),
+    the daily target's, and each break limit's. Each is shown live on its field by its step.
+  */
+  const configErrors = useMemo(() => validateConfig(config), [config]);
+  const dailyTargetFinding = dailyTargetError(agentScreen.dailyTarget);
+  const breakErrors = useMemo(() => breakReasonsErrors(breakReasons), [breakReasons]);
+  const breakLimitsInvalid = Object.keys(breakErrors).length > 0;
+  const findings = useMemo(() => {
+    const out: Record<string, string> = { ...configErrors };
+    if (dailyTargetFinding) out.daily_target_calls = dailyTargetFinding;
+    for (const [code, message] of Object.entries(breakErrors)) out[`break_reasons.${code}`] = message;
+    return out;
+  }, [configErrors, dailyTargetFinding, breakErrors]);
+
+  const saveDraft = useCallback(async (): Promise<SavedDraft | null> => {
+    if (Object.keys(findings).length === 0 && template.scriptBlocked) {
+      // The template's script does not fit yet (CS19): it is fixed on Purpose & buttons.
+      goToFinding('purpose');
+      return null;
+    }
     if (Object.keys(findings).length > 0) {
       /*
         Save is disabled while anything is found, so this is a keyboard or programmatic
-        submit. The findings are already on their fields (`CampaignBehaviourSection` shows
-        them live), so take the operator to the first one. They are not copied into
-        `fieldErrors`, which holds the server's answer and wins over a live finding: a copy
-        would keep a field red after it was fixed.
+        submit. The findings are already on their fields (each step shows them live), so take
+        the operator to the first one. They are not copied into `fieldErrors`, which holds the
+        server's answer and wins over a live finding: a copy would keep a field red after it
+        was fixed.
       */
       trackAgencyCampaignConfigBlocked({
         source: 'builder',
@@ -411,17 +537,22 @@ export default function CampaignBuilderPage() {
       });
       const first = findingsByStep(findings).keys().next();
       if (!first.done) goToFinding(first.value);
-      return;
+      return null;
     }
     setSavingConfig(true);
     setConfigSaved(false);
     setFieldErrors({});
+    setRefusedInAdvanced(NOTHING_REFUSED);
+    setNameError(null);
+    setCallerIdsError(null);
+    setStaffingError(null);
     // A refusal from an earlier save must not outlive the save that fixed it.
     setError(null);
     // The same omit-when-it-would-be-refused rule the settings page uses.
     const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
+    let id: string;
     try {
-      const id = await ensureCampaign();
+      id = await ensureCampaign();
       /*
         The basics the draft was created with, or last saved with. Any that moved since go in
         this PATCH (a draft takes all three); the carrier re-judges the pool, so a carrier move
@@ -432,6 +563,14 @@ export default function CampaignBuilderPage() {
       const sendName = server === null || trimmedName !== server.name;
       const sendCarrier = server === null || !sameCarrier(carrier, server.carrier);
       const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
+      // The agent screen and the break limits only where they differ from what the draft has,
+      // so a campaign left on the built-in breaks keeps them (served at read time, LF20).
+      const heldScreen = createdWithRef.current?.agentScreen ?? savedAgentScreen;
+      const heldBreaks = createdWithRef.current?.breakReasons ?? savedForm.breakReasons;
+      const sendTarget = agentScreen.dailyTarget.trim() !== heldScreen.dailyTarget.trim();
+      const sendDisplay = agentScreen.phoneDisplay !== heldScreen.phoneDisplay;
+      const sendBreaks = heldBreaks !== undefined && !sameBreakLimits(heldBreaks, breakReasons);
+      // A template's script changed (or fixed for the card) since the draft got it (CTC10).
       const scriptFields = template.draft.saveFields();
       try {
         await updateAgencyCampaign(
@@ -439,7 +578,6 @@ export default function CampaignBuilderPage() {
           {
             ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
             ...recordingFields,
-            ...scriptFields,
             ...(sendName ? { name: trimmedName } : {}),
             ...(sendCallerIds ? { caller_ids: callerIds } : {}),
             ...(sendCarrier
@@ -448,19 +586,25 @@ export default function CampaignBuilderPage() {
                 telephony_credential_id: carrier.telephony_credential_id,
               }
               : {}),
+            ...(sendTarget ? { daily_target_calls: dailyTargetPayload(agentScreen.dailyTarget) } : {}),
+            ...(sendDisplay ? { phone_display: agentScreen.phoneDisplay } : {}),
+            ...(sendBreaks ? { break_reasons: breakReasonsPayload(breakReasons) } : {}),
+            ...scriptFields,
           },
           tenantId ?? undefined,
           accountId ?? undefined,
         );
       } catch (err: unknown) {
-        // A carrier refusal says the operator's sentence and goes to Basics, as on create.
+        // A carrier refusal says the operator's sentence and goes to Name & number, as on create.
         throw withCarrierRefusalCopy(err);
       }
       serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
+      createdWithRef.current = null;
       template.draft.saved(scriptFields);
       setConfigSaved(true);
       setSavedOnce(true);
-      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording, config });
+      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording, config, breakReasons });
+      setSavedAgentScreen(agentScreen);
       {
         const priorOrder = initialDispositionOrderRef.current;
         const nextOrder = config.dispositions.map((d) => d.code);
@@ -494,56 +638,121 @@ export default function CampaignBuilderPage() {
         });
       }
     } catch (err: unknown) {
+      setSavingConfig(false);
       if (err instanceof CarrierRefusalError) {
         setError(err.message);
         goTo('basics');
-        return;
+        return null;
       }
       // A `capability_disabled` 403 (recording or a summary profile the account may not
       // set) carries no `details`; say what happened, on the step that has the two fields.
       const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: payloadSetsProfile(recordingFields) });
       if (refusal !== null) {
         setError(refusal);
-        goTo('behaviour');
-        return;
+        goTo('agents');
+        return null;
       }
-      // The server answers `{ details: { field: message } }` keyed by the path into
-      // the body, so the message lands on the field that caused it rather than
-      // in one banner the operator has to map back by hand.
+      // The server answers `{ details: { field: message } }` keyed by the path into the body,
+      // so the message lands on the field that caused it rather than in one banner the
+      // operator has to map back by hand.
       const mapped = fieldErrorsFromResponse(err);
-      // The name and the caller IDs are on Basics, which shows the refusal as the page's banner.
-      const basicsRefusal = mapped.name ?? mapped.caller_ids;
-      if (basicsRefusal !== undefined) {
-        setError(basicsRefusal);
+      const { name: nameRefusal, caller_ids: callerIdsRefusal, ...rest } = mapped;
+      const keys = Object.keys(rest);
+      if (keys.length > 0) {
+        setFieldErrors(rest);
+        setRefusedInAdvanced({ purpose: keys.some(isPurposeFoldField), agents: keys.some(isAdvancedField) });
+      }
+      if (nameRefusal !== undefined || callerIdsRefusal !== undefined) {
+        // The name and the numbers are on Name & number, under their own fields.
+        setNameError(nameRefusal ?? null);
+        setCallerIdsError(callerIdsRefusal ?? null);
         goTo('basics');
-      } else if (Object.keys(mapped).length > 0) {
-        setFieldErrors(mapped);
-        if (mapped.default_timezone || mapped.calling_window_start || mapped.calling_window_end || mapped.calling_days) {
-          goTo('hours');
-        } else {
-          goTo('behaviour');
-        }
+      } else if (keys.length > 0) {
+        goTo(findingsByStep(rest).keys().next().value ?? 'agents');
       } else {
         setError(err instanceof Error ? err.message : 'Could not save the campaign.');
       }
-    } finally {
-      setSavingConfig(false);
+      return null;
     }
+
+    // CS10: who calls, now that the draft exists and holds the settings.
+    let staffingFailure: string | null;
+    try {
+      const result = await applyStaffing(id, selected);
+      staffingFailure = staffingFailureMessage(result);
+      setStaffedIds((before) => staffedAfter(before, selected, result));
+    } catch (err: unknown) {
+      staffingFailure = getErrorMessage(err, 'Could not change who calls on this campaign.');
+    }
+    setStaffingError(staffingFailure);
+    setSavingConfig(false);
+    return { id, staffingFailure };
   }, [
-    config, recording, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
-    name, callerIds, carrier, chosenCarrier, goToFinding, template.draft,
+    findings, config, recording, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId,
+    goTo, setError, name, callerIds, carrier, chosenCarrier, goToFinding, agentScreen, savedAgentScreen, breakReasons,
+    savedForm.breakReasons, applyStaffing, selected, template.draft, template.scriptBlocked,
   ]);
 
-  const backToMapping = useCallback(() => {
-    setPhase('mapping');
-    goTo('contacts');
-  }, [goTo, setPhase]);
+  /**
+   * Start campaign (CS15): save (creating the draft if need be), staff, then start. A step that
+   * fails stops the rest and leaves the draft saved; its refusal is said in words, with a link
+   * to the campaign. Started, the page opens the campaign.
+   */
+  const onStart = useCallback(async () => {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    setStartRefusal(null);
+    try {
+      const saved = await saveDraft();
+      if (!saved) return;
+      if (saved.staffingFailure) {
+        setStartRefusal({
+          id: saved.id,
+          message: `${saved.staffingFailure} The campaign is saved as a draft and has not started.`,
+        });
+        return;
+      }
+      try {
+        const started = await transitionAgencyCampaign(saved.id, 'start', tenantId ?? undefined, accountId ?? undefined);
+        if (isKnownCampaignStatus(started.status)) {
+          trackAgencyCampaignLifecycleAction({
+            campaign_id: saved.id,
+            action: 'start',
+            from_status: 'draft',
+            to_status: started.status,
+            confirmed: false,
+            from_tab: 'new_campaign',
+          });
+        }
+        setStartedId(saved.id);
+      } catch (err: unknown) {
+        setStartRefusal({
+          id: saved.id,
+          message: `${lifecycleRefusalMessage(err)} The campaign is saved as a draft and has not started.`,
+        });
+        trackAgencyCampaignLifecycleFailed({
+          campaign_id: saved.id,
+          action: 'start',
+          from_status: 'draft',
+          status_code: err instanceof ApiError ? err.statusCode : 0,
+        });
+      }
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  }, [saveDraft, tenantId, accountId]);
+
+  // Started: open the campaign, once the save's state has landed (so the guard has nothing to hold).
+  useEffect(() => {
+    if (startedId) navigate(`/agency/campaigns/${startedId}`);
+  }, [startedId, navigate]);
 
   const pickFile = useCallback(
-    async (file: File | undefined) => {
-      if (!file || phase !== 'idle' || acceptingFileRef.current) return;
+    async (file: File) => {
+      if (phase !== 'idle' || acceptingFileRef.current) return;
       acceptingFileRef.current = true;
-      setDragOver(false);
       try {
         await onPickFile(file);
       } finally {
@@ -554,73 +763,91 @@ export default function CampaignBuilderPage() {
   );
 
   /*
-    The form's own findings, live: what holds Save, which steps they are on, and what Review
-    says on each row. A refusal from the server (`fieldErrors`) is shown on its field, where
-    the save that answered it sent the operator; it is not repeated on Review, because it is
-    kept until the next save and would stay red there after the field was fixed.
+    Customers' "Add 1,240 customers" imports the checked file and moves on only once that import
+    has finished and completed; one that fails or is stopped stays on the step, which says what
+    happened and offers the retry.
   */
-  const configErrors = useMemo(() => validateConfig(config), [config]);
-  const configBlock = Object.keys(configErrors).length > 0;
-  const byStep = useMemo(() => findingsByStep(configErrors), [configErrors]);
-  const invalidSteps = useMemo(() => new Set<BuilderStepId>(byStep.keys()), [byStep]);
+  const [advanceAfterImport, setAdvanceAfterImport] = useState(false);
+  useEffect(() => {
+    if (!advanceAfterImport) return;
+    if (finished && job && !job.dry_run) {
+      setAdvanceAfterImport(false);
+      if (job.status === 'completed' && step === 'contacts') goTo('purpose');
+    } else if (!running && !importing && error !== null) {
+      setAdvanceAfterImport(false);
+    }
+  }, [advanceAfterImport, finished, job, running, importing, error, step, goTo]);
+
+  const byStep = useMemo(() => findingsByStep(findings), [findings]);
+  const configBlock = byStep.size > 0;
+  const invalidSteps = useMemo(() => {
+    const invalid = new Set<SetupStepId>(byStep.keys());
+    if (nameError || callerIdsError) invalid.add('basics');
+    // A template's script the roster's card cannot fill is fixed on Purpose & buttons (CS19).
+    if (template.scriptBlocked) invalid.add('purpose');
+    return invalid;
+  }, [byStep, nameError, callerIdsError, template.scriptBlocked]);
   const blockCopy = saveBlockCopy(byStep, step);
   const otherStepWithFindings = firstOtherStepWithFindings(byStep, step);
-  const rowFindings = useMemo(() => reviewFindings(configErrors, config), [configErrors, config]);
   const basicsReady = name.trim().length > 0 && callerIds.length > 0;
   const basicsBlock = basicsBlockReason(name, callerIds);
-  const contactsLabel = contactsContinueLabel(phase);
-  const currentMeta = stepById(step);
-  const contactsImported = phase === 'done' && job !== null && !job.dry_run;
+  const customersNext = customersContinue(phase, job, checkJob, { importing });
 
   /**
-   * Which steps show a tick.
+   * Which step cards show a tick.
    *
-   * **A step is complete when it is both valid AND has been visited**, and the
-   * second half is the one that was missing. `hours` and `behaviour` are keyed
-   * on `configBlock === null` — the config passing validation — and the config
-   * the wizard seeds *already* passes, because `emptyCampaignConfig()` is a
-   * working default. So on step 1 of 5, before the operator had been anywhere,
-   * steps 3 and 4 rendered ticks while step 2 did not.
+   * **A step is complete when it is both valid AND has been visited**, and the second half is
+   * the one that was once missing. Purpose & buttons and Agents & timing are judged on their
+   * findings, and the config the page seeds *already* passes, because `emptyCampaignConfig()` is
+   * a working default. So on step 1, before the operator had been anywhere, the later steps
+   * rendered ticks while Customers did not.
    *
-   * That is not a cosmetic wrong. A tick says "there is nothing for you here",
-   * and these two steps are where the calling window and the disposition
-   * catalog get decided — including which outcomes carry `suppress`, which is
-   * what takes a contact off the list for good. Telling an operator those are
-   * settled before they have read them is the most expensive place in the wizard
-   * to say it.
+   * That is not a cosmetic wrong. A tick says "there is nothing for you here", and these two
+   * steps are where the calling window and the buttons get decided, including which outcomes
+   * carry `suppress`, which is what takes a customer off the list for good. Telling an operator
+   * those are settled before they have read them is the most expensive place to say it.
    *
-   * `basics` and `contacts` were always honest, because `basicsReady` and
-   * `contactsImported` cannot be true without the operator having done
-   * something. `visited` is what gives the other two the same property.
-   *
-   * Each of the two is judged on its own findings: a mistake in the outcomes
-   * leaves the hours ticked, and the stepper marks the step that has it.
+   * Name & number and Customers were always honest, because `basicsReady` and `customersAdded`
+   * cannot be true without the operator having done something. `visited` gives the other two
+   * the same property. Each is judged on its own findings: a mistake in the buttons leaves
+   * Agents & timing ticked, and the step cards mark the step that has it.
    */
   const completed = useMemo(() => {
-    const next = new Set<BuilderStepId>();
+    const next = new Set<SetupStepId>();
     if (basicsReady) next.add('basics');
-    if (contactsImported) next.add('contacts');
-    if (visited.has('hours') && !invalidSteps.has('hours')) next.add('hours');
-    if (visited.has('behaviour') && !invalidSteps.has('behaviour')) next.add('behaviour');
-    if (configSaved) next.add('review');
+    if (customersAdded) next.add('contacts');
+    if (visited.has('purpose') && !invalidSteps.has('purpose')) next.add('purpose');
+    if (visited.has('agents') && !invalidSteps.has('agents')) next.add('agents');
     return next;
-  }, [basicsReady, contactsImported, invalidSteps, configSaved, visited]);
+  }, [basicsReady, customersAdded, invalidSteps, visited]);
+  const closedSteps = useMemo(
+    () => new Set<SetupStepId>(SETUP_STEPS.map((s) => s.id).filter((id) => !canVisitStep(id, basicsReady))),
+    [basicsReady],
+  );
 
   const selectStep = useCallback(
-    (id: BuilderStepId) => {
-      if (!canVisitStep(id, basicsReady)) return;
+    (id: string) => {
+      if (!isSetupStepId(id) || !canVisitStep(id, basicsReady) || id === step) return;
       goTo(id);
     },
-    [basicsReady, goTo],
+    [basicsReady, goTo, step],
   );
 
   const onContinue = useCallback(() => {
     if (step === 'basics' && basicsBlock) return;
     const next = nextStep(step);
-    if (next && canVisitStep(next, basicsReady || step === 'basics')) {
-      goTo(next);
-    }
+    if (next && canVisitStep(next, basicsReady || step === 'basics')) goTo(next);
   }, [step, basicsBlock, basicsReady, goTo]);
+
+  const onCustomersContinue = useCallback(() => {
+    if (!customersNext) return;
+    if (customersNext.action === 'next') {
+      goTo('purpose');
+      return;
+    }
+    setAdvanceAfterImport(true);
+    void importChecked();
+  }, [customersNext, goTo, importChecked]);
 
   const onBack = useCallback(() => {
     const previous = prevStep(step);
@@ -629,63 +856,86 @@ export default function CampaignBuilderPage() {
 
   /*
     Unsaved input, for the leave guard: any setting that differs from what the server has
-    (the carrier as the page would send it, so a default it settles on is not an edit), or a
-    roster upload not yet imported.
+    (the carrier as the page would send it, so a default it settles on is not an edit), the
+    agent screen, the ticks, or a roster upload not yet imported.
   */
+  const agentScreenChanged = agentScreen.dailyTarget.trim() !== savedAgentScreen.dailyTarget.trim()
+    || agentScreen.phoneDisplay !== savedAgentScreen.phoneDisplay;
   const settingsChanged = changedSettings(
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
-    { name, callerIds, carrier, recording, config },
-  ).length > 0
-    // A script changed on Review that the draft does not hold yet (CTC10).
+    { name, callerIds, carrier, recording, config, breakReasons },
+  ).length > 0 || agentScreenChanged || !samePool(selected, staffedIds)
+    // A template's script changed on Purpose & buttons that the draft does not hold yet (CTC10).
     || (campaignId !== null && template.draft.saveFields().agent_script !== undefined);
-  const unsaved = settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
+  const unsaved = !startedId
+    && (settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping');
   const leaveGuard = useUnsavedChangesGuard(unsaved);
 
   /*
-    A draft exists from its first need (a contact import, or a Save campaign whose settings
-    were then refused) with the name, numbers and carrier only; everything else reaches it
-    with Save campaign. Without saying so, a draft in the campaign list reads as "saved",
-    and an operator whose save never went through finds the defaults where their own
-    settings should be. Said only while something differs from what the draft holds, and
-    in words true of how the draft came to be.
+    A draft exists from its first need (a customer import, or a save whose settings were then
+    refused) with the name, numbers and carrier only; everything else reaches it with Save as
+    draft. Without saying so, a draft in the campaign list reads as "saved", and an operator
+    whose save never went through finds the defaults where their own settings should be. Said
+    only while something differs from what the draft holds, and in words true of how the draft
+    came to be.
   */
   const draftNote = campaignId === null || !settingsChanged || savingConfig
     ? null
     : savedOnce
-      ? 'Some changes are not saved yet. They reach the campaign only when you click Save campaign.'
+      ? 'Some changes are not saved yet. They reach the campaign only when you click Save as draft or Start campaign.'
       : importSent
-        ? 'Your contacts are in a draft of this campaign, but your settings are not saved yet. They reach the draft only when you click Save campaign.'
-        : 'A draft of this campaign exists, but your settings are not saved yet. They reach the draft only when you click Save campaign.';
+        ? 'Your customers are in a draft of this campaign, but your settings are not saved yet. They reach the draft only when you click Save as draft or Start campaign.'
+        : 'A draft of this campaign exists, but your settings are not saved yet. They reach the draft only when you click Save as draft or Start campaign.';
   const leaveMessage = campaignId === null
     ? 'What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it.'
-    : `${importSent ? 'Your contacts are in a draft of this campaign' : 'A draft of this campaign exists'}, but your latest changes are not saved. Leave now and the draft keeps ${
+    : `${importSent ? 'Your customers are in a draft of this campaign' : 'A draft of this campaign exists'}, but your latest changes are not saved. Leave now and the draft keeps ${
       savedOnce ? 'the settings it was last saved with' : 'the default settings'
     }; Cancel keeps you here to save them.`;
 
-  /** A Review row's button: "Fix" lands on the first field with an error, "Edit" on the step. */
-  const editRow = (row: ReviewRowId, target: BuilderStepId) => () =>
-    rowFindings.has(row) ? goToFinding(target) : goTo(target);
-
   const continueDisabled = step === 'basics' && basicsBlock !== null;
-  const saveDisabled = savingConfig || configBlock || !basicsReady || template.scriptBlocked;
+  const saveDisabled = savingConfig || starting || configBlock || !basicsReady || template.scriptBlocked;
+  const startReason = !basicsReady || configBlock || template.scriptBlocked
+    ? null
+    : importRunning
+      ? START_WAITS_FOR_IMPORT
+      : customersAdded
+        ? null
+        : START_NEEDS_CUSTOMERS;
+  const startDisabled = saveDisabled || startReason !== null;
+  const lastStep = step === 'agents';
+
+  const markDirty = () => setConfigSaved(false);
+  /** The last save's refusals of a template's script, said on its fields (CS19). */
+  const scriptRefusals = useMemo(
+    () => Object.fromEntries(Object.entries(fieldErrors).filter(([field]) => field.startsWith('agent_script'))),
+    [fieldErrors],
+  );
+  /** Each template section's chip and Reset, for the block that edits it (CS18); nothing without a template. */
+  const sectionSources = sectionSourcesOf(template.startFrom !== null, template.sourceProps);
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1 className={styles.title}>New campaign</h1>
-        <p className={styles.subtitle}>
-          Set up one thing at a time. You can jump back to any finished step.
-        </p>
+        <div className={styles.heading}>
+          <h1 className={styles.title}>New campaign</h1>
+          <p className={styles.subtitle}>4 short steps · you can come back to any step</p>
+        </div>
+        <button type="button" className="btn-secondary" onClick={() => navigate('/agency/campaigns')}>
+          Cancel
+        </button>
       </header>
 
       {template.panel ? <StartFromPanel {...template.panel} /> : null}
 
-      <BuilderStepper
+      <StepCards
+        steps={SETUP_STEPS}
         current={step}
-        basicsReady={basicsReady}
         completed={completed}
         invalid={invalidSteps}
+        disabled={closedSteps}
         onSelect={selectStep}
+        mode="sequence"
+        label="Campaign setup"
       />
 
       {error ? (
@@ -694,563 +944,287 @@ export default function CampaignBuilderPage() {
         </p>
       ) : null}
 
-      <div className={styles.workspace}>
-        <div className={styles.main}>
-          <section className={styles.card} data-testid="builder-step" data-step={step} ref={cardRef}>
-            <header className={styles.cardHeader}>
-              <p className={styles.cardKicker}>
-                Step {BUILDER_STEPS.findIndex((entry) => entry.id === step) + 1} of {BUILDER_STEPS.length}
-              </p>
-              <h2 className={styles.cardTitle} ref={headingRef} tabIndex={-1}>
-                {currentMeta.title}
-              </h2>
-              <p className={styles.cardHelper}>{currentMeta.helper}</p>
-            </header>
+      <div className={styles.body} data-testid="builder-step" data-step={step} ref={bodyRef}>
+        {step === 'basics' ? (
+          <NameNumberStep
+            mode="create"
+            name={name}
+            onName={(next) => {
+              setName(next);
+              setNameError(null);
+            }}
+            nameError={nameError}
+            carrierChoices={carrierChoices}
+            carrier={carrier}
+            onCarrier={setChosenCarrier}
+            carrierLocked={campaignId !== null}
+            carrierNotice={campaignId !== null
+              ? 'The draft is saved on this carrier. Change it in the campaign’s settings.'
+              : null}
+            carrierLabel={carrierLabel}
+            callerIds={callerIds}
+            onCallerIds={(next) => {
+              setCallerIds(next);
+              setCallerIdsError(null);
+            }}
+            callerIdsError={callerIdsError}
+            sectionSources={sectionSources}
+          />
+        ) : null}
 
-            <div className={styles.cardBody}>
-              {step === 'basics' ? (
-                <>
-                  <div className="form-group">
-                    <label htmlFor="campaign-name">
-                      Campaign name<span className="required-star">*</span>
-                    </label>
-                    <input
-                      id="campaign-name"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      placeholder="Collections — August"
-                      autoFocus
-                    />
-                    <p className={styles.fieldHint}>A name your team will recognise in the campaign list.</p>
-                  </div>
-                  {/* Shown only when there is a choice: with one carrier account the
-                      campaign takes it, and the step reads as it always did. */}
-                  {carrierChoices.length > 1 ? (
-                    <CampaignCarrierField
-                      options={carrierChoices}
-                      value={carrier}
-                      onChange={setChosenCarrier}
-                      disabled={campaignId !== null}
-                      notice={campaignId !== null
-                        ? 'The draft is saved on this carrier. Change it in the campaign’s settings.'
-                        : null}
-                    />
-                  ) : null}
-                  <div className="form-group">
-                    <label htmlFor="campaign-caller-ids">
-                      Numbers to call from<span className="required-star">*</span>
-                    </label>
-                    <p className={styles.fieldHint}>
-                      Customers see these as the caller ID. Pick at least one — calls rotate through them.
-                    </p>
-                    <CallerIdPicker
-                      selected={callerIds}
-                      onChange={setCallerIds}
-                      carrier={carrier}
-                      carrierLabel={carrierLabel}
-                    />
-                  </div>
-                </>
-              ) : null}
+        {step === 'contacts' ? (
+          <CustomersStep
+            ingest={rosterIngest}
+            basicsReady={basicsReady}
+            blockReason={basicsBlock}
+            onPickFile={pickFile}
+          />
+        ) : null}
 
-              {step === 'contacts' ? (
-                <div className={styles.stepFill}>
-                  {phase === 'idle' || phase === 'uploading' || phase === 'analyzing' ? (
-                    <div
-                      className={`${styles.dropzone} ${dragOver ? styles.dropzoneActive : ''}`}
-                      data-testid="contacts-dropzone"
-                      data-drag-over={dragOver || undefined}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        if (phase === 'idle' && !acceptingFileRef.current) {
-                          setDragOver(true);
-                        }
-                      }}
-                      onDragLeave={() => setDragOver(false)}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        setDragOver(false);
-                        void pickFile(event.dataTransfer.files[0]);
-                      }}
-                    >
-                      <Upload size={22} aria-hidden="true" />
-                      <p className={styles.dropzoneCopy}>
-                        Drop a CSV here, or choose a file. You&apos;ll pick the phone column on the next
-                        screen.
-                      </p>
-                      {limits ? (
-                        <p className={styles.limits} data-testid="ingest-limits">
-                          Up to {limits.max_rows.toLocaleString()} rows and{' '}
-                          {Math.floor(limits.max_file_bytes / (1024 * 1024)).toLocaleString()} MB per file.
-                        </p>
-                      ) : null}
-                      <input
-                        ref={fileInputRef}
-                        className={styles.fileInput}
-                        type="file"
-                        accept=".csv,text/csv"
-                        aria-label="CSV file"
-                        disabled={phase !== 'idle'}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          void pickFile(file);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={phase !== 'idle'}
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        Choose a CSV
-                      </button>
-                      {phase === 'uploading' ? <p className={styles.busy}>Uploading…</p> : null}
-                      {phase === 'analyzing' ? <p className={styles.busy}>Reading the columns…</p> : null}
-                    </div>
-                  ) : null}
+        {step === 'purpose' ? (
+          <PurposeButtonsStep
+            mode="create"
+            config={config}
+            onChange={(next) => {
+              setConfig(next);
+              markDirty();
+            }}
+            fieldErrors={fieldErrors}
+            onPresetApplied={(presetId) => {
+              // The save's `reordered` compares with the preset as applied, not the buttons it replaced.
+              if (isPurposePresetId(presetId)) {
+                initialDispositionOrderRef.current = withPreset(config, presetId).dispositions.map((d) => d.code);
+              }
+              markDirty();
+            }}
+            overrides={assignmentEnabled}
+            forceAdvancedOpen={refusedInAdvanced.purpose}
+            buttonsReplaced={buttonsReplaced}
+            sectionSources={sectionSources}
+          />
+        ) : null}
 
-                  {analysis && mapping && (phase === 'mapping' || phase === 'ingesting' || phase === 'done') ? (
-                    <>
-                      <ColumnMapper
-                        analysis={analysis}
-                        state={mapping}
-                        onChange={setMapping}
-                        fileName={upload?.file_name ?? ''}
-                        // Locked once a check or import has run: the review's Import
-                        // uses the mapping that was checked, so editing it here would
-                        // show one mapping and import another. "Change the column
-                        // mapping" re-opens it, and the file is checked again.
-                        disabled={phase !== 'mapping'}
-                        cardChoice
-                      />
-                      {phase === 'mapping' ? (
-                        <div className={styles.ingestActions}>
-                          <button
-                            type="button"
-                            className="btn-primary"
-                            disabled={mappingBlockReason(mapping) !== null}
-                            onClick={() => void startIngest(true)}
-                          >
-                            Check the file
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            disabled={mappingBlockReason(mapping) !== null || !basicsReady}
-                            onClick={() => void startIngest(false)}
-                          >
-                            Import without checking
-                          </button>
-                          {!basicsReady ? (
-                            <span className={styles.blockReason}>
-                              {name.trim().length === 0
-                                ? 'Name the campaign first.'
-                                : 'Pick at least one caller ID first.'}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
+        {step === 'purpose' && template.script ? (
+          // A template's script, under the buttons as Settings shows it, and its fix (CS19, CTC10).
+          <BuilderScriptCard
+            script={template.script}
+            source={sectionSources?.agent_screen}
+            campaignName={name.trim()}
+            serverErrors={scriptRefusals}
+          />
+        ) : null}
 
-                  {running ? (
-                    <div className={styles.progress} data-testid="ingest-progress">
-                      <progress
-                        max={100}
-                        {...(job && job.progress_pct !== null ? { value: job.progress_pct } : {})}
-                        aria-label="Import progress"
-                      />
-                      <p className={styles.progressLine}>
-                        {job
-                          ? `${job.rows_read.toLocaleString()} rows read${
-                              job.progress_pct !== null ? ` — ${job.progress_pct}%` : ''
-                            }`
-                          : 'Starting…'}
-                      </p>
-                      <button type="button" className="btn-secondary" onClick={() => void onCancelIngest()}>
-                        {job?.dry_run ? 'Stop the check' : 'Stop the import'}
-                      </button>
-                    </div>
-                  ) : null}
+        {step === 'agents' ? (
+          <AgentsTimingStep
+            mode="create"
+            config={config}
+            onChange={(next) => {
+              setConfig(next);
+              markDirty();
+            }}
+            fieldErrors={fieldErrors}
+            staffing={{
+              agents: staffing.agents,
+              selected,
+              onChange: (ids) => {
+                setSelected(ids);
+                markDirty();
+              },
+              loading: staffing.loading,
+              error: staffing.error,
+              onRetry: () => void staffing.reload(),
+              invitePath: staffing.invitePath,
+            }}
+            recording={{
+              state: recording,
+              onChange: (next) => {
+                setRecording(next);
+                markDirty();
+              },
+              recordingEnabled,
+              analyticsEnabled,
+              profiles: analysisProfiles,
+              profilesLoading,
+              profilesError,
+              savedProfileId: resolveProfileId(savedForm.recording.profileId),
+            }}
+            agentScreen={{
+              dailyTarget: agentScreen.dailyTarget,
+              phoneDisplay: agentScreen.phoneDisplay,
+              onChange: (patch) => {
+                setAgentScreen((current) => ({ ...current, ...patch }));
+                markDirty();
+              },
+            }}
+            breakLimits={
+              <BreakLimitsEditor
+                value={breakReasons}
+                onChange={(next) => {
+                  setBreakReasons(next);
+                  markDirty();
+                }}
+                serverError={fieldErrors['break_reasons'] ?? null}
+                icons
+                fieldErrors={fieldErrors}
+              />
+            }
+            assignment={assignmentEnabled ? { modeLocked: false } : undefined}
+            inbound={inboundEnabled}
+            // The automatic outcomes for unanswered calls are under step 3's Advanced.
+            unansweredOutcomes={false}
+            forceAdvancedOpen={refusedInAdvanced.agents || breakLimitsInvalid}
+            sectionSources={sectionSources}
+          />
+        ) : null}
+      </div>
 
-                  {finished && job ? (
-                    <>
-                      {job.dry_run ? (
-                        <p className={styles.dryRunNote} data-testid="dry-run-note">
-                          Nothing was imported — this was a check. Import when the numbers look right.
-                        </p>
-                      ) : null}
-                      <IngestSummary
-                        job={job}
-                        checkJob={checkJob}
-                        onBackToMapping={backToMapping}
-                        onDownloadRejected={() => void onDownloadRejected()}
-                        onDownloadSkipped={() => void onDownloadSkipped()}
-                        downloading={downloading}
-                        downloadError={downloadError}
-                      >
-                        {reviewing ? (
-                          <ReviewNextSteps
-                            check={job}
-                            importing={importing}
-                            blockReason={
-                              basicsReady
-                                ? null
-                                : name.trim().length === 0
-                                  ? 'Name the campaign first.'
-                                  : 'Pick at least one caller ID first.'
-                            }
-                            onImport={() => void importChecked()}
-                            onChangeMapping={backToMapping}
-                            onUploadCorrected={resetUpload}
-                          />
-                        ) : retryable && checkJob ? (
-                          // The import of the checked file failed or was stopped and the
-                          // check is still valid: import it again (the draft exists by now).
-                          <ReviewNextSteps
-                            check={checkJob}
-                            retry
-                            importing={importing}
-                            onImport={() => void importChecked()}
-                            onUploadCorrected={resetUpload}
-                          />
-                        ) : job.status !== 'completed' ? (
-                          // A check or an import that failed or was stopped: the same way
-                          // back as on Add contacts, a corrected file or another mapping.
-                          <div className={styles.ingestActions} data-testid="ingest-recovery">
-                            <button type="button" className="btn-secondary" onClick={resetUpload}>
-                              Upload a corrected file
-                            </button>
-                            <button type="button" className="btn-secondary" onClick={backToMapping}>
-                              Change the column mapping
-                            </button>
-                          </div>
-                        ) : null}
-                      </IngestSummary>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
+      {draftNote ? (
+        <p className={styles.draftNote} data-testid="draft-note">
+          {draftNote}
+        </p>
+      ) : null}
 
-              {step === 'hours' ? (
-                <>
-                  <p className={styles.recommend}>
-                    Most teams call Monday to Friday, 09:00–20:00. Change the timezone if your
-                    contacts are not in India.
-                  </p>
-                  <CampaignBehaviourSection
-                    state={config}
-                    onChange={(next) => {
-                      setConfig(next);
-                      setConfigSaved(false);
-                    }}
-                    fieldErrors={fieldErrors}
-                    layout="plain"
-                    include={['hours']}
-                  />
-                </>
-              ) : null}
+      {staffingError && !startRefusal ? (
+        <p className={styles.error} role="alert" data-testid="staffing-error">
+          {staffingError}
+        </p>
+      ) : null}
 
-              {step === 'behaviour' ? (
-                <>
-                  <p className={styles.recommend}>
-                    Recommended settings are already in place. Continue if they look right.
-                  </p>
-                  {/* AS4: the Collections set, offered in place of the outcomes below; edited like any list. */}
-                  <div className={styles.starter} data-testid="collections-starter">
-                    {isCollectionsStarter(config.dispositions) ? (
-                      <p className={styles.starterText} role="status">
-                        {`The Collections set is in place: ${collectionsStarterNames()}. Change any outcome below before you save.`}
-                      </p>
-                    ) : (
-                      <>
-                        <p className={styles.starterText}>
-                          {`Collecting payments? Start with six outcomes made for it: ${collectionsStarterNames()}. They replace the outcomes below.`}
-                        </p>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => {
-                            setConfig((current) => withCollectionsStarter(current));
-                            // The save's `reordered` compares with the set as applied, not the defaults it replaced.
-                            initialDispositionOrderRef.current = collectionsStarterOutcomes().map((d) => d.code);
-                            setConfigSaved(false);
-                            setCatalogEpoch((n) => n + 1);
-                          }}
-                          data-testid="collections-starter-apply"
-                        >
-                          Start with the Collections set
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  <CampaignBehaviourSection
-                    key={catalogEpoch}
-                    state={config}
-                    onChange={(next) => {
-                      setConfig(next);
-                      setConfigSaved(false);
-                    }}
-                    fieldErrors={fieldErrors}
-                    layout="plain"
-                    include={['behaviour']}
-                    assignment={assignmentEnabled ? { modeLocked: false } : undefined}
-                    inbound={inboundEnabled}
-                  />
-                  <CampaignRecordingField
-                    checked={recording.record}
-                    onChange={(next) => {
-                      setRecording((current) => ({ ...current, record: next }));
-                      setConfigSaved(false);
-                    }}
-                    capabilityEnabled={recordingEnabled}
-                    error={fieldErrors['record_calls']}
-                  />
-                  <CampaignCallSummaryField
-                    profileId={recording.profileId}
-                    savedProfileId={resolveProfileId(savedForm.recording.profileId)}
-                    onChange={(profileId) => {
-                      setRecording((current) => ({ ...current, profileId }));
-                      setConfigSaved(false);
-                    }}
-                    capabilityEnabled={analyticsEnabled}
-                    profiles={analysisProfiles}
-                    loading={profilesLoading}
-                    loadError={profilesError}
-                    loadErrorConsequence="You can save without one and set it later in the campaign’s Settings."
-                    error={fieldErrors['analysis_profile_id']}
-                  />
-                </>
-              ) : null}
+      {startRefusal ? (
+        <p className={styles.error} role="alert" data-testid="start-refusal">
+          {startRefusal.message}{' '}
+          <Link to={`/agency/campaigns/${startRefusal.id}`} className={styles.inlineLink}>
+            Open the campaign
+          </Link>
+        </p>
+      ) : null}
 
-              {step === 'review' ? (
-                <div className={styles.review} data-testid="builder-review">
-                  <ReviewRow
-                    label="Name"
-                    value={name.trim() || 'Not named yet'}
-                    errors={rowFindings.get('name')}
-                    onEdit={editRow('name', 'basics')}
-                  />
-                  <ReviewRow
-                    label="Call from"
-                    value={
-                      callerIds.length === 0
-                        ? 'No numbers yet'
-                        : callerIds.join(', ')
-                    }
-                    errors={rowFindings.get('callFrom')}
-                    onEdit={editRow('callFrom', 'basics')}
-                    {...template.sourceProps('numbers')}
-                  />
-                  <ReviewRow
-                    label="Contacts"
-                    value={
-                      contactsImported && job
-                        ? `${job.accepted.toLocaleString()} ready to dial`
-                        : 'None imported yet — you can add a list after saving.'
-                    }
-                    warning={!contactsImported}
-                    onEdit={() => goTo('contacts')}
-                  />
-                  <ReviewRow
-                    label="Hours"
-                    value={callingWindowEcho(config.window)}
-                    errors={rowFindings.get('hours')}
-                    onEdit={editRow('hours', 'hours')}
-                    {...template.sourceProps('hours')}
-                  />
-                  <ReviewRow
-                    label="Outcomes"
-                    value={config.dispositions.map((entry) => entry.label || entry.code).join(', ')}
-                    errors={rowFindings.get('outcomes')}
-                    onEdit={editRow('outcomes', 'behaviour')}
-                    {...template.sourceProps('outcomes')}
-                  />
-                  {/* Part of the Outcomes section: its chip, and Outcomes' Reset puts both back (N8). */}
-                  <ReviewRow
-                    label="Unanswered calls"
-                    value={outcomeDispositionsSummary(config.outcomeDispositions, config.dispositions)}
-                    errors={rowFindings.get('unanswered')}
-                    onEdit={editRow('unanswered', 'behaviour')}
-                    source={template.sourceProps('outcomes').source}
-                    note={template.startFrom ? 'Goes with Outcomes: Reset there puts both back.' : undefined}
-                  />
-                  {template.startFrom ? (
-                    <ReviewRow
-                      label="Retries"
-                      value={sectionSummary('retries', template.builderFields ?? {})}
-                      onEdit={() => goTo('behaviour')}
-                      {...template.sourceProps('retries')}
-                    />
-                  ) : null}
-                  <ReviewRow
-                    label="Wrap-up"
-                    value={wrapupSummary(config.wrapupSeconds, config.autoReturn, config.allowWrapupRedial)}
-                    errors={rowFindings.get('wrapup')}
-                    onEdit={editRow('wrapup', 'behaviour')}
-                    {...template.sourceProps('wrapup')}
-                  />
-                  {assignmentEnabled ? (
-                    <ReviewRow
-                      label="Assignment"
-                      value={`${ASSIGNMENT_MODE_COPY[config.assignment.mode].label}${
-                        config.assignment.allowAgentRetry
-                          ? ` · Agents may retry missed contacts (up to ${config.assignment.agentRetryRounds}×)`
-                          : ''
-                      }`}
-                      errors={rowFindings.get('assignment')}
-                      onEdit={editRow('assignment', 'behaviour')}
-                      {...template.sourceProps('assignment')}
-                    />
-                  ) : null}
-                  <ReviewRow
-                    label="Abandonment limit"
-                    value={ceilingSummary(config.abandonmentCeilingPct)}
-                    warning={ceilingAboveReference(config.abandonmentCeilingPct)}
-                    errors={rowFindings.get('abandonment')}
-                    onEdit={editRow('abandonment', 'behaviour')}
-                    {...template.sourceProps('safety')}
-                  />
-                  <ReviewRow
-                    label="Recording"
-                    value={recording.record ? 'Every call is recorded' : 'Off'}
-                    errors={rowFindings.get('recording')}
-                    onEdit={editRow('recording', 'behaviour')}
-                    {...template.sourceProps('recording')}
-                  />
-                  {analyticsEnabled ? (
-                    <ReviewRow
-                      label="Call summary"
-                      value={
-                        resolveProfileId(recording.profileId) === null
-                          ? 'No summary'
-                          : analysisProfiles.find((p) => p.id === recording.profileId)?.name ?? 'A summary profile is set'
-                      }
-                      errors={rowFindings.get('summary')}
-                      onEdit={editRow('summary', 'behaviour')}
-                      {...template.sourceProps('recording')}
-                    />
-                  ) : null}
-                  {template.builderFields ? (
-                    <>
-                      {inboundEnabled ? (
-                        <ReviewRow
-                          label="Customers who ring in"
-                          value={sectionSummary('inbound', template.builderFields)}
-                          onEdit={() => goTo('behaviour')}
-                          {...template.sourceProps('inbound')}
-                        />
-                      ) : null}
-                      {/* Not edited in New campaign: as the template fills them in; change them in the campaign's Settings. */}
-                      <ReviewRow label="Breaks" value={sectionSummary('breaks', template.builderFields)} {...template.sourceProps('breaks')} />
-                      <ReviewRow label="What agents see" value={sectionSummary('agent_screen', template.builderFields)} {...template.sourceProps('agent_screen')} />
-                      {template.script ? <ReviewScriptFix script={template.script} /> : null}
-                    </>
-                  ) : null}
-                  <p className={styles.reviewNote}>
-                    Saving creates a draft. Nothing is dialled until you open the campaign and start it.
-                  </p>
-                </div>
-              ) : null}
-            </div>
+      <footer className={styles.footer} data-testid="builder-footer">
+        <div className={styles.footerMain}>
+          {prevStep(step) ? (
+            <button type="button" className="btn-secondary" onClick={onBack}>
+              Back
+            </button>
+          ) : null}
 
-          {draftNote ? (
-            <p className={styles.draftNote} data-testid="draft-note">
-              {draftNote}
+          {lastStep ? (
+            <p className={styles.ready} data-testid="ready-line">
+              {readyLine({ customers: importedCount, agents: selected.length, window: config.window })}
             </p>
           ) : null}
 
-          <div className={styles.footer}>
-            {prevStep(step) ? (
-              <button type="button" className="btn-secondary" onClick={onBack}>
-                Back
-              </button>
-            ) : null}
-
-            {step !== 'review' && (step !== 'contacts' || contactsLabel) ? (
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={onContinue}
-                disabled={continueDisabled}
-              >
-                {step === 'contacts' ? contactsLabel : 'Continue'}
+          <div className={styles.actions}>
+            {step === 'contacts' ? (
+              customersNext ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onCustomersContinue}
+                  disabled={customersNext.action === 'import' && !basicsReady}
+                >
+                  {customersNext.label}
+                </button>
+              ) : null
+            ) : !lastStep ? (
+              <button type="button" className="btn-primary" onClick={onContinue} disabled={continueDisabled}>
+                Continue
               </button>
             ) : null}
 
             <button
               type="button"
-              className={step === 'review' ? 'btn-primary' : 'btn-secondary'}
-              onClick={() => void onSaveConfig()}
+              className="btn-secondary"
+              onClick={() => void saveDraft()}
               disabled={saveDisabled}
             >
-              {savingConfig ? 'Saving…' : 'Save campaign'}
+              {savingConfig && !starting ? 'Saving…' : 'Save as draft'}
             </button>
 
-            {step === 'basics' && basicsBlock ? (
-              <span className={styles.blockReason}>{basicsBlock}</span>
-            ) : null}
-            {blockCopy ? (
-              <span className={styles.blockReason} data-testid="config-block" aria-live="polite">
-                {blockCopy}
-                {/*
-                  A way to the field from wherever the operator is: another step's, or this
-                  step's when it is scrolled out of view (the outcome list is long). Not
-                  offered while Basics is incomplete: no other step opens until it is.
-                */}
-                {basicsReady || !otherStepWithFindings ? (
-                  <>
-                    {' '}
-                    <button
-                      type="button"
-                      className={styles.blockLink}
-                      onClick={() => goToFinding(otherStepWithFindings ?? step)}
-                      aria-label={
-                        otherStepWithFindings
-                          ? `${goToStepLabel(otherStepWithFindings)}, where a setting stops the campaign saving`
-                          : 'Show the setting that stops the campaign saving'
-                      }
-                    >
-                      {otherStepWithFindings ? goToStepLabel(otherStepWithFindings) : 'Show me'}
-                    </button>
-                  </>
-                ) : null}
-              </span>
-            ) : null}
-            {template.scriptBlocked && !blockCopy ? (
-              <span className={styles.blockReason} data-testid="script-block">
-                Change the script on Review before you save.
-              </span>
-            ) : null}
-            {configSaved ? (
-              <span className={styles.saved} role="status">
-                Saved.
-                {campaignId ? (
-                  <>
-                    {' '}
-                    <Link to={`/agency/campaigns/${campaignId}`} className={styles.savedLink}>
-                      Open campaign
-                    </Link>
-                  </>
-                ) : null}
-              </span>
+            {lastStep ? (
+              <button
+                type="button"
+                className={`btn-primary ${styles.start}`}
+                onClick={() => void onStart()}
+                disabled={startDisabled}
+                aria-describedby={startReason ? 'builder-start-reason' : undefined}
+              >
+                {starting ? 'Starting…' : 'Start campaign'}
+              </button>
             ) : null}
           </div>
-          </section>
         </div>
 
-        <div className={styles.railSlot}>
-          <BuilderSummary
-            name={name}
-            callerIds={callerIds}
-            phase={phase}
-            job={job}
-            config={config}
-            current={step}
-            onJump={selectStep}
-          />
+        <div className={styles.footerNotes}>
+          {step === 'basics' && basicsBlock ? (
+            <span className={styles.blockReason}>{basicsBlock}</span>
+          ) : null}
+          {lastStep && startReason ? (
+            <span className={styles.blockReason} id="builder-start-reason" data-testid="start-reason">
+              {startReason}
+            </span>
+          ) : null}
+          {blockCopy ? (
+            <span className={styles.blockReason} data-testid="config-block" aria-live="polite">
+              {blockCopy}
+              {/*
+                A way to the field from wherever the operator is: another step's, or this step's
+                when it is scrolled out of view (the button list is long). Not offered while
+                Name & number is incomplete: no other step opens until it is.
+              */}
+              {basicsReady || !otherStepWithFindings ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className={styles.blockLink}
+                    onClick={() => goToFinding(otherStepWithFindings ?? step)}
+                    aria-label={
+                      otherStepWithFindings
+                        ? `${goToStepLabel(otherStepWithFindings)}, where a setting stops the campaign saving`
+                        : 'Show the setting that stops the campaign saving'
+                    }
+                  >
+                    {otherStepWithFindings ? goToStepLabel(otherStepWithFindings) : 'Show me'}
+                  </button>
+                </>
+              ) : null}
+            </span>
+          ) : null}
+          {template.scriptBlocked ? (
+            <span className={styles.blockReason} data-testid="script-block">
+              {step === 'purpose' ? SCRIPT_BLOCK_HERE : SCRIPT_BLOCK_ELSEWHERE}
+              {basicsReady ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className={styles.blockLink}
+                    onClick={() => goToFinding('purpose')}
+                    aria-label={step === 'purpose'
+                      ? 'Show the script that stops the campaign saving'
+                      : `${goToStepLabel('purpose')}, where the script stops the campaign saving`}
+                  >
+                    {step === 'purpose' ? 'Show me' : goToStepLabel('purpose')}
+                  </button>
+                </>
+              ) : null}
+            </span>
+          ) : null}
+          {configSaved ? (
+            <span className={styles.saved} role="status">
+              Saved as a draft.
+              {campaignId ? (
+                <>
+                  {' '}
+                  <Link to={`/agency/campaigns/${campaignId}`} className={styles.inlineLink}>
+                    Open campaign
+                  </Link>
+                </>
+              ) : null}
+            </span>
+          ) : null}
         </div>
-      </div>
+      </footer>
 
       <LeaveUnsavedDialog guard={leaveGuard} message={leaveMessage} />
       <ConfirmDialog
@@ -1261,83 +1235,6 @@ export default function CampaignBuilderPage() {
         onConfirm={template.confirm.onConfirm}
         onCancel={template.confirm.onCancel}
       />
-    </div>
-  );
-}
-
-/**
- * One setting on Review. With findings it says what is wrong, in words that make sense away
- * from the field, and its button becomes "Fix", which lands on the first field to change.
- */
-function ReviewRow({
-  label,
-  value,
-  warning = false,
-  errors,
-  onEdit,
-  source,
-  onReset,
-  note,
-}: {
-  label: string;
-  value: string;
-  /** A line under the value: how the row goes with another. */
-  note?: string;
-  warning?: boolean;
-  errors?: readonly string[];
-  /** Absent: the setting is not edited in New campaign (it is the template's). */
-  onEdit?: () => void;
-  /** Where the section came from (campaign templates); absent without templates. */
-  source?: AgencyCampaignTemplateSectionSource | null;
-  /** Put the section back as the template filled it in; offered once it is changed. */
-  onReset?: () => void;
-}) {
-  const errorsId = useId();
-  const fixing = errors !== undefined && errors.length > 0;
-  return (
-    <div
-      className={styles.reviewRow}
-      data-warning={(warning && !fixing) || undefined}
-      data-invalid={fixing || undefined}
-    >
-      <div className={styles.reviewText}>
-        <p className={styles.reviewLabel}>
-          {label}
-          {source ? (
-            <>
-              {' '}
-              <span className={templateStyles.source} data-source={source} data-testid={`review-source-${label}`}>
-                {SOURCE_CHIP_LABELS[source]}
-              </span>
-            </>
-          ) : null}
-        </p>
-        <p className={styles.reviewValue}>{value}</p>
-        {note ? <p className={styles.reviewValue} data-testid={`review-note-${label}`}>{note}</p> : null}
-        {fixing ? (
-          <ul className={styles.reviewErrors} id={errorsId} data-testid="review-row-errors">
-            {errors.map((line, index) => (
-              <li key={index}>{line}</li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-      {source === 'campaign' && onReset ? (
-        <button type="button" className="btn-secondary" onClick={onReset} aria-label={`Reset ${label} to the template`}>
-          Reset
-        </button>
-      ) : null}
-      {onEdit ? (
-        <button
-          type="button"
-          className={fixing ? 'btn-primary' : 'btn-secondary'}
-          onClick={onEdit}
-          aria-label={`${fixing ? 'Fix' : 'Edit'} ${label}`}
-          aria-describedby={fixing ? errorsId : undefined}
-        >
-          {fixing ? 'Fix' : 'Edit'}
-        </button>
-      ) : null}
     </div>
   );
 }

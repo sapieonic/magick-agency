@@ -14,8 +14,8 @@ feature is **Campaign templates** and "the default template" is what a new campa
   template.
 - **New campaign** opens on the account's default template (else the organisation's default, else
   the built-in settings) and fills every step from it. A "Start from" picker switches to any other
-  template the account can see. Review labels each section with where it came from, and anything
-  changed is "Changed for this campaign".
+  template the account can see. Each step labels the blocks it edits with where their section came
+  from, and anything changed is "Changed for this campaign".
 - A campaign stores its own copy of its settings at Create (CT1). Editing or archiving a template
   never changes a campaign that exists.
 - The soft phone's outcomes for untagged calls follow the account's default template when the soft
@@ -272,18 +272,20 @@ Build notes (fresh-context review, server fixes, 2026-11-22; the IDs are in §8 
 
 - **Settings › Campaign templates**: listed in the account group and the organisation group of
   `SETTINGS_ENTRIES`, gated by the flag and the permission. A list (name, default badge, based
-  on, sections set, updated by and when, Make default, Archive) and an editor page that composes
-  the existing campaign editors per section, each with "Use <based-on or built-in>" or "Set in
+  on, sections set, updated by and when, Make default, Archive) and an editor page laid out as the
+  campaign setup's steps (CS21, below), each section with "Use <based-on or built-in>" or "Set in
   this template". "Copy from a campaign", the Collections set (AS4) on the outcomes editor,
   History with a side-by-side comparison, and "Apply to draft campaigns" (CT16) with a preview.
-- **New campaign**: "Start from" picker above the steps; the form is filled from
-  `/campaign-templates/effective`; Review rows carry the source chip and a per-section Reset; the
-  create sends `template_id`. When the read fails or the flag is off, the builder starts as today.
-  New campaign's call summary picker (on "How agents work", with `agency.analytics`) is filled
-  from the template's recording section with the record flag: Review's Call summary row carries
-  the Recording chip, changing either makes the section `campaign`, Reset puts both back, and the
-  create sends the two together or neither. An organisation template holds no profile, and one
-  the account cannot use comes as none with the `analysis_profile_unavailable` note (CT5).
+- **New campaign** (the four setup steps, `docs/campaign-setup.md` CS17–CS20; there is no Review
+  step): "Start from" is a slim card above the step cards; the form is filled from
+  `/campaign-templates/effective`; each section's source chip and Reset sit at the heading of the
+  block that edits it on its step (below); the create sends `template_id`. When the read fails or
+  the flag is off, the builder starts as today. The call summary picker (Agents & timing's agent
+  screen, with `agency.analytics`) is filled from the template's recording section with the record
+  flag: the record and call summary rows both carry the Recording chip, changing either makes the
+  section `campaign`, Reset puts both back, and the create sends the two together or neither. An
+  organisation template holds no profile, and one the account cannot use comes as none with the
+  `analysis_profile_unavailable` note (CT5).
 - **Campaign Settings**: "Started from <template>, version n" with "What's different from the
   template now" and "Save as template…" (new, or replace an existing one's sections).
 - **Soft phone settings**: the outcome list offers "Follow campaign template (<name>)" or "Set
@@ -296,8 +298,7 @@ Build notes (step 3): `/settings/campaign-templates` and `/settings/organisation
 reads through the existing campaign readers; comparisons are the domain's. New campaign sends
 `template_id` (`null` for the built-in settings) with the sections as on the form, so their
 sources are recorded at the create; the picker is locked once a roster upload has made the draft.
-Breaks and the agent screen, which New campaign has no step for, show on Review as read-only rows
-with their chip. The script editor in a template offers the keys a script with no customer card
+The script editor in a template offers the keys a script with no customer card
 takes, the legacy six (a template has no card; corrected in the fresh-context review, U1, CT22). With the flag off or the read failing, New campaign is unchanged.
 
 Build notes (review fixes, 2026-11-22): in New campaign, numbers the template leaves on built-in
@@ -306,8 +307,9 @@ are the operator's: kept across a switch or a Reset, with no chip (the record ca
 others; Reset never empties the pool. The chosen template is read before "Replace your changes?".
 A default-chain read that lands after the operator started typing fills only untouched sections,
 still shows the picker and still names the template. A template script using keys the roster's
-card lacks is held back from the draft (empty script); Review explains it with the AS19 message,
-offers the script editor, and Save campaign waits for the fix. Lists and the picker say "Account
+card lacks is held back from the draft (empty script); Purpose & buttons explains it with the
+AS19 message and the script editor, and the saves wait for the fix (Review's, until the four
+steps; see the next notes). Lists and the picker say "Account
 default" / "Organisation default"; Templates / Archived is an `aria-pressed` filter. Copies set
 only the sections the editor shows (`templateSectionKeys`); an unset section reads "Use
 <template>", "Use the organisation's default" or "Use built-in settings". Apply and Save as
@@ -316,6 +318,82 @@ the account on the organisation page. Campaign Settings reads "Started from <tem
 n · created <d Mon>" with the record's notes as sentences; an archived template "has since been
 archived" with no comparison; a campaign with no record offers only "Save as template…". The soft
 phone reads `outcomes_template` as what Follow gives; Follow or Set comes from its own list.
+
+Build notes (New campaign on the four setup steps, CS17–CS20, 2026-11-23). Review is gone, so
+what it showed moved to the blocks that edit each section. `useBuilderTemplate` is unchanged in
+its rules (the fill, the baseline, CTC1, CTC2, CTC8, CTC10, CT5, `template_id`, the analytics) and
+now also carries the agent screen's target and number display and the break limits, which
+Agents & timing edits: they fill in, count as changed, Reset and go on the create as the other
+sections do. Each section's chip and Reset is one `SectionSource`, passed to the steps by section
+key (`sectionSources`); the steps place them and know nothing of templates:
+
+| Section | Where its chip and Reset sit |
+|---|---|
+| `numbers` | Name & number, at the head of the numbers block (none while a start leaves numbers to the operator, CTC2) |
+| `outcomes` | Purpose & buttons, in the buttons' heading; it covers the unanswered calls under Advanced, and its Reset puts both back (N8) |
+| `hours` | Agents & timing, "When to call" |
+| `retries` | Agents & timing, "If the customer doesn't pick up", and the retry table under Advanced |
+| `wrapup` | Agents & timing, the wrap-up row |
+| `recording` | Agents & timing, the record and call summary rows |
+| `agent_screen` | Agents & timing, the number display and daily target rows; and the Script card on Purpose & buttons |
+| `safety`, `breaks`, `assignment`, `inbound` | Agents & timing, their blocks under Advanced (the last two only where their flags are on) |
+
+A step card whose section changed carries no extra mark; the chip says it. A template's script
+shows on Purpose & buttons under the buttons, in a Script card as Settings shows it, read-only
+with "Edit the script" (`BuilderScriptCard`); a template with no script shows none. A script held
+back for the card (CTC10) is said there with the editor open, Purpose & buttons is marked as
+needing a fix, and Save as draft and Start campaign wait, the footer saying "Change the script on
+Purpose & buttons before you save." with "Go to Purpose & buttons". A template that replaces the
+buttons (a fill, or Reset on Outcomes) bumps Purpose & buttons' `buttonsReplaced`, which forgets
+which rows follow their names and which row each unanswered outcome follows, and closes an open
+row. Step 3's starting points (CS2) are "What is this campaign for?", never called templates (CS20).
+
+Build notes (the template editor on the setup steps, CS21, 2026-11-23). The editor speaks the
+language of New campaign and campaign Settings (`docs/campaign-setup.md`) and is built from the same
+parts. "About this template" (name, description, Based on) is a `SetupCard` at the top. Under it,
+the setup steps are tabs (`StepCards` in tabs mode, as Settings has them): `SETUP_STEPS` less
+Customers, since a template holds no roster or card (§3), and only the steps holding a section the
+editor shows (`utils/agency/campaignTemplates/templateTabs.ts`). The slim bar with Discard and Save
+stays at the bottom.
+
+| Tab | Sections, in order | Notes |
+|---|---|---|
+| Name & number | `numbers` | Account templates only (CT15): an organisation template has no such tab and opens on Purpose & buttons |
+| Purpose & buttons | `outcomes`, `agent_screen` | The agent screen sits here whole, with its script |
+| Agents & timing | `hours`, `retries`, `wrapup`, `recording`, `breaks`, `safety`, `assignment`, `inbound` | Assignment and inbound only where their flags are on (`useTemplateSectionKeys`) |
+
+A section is one Use/Set choice (CT2), so it lives whole on one tab. The agent screen holds the
+script, how the number is shown and the daily target; it is on Purpose & buttons because the script
+is most of it, both campaign pages show the script there under the buttons (CS19), and the number
+display is also about what the agent sees beside the buttons, while Agents & timing already holds
+eight sections.
+
+Each section is a `SetupCard` (`TemplateSectionCard`): its name, its values in one line (dimmed
+when inherited), "Needs a fix" when a field in it has a finding, and the choice as a `PillGroup`
+("Use <what it follows>" or "Set in this template"; the checked pill is where it comes from). Unset,
+the card is its header alone. Set, it opens on the block of the steps that edits exactly that
+section (`TemplateSectionEditors`):
+
+| Section | Its editor |
+|---|---|
+| `numbers` | Name & number's carrier and numbers as cards (`CallerNumbersBlock`) |
+| `outcomes` | Purpose & buttons whole: the starting points, the buttons as sentences, the agent's view, and under Advanced the full editor and the unanswered calls (`PurposeButtonsStep` with `framed={false}`) |
+| `agent_screen` | The number display and daily target rows (`AgentScreenRows`), then the Script, on the legacy six keys (CT22) |
+| `hours` | The hour presets or Custom, and the day pills (`CallingHoursBlock`) |
+| `retries` | The one "doesn't pick up" sentence (`UnansweredRuleBlock`), with the full table right below it |
+| `wrapup` | The wrap-up row (`WrapupRow`), then what agents do after it and redial from wrap-up |
+| `recording` | The record and call summary rows (`RecordingRows`); an organisation template has the record row only (CT5) |
+| `breaks`, `safety`, `assignment`, `inbound` | The blocks Agents & timing keeps under Advanced |
+
+The steps' blocks were extracted into `pages/campaigns/agency/setup/` and the steps use them too, so
+there is one implementation; the rules stay in `utils/campaignSetup/*`,
+`utils/agencyCampaignConfigForm.ts` and `templateForm.ts`. A tab with a section to fix carries the
+needs-fixing mark, and one with a section changed since the save carries the unsaved dot (a change
+of name, description or Based on marks no tab). "Fix the marked settings to save." brings forward
+the tab holding the finding (the one on screen first) and focuses its field. All panels stay
+mounted, so no editor loses its place on a tab change. The read-only View (L4a, N7) has the same
+tabs, each card with its summary and a chip saying where it comes from, and no choices, editors or
+bar.
 
 Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 step 5):
 
@@ -334,9 +412,10 @@ Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 
   the refusal's details as sentences under "Not changed". An answer that lands after the dialog
   closed is dropped; the preview reads six drafts at a time; the results are announced and take the
   focus.
-- **The editor's layout** (U4, U6, U8, U9, U13, N9). An "About this template" card at the top holds
-  the name, the description and Based on; only a slim bar with Discard and Save, and a short note
-  beside them, sticks to the bottom (one button high on a phone). Long names wrap. A section with a
+- **The editor's layout** (U4, U6, U8, U9, U13, N9; since CS21 on the setup steps' tabs, above). An
+  "About this template" card at the top holds the name, the description and Based on; only a slim
+  bar with Discard and Save, and a short note beside them, sticks to the bottom (one button high on
+  a phone). Long names wrap. A section with a
   field to fix carries a danger border and "Needs a fix", and the bar's "Fix the marked settings to
   save." takes the focus to the field. Unset numbers read "Pick them in each campaign", never an
   organisation template. When the template it follows cannot be read, the editor says so with
@@ -354,9 +433,9 @@ Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 
   organisation's page. Templates / Archived show rows only once their own list is read (U5).
 - **Start from** (U12). Choosing in New campaign's list does nothing by itself; "Use this
   template" starts from the one chosen (an arrow key on a closed list changed it at once in
-  Chromium, a read per press). Review's script problem is a status, not an alert re-read at each
-  key, and its Unanswered calls row carries the Outcomes chip, Reset on Outcomes putting both back
-  (N8).
+  Chromium, a read per press). The script problem (on Review then, on Purpose & buttons now) is a
+  status, not an alert re-read at each key, and the unanswered calls go with the Outcomes chip,
+  Reset on Outcomes putting both back (N8).
 - **History** (U11, N1, N2, N4). Comparing two versions lists a change of name or Based on beside
   the sections' ("Set only in Version 3 (now)"); a template with one version says it has nothing to
   compare yet. A stamp from another year carries the year ("18 Nov 2025, 4:12 PM"). It reads the

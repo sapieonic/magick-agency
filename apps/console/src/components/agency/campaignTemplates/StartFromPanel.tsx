@@ -5,13 +5,15 @@ import type {
   AgencyCampaignTemplateSummary,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { actorLabel, formatStamp, noteSentence } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { SetupCard } from '../../campaign-setup';
 import { BUILT_IN_START } from './useStartFrom';
-import styles from './CampaignTemplates.module.css';
+import styles from './StartFromPanel.module.css';
 
 /**
- * New campaign's "Start from" picker and the violet banner under it: the account's templates
- * first, then the organisation's, then the built-in settings; then where the form was filled in
- * from, that changes here are this campaign's alone, and the notes on the filling-in as sentences.
+ * New campaign's "Start from" (CS17), a slim card above the step cards: the picker (the account's
+ * templates first, then the organisation's, then the built-in settings), then where the form was
+ * filled in from, that changes here are this campaign's alone, and the notes on the filling-in as
+ * sentences. It fills every step; once the draft exists it is locked, and says so.
  *
  * Choosing in the list does nothing by itself; "Use this template" starts from the one chosen (U12):
  * in Chromium on Windows and Linux an arrow key on a closed list changes it at once, which would
@@ -48,9 +50,11 @@ export function StartFromPanel({
   const who = chosen ? actorLabel(chosen.updated_by) : null;
 
   return (
-    <div className={styles.cardBody} data-testid="start-from">
+    <SetupCard density="slim" testId="start-from">
       <div className={styles.picker}>
-        <label htmlFor={`${id}-start`}>Start from</label>
+        <label htmlFor={`${id}-start`} className={styles.label}>
+          Start from
+        </label>
         <select
           id={`${id}-start`}
           value={picked}
@@ -117,6 +121,6 @@ export function StartFromPanel({
           </ul>
         ) : null}
       </div>
-    </div>
+    </SetupCard>
   );
 }

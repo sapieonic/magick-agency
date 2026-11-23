@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyCampaign } from '../../types/agency-campaign';
+import type { TenantMember } from '../../types/team';
 
 /**
  * Campaign settings, at the PAGE level.
@@ -11,6 +12,9 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  * of the feature. A unit test of that helper stayed green the entire time and
  * proved nothing about an operator's ability to change a calling window. So
  * every assertion here goes through the page.
+ *
+ * The page is the four setup steps as tabs (CS1): a test opens the tab a field is on, and
+ * Agents & timing's Advanced fold for one inside it, before it reads the field by its role.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +28,10 @@ const mocks = vi.hoisted(() => ({
   getInsightsSummary: vi.fn(),
   getInsightsUploads: vi.fn(),
   getInsightsAllocation: vi.fn(),
+  listCampaignAgents: vi.fn(),
+  assignAgent: vi.fn(),
+  unassignAgent: vi.fn(),
+  listTenantMembers: vi.fn(),
   flags: new Set<string>(),
 }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
@@ -78,7 +86,18 @@ vi.mock('../../api/agencyCampaigns', () => ({
   transitionAgencyCampaign: mocks.transitionAgencyCampaign,
   campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
-// The lifecycle and upload history under the form (IN13), and the tab bar's overdue-callbacks badge.
+// Who calls (CS10): the campaign's staffing and the team it is picked from.
+vi.mock('../../api/agency', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agency')>()),
+  listCampaignAgents: mocks.listCampaignAgents,
+  assignAgent: mocks.assignAgent,
+  unassignAgent: mocks.unassignAgent,
+}));
+vi.mock('../../api/tenants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/tenants')>()),
+  listTenantMembers: mocks.listTenantMembers,
+}));
+// The lifecycle and upload history (IN13), and the tab bar's overdue-callbacks badge.
 vi.mock('../../api/agencyInsights', () => ({
   getInsightsSummary: mocks.getInsightsSummary,
   getInsightsUploads: mocks.getInsightsUploads,
@@ -128,7 +147,17 @@ function renderPage(path = '/agency/campaigns/camp-1/settings') {
 }
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
-import { saveSettings } from '../helpers/settingsForm';
+import {
+  agentsAdvanced,
+  callerIdBox,
+  currentTab,
+  openAgentsAdvanced,
+  openTab,
+  saveSettings,
+  settingsTab,
+  tabPanel,
+} from '../helpers/settingsForm';
+import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
 import * as insightsSamples from '../helpers/insights';
 import { resetCampaignTabBadgesForTests } from '../../hooks/useCampaignTabBadges';
 
@@ -145,6 +174,10 @@ beforeEach(() => {
   mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
   mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
   mocks.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
+  mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
+  mocks.listTenantMembers.mockResolvedValue([]);
+  mocks.assignAgent.mockResolvedValue(undefined);
+  mocks.unassignAgent.mockResolvedValue(undefined);
   // The bar's badge counts are shared for 30 s; each test reads its own.
   resetCampaignTabBadgesForTests();
   // Governance fails OPEN, so the default posture here is every capability on —
@@ -261,6 +294,8 @@ describe('campaign settings — saving', () => {
     // "on" — or a save that wrote `true` back — would silently re-pace an
     // operator's whole floor.
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
 
     const box = (await screen.findByRole('checkbox', {
       name: /send agents back to the pool automatically/i,
@@ -284,6 +319,8 @@ describe('campaign settings — saving', () => {
   it('round-trips “Allow redial from wrap-up” through load, save and re-seed', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ allow_wrapup_redial: true }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
 
     const box = (await screen.findByRole('checkbox', {
       name: /allow redial from wrap-up/i,
@@ -308,6 +345,8 @@ describe('campaign settings — saving', () => {
 
   it('shows the redial setting off for a campaign that does not carry it', async () => {
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
     const box = (await screen.findByRole('checkbox', {
       name: /allow redial from wrap-up/i,
     })) as HTMLInputElement;
@@ -317,6 +356,8 @@ describe('campaign settings — saving', () => {
   it('loads the campaign’s abandonment limit and PATCHes the one the line is moved to', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: 4.5 }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
 
     const slider = await screen.findByRole('slider', { name: 'Abandonment limit' });
     expect(slider.getAttribute('aria-valuenow')).toBe('4.5');
@@ -344,6 +385,7 @@ describe('campaign settings — saving', () => {
       renderPage();
 
       const start = await screen.findByDisplayValue('10:00');
+      openAgentsAdvanced();
       expect(screen.getByTestId('abandonment-meter-value').textContent).toBe(`${stored}%`);
       expect(screen.queryByText('Set the limit between 0.5% and 10%.')).toBeNull();
       expect(screen.queryByText('Use at most one decimal place, like 3.5.')).toBeNull();
@@ -424,6 +466,30 @@ describe('campaign settings — lifecycle and uploads', () => {
     expect(mocks.getInsightsSummary).toHaveBeenCalledTimes(1);
   });
 
+  it('sits on Customers, with Add customers where the header offers Add contacts (AR7)', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('contacts');
+    const card = screen.getByTestId('lifecycle-uploads');
+    expect(within(card).getByRole('link', { name: 'Add customers' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/contacts/add');
+    cleanup();
+
+    // Not on an archived campaign, nor on one that has ended, nor to a role that cannot write.
+    for (const [over, role] of [
+      [{ archived_at: '2026-11-20T10:00:00Z' }, 'tenant_owner'],
+      [{ status: 'stopped' }, 'tenant_owner'],
+      [{}, 'operator'],
+    ] as const) {
+      mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role });
+      mocks.getAgencyCampaign.mockResolvedValue(campaign(over as Partial<AgencyCampaign>));
+      renderPage();
+      await screen.findByLabelText(/campaign name/i);
+      expect(screen.queryByTestId('settings-add-contacts')).toBeNull();
+      cleanup();
+    }
+  });
+
   it('reads neither for a role below `agency.supervise`, whose reads would 403', async () => {
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
     renderPage();
@@ -467,6 +533,8 @@ describe('campaign settings — permissions', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: 4.5 }));
 
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
 
     const box = (await screen.findByRole('spinbutton', { name: 'Pause above (%)' })) as HTMLInputElement;
     expect(box.value).toBe('4.5');
@@ -477,6 +545,8 @@ describe('campaign settings — permissions', () => {
 
   it('keeps the abandonment limit live for a role that can write', async () => {
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
     expect(await screen.findByRole('slider', { name: 'Abandonment limit' })).toBeTruthy();
     expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).disabled).toBe(false);
   });
@@ -492,7 +562,8 @@ describe('campaign settings — caller IDs', () => {
     renderPage();
 
     // Deselect the only number.
-    fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.click(callerIdBox('+912200000001'));
     saveSettings();
 
     await waitFor(() =>
@@ -522,10 +593,8 @@ describe('campaign settings — caller IDs', () => {
   it('loads the campaign’s existing pool as selected', async () => {
     renderPage();
 
-    const box = (await screen.findByRole('checkbox', {
-      name: /\+912200000001/,
-    })) as HTMLInputElement;
-    expect(box.checked).toBe(true);
+    await screen.findByLabelText(/campaign name/i);
+    expect(callerIdBox('+912200000001').checked).toBe(true);
   });
 });
 
@@ -538,19 +607,24 @@ describe('campaign settings — caller IDs', () => {
  * both to a capability-off tenant,
  * so the two capabilities were guarding a surface that did not exist.
  */
-const RECORD_LABEL = /record every call on this campaign/i;
+/** The agent screen's "Record calls" switch, on Agents & timing. */
+function recordSwitch() {
+  return screen.getByRole('switch', { name: 'Record calls' }) as HTMLButtonElement;
+}
+const isOn = (control: HTMLElement) => control.getAttribute('aria-checked') === 'true';
 
-function recordBox() {
-  return screen.getByRole('checkbox', { name: RECORD_LABEL }) as HTMLInputElement;
+/** Load the page and open Agents & timing, where recording and the call summary are. */
+async function renderAgentsTab() {
+  renderPage();
+  await screen.findByLabelText(/campaign name/i);
+  openTab('agents');
 }
 
 describe('campaign settings — recording opt-in', () => {
   it('defaults to off, and sends `record_calls: false` rather than omitting it', async () => {
-    renderPage();
+    await renderAgentsTab();
 
-    expect((await screen.findByRole('checkbox', { name: RECORD_LABEL })).getAttribute('checked'))
-      .toBeNull();
-    expect(recordBox().checked).toBe(false);
+    expect(isOn(recordSwitch())).toBe(false);
 
     saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
@@ -560,34 +634,33 @@ describe('campaign settings — recording opt-in', () => {
   });
 
   it('turns recording on and round-trips it through save and re-seed', async () => {
-    renderPage();
+    await renderAgentsTab();
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: RECORD_LABEL }));
+    fireEvent.click(recordSwitch());
     saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
-    await waitFor(() => expect(recordBox().checked).toBe(true));
+    await waitFor(() => expect(isOn(recordSwitch())).toBe(true));
   });
 
   it('loads a campaign that already records as on', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ record_calls: true }));
-    renderPage();
+    await renderAgentsTab();
 
-    await waitFor(() => expect(recordBox().checked).toBe(true));
+    await waitFor(() => expect(isOn(recordSwitch())).toBe(true));
   });
 });
 
 describe('campaign settings — `agency.recording` off', () => {
   it('does not offer switching recording ON, and names the reason', async () => {
     capabilitiesOff('agency.recording');
-    renderPage();
+    await renderAgentsTab();
 
-    await screen.findByLabelText(/campaign name/i);
-    expect(recordBox().disabled).toBe(true);
+    expect(recordSwitch().disabled).toBe(true);
     // The control must not silently vanish; the notice names the capability so
     // the operator knows what to ask an administrator for.
-    expect(screen.getByText(/agency\.recording/)).toBeTruthy();
+    expect(within(screen.getByTestId('record-row')).getByText(/agency\.recording/)).toBeTruthy();
   });
 
   it('omits `record_calls` entirely so an unrelated edit still saves', async () => {
@@ -616,13 +689,13 @@ describe('campaign settings — `agency.recording` off', () => {
   it('still lets a grandfathered campaign turn recording OFF, and the save succeeds', async () => {
     capabilitiesOff('agency.recording');
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ record_calls: true }));
-    renderPage();
+    await renderAgentsTab();
 
-    await waitFor(() => expect(recordBox().checked).toBe(true));
-    expect(recordBox().disabled).toBe(false);
+    await waitFor(() => expect(isOn(recordSwitch())).toBe(true));
+    expect(recordSwitch().disabled).toBe(false);
 
-    fireEvent.click(recordBox());
-    expect(recordBox().checked).toBe(false);
+    fireEvent.click(recordSwitch());
+    expect(isOn(recordSwitch())).toBe(false);
 
     saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
@@ -636,11 +709,11 @@ describe('campaign settings — `agency.recording` off', () => {
   it('locks the box again once it has been switched off — on is still refused', async () => {
     capabilitiesOff('agency.recording');
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ record_calls: true }));
-    renderPage();
+    await renderAgentsTab();
 
-    await waitFor(() => expect(recordBox().checked).toBe(true));
-    fireEvent.click(recordBox());
-    expect(recordBox().disabled).toBe(true);
+    await waitFor(() => expect(isOn(recordSwitch())).toBe(true));
+    fireEvent.click(recordSwitch());
+    expect(recordSwitch().disabled).toBe(true);
   });
 });
 
@@ -747,12 +820,18 @@ describe('campaign settings — call-summary profile', () => {
     });
   });
 
-  it('hides the picker when `agency.analytics` is off and nothing is set', async () => {
+  /*
+    The old page hid the picker here. The step shows every switch that exists, locked with its
+    reason when the account cannot use it (CS14): what is guarded is that nothing can be picked.
+  */
+  it('locks the picker, saying why, when `agency.analytics` is off and nothing is set', async () => {
     capabilitiesOff('agency.analytics');
-    renderPage();
+    await renderAgentsTab();
 
-    await screen.findByLabelText(/campaign name/i);
-    expect(screen.queryByLabelText(/call summary/i)).toBeNull();
+    const select = screen.getByRole('combobox', { name: 'Call summary' }) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect([...select.options].map((o) => o.textContent)).toEqual(['No summary']);
+    expect(screen.getByTestId('summary-row').textContent).toContain('Call summaries are turned off for this account.');
   });
 
   it('still offers removal when `agency.analytics` is off but a profile is set', async () => {
@@ -760,10 +839,13 @@ describe('campaign settings — call-summary profile', () => {
     // guard with the capability off.
     capabilitiesOff('agency.analytics');
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ analysis_profile_id: 'prof-1' }));
-    renderPage();
+    await renderAgentsTab();
 
-    expect(await screen.findByText(/agency\.analytics/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /remove summary profile/i }));
+    expect(within(screen.getByTestId('summary-row')).getByText(/agency\.analytics/)).toBeTruthy();
+    const select = screen.getByRole('combobox', { name: 'Call summary' }) as HTMLSelectElement;
+    // The profile already set can be removed, never swapped for another.
+    expect([...select.options].map((o) => o.textContent)).toEqual(['No summary', 'Current profile']);
+    fireEvent.change(select, { target: { value: '__none__' } });
     saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
@@ -1133,29 +1215,16 @@ describe('unsaved changes', () => {
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
-  it('Discard remounts the sections, and the section highlight follows the new ones', async () => {
-    const observers: { watched: Element[]; live: boolean }[] = [];
-    vi.stubGlobal('IntersectionObserver', class {
-      private readonly record = { watched: [] as Element[], live: true };
-      constructor() { observers.push(this.record); }
-      observe(element: Element) { this.record.watched.push(element); }
-      disconnect() { this.record.live = false; }
-    });
-    try {
-      renderPage();
-      await screen.findByLabelText(/campaign name/i);
-      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
-      const before = document.getElementById('general');
-      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-      expect(document.getElementById('general')).not.toBe(before);
-
-      const live = observers.filter((o) => o.live);
-      expect(live).toHaveLength(1);
-      expect(live[0]!.watched.length).toBeGreaterThan(0);
-      expect(live[0]!.watched.every((section) => section.isConnected)).toBe(true);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  it('Discard remounts every tab’s fields, and leaves the tab on screen', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    openTab('agents');
+    const before = document.getElementById('general');
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(document.getElementById('general')).not.toBe(before);
+    expect(document.getElementById('general')?.isConnected).toBe(true);
+    expect(currentTab()).toBe('agents');
   });
 
   it('Save sends the edits and clears the bar', async () => {
@@ -1172,6 +1241,7 @@ describe('unsaved changes', () => {
   it('keeps Save back, saying why, while a field must be fixed', async () => {
     renderPage();
     await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
     expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(bar()?.textContent).toMatch(/fix/i);
@@ -1196,7 +1266,8 @@ describe('unsaved changes', () => {
 
   it('holds Save while no caller ID is picked, saying so on the field', async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.click(callerIdBox('+912200000001'));
 
     expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(document.getElementById('caller-ids')?.textContent).toMatch(/needs at least one caller id/i);
@@ -1237,18 +1308,16 @@ describe('unsaved changes', () => {
     expect(screen.getByText('Somewhere else')).toBeTruthy();
   });
 
-  it('lets the section nav move about the page with unsaved edits', async () => {
-    Element.prototype.scrollIntoView = () => {};
-    try {
-      renderPage();
-      await screen.findByTestId('settings-section-nav');
-      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
-      fireEvent.click(screen.getByTestId('settings-section-link-recording'));
-      expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
-      expect(screen.queryByRole('dialog')).toBeNull();
-    } finally {
-      delete (Element.prototype as Partial<Element>).scrollIntoView;
-    }
+  it('lets the tabs move about the page with unsaved edits, and keeps the edits', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    openTab('agents');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(currentTab()).toBe('agents');
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    openTab('basics');
+    expect(nameField().value).toBe('Collections — September');
   });
 });
 
@@ -1257,6 +1326,8 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     mocks.flags = new Set(['agency_inbound_enabled']);
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ inbound_sticky_enabled: true }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
     const box = (await screen.findByRole('checkbox', { name: /put callers through to their agent/i })) as HTMLInputElement;
     expect(box.checked).toBe(true);
     expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/agent they last spoke to first/);
@@ -1270,6 +1341,8 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
   it('is hidden with the flag off, and the stored value is sent back as it came', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ inbound_sticky_enabled: false }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
     await screen.findByRole('checkbox', { name: /allow redial from wrap-up/i });
     expect(screen.queryByRole('checkbox', { name: /put callers through to their agent/i })).toBeNull();
     saveSettings();
@@ -1279,18 +1352,13 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
 });
 
 /**
- * ── The page's sections (decision IN14) ──────────────────────────────────────
- * `CAMPAIGN_SETTINGS_SECTIONS` is the list a section nav, a link (`…/settings#id`) and search
- * all name; the page must have a section for every entry it lists, list every section it has,
- * and open at the one a link names.
+ * ── The tabs, and the sections links land on (CS1, CS16) ─────────────────────
+ * The page is the four setup steps as tabs. `CAMPAIGN_SETTINGS_SECTIONS` is the list a link
+ * (`…/settings#id`) and search name, each with the tab it is on: the page must have every
+ * section it lists, in that tab, and a link must open that tab (and Advanced, for a section
+ * inside it) and land on the section.
  */
-describe('the settings sections', () => {
-  const navIds = () => screen.getAllByTestId(/^settings-section-link-/)
-    .map((link) => link.getAttribute('href'));
-  const current = () => screen.getAllByTestId(/^settings-section-link-/)
-    .filter((link) => link.getAttribute('aria-current') === 'true')
-    .map((link) => link.textContent);
-
+describe('the tabs and the sections links land on', () => {
   let scrolled: string[] = [];
   beforeEach(() => {
     scrolled = [];
@@ -1300,83 +1368,129 @@ describe('the settings sections', () => {
   });
   afterEach(() => {
     delete (Element.prototype as Partial<Element>).scrollIntoView;
-    vi.unstubAllGlobals();
   });
 
-  it('lists the sections the page has, in page order, each an anchor on the page', async () => {
+  it('shows the four steps as tabs, Name & number first, one panel at a time', async () => {
     renderPage();
-    await screen.findByTestId('settings-section-nav');
-
-    expect(navIds()).toEqual([
-      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#agents',
-      '#agent-screen', '#script', '#roster-uploads',
+    await screen.findByLabelText(/campaign name/i);
+    const list = screen.getByRole('tablist', { name: 'Campaign settings' });
+    expect(within(list).getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      '1Name & numberWho customers see',
+      '2CustomersUpload the list',
+      '3Purpose & buttonsWhat agents can pick',
+      '4Agents & timingWho calls, and when',
     ]);
-    for (const href of navIds()) {
-      expect(document.getElementById(href!.slice(1)), href!).toBeTruthy();
-    }
-    // Agents is there with contact assignment and inbound both off: it holds the break limits (LF27).
-    expect(document.getElementById('agents')?.querySelector('[data-testid="break-limits"]')).toBeTruthy();
-    // The nav and the page agree on order: each anchor follows the one before it.
-    const anchors = navIds().map((href) => document.getElementById(href!.slice(1))!);
+    expect(currentTab()).toBe('basics');
+    expect(screen.getAllByRole('tabpanel')).toEqual([tabPanel('basics')]);
+    expect(settingsTab('basics').getAttribute('aria-controls')).toBe('campaign-settings-panel-basics');
+
+    openTab('purpose');
+    expect(currentTab()).toBe('purpose');
+    expect(screen.getAllByRole('tabpanel')).toEqual([tabPanel('purpose')]);
+    expect(tabPanel('basics').hidden).toBe(true);
+  });
+
+  it('has every section on the page, in its own tab, in page order', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    const anchors = CAMPAIGN_SETTINGS_SECTIONS.map((section) => {
+      const element = document.getElementById(section.id);
+      expect(element, section.id).toBeTruthy();
+      expect(tabPanel(section.tab).contains(element), `${section.id} in ${section.tab}`).toBe(true);
+      // Under Agents & timing's Advanced exactly when the list says so.
+      expect(agentsAdvanced().contains(element), `${section.id} advanced`).toBe(section.advanced === true);
+      return element!;
+    });
     for (let i = 1; i < anchors.length; i += 1) {
       expect(anchors[i - 1]!.compareDocumentPosition(anchors[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
-    expect(current()).toEqual(['General']);
+    // Agents is there with contact assignment and inbound both off: it holds the break limits (LF27).
+    expect(document.getElementById('agents')?.querySelector('[data-testid="break-limits"]')).toBeTruthy();
   });
 
-  it('adds Agents with inbound on, holding its field', async () => {
+  it('adds inbound callers to Agents with the flag on', async () => {
     mocks.flags = new Set(['agency_inbound_enabled']);
     renderPage();
-    await screen.findByTestId('settings-section-nav');
-
-    expect(navIds()).toContain('#agents');
+    await screen.findByLabelText(/campaign name/i);
     expect(document.getElementById('agents')?.querySelector('[data-testid="inbound-sticky-enabled"]')).toBeTruthy();
   });
 
   it('puts each field in its section', async () => {
     renderPage();
-    await screen.findByTestId('settings-section-nav');
-
+    await screen.findByLabelText(/campaign name/i);
     const inSection = (id: string, selector: string) => document.getElementById(id)?.querySelector(selector);
-    expect(inSection('general', '#campaign-name')).toBeTruthy();
-    expect(inSection('caller-ids', 'label[for="campaign-caller-ids"]')).toBeTruthy();
+    expect(document.getElementById('general')?.contains(screen.getByLabelText(/campaign name/i))).toBe(true);
+    expect(inSection('caller-ids', '[data-testid="caller-id-cards"]')).toBeTruthy();
+    expect(inSection('agent-screen', '[data-testid="customer-facts"]')).toBeTruthy();
     expect(inSection('roster-uploads', '[data-testid="campaign-history"]')).toBeTruthy();
+    expect(inSection('wrap-up', '[data-testid="purpose-buttons-step"]')).toBeTruthy();
+    expect(inSection('script', '[data-testid="script-editor"]')).toBeTruthy();
+    expect(inSection('calling-hours', '[data-testid="hours-presets"]')).toBeTruthy();
+    expect(inSection('recording', '[data-testid="record-row"]')).toBeTruthy();
+    expect(inSection('recording', '[data-testid="daily-target"]')).toBeTruthy();
+    expect(inSection('recording', '[data-testid="phone-display-row"]')).toBeTruthy();
+    expect(inSection('dialling-retries', '[data-testid="abandonment-ceiling-input"]')).toBeTruthy();
   });
 
   it('leaves Lifecycle and uploads out below `agency.supervise`', async () => {
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'operator' });
     renderPage();
-    await screen.findByTestId('settings-section-nav');
-
-    expect(navIds()).not.toContain('#roster-uploads');
+    await screen.findByLabelText(/campaign name/i);
     expect(document.getElementById('roster-uploads')).toBeNull();
+    // The rest of Customers is still there.
+    expect(document.getElementById('agent-screen')).toBeTruthy();
   });
 
-  it('opens at the section a link names, and highlights it', async () => {
-    renderPage('/agency/campaigns/camp-1/settings#calling-hours');
-    await screen.findByTestId('settings-section-nav');
+  it.each(CAMPAIGN_SETTINGS_SECTIONS.map((section) => [section.id, section.tab, section.advanced === true] as const))(
+    'a link to #%s opens the %s tab and lands on it (Advanced open: %s)',
+    async (sectionId, tab, advanced) => {
+      renderPage(`/agency/campaigns/camp-1/settings#${sectionId}`);
+      await screen.findByLabelText(/campaign name/i);
+      await waitFor(() => expect(scrolled).toEqual([sectionId]));
+      expect(currentTab()).toBe(tab);
+      expect(agentsAdvanced().open).toBe(advanced);
+    },
+  );
 
-    await waitFor(() => expect(scrolled).toEqual(['calling-hours']));
-    expect(current()).toEqual(['Calling hours']);
+  it('keeps Advanced open after a link opened it, until the supervisor closes it', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#dialling-retries');
+    await screen.findByLabelText(/campaign name/i);
+    await waitFor(() => expect(agentsAdvanced().open).toBe(true));
+    // The fold was opened once, not held: it can be closed.
+    fireEvent.click(agentsAdvanced().querySelector('summary')!);
+    expect(agentsAdvanced().open).toBe(false);
   });
 
   it('ignores a hash that names no section', async () => {
     renderPage('/agency/campaigns/camp-1/settings#nonsense');
-    await screen.findByTestId('settings-section-nav');
-
+    await screen.findByLabelText(/campaign name/i);
     expect(scrolled).toEqual([]);
-    expect(current()).toEqual(['General']);
+    expect(currentTab()).toBe('basics');
   });
 
-  it('scrolls to a picked section, highlights it and puts it in the URL', async () => {
-    renderPage();
-    await screen.findByTestId('settings-section-nav');
+  it('follows a later link while the page stays mounted (a hash change)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-1/settings#script" />
+      </MemoryRouter>,
+    );
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    await waitFor(() => expect(scrolled).toEqual(['script']));
+    expect(currentTab()).toBe('purpose');
+  });
 
-    fireEvent.click(screen.getByTestId('settings-section-link-recording'));
-
-    expect(scrolled).toEqual(['recording']);
-    expect(current()).toEqual(['Recording']);
-    expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+  it('drops a hash that names another tab’s section once a tab is picked', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#calling-hours');
+    await screen.findByLabelText(/campaign name/i);
+    await waitFor(() => expect(currentTab()).toBe('agents'));
+    expect(screen.getByTestId('location-hash').textContent).toBe('#calling-hours');
+    openTab('purpose');
+    expect(screen.getByTestId('location-hash').textContent).toBe('');
+    expect(scrolled).toEqual(['calling-hours']);
   });
 
   it('opens at a section of another campaign only once that campaign is on the page', async () => {
@@ -1392,7 +1506,7 @@ describe('the settings sections', () => {
         <JumpTo to="/agency/campaigns/camp-2/settings#recording" />
       </MemoryRouter>,
     );
-    await screen.findByTestId('settings-section-nav');
+    await screen.findByLabelText(/campaign name/i);
 
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
     // Still the first campaign (or a spinner): no scroll to its Recording.
@@ -1401,33 +1515,265 @@ describe('the settings sections', () => {
     await act(async () => resolveSecond(campaign({ id: 'camp-2', name: 'Renewals' })));
     await waitFor(() => expect(scrolled).toEqual(['recording']));
     expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
-    expect(current()).toEqual(['Recording']);
+    expect(currentTab()).toBe('agents');
+  });
+});
+
+/**
+ * ── Which tab holds what ──────────────────────────────────────────────────────
+ * One save bar covers every tab: a tab holding an unsaved change shows a dot, and one holding a
+ * finding says it needs fixing, so nothing unsaved or wrong is out of sight on another tab.
+ */
+describe('the tabs’ marks', () => {
+  const nameField = () => screen.getByLabelText(/campaign name/i) as HTMLInputElement;
+  const dotted = () => (['basics', 'contacts', 'purpose', 'agents'] as const)
+    .filter((tab) => settingsTab(tab).hasAttribute('data-unsaved'));
+
+  it('dots each tab that holds an unsaved change, and Save or Discard clears them', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(dotted()).toEqual([]);
+
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect(dotted()).toEqual(['basics']);
+    expect(settingsTab('basics').getAttribute('aria-label')).toBe('Name & number, unsaved changes');
+
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    fireEvent.change(screen.getByTestId('script-opening'), { target: { value: 'Namaste' } });
+    expect(dotted()).toEqual(['basics', 'purpose', 'agents']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(dotted()).toEqual([]);
+
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    await waitFor(() => expect(dotted()).toEqual([]));
   });
 
-  it('highlights the section scrolled into view', async () => {
-    let report: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void = () => {};
-    const watched: Element[] = [];
-    vi.stubGlobal('IntersectionObserver', class {
-      constructor(callback: typeof report) { report = callback; }
-      observe(element: Element) { watched.push(element); }
-      disconnect() {}
-    });
+  it('shows no dot to a reader who cannot save', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
     renderPage();
-    await screen.findByTestId('settings-section-nav');
-    // The hook makes its observer in an effect, which React may run a task after the commit that
-    // put the sections on the page. Under load the find resolves in between, and a report sent
-    // then went to no observer. Report only once the sections are watched, as a browser would.
-    await waitFor(() => expect(watched).toContain(document.getElementById('wrap-up')));
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    expect(dotted()).toEqual([]);
+  });
 
-    act(() => report([
-      { target: document.getElementById('general')!, isIntersecting: false },
-      { target: document.getElementById('wrap-up')!, isIntersecting: true },
-    ]));
-    expect(current()).toEqual(['Wrap-up and outcomes']);
+  it('marks the tab holding a finding as needing fixing, on whichever tab is open', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(screen.getByDisplayValue('18:00'), { target: { value: '10:00' } });
+    expect(settingsTab('agents').getAttribute('aria-label')).toBe('Agents & timing, needs fixing, unsaved changes');
+    expect(settingsTab('basics').getAttribute('aria-label')).toBe('Name & number');
+  });
+});
 
-    // Two in the band: the upper one is the one being read.
-    act(() => report([{ target: document.getElementById('dialling-retries')!, isIntersecting: true }]));
-    expect(current()).toEqual(['Dialling and retries']);
+/**
+ * ── Going to a finding on another tab ─────────────────────────────────────────
+ * A refused save, or "Show me", brings forward the first tab holding a finding (the open one
+ * when it holds one) and moves focus to the field, as New campaign does.
+ */
+describe('a finding on another tab', () => {
+  it('a refused save brings the field’s tab forward and focuses the field', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(400, {
+      error: 'Validation failed',
+      details: { calling_window_end: 'The end of the window is refused here.' },
+    }));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
+
+    const message = await screen.findByText('The end of the window is refused here.');
+    expect(currentTab()).toBe('agents');
+    expect(tabPanel('agents').contains(message)).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByDisplayValue('18:00')));
+    expect(settingsTab('agents').getAttribute('aria-label')).toMatch(/needs fixing/);
+  });
+
+  it('a refusal on the name, saved from another tab, goes back to Name & number', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(400, {
+      error: 'Validation failed',
+      details: { name: 'A campaign with this name already exists.' },
+    }));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('agents');
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText('A campaign with this name already exists.')).toBeTruthy();
+    expect(currentTab()).toBe('basics');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(/campaign name/i)));
+  });
+
+  it('a refusal on a button brings Purpose & buttons forward and focuses that row', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(400, {
+      error: 'Validation failed',
+      details: { 'disposition_catalog[1].label': 'This button’s name is refused here.' },
+    }));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
+
+    await screen.findAllByText('This button’s name is refused here.');
+    expect(currentTab()).toBe('purpose');
+    await waitFor(() => expect(tabPanel('purpose').contains(document.activeElement)).toBe(true));
+    const focused = document.activeElement as HTMLElement;
+    const describedBy = (focused.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    expect(describedBy.map((id) => document.getElementById(id)?.textContent ?? '').join(' '))
+      .toContain('This button’s name is refused here.');
+  });
+
+  it('“Show me” goes to the tab whose field holds Save', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(screen.getByLabelText(/campaign name/i), { target: { value: '' } });
+    openTab('purpose');
+    fireEvent.click(screen.getByTestId('unsaved-changes-show'));
+    expect(currentTab()).toBe('basics');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(/campaign name/i)));
+  });
+
+  it('“Show me” opens Advanced for a finding inside it', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
+    // Closed by hand: the finding holds it open.
+    fireEvent.click(agentsAdvanced().querySelector('summary')!);
+    expect(agentsAdvanced().open).toBe(true);
+    openTab('basics');
+    fireEvent.click(screen.getByTestId('unsaved-changes-show'));
+    expect(currentTab()).toBe('agents');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('spinbutton', { name: 'Pause above (%)' })));
+  });
+});
+
+/**
+ * ── Who calls (CS10) ──────────────────────────────────────────────────────────
+ * Agents & timing lists the account's agents as tick cards. A tick is an unsaved change like any
+ * other; Save writes the settings, then assigns and takes off the difference. A tick that fails
+ * stays ticked and unsaved, and is named.
+ */
+describe('who calls on the campaign (CS10)', () => {
+  function member(id: string, name: string): TenantMember {
+    return {
+      membership: {
+        id: `m-${id}`, user_id: id, tenant_id: 'tenant-1', account_id: 'account-1', role: 'agent', status: 'active',
+        invited_by: null, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
+      },
+      user: {
+        id, firebase_uid: `fb-${id}`, email: `${id}@example.com`, display_name: name, avatar_url: null, status: 'active',
+        created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
+      },
+    } as TenantMember;
+  }
+  const NAMES: Record<string, string> = { 'u-asha': 'Asha Rao', 'u-ravi': 'Ravi Kumar', 'u-sunil': 'Sunil Das' };
+  /** Who the server has on the campaign; the assignment routes change it. */
+  let onCampaign: string[] = [];
+
+  beforeEach(() => {
+    onCampaign = ['u-asha'];
+    mocks.listTenantMembers.mockResolvedValue(Object.entries(NAMES).map(([id, name]) => member(id, name)));
+    mocks.listCampaignAgents.mockImplementation(async () => ({
+      agents: onCampaign.map((id) => ({ user_id: id, name: NAMES[id], email: null, role: 'agent', assigned_at: '2026-11-02T00:00:00Z' })),
+    }));
+    mocks.assignAgent.mockImplementation(async (_campaign: string, userId: string) => { onCampaign.push(userId); });
+    mocks.unassignAgent.mockImplementation(async (_campaign: string, userId: string) => {
+      onCampaign = onCampaign.filter((id) => id !== userId);
+    });
+  });
+
+  const tick = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
+  const bar = () => screen.queryByTestId('unsaved-changes-bar');
+
+  async function renderAgents() {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('agents');
+    await waitFor(() => expect(tick('Asha Rao').checked).toBe(true));
+  }
+
+  it('shows who is on the campaign, and a tick is an unsaved change on Agents & timing', async () => {
+    await renderAgents();
+    expect(tick('Ravi Kumar').checked).toBe(false);
+    expect(screen.getByTestId('who-will-call').textContent).toContain('1 agent picked.');
+    expect(bar()).toBeNull();
+
+    fireEvent.click(tick('Ravi Kumar'));
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    expect(settingsTab('agents').hasAttribute('data-unsaved')).toBe(true);
+    // Ticked back: nothing unsaved.
+    fireEvent.click(tick('Ravi Kumar'));
+    expect(bar()).toBeNull();
+  });
+
+  it('applies the ticks after the settings are saved, then nothing is unsaved', async () => {
+    await renderAgents();
+    fireEvent.click(tick('Ravi Kumar'));
+    fireEvent.click(tick('Asha Rao'));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.assignAgent).toHaveBeenCalledWith('camp-1', 'u-ravi', 'tenant-1', 'account-1'));
+    expect(mocks.unassignAgent).toHaveBeenCalledWith('camp-1', 'u-asha', 'tenant-1', 'account-1');
+    // After the PATCH, never before it.
+    expect(mocks.updateAgencyCampaign.mock.invocationCallOrder[0]!).toBeLessThan(mocks.assignAgent.mock.invocationCallOrder[0]!);
+    expect(mocks.updateAgencyCampaign.mock.invocationCallOrder[0]!).toBeLessThan(mocks.unassignAgent.mock.invocationCallOrder[0]!);
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(tick('Ravi Kumar').checked).toBe(true);
+    expect(tick('Asha Rao').checked).toBe(false);
+    expect(mocks.showToast).toHaveBeenCalledWith('Campaign settings saved.', 'success');
+    expect(screen.queryByTestId('staffing-error')).toBeNull();
+  });
+
+  it('names a tick that failed, keeps it ticked and unsaved, and applies the others', async () => {
+    mocks.assignAgent.mockRejectedValueOnce(new Error('Ravi is on another account.'));
+    await renderAgents();
+    fireEvent.click(tick('Ravi Kumar'));
+    fireEvent.click(tick('Asha Rao'));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect((await screen.findByTestId('staffing-error')).textContent)
+      .toContain('The other changes are saved. Could not add Ravi Kumar to this campaign.');
+    expect(mocks.unassignAgent).toHaveBeenCalledWith('camp-1', 'u-asha', 'tenant-1', 'account-1');
+    // Asha's removal went; Ravi's add is still asked for, and is the one unsaved change.
+    await waitFor(() => expect(bar()?.textContent).toContain('1 unsaved change'));
+    expect(tick('Ravi Kumar').checked).toBe(true);
+    expect(tick('Asha Rao').checked).toBe(false);
+    expect(screen.getByTestId('unsaved-changes-note').textContent).toBe('Not saved. The reason is above the form.');
+    expect(mocks.showToast).not.toHaveBeenCalled();
+
+    // Saved again, it goes.
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(screen.queryByTestId('staffing-error')).toBeNull();
+  });
+
+  it('changes nobody when the save is refused', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(500, { error: 'Internal' }));
+    await renderAgents();
+    fireEvent.click(tick('Ravi Kumar'));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(screen.getByTestId('unsaved-changes-note').textContent).toMatch(/Not saved/));
+    expect(mocks.assignAgent).not.toHaveBeenCalled();
+    expect(tick('Ravi Kumar').checked).toBe(true);
+  });
+
+  it('Discard puts the ticks back', async () => {
+    await renderAgents();
+    fireEvent.click(tick('Ravi Kumar'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(tick('Ravi Kumar').checked).toBe(false);
+    expect(bar()).toBeNull();
+  });
+
+  it('reads no staffing for a role below `agency.supervise`, and says why', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('agents');
+    expect(screen.getByTestId('who-will-call').textContent).toContain('Who calls on this campaign is shown to supervisors only.');
+    expect(mocks.listCampaignAgents).not.toHaveBeenCalled();
   });
 });
 
@@ -1473,7 +1819,8 @@ describe('a setting that holds Save', () => {
     Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
     try {
       renderPage();
-      fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+      await screen.findByLabelText(/campaign name/i);
+      fireEvent.click(callerIdBox('+912200000001'));
       fireEvent.click(screen.getByTestId('unsaved-changes-show'));
       expect(scrolled.map((element) => element.textContent)).toEqual(['A campaign needs at least one caller ID.']);
     } finally {

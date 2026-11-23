@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AGENCY_CAMPAIGN_TEMPLATE_DESCRIPTION_MAX,
   AGENCY_CAMPAIGN_TEMPLATE_NAME_MAX,
@@ -7,21 +7,31 @@ import {
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import type { AgencyCarrier } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { focusFirstFieldError } from '../../../pages/campaigns/agency/configFieldErrors';
+import { SetupCard, StepCards } from '../../campaign-setup';
+import { templateTabOf, templateTabs, type TemplateTabId } from '../../../utils/agency/campaignTemplates/templateTabs';
 import { TemplateSectionCard } from './TemplateSectionCard';
 import { TemplateSectionEditors } from './TemplateSectionEditors';
 import type { useTemplateEditor } from './useTemplateEditor';
 import styles from './CampaignTemplates.module.css';
 
+/** The tabs' ids and their panels' (`StepCards` names the panels the same way). */
+const TABS_ID = 'template-editor';
+const panelId = (tab: TemplateTabId) => `${TABS_ID}-panel-${tab}`;
+
 /**
- * The template editor's form: at the top the name, the description and an account template's
- * "Based on"; then one card per shown section in the §3 order, "Use <what it follows>" or "Set in
- * this template"; and a slim bar stuck to the bottom with Discard and Save, which on a phone
- * covers little of the screen (U4). When a field holds Save back, the bar's note takes the person
- * to it (U13). State and saving are `useTemplateEditor`'s.
+ * The template editor's form (CS21): at the top the name, the description and an account
+ * template's "Based on" ("About this template"); then the campaign setup's step cards as tabs
+ * (`StepCards`, as campaign Settings has them), less Customers, each tab holding the cards of the
+ * shown sections it edits (`templateTabs`), "Use <what it follows>" or "Set in this template"; and
+ * a slim bar stuck to the bottom with Discard and Save, which on a phone covers little of the
+ * screen (U4). A tab with a section to fix carries the needs-fixing mark, one with a section
+ * changed since the save the unsaved dot. When a field holds Save back, the bar's note brings
+ * forward the tab holding it and takes the person to it (U13). Every panel stays mounted, so no
+ * section's editor loses its place on a tab change. State and saving are `useTemplateEditor`'s.
  *
  * `readOnly` (L4): a template the reader may look at here but not change (an organisation
- * template opened from an account's page): the name and description as text, each card's summary
- * and where it comes from, no choices, no editors, no bar.
+ * template opened from an account's page): the description as text, the same tabs with each
+ * card's summary and where it comes from, no choices, no editors, no bar.
  */
 export function TemplateEditorForm({
   editor,
@@ -45,6 +55,21 @@ export function TemplateEditorForm({
 }) {
   const fieldId = useId();
   const formRef = useRef<HTMLDivElement>(null);
+  const tabs = useMemo(() => templateTabs(visible), [visible]);
+  const [chosenTab, setTab] = useState<TemplateTabId | null>(null);
+  // The first tab until one is chosen; a tab that went (a flag turned off) gives way to the first.
+  const tab = tabs.find((t) => t.step.id === chosenTab)?.step.id ?? tabs[0]?.step.id ?? 'agents';
+  const invalidTabs = useMemo(() => new Set([...editor.invalidSections].map(templateTabOf)), [editor.invalidSections]);
+  const unsavedTabs = useMemo(() => new Set([...editor.changedSections].map(templateTabOf)), [editor.changedSections]);
+
+  /** A tab whose first field with a finding takes focus, once it is on screen. */
+  const [focusRequest, setFocusRequest] = useState<{ tab: TemplateTabId } | null>(null);
+  useEffect(() => {
+    if (!focusRequest) return;
+    const panel = document.getElementById(panelId(focusRequest.tab));
+    if (panel) focusFirstFieldError(panel);
+  }, [focusRequest]);
+
   const { form, data } = editor;
   if (!form) return null;
   const { organisationTemplates, organisationDefault, template } = data;
@@ -55,12 +80,12 @@ export function TemplateEditorForm({
   // Read-only, the page says whose template it is; the card only carries a description.
   const about = readOnly ? (
     template?.description ? (
-      <section className={styles.card} aria-label="About this template" data-testid="template-about">
+      <SetupCard title="About this template" density="slim" testId="template-about">
         <p className={styles.description}>{template.description}</p>
-      </section>
+      </SetupCard>
     ) : null
   ) : (
-    <section className={styles.card} aria-label="About this template" data-testid="template-about">
+    <SetupCard title="About this template" testId="template-about">
       <div className={styles.aboutFields}>
         <div className="form-group">
           <label htmlFor={`${fieldId}-name`}>
@@ -112,38 +137,74 @@ export function TemplateEditorForm({
           </div>
         ) : null}
       </div>
-    </section>
+    </SetupCard>
   );
+
+  /** The tab holding a finding (the one on screen first), brought forward with its first field focused. */
+  const showProblem = () => {
+    const target = invalidTabs.has(tab) ? tab : tabs.find((t) => invalidTabs.has(t.step.id))?.step.id;
+    if (target === undefined) {
+      if (formRef.current) focusFirstFieldError(formRef.current);
+      return;
+    }
+    setTab(target);
+    setFocusRequest({ tab: target });
+  };
 
   return (
     <div className={styles.form} ref={formRef}>
       {about}
 
-      {visible.map((key) => (
-        <TemplateSectionCard
-          key={key}
-          section={key}
-          set={editor.setKeys.includes(key)}
-          onSetChange={(next) => editor.setSection(key, next)}
-          inheritLabel={editor.inheritLabelOf(key)}
-          inheritedFrom={editor.inheritedFromOf(key)}
-          summary={editor.summaryOf(key)}
-          invalid={editor.invalidSections.has(key)}
-          readOnly={readOnly}
+      <StepCards
+        mode="tabs"
+        idPrefix={TABS_ID}
+        label="Template settings"
+        steps={tabs.map((t) => t.step)}
+        current={tab}
+        onSelect={(next) => setTab(next as TemplateTabId)}
+        invalid={invalidTabs}
+        unsaved={readOnly ? undefined : unsavedTabs}
+      />
+
+      {tabs.map(({ step, sections }) => (
+        <div
+          key={step.id}
+          role="tabpanel"
+          id={panelId(step.id)}
+          aria-labelledby={`${TABS_ID}-tab-${step.id}`}
+          hidden={tab !== step.id}
+          tabIndex={0}
+          className={styles.panel}
+          data-testid={panelId(step.id)}
         >
-          <TemplateSectionEditors
-            section={key}
-            form={form}
-            onChange={editor.setForm}
-            scope={scope}
-            fieldErrors={editor.shownErrors}
-            recordingEnabled={recordingEnabled}
-            analyticsEnabled={analyticsEnabled}
-            carriers={carriers}
-            epoch={editor.epoch}
-            savedProfileId={editor.savedProfileId}
-          />
-        </TemplateSectionCard>
+          {sections.map((key) => (
+            <TemplateSectionCard
+              key={key}
+              section={key}
+              set={editor.setKeys.includes(key)}
+              onSetChange={(next) => editor.setSection(key, next)}
+              inheritLabel={editor.inheritLabelOf(key)}
+              inheritedFrom={editor.inheritedFromOf(key)}
+              summary={editor.summaryOf(key)}
+              invalid={editor.invalidSections.has(key)}
+              readOnly={readOnly}
+            >
+              <TemplateSectionEditors
+                section={key}
+                form={form}
+                onChange={editor.setForm}
+                scope={scope}
+                liveErrors={editor.liveErrors}
+                serverErrors={editor.serverErrors}
+                recordingEnabled={recordingEnabled}
+                analyticsEnabled={analyticsEnabled}
+                carriers={carriers}
+                epoch={editor.epoch}
+                savedProfileId={editor.savedProfileId}
+              />
+            </TemplateSectionCard>
+          ))}
+        </div>
       ))}
 
       {readOnly ? null : (
@@ -153,9 +214,7 @@ export function TemplateEditorForm({
               <button
                 type="button"
                 className={styles.linkButton}
-                onClick={() => {
-                  if (formRef.current) focusFirstFieldError(formRef.current);
-                }}
+                onClick={showProblem}
                 data-testid="template-show-problem"
               >
                 Fix the marked settings to save.

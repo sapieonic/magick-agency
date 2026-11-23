@@ -1,30 +1,35 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { assertFieldAnnouncesError } from '../helpers/a11y';
-import { MemoryRouter } from 'react-router-dom';
+import {
+  applied,
+  currentStep,
+  fillBasics,
+  goToStep,
+  openFold,
+  renderPage,
+  saveDraftButton,
+  staffingHook,
+} from './campaignBuilderFixtures';
 
 /**
- * The same behaviour at the PAGE level — the config sections as an operator meets
- * them, not as isolated components.
+ * The settings at the PAGE level, as an operator meets them on Purpose & buttons and Agents &
+ * timing (the same editors campaign Settings uses, under each step's Advanced fold), and what
+ * Save as draft sends.
  *
- * (a) built-in codes cannot be deleted in the UI and the reason is explained
- * inline; (b) server validation errors map to the offending field.
+ * (a) built-in codes cannot be deleted in the UI and the reason is explained inline; (b) server
+ * validation errors map to the offending field.
  */
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getIngestLimits: vi.fn(),
-  uploadRosterCsv: vi.fn(),
-  analyzeRosterColumns: vi.fn(),
-  startRosterIngest: vi.fn(),
-  getIngestJob: vi.fn(),
-  cancelIngestJob: vi.fn(),
-  downloadRejectedRows: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
   isCapabilityEnabled: vi.fn(),
   trackConfigSaved: vi.fn(),
   useCallAnalysisProfiles: vi.fn(),
+  applyStaffing: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -58,16 +63,23 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     defaultNumber: '+912200000001',
   }),
 }));
+vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useCampaignStaffing')>()),
+  useCampaignStaffing: () => staffingHook(mocks.applyStaffing),
+}));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: mocks.uploadRosterCsv,
-  analyzeRosterColumns: mocks.analyzeRosterColumns,
-  startRosterIngest: mocks.startRosterIngest,
-  getIngestJob: mocks.getIngestJob,
-  cancelIngestJob: mocks.cancelIngestJob,
-  downloadRejectedRows: mocks.downloadRejectedRows,
+  uploadRosterCsv: vi.fn(),
+  analyzeRosterColumns: vi.fn(),
+  startRosterIngest: vi.fn(),
+  getIngestJob: vi.fn(),
+  cancelIngestJob: vi.fn(),
+  downloadRejectedRows: vi.fn(),
+  downloadSkippedRows: vi.fn(),
+  importCheckedFile: vi.fn(),
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  transitionAgencyCampaign: vi.fn(),
 }));
 
 const PROFILES = [
@@ -75,42 +87,30 @@ const PROFILES = [
   { id: 'prof-collections', name: 'Collections dimensions', is_default: false },
 ];
 
-async function renderPage() {
-  const { default: CampaignBuilderPage } = await import(
-    '../../pages/campaigns/agency/CampaignBuilderPage'
-  );
-  return render(
-    <MemoryRouter>
-      <CampaignBuilderPage />
-    </MemoryRouter>,
-  );
-}
-
-/**
- * Name + caller ID, the two things the API requires before a campaign can exist.
- * `Save campaign` creates it on first use, so the config tests have to satisfy
- * both before they can assert anything about the config payload.
- */
-function fillRequiredBasics() {
-  fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
-  fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
-}
-
-function goToStep(title: string) {
-  fireEvent.click(screen.getByRole('button', { name: title }));
-}
-
-async function openBehaviour() {
+/** Purpose & buttons, with its Advanced fold (the full outcome editor) open. */
+async function openButtons() {
   await renderPage();
-  fillRequiredBasics();
-  goToStep('How agents work');
+  fillBasics();
+  goToStep('Purpose & buttons');
+  openFold('purpose-advanced');
 }
 
-async function openHours() {
+/** Agents & timing, with its Advanced fold open when asked. */
+async function openAgents({ advanced = false }: { advanced?: boolean } = {}) {
   await renderPage();
-  fillRequiredBasics();
-  goToStep('When to call');
+  fillBasics();
+  goToStep('Agents & timing');
+  if (advanced) openFold('advanced-settings');
 }
+
+/** Agents & timing with Custom hours: the start, end and time zone fields. */
+async function openCustomHours() {
+  await openAgents();
+  fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
+}
+
+const save = () => fireEvent.click(saveDraftButton());
+const sent = (call = 0) => mocks.updateAgencyCampaign.mock.calls[call]![1] as Record<string, any>;
 
 beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1' });
@@ -119,6 +119,7 @@ beforeEach(() => {
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
+  mocks.applyStaffing.mockResolvedValue(applied());
 });
 
 afterEach(() => {
@@ -126,25 +127,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('the disposition catalog editor', () => {
+describe('the disposition catalog editor (Purpose & buttons › Advanced)', () => {
   it('renders the three built-ins with Remove disabled and the reason beside it', async () => {
-    await openBehaviour();
-
+    await openButtons();
     for (const code of ['voicemail', 'callback', 'do_not_call']) {
       expect(screen.getByTestId(`lock-${code}`)).toBeTruthy();
     }
     // (a): not merely disabled — a lock with no reason reads as a permissions bug.
     expect(screen.getByTestId('lock-callback').textContent).toContain('schedule a call for later');
-    expect((screen.getByRole('button', { name: 'Remove Callback' }) as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect((screen.getByRole('button', { name: 'Remove Callback' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('reorders outcomes, because the order is the agent’s number key', async () => {
-    // The hint has always said the order is the number key an agent presses.
-    // Until now the only way to change it was to delete an entry and retype
-    // it — and a built-in cannot be deleted at all, so the first three keys
-    // were fixed for good.
-    await openBehaviour();
+    await openButtons();
     expect((screen.getByLabelText('Outcome 1 label') as HTMLInputElement).value).toBe('Voicemail');
 
     fireEvent.click(screen.getByRole('button', { name: 'Move Callback up' }));
@@ -152,40 +147,30 @@ describe('the disposition catalog editor', () => {
     expect((screen.getByLabelText('Outcome 1 label') as HTMLInputElement).value).toBe('Callback');
     expect((screen.getByLabelText('Outcome 2 label') as HTMLInputElement).value).toBe('Voicemail');
     // The ends stay put rather than wrapping round.
-    expect((screen.getByRole('button', { name: 'Move Callback up' }) as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect((screen.getByRole('button', { name: 'Move Callback up' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('fills the code in from the label until the operator writes one', async () => {
-    await openBehaviour();
+    await openButtons();
     fireEvent.click(screen.getByRole('button', { name: 'Add an outcome' }));
 
-    fireEvent.change(screen.getByLabelText('Outcome 4 label'), {
-      target: { value: 'Promised to pay' },
-    });
-    expect((screen.getByLabelText('Outcome 4 code') as HTMLInputElement).value)
-      .toBe('promised_to_pay');
+    fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Promised to pay' } });
+    expect((screen.getByLabelText('Outcome 4 code') as HTMLInputElement).value).toBe('promised_to_pay');
 
     // A hand-typed code detaches permanently — renaming must not overwrite it.
     fireEvent.change(screen.getByLabelText('Outcome 4 code'), { target: { value: 'ptp' } });
-    fireEvent.change(screen.getByLabelText('Outcome 4 label'), {
-      target: { value: 'Promised to pay soon' },
-    });
+    fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Promised to pay soon' } });
     expect((screen.getByLabelText('Outcome 4 code') as HTMLInputElement).value).toBe('ptp');
   });
 
   /**
-   * The regression this pins is invisible to a one-shot `fireEvent.change` with
-   * the finished string, which is what the test above does and why it passed
-   * over a card that could not actually be typed into.
-   *
-   * The list key used to embed `entry.code`. Because a new outcome's code
-   * follows its label, every keystroke changed the key, React unmounted the
-   * card and mounted a fresh one, and the field being typed into was destroyed
-   * along with the caret — one character per click into the box.
+   * The regression this pins is invisible to a one-shot `fireEvent.change` with the finished
+   * string. The list key used to embed `entry.code`; because a new outcome's code follows its
+   * label, every keystroke changed the key, React remounted the card and the field being typed
+   * into was destroyed along with the caret — one character per click into the box.
    */
   it('survives being typed into one character at a time, caret and all', async () => {
-    await openBehaviour();
+    await openButtons();
     fireEvent.click(screen.getByRole('button', { name: 'Add an outcome' }));
 
     const field = () => screen.getByLabelText('Outcome 4 label') as HTMLInputElement;
@@ -205,71 +190,54 @@ describe('the disposition catalog editor', () => {
   });
 
   it('shows a built-in code as a locked chip rather than a text box that refuses typing', async () => {
-    await openBehaviour();
-    // The built-ins are still identifiable by code…
+    await openButtons();
     expect(screen.getByTestId('lock-callback').textContent).toContain('schedule a call for later');
-    // …but the fixed value is not offered as an editable-looking field.
     expect(screen.queryByLabelText('Outcome 2 code')).toBeNull();
   });
 
   it('says what the combination of flags actually does, not just which are on', async () => {
-    await openBehaviour();
-    // Voicemail: the default entry's own retry rule, which no control used to
-    // show and nothing on screen used to state.
-    expect(screen.getByTestId('outcome-summary-0').textContent)
-      .toContain('every 4 hours, up to 2 times');
+    await openButtons();
+    // Voicemail: the default entry's own retry rule.
+    expect(screen.getByTestId('outcome-summary-0').textContent).toContain('every 4 hours, up to 2 times');
     expect(screen.getByTestId('outcome-summary-2').textContent).toContain('suppressed');
-
-    // "Ends this contact" and "Stops calling this contact" are different
-    // things, and the summary is where the difference is stated.
-    const sale = screen.getByTestId('outcome-summary-1');
-    expect(sale.textContent).toContain('pick a date and time to call back');
+    expect(screen.getByTestId('outcome-summary-1').textContent).toContain('pick a date and time to call back');
   });
 
   it('warns when Ends is set beside Stops, which the API never reaches', async () => {
-    await openBehaviour();
+    await openButtons();
     expect(screen.queryByTestId('precedence-2')).toBeNull();
 
-    // `do_not_call` already carries `suppress`; adding `terminal` is legal and
-    // saves, and is also unreachable — the API returns on the suppress arm.
-    const dncFlags = screen.getByRole('group', {
-      name: 'What happens when an agent files Do not call',
-    });
+    // `do_not_call` already carries `suppress`; adding `terminal` is legal and saves, and is also
+    // unreachable — the API returns on the suppress arm.
+    const dncFlags = screen.getByRole('group', { name: 'What happens when an agent files Do not call' });
     fireEvent.click(within(dncFlags).getByRole('checkbox', { name: /Ends this contact/ }));
 
     expect(screen.getByTestId('precedence-2').textContent).toContain('adds nothing');
   });
 
   it('offers the disposition’s own retry, and withdraws it where the API cannot read it', async () => {
-    // The retry table says in so many words that voicemail retry lives on the
-    // voicemail disposition. There was no control for it.
-    await openBehaviour();
-    const voicemailFlags = screen.getByRole('group', {
-      name: 'What happens when an agent files Voicemail',
-    });
+    await openButtons();
+    const voicemailFlags = screen.getByRole('group', { name: 'What happens when an agent files Voicemail' });
     const voicemail = within(voicemailFlags.closest('li')!);
     expect(
-      (voicemail.getByRole('checkbox', {
-        name: /Call this contact again after this outcome/,
-      }) as HTMLInputElement).checked,
+      (voicemail.getByRole('checkbox', { name: /Call this contact again after this outcome/ }) as HTMLInputElement).checked,
     ).toBe(true);
 
     fireEvent.change(screen.getByLabelText('Voicemail retry attempts'), { target: { value: '4' } });
     expect(screen.getByTestId('outcome-summary-0').textContent).toContain('up to 4 times');
 
-    // Ending the contact makes the rule unreachable, so the control goes and
-    // the reason takes its place rather than a dead input staying on screen.
+    // Ending the contact makes the rule unreachable, so the control goes and the reason takes its
+    // place rather than a dead input staying on screen.
     fireEvent.click(within(voicemailFlags).getByRole('checkbox', { name: /Ends this contact/ }));
     expect(screen.queryByLabelText('Voicemail retry attempts')).toBeNull();
     expect(screen.getByTestId('retry-inert-0').textContent).toContain('nothing will act on it');
   });
 
   it('lets an operator add and remove a custom outcome', async () => {
-    await openBehaviour();
+    await openButtons();
     fireEvent.click(screen.getByRole('button', { name: 'Add an outcome' }));
 
-    const codeField = screen.getByLabelText('Outcome 4 code');
-    fireEvent.change(codeField, { target: { value: 'promised_to_pay' } });
+    fireEvent.change(screen.getByLabelText('Outcome 4 code'), { target: { value: 'promised_to_pay' } });
     fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Promised to pay' } });
 
     const remove = screen.getByRole('button', { name: 'Remove Promised to pay' }) as HTMLButtonElement;
@@ -279,140 +247,125 @@ describe('the disposition catalog editor', () => {
   });
 });
 
-describe('wrap-up', () => {
-  /**
-   * `wrapup_auto_return` decides whether an agent's shift is paced by a timer or
-   * by them: on, the countdown returns them to the pool; off, they sit in
-   * wrap-up until they say they are ready. The API has stored and read it
-   * all along; the form hardcoded it and never sent it.
-   */
-  it('offers the control and sends it on save', async () => {
-    await openBehaviour();
-    const box = screen.getByRole('checkbox', {
-      name: /send agents back to the pool automatically/i,
-    }) as HTMLInputElement;
-    // The API's own column default, so a new campaign starts where it always did.
-    expect(box.checked).toBe(true);
+describe('wrap-up (Agents & timing)', () => {
+  const wrapupSelect = () => screen.getByRole('combobox', { name: 'Time to choose what happened after each call' }) as HTMLSelectElement;
+  const autoReturn = () =>
+    screen.getByRole('checkbox', { name: /send agents back to the pool automatically/i }) as HTMLInputElement;
 
-    fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+  /**
+   * `wrapup_auto_return` decides whether an agent's shift is paced by a timer or by them: on,
+   * the countdown returns them to the pool; off, they sit in wrap-up until they say they are
+   * ready.
+   */
+  it('offers the auto return under Advanced and sends it on save', async () => {
+    await openAgents({ advanced: true });
+    // The API's own column default, so a new campaign starts where it always did.
+    expect(autoReturn().checked).toBe(true);
+
+    fireEvent.click(autoReturn());
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].wrapup_auto_return).toBe(false);
+    expect(sent().wrapup_auto_return).toBe(false);
+  });
+
+  it('sends the time picked for “What happened?”', async () => {
+    await openAgents();
+    fireEvent.change(wrapupSelect(), { target: { value: '45' } });
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent().wrapup_seconds).toBe(45);
   });
 
   it('offers “Allow redial from wrap-up”, off by default, and sends it on save', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     const box = screen.getByRole('checkbox', { name: /allow redial from wrap-up/i }) as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(screen.getByTestId('allow-wrapup-redial-hint').textContent).toContain('up to 2 times');
 
     fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(true);
+    expect(sent().allow_wrapup_redial).toBe(true);
   });
 
   it('sends the redial setting as false when it is left off', async () => {
-    await openBehaviour();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents();
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(false);
+    expect(sent().allow_wrapup_redial).toBe(false);
   });
 
   it('says what each setting means for an agent, not just that it is on', async () => {
-    await openBehaviour();
-    // A checkbox labelled "auto return" with no consequence stated is a setting
-    // nobody can choose between.
+    await openAgents({ advanced: true });
     expect(screen.getByTestId('auto-return-hint').textContent).toContain('on their own');
-
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /send agents back to the pool automatically/i }),
-    );
+    fireEvent.click(autoReturn());
     expect(screen.getByTestId('auto-return-hint').textContent).toContain('mark themselves ready');
   });
 
   it('says the flag is inert with no wrap-up window, rather than greying it out', async () => {
-    // The API only starts a countdown when there is BOTH a window and the flag, so
-    // at 0 the checkbox is stored but does nothing. Disabling it would discard
-    // the operator's choice the moment they set the window back.
-    await openBehaviour();
-    fireEvent.change(screen.getByLabelText(/Wrap-up seconds/), { target: { value: '0' } });
+    // The API only starts a countdown when there is BOTH a window and the flag, so at 0 the
+    // checkbox is stored but does nothing. Disabling it would discard the operator's choice the
+    // moment they set the window back.
+    await openAgents({ advanced: true });
+    fireEvent.change(wrapupSelect(), { target: { value: '0' } });
 
     expect(screen.getByTestId('auto-return-hint').textContent).toContain('no countdown');
-    expect(
-      (screen.getByRole('checkbox', {
-        name: /send agents back to the pool automatically/i,
-      }) as HTMLInputElement).disabled,
-    ).toBe(false);
+    expect(autoReturn().disabled).toBe(false);
   });
 });
 
-describe('the abandonment limit', () => {
+describe('the abandonment limit (Agents & timing › Advanced)', () => {
   /*
-    Every campaign pauses itself past `abandonment_ceiling_pct`, and until now the
-    builder had no way to set it: every campaign ran on the column default. The
-    builder's first save is a create and then a PATCH, so the value has to ride
-    on the PATCH, whether or not it was touched.
+    Every campaign pauses itself past `abandonment_ceiling_pct`. The builder's first save is a
+    create and then a PATCH, so the value has to ride on the PATCH, whether or not it was touched.
   */
   const slider = () => screen.getByRole('slider', { name: 'Abandonment limit' });
 
-  it('is on the “How agents work” step at 3%, and sends 3 when left alone', async () => {
-    await openBehaviour();
+  it('is at 3%, and sends 3 when left alone', async () => {
+    await openAgents({ advanced: true });
     expect(slider().getAttribute('aria-valuenow')).toBe('3');
     expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('3');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3);
+    expect(sent().abandonment_ceiling_pct).toBe(3);
   });
 
   it('sends the value the line was moved to', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     fireEvent.keyDown(slider(), { key: 'PageUp' });
     fireEvent.keyDown(slider(), { key: 'ArrowRight' });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(4.1);
-  });
-
-  it('shows the limit in the summary rail and on review, each a way back to the step', async () => {
-    await openBehaviour();
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '2.5' } });
-
-    const rail = screen.getByLabelText('Campaign summary');
-    expect(within(rail).getByRole('button', { name: 'Pauses above 2.5%' })).toBeTruthy();
-
-    goToStep('Review & save');
-    const review = screen.getByTestId('builder-review');
-    expect(review.textContent).toContain('Abandonment limit');
-    expect(review.textContent).toContain('Pauses above 2.5%');
-    fireEvent.click(within(review).getByRole('button', { name: 'Edit Abandonment limit' }));
-    expect(slider()).toBeTruthy();
+    expect(sent().abandonment_ceiling_pct).toBe(4.1);
   });
 
   it('blocks the save on an out-of-range value', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '15' } });
 
     expect(screen.getByTestId('config-block')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Save campaign' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(saveDraftButton().disabled).toBe(true);
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
-  it('lands a server refusal on the field, on the behaviour step', async () => {
+  it('lands a server refusal on the field, on Agents & timing with Advanced open', async () => {
     mocks.updateAgencyCampaign.mockRejectedValueOnce(
       Object.assign(new Error('Validation Error'), {
         statusCode: 400,
         details: { details: { abandonment_ceiling_pct: 'Must be above 0 and at most 100.' } },
       }),
     );
-    await openBehaviour();
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await renderPage();
+    fillBasics();
+    goToStep('Purpose & buttons');
+    save();
 
     const box = await screen.findByRole('spinbutton', { name: 'Pause above (%)' });
+    expect(currentStep()).toBe('agents');
+    expect((screen.getByTestId('advanced-settings') as HTMLDetailsElement).open).toBe(true);
     assertFieldAnnouncesError(box.id, 'Must be above 0 and at most 100.');
 
     // A refusal is about the value it came with: moving the line retires it.
@@ -422,9 +375,9 @@ describe('the abandonment limit', () => {
   });
 });
 
-describe('the retry policy editor', () => {
+describe('the retry policy editor (Agents & timing › Advanced)', () => {
   it('shows invalid and connected as fixed at zero WITH the reason, not hidden', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     // Hiding them invites the operator to assume they retry.
     expect(screen.getByTestId('fixed-invalid').textContent).toContain('does not become valid');
     expect(screen.getByTestId('fixed-connected').textContent).toContain('agent');
@@ -432,99 +385,67 @@ describe('the retry policy editor', () => {
   });
 
   it('previews a configured rule in English', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     fireEvent.change(screen.getByLabelText('Busy delay in minutes'), { target: { value: '15' } });
     fireEvent.change(screen.getByLabelText('Busy max attempts'), { target: { value: '4' } });
 
-    expect(screen.getByTestId('retry-previews').textContent).toContain(
-      'Busy: retried every 15 minutes, up to 4 times.',
-    );
+    expect(screen.getByTestId('retry-previews').textContent).toContain('Busy: retried every 15 minutes, up to 4 times.');
   });
 
   it('explains that voicemail retry lives on the disposition, not here', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     expect(screen.getByTestId('voicemail-retry-callout').textContent).toContain('voicemail disposition');
   });
 
-  /**
-   * The API added `agent_disconnected` to its validator and
-   * reads it on the dial path, but this wizard never followed — an operator
-   * could only set the cap by curl.
-   */
   it('offers an editable `agent_disconnected` row, labelled as our fault', async () => {
-    await openBehaviour();
-
-    // Editable, not fixed-at-zero: The API genuinely honours a configured cap,
-    // unlike `invalid`/`connected`.
+    await openAgents({ advanced: true });
+    // Editable, not fixed-at-zero: the API genuinely honours a configured cap.
     expect(screen.getByLabelText('Agent disconnected (our fault) max attempts')).toBeTruthy();
     expect(screen.queryByTestId('fixed-agent_disconnected')).toBeNull();
   });
 
-  it('does NOT offer an `orphaned` row — the API never reads a campaign value for it', () => {
-    // A control that saves, persists and reloads while changing nothing is worse
-    // than no control: it tells the operator they have tuned something.
-    return openBehaviour().then(() => {
-      expect(screen.queryByLabelText('Orphaned by a restart (our fault) max attempts')).toBeNull();
-    });
+  it('does NOT offer an `orphaned` row — the API never reads a campaign value for it', async () => {
+    // A control that saves, persists and reloads while changing nothing is worse than no control.
+    await openAgents({ advanced: true });
+    expect(screen.queryByLabelText('Orphaned by a restart (our fault) max attempts')).toBeNull();
   });
 
   it('does not zero the platform bound when only the DELAY is typed', async () => {
     /*
-     * The regression this exists for. The row seed was `{ max_attempts: 0 }`, so
-     * touching only the delay box submitted `max_attempts: 0` the operator never
-     * typed — and the API reads `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring
-     * the contact on its FIRST pre-connect agent drop. Never dialled again.
+     * The row seed was `{ max_attempts: 0 }`, so touching only the delay box submitted
+     * `max_attempts: 0` the operator never typed — and the API reads
+     * `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring the contact on its FIRST pre-connect
+     * agent drop. Never dialled again.
      */
-    await openBehaviour();
-    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), {
-      target: { value: '7' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents({ advanced: true });
+    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), { target: { value: '7' } });
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    const sent = mocks.updateAgencyCampaign.mock.calls[0]![1].retry_policy.agent_disconnected;
-    expect(sent.delay_minutes).toBe(7);
-    expect(sent.max_attempts).toBe(3);
+    const rule = sent().retry_policy.agent_disconnected;
+    expect(rule.delay_minutes).toBe(7);
+    expect(rule.max_attempts).toBe(3);
   });
 
   it('warns on the row when the operator really does set 0', async () => {
-    // 0 is a legitimate choice, so this is a consequence rather than an error —
-    // but "0 attempts" does not convey "retire the contact outright".
-    await openBehaviour();
+    await openAgents({ advanced: true });
     expect(screen.queryByTestId('our-fault-zero-agent_disconnected')).toBeNull();
-    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) max attempts'), {
-      target: { value: '0' },
-    });
-    expect(screen.getByTestId('our-fault-zero-agent_disconnected').textContent)
-      .toMatch(/retires the contact permanently/);
+    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) max attempts'), { target: { value: '0' } });
+    expect(screen.getByTestId('our-fault-zero-agent_disconnected').textContent).toMatch(/retires the contact permanently/);
   });
 
   it('sends a configured `agent_disconnected` cap on save', async () => {
-    await openBehaviour();
-
-    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), {
-      target: { value: '5' },
-    });
-    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) max attempts'), {
-      target: { value: '3' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents({ advanced: true });
+    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) max attempts'), { target: { value: '3' } });
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].retry_policy.agent_disconnected).toEqual({
-      delay_minutes: 5,
-      max_attempts: 3,
-    });
+    expect(sent().retry_policy.agent_disconnected).toEqual({ delay_minutes: 5, max_attempts: 3 });
   });
 
   it('says the bound can be lowered here, and what lowering it to 0 costs', async () => {
-    /*
-     * The earlier copy said the platform limit "cannot be raised from here" and
-     * called it "smaller" — the first is only half true and the second is false
-     * (both are 3). Together they read as "this row cannot affect the bound",
-     * which is exactly the belief that makes setting it to 0 look harmless.
-     */
-    await openBehaviour();
+    await openAgents({ advanced: true });
     const callout = screen.getByTestId('our-fault-retry-callout').textContent!;
     expect(callout).toContain('Our fault');
     expect(callout).toMatch(/only LOWER it here, never raise it/);
@@ -532,81 +453,72 @@ describe('the retry policy editor', () => {
     expect(callout.toLowerCase()).not.toContain('smaller');
   });
 
-  /**
-   * Since the 2026-09-08 pilot, a dial we stopped before anyone picked up is its
-   * own outcome, is charged to the our-fault ledger, and the API accepts the
-   * retry-policy key — so the wizard has to offer the row, or the lever is
-   * curl-only again.
-   */
   it('offers an editable `canceled` row, labelled as our fault', async () => {
-    await openBehaviour();
-
+    await openAgents({ advanced: true });
     expect(screen.getByLabelText('Stopped by us before answer (our fault) max attempts')).toBeTruthy();
     expect(screen.queryByTestId('fixed-canceled')).toBeNull();
   });
 
   it('does not zero the bound when only the DELAY is typed on the `canceled` row', async () => {
-    // The `agent_disconnected` regression, one row down. The seed comes from
-    // `OUR_FAULT_RETRY_OUTCOMES` membership, so a row that is our-fault in the API
-    // and not named in that list would send a `max_attempts: 0` nobody typed —
-    // retiring the contact on its first cancelled dial.
-    await openBehaviour();
-    fireEvent.change(screen.getByLabelText('Stopped by us before answer (our fault) delay in minutes'), {
-      target: { value: '10' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents({ advanced: true });
+    fireEvent.change(screen.getByLabelText('Stopped by us before answer (our fault) delay in minutes'), { target: { value: '10' } });
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    const sent = mocks.updateAgencyCampaign.mock.calls[0]![1].retry_policy.canceled;
-    expect(sent.delay_minutes).toBe(10);
-    expect(sent.max_attempts).toBe(3);
+    const rule = sent().retry_policy.canceled;
+    expect(rule.delay_minutes).toBe(10);
+    expect(rule.max_attempts).toBe(3);
   });
 
   it('warns on the `canceled` row when the operator really does set 0', async () => {
-    await openBehaviour();
+    await openAgents({ advanced: true });
     expect(screen.queryByTestId('our-fault-zero-canceled')).toBeNull();
-    fireEvent.change(screen.getByLabelText('Stopped by us before answer (our fault) max attempts'), {
-      target: { value: '0' },
-    });
-    expect(screen.getByTestId('our-fault-zero-canceled').textContent)
-      .toMatch(/retires the contact permanently/);
+    fireEvent.change(screen.getByLabelText('Stopped by us before answer (our fault) max attempts'), { target: { value: '0' } });
+    expect(screen.getByTestId('our-fault-zero-canceled').textContent).toMatch(/retires the contact permanently/);
   });
 
   it('names BOTH our-fault failures in the one shared callout', async () => {
-    // One callout under one table. It used to name only an agent-side drop,
-    // which left the `canceled` row's rule unstated on the screen that sets it.
-    await openBehaviour();
+    await openAgents({ advanced: true });
     const callout = screen.getByTestId('our-fault-retry-callout').textContent!;
     expect(callout).toContain('agent-side drop');
     expect(callout).toContain('before anyone picked up');
   });
 });
 
-describe('calling hours', () => {
-  it('echoes the window in plain English', async () => {
-    await openHours();
+describe('calling hours (Agents & timing)', () => {
+  it('offers the hours as choices, today’s default picked, and sends a choice', async () => {
+    await openAgents();
+    expect((screen.getByRole('radio', { name: '9 AM – 8 PM' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: '9 AM – 9 PM' }));
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent().calling_window_start).toBe('09:00');
+    expect(sent().calling_window_end).toBe('21:00');
+  });
+
+  it('echoes a custom window in plain English', async () => {
+    await openCustomHours();
     const echo = screen.getByTestId('calling-window-echo').textContent!;
-    expect(echo).toContain('Mon–Fri');
     expect(echo).toContain('09:00–20:00');
     expect(echo).toContain('Asia/Kolkata');
   });
 
   it('re-echoes an inverted window as the operator types it', async () => {
-    // The echo exists because a pair of time inputs cannot show an inverted
-    // range. It has to be live, or it only catches the mistake on save.
-    await openHours();
+    // The echo exists because a pair of time inputs cannot show an inverted range. It has to be
+    // live, or it only catches the mistake on save.
+    await openCustomHours();
     fireEvent.change(screen.getByLabelText('Start'), { target: { value: '22:00' } });
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '06:00' } });
     expect(screen.getByTestId('calling-window-echo').textContent).toContain('overnight');
   });
 
   it('displays the concurrency limit without offering a control', async () => {
-    await openHours();
+    await openCustomHours();
     const note = screen.getByTestId('concurrency-note');
     expect(note.textContent).toContain('shared with your AI calls');
     expect(note.textContent).toContain('Contact support');
-    // No input, no stepper, no Edit link — a greyed-out control reads as "you
-    // lack permission today" and produces a support ticket with no resolution.
+    // No input, no stepper, no Edit link — a greyed-out control reads as "you lack permission
+    // today" and produces a support ticket with no resolution.
     expect(note.querySelector('input')).toBeNull();
     expect(note.querySelector('button')).toBeNull();
     expect(note.querySelector('a')).toBeNull();
@@ -615,55 +527,21 @@ describe('calling hours', () => {
 
 describe('validation', () => {
   it('blocks the save on a client-side finding and says why', async () => {
-    await openHours();
+    await openCustomHours();
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '09:00' } });
 
     expect(screen.getByTestId('config-block')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Save campaign' }) as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect(saveDraftButton().disabled).toBe(true);
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
-  });
-
-  it('lands a SERVER validation error on the offending field, not in a banner', async () => {
-    // (b). The API's config validator answers a flat `details` record keyed by
-    // the body path; `ApiError` cannot summarise that shape, so its message is
-    // the bare 'Validation Error' and the detail is only reachable from
-    // `err.details`.
-    mocks.updateAgencyCampaign.mockRejectedValue(
-      Object.assign(new Error('Validation Error'), {
-        statusCode: 400,
-        details: {
-          error: 'Validation Error',
-          details: {
-            'default_timezone':
-              "default_timezone must be a full IANA zone name like 'America/New_York'.",
-          },
-        },
-      }),
-    );
-
-    await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
-    fillRequiredBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
-
-    await waitFor(() =>
-      expect(screen.getByText(/must be a full IANA zone name/)).toBeTruthy(),
-    );
-    // Beside the field it is about — the timezone input's own form group.
-    const message = screen.getByText(/must be a full IANA zone name/);
-    expect(message.closest('.form-group')?.querySelector('#window-timezone')).toBeTruthy();
-    expect(screen.queryByTestId('builder-error')).toBeNull();
   });
 
   it('sends the whole config, including an empty retry policy', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections' } });
-    fillRequiredBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    fillBasics();
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
+    const body = sent();
     expect(body.calling_days).toEqual([1, 2, 3, 4, 5]);
     expect(body.default_timezone).toBe('Asia/Kolkata');
     expect(body.retry_policy).toEqual({});
@@ -677,9 +555,8 @@ describe('validation', () => {
 
 describe('the campaign a builder actually creates', () => {
   /**
-   * The campaign table declares no `description` column and its update
-   * whitelist does not list it, so the field wrote nothing. The API forwards the
-   * body unchanged, which is what made it look like it worked.
+   * The campaign table declares no `description` column and its update whitelist does not list
+   * it, so the field wrote nothing.
    */
   it('offers no Description field', async () => {
     await renderPage();
@@ -688,13 +565,11 @@ describe('the campaign a builder actually creates', () => {
 
   it('sends no `description` key on create', async () => {
     await renderPage();
-    fillRequiredBasics();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    fillBasics();
+    save();
 
     await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
-    // The whole body, not just the absent key: an empty-but-present field sent
-    // `description: null` from the settings page and nothing from here, so
-    // asserting absence alone would have passed against the broken version too.
+    // The whole body, not just the absent key.
     expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toEqual({
       name: 'Collections',
       caller_ids: ['+912200000001'],
@@ -707,45 +582,86 @@ describe('the campaign a builder actually creates', () => {
   });
 });
 
-describe('call recording in the builder', () => {
-  const recordBox = () =>
-    screen.getByRole('checkbox', { name: /record every call on this campaign/i }) as HTMLInputElement;
+describe('the agent screen and break limits (Agents & timing)', () => {
+  /*
+    The same campaign PATCH campaign Settings saves them with takes them, so New campaign sends
+    each one that moved from the server's default, and nothing for one left alone.
+  */
+  it('sends nothing for the daily target, number display or breaks when left alone', async () => {
+    await openAgents();
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent()).not.toHaveProperty('daily_target_calls');
+    expect(sent()).not.toHaveProperty('phone_display');
+    expect(sent()).not.toHaveProperty('break_reasons');
+  });
 
-  it('is offered on the behaviour step, off by default, and sent as record_calls on save', async () => {
-    await openBehaviour();
-    expect(recordBox().checked).toBe(false);
-    expect(recordBox().disabled).toBe(false);
+  it('sends a daily target, the number hidden and a break limit once set', async () => {
+    await openAgents({ advanced: true });
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '40' } });
+    fireEvent.click(within(screen.getByTestId('phone-display-row')).getByRole('switch'));
+    fireEvent.change(screen.getByLabelText('Limit for Tea, in minutes'), { target: { value: '10' } });
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent().daily_target_calls).toBe(40);
+    expect(sent().phone_display).toBe('masked');
+    const tea = (sent().break_reasons as Array<{ code: string; limit_minutes?: number }>).find((r) => r.code === 'tea');
+    expect(tea?.limit_minutes).toBe(10);
+  });
 
-    fireEvent.click(recordBox());
-    expect(screen.getByText(/announce it/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+  it('holds the save on a daily target out of range or a break limit out of range', async () => {
+    await openAgents();
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '0' } });
+    expect(saveDraftButton().disabled).toBe(true);
+    expect(screen.getByTestId('config-block').textContent).toContain('Fix the highlighted field to save.');
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '' } });
+    expect(saveDraftButton().disabled).toBe(false);
+
+    openFold('advanced-settings');
+    fireEvent.change(screen.getByLabelText('Limit for Tea, in minutes'), { target: { value: '999' } });
+    expect(saveDraftButton().disabled).toBe(true);
+    // The fold that holds it stays open.
+    expect((screen.getByTestId('advanced-settings') as HTMLDetailsElement).open).toBe(true);
+  });
+});
+
+describe('call recording (Agents & timing)', () => {
+  const recordSwitch = () => within(screen.getByTestId('record-row')).getByRole('switch') as HTMLButtonElement;
+
+  it('is offered, off by default, and sent as record_calls on save', async () => {
+    await openAgents();
+    expect(recordSwitch().getAttribute('aria-checked')).toBe('false');
+    expect(recordSwitch().disabled).toBe(false);
+
+    fireEvent.click(recordSwitch());
+    expect(screen.getByTestId('record-row').textContent).toMatch(/Make sure agents tell customers/);
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
+    expect(sent().record_calls).toBe(true);
   });
 
   it('sends record_calls: false when left off, so the saved value is explicit', async () => {
-    await openBehaviour();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
-
+    await openAgents();
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
+    expect(sent().record_calls).toBe(false);
   });
 
-  it('locks the box and says why when the account may not record', async () => {
+  it('locks the switch and says why when the account may not record', async () => {
     mocks.isCapabilityEnabled.mockImplementation((key: string) => key !== 'agency.recording');
-    await openBehaviour();
+    await openAgents();
 
-    expect(recordBox().disabled).toBe(true);
-    expect(screen.getByRole('note').textContent).toContain('Call recording is turned off for this account');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    expect(recordSwitch().disabled).toBe(true);
+    expect(screen.getByTestId('record-row').textContent).toContain('Call recording is turned off for this account');
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     // Off is always allowed, so it is still sent.
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
+    expect(sent().record_calls).toBe(false);
   });
 
-  it('shows the API refusal in words and returns to the step with the box', async () => {
+  it('shows the API refusal in words and returns to the step with the switch', async () => {
     // The governance map can be stale; the API's 403 is the real answer.
     mocks.updateAgencyCampaign.mockRejectedValueOnce(
       Object.assign(new Error('capability_disabled'), {
@@ -753,15 +669,16 @@ describe('call recording in the builder', () => {
         details: { error: 'capability_disabled', capability: 'agency.recording' },
       }),
     );
-    await openBehaviour();
-    fireEvent.click(recordBox());
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents();
+    fireEvent.click(recordSwitch());
+    goToStep('Purpose & buttons');
+    save();
 
     const banner = await screen.findByTestId('builder-error');
     expect(banner.textContent).toContain('Call recording is turned off for this account (agency.recording)');
     expect(screen.queryByText(/^capability_disabled$/)).toBeNull();
-    expect(recordBox()).toBeTruthy(); // back on the behaviour step
+    expect(currentStep()).toBe('agents');
+    expect(recordSwitch()).toBeTruthy();
   });
 
   it('clears the refusal once a later save succeeds', async () => {
@@ -771,35 +688,25 @@ describe('call recording in the builder', () => {
         details: { error: 'capability_disabled', capability: 'agency.recording' },
       }),
     );
-    await openBehaviour();
-    fireEvent.click(recordBox());
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents();
+    fireEvent.click(recordSwitch());
+    save();
     await screen.findByTestId('builder-error');
 
-    fireEvent.click(recordBox()); // back off
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    fireEvent.click(recordSwitch()); // back off
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(2));
-    expect(mocks.updateAgencyCampaign.mock.calls[1]![1].record_calls).toBe(false);
+    expect(sent(1).record_calls).toBe(false);
     await waitFor(() => expect(screen.queryByTestId('builder-error')).toBeNull());
-  });
-
-  it('appears on the review step', async () => {
-    await openBehaviour();
-    fireEvent.click(recordBox());
-    goToStep('Review & save');
-    expect(screen.getByText('Every call is recorded')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Edit Recording' })).toBeTruthy();
   });
 });
 
-describe('the call summary in the builder', () => {
-  const summarySelect = () => screen.getByLabelText('Call summary') as HTMLSelectElement;
+describe('the call summary (Agents & timing)', () => {
+  const summarySelect = () => screen.getByRole('combobox', { name: 'Call summary' }) as HTMLSelectElement;
 
-  it('offers the account’s profiles on the behaviour step and sends the one picked on save', async () => {
-    await openBehaviour();
+  it('offers the account’s profiles and sends the one picked on save', async () => {
+    await openAgents();
     expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: true });
     expect([...summarySelect().options].map((o) => o.textContent)).toEqual([
       'No summary',
@@ -809,61 +716,47 @@ describe('the call summary in the builder', () => {
     expect(summarySelect().value).toBe('__none__');
 
     fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
-    expect(screen.getByText(/summarised against this profile/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    expect(screen.getByTestId('summary-row').textContent).toContain('Each connected call is summarised');
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-collections');
-    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'builder', analysis_profile_set: true }),
-    );
+    expect(sent().analysis_profile_id).toBe('prof-collections');
+    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(expect.objectContaining({ source: 'builder', analysis_profile_set: true }));
   });
 
   it('sends an explicit null when left at No summary', async () => {
-    await openBehaviour();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await openAgents();
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
-    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(
-      expect.objectContaining({ analysis_profile_set: false }),
-    );
+    expect(sent().analysis_profile_id).toBeNull();
+    expect(mocks.trackConfigSaved).toHaveBeenCalledWith(expect.objectContaining({ analysis_profile_set: false }));
   });
 
-  it('is not offered, and no profile is sent, when the account may not summarise calls', async () => {
+  it('is locked with its reason, and no profile is sent, when the account may not summarise calls', async () => {
     mocks.isCapabilityEnabled.mockImplementation((key: string) => key !== 'agency.analytics');
-    await openBehaviour();
+    await openAgents();
 
-    expect(screen.queryByLabelText('Call summary')).toBeNull();
+    expect(summarySelect().disabled).toBe(true);
+    expect(screen.getByTestId('summary-row').textContent).toContain('Call summaries are turned off for this account');
     expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: false });
-    goToStep('Review & save');
-    expect(screen.queryByRole('button', { name: 'Edit Call summary' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     // Clearing is always allowed, so `null` passes the API's guard with the capability off.
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
+    expect(sent().analysis_profile_id).toBeNull();
   });
 
   it('says when the profiles could not be loaded, and still saves without one', async () => {
     mocks.useCallAnalysisProfiles.mockReturnValue({ profiles: [], loading: false, error: 'Network down' });
-    await openBehaviour();
+    await openAgents();
 
-    expect(screen.getByRole('note').textContent).toContain('Could not load your summary profiles (Network down)');
-    expect(screen.getByRole('note').textContent).toContain('set it later in the campaign’s Settings');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    const row = screen.getByTestId('summary-row').textContent!;
+    expect(row).toContain('Could not load your summary profiles (Network down)');
+    expect(row).toContain('set it later in the campaign’s Settings');
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
-  });
-
-  it('names the profile on the review step, as a way back to the step', async () => {
-    await openBehaviour();
-    fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
-    goToStep('Review & save');
-
-    expect(screen.getByText('Collections dimensions')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Call summary' }));
-    expect(summarySelect().value).toBe('prof-collections');
+    expect(sent().analysis_profile_id).toBeNull();
   });
 
   it('turns a profile the account no longer has into words, on the step with the picker', async () => {
@@ -874,14 +767,15 @@ describe('the call summary in the builder', () => {
         details: { error: 'Request Failed', message: 'Something went wrong' },
       }),
     );
-    await openBehaviour();
+    await openAgents();
     fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    goToStep('Purpose & buttons');
+    save();
 
     const banner = await screen.findByTestId('builder-error');
     expect(banner.textContent).toContain('That call-summary profile is no longer available');
-    expect(summarySelect()).toBeTruthy(); // back on the behaviour step
+    expect(currentStep()).toBe('agents');
+    expect(summarySelect()).toBeTruthy();
   });
 
   it('shows the server’s refusal of the profile on the field', async () => {
@@ -891,58 +785,58 @@ describe('the call summary in the builder', () => {
         details: { error: 'Validation failed', details: { analysis_profile_id: 'must be a call-analysis profile id, or null to clear it' } },
       }),
     );
-    await openBehaviour();
+    await openAgents();
     fireEvent.change(summarySelect(), { target: { value: 'prof-collections' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
 
     expect(await screen.findByText('must be a call-analysis profile id, or null to clear it')).toBeTruthy();
     expect(summarySelect().getAttribute('aria-invalid')).toBe('true');
   });
 });
 
-describe('the Collections set (agent station AS4)', () => {
-  it('names the six in the offer exactly as their tiles are labelled', async () => {
+describe('the Payment reminder starting point (the Collections set, AS4, CS2)', () => {
+  async function pickPayment() {
+    await renderPage();
+    fillBasics();
+    goToStep('Purpose & buttons');
+    fireEvent.click(screen.getByRole('radio', { name: /Payment reminder/ }));
+  }
+
+  it('shows the six as their tiles are labelled, in the agent’s view', async () => {
     const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
-    await openBehaviour();
-    const offer = () => screen.getByTestId('collections-starter').textContent ?? '';
-    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
-    expect(offer()).toContain("Wrong number and Don't call again.");
-    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
-    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(offer()).toContain(entry.label);
+    await pickPayment();
+    const preview = screen.getByTestId('agent-buttons-preview').textContent ?? '';
+    for (const entry of AGENCY_COLLECTIONS_STARTER_CATALOG) expect(preview).toContain(entry.label);
   });
 
   it('reports a reorder against the set as applied, not the outcomes it replaced', async () => {
-    await openBehaviour();
-    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await pickPayment();
+    save();
     await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(1));
     expect(mocks.trackConfigSaved.mock.calls[0]![0]).toMatchObject({ reordered: false });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move Will pay down' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move the Will pay button down' }));
+    save();
     await waitFor(() => expect(mocks.trackConfigSaved).toHaveBeenCalledTimes(2));
     expect(mocks.trackConfigSaved.mock.calls[1]![0]).toMatchObject({ reordered: true });
   });
 
   it('replaces the outcomes with the six, each with its picture, editable, and saves them', async () => {
     const { AGENCY_COLLECTIONS_STARTER_CATALOG } = await import('@magick-agency/contracts/agency');
-    await openBehaviour();
-    expect(screen.getByTestId('collections-starter').textContent).toMatch(/They replace the outcomes below/);
-    fireEvent.click(screen.getByRole('button', { name: 'Start with the Collections set' }));
+    await pickPayment();
+    openFold('purpose-advanced');
 
     expect((screen.getByLabelText('Outcome 1 label') as HTMLInputElement).value).toBe('Will pay');
     expect((screen.getByLabelText('Outcome 6 label') as HTMLInputElement).value).toBe("Don't call again");
     expect(screen.queryByLabelText('Outcome 7 label')).toBeNull();
     expect(screen.getByTestId('outcome-icon-0').getAttribute('aria-label')).toBe('Picture for Will pay: Rupee');
-    expect(screen.getByTestId('collections-starter').textContent).toMatch(/The Collections set is in place/);
 
     // Still a starting point: rename one before saving.
     fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Will not pay' } });
-    expect(screen.getByRole('button', { name: 'Start with the Collections set' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    const sent = mocks.updateAgencyCampaign.mock.calls[0]![1].disposition_catalog as Array<Record<string, unknown>>;
-    expect(sent).toEqual(AGENCY_COLLECTIONS_STARTER_CATALOG.map((entry) => (
+    const catalog = sent().disposition_catalog as Array<Record<string, unknown>>;
+    expect(catalog).toEqual(AGENCY_COLLECTIONS_STARTER_CATALOG.map((entry) => (
       entry.code === 'refused' ? { ...entry, label: 'Will not pay' } : { ...entry }
     )));
   });

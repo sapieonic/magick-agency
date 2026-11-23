@@ -1,21 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, act, within, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen, cleanup, fireEvent, act, within, waitFor } from '@testing-library/react';
 import type {
   AgencyCampaignTemplateEffective,
   AgencyCampaignTemplateSections,
   AgencyCampaignTemplateSummary,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
-import type { AgencyColumnAnalysis } from '../../types/agency-campaign';
 import { scriptPlaceholdersFor, unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
+import type { AgencyColumnAnalysis } from '../../types/agency-campaign';
+import {
+  ANALYSIS,
+  applied,
+  check,
+  currentStep,
+  dropCsv,
+  footer,
+  footerButton,
+  goToStep,
+  imported,
+  openFold,
+  renderPage as renderBuilder,
+  saveDraftButton,
+  stepCard,
+  staffingHook,
+} from './campaignBuilderFixtures';
 
 /**
- * New campaign with campaign templates (`docs/campaign-templates.md` §7): the form opens filled in
- * from the account's default chain (`/campaign-templates/effective`), with a "Start from" picker
- * and the banner saying where from; switching re-fills it, asking first when something was
- * changed; Review labels each section with its source and offers Reset once it is changed; the
- * create names the template. With the flag off, or the read failing, the page is as before.
+ * New campaign with campaign templates (`docs/campaign-templates.md` §7, CS17–CS20): the form opens
+ * filled in from the account's default chain (`/campaign-templates/effective`), with "Start from"
+ * above the step cards and the line saying where from; switching re-fills it, asking first when
+ * something was changed; each section's source chip and Reset sit at the block that edits it on its
+ * step (Review is gone, CS1); a template's script is on Purpose & buttons, and held there when the
+ * roster's card cannot fill it; the create names the template. With the flag off, or the read
+ * failing, the page is as before.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   getIngestLimits: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  transitionAgencyCampaign: vi.fn(),
   listCampaignTemplates: vi.fn(),
   getEffectiveCampaignTemplate: vi.fn(),
   started: vi.fn(),
@@ -31,7 +49,9 @@ const mocks = vi.hoisted(() => ({
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
+  importCheckedFile: vi.fn(),
   useCallAnalysisProfiles: vi.fn(),
+  applyStaffing: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -53,16 +73,23 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
 }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({ useCallAnalysisProfiles: mocks.useCallAnalysisProfiles }));
 vi.mock('../../hooks/useAgencyCarriers', () => ({ useAgencyCarriers: () => ({ carriers: null, error: null }) }));
+vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useCampaignStaffing')>()),
+  useCampaignStaffing: () => staffingHook(mocks.applyStaffing),
+}));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
   uploadRosterCsv: mocks.uploadRosterCsv,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
+  importCheckedFile: mocks.importCheckedFile,
   cancelIngestJob: vi.fn(),
   downloadRejectedRows: vi.fn(),
+  downloadSkippedRows: vi.fn(),
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
 }));
 vi.mock('../../api/campaignTemplates', () => ({
   listCampaignTemplates: mocks.listCampaignTemplates,
@@ -112,23 +139,53 @@ const PROFILES = [
   { id: 'prof-collections', name: 'Collections dimensions', is_default: false },
 ];
 
+/** The numbers as the cards name them. */
+const N1 = '+91 22000 00001';
+const N2 = '+91 22000 00002';
+
 async function renderPage(role = 'account_admin') {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1', role });
-  const { default: CampaignBuilderPage } = await import('../../pages/campaigns/agency/CampaignBuilderPage');
-  render(
-    <MemoryRouter>
-      <CampaignBuilderPage />
-    </MemoryRouter>,
-  );
+  await renderBuilder();
   await act(async () => {});
   await act(async () => {});
 }
 
-const goToStep = (title: string) => fireEvent.click(screen.getByRole('button', { name: title }));
-const chip = (label: string) => screen.getByTestId(`review-source-${label}`).textContent;
+const typeName = (value = 'Diwali') => fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value } });
+const tick = (number: string) => fireEvent.click(screen.getByRole('checkbox', { name: number }));
+const ticked = (number: string) => (screen.getByRole('checkbox', { name: number }) as HTMLInputElement).checked;
+const startSelect = () => screen.getByTestId('start-from-select') as HTMLSelectElement;
+const startInput = () => screen.getByLabelText('Start') as HTMLInputElement;
+const pickStart = async (value: string) => {
+  fireEvent.change(startSelect(), { target: { value } });
+  fireEvent.click(screen.getByTestId('start-from-use'));
+  await act(async () => {});
+};
+const createBody = () => mocks.createAgencyCampaign.mock.calls[0]![0] as Record<string, unknown>;
+const lastPatch = () => mocks.updateAgencyCampaign.mock.calls.at(-1)![1] as Record<string, unknown>;
+const save = async () => {
+  fireEvent.click(saveDraftButton());
+  await act(async () => {});
+};
+
+/** The block (by test id) that edits a section, and the chip and Reset in it (CS18). */
+const block = (testId: string) => within(screen.getByTestId(testId));
+const chip = (testId: string) => block(testId).getByTestId('section-source-chip').textContent;
+const chipSource = (testId: string) => block(testId).getByTestId('section-source-chip').getAttribute('data-source');
+const resetIn = (testId: string, section: string) => block(testId).queryByRole('button', { name: `Reset ${section} to the template` });
+
+/** Where each section's chip sits on its step, by the block's test id. */
+const AGENTS_BLOCKS = {
+  hours: 'when-to-call',
+  retries: 'unanswered-rule',
+  wrapup: 'wrapup-row',
+  record: 'record-row',
+  summary: 'summary-row',
+  phoneDisplay: 'phone-display-row',
+  dailyTarget: 'daily-target-row',
+} as const;
 
 beforeEach(() => {
-  // The banner's stamp says the year only when it is not this one: pin today.
+  // The line's stamp says the year only when it is not this one: pin today.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-22T10:00:00Z'));
   mocks.flags = { agency_campaign_templates_enabled: true };
@@ -138,6 +195,7 @@ beforeEach(() => {
   mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, ORG]);
   mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) => (id === 'org-1' ? FROM_ORG : FROM_ACCOUNT));
   mocks.useCallAnalysisProfiles.mockReturnValue({ profiles: PROFILES, loading: false, error: null });
+  mocks.applyStaffing.mockResolvedValue(applied());
 });
 
 afterEach(() => {
@@ -146,13 +204,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('New campaign starts from a template', () => {
-  it('opens filled in from the account’s default, saying where from, with its notes', async () => {
+describe('New campaign starts from a template (CS17)', () => {
+  it('opens filled in from the account’s default, above the step cards, saying where from, with its notes', async () => {
     await renderPage();
     expect(mocks.getEffectiveCampaignTemplate).toHaveBeenCalledWith(null, 't1', 'a1');
-    expect((screen.getByTestId('start-from-select') as HTMLSelectElement).value).toBe('acc-1');
+    expect(startSelect().value).toBe('acc-1');
+    // A slim card above the four step cards (CS17).
+    const panel = screen.getByTestId('start-from');
+    expect(panel.tagName).toBe('SECTION');
+    expect(panel.compareDocumentPosition(screen.getByRole('navigation', { name: 'Campaign setup' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Which default is which (CTC4): the account's is the one New campaign opens on.
-    expect([...(screen.getByTestId('start-from-select') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
+    expect([...startSelect().options].map((o) => o.textContent)).toEqual([
       'Pune collections (account default)',
       'Standard (organisation default)',
       'Built-in settings',
@@ -165,41 +227,93 @@ describe('New campaign starts from a template', () => {
     expect(screen.getByTestId('start-from-notes').textContent).toBe(
       'Recording is off for this account, so this campaign starts with recording off.',
     );
-    // The template's numbers are picked on Basics; its hours are on When to call.
-    expect((screen.getByRole('checkbox', { name: /\+912200000002/ }) as HTMLInputElement).checked).toBe(true);
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('When to call');
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('10:00');
+    // The template's numbers are picked on Name & number; its hours are on Agents & timing.
+    expect(ticked(N2)).toBe(true);
+    typeName();
+    goToStep('Agents & timing');
+    expect(startInput().value).toBe('10:00');
     expect(mocks.started).toHaveBeenCalledWith({ source: 'account', preselected: true, note_count: 1 });
   });
 
-  it('labels each Review row with its source, and resets a changed section', async () => {
+  it('labels each section at the block that edits it, and resets a changed section there (CS18)', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('Review & save');
-    expect(chip('Hours')).toBe('Account template');
-    expect(chip('Wrap-up')).toBe('Organisation template');
-    expect(chip('Retries')).toBe('Built-in');
-    expect(chip('Call from')).toBe('Account template');
-    // Unanswered calls are part of Outcomes, and say so (N8).
-    expect(chip('Unanswered calls')).toBe(chip('Outcomes'));
-    expect(screen.getByTestId('review-note-Unanswered calls').textContent).toBe('Goes with Outcomes: Reset there puts both back.');
-    expect(screen.queryByRole('button', { name: 'Reset Hours to the template' })).toBeNull();
+    typeName();
+    // Name & number: the numbers.
+    expect(chip('caller-id-field')).toBe('Account template');
+    // Purpose & buttons: the buttons (neither template sets them).
+    goToStep('Purpose & buttons');
+    expect(chip('buttons-block')).toBe('Built-in');
+    // Agents & timing: hours, retries, wrap-up, recording and the agent screen.
+    goToStep('Agents & timing');
+    expect(chip(AGENTS_BLOCKS.hours)).toBe('Account template');
+    expect(chip(AGENTS_BLOCKS.wrapup)).toBe('Organisation template');
+    expect(chip(AGENTS_BLOCKS.retries)).toBe('Built-in');
+    expect(chip(AGENTS_BLOCKS.record)).toBe('Built-in');
+    expect(chip(AGENTS_BLOCKS.summary)).toBe('Built-in');
+    expect(chip(AGENTS_BLOCKS.phoneDisplay)).toBe('Built-in');
+    expect(chip(AGENTS_BLOCKS.dailyTarget)).toBe('Built-in');
+    // Under Advanced: the retry table, the abandonment limit and the break limits.
+    openFold('advanced-settings');
+    expect(chip('sourced-retries')).toBe('Built-in');
+    expect(chip('sourced-safety')).toBe('Built-in');
+    expect(chip('sourced-breaks')).toBe('Built-in');
+    // Flag-gated sections show only where their flag is on.
+    expect(screen.queryByTestId('sourced-assignment')).toBeNull();
+    expect(screen.queryByTestId('sourced-inbound')).toBeNull();
+    expect(resetIn(AGENTS_BLOCKS.hours, 'calling hours')).toBeNull();
 
-    goToStep('When to call');
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '11:00' } });
-    goToStep('Review & save');
-    expect(chip('Hours')).toBe('Changed for this campaign');
-    expect(screen.getByTestId('review-source-Hours').getAttribute('data-source')).toBe('campaign');
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Hours to the template' }));
-    expect(chip('Hours')).toBe('Account template');
-    goToStep('When to call');
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('10:00');
+    fireEvent.change(startInput(), { target: { value: '11:00' } });
+    expect(chip(AGENTS_BLOCKS.hours)).toBe('Changed for this campaign');
+    expect(chipSource(AGENTS_BLOCKS.hours)).toBe('campaign');
+    // No extra mark on the step card: the chip says it.
+    expect(stepCard('Agents & timing').getAttribute('aria-label')).toBe('Agents & timing');
+    fireEvent.click(resetIn(AGENTS_BLOCKS.hours, 'calling hours')!);
+    expect(chip(AGENTS_BLOCKS.hours)).toBe('Account template');
+    expect(startInput().value).toBe('10:00');
+  });
+
+  it('shows the assignment and inbound chips under Advanced where their flags are on', async () => {
+    mocks.flags = { agency_campaign_templates_enabled: true, agency_contact_assignment_enabled: true, agency_inbound_enabled: true };
+    await renderPage();
+    typeName();
+    goToStep('Agents & timing');
+    openFold('advanced-settings');
+    expect(chip('sourced-assignment')).toBe('Built-in');
+    expect(chip('sourced-inbound')).toBe('Built-in');
+  });
+
+  it('keeps the unanswered calls with the buttons: one chip, and their Reset puts both back (N8)', async () => {
+    await renderPage();
+    typeName();
+    goToStep('Purpose & buttons');
+    openFold('purpose-advanced');
+    const noAnswer = () => screen.getByLabelText('No answer') as HTMLSelectElement;
+    const before = noAnswer().value;
+    const other = [...noAnswer().options].map((o) => o.value).find((v) => v !== before && v !== '')!;
+    fireEvent.change(noAnswer(), { target: { value: other } });
+    expect(chip('buttons-block')).toBe('Changed for this campaign');
+    fireEvent.click(resetIn('buttons-block', 'outcomes')!);
+    expect(chip('buttons-block')).toBe('Built-in');
+    expect(noAnswer().value).toBe(before);
+  });
+
+  it('starts Purpose & buttons’ rows afresh when the Reset puts the buttons back', async () => {
+    await renderPage();
+    typeName();
+    goToStep('Purpose & buttons');
+    fireEvent.click(screen.getByTestId('button-edit-0'));
+    fireEvent.change(screen.getByTestId('button-success-0'), { target: { value: 'yes' } });
+    expect(chip('buttons-block')).toBe('Changed for this campaign');
+    expect(screen.getByTestId('button-sentence-0')).toBeTruthy();
+    fireEvent.click(resetIn('buttons-block', 'outcomes')!);
+    expect(chip('buttons-block')).toBe('Built-in');
+    // The row open on the old buttons is not left open on the new ones.
+    expect(screen.queryByTestId('button-sentence-0')).toBeNull();
   });
 
   it('re-fills the form from another template, asking first when something was changed', async () => {
     await renderPage();
-    fireEvent.change(screen.getByTestId('start-from-select'), { target: { value: 'org-1' } });
+    fireEvent.change(startSelect(), { target: { value: 'org-1' } });
     // Choosing in the list starts nothing by itself (U12): the button does.
     expect(mocks.getEffectiveCampaignTemplate).not.toHaveBeenCalledWith('org-1', 't1', 'a1');
     fireEvent.click(screen.getByTestId('start-from-use'));
@@ -208,43 +322,67 @@ describe('New campaign starts from a template', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(mocks.getEffectiveCampaignTemplate).toHaveBeenLastCalledWith('org-1', 't1', 'a1');
     expect(screen.getByTestId('start-from-banner').textContent).toContain('Filled in from Standard (version 2');
-    // The organisation template sets no numbers: Basics asks again.
-    expect((screen.getByRole('checkbox', { name: /\+912200000002/ }) as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('When to call');
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('08:00');
+    // The organisation template sets no numbers: Name & number asks again.
+    expect(ticked(N2)).toBe(false);
+    tick(N1);
+    typeName();
+    goToStep('Agents & timing');
+    expect(startInput().value).toBe('08:00');
 
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '07:00' } });
-    fireEvent.change(screen.getByTestId('start-from-select'), { target: { value: '__builtin__' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Use the built-in settings' }));
-    await act(async () => {});
+    fireEvent.change(startInput(), { target: { value: '07:00' } });
+    await pickStart('__builtin__');
     const dialog = screen.getByRole('dialog');
-    // The hours only: the number picked on Basics is kept, since the built-in settings leave numbers alone.
+    // The hours only: the number picked is kept, since the built-in settings leave numbers alone.
     expect(dialog.textContent).toContain('You changed a section of these settings. Starting from another template replaces it');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start from it' }));
     await act(async () => {});
     expect(screen.getByTestId('start-from-banner').textContent).toContain('Filled in from the built-in settings.');
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('09:00');
+    // The built-in 9 AM – 8 PM is a choice of its own.
+    expect((screen.getByRole('radio', { name: '9 AM – 8 PM' }) as HTMLInputElement).checked).toBe(true);
     expect(mocks.started).toHaveBeenLastCalledWith({ source: 'builtin', preselected: false, note_count: 0 });
-    goToStep('Name & numbers');
-    expect((screen.getByRole('checkbox', { name: /\+912200000001/ }) as HTMLInputElement).checked).toBe(true);
+    goToStep('Name & number');
+    expect(ticked(N1)).toBe(true);
     expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).value).toBe('Diwali');
   });
 
   it('names the template on the create, with the sections as on the form', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('Review & save');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    const body = mocks.createAgencyCampaign.mock.calls[0]![0];
+    typeName();
+    await save();
+    const body = createBody();
     expect(body.template_id).toBe('acc-1');
     expect(body.caller_ids).toEqual(['+912200000002']);
     expect(body.calling_window_start).toBe('10:00');
     expect(body.wrapup_seconds).toBe(45);
     expect(body.break_reasons).toEqual([]);
     expect(body.record_calls).toBe(false);
+    expect(body.phone_display).toBe('full');
+    expect(body.daily_target_calls).toBeNull();
+  });
+
+  it('sends the agent screen and the break limits as changed on Agents & timing, and marks the sections changed', async () => {
+    await renderPage();
+    typeName();
+    goToStep('Agents & timing');
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '40' } });
+    fireEvent.click(within(screen.getByTestId('phone-display-row')).getByRole('switch'));
+    expect(chip(AGENTS_BLOCKS.dailyTarget)).toBe('Changed for this campaign');
+    expect(chip(AGENTS_BLOCKS.phoneDisplay)).toBe('Changed for this campaign');
+    await save();
+    expect(createBody()).toMatchObject({ template_id: 'acc-1', daily_target_calls: 40, phone_display: 'masked' });
+    // The draft has them from the create: the save that follows does not send them again.
+    expect(lastPatch()).not.toHaveProperty('daily_target_calls');
+    expect(lastPatch()).not.toHaveProperty('phone_display');
+  });
+
+  it('puts the agent screen back with its Reset', async () => {
+    await renderPage();
+    typeName();
+    goToStep('Agents & timing');
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '40' } });
+    fireEvent.click(resetIn(AGENTS_BLOCKS.dailyTarget, 'what agents see')!);
+    expect((screen.getByTestId('daily-target') as HTMLInputElement).value).toBe('');
+    expect(chip(AGENTS_BLOCKS.dailyTarget)).toBe('Built-in');
   });
 
   it('says nothing of templates, reads none and names none with the flag off', async () => {
@@ -253,13 +391,18 @@ describe('New campaign starts from a template', () => {
     expect(screen.queryByTestId('start-from')).toBeNull();
     expect(mocks.listCampaignTemplates).not.toHaveBeenCalled();
     expect(mocks.getEffectiveCampaignTemplate).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
-    goToStep('Review & save');
-    expect(screen.queryByTestId(/^review-source-/)).toBeNull();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    expect(Object.keys(mocks.createAgencyCampaign.mock.calls[0]![0]).sort()).toEqual(
+    typeName();
+    tick(N1);
+    expect(screen.queryByTestId(/^section-source-/)).toBeNull();
+    goToStep('Purpose & buttons');
+    expect(screen.queryByTestId(/^section-source-/)).toBeNull();
+    expect(screen.queryByTestId('builder-script')).toBeNull();
+    goToStep('Agents & timing');
+    openFold('advanced-settings');
+    expect(screen.queryByTestId(/^section-source-/)).toBeNull();
+    expect(screen.queryByTestId(/^sourced-/)).toBeNull();
+    await save();
+    expect(Object.keys(createBody()).sort()).toEqual(
       ['abandonment_ceiling_pct', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider'],
     );
   });
@@ -268,27 +411,32 @@ describe('New campaign starts from a template', () => {
     mocks.getEffectiveCampaignTemplate.mockRejectedValue(new Error('down'));
     await renderPage();
     expect(screen.queryByTestId('start-from')).toBeNull();
-    goToStep('When to call');
-    // Not past Basics without a name and a number.
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
-    goToStep('When to call');
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('09:00');
-    goToStep('Review & save');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).not.toHaveProperty('template_id');
+    // Not past Name & number without a name and a number.
+    expect(stepCard('Agents & timing').disabled).toBe(true);
+    typeName();
+    tick(N1);
+    goToStep('Agents & timing');
+    expect((screen.getByRole('radio', { name: '9 AM – 8 PM' }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByTestId(/^section-source-/)).toBeNull();
+    await save();
+    expect(createBody()).not.toHaveProperty('template_id');
   });
 });
 
-const tick = (number: string) => fireEvent.click(screen.getByRole('checkbox', { name: new RegExp(number.replace('+', '\\+')) }));
-const ticked = (number: string) =>
-  (screen.getByRole('checkbox', { name: new RegExp(number.replace('+', '\\+')) }) as HTMLInputElement).checked;
-const pickStart = async (value: string) => {
-  fireEvent.change(screen.getByTestId('start-from-select'), { target: { value } });
-  fireEvent.click(screen.getByTestId('start-from-use'));
-  await act(async () => {});
-};
+describe('step 3’s starting points are not templates (CS20)', () => {
+  it('calls its cards “What is this campaign for?” and never says template', async () => {
+    await renderPage();
+    typeName();
+    goToStep('Purpose & buttons');
+    const step = screen.getByTestId('purpose-buttons-step');
+    expect(within(step).getByRole('heading', { name: 'What is this campaign for?' })).toBeTruthy();
+    expect(screen.getByTestId('purpose-presets').textContent).not.toMatch(/template/i);
+    // Only the source chip in the buttons' heading names a template, as every step's chips do.
+    const words = step.cloneNode(true) as HTMLElement;
+    words.querySelectorAll('[data-testid^="section-source-"]').forEach((node) => node.remove());
+    expect(words.textContent).not.toMatch(/template/i);
+  });
+});
 
 /** A second account template that sets other numbers. */
 const OTHER = summary({ id: 'acc-2', name: 'Mumbai sales', version: 1 });
@@ -296,7 +444,9 @@ const FROM_OTHER = effective({ id: 'acc-2', name: 'Mumbai sales', version: 1, sc
   numbers: { caller_ids: ['+912200000001'], telephony_provider: 'voicelink', telephony_credential_id: null },
 }, ORG_SECTIONS);
 
-describe('the numbers picked on Basics (CTC2)', () => {
+const NUMBERS = 'caller-id-field';
+
+describe('the numbers picked on Name & number (CTC2)', () => {
   beforeEach(() => {
     mocks.listCampaignTemplates.mockResolvedValue([ACCOUNT, OTHER, ORG]);
     mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) =>
@@ -307,45 +457,42 @@ describe('the numbers picked on Basics (CTC2)', () => {
     // The organisation's default: it sets no numbers.
     mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) => (id === 'acc-1' ? FROM_ACCOUNT : FROM_ORG));
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    tick('+912200000001');
-    goToStep('Review & save');
-    expect(screen.queryByTestId('review-source-Call from')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Reset Call from to the template' })).toBeNull();
+    typeName();
+    tick(N1);
+    expect(block(NUMBERS).queryByTestId('section-source-chip')).toBeNull();
+    expect(resetIn(NUMBERS, 'numbers to call from')).toBeNull();
 
     await pickStart('__builtin__');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByTestId('start-from-banner').textContent).toContain('Filled in from the built-in settings.');
-    goToStep('Name & numbers');
-    expect(ticked('+912200000001')).toBe(true);
+    expect(ticked(N1)).toBe(true);
   });
 
   it('survive a Reset of another section', async () => {
     mocks.getEffectiveCampaignTemplate.mockImplementation(async () => FROM_ORG);
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    tick('+912200000002');
-    goToStep('When to call');
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '07:00' } });
-    goToStep('Review & save');
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Hours to the template' }));
-    goToStep('Name & numbers');
-    expect(ticked('+912200000002')).toBe(true);
+    typeName();
+    tick(N2);
+    goToStep('Agents & timing');
+    fireEvent.change(startInput(), { target: { value: '07:00' } });
+    fireEvent.click(resetIn(AGENTS_BLOCKS.hours, 'calling hours')!);
+    goToStep('Name & number');
+    expect(ticked(N2)).toBe(true);
   });
 
   it('are replaced by a template that sets numbers, without asking when the operator picked none of their own', async () => {
     await renderPage();
-    expect(ticked('+912200000002')).toBe(true);
+    expect(ticked(N2)).toBe(true);
     await pickStart('acc-2');
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(ticked('+912200000001')).toBe(true);
-    expect(ticked('+912200000002')).toBe(false);
+    expect(ticked(N1)).toBe(true);
+    expect(ticked(N2)).toBe(false);
   });
 
   async function pickedOwnThenSwitch() {
     await renderPage();
     // Pune collections sets +912200000002; the operator adds +912200000001.
-    tick('+912200000001');
+    tick(N1);
     await pickStart('acc-2');
   }
 
@@ -355,30 +502,28 @@ describe('the numbers picked on Basics (CTC2)', () => {
     expect(dialog.textContent).toContain('You changed a section of these settings.');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start from it' }));
     await act(async () => {});
-    expect(ticked('+912200000001')).toBe(true);
-    expect(ticked('+912200000002')).toBe(false);
+    expect(ticked(N1)).toBe(true);
+    expect(ticked(N2)).toBe(false);
   });
 
   it('stay when that question is answered Cancel', async () => {
     await pickedOwnThenSwitch();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
-    expect(ticked('+912200000001')).toBe(true);
-    expect(ticked('+912200000002')).toBe(true);
-    expect((screen.getByTestId('start-from-select') as HTMLSelectElement).value).toBe('acc-1');
+    expect(ticked(N1)).toBe(true);
+    expect(ticked(N2)).toBe(true);
+    expect(startSelect().value).toBe('acc-1');
   });
 
-  it('go back to the template’s with Reset on Call from', async () => {
+  it('go back to the template’s with the Reset on the numbers block', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    tick('+912200000001');
-    tick('+912200000002');
-    goToStep('Review & save');
-    expect(chip('Call from')).toBe('Changed for this campaign');
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Call from to the template' }));
-    expect(chip('Call from')).toBe('Account template');
-    goToStep('Name & numbers');
-    expect(ticked('+912200000002')).toBe(true);
-    expect(ticked('+912200000001')).toBe(false);
+    typeName();
+    tick(N1);
+    tick(N2);
+    expect(chip(NUMBERS)).toBe('Changed for this campaign');
+    fireEvent.click(resetIn(NUMBERS, 'numbers to call from')!);
+    expect(chip(NUMBERS)).toBe('Account template');
+    expect(ticked(N2)).toBe(true);
+    expect(ticked(N1)).toBe(false);
   });
 });
 
@@ -393,93 +538,100 @@ describe('the default chain read landing late (CTC8)', () => {
         : Promise.resolve(FROM_ORG)));
     await renderPage();
     expect(screen.queryByTestId('start-from')).toBeNull();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    tick('+912200000001');
-    goToStep('When to call');
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '07:00' } });
+    typeName();
+    tick(N1);
+    goToStep('Agents & timing');
+    fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
+    fireEvent.change(startInput(), { target: { value: '07:00' } });
+    fireEvent.change(screen.getByTestId('daily-target'), { target: { value: '25' } });
 
     await act(async () => land(FROM_ACCOUNT));
-    expect((screen.getByTestId('start-from-select') as HTMLSelectElement).value).toBe('acc-1');
-    // The hours typed stay; the wrap-up nobody touched comes from the template.
-    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('07:00');
-    goToStep('Review & save');
-    expect(chip('Hours')).toBe('Changed for this campaign');
-    expect(chip('Wrap-up')).toBe('Organisation template');
+    expect(startSelect().value).toBe('acc-1');
+    // The hours and the target typed stay; the wrap-up nobody touched comes from the template.
+    expect(startInput().value).toBe('07:00');
+    expect((screen.getByTestId('daily-target') as HTMLInputElement).value).toBe('25');
+    expect(chip(AGENTS_BLOCKS.hours)).toBe('Changed for this campaign');
+    expect(chip(AGENTS_BLOCKS.dailyTarget)).toBe('Changed for this campaign');
+    expect(chip(AGENTS_BLOCKS.wrapup)).toBe('Organisation template');
     // The number ticked stays in place of the template's.
-    expect(chip('Call from')).toBe('Changed for this campaign');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    const body = mocks.createAgencyCampaign.mock.calls[0]![0];
+    goToStep('Name & number');
+    expect(chip(NUMBERS)).toBe('Changed for this campaign');
+    await save();
+    const body = createBody();
     expect(body.template_id).toBe('acc-1');
     expect(body.caller_ids).toEqual(['+912200000001']);
     expect(body.calling_window_start).toBe('07:00');
     expect(body.wrapup_seconds).toBe(45);
+    expect(body.daily_target_calls).toBe(25);
   });
 });
 
-const ANALYSIS: AgencyColumnAnalysis = {
-  headers: ['Mobile', 'Full Name', 'Loan No'],
-  columns: [
-    { name: 'Mobile', index: 0, samples: ['9820041772'], non_empty: 10, phone_score: 0.95, distinct: 10, distinct_phones: 10 },
-    { name: 'Full Name', index: 1, samples: ['Priya Menon'], non_empty: 10, phone_score: 0, distinct: 10, distinct_phones: 0 },
-    { name: 'Loan No', index: 2, samples: ['L-1'], non_empty: 10, phone_score: 0, distinct: 10, distinct_phones: 0 },
-  ],
-  rows_sampled: 10,
-  truncated: false,
-  suggested_phone_column: 'Mobile',
-  phone_column_ambiguous: false,
-  phone_column_candidates: [],
-};
+/** Serve the check and its import: "Add 3 customers" imports the file and the import completes. */
+function serveJobs() {
+  const jobs = new Map([check(), imported()].map((j) => [j.job_id, j]));
+  mocks.getIngestJob.mockImplementation(async (id: string) => {
+    const found = jobs.get(id);
+    if (!found) throw new Error(`no job ${id}`);
+    return found;
+  });
+}
 
-/** Upload a roster on Contacts and import it: the roster upload creates the draft. */
-async function importRoster(onCard: string | null = null) {
-  goToStep('Who to call');
-  const input = screen.getByLabelText('CSV file') as HTMLInputElement;
-  fireEvent.change(input, { target: { files: [new File(['Mobile\n9820041772\n'], 'r.csv', { type: 'text/csv' })] } });
-  await screen.findByLabelText('Use Mobile as');
-  if (onCard) fireEvent.change(screen.getByLabelText(`Use ${onCard} as`), { target: { value: 'hero' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
-  await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+/** On Customers: drop a file, tick `facts` for the card, and add the customers, which makes the draft. */
+async function addCustomers(facts: string[] = []) {
+  goToStep('Customers');
+  dropCsv();
+  await screen.findByRole('button', { name: 'Add 3 customers' }, { timeout: 4000 });
+  for (const fact of facts) fireEvent.click(screen.getByRole('switch', { name: `Show ${fact} to agents` }));
+  fireEvent.click(footerButton('Add 3 customers'));
+  await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalled());
+  await waitFor(() => expect(currentStep()).toBe('purpose'), { timeout: 4000 });
+}
+
+function withRoster(analysis: AgencyColumnAnalysis = ANALYSIS) {
+  mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'collections_aug.csv', dedupe_columns: [], file_size_bytes: 10 });
+  mocks.analyzeRosterColumns.mockResolvedValue(analysis);
+  mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+  mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+  serveJobs();
 }
 
 describe('the draft a roster upload makes (CTC1)', () => {
-  beforeEach(() => {
-    mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'r.csv', dedupe_columns: [], file_size_bytes: 10 });
-    mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
-    mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'running' });
-    mocks.getIngestJob.mockReturnValue(new Promise(() => {}));
-  });
+  beforeEach(() => withRoster());
 
-  it('is created with the template named, and Save campaign then sends the hours changed after it', async () => {
+  it('is created with the template named, and Save as draft then sends the hours changed after it', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    await importRoster();
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({ template_id: 'acc-1', calling_window_start: '10:00' });
-    expect((screen.getByTestId('start-from-select') as HTMLSelectElement).disabled).toBe(true);
+    typeName();
+    await addCustomers();
+    expect(createBody()).toMatchObject({ template_id: 'acc-1', calling_window_start: '10:00' });
+    // Locked once the draft exists, and says so (CS17).
+    expect(startSelect().disabled).toBe(true);
+    expect(screen.getByTestId('start-from').textContent).toContain('The draft is made. Change its settings in the steps below.');
 
-    goToStep('When to call');
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '11:00' } });
-    goToStep('Review & save');
-    expect(chip('Hours')).toBe('Changed for this campaign');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
+    goToStep('Agents & timing');
+    fireEvent.change(startInput(), { target: { value: '11:00' } });
+    expect(chip(AGENTS_BLOCKS.hours)).toBe('Changed for this campaign');
+    await save();
     expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
     const patch = mocks.updateAgencyCampaign.mock.calls.at(-1)!;
     expect(patch[0]).toBe('camp-1');
     expect(patch[1]).toMatchObject({ calling_window_start: '11:00', calling_window_end: '20:00', wrapup_seconds: 45 });
   });
 
-  it('names only the template while a setting is still being fixed: the server fills the rest from it, and Save campaign sends them', async () => {
+  it('names only the template while a setting is still being fixed: the server fills the rest from it, and Save as draft sends them', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('When to call');
+    typeName();
+    goToStep('Agents & timing');
     // Start and end the same: the hours cannot be saved yet.
-    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '20:00' } });
-    await importRoster();
-    expect(Object.keys(mocks.createAgencyCampaign.mock.calls[0]![0]).sort()).toEqual([
+    fireEvent.change(startInput(), { target: { value: '20:00' } });
+    await addCustomers();
+    expect(Object.keys(createBody()).sort()).toEqual([
       'abandonment_ceiling_pct', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider', 'template_id',
     ]);
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0].template_id).toBe('acc-1');
+    expect(createBody().template_id).toBe('acc-1');
+    goToStep('Agents & timing');
+    fireEvent.change(startInput(), { target: { value: '10:00' } });
+    await save();
+    expect(lastPatch()).toMatchObject({ calling_window_start: '10:00', wrapup_seconds: 45 });
   });
 });
 
@@ -487,12 +639,10 @@ describe('the built-in settings', () => {
   it('are named on the create as template_id null', async () => {
     await renderPage();
     await pickStart('__builtin__');
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    tick('+912200000001');
-    goToStep('Review & save');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    const body = mocks.createAgencyCampaign.mock.calls[0]![0];
+    typeName();
+    tick(N1);
+    await save();
+    const body = createBody();
     expect(body).toHaveProperty('template_id', null);
     expect(body.calling_window_start).toBe('09:00');
   });
@@ -505,19 +655,27 @@ describe('the built-in settings', () => {
   (`apps/server/src/agency/agent-script.ts`): a card that takes away a key the stored script uses,
   and a script with a key its card has no fact for.
 */
-describe('a template script that uses keys the roster’s card does not have (CTC10)', () => {
+describe('a template’s script on Purpose & buttons (CS19, CTC10)', () => {
+  const OPENING = 'Hello {name}. Your {amount_due} is due on {due_date}.';
   const SCRIPTED = effective({ id: 'acc-1', name: 'Pune collections', version: 4, scope: 'account' }, {
     ...ACCOUNT_SECTIONS,
-    agent_screen: { agent_script: { opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' } },
+    agent_screen: { agent_script: { opening: OPENING } },
   }, ORG_SECTIONS);
   let stored: Record<string, unknown> = {};
 
+  /** A roster whose card can hold the script's keys. */
+  const WITH_AMOUNTS: AgencyColumnAnalysis = {
+    ...ANALYSIS,
+    headers: [...ANALYSIS.headers, 'Amount Due', 'Due Date'],
+    columns: [
+      ...ANALYSIS.columns,
+      { name: 'Amount Due', index: 4, samples: ['12000'], non_empty: 100, phone_score: 0, distinct: 100, distinct_phones: 0 },
+      { name: 'Due Date', index: 5, samples: ['2026-12-01'], non_empty: 100, phone_score: 0, distinct: 100, distinct_phones: 0 },
+    ],
+  };
+
   beforeEach(() => {
     mocks.getEffectiveCampaignTemplate.mockResolvedValue(SCRIPTED);
-    mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'r.csv', dedupe_columns: [], file_size_bytes: 10 });
-    mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
-    mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'running' });
-    mocks.getIngestJob.mockReturnValue(new Promise(() => {}));
     stored = {};
     mocks.createAgencyCampaign.mockImplementation(async (body: Record<string, unknown>) => {
       stored = { ...body };
@@ -540,42 +698,79 @@ describe('a template script that uses keys the roster’s card does not have (CT
     });
   });
 
-  it('imports the roster all the same, then says so on Review and lets the script be fixed there', async () => {
+  it('shows the template’s script under the buttons, read-only with Edit, carrying the agent screen chip', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    expect((mocks.createAgencyCampaign.mock.calls[0]?.[0])).toBeUndefined();
-    await importRoster('Loan No');
-    expect(screen.queryByTestId('builder-error')).toBeNull();
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0].agent_script).toEqual({ opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' });
+    typeName();
+    goToStep('Purpose & buttons');
+    const card = screen.getByTestId('builder-script');
+    // Under the buttons step, as Settings shows its Script.
+    expect(screen.getByTestId('purpose-buttons-step').compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(card).getByTestId('script-summary').textContent).toContain(OPENING);
+    expect(chip('builder-script')).toBe('Account template');
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit the script' }));
+    fireEvent.change(within(card).getByLabelText('Opening line'), { target: { value: 'Hello {name}.' } });
+    expect(chip('builder-script')).toBe('Changed for this campaign');
+    await save();
+    expect(createBody().agent_script).toEqual({ opening: 'Hello {name}.' });
+  });
 
-    goToStep('Review & save');
-    const problem = screen.getByTestId('review-script-problem');
+  it('shows no script card for a template without one', async () => {
+    mocks.getEffectiveCampaignTemplate.mockResolvedValue(FROM_ACCOUNT);
+    await renderPage();
+    typeName();
+    goToStep('Purpose & buttons');
+    expect(screen.queryByTestId('builder-script')).toBeNull();
+  });
+
+  it('imports the roster all the same, then holds the script back on Purpose & buttons, marks the step, and the saves wait for the fix', async () => {
+    withRoster();
+    await renderPage();
+    typeName();
+    expect(mocks.createAgencyCampaign.mock.calls[0]?.[0]).toBeUndefined();
+    await addCustomers(['Internal Score']);
+    expect(screen.queryByTestId('builder-error')).toBeNull();
+    expect(createBody().agent_script).toEqual({ opening: OPENING });
+    // The card's save carried an empty script: the draft has none for now.
+    expect(stored.agent_script).toEqual({});
+
+    // Purpose & buttons is marked, and the saves wait, pointing at it from another step.
+    expect(stepCard('Purpose & buttons').getAttribute('aria-label')).toMatch(/needs fixing/);
+    goToStep('Agents & timing');
+    expect(saveDraftButton().disabled).toBe(true);
+    expect(footerButton('Start campaign').disabled).toBe(true);
+    expect(footer().getByTestId('script-block').textContent).toContain('Change the script on Purpose & buttons before you save.');
+    fireEvent.click(footer().getByRole('button', { name: /^Go to Purpose & buttons/ }));
+    expect(currentStep()).toBe('purpose');
+    expect(footer().getByTestId('script-block').textContent).toContain('Change the script below before you save.');
+
+    const problem = screen.getByTestId('script-problem');
     // Said as a status: it changes as the script is typed, and an alert would be read out at each key (U12).
     expect(problem.getAttribute('role')).toBe('status');
     expect(problem.textContent).toContain(
       'The script uses {amount_due} and {due_date}, which are not facts on the card. Add them as facts or take them out.',
     );
-    const save = () => screen.getAllByRole('button', { name: 'Save campaign' })[0] as HTMLButtonElement;
-    expect(save().disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Edit the script' }));
-    fireEvent.change(screen.getByLabelText('Opening line'), { target: { value: 'Hello {name}. Your {loan_no} is due.' } });
-    expect(screen.queryByTestId('review-script-problem')).toBeNull();
-    expect(chip('What agents see')).toBe('Changed for this campaign');
-    expect(save().disabled).toBe(false);
-    fireEvent.click(save());
-    await act(async () => {});
+    // The editor is open on the card's keys.
+    fireEvent.change(screen.getByLabelText('Opening line'), { target: { value: 'Hello {name}. Your {internal_score} is due.' } });
+    expect(screen.queryByTestId('script-problem')).toBeNull();
+    expect(screen.queryByTestId('script-block')).toBeNull();
+    expect(chip('builder-script')).toBe('Changed for this campaign');
+    expect(stepCard('Purpose & buttons').getAttribute('aria-label')).not.toMatch(/needs fixing/);
+    expect(saveDraftButton().disabled).toBe(false);
+    await save();
     expect(screen.queryByTestId('builder-error')).toBeNull();
-    expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {loan_no} is due.' });
+    expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {internal_score} is due.' });
   });
 
   it('keeps the script whole when the card has its keys', async () => {
+    withRoster(WITH_AMOUNTS);
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    await importRoster();
+    typeName();
+    await addCustomers(['Amount Due', 'Due Date']);
     expect(screen.queryByTestId('builder-error')).toBeNull();
-    goToStep('Review & save');
-    expect(screen.queryByTestId('review-script-problem')).toBeNull();
-    expect(stored.agent_script).toEqual({ opening: 'Hello {name}. Your {amount_due} is due on {due_date}.' });
+    expect(screen.queryByTestId('script-problem')).toBeNull();
+    expect(screen.queryByTestId('script-block')).toBeNull();
+    expect(stored.agent_script).toEqual({ opening: OPENING });
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1]).not.toHaveProperty('agent_script');
   });
 });
 
@@ -590,68 +785,59 @@ describe('the call summary profile a template sets', () => {
     ...ACCOUNT_SECTIONS,
     recording: { record_calls: true, analysis_profile_id: 'prof-collections' },
   }, ORG_SECTIONS);
-  const summarySelect = () => screen.getByLabelText('Call summary') as HTMLSelectElement;
-  const recordBox = () => screen.getByRole('checkbox', { name: /record every call on this campaign/i }) as HTMLInputElement;
+  const summarySelect = () => screen.getByRole('combobox', { name: 'Call summary' }) as HTMLSelectElement;
+  const recordSwitch = () => within(screen.getByTestId('record-row')).getByRole('switch') as HTMLButtonElement;
 
   beforeEach(() => {
     mocks.getEffectiveCampaignTemplate.mockImplementation(async (id: string | null) => (id === 'org-1' ? FROM_ORG : PROFILED));
   });
 
-  it('fills the picker, names it on Review with the template’s chip, and is sent on the create and the save', async () => {
+  it('fills the picker, carries the template’s chip on both rows, and is sent on the create and the save', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('How agents work');
-    expect(recordBox().checked).toBe(true);
+    typeName();
+    goToStep('Agents & timing');
+    expect(recordSwitch().getAttribute('aria-checked')).toBe('true');
     expect(summarySelect().value).toBe('prof-collections');
-    goToStep('Review & save');
-    expect(screen.getByText('Collections dimensions')).toBeTruthy();
-    expect(chip('Call summary')).toBe('Account template');
-    expect(chip('Recording')).toBe('Account template');
-    // Filled in, not typed: nothing to warn about on leaving before a draft exists.
+    expect(chip(AGENTS_BLOCKS.record)).toBe('Account template');
+    expect(chip(AGENTS_BLOCKS.summary)).toBe('Account template');
+    // Filled in, not typed: nothing to warn about.
     expect(screen.queryByTestId('draft-note')).toBeNull();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    const body = mocks.createAgencyCampaign.mock.calls[0]![0];
-    expect(body).toMatchObject({ template_id: 'acc-1', record_calls: true, analysis_profile_id: 'prof-collections' });
-    expect(mocks.updateAgencyCampaign.mock.calls.at(-1)![1]).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-collections' });
+    await save();
+    expect(createBody()).toMatchObject({ template_id: 'acc-1', record_calls: true, analysis_profile_id: 'prof-collections' });
+    expect(lastPatch()).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-collections' });
   });
 
   it('marks the recording section changed when the profile is changed, and sends the one picked', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('How agents work');
+    typeName();
+    goToStep('Agents & timing');
     fireEvent.change(summarySelect(), { target: { value: 'prof-default' } });
-    goToStep('Review & save');
-    expect(chip('Recording')).toBe('Changed for this campaign');
-    expect(chip('Call summary')).toBe('Changed for this campaign');
-    expect(screen.getByTestId('review-source-Recording').getAttribute('data-source')).toBe('campaign');
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-default' });
+    expect(chip(AGENTS_BLOCKS.record)).toBe('Changed for this campaign');
+    expect(chip(AGENTS_BLOCKS.summary)).toBe('Changed for this campaign');
+    expect(chipSource(AGENTS_BLOCKS.record)).toBe('campaign');
+    await save();
+    expect(createBody()).toMatchObject({ record_calls: true, analysis_profile_id: 'prof-default' });
   });
 
-  it('puts the template’s profile back, with the flag, on Reset of Recording', async () => {
+  it('puts the template’s profile back, with the flag, on the Reset of Recording', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('How agents work');
-    fireEvent.click(recordBox());
+    typeName();
+    goToStep('Agents & timing');
+    fireEvent.click(recordSwitch());
     fireEvent.change(summarySelect(), { target: { value: '__none__' } });
-    goToStep('Review & save');
-    expect(chip('Recording')).toBe('Changed for this campaign');
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Recording to the template' }));
-    expect(chip('Recording')).toBe('Account template');
-    expect(chip('Call summary')).toBe('Account template');
-    goToStep('How agents work');
-    expect(recordBox().checked).toBe(true);
+    expect(chip(AGENTS_BLOCKS.record)).toBe('Changed for this campaign');
+    fireEvent.click(resetIn(AGENTS_BLOCKS.record, 'recording')!);
+    expect(chip(AGENTS_BLOCKS.record)).toBe('Account template');
+    expect(chip(AGENTS_BLOCKS.summary)).toBe('Account template');
+    expect(recordSwitch().getAttribute('aria-checked')).toBe('true');
     expect(summarySelect().value).toBe('prof-collections');
   });
 
   it('asks before replacing a profile the operator changed, and a template without one clears it', async () => {
     await renderPage();
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('How agents work');
+    typeName();
+    goToStep('Agents & timing');
     fireEvent.change(summarySelect(), { target: { value: 'prof-default' } });
     await pickStart('org-1');
     const dialog = screen.getByRole('dialog');
@@ -672,13 +858,11 @@ describe('the call summary profile a template sets', () => {
     expect(screen.getByTestId('start-from-notes').textContent).toBe(
       'The template’s call summary profile is no longer available, so this campaign starts with no summary.',
     );
-    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Diwali' } });
-    goToStep('How agents work');
+    typeName();
+    goToStep('Agents & timing');
     expect(summarySelect().value).toBe('__none__');
-    goToStep('Review & save');
-    expect(chip('Call summary')).toBe('Account template');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save campaign' })[0]!);
-    await act(async () => {});
-    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({ record_calls: true, analysis_profile_id: null });
+    expect(chip(AGENTS_BLOCKS.summary)).toBe('Account template');
+    await save();
+    expect(createBody()).toMatchObject({ record_calls: true, analysis_profile_id: null });
   });
 });

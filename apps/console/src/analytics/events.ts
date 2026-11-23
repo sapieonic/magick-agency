@@ -17,7 +17,7 @@ import type { AudioCaptureFailureKind } from '../hooks/useAudioCapture';
 import type { CampaignTabId } from '../utils/agencyCampaignTabs';
 import type { AgencyPersona } from '../utils/agencyPersona';
 import type { AgentStatsWindow } from '../utils/agencyAgentPerformance';
-import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
+import type { SetupStepId } from '../utils/campaignSetup/setupSteps';
 import type {
   AgencyAgentRetryErrorCode,
   AgencyAssignmentKind,
@@ -1214,8 +1214,11 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     from_status: AgencyCampaignStatus;
     to_status: AgencyCampaignStatus;
     confirmed: boolean;
-    /** The campaign tab whose header it was taken from, or `live_floor` for a Live floor card. */
-    from_tab: CampaignTabId | 'live_floor';
+    /**
+     * The campaign tab whose header it was taken from, `live_floor` for a Live floor card, or
+     * `new_campaign` for New campaign's Start campaign (CS15).
+     */
+    from_tab: CampaignTabId | 'live_floor' | 'new_campaign';
   };
   /**
    * {@link trackAgencyCampaignArchiveAction}: a campaign archived or restored (AR1–AR7), on
@@ -1317,7 +1320,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
   };
   /** {@link trackAgencyCampaignBuilderStepViewed} */
   agency_campaign_builder_step_viewed: {
-    step: BuilderStepId;
+    /** The setup step (CS1), by its stable id. */
+    step: SetupStepId;
     step_index: number;
   };
   /** {@link trackAgencyCampaignConfigSaved} */

@@ -20,13 +20,20 @@ import { sameCarrier, type CarrierChoice } from '../../../utils/agencyCarriers';
 import { samePool } from '../../../utils/campaignSettingsChanges';
 import {
   cardKeys,
+  dailyTargetError,
   factsFormOf,
   scriptErrors,
   scriptPayload,
   type FactsForm,
   type ScriptForm,
 } from '../../../utils/agency/stationSettings';
-import { AGENCY_SCRIPT_PLACEHOLDERS, type AgencyAgentScript, type AgencyContextDisplay } from '@magick-agency/contracts/agency';
+import { breakReasonsErrors, type BreakReasonsForm } from '../../../utils/agency/breakLimits';
+import {
+  AGENCY_SCRIPT_PLACEHOLDERS,
+  type AgencyAgentScript,
+  type AgencyContextDisplay,
+  type AgencyPhoneDisplay,
+} from '@magick-agency/contracts/agency';
 import { unknownPlaceholdersIn } from '@magick-agency/domain/fact-fields';
 import { sameTemplateValue } from '@magick-agency/domain/campaign-templates';
 import { BUILT_IN_START, useStartFrom } from './useStartFrom';
@@ -40,6 +47,19 @@ export interface BuilderTemplateValues {
   callerIds: string[];
   /** `null`: the page's default carrier stands. */
   chosenCarrier: CarrierChoice | null;
+  /** The break limits (Agents & timing, under Advanced): the template's breaks section. */
+  breakReasons: BreakReasonsForm;
+  /**
+   * The daily target and the number display (Agents & timing's agent screen): with the script,
+   * which this hook holds, the template's agent screen section.
+   */
+  agentScreen: BuilderAgentScreen;
+}
+
+/** The two agent screen settings New campaign's own step edits. */
+export interface BuilderAgentScreen {
+  dailyTarget: string;
+  phoneDisplay: AgencyPhoneDisplay;
 }
 
 export interface BuilderTemplateInput extends BuilderTemplateValues {
@@ -54,7 +74,8 @@ export interface BuilderTemplateInput extends BuilderTemplateValues {
   /**
    * Put values on the form. `baseline` is set when they are what a template fills in, the
    * starting point rather than an edit (the page's unsaved-input baseline and its analytics);
-   * `outcomes` when the outcome list was replaced, so its editors remount.
+   * `outcomes` when the outcome list was replaced, so the editors that keep state of their own
+   * about its rows (Purpose & buttons) start again on the new rows.
    */
   apply: (next: Partial<BuilderTemplateValues>, how: { baseline: BuilderTemplateValues | null; outcomes: boolean }) => void;
   /** A "Start from" read failed: the form keeps what it had. */
@@ -64,13 +85,16 @@ export interface BuilderTemplateInput extends BuilderTemplateValues {
 /**
  * New campaign's campaign templates (`docs/campaign-templates.md` §7), as one hook the page
  * composes: the filled-in settings ("Start from" and its read), filling the form from them,
- * where each section now comes from (Review's chips) and its Reset, the "Replace your changes?"
- * question, and what the create sends (`template_id` and the sections, CT8, CT9). With the flag
+ * where each section now comes from (the chip at the block that edits it, CS18) and its Reset,
+ * the "Replace your changes?" question, the template's script and its fix (CS19, CTC10), and
+ * what the create sends (`template_id` and the sections, CT8, CT9). With the flag
  * off, or the reads failing, `startFrom` stays null and every part of it is inert: the page is as
  * it was before templates.
  */
 export function useBuilderTemplate(input: BuilderTemplateInput) {
-  const { campaignId, config, recording, callerIds, carrier, recordingEnabled, analyticsEnabled, assignmentEnabled } = input;
+  const {
+    campaignId, config, recording, callerIds, carrier, breakReasons, agentScreen, recordingEnabled, analyticsEnabled, assignmentEnabled,
+  } = input;
   const inputRef = useRef(input);
   inputRef.current = input;
 
@@ -81,15 +105,14 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const [switching, setSwitching] = useState(false);
 
   /*
-    The form as a template's sections see it (the parts New campaign does not edit, the break
-    limits and what agents see, are the filled-in template's), and where each
-    section now comes from: the filled-in source while it is unchanged, `campaign` once changed
+    The form as a template's sections see it (every section is on one of New campaign's steps;
+    the script, which the page does not hold, is this hook's), and where each section now comes from: the filled-in source while it is unchanged, `campaign` once changed
     (compared by the domain's normalisation, as the server records it, CT9).
   */
   const startForm = useMemo(() => (startFrom ? formOfConfig(startFrom.config) : null), [startFrom]);
   /**
-   * The script, which Review can change when the roster's card lacks a key it uses (CTC10); the
-   * filled-in template's until then.
+   * The script, shown and edited on Purpose & buttons (CS19), and held back there when the
+   * roster's card lacks a key it uses (CTC10); the filled-in template's until it is changed.
    */
   const [script, setScript] = useState<ScriptForm | null>(null);
   const builderForm = useMemo<TemplateForm | null>(
@@ -98,12 +121,17 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
         ...startForm,
         config,
         recording,
-        station: { ...startForm.station, script: script ?? startForm.station.script },
+        breakReasons,
+        station: {
+          dailyTarget: agentScreen.dailyTarget,
+          phoneDisplay: agentScreen.phoneDisplay,
+          script: script ?? startForm.station.script,
+        },
         callerIds,
         carrier,
       }
       : null),
-    [startForm, config, recording, script, callerIds, carrier],
+    [startForm, config, recording, breakReasons, agentScreen, script, callerIds, carrier],
   );
   const builderFields = useMemo(() => (builderForm ? campaignFieldsOfForm(builderForm) : null), [builderForm]);
   const sectionSource = useCallback(
@@ -121,8 +149,8 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
 
   /*
     With a template in play the create names it (`template_id`, null for the built-in settings) and
-    carries every section New campaign shows, when they pass their checks, plus the filled-in break
-    limits and agent screen: so the server records each section's source as it is at the create
+    carries every section New campaign shows, when they pass their checks (the script included):
+    so the server records each section's source as it is at the create
     (CT9), and nothing is left to a default chain the picker moved away from. Sections still being
     fixed are left out and filled in from the template; Save campaign sends them.
 
@@ -131,9 +159,15 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     template's profile. It is left out (the template's, as the server filled it in) when either
     field would be refused: recording switched on, or a profile set, where the account may not.
   */
+  const scriptNow = script ?? startForm?.station.script ?? null;
   const createFields = useMemo(() => {
     if (!startFrom || !builderFields) return {};
-    if (Object.keys(validateConfig(config)).length > 0) return { template_id: startFrom.template?.id ?? null };
+    const fixing = Object.keys(validateConfig(config)).length > 0
+      || Object.keys(breakReasonsErrors(breakReasons)).length > 0
+      || dailyTargetError(agentScreen.dailyTarget) !== null
+      // Before the import saves a card the script takes the keys a script with no card takes.
+      || (scriptNow !== null && Object.keys(scriptErrors(scriptNow, [...AGENCY_SCRIPT_PLACEHOLDERS])).length > 0);
+    if (fixing) return { template_id: startFrom.template?.id ?? null };
     const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
     const wholeRecording = recordingFields.record_calls !== undefined && recordingFields.analysis_profile_id !== undefined;
     return {
@@ -145,7 +179,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       phone_display: builderFields.phone_display,
       daily_target_calls: builderFields.daily_target_calls,
     };
-  }, [startFrom, builderFields, config, recordingEnabled, analyticsEnabled, recording, assignmentEnabled]);
+  }, [startFrom, builderFields, config, breakReasons, agentScreen, scriptNow, recordingEnabled, analyticsEnabled, recording, assignmentEnabled]);
 
   /**
    * The numbers the last filling-in put on Basics (the template's, or none when it leaves them
@@ -168,17 +202,32 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       const now = inputRef.current;
       const filled = formOfConfig(effective.config);
       const typed = typedForm(filled, now);
-      let next: TemplateForm = { ...typed, config: filled.config, recording: filled.recording };
+      let next: TemplateForm = {
+        ...typed,
+        config: filled.config,
+        recording: filled.recording,
+        breakReasons: filled.breakReasons,
+        station: filled.station,
+      };
       for (const key of how.keep) next = withSectionFrom(next, typed, key);
       const templateNumbers = numbersOf(effective, filled);
       const numbers = how.keepNumbers ? { callerIds: now.callerIds, chosenCarrier: now.chosenCarrier } : templateNumbers;
       filledNumbersRef.current = templateNumbers;
       now.apply(
-        { config: next.config, recording: next.recording, ...numbers },
+        { config: next.config, recording: next.recording, breakReasons: next.breakReasons, agentScreen: agentScreenOf(next), ...numbers },
         // What the template fills in is the starting point, not an edit; kept sections stay edits.
-        { baseline: { config: filled.config, recording: filled.recording, ...templateNumbers }, outcomes: true },
+        {
+          baseline: {
+            config: filled.config,
+            recording: filled.recording,
+            breakReasons: filled.breakReasons,
+            agentScreen: agentScreenOf(filled),
+            ...templateNumbers,
+          },
+          outcomes: true,
+        },
       );
-      setScript(filled.station.script);
+      setScript(next.station.script);
       setStartFrom(effective);
       trackAgencyCampaignTemplateStartedFrom({
         source: effective.template?.scope ?? 'builtin',
@@ -196,7 +245,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     names the template it was filled from. Nothing typed is overwritten. A draft already made
     keeps what it has: nothing is filled into it.
   */
-  const openingRef = useRef({ config, recording });
+  const openingRef = useRef({ config, recording, breakReasons, agentScreen });
   const filledInitialRef = useRef(false);
   useEffect(() => {
     if (filledInitialRef.current || read.status !== 'ready' || !read.initial) return;
@@ -204,11 +253,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     const now = inputRef.current;
     if (now.campaignId !== null) return;
     const filled = formOfConfig(read.initial.config);
-    const opening = campaignFieldsOfForm({
-      ...typedForm(filled, now),
-      config: openingRef.current.config,
-      recording: openingRef.current.recording,
-    });
+    const opening = campaignFieldsOfForm(typedForm(filled, { ...now, ...openingRef.current }));
     const typed = campaignFieldsOfForm(typedForm(filled, now));
     fill(read.initial, {
       keep: TYPED_SECTIONS.filter((key) => !sameSection(key, opening, typed)),
@@ -254,7 +299,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   );
 
   /**
-   * Put section `key` back as the template filled it in (Review's Reset). The numbers go back to
+   * Put section `key` back as the template filled it in (its Reset, CS18). The numbers go back to
    * the template's: never to an empty pool, and not at all when it leaves them built-in.
    */
   const resetSection = useCallback(
@@ -267,6 +312,8 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
         {
           config: next.config,
           recording: next.recording,
+          breakReasons: next.breakReasons,
+          agentScreen: agentScreenOf(next),
           ...(key === 'numbers' && !leavesNumbers(startFrom)
             ? { callerIds: next.callerIds.length > 0 ? next.callerIds : now.callerIds, chosenCarrier: next.carrier }
             : {}),
@@ -315,7 +362,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     onCancel: () => setPending(null),
   };
 
-  /** A Review row's source chip and Reset, for the section it shows; nothing without templates. */
+  /** A section's source chip and Reset, for the block that edits it (CS18); nothing without templates. */
   const sourceProps = (key: AgencyCampaignTemplateSectionKey) =>
     startFrom ? { source: sectionSource(key), onReset: () => resetSection(key) } : {};
 
@@ -324,9 +371,9 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     `{due_date}`, which a campaign without a card allows (the legacy keys, so the create takes
     it), but the card the import saves has its own keys: a card without those facts would be
     refused for taking away keys the draft's script uses, and the import with it. So the card's
-    save then carries an empty script (the draft has none for now), and Review says why, opens
-    the script editor on the card's keys and holds Save campaign until the script fits; Save
-    campaign then sends it.
+    save then carries an empty script (the draft has none for now), and Purpose & buttons says
+    why, opens the script editor on the card's keys and marks its step, and Save as draft and
+    Start wait until the script fits (CS19); the save then sends it.
   */
   /** The card the import saved on the draft; null while it has none (the legacy keys). */
   const [card, setCard] = useState<FactsForm | null>(null);
@@ -337,16 +384,30 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     () => (startFrom && script ? scriptErrors(script, allowedKeys) : {}),
     [startFrom, script, allowedKeys],
   );
-  const scriptFix = startFrom && script
-    ? { value: script, onChange: setScript, errors: scriptErrs, allowed: allowedKeys, facts: card ?? EMPTY_CARD }
+  /*
+    Shown on Purpose & buttons when the template brings a script, or one is held back or typed: a
+    template with no script leaves New campaign without one, as before (Settings has the editor).
+  */
+  const scriptShown = startForm !== null && script !== null
+    && (hasText(startForm.station.script) || hasText(script) || Object.keys(scriptErrs).length > 0);
+  const scriptFix = scriptShown
+    ? { value: script!, onChange: setScript, errors: scriptErrs, allowed: allowedKeys, facts: card ?? EMPTY_CARD }
     : null;
   const latestRef = useRef({ builderFields, script });
   latestRef.current = { builderFields, script };
+  const startScriptRef = useRef<AgencyAgentScript | null>(null);
+  startScriptRef.current = startForm ? scriptPayload(startForm.station.script) : null;
   const draft = useMemo(() => ({
-    /** The draft was created with the form as it is now. */
-    created: () => {
-      const fields = latestRef.current.builderFields;
-      draftScriptRef.current = fields ? (fields.agent_script as AgencyAgentScript) : null;
+    /**
+     * The draft was created with `sent` (the create's template fields): its script is the one
+     * sent, else the template's, which the server filled in.
+     */
+    created: (sent: { agent_script?: unknown }) => {
+      if (!latestRef.current.builderFields) {
+        draftScriptRef.current = null;
+        return;
+      }
+      draftScriptRef.current = (sent.agent_script as AgencyAgentScript | undefined) ?? startScriptRef.current;
     },
     /** What the PATCH that saves the card `display` also sends: an empty script when the draft's would not fit it. */
     cardFields: (display: AgencyContextDisplay): { agent_script?: AgencyAgentScript } => {
@@ -358,14 +419,14 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
       draftScriptRef.current = {};
       return { agent_script: {} };
     },
-    /** What Save campaign's PATCH also sends: the script, when it is not what the draft holds. */
+    /** What Save as draft's PATCH also sends: the script, when it is not what the draft holds. */
     saveFields: (): { agent_script?: AgencyAgentScript } => {
       const { script } = latestRef.current;
       if (!script || draftScriptRef.current === null) return {};
       const next = scriptPayload(script);
       return sameTemplateValue(next, draftScriptRef.current) ? {} : { agent_script: next };
     },
-    /** Save campaign went through with `sent`. */
+    /** Save as draft went through with `sent`. */
     saved: (sent: { agent_script?: AgencyAgentScript }) => {
       if (sent.agent_script) draftScriptRef.current = sent.agent_script;
     },
@@ -379,7 +440,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     sourceProps,
     createFields,
     script: scriptFix,
-    /** The script does not fit the card: Save campaign waits for Review's fix. */
+    /** The script does not fit (the card's keys, or its own checks): the saves wait for its fix on Purpose & buttons. */
     scriptBlocked: Object.keys(scriptErrs).length > 0,
     draft,
   };
@@ -390,7 +451,7 @@ const NO_NUMBERS: Numbers = { callerIds: [], chosenCarrier: null };
 
 /** The sections New campaign's own steps edit: what a late filling-in keeps when typed (CTC8). */
 const TYPED_SECTIONS: readonly AgencyCampaignTemplateSectionKey[] = [
-  'outcomes', 'retries', 'hours', 'wrapup', 'recording', 'safety', 'assignment', 'inbound',
+  'outcomes', 'retries', 'hours', 'wrapup', 'breaks', 'recording', 'agent_screen', 'safety', 'assignment', 'inbound',
 ];
 
 /** The start leaves the numbers to the operator: an organisation template, the built-in settings, or an account template that sets none. */
@@ -409,19 +470,34 @@ function sameNumbers(a: Numbers, b: Numbers): boolean {
   return sameCarrier(a.chosenCarrier, b.chosenCarrier);
 }
 
-/** The form as typed, with the parts New campaign does not edit as `filled` has them. */
-function typedForm(filled: TemplateForm, now: BuilderTemplateInput): TemplateForm {
+/** The form as typed, with the script (which the page does not hold) as `filled` has it. */
+function typedForm(
+  filled: TemplateForm,
+  now: Pick<BuilderTemplateInput, 'config' | 'recording' | 'breakReasons' | 'agentScreen' | 'callerIds' | 'carrier'>,
+): TemplateForm {
   return {
     ...filled,
     config: now.config,
     recording: now.recording,
+    breakReasons: now.breakReasons,
+    station: { ...filled.station, dailyTarget: now.agentScreen.dailyTarget, phoneDisplay: now.agentScreen.phoneDisplay },
     callerIds: now.callerIds,
     carrier: now.carrier,
   };
 }
 
+/** The agent screen settings the page holds, out of a form. */
+function agentScreenOf(form: TemplateForm): BuilderAgentScreen {
+  return { dailyTarget: form.station.dailyTarget, phoneDisplay: form.station.phoneDisplay };
+}
+
 /** A card with no facts: the script editor's `facts` before the import saves one. */
 const EMPTY_CARD: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {} }) as FactsForm;
+
+/** Whether a script form says anything. */
+function hasText(script: ScriptForm): boolean {
+  return script.opening.trim() !== '' || script.steps.some((step) => step.trim() !== '');
+}
 
 /** Every text of a stored script, one per line. */
 function scriptTextOf(script: AgencyAgentScript): string {

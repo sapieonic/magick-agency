@@ -145,11 +145,16 @@ export function useTemplateEditor({
   }, [loading, loadError, inheritedReady, inheritedForm]);
 
   const sections = useMemo(() => (form ? sectionsOfForm(form, ownScope, setKeys) : {}), [form, ownScope, setKeys]);
+  /** The sections that differ from the saved template (set, unset or changed): the tabs' unsaved marks. */
+  const changedSections = useMemo(
+    () => new Set<AgencyCampaignTemplateSectionKey>(baseline && form ? diffSections(baseline.sections, sections).map((d) => d.section) : []),
+    [baseline, form, sections],
+  );
   const dirty = baseline !== null && form !== null && (
     name.trim() !== baseline.name
     || description.trim() !== (baseline.description ?? '')
     || basedOnId !== baseline.basedOnId
-    || diffSections(baseline.sections, sections).length > 0
+    || changedSections.size > 0
   );
 
   const liveErrors = useMemo(() => (form ? templateFormErrors(form, setKeys) : {}), [form, setKeys]);
@@ -326,7 +331,12 @@ export function useTemplateEditor({
     /** The server refused fields of the last save (shown on their cards). */
     hasFieldErrors: Object.keys(fieldErrors).length > 0,
     shownErrors: { ...liveErrors, ...fieldErrors },
+    /** The form's own findings for the sections it sets, as they are typed (quiet). */
+    liveErrors,
+    /** The server's refusal of the last save, by campaign field path (CT4). */
+    serverErrors: fieldErrors,
     invalidSections,
+    changedSections,
     saving,
     saveError,
     conflict,

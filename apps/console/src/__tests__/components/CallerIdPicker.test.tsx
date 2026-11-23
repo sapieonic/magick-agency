@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';
 import { SERVICE_CARRIER, type CarrierChoice } from '../../utils/agencyCarriers';
 
@@ -198,5 +198,80 @@ describe('a selected number the account no longer lists on this carrier account'
     expect(screen.getByText('No numbers on Pravah (Acme spare) are assigned to this account.')).toBeTruthy();
     screen.getByRole('button', { name: 'Remove +14155550199' }).click();
     expect(onChange).toHaveBeenCalledWith([]);
+  });
+});
+
+describe('the cards layout (campaign setup, step 1)', () => {
+  const cards = () => screen.getByTestId('caller-id-cards');
+
+  it('shows each number on the carrier as a card: spaced for reading, its label under it', () => {
+    render(
+      <CallerIdPicker layout="cards" legend="Customers will see this number" selected={[]} onChange={vi.fn()} carrier={TENANT_A} carrierLabel="Acme main" />,
+    );
+    expect(screen.getByRole('group', { name: 'Customers will see this number' })).toBe(cards());
+    const card = screen.getByRole('checkbox', { name: '+1 415 555 0104' });
+    expect(card.closest('label')?.textContent).toContain('Own A');
+    // Only this carrier account's numbers, and the others still named.
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+    expect(screen.getByText(/dials through Pravah \(Acme main\) only/)).toBeTruthy();
+    expect(screen.getByText('Pick at least one number. Pick more than one to rotate numbers. Most campaigns need one.')).toBeTruthy();
+  });
+
+  it('spaces an Indian number and marks the default', () => {
+    render(<CallerIdPicker layout="cards" selected={['+912200000001']} onChange={vi.fn()} carrier={SERVICE_CARRIER} />);
+    const card = screen.getByRole('checkbox', { name: '+91 22000 00001' }) as HTMLInputElement;
+    expect(card.checked).toBe(true);
+    expect(card.closest('label')?.textContent).toContain('Default');
+    expect(screen.getByText('Pick more than one to rotate numbers. Most campaigns need one.')).toBeTruthy();
+  });
+
+  it('adds and removes one number at a time, keeping the pool’s order and a number no longer available', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <CallerIdPicker layout="cards" selected={['+14155550199']} onChange={onChange} carrier={TENANT_A} carrierLabel="Acme main" />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: '+1 415 555 0104' }));
+    expect(onChange).toHaveBeenLastCalledWith(['+14155550199', '+14155550104']);
+
+    rerender(
+      <CallerIdPicker layout="cards" selected={['+14155550199', '+14155550104']} onChange={onChange} carrier={TENANT_A} carrierLabel="Acme main" />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: '+1 415 555 0104' }));
+    expect(onChange).toHaveBeenLastCalledWith(['+14155550199']);
+    // The number no longer available keeps its own row and Remove, as in the list.
+    expect(screen.getByTestId('caller-id-unavailable').textContent).toMatch(/No longer available/);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove +14155550199' }));
+    expect(onChange).toHaveBeenLastCalledWith(['+14155550104']);
+  });
+
+  it('prunes on a change of carrier, as the list does', () => {
+    const onChange = vi.fn();
+    const selected = ['+912200000001', '+14155550104'];
+    const { rerender } = render(<CallerIdPicker layout="cards" selected={selected} onChange={onChange} carrier={SERVICE_CARRIER} />);
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(<CallerIdPicker layout="cards" selected={selected} onChange={onChange} carrier={TENANT_A} />);
+    expect(onChange).toHaveBeenCalledWith(['+14155550104']);
+  });
+
+  it('keeps the empty state, under the field’s name', () => {
+    render(
+      <CallerIdPicker
+        layout="cards"
+        legend="Customers will see this number"
+        selected={[]}
+        onChange={vi.fn()}
+        carrier={{ telephony_provider: 'plivo', telephony_credential_id: '33333333-3333-4333-8333-333333333333' }}
+        carrierLabel="Acme spare"
+      />,
+    );
+    expect(screen.getByText('Customers will see this number')).toBeTruthy();
+    expect(screen.getByText('No numbers on Pravah (Acme spare) are assigned to this account.')).toBeTruthy();
+    expect(screen.queryByTestId('caller-id-cards')).toBeNull();
+  });
+
+  it('leaves the list layout as it was by default', () => {
+    render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={SERVICE_CARRIER} />);
+    expect(screen.queryByTestId('caller-id-cards')).toBeNull();
+    expect(shown()).toEqual([expect.stringContaining('+912200000001')]);
   });
 });

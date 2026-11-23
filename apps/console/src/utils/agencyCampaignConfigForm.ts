@@ -83,9 +83,10 @@ export function slugifyCode(label: string): string {
  * `suppress` + `terminal` pair, or a `requires_datetime` with nothing to
  * schedule against, is invisible until it is stated as a whole.
  *
- * The contact's fate is stated ALWAYS, including the plain case — "stays in
- * the queue" is a real outcome, and an absent sentence reads as "nothing
- * happens", which is not the same thing.
+ * The contact's fate is stated ALWAYS, including the plain case. A plain outcome (no
+ * retry, callback, terminal or suppress, or a retry of 0 tries) finishes the contact on the
+ * server (`resolveDispositionDecision` in `apps/server/src/agency/disposition-policy.ts`:
+ * `completed`, no next attempt), and an absent sentence would read as "nothing happens".
  */
 export function dispositionSummary(entry: AgencyDispositionEntry): string {
   const asks: string[] = [];
@@ -113,7 +114,7 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
     const days = entry.promise_follow_up_days;
     parts.push(`We call the contact ${days} day${days === 1 ? '' : 's'} after the promised date, in calling hours.`);
   } else {
-    parts.push('The contact stays in the queue with its remaining attempts.');
+    parts.push('The contact is finished on this campaign — no follow-up call.');
   }
 
   if (entry.requires_promise && !entry.promise_follow_up_days) {

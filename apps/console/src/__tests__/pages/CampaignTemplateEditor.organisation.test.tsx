@@ -73,6 +73,8 @@ describe('the organisation template editor', () => {
     );
     await act(async () => {});
     await act(async () => {});
+    // The campaign steps as tabs, less Customers and Name & number: it holds no numbers (CS21, CT15).
+    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual(['Purpose & buttons', 'Agents & timing']);
     fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'For everyone' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
