@@ -854,8 +854,9 @@ columns). Three definitions were added: `outbound_connect_rate`, `inbound_calls`
 
 - Contracts: `agency/campaign-stats.ts` (`AgencyInboundCampaignCounts`, the soft phone's
   `talk_seconds`, `/stats` `inbound`), `api/agency/insights.ts` (`calls.inbound`,
-  `outcomes_by_type`), `api/agency/call-log.ts` (the table's words: the rate labels, "not
-  added", "Outbound connect rate", the footnote), `reports/dataset.ts` (the definition keys).
+  `outcomes_by_type`), `api/agency/call-log.ts` (the table itself, `agencyCallsByType`: the
+  columns and the All calls sums, built once for the console and the report, each passing its
+  own rates; and its words: the rate labels, "not added", "Outbound connect rate", the footnote), `reports/dataset.ts` (the definition keys).
 - Server: `db/repositories/agency/inbound-campaign-sql.ts`, `sql-fragments.ts` (the shared row
   rule), `insights-reads.repository.ts` (`inboundCalls`, `outcomesByType`),
   `agency/insights/activity.ts`, `db/repositories/agency/campaign-stats.ts`,

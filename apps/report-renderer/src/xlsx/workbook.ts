@@ -20,7 +20,7 @@ import type {
   ReportDetailFile,
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
-import { AGENCY_CALLS_BY_TYPE_RATE_LABELS, AGENCY_OUTBOUND_CONNECT_RATE_LABEL } from '@magick-agency/contracts/reports';
+import { AGENCY_CALL_LOG_TYPE_LABELS, AGENCY_CALLS_BY_TYPE_RATE_LABELS, AGENCY_OUTBOUND_CONNECT_RATE_LABEL } from '@magick-agency/contracts/reports';
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, unknownUser, type Rate } from '../format';
 import { definitionText as def } from '../definitions';
 import type { DetailReader } from '../io';
@@ -382,7 +382,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Conversations', value: calls.conversations, type: 'int' },
     { metric: 'People reached', value: calls.human_connects, type: 'int' },
     // "Dialler connect rate" where another type's rows follow (SR1).
-    { metric: byType ? 'Dialler connect rate' : 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
+    { metric: byType ? AGENCY_CALLS_BY_TYPE_RATE_LABELS.dialler : 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: calls.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(success), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Answered', value: answered, type: 'int' },
@@ -430,7 +430,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
         { metric: 'All call types: calls', value: byType.all.calls, type: 'int' as const, definition: def(d, 'calls_by_type') },
         { metric: 'All call types: connected', value: byType.all.connected, type: 'int' as const },
         { metric: 'All call types: people reached', value: byType.all.reached, type: 'int' as const },
-        { metric: 'All call types: talk time', value: byType.all.talkSeconds, type: 'duration_s' as const },
+        { metric: 'All call types: talk time', value: byType.all.talk_seconds, type: 'duration_s' as const },
       ]
       : []),
   ]);
@@ -479,17 +479,17 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
       { header: 'Success', type: 'bool' },
       // The dialler's conversations and their share of the dialler's. Named as the dialler's
       // where the other types' columns follow, as the PDF's table.
-      { header: typed ? 'Dialler' : 'Conversations', type: 'int' },
+      { header: typed ? AGENCY_CALL_LOG_TYPE_LABELS.dialler : 'Conversations', type: 'int' },
       { header: typed ? 'Share of dialler' : 'Share', type: 'percent' },
       // By type, where the report shows more than the dialler (CL28): the same outcome on the
       // soft-phone and inbound calls, and the columns added.
-      ...(typed ? typed.columns.filter((c) => c.key !== 'dialler').map((c) => ({ header: c.label, type: 'int' as const })) : []),
+      ...(typed ? typed.columns.filter((c) => c.type !== 'dialler').map((c) => ({ header: c.label, type: 'int' as const })) : []),
       ...(typed ? [{ header: 'Total', type: 'int' as const }] : []),
     ],
     outcomeRows.map((o) => [
       o.label ?? (o.code === null ? 'No outcome written' : `${o.code} (retired)`), o.code, o.is_success, o.dialler, share(o.dialler, calls.conversations),
-      ...(typed ? typed.columns.filter((c) => c.key !== 'dialler').map((c) => o[c.key]) : []),
-      ...(typed ? [typed.columns.reduce((sum, c) => sum + o[c.key], 0)] : []),
+      ...(typed ? typed.columns.filter((c) => c.type !== 'dialler').map((c) => o[c.type]) : []),
+      ...(typed ? [o.total] : []),
     ]),
     { zone },
   );

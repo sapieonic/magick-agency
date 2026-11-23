@@ -436,16 +436,7 @@ export function outboundConnectRateReadout(stats: AgencyCampaignStats | null): P
 
 // ── Inbound beside both (call log P4, CL7, CL25) ────────────────────────────
 
-/**
- * Whether the card shows the inbound calls filed under the campaign (SR5's rule on inbound):
- * while inbound is on for the account, or whenever the campaign holds any. Never when the
- * payload does not carry them (an older server).
- */
-export function showsInbound(stats: AgencyCampaignStats | null, inboundEnabled: boolean): boolean {
-  const inbound = stats?.inbound;
-  if (!inbound) return false;
-  return inboundEnabled || inbound.received > 0 || inbound.open_follow_ups > 0;
-}
+// Whether the card shows them is Insights' own rule (`showInboundFigures`, `insights/rates.ts`).
 
 /**
  * Inbound's answer rate on this campaign: the calls an agent answered over the calls that

@@ -5,10 +5,10 @@ import type {
   AgencyInsightsRoster,
 } from '../../../types/agency-insights';
 import {
-  AGENCY_CALL_LOG_TYPE_LABELS,
-  AGENCY_CALLS_BY_TYPE_RATE_LABELS,
+  agencyCallsByType,
   agencyCallsByTypeFootnote,
-  type AgencyCallLogType,
+  type AgencyCallsByTypeColumn,
+  type AgencyCallsByTypeTable,
 } from '../../../types/agency-call-log';
 import { pct } from '../../format/number';
 
@@ -191,7 +191,10 @@ export type InboundCounts = AgencyInsightsCalls['inbound'];
  * missed calls still to follow up: those are owed whatever the dates (CL27), so a range with no
  * inbound call must not hide them. Never when the counts were not served (an older server).
  */
-export function showInboundFigures(enabled: boolean, counts: InboundCounts | null | undefined): counts is InboundCounts {
+export function showInboundFigures<C extends Pick<InboundCounts, 'received' | 'open_follow_ups'>>(
+  enabled: boolean,
+  counts: C | null | undefined,
+): counts is C {
   if (!counts) return false;
   return enabled || counts.received > 0 || counts.open_follow_ups > 0;
 }
@@ -206,28 +209,10 @@ export function inboundAnswerRate(counts: Pick<InboundCounts, 'answered' | 'open
 }
 
 /** One call type's column of the Calls by type table. */
-export interface CallsByTypeColumn {
-  type: AgencyCallLogType;
-  /** "Dialler", "Soft phone", "Inbound": the Call log's words. */
-  label: string;
-  calls: number;
-  /** What a call of the type is: "dialled" or "received". */
-  callsWord: 'dialled' | 'received';
-  connected: number;
-  reached: number;
-  /** Null when the server did not serve the type's talk time (an older server): a dash. */
-  talk_seconds: number | null;
-  /** Only inbound has calls we missed, and calls still to follow up (as of now, whatever the range). */
-  missed: number | null;
-  open_follow_ups: number | null;
-  rate: InsightsRate;
-  rateLabel: string;
-}
+export type CallsByTypeColumn = AgencyCallsByTypeColumn<InsightsRate>;
 
 /** The Calls by type table: a column per type shown, and All calls, the counts added. */
-export interface CallsByType {
-  columns: CallsByTypeColumn[];
-  all: { calls: number; connected: number; reached: number; talk_seconds: number; missed: number | null };
+export interface CallsByType extends AgencyCallsByTypeTable<InsightsRate> {
   /** The dialler and the soft phone together, when the soft phone shows; never inbound (CL7). */
   outbound: OutboundCounts | null;
   footnote: string;
@@ -236,7 +221,8 @@ export interface CallsByType {
 /**
  * A campaign's calls by type (`docs/call-log.md` §6), or null when only the dialler shows: the
  * page is then exactly what it was. Counts, people reached and talk time add up across types.
- * **No rate does**: each type keeps its own, and All calls has none.
+ * **No rate does**: each type keeps its own, and All calls has none. The table is the
+ * contract's (`agencyCallsByType`, shared with the report), with this page's rates.
  *
  * One row is one call of one type, the Call log's own rows: the Dialler column is the dials
  * (the Dials figure), Soft phone the calls placed and logged to the campaign, Inbound the calls
@@ -248,64 +234,35 @@ export function callsByType(
   inbound: InboundCounts | null,
 ): CallsByType | null {
   if (!softphone && !inbound) return null;
-  const columns: CallsByTypeColumn[] = [
-    {
-      type: 'dialler',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.dialler,
+  const table = agencyCallsByType<InsightsRate>({
+    dialler: {
       calls: calls.dials,
-      callsWord: 'dialled',
       connected: calls.connected,
       reached: calls.human_connects,
       talk_seconds: calls.talk_seconds,
-      missed: null,
-      open_follow_ups: null,
       rate: callsConnectRate(calls),
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.dialler,
     },
-  ];
-  if (softphone) {
-    columns.push({
-      type: 'soft_phone',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.soft_phone,
+    soft_phone: softphone && {
       calls: softphone.placed,
-      callsWord: 'dialled',
       connected: softphone.connected,
       reached: softphone.human_connects,
       talk_seconds: typeof softphone.talk_seconds === 'number' ? softphone.talk_seconds : null,
-      missed: null,
-      open_follow_ups: null,
       rate: softphoneConnectRate(softphone),
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.soft_phone,
-    });
-  }
-  if (inbound) {
-    columns.push({
-      type: 'inbound',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.inbound,
+    },
+    inbound: inbound && {
       calls: inbound.received,
-      callsWord: 'received',
       connected: inbound.answered,
       reached: inbound.answered,
       talk_seconds: inbound.talk_seconds,
       missed: inbound.missed,
       open_follow_ups: inbound.open_follow_ups,
       rate: inboundAnswerRate(inbound),
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.inbound,
-    });
-  }
-  const sum = (pick: (c: CallsByTypeColumn) => number) => columns.reduce((total, c) => total + pick(c), 0);
-  return {
-    columns,
-    all: {
-      calls: sum((c) => c.calls),
-      connected: sum((c) => c.connected),
-      reached: sum((c) => c.reached),
-      // The types whose talk time is known: an unknown one is a dash in its column, not a 0 here.
-      talk_seconds: sum((c) => c.talk_seconds ?? 0),
-      missed: inbound ? inbound.missed : null,
     },
+  });
+  return {
+    ...table,
     outbound: softphone ? outboundCounts(calls, softphone) : null,
-    footnote: agencyCallsByTypeFootnote(columns.map((c) => c.type)),
+    footnote: agencyCallsByTypeFootnote(table.columns.map((c) => c.type)),
   };
 }
 

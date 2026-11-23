@@ -3,10 +3,9 @@
  * cannot disagree.
  */
 import {
-  AGENCY_CALL_LOG_TYPE_LABELS,
-  AGENCY_CALLS_BY_TYPE_RATE_LABELS,
-  agencyCallsByTypeFootnote,
+  agencyCallsByType,
   type AccountReportFigures,
+  type AgencyCallsByTypeTable,
   type AgentReviewDataset,
   type CampaignReportDataset,
 } from '@magick-agency/contracts/reports';
@@ -168,35 +167,15 @@ export function campaignInboundFigures(d: CampaignReportDataset): CampaignInboun
   };
 }
 
-/** One call type's column of the Calls by type table. */
-export interface CallsByTypeColumn {
-  key: 'dialler' | 'soft_phone' | 'inbound';
-  /** "Dialler", "Soft phone", "Inbound": the Call log's words. */
-  label: string;
-  calls: number;
-  /** What a call of the type is: "dialled" or "received". */
-  callsWord: 'dialled' | 'received';
-  connected: number;
-  reached: number;
-  /** Null when the dataset does not carry the type's talk time (an older server): a dash. */
-  talkSeconds: number | null;
-  /** Only inbound has calls we missed. */
-  missed: number | null;
-  openFollowUps: number | null;
-  rate: Rate;
-  rateLabel: string;
-}
-
 /**
  * The campaign's calls by type (`docs/call-log.md` §6): one column per type the report shows,
- * and All calls, the counts added. `null` when only the dialler has calls to show: the report
- * then prints the figures it always did. Counts, people reached and talk time add up; **no rate is added**
- * (CL7): each type's rate measures a different thing. One gate for the PDF and the workbook.
+ * and All calls, the counts added (the contract's table, `agencyCallsByType`, shared with the
+ * console's Insights, with this report's rates). `null` when only the dialler has calls to
+ * show: the report then prints the figures it always did. Counts, people reached and talk time
+ * add up; **no rate is added** (CL7): each type's rate measures a different thing. One gate for
+ * the PDF and the workbook.
  */
-export interface CampaignCallsByType {
-  columns: CallsByTypeColumn[];
-  /** The counts added. `talkSeconds` adds the types whose talk time is known. */
-  all: { calls: number; connected: number; reached: number; talkSeconds: number; missed: number | null };
+export interface CampaignCallsByType extends AgencyCallsByTypeTable<Rate> {
   soft: CampaignSoftphoneFigures | null;
   inbound: CampaignInboundFigures | null;
 }
@@ -206,70 +185,33 @@ export function campaignCallsByType(d: CampaignReportDataset): CampaignCallsByTy
   const inbound = campaignInboundFigures(d);
   if (!soft && !inbound) return null;
   const calls = d.activity.calls;
-  const columns: CallsByTypeColumn[] = [
-    {
-      key: 'dialler',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.dialler,
+  const table = agencyCallsByType<Rate>({
+    dialler: {
       calls: calls.dials,
-      callsWord: 'dialled',
       connected: calls.connected,
       reached: calls.human_connects,
-      talkSeconds: calls.talk_seconds,
-      missed: null,
-      openFollowUps: null,
+      talk_seconds: calls.talk_seconds,
       rate: campaignFigures(d).connect,
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.dialler,
     },
-  ];
-  if (soft) {
-    columns.push({
-      key: 'soft_phone',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.soft_phone,
+    soft_phone: soft && {
       calls: soft.placed,
-      callsWord: 'dialled',
       connected: soft.connected,
       reached: soft.humanConnects,
-      talkSeconds: soft.talkSeconds,
-      missed: null,
-      openFollowUps: null,
+      talk_seconds: soft.talkSeconds,
       rate: soft.connect,
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.soft_phone,
-    });
-  }
-  if (inbound) {
-    columns.push({
-      key: 'inbound',
-      label: AGENCY_CALL_LOG_TYPE_LABELS.inbound,
+    },
+    inbound: inbound && {
       calls: inbound.received,
-      callsWord: 'received',
       connected: inbound.answered,
       // A caller an agent answered is a person reached: nobody rings us by machine.
       reached: inbound.answered,
-      talkSeconds: inbound.talkSeconds,
+      talk_seconds: inbound.talkSeconds,
       missed: inbound.missed,
-      openFollowUps: inbound.openFollowUps,
+      open_follow_ups: inbound.openFollowUps,
       rate: inbound.answer,
-      rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS.inbound,
-    });
-  }
-  const sum = (pick: (c: CallsByTypeColumn) => number) => columns.reduce((s, c) => s + pick(c), 0);
-  return {
-    columns,
-    all: {
-      calls: sum((c) => c.calls),
-      connected: sum((c) => c.connected),
-      reached: sum((c) => c.reached),
-      talkSeconds: sum((c) => c.talkSeconds ?? 0),
-      missed: inbound ? inbound.missed : null,
     },
-    soft,
-    inbound,
-  };
-}
-
-/** The footnote under the Calls by type table, for the types it shows. */
-export function callsByTypeFootnote(t: CampaignCallsByType): string {
-  return agencyCallsByTypeFootnote(t.columns.map((c) => c.key));
+  });
+  return { ...table, soft, inbound };
 }
 
 /** One outcome of the campaign on each call type; a type the report does not show counts 0. */
@@ -280,6 +222,8 @@ export interface CampaignOutcomeRow {
   dialler: number;
   soft_phone: number;
   inbound: number;
+  /** The three added: what the rows are sorted by, and the Total column. */
+  total: number;
 }
 
 /**
@@ -291,20 +235,22 @@ export interface CampaignOutcomeRow {
 export function campaignOutcomeRows(d: CampaignReportDataset, typed: CampaignCallsByType | null): CampaignOutcomeRow[] {
   const byType = d.activity.outcomes_by_type;
   if (!typed || !byType) {
-    return d.activity.outcomes.map((o) => ({ code: o.code, label: o.label, is_success: o.is_success, dialler: o.count, soft_phone: 0, inbound: 0 }));
+    return d.activity.outcomes.map((o) => ({
+      code: o.code, label: o.label, is_success: o.is_success, dialler: o.count, soft_phone: 0, inbound: 0, total: o.count,
+    }));
   }
-  const shown = new Set(typed.columns.map((c) => c.key));
+  const shown = new Set(typed.columns.map((c) => c.type));
   return byType
-    .map((o) => ({
-      code: o.code,
-      label: o.label,
-      is_success: o.is_success,
-      dialler: o.dialler,
-      soft_phone: shown.has('soft_phone') ? o.soft_phone : 0,
-      inbound: shown.has('inbound') ? o.inbound : 0,
-    }))
-    .filter((o) => o.dialler + o.soft_phone + o.inbound > 0)
-    .sort((a, b) => (b.dialler + b.soft_phone + b.inbound) - (a.dialler + a.soft_phone + a.inbound));
+    .map((o) => {
+      const softPhone = shown.has('soft_phone') ? o.soft_phone : 0;
+      const inbound = shown.has('inbound') ? o.inbound : 0;
+      return {
+        code: o.code, label: o.label, is_success: o.is_success,
+        dialler: o.dialler, soft_phone: softPhone, inbound, total: o.dialler + softPhone + inbound,
+      };
+    })
+    .filter((o) => o.total > 0)
+    .sort((a, b) => b.total - a.total);
 }
 
 /** One campaign row's or the account totals' figures, rates recomputed from the counts. */

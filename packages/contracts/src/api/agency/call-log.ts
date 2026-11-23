@@ -122,6 +122,89 @@ export function agencyCallsByTypeFootnote(types: readonly AgencyCallLogType[]): 
   return `All calls adds the ${howMany ? `${howMany} ` : ''}types. Each call is counted once, under the type it was. Rates are not added together: ${list}.`;
 }
 
+/** One call type's counts and its own rate, as a Calls by type table takes them ({@link agencyCallsByType}). */
+export interface AgencyCallsByTypeCounts<R> {
+  calls: number;
+  connected: number;
+  /** People reached. */
+  reached: number;
+  /** Null when the type's talk time is not known (an older server): a dash. */
+  talk_seconds: number | null;
+  /** The type's own rate, in whatever form the surface shows a rate (each applies its own floor). */
+  rate: R;
+}
+
+/** One call type's column of a Calls by type table. */
+export interface AgencyCallsByTypeColumn<R> extends AgencyCallsByTypeCounts<R> {
+  type: AgencyCallLogType;
+  /** "Dialler", "Soft phone", "Inbound": the Call log's words. */
+  label: string;
+  /** What a call of the type is: "dialled" or "received". */
+  callsWord: 'dialled' | 'received';
+  /** Only inbound has calls we missed, and calls still to follow up (as of now, whatever the range). */
+  missed: number | null;
+  open_follow_ups: number | null;
+  rateLabel: string;
+}
+
+/** A Calls by type table: a column per type shown, and All calls, the counts added. */
+export interface AgencyCallsByTypeTable<R> {
+  columns: Array<AgencyCallsByTypeColumn<R>>;
+  /** The counts added. `talk_seconds` adds the types whose talk time is known. */
+  all: { calls: number; connected: number; reached: number; talk_seconds: number; missed: number | null };
+}
+
+/**
+ * A campaign's Calls by type table (`docs/call-log.md` §6), built once for the console's
+ * Insights and the report: the dialler's column, then the soft phone's and inbound's when the
+ * surface shows them (null: not shown). Counts, people reached and talk time add up across the
+ * types. **No rate does** (CL7): each type keeps its own, as the caller computed it, and All
+ * calls has none.
+ *
+ * One row is one call of one type, the Call log's own rows. On inbound, `connected` and
+ * `reached` are both the calls an agent answered: a caller an agent answered is a person
+ * reached (nobody rings us by machine).
+ */
+export function agencyCallsByType<R>(types: {
+  dialler: AgencyCallsByTypeCounts<R>;
+  soft_phone: AgencyCallsByTypeCounts<R> | null;
+  inbound: (AgencyCallsByTypeCounts<R> & { missed: number; open_follow_ups: number }) | null;
+}): AgencyCallsByTypeTable<R> {
+  const column = (
+    type: AgencyCallLogType,
+    counts: AgencyCallsByTypeCounts<R>,
+    missed: number | null,
+    openFollowUps: number | null,
+  ): AgencyCallsByTypeColumn<R> => ({
+    type,
+    label: AGENCY_CALL_LOG_TYPE_LABELS[type],
+    calls: counts.calls,
+    callsWord: type === 'inbound' ? 'received' : 'dialled',
+    connected: counts.connected,
+    reached: counts.reached,
+    talk_seconds: counts.talk_seconds,
+    missed,
+    open_follow_ups: openFollowUps,
+    rate: counts.rate,
+    rateLabel: AGENCY_CALLS_BY_TYPE_RATE_LABELS[type],
+  });
+  const columns = [column('dialler', types.dialler, null, null)];
+  if (types.soft_phone) columns.push(column('soft_phone', types.soft_phone, null, null));
+  if (types.inbound) columns.push(column('inbound', types.inbound, types.inbound.missed, types.inbound.open_follow_ups));
+  const sum = (pick: (c: AgencyCallsByTypeColumn<R>) => number) => columns.reduce((total, c) => total + pick(c), 0);
+  return {
+    columns,
+    all: {
+      calls: sum((c) => c.calls),
+      connected: sum((c) => c.connected),
+      reached: sum((c) => c.reached),
+      // The types whose talk time is known: an unknown one is a dash in its column, not a 0 here.
+      talk_seconds: sum((c) => c.talk_seconds ?? 0),
+      missed: types.inbound ? types.inbound.missed : null,
+    },
+  };
+}
+
 /**
  * The words for an outcome code no campaign's list can hold, where a table of outcomes would
  * otherwise print the raw code. `no_disposition` is what the server stamps on a call whose

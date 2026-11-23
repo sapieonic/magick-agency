@@ -5,9 +5,11 @@
  * the counts beside it and withheld below `floors.campaign_rate_min_first_dials` (RP9).
  */
 import type { ReactNode } from 'react';
-import { AGENCY_CALLS_BY_TYPE_NO_RATE, AGENCY_OUTBOUND_CONNECT_RATE_LABEL, type CampaignReportDataset } from '@magick-agency/contracts/reports';
+import {
+  AGENCY_CALLS_BY_TYPE_NO_RATE, AGENCY_OUTBOUND_CONNECT_RATE_LABEL, agencyCallsByTypeFootnote, type CampaignReportDataset,
+} from '@magick-agency/contracts/reports';
 import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, unknownUser } from '../../format';
-import { callsByTypeFootnote, campaignCallsByType, campaignFigures, campaignOutcomeRows, recordingShare, type CampaignCallsByType } from '../../rates';
+import { campaignCallsByType, campaignFigures, campaignOutcomeRows, recordingShare, type CampaignCallsByType } from '../../rates';
 import { HourColumns, StackedColumns, tickEvery } from '../charts';
 import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
@@ -88,7 +90,7 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
         // With the types' columns the table holds more than the dialler's conversations: say
         // how many across the types, and whose the share is.
         aside={typed
-          ? `${count(outcomeRows.reduce((sum, o) => sum + typed.columns.reduce((n, c) => n + o[c.key], 0), 0))} conversations across the call types; share is of the dialler’s ${count(conversations)}`
+          ? `${count(outcomeRows.reduce((sum, o) => sum + o.total, 0))} conversations across the call types; share is of the dialler’s ${count(conversations)}`
           : `over ${count(conversations)} conversations`}
         id="outcomes"
       >
@@ -104,7 +106,7 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
                   <th>Outcome</th>
                   <th className="num">Dialler</th>
                   <th className="num">Share of dialler</th>
-                  {typed.columns.filter((c) => c.key !== 'dialler').map((c) => <th key={c.key} className="num">{c.label}</th>)}
+                  {typed.columns.filter((c) => c.type !== 'dialler').map((c) => <th key={c.type} className="num">{c.label}</th>)}
                   <th className="num">Total</th>
                 </tr>
               </thead>
@@ -117,8 +119,8 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
                     </td>
                     <td className="num">{count(o.dialler)}</td>
                     <td className="num">{conversations > 0 ? pct((o.dialler / conversations) * 100) : '—'}</td>
-                    {typed.columns.filter((c) => c.key !== 'dialler').map((c) => <td key={c.key} className="num">{count(o[c.key])}</td>)}
-                    <td className="num">{count(typed.columns.reduce((sum, c) => sum + o[c.key], 0))}</td>
+                    {typed.columns.filter((c) => c.type !== 'dialler').map((c) => <td key={c.type} className="num">{count(o[c.type])}</td>)}
+                    <td className="num">{count(o.total)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -203,37 +205,37 @@ function CallsByType({ t }: { t: CampaignCallsByType }) {
         <thead>
           <tr>
             <th />
-            {t.columns.map((c) => <th key={c.key} className="num">{c.label}</th>)}
+            {t.columns.map((c) => <th key={c.type} className="num">{c.label}</th>)}
             <th className="num">All calls</th>
           </tr>
         </thead>
         <tbody>
           <tr data-row="calls">
             <td>Calls</td>
-            {t.columns.map((c) => <td key={c.key} className="num">{count(c.calls)} {c.callsWord}</td>)}
+            {t.columns.map((c) => <td key={c.type} className="num">{count(c.calls)} {c.callsWord}</td>)}
             <td className="num">{count(t.all.calls)}</td>
           </tr>
           <tr data-row="connected">
             <td>Connected</td>
-            {t.columns.map((c) => <td key={c.key} className="num">{count(c.connected)}{c.key === 'inbound' ? ' answered' : ''}</td>)}
+            {t.columns.map((c) => <td key={c.type} className="num">{count(c.connected)}{c.type === 'inbound' ? ' answered' : ''}</td>)}
             <td className="num">{count(t.all.connected)}</td>
           </tr>
           <tr data-row="reached">
             <td>Reached a person</td>
-            {t.columns.map((c) => <td key={c.key} className="num">{count(c.reached)}</td>)}
+            {t.columns.map((c) => <td key={c.type} className="num">{count(c.reached)}</td>)}
             <td className="num">{count(t.all.reached)}</td>
           </tr>
           <tr data-row="talk">
             <td>Talk time</td>
-            {t.columns.map((c) => <td key={c.key} className="num">{c.talkSeconds === null ? NA : duration(c.talkSeconds)}</td>)}
-            <td className="num">{duration(t.all.talkSeconds)}</td>
+            {t.columns.map((c) => <td key={c.type} className="num">{c.talk_seconds === null ? NA : duration(c.talk_seconds)}</td>)}
+            <td className="num">{duration(t.all.talk_seconds)}</td>
           </tr>
           {t.all.missed !== null ? (
             <tr data-row="missed">
               <td>Missed by us</td>
               {t.columns.map((c) => (
-                <td key={c.key} className="num">
-                  {c.missed === null ? NA : <>{count(c.missed)} <span className="muted">({count(c.openFollowUps ?? 0)} to follow up)</span></>}
+                <td key={c.type} className="num">
+                  {c.missed === null ? NA : <>{count(c.missed)} <span className="muted">({count(c.open_follow_ups ?? 0)} to follow up)</span></>}
                 </td>
               ))}
               <td className="num">{count(t.all.missed)}</td>
@@ -242,7 +244,7 @@ function CallsByType({ t }: { t: CampaignCallsByType }) {
           <tr data-row="rate">
             <td>Rate</td>
             {t.columns.map((c) => (
-              <td key={c.key} className="num">
+              <td key={c.type} className="num">
                 <b>{rateText(c.rate)}</b>
                 <br />
                 <span className="muted">{c.rateLabel}</span>
@@ -253,7 +255,7 @@ function CallsByType({ t }: { t: CampaignCallsByType }) {
         </tbody>
       </table>
       <p className="small muted" style={{ marginTop: 5 }} data-testid="calls-by-type-note">
-        {callsByTypeFootnote(t)}
+        {agencyCallsByTypeFootnote(t.columns.map((c) => c.type))}
         {t.inbound ? ' To follow up counts the campaign’s missed calls still owed a call back when this report was made, whatever the window.' : ''}
       </p>
       {soft ? (

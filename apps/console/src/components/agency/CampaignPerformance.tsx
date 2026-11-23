@@ -8,13 +8,13 @@ import {
   handledCallCost,
   segmentShareText,
   inboundAnswerRateReadout,
-  showsInbound,
   showsSoftphone,
   softphoneConnectRateReadout,
   wrapupReadout,
   type ConnectsSegment,
   type PerformanceReadout,
 } from '../../utils/agencyCampaignPerformance';
+import { showInboundFigures } from '../../utils/agency/insights/rates';
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
 import { AGENCY_CALLS_BY_TYPE_RATE_LABELS, AGENCY_OUTBOUND_CONNECT_RATE_LABEL } from '../../types/agency-call-log';
 import { formatCount, plural } from '../../utils/format/number';
@@ -210,7 +210,7 @@ export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = f
   // The soft phone's tagged calls beside the dialler's rate, never in it (SR1, SR5).
   const soft = showsSoftphone(stats, softphoneEnabled);
   // The inbound calls filed under it, beside both and in no connect rate (CL7).
-  const inbound = showsInbound(stats, inboundEnabled);
+  const inbound = showInboundFigures(inboundEnabled, stats?.inbound);
   const conversionRate = conversionRateReadout(stats);
   const handleTime = handleTimeReadout(stats);
   const wrapup = wrapupReadout(stats, wrapupSeconds);

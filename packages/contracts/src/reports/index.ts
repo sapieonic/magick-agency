@@ -29,14 +29,18 @@ export {
   type ReportKind,
 } from '../api/agency/reports';
 
-// The Calls by type table's words, shared with the console's Insights (`docs/call-log.md` §6).
+// The Calls by type table and its words, shared with the console's Insights (`docs/call-log.md` §6).
 export {
   AGENCY_CALL_LOG_TYPE_LABELS,
   AGENCY_CALLS_BY_TYPE_NO_RATE,
   AGENCY_CALLS_BY_TYPE_RATE_LABELS,
   AGENCY_OUTBOUND_CONNECT_RATE_LABEL,
+  agencyCallsByType,
   agencyCallsByTypeFootnote,
   type AgencyCallLogType,
+  type AgencyCallsByTypeColumn,
+  type AgencyCallsByTypeCounts,
+  type AgencyCallsByTypeTable,
 } from '../api/agency/call-log';
 
 /** Every dataset, discriminated on `kind`. */
