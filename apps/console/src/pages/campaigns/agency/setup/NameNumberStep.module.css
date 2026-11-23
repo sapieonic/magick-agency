@@ -28,3 +28,14 @@
   gap: 8px;
   min-width: 0;
 }
+
+/* Where the numbers came from (a template's chip and Reset, CS18), at the head of the block. */
+.sectionSource {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.sectionSource:empty {
+  display: none;
+}

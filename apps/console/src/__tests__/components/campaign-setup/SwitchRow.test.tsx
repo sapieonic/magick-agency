@@ -67,6 +67,29 @@ describe('SwitchRow', () => {
   });
 });
 
+describe('SwitchRow badge', () => {
+  it('sits beside the label, outside it, so pressing it never flips the switch', () => {
+    const onChange = vi.fn();
+    const onBadge = vi.fn();
+    render(
+      <SwitchRow
+        label="Record calls"
+        checked={false}
+        onChange={onChange}
+        testId="record-row"
+        badge={<button type="button" onClick={onBadge}>Reset</button>}
+      />,
+    );
+    const badge = screen.getByRole('button', { name: 'Reset' });
+    expect(badge.closest('label')).toBeNull();
+    fireEvent.click(badge);
+    expect(onBadge).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+    // The switch is still named by the label alone.
+    expect(screen.getByRole('switch', { name: 'Record calls' })).toBeTruthy();
+  });
+});
+
 describe('Switch', () => {
   it('turns off when on', () => {
     const onChange = vi.fn();

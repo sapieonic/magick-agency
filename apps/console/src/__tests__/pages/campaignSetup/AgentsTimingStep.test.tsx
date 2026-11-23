@@ -430,3 +430,45 @@ describe('readyLine', () => {
     );
   });
 });
+
+describe('what the page brings: each section’s source at its block (CS18)', () => {
+  const SOURCES = ['hours', 'retries', 'wrapup', 'recording', 'agent_screen', 'safety', 'assignment', 'inbound', 'breaks', 'outcomes', 'numbers'] as const;
+  const sectionSources = Object.fromEntries(SOURCES.map((key) => [key, <span data-testid={`src-${key}`}>{key}</span>]));
+  const inside = (testId: string, key: string) =>
+    within(screen.getByTestId(testId)).getAllByTestId(`src-${key}`).length;
+
+  it('places each one in the block that edits its section, and none for a section of another step', () => {
+    renderStep({
+      props: {
+        sectionSources,
+        assignment: { modeLocked: false },
+        inbound: true,
+        breakLimits: <div data-testid="break-limits">Break limits</div>,
+      },
+    });
+    expect(inside('when-to-call', 'hours')).toBe(1);
+    expect(inside('unanswered-rule', 'retries')).toBe(1);
+    expect(inside('wrapup-row', 'wrapup')).toBe(1);
+    expect(inside('record-row', 'recording')).toBe(1);
+    expect(inside('summary-row', 'recording')).toBe(1);
+    expect(inside('phone-display-row', 'agent_screen')).toBe(1);
+    expect(inside('daily-target-row', 'agent_screen')).toBe(1);
+    fireEvent.click(fold().querySelector('summary')!);
+    expect(inside('sourced-retries', 'retries')).toBe(1);
+    expect(inside('sourced-safety', 'safety')).toBe(1);
+    expect(inside('sourced-assignment', 'assignment')).toBe(1);
+    expect(inside('sourced-inbound', 'inbound')).toBe(1);
+    expect(inside('sourced-breaks', 'breaks')).toBe(1);
+    expect(within(screen.getByTestId('sourced-breaks')).getByTestId('break-limits')).toBeTruthy();
+    // The buttons and the numbers are other steps'.
+    expect(screen.queryByTestId('src-outcomes')).toBeNull();
+    expect(screen.queryByTestId('src-numbers')).toBeNull();
+  });
+
+  it('wraps nothing without them', () => {
+    renderStep({ props: { breakLimits: <div data-testid="break-limits">Break limits</div> } });
+    expect(screen.queryByTestId(/^sourced-/)).toBeNull();
+    expect(screen.queryByTestId(/^src-/)).toBeNull();
+  });
+});
+

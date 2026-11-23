@@ -155,3 +155,17 @@ describe('NameNumberStep (CS1, step 1)', () => {
     expect(screen.getByText('Pick at least one number.').hasAttribute('data-field-error')).toBe(true);
   });
 });
+
+describe('NameNumberStep: a section’s source (CS18)', () => {
+  it('puts the numbers’ source at the head of the numbers block, and shows nothing without one', () => {
+    renderStep({ sectionSources: { numbers: <span data-testid="numbers-source">Account template</span>, hours: <span data-testid="hours-source" /> } });
+    const field = screen.getByTestId('caller-id-field');
+    expect(field.contains(screen.getByTestId('numbers-source'))).toBe(true);
+    expect(field.firstElementChild?.contains(screen.getByTestId('numbers-source'))).toBe(true);
+    // A section this step does not edit is not placed.
+    expect(screen.queryByTestId('hours-source')).toBeNull();
+    cleanup();
+    renderStep();
+    expect(screen.getByTestId('caller-id-field').textContent).not.toContain('Account template');
+  });
+});

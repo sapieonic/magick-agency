@@ -98,3 +98,21 @@
   gap: 12px;
   min-width: 0;
 }
+
+/* A block under Advanced with its section's source (a template's chip and Reset, CS18) above its heading. */
+.sourced {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sourceLine {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.sourceLine:empty {
+  display: none;
+}

@@ -324,3 +324,70 @@ describe('PurposeButtonsStep: Advanced (CS13)', () => {
     expect(latest.outcomeDispositions).toEqual({ no_answer: 'rang_out' });
   });
 });
+
+describe('PurposeButtonsStep: what the page brings (CS18, templates)', () => {
+  it('puts the outcomes’ source in the buttons’ heading, and no other section’s', () => {
+    render(
+      <PurposeButtonsStep
+        config={withButtons()}
+        onChange={() => {}}
+        fieldErrors={{}}
+        mode="create"
+        sectionSources={{ outcomes: <span data-testid="outcomes-source">Built-in</span>, hours: <span data-testid="hours-source" /> }}
+      />,
+    );
+    const heading = screen.getByRole('heading', { name: 'Buttons agents will see after each call' });
+    const block = screen.getByTestId('buttons-block');
+    expect(block.contains(screen.getByTestId('outcomes-source'))).toBe(true);
+    // In the heading's row, beside the count, not among the buttons.
+    expect(heading.parentElement?.parentElement?.contains(screen.getByTestId('outcomes-source'))).toBe(true);
+    expect(screen.getByTestId('button-rows').contains(screen.getByTestId('outcomes-source'))).toBe(false);
+    expect(screen.queryByTestId('hours-source')).toBeNull();
+  });
+
+  it('forgets the old rows when the page replaces the buttons: a name no longer writes the code, and no row stays open', () => {
+    const replacement = withButtons([...collectionsStarterOutcomes(), { code: 'paid', label: 'Paid' }]);
+    function Replacing() {
+      const [config, setConfig] = useState(withButtons());
+      const [replaced, setReplaced] = useState(0);
+      latest = config;
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setConfig(replacement);
+              setReplaced((n) => n + 1);
+            }}
+          >
+            Replace from the page
+          </button>
+          <PurposeButtonsStep
+            config={config}
+            onChange={(next) => {
+              latest = next;
+              setConfig(next);
+            }}
+            fieldErrors={{}}
+            mode="create"
+            buttonsReplaced={replaced}
+          />
+        </>
+      );
+    }
+    render(<Replacing />);
+    // A new seventh button takes its code from its name while it is open.
+    fireEvent.click(screen.getByTestId('button-add'));
+    fireEvent.change(screen.getByLabelText('Button name'), { target: { value: 'Paid late' } });
+    expect(latest.dispositions[6]).toEqual({ code: 'paid_late', label: 'Paid late' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace from the page' }));
+    expect(latest.dispositions[6]).toEqual({ code: 'paid', label: 'Paid' });
+    expect(screen.queryByTestId('button-sentence-6')).toBeNull();
+    // The seventh row is the page's now: renaming it keeps its code.
+    fireEvent.click(screen.getByTestId('button-edit-6'));
+    fireEvent.change(screen.getByLabelText('Button name'), { target: { value: 'Paid in full' } });
+    expect(latest.dispositions[6]).toEqual({ code: 'paid', label: 'Paid in full' });
+  });
+});
+

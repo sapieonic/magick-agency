@@ -22,6 +22,8 @@ describe('stepForConfigField', () => {
     expect(stepForConfigField('disposition_catalog')).toBe('purpose');
     expect(stepForConfigField('disposition_catalog[4].requires_promise')).toBe('purpose');
     expect(stepForConfigField('outcome_dispositions.invalid')).toBe('purpose');
+    expect(stepForConfigField('agent_script.opening')).toBe('purpose');
+    expect(stepForConfigField('agent_script.steps[1].text')).toBe('purpose');
     expect(stepForConfigField('calling_window_start')).toBe('agents');
     expect(stepForConfigField('calling_window_end')).toBe('agents');
     expect(stepForConfigField('calling_days')).toBe('agents');

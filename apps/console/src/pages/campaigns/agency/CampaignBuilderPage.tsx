@@ -89,6 +89,11 @@ import { focusFirstFieldError } from './configFieldErrors';
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { useBuilderTemplate } from '../../../components/agency/campaignTemplates/useBuilderTemplate';
+import { StartFromPanel } from '../../../components/agency/campaignTemplates/StartFromPanel';
+import { BuilderScriptCard } from '../../../components/agency/campaignTemplates/BuilderScriptCard';
+import { sectionSourcesOf } from '../../../components/agency/campaignTemplates/SectionSource';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -99,6 +104,11 @@ import styles from './CampaignBuilderPage.module.css';
  *
  * There is no Review step: the step cards mark a step that needs fixing, the footer names the
  * step that holds a finding with a way to it, and the last step's footer reads "Ready: …".
+ *
+ * With campaign templates on (`docs/campaign-templates.md` §7, CS17–CS20), "Start from" sits above
+ * the step cards and fills every step (`useBuilderTemplate`); each section's source chip and Reset
+ * sit at the block that edits it, through the steps' `sectionSources`; a template's script is on
+ * Purpose & buttons, under the buttons. With the flag off or the read failing, none of it shows.
  *
  * Leaving with input not yet saved asks first, as campaign Settings does
  * (`useUnsavedChangesGuard`): what is typed is compared with what the server has (nothing
@@ -131,6 +141,9 @@ export const START_NEEDS_CUSTOMERS =
   'Add customers on the Customers step first: a campaign with no customers cannot start. You can save it as a draft now.';
 /** Start's reason while customers are still being added. */
 export const START_WAITS_FOR_IMPORT = 'Wait for the customers to finish being added.';
+/** Why the saves wait while a template's script does not fit (CS19, CTC10), from another step and on its own. */
+export const SCRIPT_BLOCK_ELSEWHERE = 'Change the script on Purpose & buttons before you save.';
+export const SCRIPT_BLOCK_HERE = 'Change the script below before you save.';
 
 /** A save's refusal that lives under a step's Advanced fold, so that fold is held open. */
 interface RefusedInAdvanced {
@@ -221,6 +234,11 @@ export default function CampaignBuilderPage() {
   const [agentScreen, setAgentScreen] = useState<AgentScreenForm>(NEW_AGENT_SCREEN);
   const [savedAgentScreen, setSavedAgentScreen] = useState<AgentScreenForm>(NEW_AGENT_SCREEN);
   const [breakReasons, setBreakReasons] = useState<BreakReasonsForm>(NEW_BREAK_REASONS);
+  /**
+   * Bumped when a campaign template replaced the buttons (filled in, or Reset): Purpose & buttons
+   * then forgets what it held about the old rows (`buttonsReplaced`).
+   */
+  const [buttonsReplaced, setButtonsReplaced] = useState(0);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [refusedInAdvanced, setRefusedInAdvanced] = useState<RefusedInAdvanced>(NOTHING_REFUSED);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -250,6 +268,11 @@ export default function CampaignBuilderPage() {
    * after `ensureCampaign` may have set it.
    */
   const serverBasicsRef = useRef<{ name: string; callerIds: readonly string[]; carrier: CarrierChoice } | null>(null);
+  /**
+   * The agent screen and break limits a template's create sent, for the save that follows it in
+   * the same click (its state is not read yet); cleared once a save has used it.
+   */
+  const createdWithRef = useRef<{ agentScreen?: AgentScreenForm; breakReasons?: BreakReasonsForm } | null>(null);
 
   /*
     Who calls (CS10). The ticks are the page's; they reach the campaign when a save goes
@@ -328,6 +351,52 @@ export default function CampaignBuilderPage() {
   // `undefined` is dropped from the JSON body, so the server's default applies.
   const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
 
+  /*
+    Campaign templates (`docs/campaign-templates.md` §7). With the flag on and the right to create
+    campaigns, the form opens filled in from the account's default chain and "Start from" switches
+    it; the create names the template (`template_id`, CT8). With the flag off, or either read
+    failing, nothing of it runs and the page is as it was before templates.
+  */
+  const template = useBuilderTemplate({
+    campaignId,
+    config,
+    recording,
+    callerIds,
+    chosenCarrier,
+    breakReasons,
+    agentScreen,
+    carrier,
+    recordingEnabled,
+    analyticsEnabled,
+    assignmentEnabled,
+    apply: (next, how) => {
+      if (next.config) setConfig(next.config);
+      // The flag and the call summary profile together: the template's recording section (CT5).
+      if (next.recording) setRecording(next.recording);
+      if (next.callerIds) setCallerIds(next.callerIds);
+      if ('chosenCarrier' in next) setChosenCarrier(next.chosenCarrier ?? null);
+      if (next.breakReasons) setBreakReasons(next.breakReasons);
+      if (next.agentScreen) setAgentScreen(next.agentScreen);
+      if (how.outcomes) setButtonsReplaced((n) => n + 1);
+      setConfigSaved(false);
+      const baseline = how.baseline;
+      if (baseline) {
+        initialDispositionOrderRef.current = baseline.config.dispositions.map((d) => d.code);
+        // Before a draft exists, what the template fills in is the starting point, not an edit.
+        setSavedForm((saved) => ({
+          ...saved,
+          callerIds: baseline.callerIds,
+          carrier: baseline.chosenCarrier,
+          recording: baseline.recording,
+          config: baseline.config,
+          breakReasons: baseline.breakReasons,
+        }));
+        setSavedAgentScreen(baseline.agentScreen);
+      }
+    },
+    onReadFailed: (message) => setError(message),
+  });
+
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
     if (campaignId) return campaignId;
@@ -346,6 +415,7 @@ export default function CampaignBuilderPage() {
           telephony_provider: carrier.telephony_provider,
           telephony_credential_id: carrier.telephony_credential_id,
           abandonment_ceiling_pct: ceilingForCreate,
+          ...template.createFields,
         },
         tenantId ?? undefined,
         accountId ?? undefined,
@@ -356,11 +426,31 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    const sent: Record<string, unknown> = template.createFields;
+    template.draft.created(sent);
     serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
-    // The draft has the basics now; the rest is saved by Save as draft.
-    setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
+    /*
+      The draft has the basics now; the rest is saved by Save as draft. A template's create also
+      carried the agent screen and the break limits as on the form: the draft holds those (else it
+      holds what the template filled in, the baseline already there).
+    */
+    setSavedForm((saved) => ({
+      ...saved,
+      name,
+      callerIds,
+      carrier: chosenCarrier,
+      ...('break_reasons' in sent ? { breakReasons } : {}),
+    }));
+    if ('daily_target_calls' in sent) setSavedAgentScreen(agentScreen);
+    createdWithRef.current = {
+      ...('daily_target_calls' in sent ? { agentScreen } : {}),
+      ...('break_reasons' in sent ? { breakReasons } : {}),
+    };
     return created.id;
-  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, tenantId, accountId]);
+  }, [
+    campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft,
+    breakReasons, agentScreen, tenantId, accountId,
+  ]);
 
   const rosterIngest = useRosterIngest(tenantId ?? undefined, accountId ?? undefined, {
     source: 'builder',
@@ -376,7 +466,8 @@ export default function CampaignBuilderPage() {
       if (display.facts) {
         await updateAgencyCampaign(
           id,
-          { context_display: display } as never,
+          // A template's script that uses keys this card lacks is held back (CTC10): Purpose & buttons says so.
+          { context_display: display, ...template.draft.cardFields(display) } as never,
           tenantId ?? undefined,
           accountId ?? undefined,
         );
@@ -427,6 +518,11 @@ export default function CampaignBuilderPage() {
   }, [configErrors, dailyTargetFinding, breakErrors]);
 
   const saveDraft = useCallback(async (): Promise<SavedDraft | null> => {
+    if (Object.keys(findings).length === 0 && template.scriptBlocked) {
+      // The template's script does not fit yet (CS19): it is fixed on Purpose & buttons.
+      goToFinding('purpose');
+      return null;
+    }
     if (Object.keys(findings).length > 0) {
       /*
         Save is disabled while anything is found, so this is a keyboard or programmatic
@@ -469,9 +565,13 @@ export default function CampaignBuilderPage() {
       const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
       // The agent screen and the break limits only where they differ from what the draft has,
       // so a campaign left on the built-in breaks keeps them (served at read time, LF20).
-      const sendTarget = agentScreen.dailyTarget.trim() !== savedAgentScreen.dailyTarget.trim();
-      const sendDisplay = agentScreen.phoneDisplay !== savedAgentScreen.phoneDisplay;
-      const sendBreaks = savedForm.breakReasons !== undefined && !sameBreakLimits(savedForm.breakReasons, breakReasons);
+      const heldScreen = createdWithRef.current?.agentScreen ?? savedAgentScreen;
+      const heldBreaks = createdWithRef.current?.breakReasons ?? savedForm.breakReasons;
+      const sendTarget = agentScreen.dailyTarget.trim() !== heldScreen.dailyTarget.trim();
+      const sendDisplay = agentScreen.phoneDisplay !== heldScreen.phoneDisplay;
+      const sendBreaks = heldBreaks !== undefined && !sameBreakLimits(heldBreaks, breakReasons);
+      // A template's script changed (or fixed for the card) since the draft got it (CTC10).
+      const scriptFields = template.draft.saveFields();
       try {
         await updateAgencyCampaign(
           id,
@@ -489,6 +589,7 @@ export default function CampaignBuilderPage() {
             ...(sendTarget ? { daily_target_calls: dailyTargetPayload(agentScreen.dailyTarget) } : {}),
             ...(sendDisplay ? { phone_display: agentScreen.phoneDisplay } : {}),
             ...(sendBreaks ? { break_reasons: breakReasonsPayload(breakReasons) } : {}),
+            ...scriptFields,
           },
           tenantId ?? undefined,
           accountId ?? undefined,
@@ -498,6 +599,8 @@ export default function CampaignBuilderPage() {
         throw withCarrierRefusalCopy(err);
       }
       serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
+      createdWithRef.current = null;
+      template.draft.saved(scriptFields);
       setConfigSaved(true);
       setSavedOnce(true);
       setSavedForm({ name, callerIds, carrier: chosenCarrier, recording, config, breakReasons });
@@ -587,7 +690,7 @@ export default function CampaignBuilderPage() {
   }, [
     findings, config, recording, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId,
     goTo, setError, name, callerIds, carrier, chosenCarrier, goToFinding, agentScreen, savedAgentScreen, breakReasons,
-    savedForm.breakReasons, applyStaffing, selected,
+    savedForm.breakReasons, applyStaffing, selected, template.draft, template.scriptBlocked,
   ]);
 
   /**
@@ -680,8 +783,10 @@ export default function CampaignBuilderPage() {
   const invalidSteps = useMemo(() => {
     const invalid = new Set<SetupStepId>(byStep.keys());
     if (nameError || callerIdsError) invalid.add('basics');
+    // A template's script the roster's card cannot fill is fixed on Purpose & buttons (CS19).
+    if (template.scriptBlocked) invalid.add('purpose');
     return invalid;
-  }, [byStep, nameError, callerIdsError]);
+  }, [byStep, nameError, callerIdsError, template.scriptBlocked]);
   const blockCopy = saveBlockCopy(byStep, step);
   const otherStepWithFindings = firstOtherStepWithFindings(byStep, step);
   const basicsReady = name.trim().length > 0 && callerIds.length > 0;
@@ -759,7 +864,9 @@ export default function CampaignBuilderPage() {
   const settingsChanged = changedSettings(
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
     { name, callerIds, carrier, recording, config, breakReasons },
-  ).length > 0 || agentScreenChanged || !samePool(selected, staffedIds);
+  ).length > 0 || agentScreenChanged || !samePool(selected, staffedIds)
+    // A template's script changed on Purpose & buttons that the draft does not hold yet (CTC10).
+    || (campaignId !== null && template.draft.saveFields().agent_script !== undefined);
   const unsaved = !startedId
     && (settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping');
   const leaveGuard = useUnsavedChangesGuard(unsaved);
@@ -786,8 +893,8 @@ export default function CampaignBuilderPage() {
     }; Cancel keeps you here to save them.`;
 
   const continueDisabled = step === 'basics' && basicsBlock !== null;
-  const saveDisabled = savingConfig || starting || configBlock || !basicsReady;
-  const startReason = !basicsReady || configBlock
+  const saveDisabled = savingConfig || starting || configBlock || !basicsReady || template.scriptBlocked;
+  const startReason = !basicsReady || configBlock || template.scriptBlocked
     ? null
     : importRunning
       ? START_WAITS_FOR_IMPORT
@@ -798,6 +905,13 @@ export default function CampaignBuilderPage() {
   const lastStep = step === 'agents';
 
   const markDirty = () => setConfigSaved(false);
+  /** The last save's refusals of a template's script, said on its fields (CS19). */
+  const scriptRefusals = useMemo(
+    () => Object.fromEntries(Object.entries(fieldErrors).filter(([field]) => field.startsWith('agent_script'))),
+    [fieldErrors],
+  );
+  /** Each template section's chip and Reset, for the block that edits it (CS18); nothing without a template. */
+  const sectionSources = sectionSourcesOf(template.startFrom !== null, template.sourceProps);
 
   return (
     <div className={styles.page}>
@@ -810,6 +924,8 @@ export default function CampaignBuilderPage() {
           Cancel
         </button>
       </header>
+
+      {template.panel ? <StartFromPanel {...template.panel} /> : null}
 
       <StepCards
         steps={SETUP_STEPS}
@@ -852,6 +968,7 @@ export default function CampaignBuilderPage() {
               setCallerIdsError(null);
             }}
             callerIdsError={callerIdsError}
+            sectionSources={sectionSources}
           />
         ) : null}
 
@@ -882,6 +999,18 @@ export default function CampaignBuilderPage() {
             }}
             overrides={assignmentEnabled}
             forceAdvancedOpen={refusedInAdvanced.purpose}
+            buttonsReplaced={buttonsReplaced}
+            sectionSources={sectionSources}
+          />
+        ) : null}
+
+        {step === 'purpose' && template.script ? (
+          // A template's script, under the buttons as Settings shows it, and its fix (CS19, CTC10).
+          <BuilderScriptCard
+            script={template.script}
+            source={sectionSources?.agent_screen}
+            campaignName={name.trim()}
+            serverErrors={scriptRefusals}
           />
         ) : null}
 
@@ -944,6 +1073,7 @@ export default function CampaignBuilderPage() {
             // The automatic outcomes for unanswered calls are under step 3's Advanced.
             unansweredOutcomes={false}
             forceAdvancedOpen={refusedInAdvanced.agents || breakLimitsInvalid}
+            sectionSources={sectionSources}
           />
         ) : null}
       </div>
@@ -1060,6 +1190,26 @@ export default function CampaignBuilderPage() {
               ) : null}
             </span>
           ) : null}
+          {template.scriptBlocked ? (
+            <span className={styles.blockReason} data-testid="script-block">
+              {step === 'purpose' ? SCRIPT_BLOCK_HERE : SCRIPT_BLOCK_ELSEWHERE}
+              {basicsReady ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className={styles.blockLink}
+                    onClick={() => goToFinding('purpose')}
+                    aria-label={step === 'purpose'
+                      ? 'Show the script that stops the campaign saving'
+                      : `${goToStepLabel('purpose')}, where the script stops the campaign saving`}
+                  >
+                    {step === 'purpose' ? 'Show me' : goToStepLabel('purpose')}
+                  </button>
+                </>
+              ) : null}
+            </span>
+          ) : null}
           {configSaved ? (
             <span className={styles.saved} role="status">
               Saved as a draft.
@@ -1077,6 +1227,14 @@ export default function CampaignBuilderPage() {
       </footer>
 
       <LeaveUnsavedDialog guard={leaveGuard} message={leaveMessage} />
+      <ConfirmDialog
+        open={template.confirm.open}
+        title="Replace your changes?"
+        message={template.confirm.message}
+        confirmLabel="Start from it"
+        onConfirm={template.confirm.onConfirm}
+        onCancel={template.confirm.onCancel}
+      />
     </div>
   );
 }

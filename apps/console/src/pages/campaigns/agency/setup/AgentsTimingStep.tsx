@@ -56,6 +56,7 @@ import { OutcomeDispositionMap } from '../OutcomeDispositionMap';
 import { AssignmentFields } from '../AssignmentFields';
 import { InboundStickyField } from '../InboundStickyField';
 import { AgentPicker } from './AgentPicker';
+import type { SetupSectionSources } from './sectionSources';
 import styles from './AgentsTimingStep.module.css';
 
 export { readyLine } from '../../../../utils/campaignSetup/agentsTiming';
@@ -138,6 +139,14 @@ export interface AgentsTimingStepProps {
   anchors?: { whenToCall?: string; agentScreen?: string; retries?: string; agentRules?: string };
   /** The viewer cannot write campaigns: every control is locked. */
   readOnly?: boolean;
+  /**
+   * Shown at the heading of the block that edits each section (New campaign's template sources,
+   * CS18): `hours` on When to call; `retries` on the "doesn't pick up" rule and the retry table;
+   * `wrapup` on the wrap-up row; `recording` on the record and call summary rows; `agent_screen`
+   * on the number display and daily target rows; and under Advanced `safety`, `assignment`,
+   * `inbound` and `breaks` on their blocks.
+   */
+  sectionSources?: SetupSectionSources;
   /** Injectable for tests; the custom window's echo is clock-derived. */
   now?: Date;
 }
@@ -161,11 +170,21 @@ export function AgentsTimingStep({
   anchors,
   readOnly = false,
   now,
+  sectionSources,
 }: AgentsTimingStepProps) {
   const uid = useId();
   const hintId = `${uid}-staffing-hint`;
   const foldId = `${uid}-advanced`;
   const foldRef = useRef<HTMLDivElement>(null);
+  const sources = sectionSources ?? {};
+  /** A block under Advanced with its section's source on a line above its own heading. */
+  const sourced = (key: keyof SetupSectionSources, block: ReactNode) =>
+    (sources[key] ? (
+      <div className={styles.sourced} data-testid={`sourced-${key}`}>
+        <div className={styles.sourceLine}>{sources[key]}</div>
+        {block}
+      </div>
+    ) : block);
 
   /* ── Findings ───────────────────────────────────────────────────────────── */
   const dailyTarget = agentScreen?.dailyTarget;
@@ -266,7 +285,13 @@ export function AgentsTimingStep({
         </SetupCard>
 
         <SetupCard testId="call-timing">
-          <SetupSection title="When to call" helper="Calls only go out inside these hours." testId="when-to-call" id={anchors?.whenToCall}>
+          <SetupSection
+            title="When to call"
+            helper="Calls only go out inside these hours."
+            actions={sources.hours}
+            testId="when-to-call"
+            id={anchors?.whenToCall}
+          >
             <PillGroup
               legend="Calling hours"
               hideLegend
@@ -312,7 +337,7 @@ export function AgentsTimingStep({
             {errors.render('calling_days')}
           </SetupSection>
 
-          <SetupSection title="If the customer doesn’t pick up" testId="unanswered-rule">
+          <SetupSection title="If the customer doesn’t pick up" actions={sources.retries} testId="unanswered-rule">
             <div className={styles.tinted}>
               {rule.kind === 'same' ? (
                 <>
@@ -389,6 +414,7 @@ export function AgentsTimingStep({
                 checked={config.wrapupSeconds > 0}
                 onChange={() => {}}
                 testId="wrapup-row"
+                badge={sources.wrapup}
                 control={({ describedBy }) => (
                   <SentenceSelect
                     value={String(config.wrapupSeconds)}
@@ -417,6 +443,7 @@ export function AgentsTimingStep({
                 disabled={recLocked}
                 disabledReason={readOnly ? undefined : recGate.notice ?? undefined}
                 testId="record-row"
+                badge={sources.recording}
               />
               {errors.render('record_calls')}
 
@@ -438,6 +465,7 @@ export function AgentsTimingStep({
                 disabled={summaryLocked}
                 disabledReason={summaryOff && !readOnly ? SUMMARY_OFF_REASON : undefined}
                 testId="summary-row"
+                badge={sources.recording}
                 control={({ describedBy }) => (
                   <SentenceSelect
                     value={rec.profileId}
@@ -464,6 +492,7 @@ export function AgentsTimingStep({
                     onChange={(full) => agentScreen.onChange({ phoneDisplay: full ? 'full' : 'masked' })}
                     disabled={readOnly}
                     testId="phone-display-row"
+                    badge={sources.agent_screen}
                   />
                   {errors.render('phone_display')}
 
@@ -473,6 +502,7 @@ export function AgentsTimingStep({
                     checked={agentScreen.dailyTarget.trim() !== ''}
                     onChange={() => {}}
                     testId="daily-target-row"
+                    badge={sources.agent_screen}
                     control={({ labelId, describedBy }) => (
                       <span className={styles.target}>
                         <input
@@ -511,14 +541,16 @@ export function AgentsTimingStep({
         >
           <div className={styles.advanced}>
             <div className={styles.advanced} id={anchors?.retries}>
-              <RetryPolicyTable retryPolicy={config.retryPolicy} onChange={setRetry} errors={errors} />
-              <AbandonmentCeilingFields
-                ceilingPct={config.abandonmentCeilingPct}
-                storedPct={config.abandonmentCeilingStoredPct}
-                onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
-                errors={errors}
-                readOnly={readOnly}
-              />
+              {sourced('retries', <RetryPolicyTable retryPolicy={config.retryPolicy} onChange={setRetry} errors={errors} />)}
+              {sourced('safety', (
+                <AbandonmentCeilingFields
+                  ceilingPct={config.abandonmentCeilingPct}
+                  storedPct={config.abandonmentCeilingStoredPct}
+                  onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
+                  errors={errors}
+                  readOnly={readOnly}
+                />
+              ))}
             </div>
             {unansweredOutcomes ? (
               <OutcomeDispositionMap
@@ -538,21 +570,21 @@ export function AgentsTimingStep({
             />
             {assignment || inbound || breakLimits ? (
               <div className={styles.advanced} id={anchors?.agentRules}>
-                {assignment ? (
+                {assignment ? sourced('assignment', (
                   <AssignmentFields
                     assignment={config.assignment}
                     onChange={(next) => onChange({ ...config, assignment: next })}
                     errors={errors}
                     modeLocked={assignment.modeLocked}
                   />
-                ) : null}
-                {inbound ? (
+                )) : null}
+                {inbound ? sourced('inbound', (
                   <InboundStickyField
                     checked={config.inboundSticky}
                     onChange={(inboundSticky) => onChange({ ...config, inboundSticky })}
                   />
-                ) : null}
-                {breakLimits ?? null}
+                )) : null}
+                {breakLimits ? sourced('breaks', breakLimits) : null}
               </div>
             ) : null}
           </div>

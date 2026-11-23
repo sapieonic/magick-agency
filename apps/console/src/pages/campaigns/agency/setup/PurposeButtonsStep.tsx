@@ -33,6 +33,7 @@ import { DispositionCatalogEditor } from '../DispositionCatalogEditor';
 import { OutcomeDispositionMap } from '../OutcomeDispositionMap';
 import { AgentButtonsPreview } from './AgentButtonsPreview';
 import { OutcomeButtonList } from './OutcomeButtonList';
+import type { SetupSectionSources } from './sectionSources';
 import styles from './PurposeButtonsStep.module.css';
 
 export interface PurposeButtonsStepProps {
@@ -51,6 +52,18 @@ export interface PurposeButtonsStepProps {
    * each button's "Allows override". Off, as `CampaignBehaviourSection` without `assignment`.
    */
   overrides?: boolean;
+  /**
+   * Bumped by the page when it replaced the buttons from outside the step (New campaign's
+   * template, filled in or Reset): the step forgets which rows follow their names and which row
+   * each automatic outcome follows, and the full editor and any open row start again, as after a
+   * starting point.
+   */
+  buttonsReplaced?: number;
+  /**
+   * Shown in the buttons' heading: `outcomes` (New campaign's template source, CS18), which covers
+   * the automatic outcomes for unanswered calls under Advanced too.
+   */
+  sectionSources?: SetupSectionSources;
 }
 
 /** Above this many buttons the count chip turns to a warning: the station's tiles go small. */
@@ -107,6 +120,8 @@ export function PurposeButtonsStep({
   onPresetApplied,
   forceAdvancedOpen = false,
   overrides = false,
+  buttonsReplaced = 0,
+  sectionSources,
 }: PurposeButtonsStepProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
   const mappedRows = useRef<MappedRows>({});
@@ -117,6 +132,21 @@ export function PurposeButtonsStep({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const foldRef = useRef<HTMLDivElement>(null);
   const focusFoldRow = useRef<number | null>(null);
+
+  /*
+    Buttons replaced from outside: what the step holds about their rows is about rows that are
+    gone. Reset while rendering, so no render pairs the new rows with the old rows' state.
+  */
+  const [seenReplaced, setSeenReplaced] = useState(buttonsReplaced);
+  if (seenReplaced !== buttonsReplaced) {
+    setSeenReplaced(buttonsReplaced);
+    autoCodeRows.current = new Set();
+    mappedRows.current = {};
+    setEditorEpoch((n) => n + 1);
+    setExpanded(null);
+    setFocusNameOf(null);
+    setPendingPreset(null);
+  }
 
   const dispositions = config.dispositions;
   const currentPreset = useMemo(() => presetOf(dispositions), [dispositions]);
@@ -261,10 +291,14 @@ export function PurposeButtonsStep({
             title="Buttons agents will see after each call"
             helper="Keep to 6 or fewer so agents can decide quickly. The order is the number key."
             actions={
-              <StatusChip tone={over ? 'warning' : 'muted'} icon={over ? undefined : null} testId="button-count">
-                {count} of {BUTTONS_KEPT_TO}
-              </StatusChip>
+              <>
+                {sectionSources?.outcomes ?? null}
+                <StatusChip tone={over ? 'warning' : 'muted'} icon={over ? undefined : null} testId="button-count">
+                  {count} of {BUTTONS_KEPT_TO}
+                </StatusChip>
+              </>
             }
+            testId="buttons-block"
           >
             {over ? (
               <p className={styles.countNote} data-testid="button-count-note">

@@ -66,6 +66,11 @@ export interface SwitchRowProps {
   control?: ReactNode | ((ids: SwitchRowControlIds) => ReactNode);
   /** On the row; the switch gets `${testId}-switch`. */
   testId?: string;
+  /**
+   * Beside the label, outside it (so a button in it never flips the switch): e.g. where the
+   * setting came from. Nothing is shown when it renders nothing.
+   */
+  badge?: ReactNode;
 }
 
 /**
@@ -82,6 +87,7 @@ export function SwitchRow({
   id,
   control,
   testId,
+  badge,
 }: SwitchRowProps) {
   const uid = useId();
   const switchId = id ?? `${uid}-switch`;
@@ -93,15 +99,18 @@ export function SwitchRow({
   return (
     <div className={styles.row} data-disabled={disabled || undefined} data-testid={testId}>
       <div className={styles.text}>
-        {control === undefined ? (
-          <label className={styles.label} id={labelId} htmlFor={switchId}>
-            {label}
-          </label>
-        ) : (
-          <span className={styles.label} id={labelId}>
-            {label}
-          </span>
-        )}
+        <span className={styles.labelLine}>
+          {control === undefined ? (
+            <label className={styles.label} id={labelId} htmlFor={switchId}>
+              {label}
+            </label>
+          ) : (
+            <span className={styles.label} id={labelId}>
+              {label}
+            </span>
+          )}
+          {badge != null ? <span className={styles.badge}>{badge}</span> : null}
+        </span>
         {hintId ? (
           <span className={styles.hint} id={hintId}>
             {hint}

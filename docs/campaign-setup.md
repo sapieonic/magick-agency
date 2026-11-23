@@ -27,7 +27,7 @@ aim for; the content, limits and wording follow what this repo supports.
 | CS15 | **Start from the builder.** The last step's footer reads "Ready: 1,240 customers · 6 agents · 9 AM – 6 PM · 6 days a week", with *Save as draft* and *Start campaign*. Start saves, staffs, then starts (`POST …/start`). If the start is refused, the draft stays saved and the refusal is shown in plain words, with a link to the campaign | **Default, pending Manas** |
 | CS16 | **Settings anchors keep working.** The section ids in `utils/campaignSettingsSections.ts` are link targets and search targets. Each id still exists on the page, now inside the tab it belongs to; a link to `…/settings#<id>` opens that tab and scrolls to it | **Settled** (existing rule) |
 | CS17 | **Templates start the steps.** With campaign templates on (`docs/campaign-templates.md`), New campaign's "Start from" sits above the four step cards, as a slim card: the template it starts from, "Use this template" for another, and the notes. It fills every step. It is locked once the draft exists, as before. With the flag off or the read failing, it is not shown and the steps start from the built-in settings | **Default, pending Manas** |
-| CS18 | **Where each setting came from, where it is edited.** Review's source chip and per-section Reset move into the steps: each template section shows its chip ("Account default", "Organisation default", "Built-in", "Changed for this campaign") and Reset in the heading of the block that edits it. Numbers are on Name & number. Outcomes are on Purpose & buttons. Hours, retries, wrap-up, recording, the agent screen, safety, breaks, assignment and inbound are on Agents & timing, in its main blocks or under Advanced. A step card whose section changed carries no extra mark; the chip says it | **Default, pending Manas** |
+| CS18 | **Where each setting came from, where it is edited.** Review's source chip and per-section Reset move into the steps: each template section shows its source chip (`SOURCE_CHIP_LABELS`: the account template, the organisation template, built-in, or changed for this campaign) and Reset in the heading of the block that edits it. Numbers are on Name & number. Outcomes are on Purpose & buttons. Hours, retries, wrap-up, recording, the agent screen, safety, breaks, assignment and inbound are on Agents & timing, in its main blocks or under Advanced. A step card whose section changed carries no extra mark; the chip says it | **Default, pending Manas** |
 | CS19 | **A template's script on Purpose & buttons.** A script a template brings shows on Purpose & buttons, under the buttons, as Settings shows it. A script whose keys the uploaded card cannot fill (CT22, CTC10) is held back there with the fix, and Save and Start wait for it, as Review did | **Default, pending Manas** |
 | CS20 | **Starting points and templates are different things.** A template is a whole campaign's settings; step 3's starting points (CS2) only fill the buttons. Step 3 calls its cards "What is this campaign for?", never "template" | **Default, pending Manas** |
 | CS21 | **The template editor looks like the steps.** Settings › Campaign templates' editor groups its sections under the same step cards (Name & number for the numbers, where an account template has them; Purpose & buttons; Agents & timing), with the same parts as New campaign and Settings. Each section keeps its "Use …" or "Set in this template" choice | **Default, pending Manas** |
@@ -57,6 +57,17 @@ campaign, then Settings.
   the campaign's page opens (CS15). Start is held, with its reason, until customers have been
   added in this visit, since the server refuses a campaign with nothing to dial. The daily target,
   the number display and the break limits are set on step 4 and go in the same PATCH Settings uses.
+- **Campaign templates in New campaign** (CS17–CS20, `docs/campaign-templates.md` §7): built. With
+  the flag on, "Start from" (`StartFromPanel`) is a slim `SetupCard` above the step cards, locked
+  once the draft exists; `useBuilderTemplate` fills every step, the agent screen and break limits
+  included. Each section's chip and Reset (`SectionSource`) reach the steps through their
+  `sectionSources` prop and sit at the block that edits the section (the table in
+  `campaign-templates.md` §7); the steps know nothing of templates. A template's script is a
+  Script card under the buttons (`BuilderScriptCard`), and one the roster's card cannot fill marks
+  Purpose & buttons and holds Save as draft and Start, the footer pointing at it. A template that
+  replaces the buttons bumps step 3's `buttonsReplaced`. The chips read "Account template",
+  "Organisation template", "Built-in" and "Changed for this campaign". Flag off or the read
+  failing: none of it shows.
 - **Campaign Settings** (`pages/agency/AgencyCampaignSettingsPage.tsx`): built. The same four steps
   as tabs (`StepCards` in tabs mode) with one save bar and one leave guard; a tab with an unsaved
   change carries a dot, one with a finding the needs-fixing mark, and a refused or blocked save

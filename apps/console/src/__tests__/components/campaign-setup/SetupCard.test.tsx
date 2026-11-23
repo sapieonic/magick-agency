@@ -44,6 +44,19 @@ describe('SetupCard', () => {
   });
 });
 
+describe('SetupCard density', () => {
+  it('marks a slim card, and leaves a regular one unmarked', () => {
+    render(
+      <>
+        <SetupCard density="slim" testId="slim">Start from</SetupCard>
+        <SetupCard testId="regular">Customers</SetupCard>
+      </>,
+    );
+    expect(screen.getByTestId('slim').getAttribute('data-density')).toBe('slim');
+    expect(screen.getByTestId('regular').hasAttribute('data-density')).toBe(false);
+  });
+});
+
 describe('StatusChip', () => {
   it('carries its tone, a default icon, and an action', () => {
     render(

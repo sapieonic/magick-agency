@@ -19,8 +19,26 @@
   min-width: 0;
 }
 
+/* The label, and a badge beside it when there is one. */
+.labelLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.badge:empty {
+  display: none;
+}
+
 /* Outranks the global `label` rule (block, muted, a bottom margin). */
-.text > .label {
+.labelLine > .label {
   display: block;
   margin: 0;
   font-size: 14px;
@@ -29,11 +47,11 @@
   cursor: pointer;
 }
 
-.text > span.label {
+.labelLine > span.label {
   cursor: default;
 }
 
-.row[data-disabled='true'] .text > .label {
+.row[data-disabled='true'] .labelLine > .label {
   color: var(--text-secondary);
   cursor: not-allowed;
 }

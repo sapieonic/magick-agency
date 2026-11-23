@@ -18,14 +18,16 @@ import { joinAnd } from '../../../utils/agencyCampaignConfigForm';
 const BASICS_FIELDS = new Set(['name', 'caller_ids', 'telephony_provider', 'telephony_credential_id']);
 
 /**
- * The step whose editor renders this field: the buttons and the automatic outcomes for
- * unanswered calls are on Purpose & buttons; the name, numbers and carrier on Name & number;
+ * The step whose editor renders this field: the buttons, the automatic outcomes for
+ * unanswered calls and a template's script are on Purpose & buttons; the name, numbers and carrier on Name & number;
  * everything else (hours, retries, wrap-up, assignment, inbound, the abandonment limit,
  * recording, the call summary, the agent screen and break limits) on Agents & timing.
  */
 export function stepForConfigField(field: string): SetupStepId {
   if (BASICS_FIELDS.has(field)) return 'basics';
   if (field.startsWith('disposition_catalog') || field.startsWith('outcome_dispositions')) return 'purpose';
+  // A campaign template's script is shown and fixed under the buttons (CS19).
+  if (field.startsWith('agent_script')) return 'purpose';
   return 'agents';
 }
 

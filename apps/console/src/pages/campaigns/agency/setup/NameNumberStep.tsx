@@ -3,6 +3,7 @@ import { SetupCard } from '../../../../components/campaign-setup';
 import { CampaignCarrierField } from '../../../../components/agency/CampaignCarrierField';
 import { CallerIdPicker } from '../../../agency/CallerIdPicker';
 import { carrierName, sameCarrier, type CarrierChoice, type CarrierOption } from '../../../../utils/agencyCarriers';
+import type { SetupSectionSources } from './sectionSources';
 import styles from './NameNumberStep.module.css';
 
 export interface NameNumberStepProps {
@@ -41,6 +42,8 @@ export interface NameNumberStepProps {
   readOnly?: boolean;
   /** Element ids for links into the step (Settings' `…/settings#<id>`): the card, and the numbers. */
   anchors?: { card?: string; numbers?: string };
+  /** Shown at the head of the numbers block: `numbers` (New campaign's template source, CS18). */
+  sectionSources?: SetupSectionSources;
 }
 
 /**
@@ -67,6 +70,7 @@ export function NameNumberStep({
   headingRef,
   readOnly = false,
   anchors,
+  sectionSources,
 }: NameNumberStepProps) {
   const uid = useId();
   const nameId = `${uid}-name`;
@@ -123,6 +127,7 @@ export function NameNumberStep({
       ) : null}
 
       <div className={styles.numbers} data-testid="caller-id-field" id={anchors?.numbers}>
+        {sectionSources?.numbers ? <div className={styles.sectionSource}>{sectionSources.numbers}</div> : null}
         <CallerIdPicker
           layout="cards"
           legend={

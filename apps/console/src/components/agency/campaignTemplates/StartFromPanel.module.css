@@ -1,0 +1,55 @@
+/* New campaign's "Start from" (CS17): one line of controls, and where the form came from under it. */
+.picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+/* Outranks the global `label` rule (block, muted, a bottom margin). */
+.picker > .label {
+  display: inline;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.picker select {
+  flex: 0 1 320px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.muted {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.banner p {
+  margin: 0;
+}
+
+.notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+  .picker select {
+    flex-basis: 100%;
+  }
+}

@@ -12,6 +12,8 @@ export interface SetupCardProps {
   testId?: string;
   /** The heading takes `tabIndex={-1}`, so a step change can move focus to it. */
   headingRef?: Ref<HTMLHeadingElement>;
+  /** `slim`: less padding, for a one-line card above the steps (New campaign's "Start from"). */
+  density?: 'regular' | 'slim';
 }
 
 /** The white panel a step's content sits in; a `<section>` named by its heading. */
@@ -24,6 +26,7 @@ export function SetupCard({
   id,
   testId,
   headingRef,
+  density = 'regular',
 }: SetupCardProps) {
   const uid = useId();
   const headingId = `${uid}-heading`;
@@ -34,6 +37,7 @@ export function SetupCard({
       className={styles.card}
       id={id}
       data-testid={testId}
+      data-density={density === 'slim' ? 'slim' : undefined}
       aria-labelledby={title != null ? headingId : undefined}
     >
       {hasHeader ? (
