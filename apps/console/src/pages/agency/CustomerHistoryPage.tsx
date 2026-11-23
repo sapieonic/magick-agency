@@ -59,7 +59,7 @@ const RESULTS_PATH: Record<Surface, string> = {
   agent: '/dialer/customers',
 };
 
-const NO_HISTORY_TITLE = 'No calls to this number in the accounts you can see';
+const NO_HISTORY_TITLE = 'No calls to or from this number in the accounts you can see';
 
 function accountsSeen(answer: CustomerSearchResponse): number {
   const ids = new Set<string>();

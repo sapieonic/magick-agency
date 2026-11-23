@@ -8,9 +8,8 @@
  * routing tests build their own table, so only a read of `App.tsx` itself catches
  * that drift.
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { appCode, parseRoutes, type RouteNode } from './appRoutes';
 
 /** The pages that are unscoped by definition (`isUnscopedPagePath`). */
 const PUBLIC_PATHS = ['/login', '/agency/login', '/agency/join/:token', '/join/:token', '/verify-email'];
@@ -28,80 +27,6 @@ const GATED_PATHS = [
   '/app',
   '*',
 ];
-
-interface RouteNode {
-  /** Source offset of the `<Route`, i.e. declaration order. */
-  at: number;
-  path: string | null;
-  isGate: boolean;
-  parent: RouteNode | null;
-}
-
-/** `App.tsx` with comments removed, so prose about routes is not read as routes. */
-function appCode(): string {
-  const source = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-}
-
-/**
- * Every `<Route>` in the `<Routes>` block, with its nesting. An opening tag ends at
- * the first `>` outside braces and quotes, so JSX inside `element={…}` neither ends
- * the tag nor counts as a route; its own `path="…"` is read from the part of the
- * tag outside braces only.
- */
-function parseRoutes(code: string): RouteNode[] {
-  const start = code.indexOf('<Routes>');
-  const end = code.indexOf('</Routes>');
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  const block = code.slice(start, end);
-
-  const nodes: RouteNode[] = [];
-  const stack: RouteNode[] = [];
-  const token = /<Route\b|<\/Route>/g;
-  let m: RegExpExecArray | null;
-  while ((m = token.exec(block))) {
-    if (m[0] === '</Route>') {
-      expect(stack.length).toBeGreaterThan(0);
-      stack.pop();
-      continue;
-    }
-    let depth = 0;
-    let quote: string | null = null;
-    let topLevel = '';
-    let i = m.index + m[0].length;
-    let selfClosing = false;
-    for (; i < block.length; i++) {
-      const c = block[i]!;
-      if (depth === 0 && quote) {
-        topLevel += c;
-        if (c === quote) quote = null;
-        continue;
-      }
-      if (c === '{') depth++;
-      else if (c === '}') depth--;
-      else if (depth === 0 && (c === '"' || c === "'")) quote = c;
-      else if (depth === 0 && c === '/' && block[i + 1] === '>') {
-        selfClosing = true;
-        i += 1;
-        break;
-      } else if (depth === 0 && c === '>') break;
-      if (depth === 0 && c !== '}') topLevel += c;
-    }
-    const tag = block.slice(m.index, i + 1);
-    const node: RouteNode = {
-      at: m.index,
-      path: /\bpath="([^"]*)"/.exec(topLevel)?.[1] ?? null,
-      isGate: /^<Route\s+element=\{\s*<ScopeGate\s*\/>\s*\}\s*>$/.test(tag),
-      parent: stack[stack.length - 1] ?? null,
-    };
-    nodes.push(node);
-    if (!selfClosing) stack.push(node);
-    token.lastIndex = i + 1;
-  }
-  expect(stack).toEqual([]);
-  return nodes;
-}
 
 function insideGate(node: RouteNode): boolean {
   for (let p = node.parent; p; p = p.parent) if (p.isGate) return true;

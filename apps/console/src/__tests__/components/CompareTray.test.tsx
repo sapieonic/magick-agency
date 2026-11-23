@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   getAgentStats: vi.fn(),
   getMyStats: vi.fn(),
   getAgentAttempts: vi.fn(),
-  getMyAttempts: vi.fn(),
   getMyCampaigns: vi.fn(),
   trackOpened: vi.fn(),
 }));
@@ -44,7 +43,6 @@ vi.mock('../../api/agencyStats', () => ({
   getAgentStats: mocks.getAgentStats,
   getMyStats: mocks.getMyStats,
   getAgentAttempts: mocks.getAgentAttempts,
-  getMyAttempts: mocks.getMyAttempts,
   getMyCampaigns: mocks.getMyCampaigns,
 }));
 vi.mock('../../analytics/events', () => ({
@@ -104,7 +102,6 @@ function totalRequests(): number {
     mocks.getAgentStats.mock.calls.length +
     mocks.getMyStats.mock.calls.length +
     mocks.getAgentAttempts.mock.calls.length +
-    mocks.getMyAttempts.mock.calls.length +
     mocks.getMyCampaigns.mock.calls.length
   );
 }

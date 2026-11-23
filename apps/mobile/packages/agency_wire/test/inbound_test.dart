@@ -113,6 +113,47 @@ void main() {
     });
   });
 
+  group('InboundCall: the campaign it is filed under', () {
+    Map<String, Object?> call() => ib('call_response')['call']! as Map<String, Object?>;
+
+    test('a matched caller is filed under their campaign, fixed', () {
+      final c = InboundCall.fromJson(call());
+      expect(c.campaign!.campaignId, 'c0ffee00-1111-4222-8333-444455556666');
+      expect(c.campaign!.campaignName, 'Q4 Renewals — Pune');
+      expect(c.campaign!.isMatch, isTrue);
+      expect(c.campaignChangeable, isFalse);
+      expect(c.campaignRequired, isFalse);
+    });
+
+    test('an unknown caller filed by the route can be moved, and the setting is carried', () {
+      final c = InboundCall.fromJson({
+        ...call(),
+        'campaign': {'campaign_id': 'c1', 'campaign_name': 'General enquiries', 'source': 'route'},
+        'campaign_changeable': true,
+        'campaign_required': true,
+      });
+      expect(c.campaign!.isMatch, isFalse);
+      expect(c.campaign!.source, 'route');
+      expect(c.campaignChangeable, isTrue);
+      expect(c.campaignRequired, isTrue);
+      expect(c, isNot(InboundCall.fromJson(call())));
+    });
+
+    test('a server from before the fields: no campaign, nothing required', () {
+      final old = {...call()}..remove('campaign')..remove('campaign_changeable')..remove('campaign_required');
+      final c = InboundCall.fromJson(old);
+      expect(c.campaign, isNull);
+      expect(c.campaignChangeable, isFalse);
+      expect(c.campaignRequired, isFalse);
+    });
+
+    test('the three new refusal codes are known', () {
+      expect(InboundErrorCode.fromWire('default_campaign_required'), InboundErrorCode.defaultCampaignRequired);
+      expect(InboundErrorCode.fromWire('inbound_campaign_fixed'), InboundErrorCode.inboundCampaignFixed);
+      expect(InboundErrorCode.fromWire('inbound_campaign_not_allowed'), InboundErrorCode.inboundCampaignNotAllowed);
+    });
+  });
+
   group('InboundCall through its states', () {
     InboundCall call(String sample) => (frameOf(sample) as InboundCallFrame).inboundCall!;
 

@@ -54,6 +54,8 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
   agencyAgentCallerIdRepository: repos.callerIds,
+  // No inbound route files callers under the campaign (docs/call-log.md §5, CL8).
+  agencyInboundRouteRepository: { listDefaultingTo: vi.fn().mockResolvedValue([]) },
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,

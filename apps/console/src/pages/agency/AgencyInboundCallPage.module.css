@@ -1,0 +1,73 @@
+/* The inbound Call page: who rang and why it is in this log, then the caller's path. */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 12px;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.headline {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.journey {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+/* A line per step, in order, with a rule down the side to read as one path. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  border-left: 2px solid var(--border);
+}
+
+.step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.stepTitle {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stepDetail {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.step[data-step='missed'] .stepTitle {
+  color: var(--warning, #f5a623);
+}

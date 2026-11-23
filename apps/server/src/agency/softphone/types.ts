@@ -43,6 +43,8 @@ export type SoftphoneRefusal =
   | { code: 'invalid_number' }
   | { code: 'caller_id_not_allowed'; allowed_codes: string[] }
   | { code: 'campaign_not_taggable' }
+  /** The account's "Every call must belong to a campaign" is on and the dial names none (docs/call-log.md §5). */
+  | { code: 'campaign_required' }
   | { code: 'override_note_invalid'; details: CallFieldIssue[] }
   | { code: 'fields_invalid'; details: CallFieldIssue[] }
   | { code: 'contact_in_flight'; campaign_id: string; contact_id: string }
@@ -86,6 +88,17 @@ type _UnlistedRefusal = Exclude<SoftphoneRefusal['code'], AgencySoftphoneErrorCo
 const _everyRefusalIsAContractCode: _UnlistedRefusal extends never ? true : _UnlistedRefusal = true;
 void _everyRefusalIsAContractCode;
 
+/**
+ * `campaign_required` on a dial, as an app that does not know the code shows it (docs/call-log.md
+ * §5: an older build still offers "Not logged to a campaign").
+ */
+export const CAMPAIGN_REQUIRED_DIAL_MESSAGE =
+  'Choose a campaign before you dial. Every call in this account must belong to a campaign.';
+
+/** `campaign_required` on an inbound call's outcome (the inbound routes answer the same code). */
+export const CAMPAIGN_REQUIRED_OUTCOME_MESSAGE =
+  'Choose a campaign before you save the outcome. Every call in this account must belong to a campaign.';
+
 /** An operation's answer. */
 export type SoftphoneResult<T> = ({ ok: true } & T) | { ok: false; refusal: SoftphoneRefusal };
 
@@ -98,6 +111,7 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'invalid_number': return 'That is not a dialable phone number.';
     case 'caller_id_not_allowed': return 'That caller ID is not allowed for this call.';
     case 'campaign_not_taggable': return 'You cannot log a call to that campaign.';
+    case 'campaign_required': return CAMPAIGN_REQUIRED_DIAL_MESSAGE;
     case 'override_note_invalid': return 'An override note must be 10 to 500 characters.';
     case 'fields_invalid': return 'Some call details are invalid.';
     case 'contact_in_flight': return 'A campaign call to this contact is in progress.';

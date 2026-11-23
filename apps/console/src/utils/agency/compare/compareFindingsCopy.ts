@@ -107,10 +107,12 @@ export function findingAction(finding: AgencyCompareFinding, ctx: FindingContext
   const info = metricOf(response, finding.metric);
   const name = agentName(response, finding.agent_user_id);
   const first = firstName(name) ?? name;
-  // The campaign's Call attempts tab for this agent: their placed dials in the window (half-open
-  // on the dial's local midnights, as every compare count is cut), narrowed to `codes` when given.
+  // The campaign's Call log for this agent: their calls in the window (half-open on the call's
+  // local midnights, as every compare count is cut), narrowed to `codes` when given. Every call
+  // type, not the Dialler chip: a promise taken on the soft phone counts in Compare too (CP2).
   const calls = (codes: string[] = []) =>
     attemptsLink(response.campaign_id, {
+      type: 'all',
       disposition: codes,
       agent_user_id: finding.agent_user_id,
       from: zoneDayStart(response.from, ctx.timezone).toISOString(),

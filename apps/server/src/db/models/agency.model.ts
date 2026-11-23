@@ -714,6 +714,8 @@ export interface AgencyManualCallRecord {
   dnc_override_entry_id: string | null;
   /** SP2. */
   hours_override_note: string | null;
+  /** The Missed inbound call this call was placed from (its Call back, 0069, CL1). No FK; NULL: not a call back. */
+  callback_of_inbound_call_id: string | null;
   dialed_at: Date | null;
   answered_at: Date | null;
   bridged_at: Date | null;

@@ -56,7 +56,9 @@ const { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } = await impo
 const isRoster = (sql: unknown): boolean => String(sql).includes('agency_agent_sessions s');
 /** The tagged soft-phone counts (SR1–SR3): their own statement, on the tag's index, holding no rate of the dialler's. */
 const isSoftphone = (sql: unknown): boolean => String(sql).includes('FROM agency_manual_calls m');
-const isAggregate = (sql: unknown): boolean => !isRoster(sql) && !isSoftphone(sql);
+/** The inbound calls filed under the campaign (call log P4): their own statement too, on their campaign index. */
+const isInbound = (sql: unknown): boolean => String(sql).includes('FROM agency_inbound_calls i');
+const isAggregate = (sql: unknown): boolean => !isRoster(sql) && !isSoftphone(sql) && !isInbound(sql);
 const aggregateCall = (): unknown[] =>
   (pool.query.mock.calls.filter((c) => isAggregate(c[0]))[0] ?? []) as unknown[];
 const sqlOf = (): string => String(aggregateCall()[0] ?? '');
@@ -198,6 +200,8 @@ describe('the stats payload produces every field the contract declares', () => {
       'previous_hour',
       // The tagged soft-phone calls: an object of three counts, each checked below.
       'softphone',
+      // The inbound calls filed under the campaign: an object of counts, checked below too.
+      'inbound',
     ]);
     for (const [key, value] of Object.entries(stats)) {
       if (notPlainNumbers.has(key)) continue;
@@ -205,6 +209,10 @@ describe('the stats payload produces every field the contract declares', () => {
     }
     for (const [key, value] of Object.entries(stats.softphone)) {
       expect(typeof value, `softphone.${key} must be a number, not a pg string`).toBe('number');
+    }
+    expect(Object.keys(stats.inbound).sort()).toEqual(['answered', 'missed', 'open_follow_ups', 'open_hours', 'received', 'talk_seconds']);
+    for (const [key, value] of Object.entries(stats.inbound)) {
+      expect(typeof value, `inbound.${key} must be a number, not a pg string`).toBe('number');
     }
   });
 });

@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   hangupInboundCall: vi.fn(),
   dispositionInboundCall: vi.fn(),
   markInboundCallDnc: vi.fn(),
+  listInboundCallCampaigns: vi.fn(),
+  setInboundCallCampaign: vi.fn(),
   getMyContactsSummary: vi.fn(),
   useTenant: vi.fn(),
   flags: new Set<string>(),
@@ -38,6 +40,8 @@ vi.mock('../../api/inbound', () => ({
   hangupInboundCall: mocks.hangupInboundCall,
   dispositionInboundCall: mocks.dispositionInboundCall,
   markInboundCallDnc: mocks.markInboundCallDnc,
+  listInboundCallCampaigns: mocks.listInboundCallCampaigns,
+  setInboundCallCampaign: mocks.setInboundCallCampaign,
 }));
 vi.mock('../../api/agencyAssignment', () => ({ getMyContactsSummary: mocks.getMyContactsSummary }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -378,6 +382,80 @@ describe('a call-later on an inbound call says who will make it (AS8)', () => {
     await mounted();
     expect(await callLaterLine({ match: null })).toMatch(/^This time is saved with the call\. No one will call by themselves, so call back today at .* yourself\.$/);
     expect(mocks.getMyContactsSummary).not.toHaveBeenCalled();
+  });
+});
+
+// docs/call-log.md §5: at the end of a call from a number on no list, where it is filed and Change.
+describe('Filed under, at the end of a call from a number on no list', () => {
+  const routed = (over: Partial<AgencyInboundCall> = {}) => owing({
+    match: null,
+    campaign: { campaign_id: 'c-gen', campaign_name: 'General enquiries', source: 'route' },
+    campaign_changeable: true,
+    campaign_required: true,
+    ...over,
+  });
+
+  it('says where the call is filed and why it can be moved; Change lists the agent’s work, and choosing one reloads what they can choose', async () => {
+    mocks.listInboundCallCampaigns.mockResolvedValue([
+      { campaign_id: 'c-gen', campaign_name: 'General enquiries' }, { campaign_id: 'c-gold', campaign_name: 'Gold Loan Renewals' },
+    ]);
+    mocks.setInboundCallCampaign.mockResolvedValue({
+      ok: true,
+      value: routed({
+        campaign: { campaign_id: 'c-gold', campaign_name: 'Gold Loan Renewals', source: 'agent' },
+        disposition_catalog: [{ code: 'query', label: 'Query' }],
+      }),
+    });
+    await mounted();
+    await call(routed());
+    const card = screen.getByTestId('inbound-filed-under');
+    expect(card.textContent).toContain('Filed under: General enquiries (this number is not on any list)');
+    expect(screen.queryByTestId('inbound-filed-select')).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(within(card).getByRole('button', { name: 'Change the work this call is filed under' }));
+    });
+    const select = screen.getByTestId('inbound-filed-select') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Choose the work', 'General enquiries', 'Gold Loan Renewals']);
+    expect(select.value).toBe('c-gen');
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'c-gold' } });
+    });
+    expect(mocks.setInboundCallCampaign).toHaveBeenCalledWith('ib-1', 'c-gold', 't-1', 'a-1');
+    expect(screen.getByTestId('inbound-filed-name').textContent).toBe('Gold Loan Renewals');
+    expect(screen.getByTestId('inbound-filed-notice').textContent).toBe('What you can choose changed to match Gold Loan Renewals.');
+    expect(screen.queryByTestId('inbound-filed-select')).toBeNull();
+    // The tiles are the new work's.
+    expect(screen.getByTestId('station-inbound').textContent).toContain('Query');
+    expect(screen.getByTestId('station-inbound').textContent).not.toContain('Complaint');
+  });
+
+  it('a customer on a list keeps their own work: nothing to change', async () => {
+    await mounted();
+    await call(owing({ campaign: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals', source: 'contact' }, campaign_changeable: false }));
+    expect(screen.queryByTestId('inbound-filed-under')).toBeNull();
+  });
+
+  it('a call filed nowhere, where every call needs a work: Save says to choose one first and saves nothing', async () => {
+    await mounted();
+    await call(routed({ campaign: null }));
+    const card = screen.getByTestId('inbound-filed-under');
+    expect(card.getAttribute('data-missing')).toBe('true');
+    expect(screen.getByTestId('inbound-filed-missing').textContent).toBe('Choose the work to file this call under, then save.');
+    expect(within(card).getByRole('button', { name: 'Change the work this call is filed under' }).textContent).toBe('Choose the work');
+    fireEvent.keyDown(window, { key: '1' });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('inbound-save'));
+    });
+    expect(mocks.dispositionInboundCall).not.toHaveBeenCalled();
+    expect(screen.getByTestId('inbound-save-reason').textContent).toBe('Choose the work to file this call under, then save.');
+  });
+
+  it('while the caller is on the line, About this call names the work the call is filed under', async () => {
+    await mounted();
+    await call(connected({ match: null, campaign: { campaign_id: 'c-gen', campaign_name: 'General enquiries', source: 'route' } }));
+    expect(screen.getByTestId('inbound-campaign').textContent).toBe('General enquiries');
+    expect(screen.queryByTestId('inbound-filed-under')).toBeNull();
   });
 });
 

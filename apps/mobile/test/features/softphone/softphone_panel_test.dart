@@ -213,6 +213,74 @@ void main() {
       expect(h.actions.args['setTag'], [null]);
     });
 
+    // The account's "Every call must belong to a campaign" (the bootstrap's `campaign_required`).
+    testWidgets('every call must belong to a campaign: "Log to (required)", no "Not logged to a campaign", and Call says what to choose', (
+      tester,
+    ) async {
+      final h = await pumpSoftphone(
+        tester,
+        readyView(campaignRequired: true, canDial: false, dialUnavailableReason: 'Choose a campaign to log this call to.'),
+      );
+      expect(find.text('Log to (required)'), findsOneWidget);
+      expect(find.text('Choose a campaign to log this call to.'), findsOneWidget);
+      // The header's pill does not claim the call is "not logged": nothing is logged anywhere yet.
+      expect(find.byKey(const Key('softphone-logging-to')), findsNothing);
+      expect(tester.widget<FilledButton>(callButton()).onPressed, isNull);
+      // Nothing is said about the soft phone's own outcomes: no call uses them.
+      expect(find.text('Uses the soft phone’s own outcomes and your account’s numbers'), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('log-to')));
+      await tester.tap(find.byKey(const Key('log-to')));
+      await settle(tester);
+      expect(find.text('Not logged to a campaign'), findsNothing);
+      expect(find.text('Choose a campaign'), findsWidgets);
+      await tester.tap(find.text('Diwali Offers').last);
+      await settle(tester);
+      expect(h.actions.args['setTag'], ['c2']);
+    });
+
+    testWidgets('with a campaign chosen under the rule, the empty choice is gone', (tester) async {
+      await pumpSoftphone(tester, readyView(campaignRequired: true, tag: 'c2'));
+      await tester.ensureVisible(find.byKey(const Key('log-to')));
+      await tester.tap(find.byKey(const Key('log-to')));
+      await settle(tester);
+      expect(find.text('Choose a campaign'), findsNothing);
+      expect(find.text('Not logged to a campaign'), findsNothing);
+    });
+
+    testWidgets('a redial of a call logged to no campaign says why Log to is empty', (tester) async {
+      await pumpSoftphone(
+        tester,
+        readyView(
+          campaignRequired: true,
+          canDial: false,
+          setupNote: 'This call was not logged to a campaign. Choose one to call again.',
+          dialUnavailableReason: 'Choose a campaign to log this call to.',
+        ),
+      );
+      expect(find.byKey(const Key('log-to-note')), findsOneWidget);
+      expect(find.text('This call was not logged to a campaign. Choose one to call again.'), findsOneWidget);
+    });
+
+    testWidgets('an agent on no running campaign: no pad, no number, no Call, no Log to; who to ask', (tester) async {
+      final h = await pumpSoftphone(
+        tester,
+        readyView(
+          campaignRequired: true,
+          noCampaignToLogTo: true,
+          canDial: false,
+          dialUnavailableReason: 'You are not on any running campaign, so you cannot dial.',
+        ),
+      );
+      expect(find.byKey(const Key('softphone-no-campaign')), findsOneWidget);
+      expect(find.text('You are not on any running campaign, so you cannot dial.'), findsOneWidget);
+      expect(find.text('Ask your supervisor to add you to one.'), findsOneWidget);
+      expect(find.byKey(const Key('dial-pad')), findsNothing);
+      expect(find.byKey(const Key('dial-number')), findsNothing);
+      expect(find.byKey(const Key('dial-call')), findsNothing);
+      expect(find.byKey(const Key('log-to')), findsNothing);
+      expect(h.actions.calls, isEmpty);
+    });
+
     testWidgets('finish mode: no pad, no number, no Call; the notice says what still works', (tester) async {
       final h = await pumpSoftphone(tester, readyView(finishOnly: true));
       expect(find.byKey(const Key('dial-pad')), findsNothing);

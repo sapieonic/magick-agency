@@ -5,7 +5,9 @@ import {
   dispositionInboundCall,
   getInboundCall,
   hangupInboundCall,
+  listInboundCallCampaigns,
   markInboundCallDnc,
+  setInboundCallCampaign,
   updateInboundCallNotes,
   type InboundRefusal,
   type InboundResult,
@@ -31,7 +33,7 @@ import { useCallNotesAutosave, type NotesSaveSettled } from './useCallNotesAutos
 import type { ServerClock } from './useServerClock';
 import type { StationConnection } from './agencyStation/types';
 import type { AgencyDisposition } from '../types/agency';
-import type { AgencyInboundCall } from '../types/inbound';
+import type { AgencyInboundCall, AgencyInboundCallCampaignOption } from '../types/inbound';
 
 /**
  * The agent's inbound call (P2, `docs/inbound.md` §6), on top of a station someone else owns.
@@ -49,12 +51,17 @@ import type { AgencyInboundCall } from '../types/inbound';
  * that says the call is not this agent's any more (`inbound_call_not_found`) retires it too.
  */
 
-export type InboundSaveBlock = DispositionBlockReason | 'call_live';
+/**
+ * `work_required`: the account asks for a campaign on every call (`docs/call-log.md` §5) and
+ * this one is filed under none; the agent chooses one before Save.
+ */
+export type InboundSaveBlock = DispositionBlockReason | 'call_live' | 'work_required';
 
 /** Why Save cannot save yet, in the station's words (AS15). */
 export const INBOUND_SAVE_BLOCK_COPY: Record<InboundSaveBlock, string> = {
   ...STATION_BLOCK_COPY,
   call_live: SIDE_COPY.saveOpensAfterCall,
+  work_required: SIDE_COPY.chooseWorkToSave,
 };
 
 /** Why the server refused what the agent chose (`inbound_disposition_invalid`'s `reason`), in the station's words. */
@@ -133,6 +140,12 @@ export interface InboundCallState {
   saving: boolean;
   saveOutcome: () => void;
 
+  /**
+   * The work the call is filed under at the end of the call (`docs/call-log.md` §5), for a caller
+   * on no list: shown as "Filed under", with Change while the server says it can be moved.
+   */
+  filing: InboundFiling;
+
   notes: string;
   setNotes: (value: string) => void;
   notesEnabled: boolean;
@@ -156,6 +169,33 @@ export interface InboundCallState {
 
   /** Assertive: the direct result of something the agent pressed, or must know before speaking. */
   announcement: string;
+}
+
+/** "Filed under" at the end of a call from a number on no list. */
+export interface InboundFiling {
+  /** Shown at all: the caller is on no list and the call is over. */
+  shown: boolean;
+  /** The work it is filed under; null: none yet. */
+  name: string | null;
+  campaignId: string | null;
+  /** The call may be moved to another work (its outcome is not saved). */
+  changeable: boolean;
+  /** The account asks for a work on every call and this one has none: Save waits for it. */
+  missing: boolean;
+  /** The choices, once asked for; null before, and while they load. */
+  options: AgencyInboundCallCampaignOption[] | null;
+  /** The list is open (asked for), loading or loaded. */
+  choosing: boolean;
+  loading: boolean;
+  /** A change is being saved. */
+  changing: boolean;
+  /** Why the list did not load, or the change did not save. */
+  error: string | null;
+  /** Said once after a change: what the agent can choose is the new work's. */
+  notice: string | null;
+  open: () => void;
+  close: () => void;
+  choose: (campaignId: string) => void;
 }
 
 export { NOTES_DEBOUNCE_MS } from './useCallNotesAutosave';
@@ -186,7 +226,17 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
 
   const fresh = (candidate: AgencyInboundCall | null) =>
     candidate && !staleKeys.has(snapshotKey(candidate)) ? candidate : null;
-  const newest = newerInboundCall(fresh(frameCall), fresh(httpCall));
+  const held = newerInboundCall(fresh(frameCall), fresh(httpCall));
+  /**
+   * The work the agent just filed the call under (`docs/call-log.md` §5), until the copy held
+   * says so itself. Moving a call changes neither its state nor an instant, so the frame's copy
+   * (the authority on a tie) would otherwise show the old work until the server's frame lands.
+   * It stops applying once the copy held is under any other work than the one it was moved from.
+   */
+  const [refiled, setRefiled] = useState<{ callId: string; fromCampaignId: string | null; call: AgencyInboundCall } | null>(null);
+  const newest = held && refiled && refiled.callId === held.id && (held.campaign?.campaign_id ?? null) === refiled.fromCampaignId
+    ? { ...held, campaign: refiled.call.campaign, catalog_source: refiled.call.catalog_source, disposition_catalog: refiled.call.disposition_catalog }
+    : held;
   const phase = inboundPhase(newest);
   const call = phase !== null ? newest : null;
   const heldRef = useLatestRef(newest);
@@ -356,15 +406,29 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     setFormState(next);
     setPadRejection(null);
   }, []);
+
+  // ── Filed under (docs/call-log.md §5) ─────────────────────────────────────
+  const onRefiled = useCallback((from: AgencyInboundCall, next: AgencyInboundCall) => {
+    adoptCall(next);
+    setRefiled({ callId: from.id, fromCampaignId: from.campaign?.campaign_id ?? null, call: next });
+    // What could be chosen was the old work's: the choice made from it is cleared with it.
+    setFormState(EMPTY_DISPOSITION_FORM);
+    setCatalogOverride(null);
+    setPadRejection(null);
+  }, [adoptCall]);
+  const filing = useInboundFiling({ call, phase, tenantId, accountId, reconcile, onRefiled, announce: setAnnouncement });
+  const filingMissing = filing.missing;
   const fullForm = useMemo(() => ({ ...form, notes }), [form, notes]);
   const saveBlockAt = useCallback(
     (now: number): InboundSaveBlock | null => {
       const formBlock = blockReason(catalog, fullForm, now);
       if (formBlock === 'no_selection') return 'no_selection';
       if (phase !== 'outcome') return 'call_live';
+      // The server refuses the save (`campaign_required`); say what is missing before it is sent.
+      if (filingMissing) return 'work_required';
       return formBlock;
     },
-    [catalog, fullForm, phase],
+    [catalog, fullForm, phase, filingMissing],
   );
 
   const savingRef = useRef(false);
@@ -408,6 +472,9 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
       setCatalogOverride({ callId: target.id, catalog: resyncCatalog(catalog, refusal.allowedCodes) });
     }
     if (refusal.code === 'inbound_outcome_already_saved' || refusal.code === 'inbound_call_not_found') reconcile();
+    // The account began asking for a work on every call while this one was open: read the call
+    // again, so "Filed under" asks for it.
+    if (refusal.code === 'campaign_required') reconcile();
     setPadRejection(message);
     setAnnouncement(SIDE_COPY.notSaved(message));
   }, [call, tenantId, accountId, clock, saveBlockAt, catalog, fullForm, adoptCall, reconcile, cancelSave]);
@@ -476,6 +543,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     saveBlockAt,
     saving,
     saveOutcome: () => void saveOutcome(),
+    filing,
     notes,
     setNotes,
     notesEnabled,
@@ -510,7 +578,99 @@ export const INBOUND_CALL_REFUSAL_WORDS: Partial<Record<InboundRefusal['code'], 
   inbound_call_not_dispositionable: 'You can choose what happened only after you have talked to the customer.',
   inbound_disposition_invalid: 'That did not save. Check what you chose, the note and the time.',
   inbound_outcome_already_saved: 'This call is saved already.',
+  // Every call must be filed under a work (docs/call-log.md §5).
+  campaign_required: SIDE_COPY.chooseWorkToSave,
+  inbound_campaign_fixed: 'This customer is on a list already, so the call stays where it is.',
+  inbound_campaign_not_allowed: 'You cannot file calls under that work. Choose another.',
 };
+
+/**
+ * "Filed under" at the end of a call from a number on no list (docs/call-log.md §5): the list of
+ * works, asked for when the agent opens it, and the change of work. `onRefiled` takes the call as
+ * it was and as the server now has it; `announce` says a refusal or the change out loud.
+ */
+function useInboundFiling({ call, phase, tenantId, accountId, reconcile, onRefiled, announce }: {
+  call: AgencyInboundCall | null;
+  phase: InboundPhase | null;
+  tenantId: string | null | undefined;
+  accountId: string | null | undefined;
+  reconcile: () => void;
+  onRefiled: (from: AgencyInboundCall, next: AgencyInboundCall) => void;
+  announce: (text: string) => void;
+}): InboundFiling {
+  const [filingFor, setFilingFor] = useState<string | null>(null);
+  const [filingOptions, setFilingOptions] = useState<AgencyInboundCallCampaignOption[] | null>(null);
+  const [filingLoading, setFilingLoading] = useState(false);
+  const [filingChanging, setFilingChanging] = useState(false);
+  const [filingError, setFilingError] = useState<string | null>(null);
+  const [filingNotice, setFilingNotice] = useState<{ callId: string; text: string } | null>(null);
+
+  const filingShown = call !== null && phase === 'outcome' && !call.match
+    && (Boolean(call.campaign) || call.campaign_required === true || call.campaign_changeable === true);
+  const filingChangeable = filingShown && call?.campaign_changeable === true;
+  const filingMissing = call !== null && phase === 'outcome' && call.campaign_required === true && !call.campaign;
+  const filingChoosing = call !== null && filingFor === call.id;
+  const openFiling = useCallback(async () => {
+    const target = call;
+    if (!target || !tenantId || !accountId || filingLoading) return;
+    setFilingFor(target.id);
+    setFilingError(null);
+    setFilingLoading(true);
+    try {
+      setFilingOptions(await listInboundCallCampaigns(target.id, tenantId, accountId));
+    } catch {
+      setFilingOptions(null);
+      setFilingError(SIDE_COPY.worksDidNotLoad);
+    } finally {
+      setFilingLoading(false);
+    }
+  }, [call, tenantId, accountId, filingLoading]);
+  const closeFiling = useCallback(() => {
+    setFilingFor(null);
+    setFilingError(null);
+  }, []);
+  const chooseFiling = useCallback(async (campaignId: string) => {
+    const target = call;
+    if (!target || !tenantId || !accountId || filingChanging || !campaignId) return;
+    if (campaignId === target.campaign?.campaign_id) {
+      setFilingFor(null);
+      return;
+    }
+    setFilingChanging(true);
+    setFilingError(null);
+    const result = await setInboundCallCampaign(target.id, campaignId, tenantId, accountId);
+    setFilingChanging(false);
+    if (!result.ok) {
+      if (result.refusal.code === 'inbound_outcome_already_saved' || result.refusal.code === 'inbound_call_not_found') reconcile();
+      const text = inboundCallRefusalWords(result.refusal);
+      setFilingError(text);
+      announce(text);
+      return;
+    }
+    onRefiled(target, result.value);
+    setFilingFor(null);
+    const text = SIDE_COPY.choicesChanged(result.value.campaign?.campaign_name ?? '');
+    setFilingNotice({ callId: target.id, text });
+    announce(text);
+  }, [call, tenantId, accountId, filingChanging, onRefiled, reconcile, announce]);
+
+  return {
+    shown: filingShown,
+    name: call?.campaign?.campaign_name || null,
+    campaignId: call?.campaign?.campaign_id ?? null,
+    changeable: filingChangeable,
+    missing: filingMissing,
+    options: filingChoosing ? filingOptions : null,
+    choosing: filingChoosing,
+    loading: filingChoosing && filingLoading,
+    changing: filingChanging,
+    error: filingChoosing || filingMissing ? filingError : null,
+    notice: call && filingNotice?.callId === call.id ? filingNotice.text : null,
+    open: () => void openFiling(),
+    close: closeFiling,
+    choose: (id: string) => void chooseFiling(id),
+  };
+}
 
 export function inboundCallRefusalWords(refusal: InboundRefusal): string {
   return INBOUND_CALL_REFUSAL_WORDS[refusal.code] ?? STATION_COPY.somethingWentWrong;

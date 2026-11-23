@@ -87,6 +87,45 @@ final class InboundCallRoute {
   int get hashCode => Object.hash(id, name);
 }
 
+/// The campaign an inbound call is filed under ("Filed under: General
+/// enquiries"): the matched contact's, else the route's campaign for unknown
+/// callers, else one chosen at wrap-up.
+///
+/// Contract: `AgencyInboundCallCampaign`.
+@immutable
+final class InboundCallCampaign {
+  const InboundCallCampaign({required this.campaignId, required this.campaignName, required this.source});
+
+  factory InboundCallCampaign.fromJson(Map<String, Object?> j) => InboundCallCampaign(
+    campaignId: j.str('campaign_id'),
+    campaignName: j.str('campaign_name'),
+    source: j.str('source'),
+  );
+
+  final String campaignId;
+
+  /// Empty when the campaign row is gone.
+  final String campaignName;
+
+  /// How the call came by it (`AGENCY_INBOUND_CAMPAIGN_SOURCES`): `contact`
+  /// (the caller is on the campaign's list, fixed), `route`, `agent` or
+  /// `supervisor` (a filing choice). Kept as sent; the app only shows the name.
+  final String source;
+
+  /// The caller is on this campaign's list: it cannot be changed.
+  bool get isMatch => source == 'contact';
+
+  @override
+  bool operator ==(Object other) =>
+      other is InboundCallCampaign &&
+      other.campaignId == campaignId &&
+      other.campaignName == campaignName &&
+      other.source == source;
+
+  @override
+  int get hashCode => Object.hash(campaignId, campaignName, source);
+}
+
 /// Why the panel names an agent as the caller's own, and whether that is the
 /// agent the call is offered to.
 ///
@@ -216,6 +255,9 @@ final class InboundCall {
     required this.callerDnc,
     this.sticky,
     this.match,
+    this.campaign,
+    this.campaignChangeable = false,
+    this.campaignRequired = false,
     required this.catalogSource,
     String? catalogSourceRaw,
     required List<Disposition> dispositionCatalog,
@@ -250,6 +292,9 @@ final class InboundCall {
     final route = j.objOrNull('route');
     final sticky = j.objOrNull('sticky');
     final match = j.objOrNull('match');
+    // The campaign the call is filed under, read leniently: absent (a server
+    // from before it) decodes as none, not required.
+    final campaign = j.objOrNull('campaign');
     // Mode B's three fields are read leniently: absent (a server from before
     // them) decodes as null, a station offer with no ring.
     final channel = j.strOrNull('offer_channel');
@@ -266,6 +311,9 @@ final class InboundCall {
       callerDnc: j.boolean('caller_dnc'),
       sticky: sticky == null ? null : InboundCallSticky.fromJson(sticky),
       match: match == null ? null : InboundCallMatch.fromJson(match),
+      campaign: campaign == null ? null : InboundCallCampaign.fromJson(campaign),
+      campaignChangeable: j.boolOrNull('campaign_changeable') ?? false,
+      campaignRequired: j.boolOrNull('campaign_required') ?? false,
       catalogSource: InboundCatalogSource.fromWire(catalog),
       catalogSourceRaw: catalog,
       dispositionCatalog: j.list('disposition_catalog', Disposition.fromJson),
@@ -330,6 +378,18 @@ final class InboundCall {
 
   /// Null: the caller matched no roster contact.
   final InboundCallMatch? match;
+
+  /// The campaign the call is filed under, or null: none.
+  final InboundCallCampaign? campaign;
+
+  /// The call can be filed under another campaign (an unknown caller's, its
+  /// outcome not saved yet). The console offers "Change"; the app shows the
+  /// campaign only.
+  final bool campaignChangeable;
+
+  /// The account's "Every call must belong to a campaign" applies to this
+  /// call: with no [campaign] its outcome is refused `campaign_required`.
+  final bool campaignRequired;
   final InboundCatalogSource catalogSource;
   final String catalogSourceRaw;
 
@@ -424,6 +484,9 @@ final class InboundCall {
       other.callerDnc == callerDnc &&
       other.sticky == sticky &&
       other.match == match &&
+      other.campaign == campaign &&
+      other.campaignChangeable == campaignChangeable &&
+      other.campaignRequired == campaignRequired &&
       other.catalogSourceRaw == catalogSourceRaw &&
       listEquals(other.dispositionCatalog, dispositionCatalog) &&
       other.recording == recording &&
@@ -710,6 +773,8 @@ final class InboundMissedCall {
     this.matchedContactId,
     this.matchedCampaignId,
     this.matchedCampaignName,
+    this.campaignId,
+    this.campaignName,
     this.matchName,
     this.callbackDueAt,
     required this.hasVoicemail,
@@ -755,6 +820,9 @@ final class InboundMissedCall {
       matchedContactId: j.strOrNull('matched_contact_id'),
       matchedCampaignId: j.strOrNull('matched_campaign_id'),
       matchedCampaignName: j.strOrNull('matched_campaign_name'),
+      // Absent on a server from before calls were filed under a campaign.
+      campaignId: j.strOrNull('campaign_id'),
+      campaignName: j.strOrNull('campaign_name'),
       matchName: j.strOrNull('match_name'),
       callbackDueAt: j.timeOrNull('callback_due_at'),
       hasVoicemail: j.boolean('has_voicemail'),
@@ -801,6 +869,17 @@ final class InboundMissedCall {
   final String? matchedContactId;
   final String? matchedCampaignId;
   final String? matchedCampaignName;
+
+  /// The campaign the call is filed under: the matched caller's own, else the
+  /// campaign the inbound number files unknown callers under. Null when it is
+  /// under none, and from a server that predates the field.
+  final String? campaignId;
+  final String? campaignName;
+
+  /// The campaign Call back logs the call to, and the one the list names:
+  /// where the call is filed, else (an older server) its match.
+  String? get loggedCampaignId => campaignId ?? matchedCampaignId;
+  String? get loggedCampaignName => campaignName ?? matchedCampaignName;
 
   /// The matched contact's name (`match_name`, IQ54), shown above the
   /// number; null when the caller matched no contact, withheld their number,
@@ -853,6 +932,8 @@ final class InboundMissedCall {
       other.matchedContactId == matchedContactId &&
       other.matchedCampaignId == matchedCampaignId &&
       other.matchedCampaignName == matchedCampaignName &&
+      other.campaignId == campaignId &&
+      other.campaignName == campaignName &&
       other.matchName == matchName &&
       other.callbackDueAt == callbackDueAt &&
       other.hasVoicemail == hasVoicemail &&
@@ -1164,6 +1245,18 @@ enum InboundErrorCode implements WireEnum {
   /// 409 (Mode B, `…/ring/answering` or `…/ring/decline` after accept, N4):
   /// hang up from the call screen instead.
   alreadyAccepted('already_accepted'),
+
+  /// 422: an inbound route saved with no campaign for unknown callers, or the
+  /// account's "Every call must belong to a campaign" switched on while a
+  /// route has none. The console's; the app does not meet it.
+  defaultCampaignRequired('default_campaign_required'),
+
+  /// 409: a campaign named for a call whose caller is on a campaign's list
+  /// (that campaign is fixed).
+  inboundCampaignFixed('inbound_campaign_fixed'),
+
+  /// 403: the campaign named is not one the caller may log a call to.
+  inboundCampaignNotAllowed('inbound_campaign_not_allowed'),
   unknown('');
 
   const InboundErrorCode(this.wire);

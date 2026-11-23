@@ -708,6 +708,9 @@ class SoftphoneView {
     this.startAllowed = true,
     this.finishOnly = false,
     this.campaigns = const [],
+    this.campaignRequired = false,
+    this.noCampaignToLogTo = false,
+    this.setupNote,
     this.tagCampaignId,
     this.callerIds = const [],
     this.callerId,
@@ -807,9 +810,23 @@ class SoftphoneView {
 
   // ── Setup (locked once a call is placed) ──
 
-  /// "Log to": the taggable campaigns. Untagged is always offered as well
-  /// (`tagCampaignId == null`, label "Don't log to a campaign").
+  /// "Log to": the taggable campaigns. Untagged is offered as well
+  /// (`tagCampaignId == null`, "Not logged to a campaign") unless
+  /// [campaignRequired].
   final List<SoftphoneTagOption> campaigns;
+
+  /// The account's "Every call must belong to a campaign" is on (the
+  /// bootstrap's `campaign_required`): "Log to" is required, untagged is not
+  /// offered, and Call stays off until a campaign is chosen.
+  final bool campaignRequired;
+
+  /// [campaignRequired], and the agent is on no campaign a call can be logged
+  /// to: they cannot dial, and the pad gives way to saying so.
+  final bool noCampaignToLogTo;
+
+  /// A line under "Log to": why it was left empty (a redial of a call that
+  /// was logged to no campaign), or null.
+  final String? setupNote;
 
   /// The draft's tag before dialling; the call's tag once dialled. Null: untagged.
   final String? tagCampaignId;
@@ -1048,6 +1065,9 @@ class SoftphoneView {
       other.startAllowed == startAllowed &&
       other.finishOnly == finishOnly &&
       _eqT.equals(other.campaigns, campaigns) &&
+      other.campaignRequired == campaignRequired &&
+      other.noCampaignToLogTo == noCampaignToLogTo &&
+      other.setupNote == setupNote &&
       other.tagCampaignId == tagCampaignId &&
       _eqC.equals(other.callerIds, callerIds) &&
       other.callerId == callerId &&
@@ -1266,7 +1286,12 @@ abstract interface class SoftphoneActions {
   /// not count), on any session change but the first session to open after
   /// it, and when the soft phone is open on another device or account. Either
   /// way any open override prompt goes: it was for another number.
-  void callBack(String number, {String? campaignId});
+  ///
+  /// [inboundCallId] is the Missed inbound call this is the Call back of: the
+  /// first dial of that number from the pad names it, so the call is linked
+  /// to the missed call (`docs/call-log.md`, CL1). A dial of any other number
+  /// names nothing.
+  void callBack(String number, {String? campaignId, String? inboundCallId});
 
   // ── Setup ──
 

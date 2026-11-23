@@ -76,6 +76,7 @@ import {
   softphoneCampaignCountsStatement,
   type SoftphoneCampaignCounts,
 } from './softphone-campaign-sql.js';
+import { inboundCampaignCountsStatement, readInboundCampaignCounts, type InboundCampaignCounts } from './inbound-campaign-sql.js';
 
 /**
  * A `TIMESTAMPTZ` as an ISO instant, degrading to the epoch rather than throwing.
@@ -401,10 +402,15 @@ export async function campaignStats(
   // The tagged soft-phone calls over the campaign's life (SR1–SR3): beside the dialler's
   // figures, never in them. Its own statement, on the tag's index, read beside the roster.
   const soft = softphoneCampaignCountsStatement({ campaignId, tenantId: null });
-  const [agents, softphone] = await Promise.all([
+  // The inbound calls filed under it over its life, by the Call log's rule for an inbound row
+  // (`inbound-campaign-sql.ts`): beside both, in neither. One range of its campaign index.
+  const inb = inboundCampaignCountsStatement({ campaignId, tenantId: null });
+  const [agents, softphone, inbound] = await Promise.all([
     supervisorAgents(campaignId),
     getPool().query<SoftphoneCampaignCounts>(soft.text, soft.values)
       .then((r) => readSoftphoneCampaignCounts(r.rows[0])),
+    getPool().query<InboundCampaignCounts>(inb.text, inb.values)
+      .then((r) => readInboundCampaignCounts(r.rows[0])),
   ]);
 
   return {
@@ -477,6 +483,7 @@ export async function campaignStats(
     connect_rate_pct: ratePct(humanConnects, num('first_dials_placed')),
     first_dials_placed: num('first_dials_placed'),
     softphone,
+    inbound,
     attempts_success: attemptsSuccess,
     // `null`, never `0`, when nothing has bridged — the same imported helper
     // `abandonment_rate_24h_pct` uses, and the same distinction: "nothing has

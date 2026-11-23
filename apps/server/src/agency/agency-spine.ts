@@ -72,12 +72,27 @@ export const TOTAL_QUERY_PARAMS = ['include_total'] as const;
 export const PREAMBLE_QUERY_PARAMS = ['preamble'] as const;
 
 /**
- * The campaign call export's own filter (decision SR6): `source=dialler|soft_phone` keeps one
- * of the two sources of the campaign's call log; absent, the file carries both. Forwarded to
- * the call log's internal read, which validates it. Not on the JSON attempt list, whose rows
- * are the dialler's alone (the soft phone's are Call log's other view).
+ * The campaign call export's own filter (decision SR6): `source=dialler|soft_phone|inbound`
+ * keeps one of the three sources of the campaign's call log, and `source=to_follow_up` its open
+ * Missed rows (inbound rows); absent, the file carries every source. Forwarded to
+ * the call log's internal read, which validates it. `status=live|awaiting_outcome|settled` is
+ * the Call log's soft-phone status filter (CL11, `docs/call-log.md`): the soft-phone calls in
+ * that status, and no dialler or inbound row; absent, the file is as it was. Neither is on the JSON
+ * attempt list, whose rows are the dialler's alone.
  */
-export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source'] as const;
+export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source', 'status'] as const;
+
+/** The call export's `source` cell for a row: its own, and `dialler` for a row that carries none. */
+export type SpineCallSource = 'dialler' | 'soft_phone' | 'inbound';
+
+/**
+ * The Call log's own params on its JSON route (`GET /proxy/agency/campaigns/:id/call-log`,
+ * CL11): `type=all|dialler|soft_phone|inbound|to_follow_up`, the chip, and `include_counts=1`,
+ * the chips' counts.
+ * `type` becomes the internal read's `source`; `include_counts` and `status` (the soft-phone
+ * status filter, below) are forwarded by name. The export keeps `source` and takes `status` too.
+ */
+export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts', 'status'] as const;
 
 /**
  * The outcome of narrowing a query down to the params a route forwards.
@@ -181,16 +196,17 @@ export function forwardAllowedQuery(
 export interface SpineAttemptRow {
   /**
    * Where the row came from (the call log, decision SR6): `dialler` for an attempt,
-   * `soft_phone` for a soft-phone call tagged to the campaign. Absent on the JSON attempt
-   * list, whose rows are all the dialler's.
+   * `soft_phone` for a soft-phone call tagged to the campaign, `inbound` for an inbound call
+   * filed under it. Absent on the JSON attempt list, whose rows are all the dialler's.
    */
-  source?: 'dialler' | 'soft_phone';
+  source?: SpineCallSource;
   id: string;
-  /** Null on a soft-phone row whose number matched no roster contact. */
+  /** Null on a soft-phone or inbound row whose number matched no roster contact. */
   contact_id: string | null;
-  /** Null on a soft-phone row: the soft phone does not number its calls per contact. */
+  /** Null on a soft-phone or inbound row: neither numbers its calls per contact. */
   attempt_number: number | null;
-  phone_e164: string;
+  /** Null on an inbound row whose caller withheld their number. */
+  phone_e164: string | null;
   caller_id: string;
   agent_user_id: string | null;
   /**
@@ -221,6 +237,13 @@ export interface SpineAttemptRow {
   ended_at: string | null;
   talk_seconds: number | null;
   wrapup_seconds: number | null;
+  /** On a soft-phone row: the Missed inbound call it rang back, if it was a call back (CL1). */
+  callback_of?: { inbound_call_id?: string | null } | null;
+  /** On an inbound row: what only an inbound call has (`CampaignInboundFacts`). */
+  inbound?: {
+    wait_seconds?: number | null;
+    follow_up?: { reason?: string | null; assignee_user_id?: string | null; assignee_name?: string | null } | null;
+  } | null;
   created_at: string;
 }
 
@@ -430,6 +453,20 @@ export const ATTEMPT_CSV_COLUMNS = [
   // and amount (two places, no currency) recorded with this attempt's outcome.
   'promise_date',
   'promise_amount',
+  // Inbound calls in the log (docs/call-log.md P2), appended. `source` gains `inbound`: a call
+  // the customer made to us, filed under this campaign. On such a row `attempt_id` is the
+  // inbound call's id, `phone` the caller's number (empty when withheld), `caller_id` the number
+  // they rang, `agent_user_id` who answered (empty for a missed call), `created_at` when it
+  // arrived, `answered_at` when we answered and `bridged_at` when an agent did; `attempt_number`,
+  // `dialed_at`, `wrapup_seconds` and `auto_disposition_code` are empty.
+  //  - `wait_seconds`: an inbound row's seconds from arrival to the agent's answer, else to the end.
+  //  - `missed_reason`: why an inbound call reached nobody (`closed`, `abandoned_in_queue`,
+  //    `overflow`, `overflow_no_capacity`, `failed`); empty for an answered call.
+  //  - `callback_of`: on a soft_phone row placed from a missed call's Call back, that inbound
+  //    call's id (its `attempt_id` in this file).
+  'wait_seconds',
+  'missed_reason',
+  'callback_of',
 ] as const;
 
 export const CONTACT_CSV_COLUMNS = [
@@ -483,6 +520,8 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     // A row with no `source` is an attempt: the JSON attempt list's rows carry none.
     cell(row.source ?? 'dialler'),
     cell(row.promise_date), cell(row.promise_amount),
+    cell(row.inbound?.wait_seconds), cell(row.inbound?.follow_up?.reason),
+    cell(row.callback_of?.inbound_call_id),
   ]);
 }
 
@@ -552,7 +591,7 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
     preambleLine(
       input.kind === 'attempts'
         // The product name, decision B17.
-        ? 'Magick Agency — campaign call export (one row per dial, and one per soft-phone call logged to the campaign)'
+        ? 'Magick Agency — campaign call export (one row per dial, one per soft-phone call logged to the campaign, and one per inbound call filed under it)'
         : 'Magick Agency — campaign contact roster export (one row per contact)',
     ),
     preambleLine(`Generated: ${input.generatedAt.toISOString()} (UTC)`),
@@ -583,6 +622,15 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
           + 'Soft-phone calls logged to no campaign are not in this file. Pass ?source=dialler '
           + 'for the dialler\'s rows alone. The promise_date and promise_amount columns after it '
           + 'are the promise to pay recorded with the row\'s outcome, empty where there is none.',
+        ),
+        preambleLine(
+          'An inbound row is a call a customer made to us that is filed under this campaign and has '
+          + 'ended: phone is the caller\'s number (empty when withheld), caller_id the number they '
+          + 'rang, agent_user_id who answered (empty for a missed call), created_at when it arrived. '
+          + 'wait_seconds is how long the caller was with us before an agent answered, or before the '
+          + 'call ended; missed_reason says why a call reached nobody. callback_of, on a soft_phone '
+          + 'row, is the attempt_id of the missed inbound call it rang back. A call still in progress, '
+          + 'one we turned away, and one filed under no campaign are not in this file.',
         ),
         preambleLine(
           'Not included for a soft_phone row: the call details the agent entered and the reasons '

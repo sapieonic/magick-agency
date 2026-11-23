@@ -253,6 +253,108 @@ void main() {
 
   // ─── A Missed call's Call back ─────────────────────────────────────────────
 
+  // The account's "Every call must belong to a campaign" (the bootstrap's `campaign_required`).
+  group('every call must belong to a campaign', () {
+    void required(SoftphoneHarness h, [Map<String, Object?> over = const {}]) =>
+        h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'campaign_required': true, ...over}));
+
+    softphoneTest('Call stays off until Log to names a campaign, and says what to choose', before: required, (h) {
+      h.openWith();
+      expect(h.view.campaignRequired, isTrue);
+      expect(h.view.noCampaignToLogTo, isFalse);
+      expect(h.view.tagCampaignId, isNull);
+      expect(h.view.canDial, isFalse);
+      expect(h.view.dialUnavailableReason, 'Choose a campaign to log this call to.');
+      fire(h.actions.dial());
+      h.pump();
+      expect(h.dials, isEmpty);
+
+      h.actions.setTag('camp-1');
+      expect(h.view.dialUnavailableReason, isNull);
+      expect(h.view.canDial, isTrue);
+      h.reply('POST $callsPath', manualCallJson({'tag': tag}), status: 201);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json['campaign_id'], 'camp-1');
+    });
+
+    softphoneTest('with the setting off a call goes with no campaign, as before', (h) {
+      h.openWith();
+      expect(h.view.campaignRequired, isFalse);
+      expect(h.view.canDial, isTrue);
+    });
+
+    softphoneTest(
+      'an agent on no campaign a call can be logged to cannot dial, and is told who can put it right',
+      before: (h) => required(h, {'taggable_campaigns': <Object?>[]}),
+      (h) {
+        h.openWith();
+        expect(h.view.noCampaignToLogTo, isTrue);
+        expect(h.view.canDial, isFalse);
+        expect(h.view.dialUnavailableReason, 'You are not on any running campaign, so you cannot dial.');
+      },
+    );
+
+    softphoneTest('a redial of a call logged to no campaign leaves Log to empty and says why; choosing one clears it',
+        before: required, (h) {
+      h.reply('GET $callsPath', {
+        'rows': [
+          listRow('mc-7', {'tag': null}),
+          listRow('mc-8', {'tag': tag, 'destination_e164': '+919999900000'}),
+        ],
+        'next_cursor': null,
+        'limit': 8,
+      });
+      h.openWith(number: '');
+      h.run(h.actions.reloadRecent());
+      h.actions.redial('mc-7');
+      expect(h.view.tagCampaignId, isNull);
+      expect(h.view.setupNote, 'This call was not logged to a campaign. Choose one to call again.');
+      expect(h.view.canDial, isFalse);
+      h.actions.setTag('camp-1');
+      expect(h.view.setupNote, isNull);
+      expect(h.view.canDial, isTrue);
+
+      // A call that was logged to a campaign the agent can still choose keeps it, with no line.
+      h.actions.redial('mc-7');
+      expect(h.view.setupNote, isNotNull);
+      h.actions.redial('mc-8');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.setupNote, isNull);
+    });
+
+    softphoneTest('switched on under an open soft phone: the refusal is the server’s sentence and the setup is read again', (h) {
+      h.openWith();
+      final before = h.bootstraps.length;
+      required(h);
+      h.reply('POST $callsPath', {
+        'error': 'Conflict',
+        'code': 'campaign_required',
+        'message': 'Choose a campaign before you dial. Every call in this account must belong to a campaign.',
+      }, status: 409);
+      h.run(h.actions.dial());
+      expect(h.view.dialError, 'Choose a campaign before you dial. Every call in this account must belong to a campaign.');
+      h.pump();
+      expect(h.bootstraps.length, greaterThan(before));
+      expect(h.view.campaignRequired, isTrue);
+      expect(h.view.canDial, isFalse);
+    });
+
+    softphoneTest('a Missed call’s Call back to a campaign the agent may not log to leaves Log to empty and asks', before: required,
+        (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', campaignId: 'camp-not-mine');
+      expect(h.view.tagCampaignId, isNull);
+      expect(h.view.canDial, isFalse);
+      expect(h.view.dialUnavailableReason, 'Choose a campaign to log this call to.');
+      // And says why it is empty, as a redial does.
+      expect(h.view.setupNote, 'This call was not logged to a campaign. Choose one to call again.');
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.setupNote, isNull);
+      expect(h.view.canDial, isTrue);
+    });
+  });
+
   group('Call back (a Missed call) fills the pad like redial, and never dials', () {
     softphoneTest('number, the matched campaign as Log to, and Call takes focus', (h) {
       h.openWith(number: '');
@@ -263,6 +365,26 @@ void main() {
       expect(h.view.canDial, isTrue);
       h.pump();
       expect(h.dials, isEmpty);
+    });
+
+    softphoneTest('its dial names the missed call it answers, once, and only while the pad holds that number (CL1)', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', inboundCallId: 'in-1');
+      h.reply('POST $callsPath', {'error': 'no', 'code': 'dial_failed'}, status: 502);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json['callback_of_inbound_call_id'], 'in-1');
+      // The agent rings someone else from the same pad: that call is no call back.
+      h.actions.setNumber('9820461744');
+      h.run(h.actions.dial());
+      expect(h.dials.last.json.containsKey('callback_of_inbound_call_id'), isFalse);
+    });
+
+    softphoneTest('a Call back with no missed call behind it names none', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109');
+      h.reply('POST $callsPath', manualCallJson(), status: 201);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json.containsKey('callback_of_inbound_call_id'), isFalse);
     });
 
     softphoneTest('a campaign the agent may not log to leaves Log to as it was', (h) {
@@ -1326,8 +1448,19 @@ void main() {
   // ─── Rule 14 ──────────────────────────────────────────────────────────────
 
   group('rule 14: Mark DNC and recent calls', () {
-    softphoneTest('a tagged call is marked for its campaign', (h) {
-      h.openWith(call: bridged({'tag': tag}));
+    softphoneTest('a call logged to a campaign whose list holds the number is marked for that campaign', (h) {
+      h.openWith(
+        call: bridged({
+          'tag': tag,
+          'contact': {
+            'contact_id': 'c-1',
+            'state': 'in_flight',
+            'claimed': true,
+            'context': <String, Object?>{},
+            'prior_attempts': <Object?>[],
+          },
+        }),
+      );
       expect(h.view.dncScopeLabel, 'for Home Loan Renewals');
       h.reply('POST $callsPath/mc-1/dnc', {
         'call_id': 'mc-1',
@@ -1340,6 +1473,21 @@ void main() {
       expect(h.requests('POST', '$callsPath/mc-1/dnc').single.json, {'reason': 'Asked'});
       expect(h.view.dncOutcome, '+91 98204 61733 is on the Do Not Call list for Home Loan Renewals.');
       expect(h.view.announcement, h.view.dncOutcome);
+    });
+
+    // CL6: the campaign is only where the call is logged, so the mark covers the whole account.
+    softphoneTest('a call logged to a campaign whose list does not hold the number is marked for the account', (h) {
+      h.openWith(call: bridged({'tag': tag}));
+      expect(h.view.dncScopeLabel, 'for this account');
+      h.reply('POST $callsPath/mc-1/dnc', {
+        'call_id': 'mc-1',
+        'phone_e164': '+919820461733',
+        'scope': 'account',
+        'dnc_recorded': true,
+        'contact_state': null,
+      });
+      h.run(h.actions.markDnc(callId: 'mc-1'));
+      expect(h.view.dncOutcome, '+91 98204 61733 is on the Do Not Call list for this account.');
     });
 
     softphoneTest('an untagged call for the account; another call on screen marks nothing', (h) {

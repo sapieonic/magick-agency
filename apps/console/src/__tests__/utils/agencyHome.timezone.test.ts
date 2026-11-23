@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { localDay, todayWindow } from '../../utils/agency/home';
+import { todayWindow } from '../../utils/agency/home';
+import { localDay } from '../../utils/format/date';
 import { homeAckDay } from '../../utils/agency/homeAcks';
 
 /**

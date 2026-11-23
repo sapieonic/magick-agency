@@ -291,7 +291,7 @@ async function measure(): Promise<void> {
     ['callStats', CUSTOMER_HISTORY_SQL.callStats, [ids.tenant, NUMBER, accounts]],
     ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [ids.tenant, NUMBER, accounts]],
     ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [ids.tenant, NUMBER, accounts]],
-    ['latestBookings', CUSTOMER_HISTORY_SQL.latestBookings, [ids.tenant, accounts, contactIds]],
+    ['latestBookings', CUSTOMER_HISTORY_SQL.latestBookings, [ids.tenant, accounts, contactIds, NUMBER]],
     ['dnc', CUSTOMER_HISTORY_SQL.dnc, [ids.tenant, NUMBER, accounts]],
     ['pageAttempts (first)', CUSTOMER_HISTORY_SQL.pageAttempts, calls('infinity')],
     ['pageAttempts (later)', CUSTOMER_HISTORY_SQL.pageAttempts, calls(laterAt)],

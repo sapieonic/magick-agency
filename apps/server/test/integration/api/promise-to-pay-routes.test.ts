@@ -408,9 +408,11 @@ describe('PT7, PT12: the Contacts list, its filter and the exports', () => {
     expect((await contactRow(c.contact)).promise_followed_up_at).not.toBeNull();
   });
 
-  it('appends the promise columns at the END of both CSV exports', async () => {
+  it('appends the promise columns at the end of both CSV exports (the call export\'s inbound columns came after them)', async () => {
     const c = await promised('missed');
-    expect(ATTEMPT_CSV_COLUMNS.slice(-2)).toEqual(['promise_date', 'promise_amount']);
+    // Appended in turn: the promise columns keep their place, and the three inbound columns
+    // (docs/call-log.md §4) follow them, empty on a dialler row.
+    expect(ATTEMPT_CSV_COLUMNS.slice(-5)).toEqual(['promise_date', 'promise_amount', 'wait_seconds', 'missed_reason', 'callback_of']);
     expect(CONTACT_CSV_COLUMNS.slice(-3)).toEqual(['promise_date', 'promise_amount', 'promise_state']);
     const contacts = await get(`/proxy/agency/campaigns/${c.campaign}/contacts.csv`, supervisor);
     expect(contacts.statusCode, contacts.body).toBe(200);
@@ -419,8 +421,8 @@ describe('PT7, PT12: the Contacts list, its filter and the exports', () => {
     expect(lines[1]!.endsWith(`${dayIn('UTC', 2)},10.00,missed`)).toBe(true);
     const attempts = await get(`/proxy/agency/campaigns/${c.campaign}/attempts.csv`, supervisor);
     const aLines = attempts.body.trim().split(/\r?\n/).filter((l) => !l.startsWith('#'));
-    expect(aLines[0]!.endsWith('promise_date,promise_amount')).toBe(true);
-    expect(aLines[1]!.endsWith(`${dayIn('UTC', 2)},10.00`)).toBe(true);
+    expect(aLines[0]!.endsWith('promise_date,promise_amount,wait_seconds,missed_reason,callback_of')).toBe(true);
+    expect(aLines[1]!.endsWith(`${dayIn('UTC', 2)},10.00,,,`)).toBe(true);
   });
 });
 

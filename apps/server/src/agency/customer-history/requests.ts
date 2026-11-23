@@ -15,6 +15,7 @@ import {
   CUSTOMER_TIMELINE_PAGE_SIZE,
   CUSTOMER_FILTER_LIST_MAX,
   CUSTOMER_FILTER_CODE_MAX,
+  type CustomerTimelineChannel,
   type CustomerTimelineFilters,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import { AGENCY_MANUAL_CALL_OUTCOMES } from '@magick-agency/contracts/agency';
@@ -72,7 +73,7 @@ export interface TimelineFilter {
   dispositionCodes: readonly string[] | null;
   agentUserIds: readonly string[] | null;
   connectedOnly: boolean;
-  channel: 'campaign' | 'softphone' | null;
+  channel: CustomerTimelineChannel | null;
   /** Any call-only filter set: only the call sources are read. */
   callsOnly: boolean;
 }

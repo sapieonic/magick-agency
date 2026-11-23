@@ -4,6 +4,12 @@ import type {
   AgencyInsightsCalls,
   AgencyInsightsRoster,
 } from '../../../types/agency-insights';
+import {
+  agencyCallsByType,
+  agencyCallsByTypeFootnote,
+  type AgencyCallsByTypeColumn,
+  type AgencyCallsByTypeTable,
+} from '../../../types/agency-call-log';
 import { pct } from '../../format/number';
 
 /**
@@ -118,6 +124,8 @@ export interface SoftphoneCounts {
   placed: number;
   connected: number;
   human_connects: number;
+  /** Talk time of the placed calls; absent from a server that predates Calls by type. */
+  talk_seconds?: number;
 }
 
 /**
@@ -139,8 +147,12 @@ export function softphoneConnectRate(counts: SoftphoneCounts): InsightsRate {
   return connectRate({ human_connects: counts.human_connects, first_dials: counts.placed });
 }
 
-/** The dialler's and the soft phone's counts together: what "All calls" shows (SR1). */
-export interface AllCallsCounts {
+/**
+ * The dialler's and the soft phone's counts together: every call we placed (SR3). Its rate is the
+ * **Outbound connect rate** (CL7; "All calls connect rate" before inbound calls joined the
+ * figures). An inbound call is never in it.
+ */
+export interface OutboundCounts {
   /** Every placed call: the dialler's dials (wrap-up redials included) and the soft phone's placed. */
   placed: number;
   connected: number;
@@ -149,11 +161,11 @@ export interface AllCallsCounts {
   first_dials: number;
 }
 
-/** The calls block's {@link AllCallsCounts}. */
-export function allCallsCounts(
+/** The calls block's {@link OutboundCounts}. */
+export function outboundCounts(
   calls: Pick<AgencyInsightsCalls, 'dials' | 'connected' | 'human_connects' | 'redials'>,
   softphone: SoftphoneCounts,
-): AllCallsCounts {
+): OutboundCounts {
   return {
     placed: calls.dials + softphone.placed,
     connected: calls.connected + softphone.connected,
@@ -162,9 +174,96 @@ export function allCallsCounts(
   };
 }
 
-/** The connect rate over {@link AllCallsCounts}: every person reached over every first call placed. */
-export function allCallsConnectRate(counts: AllCallsCounts): InsightsRate {
+/** The connect rate over {@link OutboundCounts}: every person reached over every first call placed. */
+export function outboundConnectRate(counts: OutboundCounts): InsightsRate {
   return connectRate(counts);
+}
+
+// ── Inbound beside both, and Calls by type (call log P4, CL7, CL25–CL30) ────
+
+/** The inbound counts the server serves (`calls.inbound`, `/stats` `inbound`). */
+export type InboundCounts = AgencyInsightsCalls['inbound'];
+
+/**
+ * Whether a campaign surface shows inbound figures (SR5's rule on inbound): while inbound is on
+ * for the account (`agency_inbound_enabled`), or whenever the range holds an inbound call (a
+ * campaign keeps the calls filed under it when the flag goes off), or while the campaign has
+ * missed calls still to follow up: those are owed whatever the dates (CL27), so a range with no
+ * inbound call must not hide them. Never when the counts were not served (an older server).
+ */
+export function showInboundFigures<C extends Pick<InboundCounts, 'received' | 'open_follow_ups'>>(
+  enabled: boolean,
+  counts: C | null | undefined,
+): counts is C {
+  if (!counts) return false;
+  return enabled || counts.received > 0 || counts.open_follow_ups > 0;
+}
+
+/**
+ * Inbound's answer rate: calls an agent answered over the calls that arrived in open hours (the
+ * inbound summary's definition), under the page's one floor. It measures us, not the list, and
+ * is never added to a connect rate (CL7).
+ */
+export function inboundAnswerRate(counts: Pick<InboundCounts, 'answered' | 'open_hours'>): InsightsRate {
+  return insightsRate(counts.answered, counts.open_hours);
+}
+
+/** One call type's column of the Calls by type table. */
+export type CallsByTypeColumn = AgencyCallsByTypeColumn<InsightsRate>;
+
+/** The Calls by type table: a column per type shown, and All calls, the counts added. */
+export interface CallsByType extends AgencyCallsByTypeTable<InsightsRate> {
+  /** The dialler and the soft phone together, when the soft phone shows; never inbound (CL7). */
+  outbound: OutboundCounts | null;
+  footnote: string;
+}
+
+/**
+ * A campaign's calls by type (`docs/call-log.md` §6), or null when only the dialler shows: the
+ * page is then exactly what it was. Counts, people reached and talk time add up across types.
+ * **No rate does**: each type keeps its own, and All calls has none. The table is the
+ * contract's (`agencyCallsByType`, shared with the report), with this page's rates.
+ *
+ * One row is one call of one type, the Call log's own rows: the Dialler column is the dials
+ * (the Dials figure), Soft phone the calls placed and logged to the campaign, Inbound the calls
+ * filed under it. A caller an agent answered is a person reached.
+ */
+export function callsByType(
+  calls: Pick<AgencyInsightsCalls, 'dials' | 'connected' | 'human_connects' | 'redials' | 'talk_seconds'>,
+  softphone: SoftphoneCounts | null,
+  inbound: InboundCounts | null,
+): CallsByType | null {
+  if (!softphone && !inbound) return null;
+  const table = agencyCallsByType<InsightsRate>({
+    dialler: {
+      calls: calls.dials,
+      connected: calls.connected,
+      reached: calls.human_connects,
+      talk_seconds: calls.talk_seconds,
+      rate: callsConnectRate(calls),
+    },
+    soft_phone: softphone && {
+      calls: softphone.placed,
+      connected: softphone.connected,
+      reached: softphone.human_connects,
+      talk_seconds: typeof softphone.talk_seconds === 'number' ? softphone.talk_seconds : null,
+      rate: softphoneConnectRate(softphone),
+    },
+    inbound: inbound && {
+      calls: inbound.received,
+      connected: inbound.answered,
+      reached: inbound.answered,
+      talk_seconds: inbound.talk_seconds,
+      missed: inbound.missed,
+      open_follow_ups: inbound.open_follow_ups,
+      rate: inboundAnswerRate(inbound),
+    },
+  });
+  return {
+    ...table,
+    outbound: softphone ? outboundCounts(calls, softphone) : null,
+    footnote: agencyCallsByTypeFootnote(table.columns.map((c) => c.type)),
+  };
 }
 
 /**

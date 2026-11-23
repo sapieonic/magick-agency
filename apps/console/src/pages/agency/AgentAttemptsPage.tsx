@@ -1,21 +1,18 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
+import { useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useSoftphoneAvailable } from '../../components/agency/AgentNav';
-import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsList';
 import { PhoneOutgoing } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { getMyCampaigns } from '../../api/agencyStats';
+import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { agencyPersona } from '../../utils/agencyPersona';
-import { campaignNameMap } from '../../utils/agencyAgentPerformance';
 import { AgentSurfaceShell } from '../../components/agency/AgentSurfaceShell';
-import { AgentAttemptsPanel } from '../../components/agency/AgentAttemptsPanel';
+import { MyCallsList } from '../../components/agency/MyCallsList';
+import { MY_CALLS_SUBTITLE } from '../../utils/agency/myCalls';
 import { trackAgentSurfaceViewed } from '../../analytics/events';
-import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
 
 /**
- * "My calls" — one row per dial the signed-in person placed, at
- * `/dialer/attempts`.
+ * "My calls" — one row per call the signed-in person made or took, at
+ * `/dialer/attempts` (`docs/call-log.md` §7).
  *
  * ── What this is, next to the campaign's Attempts view ────────────────────
  * `/agency/campaigns/:id/attempts` is the same spine scoped to ONE campaign and
@@ -56,30 +53,15 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * audience — while everybody who COULD find it there is a supervisor or above, who
  * must not be sent to an agent-scoped page. `dialerEntryRoutes.test.tsx` pins it.
  *
- * ── Why the staffing history is fetched here ──────────────────────────────
- * `AgencyAttempt` carries `campaign_id` and no campaign NAME — the API has the name,
- * the row does not — and this list is cross-campaign, so the campaign column is the
- * one column that cannot be derived from the URL. `getMyCampaigns` is the id→name
- * source: it is floored at `agency.station.connect` (one of the very few reads an
- * `agent` can make at all) and it returns the whole staffing HISTORY including
- * ENDED assignments, which matters because a campaign somebody was unstaffed from
- * still has their attempts on it. One request for the whole list, never one per row.
- *
- * A failure here does **not** withhold the calls. The names are a courtesy; the
- * dials are the point. An unresolved id degrades to a shortened id inside the panel
- * rather than to a blank cell — see `AgentAttemptsPanel`.
+ * ── The campaign's name comes with the row ─────────────────────────────────
+ * The list is cross-campaign, so the campaign column cannot come from the URL. Each row of
+ * `GET /proxy/agency/my-calls` names its own campaign, so no second read is made for names.
  */
 
-type HistoryState =
-  | { status: 'loading' }
-  | { status: 'ready'; entries: AgencyStaffingHistoryEntry[] }
-  | { status: 'error' };
-
 export function AgentAttemptsPage() {
-  const { role, tenantId, accountId } = useTenant();
+  const { role } = useTenant();
   const persona = agencyPersona(role);
   const supervisor = persona === 'supervisor';
-  const [history, setHistory] = useState<HistoryState>({ status: 'loading' });
 
   /**
    * `agent_surface_viewed`, fired once per page visit — guarded rather than a
@@ -111,81 +93,26 @@ export function AgentAttemptsPage() {
     });
   }, [persona]);
 
-  useEffect(() => {
-    /**
-     * Both ids, for the reason every agency surface waits for both: an `agent` is
-     * below `account.read`'s `viewer` floor so `GET /accounts` 403s for them, and a
-     * request sent before `TenantContext` resolves carries no `X-Account-Id`, which
-     * the API answers with a 400 about a header this client never sent. This cannot
-     * become a permanent spinner — `AgentSurfaceShell` renders `AccountUnavailable`
-     * once resolution settles without an account, and the panel below renders its
-     * own three states regardless of what this read does.
-     */
-    if (!tenantId || !accountId) return undefined;
-
-    let cancelled = false;
-    setHistory({ status: 'loading' });
-    getMyCampaigns(tenantId, accountId)
-      .then((entries) => {
-        if (cancelled) return;
-        setHistory({ status: 'ready', entries });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        /*
-          No message kept, and no alert raised. The names this read supplies are a
-          courtesy on top of the calls, and an error banner over a table that
-          loaded perfectly well would tell the reader their history failed when it
-          did not. The campaign column says what it can instead.
-        */
-        setHistory({ status: 'error' });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId, accountId]);
-
-  const entries = history.status === 'ready' ? history.entries : [];
-
   /*
-    ── Soft-phone calls: a tab, not a merged list ─────────────────────────────
-    A manual call is not an attempt (`docs/softphone.md` §2): no try number, no
-    roster contact of its own, an outcome from a different catalog when it is not
-    logged to a campaign, and a call-details record an attempt does not have.
-    Interleaving the two would make every column mean two things, so the agent's
-    soft-phone calls are the second tab of the same page — reachable as
-    `?view=softphone` — and only when the soft phone is on for them.
+    ── One list, with chips (CL9) ─────────────────────────────────────────────
+    My calls used to be two tabs, Campaign calls and Soft-phone calls, with Missed calls a page
+    of its own. It is one list now (`MyCallsList`): the type is a chip and a column, answered
+    inbound calls are in it, and To follow up (the missed calls that are this person's to ring
+    back, then their callbacks due) is the first chip. `?view=softphone`, the old tab's URL,
+    opens the Soft phone chip.
   */
   const softphone = useSoftphoneAvailable();
-  const [params, setParams] = useSearchParams();
-  const view = softphone && params.get('view') === 'softphone' ? 'softphone' : 'campaign';
-  const choose = (next: 'campaign' | 'softphone') => {
-    const updated = new URLSearchParams(params);
-    if (next === 'softphone') updated.set('view', 'softphone');
-    else updated.delete('view');
-    setParams(updated, { replace: true });
-  };
-  const onTabKey = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const next = view === 'campaign' ? 'softphone' : 'campaign';
-    choose(next);
-    document.getElementById(`my-calls-tab-${next}`)?.focus();
-  };
-
-  const campaignPanel = (
-    <AgentAttemptsPanel
-      subject={{ kind: 'me' }}
-      campaignNames={campaignNameMap(entries)}
-      caption="Calls you have taken, newest first"
-    />
-  );
+  const missedAccess = useMissedCallsAccess();
+  const missed = missedAccess.available;
+  // An agent's Missed calls badge counts their own open rows, the rows To follow up counts; a
+  // supervisor's counts the account's, which says nothing of their own.
+  const missedOpen = supervisor ? null : missedAccess.count?.open ?? null;
 
   return (
     <AgentSurfaceShell
       icon={<PhoneOutgoing size={20} />}
       title="My calls"
-      subtitle="Every dial in your name, newest first — across every campaign you’ve worked, including the ones that never connected."
+      subtitle={MY_CALLS_SUBTITLE}
       current="attempts"
       note={
         supervisor ? (
@@ -196,47 +123,8 @@ export function AgentAttemptsPage() {
         ) : undefined
       }
     >
-      {softphone ? (
-        <>
-          <div role="tablist" aria-label="Which calls" style={{ display: 'flex', gap: 8 }}>
-            {(['campaign', 'softphone'] as const).map((id) => (
-              <button
-                key={id}
-                id={`my-calls-tab-${id}`}
-                type="button"
-                role="tab"
-                aria-selected={view === id}
-                aria-controls={`my-calls-panel-${id}`}
-                tabIndex={view === id ? 0 : -1}
-                className={view === id ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => choose(id)}
-                onKeyDown={onTabKey}
-                data-testid={`my-calls-tab-${id}`}
-              >
-                {id === 'campaign' ? 'Campaign calls' : 'Soft-phone calls'}
-              </button>
-            ))}
-          </div>
-          <div role="tabpanel" id={`my-calls-panel-${view}`} aria-labelledby={`my-calls-tab-${view}`}>
-            {view === 'campaign' ? campaignPanel : <MySoftphoneCalls />}
-          </div>
-        </>
-      ) : (
-        campaignPanel
-      )}
+      <MyCallsList softphone={softphone} inbound={missed} missedOpen={missedOpen} />
     </AgentSurfaceShell>
-  );
-}
-
-/** The agent's own soft-phone calls — scoped to their user id, whatever their role. */
-function MySoftphoneCalls() {
-  const { user } = useAuth();
-  return (
-    <SoftphoneCallsList
-      scope="me"
-      userId={user?.id ?? null}
-      caption="Soft-phone calls you have made, newest first"
-    />
   );
 }
 

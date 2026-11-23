@@ -11,8 +11,11 @@ import { fileURLToPath } from 'node:url';
  * live calls and dials outside the range; the rollup job run until it is caught up; then
  * `/insights/{summary,allocation,activity}` read as the console reads them. For every row of
  * `test/fixtures/insights-drilldowns.json` the number is read from the response, the list the
- * console would open is requested with `include_total=1`, and its `total` must equal the
- * number. The console holds the same table against `links.ts` and the sections
+ * console would open is requested as the console requests it, and the count its page shows must
+ * equal the number: the roster's `total` (`include_total=1`), or for a dials link the campaign
+ * Call log's count for the chip the link puts on (`call-log`, `include_counts=1`, CL11). The seed
+ * holds a soft-phone call logged to the campaign inside the range, so a dials link that forgot
+ * `type=dialler` counts it and goes red. The console holds the same table against `links.ts` and the sections
  * (`apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx`), so a param that changes on
  * one side only reds one of the two.
  *
@@ -237,6 +240,17 @@ async function seed(): Promise<{ sessions: string[] }> {
   await q(`INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, campaign_id, destination_e164, caller_id, state, dialed_at, ended_at, created_at)
            VALUES ($1, $2, $3, $4, $5, '+919822222222', '+919000000001', 'ended', $6, $7, $6)`,
     [floor.tenant, floor.account, soft.id, agent(2).id, campaignId, at(1, 30), at(1, 50)]);
+  // A second soft-phone call logged to the campaign, by the agent the per-agent numbers are read
+  // for: connected, written up `interested`, on the dialler's caller ID. It is in no Insights
+  // dialler figure (SR1), and it matches a dials link's filters (agent, outcome, code, caller ID,
+  // window), so a link that opens the Call log without `type=dialler` counts it.
+  const { rows: [softOwn] } = await q(
+    `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state, kind, joined_at, left_at)
+     VALUES ($1, $2, NULL, $3, 'offline', 'softphone', $4, $5) RETURNING id`, [floor.tenant, floor.account, agent(0).id, at(3), at(4)]);
+  await q(`INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, campaign_id, destination_e164, caller_id,
+                                            state, outcome, disposition_code, disposition_source, dialed_at, answered_at, bridged_at, ended_at, settled_at, talk_seconds, created_at)
+           VALUES ($1, $2, $3, $4, $5, '+919833333333', '+919000000001', 'ended', 'connected', 'interested', 'campaign', $6, $6, $6, $7, $7, 20, $6)`,
+    [floor.tenant, floor.account, softOwn.id, agent(0).id, campaignId, at(3, 30), at(3, 50)]);
 
   // The rollup job, run until the backlog is empty.
   for (let i = 0; i < 50; i++) if ((await agencyInsightsRollupRepository.recomputeBatch(200)).picked < 200) break;
@@ -343,10 +357,21 @@ describe('every number opens a list whose total is the number', () => {
     const expected = numberAt(responses, link.number, v) - (link.minus ? numberAt(responses, link.minus, v) : 0);
     const qs = new URLSearchParams();
     for (const [key, values] of Object.entries(link.params)) for (const value of values) qs.append(key, fill(value, v));
-    qs.set('include_total', '1');
-    const res = await get(`/proxy/agency/campaigns/${campaignId}/${link.list}?${qs.toString()}`);
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json().total, `${link.number} = ${expected}`).toBe(expected);
+    let shown: unknown;
+    if (link.list === 'attempts') {
+      // The campaign Call log (CL11): the count line is the count of the chip that is on, All
+      // when the link names none. Insights is the dialler's alone (SR1), so the link names it.
+      qs.set('include_counts', '1');
+      const res = await get(`/proxy/agency/campaigns/${campaignId}/call-log?${qs.toString()}`);
+      expect(res.statusCode, res.body).toBe(200);
+      shown = res.json().counts[link.params['type']?.[0] ?? 'all'];
+    } else {
+      qs.set('include_total', '1');
+      const res = await get(`/proxy/agency/campaigns/${campaignId}/${link.list}?${qs.toString()}`);
+      expect(res.statusCode, res.body).toBe(200);
+      shown = res.json().total;
+    }
+    expect(shown, `${link.number} = ${expected}`).toBe(expected);
     // Not vacuous: the seed puts something behind every number.
     expect(expected, link.number).toBeGreaterThan(0);
   });
@@ -377,9 +402,14 @@ describe('the range reads', () => {
     const a = responses['activity'] as Record<string, any>;
     expect(a.reconciliation.length).toBeGreaterThan(0);
     for (const check of a.reconciliation) expect(check, check.check).toMatchObject({ ok: true });
-    expect(a.calls.softphone_calls).toBe(1);
-    // Placed, ended with no outcome: neither connected nor a person reached (SR2).
-    expect(a.calls.softphone).toEqual({ placed: 1, connected: 0, human_connects: 0 });
+    expect(a.calls.softphone_calls).toBe(2);
+    // Two placed: one ended with no outcome (neither connected nor a person reached, SR2), one
+    // connected and written up `interested`.
+    expect(a.calls.softphone).toEqual({ placed: 2, connected: 1, human_connects: 1, talk_seconds: 20 });
+    // No inbound call is filed under this campaign: zeros, and every outcome row is the dialler's or the soft phone's.
+    expect(a.calls.inbound).toEqual({ received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 });
+    for (const row of a.outcomes_by_type) expect(row.total, row.code).toBe(row.dialler + row.soft_phone + row.inbound);
+    expect(a.outcomes_by_type.reduce((s: number, r: { dialler: number }) => s + r.dialler, 0)).toBe(a.calls.conversations);
     expect(a.calls.redials.refused_at_limit).toBe(1);
     expect(a.calls.conversations).toBeGreaterThan(0);
     expect(a.calls.successes).toBeLessThanOrEqual(a.calls.conversations);

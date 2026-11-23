@@ -407,17 +407,36 @@ describe('the identification reads', () => {
     expect(identity).toEqual({ match: null, candidates: [{ userId: took, reason: 'last_connected', accountId: A, at: expect.any(Date) }] });
   });
 
-  it('IQ49: the inbound arm walks idx_agency_inbound_calls_answered_from (0033)', async () => {
+  it('IQ49: the inbound arm walks idx_agency_inbound_calls_answered_from (0033), on analysed calls answered and missed', async () => {
+    // Since 0073 the table has a second index by caller, every call of the number
+    // (`idx_agency_inbound_calls_from`, the customer history's), of which 0033's answered-only one
+    // is a subset. On an unanalysed handful of rows the two cost the same; on a table like a real
+    // one (callers with answered and missed calls, statistics) the planner takes 0033's, the
+    // smaller one that needs no filter. Seeded and analysed inside the transaction, rolled back.
     const client = await pool().connect();
     try {
       await client.query('BEGIN');
-      await client.query('SET LOCAL enable_seqscan = off');
+      await client.query('SET LOCAL session_replication_role = replica');
+      await client.query(
+        `INSERT INTO agency_inbound_calls
+           (tenant_id, account_id, provider_call_id, from_e164, to_e164, state, outcome, arrived_at, answered_at, bridged_at,
+            answered_by_user_id, ended_at, follow_up_status, follow_up_reason)
+         SELECT $1, $2, 'iq49-' || g, '+9197' || lpad((g % 2000)::text, 8, '0'), $3, 'ended',
+                CASE WHEN g % 2 = 0 THEN 'answered' ELSE 'overflow' END,
+                now() - (g || ' seconds')::interval, now() - (g || ' seconds')::interval,
+                CASE WHEN g % 2 = 0 THEN now() - (g || ' seconds')::interval END, CASE WHEN g % 2 = 0 THEN gen_random_uuid() END,
+                now() - (g || ' seconds')::interval,
+                CASE WHEN g % 2 = 1 THEN 'open' END, CASE WHEN g % 2 = 1 THEN 'overflow' END
+           FROM generate_series(1, 20000) g`, [T, A, RUNG]);
+      await client.query('ANALYZE agency_inbound_calls');
       const { rows } = await client.query<{ 'QUERY PLAN': string }>(
         `EXPLAIN (COSTS OFF) SELECT i.id FROM agency_inbound_calls i
           WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.from_e164 = $3::text
             AND i.bridged_at IS NOT NULL AND i.from_e164 IS NOT NULL AND i.arrived_at >= $4::timestamptz
-          ORDER BY i.arrived_at DESC, i.id DESC LIMIT 50`, [T, A, '+919812345678', new Date()]);
-      expect(rows.map((r) => r['QUERY PLAN']).join('\n')).toContain('idx_agency_inbound_calls_answered_from');
+          ORDER BY i.arrived_at DESC, i.id DESC LIMIT 50`, [T, A, '+919700000007', new Date(Date.now() - 30 * 86_400_000)]);
+      const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+      expect(plan, plan).toMatch(/Index (Only )?Scan using idx_agency_inbound_calls_answered_from /);
+      expect(plan, plan).not.toMatch(/Sort|Seq Scan/);
     } finally {
       await client.query('ROLLBACK');
       client.release();

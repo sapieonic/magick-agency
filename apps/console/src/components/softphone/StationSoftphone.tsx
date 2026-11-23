@@ -315,12 +315,19 @@ export function SoftphoneScreen({
           <section className={styles.card}>
             <p className={side.reason} role="status" data-testid="softphone-finish-notice">{sp.finishNotice ?? SIDE_COPY.finishIdle}</p>
           </section>
+        ) : sp.noWorkToDial ? (
+          // Every call must be saved to a work and this agent is in none that is running: nothing
+          // to dial from, so the pad gives way to what to do about it (docs/call-log.md §5).
+          <section className={styles.card} role="status" data-testid="softphone-no-work">
+            <p className={side.reason}>{sp.noWorkCopy.title}</p>
+            {sp.noWorkCopy.body ? <p className={side.hint}>{sp.noWorkCopy.body}</p> : null}
+          </section>
         ) : (
           <DialCard sp={sp} connection={connection} numberInputRef={numberInputRef} callButtonRef={callButtonRef} inboundNote={inboundNote} />
         )}
         <div className={styles.col}>
-          {sp.finishOnly ? null : <SetupCard sp={sp} />}
-          {sp.finishOnly ? null : detailsCard}
+          {sp.finishOnly || sp.noWorkToDial ? null : <SetupCard sp={sp} />}
+          {sp.finishOnly || sp.noWorkToDial ? null : detailsCard}
           {sp.finishOnly ? null : <RecentCallsCard sp={sp} />}
         </div>
       </>
@@ -392,7 +399,9 @@ export function SoftphoneScreen({
     );
   }
 
-  const stopBody = call?.tag ? SIDE_COPY.stopBodyWork(call.tag.campaign_name) : SIDE_COPY.stopBodyAll;
+  // Where the mark reaches is the server's rule (CL6, docs/call-log.md §5): the work's only when
+  // the number is on its list; a call merely saved to a work stops the number for the whole account.
+  const stopBody = call?.tag && call.contact ? SIDE_COPY.stopBodyWork(call.tag.campaign_name) : SIDE_COPY.stopBodyAll;
 
   return (
     <>
@@ -450,6 +459,8 @@ function dialReason(sp: SoftphoneState, connection: StationConnection): string |
   if (connection === 'connecting' || connection === 'idle') return SIDE_COPY.connectingPhone;
   if (connection !== 'open') return SIDE_COPY.notConnected;
   if (!sp.bootstrap) return SIDE_COPY.loading;
+  // The account asks for a work on every call: Call stays off until one is chosen.
+  if (sp.campaignRequired && sp.tagCampaignId === null) return SIDE_COPY.chooseWorkHint;
   if (sp.callerIdOptions.length === 0) return SIDE_COPY.noCallerId;
   if (sp.number.length > 0 && sp.dialBlock) return DIAL_BLOCK_WORDS[sp.dialBlock];
   return null;
@@ -580,20 +591,29 @@ function SetupCard({ sp }: { sp: SoftphoneState }) {
   return (
     <section className={styles.card} data-testid="log-to">
       <div className={side.field}>
-        <label className={side.fieldLabel} htmlFor={tagId}>{SIDE_COPY.saveTo}</label>
+        <label className={side.fieldLabel} htmlFor={tagId}>
+          {SIDE_COPY.saveTo}
+          {sp.campaignRequired ? <span data-testid="log-to-required"> {SIDE_COPY.required}</span> : null}
+        </label>
         <select
           id={tagId}
           className={side.select}
           value={sp.tagCampaignId ?? ''}
           disabled={!editable}
+          required={sp.campaignRequired}
+          aria-required={sp.campaignRequired}
           onChange={(event) => sp.setTagCampaignId(event.target.value || null)}
           data-testid="log-to-select"
         >
-          <option value="">{SIDE_COPY.noWorkOption}</option>
+          {/* With every call needing a work there is no "Not in any work": the empty choice only asks. */}
+          {sp.campaignRequired
+            ? <option value="" disabled={sp.tagCampaignId !== null}>{SIDE_COPY.chooseWork}</option>
+            : <option value="">{SIDE_COPY.noWorkOption}</option>}
           {sp.taggableCampaigns.map((c) => (
             <option key={c.campaign_id} value={c.campaign_id}>{c.campaign_name}</option>
           ))}
         </select>
+        {editable && sp.setupNote ? <p className={side.hint} role="status" data-testid="log-to-note">{sp.setupNote}</p> : null}
         {editable && sp.campaign && !sp.campaign.calling_window_open ? (
           <p className={side.hint} data-testid="window-closed-hint">{SIDE_COPY.outsideHours}</p>
         ) : null}

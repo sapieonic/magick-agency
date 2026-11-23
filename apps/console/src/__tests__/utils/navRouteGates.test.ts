@@ -19,6 +19,7 @@ import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { isDedicatedAgent } from '../../utils/agencyPersona';
 import type { Role } from '../../types/auth';
+import { declaredPaths, isDeclared } from '../routing/appRoutes';
 
 /**
  * Every destination the shell offers passes the gate of the route it links to (B28), for every
@@ -111,13 +112,15 @@ const ROUTES: RouteRule[] = [
   [new RegExp(`^/agency/campaigns/${ID}/(overview|calls|callbacks|health|contacts|attempts|settings)$`), (r) => dialer(r) && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}/agents$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/activity$`), (r) => dialer(r) && can(r, 'audit.read')],
-  [new RegExp(`^/agency/campaigns/${ID}/manual-calls$`), (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
+  // Only a redirect to the Call log with its Soft phone chip on (CL11): the Call log's gate. Search offers the chip itself.
+  [new RegExp(`^/agency/campaigns/${ID}/manual-calls$`), (r) => dialer(r) && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/calls/live$`), (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
   [/^\/agency\/live$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
   // Not behind the listening flag (LS19, amended 2026-11-17): past listens stay visible.
   [/^\/agency\/listening-history$/, (r) => dialer(r) && can(r, 'agency.supervise')],
-  [/^\/agency\/softphone$/, (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
+  // `AllCallsPage` checks `agency.supervise` (the server's floor on `GET /calls`); behind no call type's flag (CL34).
+  [/^\/agency\/calls$/, (r) => dialer(r) && can(r, 'agency.supervise')],
   [/^\/agency\/inbound\/missed$/, (r) => dialer(r) && r.missed && can(r, 'agency.campaigns.read')],
   [/^\/agency\/inbound\/summary$/, (r) => dialer(r) && r.missed && can(r, 'agency.supervise')],
   [/^\/agency\/analytics$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
@@ -131,6 +134,8 @@ const ROUTES: RouteRule[] = [
   [/^\/dialer$/, (r) => dialer(r) && can(r, 'agency.station.connect')],
   [/^\/settings$/, keptInShell],
   [/^\/settings\/(profile|notifications|team|accounts)$/, keptInShell],
+  // `CallsSettingsPage` checks `agency.calls.manage`; behind neither the soft phone's flag nor inbound's.
+  [/^\/settings\/calls$/, (r) => keptInShell(r) && r.caps.has('agency') && can(r, 'agency.calls.manage')],
   [/^\/settings\/softphone$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_softphone_enabled') && can(r, 'agency.softphone.dial')],
   [/^\/settings\/inbound$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_inbound_enabled') && can(r, 'agency.inbound.write')],
   // Read-only, so shown whether listening is on or off (it says which).
@@ -171,7 +176,21 @@ function searchTargets(r: Reader): string[] {
   return results.map((res) => (res.target.type === 'path' ? res.target.to : '/agency/customers'));
 }
 
+/**
+ * Each reader's offers, worked out once: the per-role sweeps and the App.tsx read walk the same
+ * readers, and search over every query is the costly part.
+ */
+const OFFERS = new Map<Reader, { from: string; to: string }[]>();
+
 function offers(r: Reader): { from: string; to: string }[] {
+  const held = OFFERS.get(r);
+  if (held) return held;
+  const out = offersOf(r);
+  OFFERS.set(r, out);
+  return out;
+}
+
+function offersOf(r: Reader): { from: string; to: string }[] {
   const gate = gateInput(r);
   const out: { from: string; to: string }[] = [];
   for (const { section, href } of visibleSections(gate)) out.push({ from: `sidebar ${section.id}`, to: href });
@@ -246,14 +265,42 @@ describe('every offer passes the gate of the route it opens', () => {
     const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.organisationWide && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
-      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/softphone', '/agency/inbound/missed',
+      '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/calls', '/agency/inbound/missed',
       '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
-      '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/manual-calls',
+      '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
       '/settings/campaign-templates', '/settings/organisation-campaign-templates',
     ]) {
       expect(targets, path).toContain(path);
+    }
+  });
+
+  /**
+   * The rules above are written by hand, so they cannot tell whether `App.tsx` routes a path
+   * at all: a tab whose route was never added passed them and opened "Page not found". This
+   * reads the real route table.
+   */
+  it('routes every path the shell offers, in App.tsx itself', () => {
+    const declared = declaredPaths();
+    // Not vacuous: the table really was read.
+    expect(declared).toContain('/agency/campaigns');
+    expect(declared.length).toBeGreaterThan(30);
+    const offered = new Set(READERS.flatMap((r) => offers(r).map((o) => o.to.split('#')[0]!.split('?')[0]!)));
+    expect(offered.size).toBeGreaterThan(25);
+    const unrouted = [...offered].filter((path) => !isDeclared(path, declared));
+    expect(unrouted).toEqual([]);
+  // It walks every reader's offers: held from the sweeps above, else worked out here (run alone).
+  }, 30_000);
+
+  it('routes every path the hand-written rules name, so a rule cannot outlive its route', () => {
+    const declared = declaredPaths();
+    for (const path of [
+      '/agency/home', '/agency/callbacks', '/agency/calls', '/agency/listening-history', '/agency/live', '/agency/inbound/missed',
+      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/campaigns/c-1/manual-calls', '/agency/softphone', '/dialer', '/settings/calls', '/settings/listening',
+    ]) {
+      expect(isDeclared(path, declared), path).toBe(true);
     }
   });
 });

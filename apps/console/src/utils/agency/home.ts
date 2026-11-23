@@ -479,15 +479,6 @@ export function homeFloor(reads: readonly HomeCampaignRead[]): HomeFloorRow[] {
 // ── Today so far ──────────────────────────────────────────────────────────────
 
 /**
- * The viewer's calendar day, `YYYY-MM-DD` in the browser's zone: the day Today so far counts
- * ({@link todayWindow}) and the one "Got it" lasts for (`homeAcks.ts`).
- */
-export function localDay(now: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-/**
  * How long until the viewer's next local midnight, when Today so far's day turns. At least 1 ms,
  * so a timer set on the boundary itself waits for the next one rather than firing at once.
  */

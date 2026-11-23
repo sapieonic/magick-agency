@@ -179,6 +179,8 @@ describe('the header and the summary', () => {
     renderPage(customerHistoryFixture().search_response);
     expect(screen.getByTestId('customer-total-calls').textContent).toBe('5');
     expect(screen.getByTestId('customer-total-connected').textContent).toBe('2');
+    // The calls the number made to us, apart from the calls placed.
+    expect(screen.getByTestId('customer-total-inbound').textContent).toBe('1 · 0 answered');
     const last = screen.getByTestId('customer-last-contacted').textContent ?? '';
     expect(last).toContain('by Priya Nair');
     expect(last).toContain('Soft-phone call');
@@ -218,10 +220,76 @@ describe('the header and the summary', () => {
 describe('the timeline', () => {
   it('renders one row per kind, newest first, as the server ordered them', () => {
     renderPage(customerHistoryFixture().search_response);
-    expect(kinds()).toEqual(['softphone_call', 'callback', 'campaign_call', 'dnc_mark', 'roster_entry']);
+    expect(kinds()).toEqual(['softphone_call', 'callback', 'campaign_call', 'dnc_mark', 'roster_entry', 'inbound_call']);
     expect(entries()[1]!.textContent).toContain('Callback · Upcoming');
     expect(entries()[3]!.textContent).toContain('Added to a do-not-call list');
     expect(entries()[4]!.textContent).toContain('Added to October dues from october-dues.csv');
+  });
+
+  it('an inbound call (CL39): the Call log\'s words for a missed call, its follow-up and call back, "No campaign", no Call page', () => {
+    renderPage(customerHistoryFixture().search_response);
+    const row = entries()[5]!;
+    const text = row.textContent ?? '';
+    expect(text).toContain('Inbound call · No campaign');
+    expect(within(row).getByTestId('customer-inbound-happened').textContent).toBe('Missed · nobody free to answer · waited 1:40');
+    expect(text).toContain('Nobody answered · assigned to Priya Nair');
+    expect(text).toContain('Rang +918045550100 (Collections line)');
+    expect(text).toContain('Voicemail 0:22');
+    // Rung back the same day: the time alone, AM / PM in capitals.
+    expect(text).toContain('Called back 10:58 AM');
+    // Handled, and the call back already says how: no second status.
+    expect(within(row).queryByTestId('customer-inbound-follow-up')).toBeNull();
+    // Nobody answered: no recording line. No campaign: no Call page.
+    expect(within(row).queryByTestId('customer-recording')).toBeNull();
+    expect(within(row).queryByTestId('customer-call-link')).toBeNull();
+    expect(row.querySelector('audio')).toBeNull();
+  });
+
+  it('an answered inbound call: who answered, the wait, their own agent, the outcome, the notes, and its Call page in the campaign', () => {
+    const answer = customerHistoryFixture().search_response;
+    const call = answer.timeline.entries[5]!;
+    if (call.kind !== 'inbound_call') throw new Error('the fixture\'s sixth entry is the inbound call');
+    Object.assign(call, {
+      campaign: { id: 'camp-7', name: 'Diwali EMI', status: 'running', account_id: ACCOUNT, root_id: 'camp-7', retry_generation: 0 },
+      campaign_source: 'contact', agent: { user_id: 'u-1', name: 'Karan Shah' }, outcome: 'answered', disposition_code: 'ptp',
+      talk_seconds: 252, notes: 'Will pay on the 25th', wait_seconds: 18, queued: false, via_sticky_agent: true, voicemail_seconds: null,
+      follow_up: null, called_back_at: null, recording: 'available', promise_date: '2026-11-25', promise_amount: '4500.00',
+      call_page: { account_id: ACCOUNT, campaign_id: 'camp-7', inbound_call_id: 'in-1' },
+    });
+    renderPage(answer);
+    const row = entries()[5]!;
+    const text = row.textContent ?? '';
+    expect(text).toContain('Inbound call · Diwali EMI');
+    expect(within(row).getByTestId('customer-inbound-happened').textContent).toBe('Answered · waited 0:18 · came through their agent');
+    expect(text).toContain('Answered by Karan Shah');
+    expect(text).toContain('Outcome code: ptp');
+    expect(within(row).getByTestId('customer-recording').textContent).toBe('Recording available');
+    expect(within(row).getByTestId('customer-notes').textContent).toBe('Will pay on the 25th');
+    expect(within(row).getByTestId('customer-promise').textContent).toContain('25 Nov');
+    expect(within(row).getByTestId('customer-call-link').getAttribute('href')).toBe('/agency/campaigns/camp-7/calls/inbound/in-1');
+  });
+
+  it('a call that could not be answered and left no Missed row reads "Missed" alone, never "Missed · "', () => {
+    const answer = customerHistoryFixture().search_response;
+    const call = answer.timeline.entries[5]!;
+    if (call.kind !== 'inbound_call') throw new Error('the fixture\'s sixth entry is the inbound call');
+    Object.assign(call, { outcome: 'failed', follow_up: null, queued: false, voicemail_seconds: null, called_back_at: null });
+    renderPage(answer);
+    expect(within(entries()[5]!).getByTestId('customer-inbound-happened').textContent).toBe('Missed');
+  });
+
+  it('an inbound call still owed a call back says "To follow up"; hidden notes say so', () => {
+    const answer = customerHistoryFixture().search_response;
+    const call = answer.timeline.entries[5]!;
+    if (call.kind !== 'inbound_call') throw new Error('the fixture\'s sixth entry is the inbound call');
+    Object.assign(call, { called_back_at: null, notes_hidden: true });
+    call.follow_up = { ...call.follow_up!, status: 'open', handled_reason: null, handled_at: null };
+    renderPage(answer);
+    const row = entries()[5]!;
+    const followUp = within(row).getByTestId('customer-inbound-follow-up');
+    expect(followUp.textContent).toBe('To follow up');
+    expect(followUp.getAttribute('data-open')).toBe('true');
+    expect(within(row).getByTestId('customer-notes-hidden').textContent).toBe('Notes hidden');
   });
 
   it('shows the notes it may, says "Notes hidden" where it may not, and the soft-phone fields', () => {
@@ -344,7 +412,7 @@ describe('the timeline', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
 
-    await waitFor(() => expect(entries()).toHaveLength(7));
+    await waitFor(() => expect(entries()).toHaveLength(8));
     expect(mocks.getCustomerTimeline).toHaveBeenCalledWith(
       { search_id: answer.search_id, cursor: answer.timeline.next_cursor },
       'tenant-1',
@@ -398,6 +466,36 @@ describe('the timeline', () => {
     for (const call of mocks.getCustomerTimeline.mock.calls) expect(call[0]).not.toHaveProperty('cursor');
   });
 
+  it('the Channel filter offers every call type, then each alone, and asks the server for inbound calls', async () => {
+    const answer = customerHistoryFixture().search_response;
+    renderPage(answer);
+    const select = screen.getByLabelText('Channel') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      'Every call type', 'Campaign calls only', 'Soft-phone calls only', 'Inbound calls only',
+    ]);
+    fireEvent.change(select, { target: { value: 'inbound' } });
+    await waitFor(() => expect(mocks.getCustomerTimeline).toHaveBeenCalledWith(
+      { search_id: answer.search_id, filters: { channel: 'inbound' } }, 'tenant-1', ACCOUNT,
+    ));
+  });
+
+  it('a number that only ever rang us: its calls received, and "We have not called this number" rather than "Never contacted"', () => {
+    const answer = customerHistoryFixture().search_response;
+    answer.summary.totals = { calls: 0, connected: 0, inbound: { calls: 2, answered: 1 }, last_contacted: null };
+    renderPage(answer);
+    expect(screen.getByTestId('customer-total-inbound').textContent).toBe('2 · 1 answered');
+    expect(screen.getByTestId('customer-last-contacted').textContent).toBe('We have not called this number');
+  });
+
+  it('an answer from a server without inbound totals shows no Calls received', () => {
+    const answer = customerHistoryFixture().search_response;
+    delete answer.summary.totals.inbound;
+    answer.summary.totals.last_contacted = null;
+    renderPage(answer);
+    expect(screen.queryByTestId('customer-total-inbound')).toBeNull();
+    expect(screen.getByTestId('customer-last-contacted').textContent).toBe('Never contacted');
+  });
+
   it('says so when the filters match nothing, and Clear filters starts again', async () => {
     renderPage(customerHistoryFixture().search_response);
     fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'campaign' } });
@@ -420,7 +518,7 @@ describe('filters that fail, and answers that arrive late', () => {
     const answer = customerHistoryFixture().search_response;
     mocks.getCustomerTimeline.mockRejectedValueOnce(new ApiError(503, { message: 'Service Unavailable' }));
     renderPage(answer);
-    expect(entries()).toHaveLength(5);
+    expect(entries()).toHaveLength(6);
     expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'softphone' } });
@@ -551,7 +649,7 @@ describe('the export', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     expect(await screen.findByText('Could not export this history.')).toBeTruthy();
     expect(screen.queryByTestId('customer-export-note')).toBeNull();
-    expect(entries()).toHaveLength(5);
+    expect(entries()).toHaveLength(6);
     expect((screen.getByRole('button', { name: 'Export CSV' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -583,7 +681,7 @@ describe('the export', () => {
 describe('the empty history', () => {
   it('says there are no calls in the accounts you can see, and still shows the DNC status', () => {
     renderPage(customerHistoryFixture().search_response_empty);
-    expect(screen.getByText('No calls to this number in the accounts you can see')).toBeTruthy();
+    expect(screen.getByText('No calls to or from this number in the accounts you can see')).toBeTruthy();
     expect(screen.getByTestId('customer-dnc-none').textContent).toBe('Not on any do-not-call list');
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
@@ -594,7 +692,7 @@ describe('the empty history', () => {
       { channel: 'softphone', campaign: null, agent: { user_id: 'u1', name: 'Priya Nair' }, started_at: '2026-11-06T10:00:00.000Z' },
     ];
     renderPage(answer);
-    expect(screen.queryByText('No calls to this number in the accounts you can see')).toBeNull();
+    expect(screen.queryByText('No calls to or from this number in the accounts you can see')).toBeNull();
     expect(screen.getByTestId('customer-live-call').textContent).toContain('Priya Nair');
     expect(screen.getByTestId('customer-dnc-none')).toBeTruthy();
   });
@@ -610,7 +708,7 @@ describe('the empty history', () => {
     answer.timeline.entries = [softphone, full.timeline.entries[3]!];
     answer.summary.dnc = full.summary.dnc;
     renderPage(answer);
-    expect(screen.queryByText('No calls to this number in the accounts you can see')).toBeNull();
+    expect(screen.queryByText('No calls to or from this number in the accounts you can see')).toBeNull();
     expect(kinds()).toEqual(['softphone_call', 'dnc_mark']);
     expect(screen.getByTestId('customer-dnc-entry')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy();
@@ -620,7 +718,7 @@ describe('the empty history', () => {
     const answer = customerHistoryFixture().search_response_empty;
     answer.summary.dnc = customerHistoryFixture().search_response.summary.dnc;
     renderPage(answer);
-    expect(screen.getByText('No calls to this number in the accounts you can see')).toBeTruthy();
+    expect(screen.getByText('No calls to or from this number in the accounts you can see')).toBeTruthy();
     expect(screen.getByTestId('customer-dnc-entry')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Export CSV' })).toBeNull();
   });

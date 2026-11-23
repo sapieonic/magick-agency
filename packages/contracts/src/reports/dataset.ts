@@ -109,6 +109,11 @@ export const REPORT_DEFINITION_KEYS = {
     'recording_share',
     // The soft-phone calls logged to the campaign (SR1-SR3), beside the dialler's figures.
     'softphone_calls',
+    // Calls by type (call log P4): the dialler and the soft phone together, the inbound calls
+    // filed under the campaign, and the three added.
+    'outbound_connect_rate',
+    'inbound_calls',
+    'calls_by_type',
   ],
   account: [
     'dials',

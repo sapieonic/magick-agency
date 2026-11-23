@@ -117,6 +117,16 @@ void main() {
       expect(json.containsKey('campaign_id'), isTrue);
     });
 
+    test('create: a Call back names the missed call it answers, and a plain dial names none', () {
+      final json = ManualCallCreateRequest(sessionId: 's1', to: '+919812345678', callbackOfInboundCallId: 'in-1').toJson();
+      expect(json['callback_of_inbound_call_id'], 'in-1');
+      expect(ManualCallCreateRequest(sessionId: 's1', to: '+919812345678').toJson().containsKey('callback_of_inbound_call_id'), isFalse);
+      expect(
+        ManualCallCreateRequest(sessionId: 's1', to: 'x', callbackOfInboundCallId: 'in-1'),
+        isNot(ManualCallCreateRequest(sessionId: 's1', to: 'x')),
+      );
+    });
+
     test('create: fields and overrides only when given, and empty overrides are left out', () {
       final json = ManualCallCreateRequest(
         sessionId: 's1',
@@ -306,6 +316,22 @@ void main() {
   });
 
   group('SoftphoneBootstrap', () {
+    test('campaign_required: on when the account asks for a campaign on every call; absent reads as off', () {
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_idle')).campaignRequired, isTrue);
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_enabled')).campaignRequired, isFalse);
+      // A server from before the setting sends no field (the finish-mode sample has none).
+      expect(sp('bootstrap_finish_mode').containsKey('campaign_required'), isFalse);
+      expect(SoftphoneBootstrap.fromJson(sp('bootstrap_finish_mode')).campaignRequired, isFalse);
+      expect(
+        SoftphoneBootstrap.fromJson(sp('bootstrap_idle')),
+        isNot(SoftphoneBootstrap.fromJson({...sp('bootstrap_idle'), 'campaign_required': false})),
+      );
+    });
+
+    test('campaign_required is a soft-phone refusal code', () {
+      expect(SoftphoneErrorCode.fromWire('campaign_required'), SoftphoneErrorCode.campaignRequired);
+    });
+
     test('finds a taggable campaign by id', () {
       final b = SoftphoneBootstrap.fromJson(sp('bootstrap_enabled'));
       expect(b.taggable('c0ffee00-1111-4222-8333-444455556666')!.callingWindowOpen, isTrue);

@@ -80,6 +80,9 @@ export { AgencyPromiseSummaryRepository, agencyPromiseSummaryRepository } from '
 export type { AgencyPromiseSummaryRow } from './agency/promise-summary.repository.js';
 export { AgencyCallbacksRepository, agencyCallbacksRepository, callbacksPageStatement, CALLBACK_CANDIDATE_SQL } from './agency/callbacks.repository.js';
 export type { CallbacksListCampaignRow, CallbacksPageCampaign, CallbacksPageInput, CallbacksPageRow } from './agency/callbacks.repository.js';
+export { AgencyCallListRepository, agencyCallListRepository } from './agency/call-list.repository.js';
+export type { CallListCampaign, CallListContactName, StaffedCampaign } from './agency/call-list.repository.js';
+export type { CallLogScope } from './agency/attempt.repository.js';
 export { AgencyMyDayRepository, agencyMyDayRepository, myCallLaterStatement, MY_CALLBACKS_INDEX_PREDICATE_SQL, MY_DAY_COUNTS_SQL } from './agency/my-day.repository.js';
 export type { MyCallLatersInput, MyDayCountsInput } from './agency/my-day.repository.js';
 export type { AgencyLiveCallQuery, AgencyLiveCallRow } from './agency/live-call.repository.js';
@@ -100,6 +103,16 @@ export {
   asSoftphoneCatalog,
 } from './agency/softphone-settings.repository.js';
 export type { SoftphoneSettingsIssue } from './agency/softphone-settings.repository.js';
+export {
+  AgencyCallSettingsRepository,
+  agencyCallSettingsRepository,
+  REQUIRE_CAMPAIGN_OFF,
+} from './agency/call-settings.repository.js';
+export type {
+  AccountMemberRoles,
+  AgencyCallSettingsRecord,
+  RequireCampaign,
+} from './agency/call-settings.repository.js';
 export {
   AgencyAbandonmentRepository,
   AgencyLiveConcurrencyRepository,
@@ -231,6 +244,7 @@ export type {
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryInboundCallRow,
   CustomerHistoryLastPlacedRow,
   CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,

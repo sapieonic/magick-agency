@@ -22,7 +22,12 @@ locally: `apps/mobile/README.md`. As of 2026-11-10.
   away from the app (IQ58–IQ74). See "Ringing while away (Mode B)" below; iOS is designed only;
 - the soft phone (manual dialling, decision M2): the Phone tab, and in place on the station after
   "Switch to soft phone" (SP7). See "The soft phone" below;
-- My performance and My calls (campaign calls and soft-phone calls);
+- My performance and My calls (one list of the agent's calls of every type, with chips; the app
+  needs a server that has `GET /proxy/agency/my-calls`: **deploy the server before handing out
+  the APK**, and against an older or rolled-back server the tab says "My calls needs a newer
+  version of the server. Ask your admin to update it." while the rest of the app works,
+  `DEPLOYMENT.md` 12; "My calls"
+  below and [`call-log.md`](call-log.md) §7);
 - customer history: search one full number (the search icon on My calls) and see its contacts,
   DNC status, open items and timeline across the accounts the agent belongs to, with the console's
   number rule (country picker, helper text, preview, refusals). See [`customer-history.md`](customer-history.md) §5.
@@ -30,20 +35,24 @@ locally: `apps/mobile/README.md`. As of 2026-11-10.
   loads or when it cannot be read). The page has the console's content: a copy button, every
   console filter (the channel and "Connected calls only" on the page, campaign, days, outcome,
   outcome code and agent in a "Filters (N)" sheet), redial chains, the follow-up of an open
-  override, and the console's empty-state rule. Two differences: no CSV export (the console's only,
+  override, and the console's empty-state rule. Since 2026-11-22 the timeline holds the calls the
+  number made to us too (an "Inbound call" entry with an Answered, Missed or To follow up pill,
+  an **Inbound calls** chip, "N calls received · M answered" in the summary;
+  [`call-log.md`](call-log.md) §8). Two differences: no CSV export (the console's only,
   CH13), and the app never opens a call page (CH8). The empty box and "too short" refusals show
   when Search is pressed, the others as typed. Recent searches (last five) stay on the device
   until Clear or any route to the signed-out state (sign-out, a refused session, start-up with
   nobody signed in);
-- Missed calls (inbound calls that reached nobody, assigned to the agent): a segment of My calls
-  with the open count as a badge on the tab, Call back into the soft phone, Mark handled and
-  Reopen. See "Missed calls" below;
+- Missed calls (inbound calls that reached nobody, assigned to the agent): My calls' **To follow
+  up** chip, with what the agent still owes as its badge and the open count on the tab, Call back
+  into the soft phone and Mark handled; the Missed calls list (the team's calls to claim,
+  voicemails, Reopen) is one tap from it. See "Missed calls" below;
 - the Me tab: account switch, email preferences, the dark theme switch, sound and vibration,
   diagnostics, sign out.
 
 **The tabs**: Station, Phone, Performance, My calls, Me. The Phone tab shows only where the soft
 phone is available to the agent (decision M3); without it the bar has four tabs. Missed calls is
-not a tab: it is a segment of My calls, whose tab carries its badge.
+not a tab: it is My calls' To follow up chip, and the My calls tab carries its badge.
 
 **The tab rule** (decision M4):
 
@@ -415,10 +424,12 @@ text the band scrolls with the content and the main action keeps its place.
   the station's chips and who makes the call (on a contact a list is waiting on, another agent may
   get it; otherwise the agent calls back), the pay date picker, and the station's words for why
   Save is not ready.
-- **My calls and My customers** show each row's number as its campaign does (AS9): the server's
-  `phone_display` on the row, masked with `stationPhone` (in the list, a call's detail and the Call
-  button's spoken label); an older server sends none, and the number shows in full. On a campaign
-  that hides numbers, My customers' phone-typed hero values arrive masked from the server (AS19 S3(d)).
+- **My customers** shows each row's number as its campaign does (AS9): the server's
+  `phone_display` on the row, masked with `stationPhone` (in the list and the Call button's spoken
+  label); an older server sends none, and the number shows in full. On a campaign that hides
+  numbers, My customers' phone-typed hero values arrive masked from the server (AS19 S3(d)).
+  **My calls** goes further (CL32, [`call-log.md`](call-log.md) §7): a number its campaign hides is
+  masked by the server and never reaches the app on that route; the card shows it as it arrived.
 - **Light by default (AS14).** The app opens light whatever the phone's setting until the agent
   turns the dark theme on (the Me tab, or ⋮ More → Sound); every station screen is tested in light
   and its colours' contrast in both.
@@ -587,6 +598,18 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
     have been placed;
   - redial fills the pad and focuses Call, it never dials;
   - Log to and Call from lock once a call is placed;
+  - every call must belong to a campaign when the bootstrap says so (`campaign_required`,
+    [`call-log.md`](call-log.md) §5): "Log to (required)", no "Not logged to a campaign", Call
+    off with "Choose a campaign to log this call to." until one is chosen; a redial of a call
+    logged to none leaves Log to empty and says "This call was not logged to a campaign. Choose
+    one to call again.", and so does a Missed call's Call back whose campaign cannot be chosen;
+    an agent on no running campaign gets "You are not on any running
+    campaign, so you cannot dial. Ask your supervisor to add you to one." in place of the pad.
+    The server refuses a dial with no campaign whatever the app shows (`campaign_required`), and
+    an older build shows that refusal's message. The app's **inbound** wrap-up has no
+    Change-campaign control: a call arrives filed by its route, and one that did arrive under
+    no campaign while the setting is on is refused its outcome (`campaign_required`) and closes
+    with none when its window ends, unless a supervisor files it from the console;
   - call fields are never sent before the field set has loaded, and autosave 700 ms after the
     last edit; unsent notes are kept on the phone under `manual:<id>`;
   - notes the agent cleared go with the outcome as `''`, notes never touched are left out;
@@ -669,15 +692,54 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   hidden by it, while the dialled number shows as typed (S3(b)). The name is the domain's one rule,
   else, on a campaign that has not chosen its facts, the card's guess from before AS19 (S1); a
   chosen campaign's compact card with no name is "Customer" over the number (S4).
-- **My calls.** A "Soft-phone calls" segment shows where the Phone tab shows, or when a `limit=1`
-  read finds any of the agent's soft-phone calls: keyset pages, number and status filters, rows
-  with "Logged to <campaign>" or "Not logged". The detail shows the record, the outcome and who
-  saved it, the call details labelled by the field set, the agent's override notes and the roster
-  contact. `media` is never rendered. An unsettled row opens the Phone tab.
+- **My calls.** The agent's soft-phone calls are in My calls' one list, under the **Soft phone**
+  chip, which shows where the Phone tab shows ("My calls" below). A card says the campaign the
+  call was logged to, or "No campaign", and "Soft phone · Call back" for a call placed from a
+  missed call's Call back. The list carries no media. (Until 2026-11-22 this was a "Soft-phone
+  calls" segment with its own filters and a detail sheet; both went with the segments, CL38.)
 - **What differs from the console.** No keyboard shortcuts. The calling-hours prompt shows the
   window as the server states it and the next opening as time from now plus the phone's own clock
   (the app has no IANA time-zone database). Conflicts with another account are settled by
   switching account. The copy says the ringback "plays on your phone".
+
+## My calls
+
+One list of the agent's own calls of every type (CL9, [`call-log.md`](call-log.md) §7), from
+`GET /proxy/agency/my-calls`. Code: `lib/features/calls/` (`calls_screen.dart`,
+`my_calls_controller.dart`, `my_calls_copy.dart`, `widgets/my_call_card.dart`); the wire types are
+`agency_wire`'s `my_calls.dart`.
+
+- **Chips, where the three segments were:** To follow up · All · Dialler · Soft phone · Inbound,
+  wrapped so all are on screen at 360 dp. The tab opens on All. To follow up is in the warning
+  colour with what the agent still owes as a badge (their open missed calls and the callbacks
+  due). Soft phone shows where the Phone tab shows; Inbound and To follow up where Missed calls
+  show (`missed_access.dart`), To follow up also whenever something is owed.
+- **A card per call:** the type in its colour ("Dialler · Try 1", "Soft phone · Call back",
+  "Inbound · missed") and the time ("3:42 PM"; the day too on another day), who the call was with
+  (the customer's name over the number, or the number), then "campaign · outcome · day · talk
+  time", and the agent's notes. No recording and no call page.
+- **Numbers are as the campaign allows.** The server masks a number its campaign hides from
+  agents; the card shows what arrived (`phone_masked`) and never regroups it.
+- **To follow up:** the agent's open missed calls as warning cards with **Call back** and **Mark
+  handled** (the Missed list's own action), then **Callbacks due**: "Callback due", "Due 4:00 PM"
+  or "Late by 2 hours", the customer, and "campaign · you booked it for 1:45 PM". Empty: "Nobody
+  is waiting for a call from you." **Missed calls list** under it opens the Missed list (below).
+- **Call back** reads that one Missed row by its id when it is pressed
+  (`MissedCallsApi.one`, `GET /inbound/missed/:id`; the number is not in My calls' rows where the
+  campaign hides it) and is the Missed list's own Call back from there (`startCallBack`):
+  nothing is dialled until the agent presses Call. By id, so it works however many rows the
+  agent has open.
+- **The badges agree.** To follow up's badge and the My calls tab's badge count the same open
+  Missed rows. When the tab's count moves to a number the list did not read
+  (`MyCallsController.missedCountChanged`), the list is read again under To follow up, and the
+  counts alone (a one-row read) under another chip, so the cards and pages on screen stay. Mark
+  handled here reads the list itself and is not followed twice.
+- **Paging:** keyset pages of 50, the next one fetched about 20 cards before the end; a chip
+  restarts from the first page, and a page that belongs to a chip no longer on is dropped.
+- **Gone with the segments (CL38):** the attempts list's filters (day, outcome, campaign, number)
+  and detail sheet, and the soft-phone calls list's filters and detail sheet. So the app has no
+  read-only page for one soft-phone call: its call fields, its override note and who saved its
+  outcome are not shown in the app.
 
 ## Missed calls
 
@@ -686,11 +748,13 @@ inbound calls that reached nobody and were assigned to this agent. The routes ar
 (`/proxy/agency/inbound/missed`, `…/:id/handled`, `…/:id/reopen`, `…/count`); the app adds none.
 Code: `lib/features/missed/`.
 
-- **Where it is.** A third segment of My calls ("Missed calls", or "Missed" beside two others),
-  with the open count as a badge on the segment and on the My calls tab ("100+" past the server's
-  cap, `InboundMissedCountResponse.badge`). Not a sixth tab: five already leave about 72 dp each
-  on a 360 dp phone, and Material's bar holds three to five. On duty on a campaign the tab opens
-  only the Missed list (IQ48; the other segments stay off duty only, M4), in a sheet over the
+- **Where it is.** The agent's own open rows are My calls' **To follow up** chip ("My calls"
+  above), and the list itself (Mine and Team, voicemails, the handled rows) opens from **Missed
+  calls list** under that chip. The open count is a badge on the My calls tab ("100+" past the
+  server's cap, `InboundMissedCountResponse.badge`); the chip's own badge adds the callbacks due.
+  It was a third segment of My calls until 2026-11-22 (CL9). Not a sixth tab: five already leave
+  about 72 dp each on a 360 dp phone, and Material's bar holds three to five. On duty on a
+  campaign the tab opens only the Missed list (IQ48; the rest of My calls stays off duty only, M4), in a sheet over the
   station (`missed_on_duty.dart`) that changes nothing on it (no pause, no switch) and closes when
   another call reaches the agent. The station's waiting, campaign wrap-up and inbound outcome
   screens show "N customers to call back" (the agent's own open rows; hidden at 0, unknown or
@@ -714,8 +778,8 @@ Code: `lib/features/missed/`.
   - the count is read again when a call settles on this phone: the station's signals
     (`callActive || outcomeOwed`) going from true to false, which covers a campaign call, an
     inbound call put through and a soft-phone call on either host (`missedCallsSettledProvider`);
-  - the list and the count are read again when the Missed segment comes on screen (picked, or the
-    My calls tab back in front: the shell's indexed stack turns its tickers back on) and the rows
+  - the list and the count are read again when the Missed list comes on screen (opened, or its
+    route back in front: the shell's indexed stack turns its tickers back on) and the rows
     are a minute old or a call has settled since; the rows stay on screen until the new page lands.
   An answer from a previous workspace never touches this one's (a generation guards the read in
   flight).
@@ -749,8 +813,12 @@ Code: `lib/features/missed/`.
   ahead (IQ55): the soft phone's SP1 note and override, as for a typed number.
 - **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
   phone is not in finish mode; otherwise the console's note says to call another way and mark the
-  call handled). It hands the number and the matched campaign to the soft phone
-  (`SoftphoneActions.callBack`) and goes to the pad: the Phone tab, or the station for a campaign
+  call handled). It hands the number, the campaign the call is filed under (a matched caller's own,
+  else the campaign the inbound number files unknown callers under, [`call-log.md`](call-log.md) §5;
+  the row names it) and the Missed row's id to the soft
+  phone (`SoftphoneActions.callBack`; the id is sent with the first dial of that number as
+  `callback_of_inbound_call_id`, so the console's Call log can tie the call to the missed call it
+  answers, `docs/call-log.md` CL15) and goes to the pad: the Phone tab, or the station for a campaign
   switched to the soft phone (SP7). Like redial it fills the pad, sets "Log to" to the matched
   campaign when the agent may log to it (else leaves it), and focuses Call; it never dials, so the
   DNC check and its note (SP1) and the calling hours apply as to a typed number; an open override
@@ -1396,8 +1464,8 @@ lib/
     audio/      orchestration of packages/agent_audio by phase
     lifecycle/  foreground rules (device_away), wake lock, local notifications
   features/   auth, join, accounts, campaigns, preflight, station, softphone (the Phone tab and
-              the panel), performance, calls (with calls/softphone), missed (My calls' Missed
-              segment), settings
+              the panel), performance, calls (My calls: one list of every call type), missed
+              (the Missed list, opened from My calls' To follow up), settings
 packages/
   agency_wire/  hand-written Dart types for the API and station frames
   agent_audio/  the native voice engine (Kotlin, Swift), the soft phone's ringback, the inbound chime
@@ -1489,13 +1557,13 @@ packages/
   - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (75: the soft phone's, customer history's, inbound calls' and floor assist's included, with `station_capabilities`, and one number, `help_expiry_ms`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
-  - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
+  - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet"). Call log P6 (2026-11-22) added `CustomerTimelineInboundCall` with `CustomerTimelineFollowUp` (`kind: inbound_call`; its `call_page` is not decoded, the app opens none), `CustomerHistoryInboundTotals` (`totals.inbound`, null from an older server), and `inbound` in `CustomerTimelineChannel`; `dart test` and `flutter test` ran on them.
 
 ## Performance and UX rules the code keeps
 
 - No per-frame JSON or copies on the 50 fps media path. One platform message per 20 ms frame, downlink handled off the main thread. A pooled uplink on Android.
 - Timers that show a ticking clock use a 1 Hz timer aligned to its start, not a frame ticker.
-- Lists use `ListView.builder` with fixed-height rows. My calls prefetches the next page about 20 rows early and debounces the number search by 400 ms.
+- Lists use `ListView.builder` with fixed-height rows. My calls is a list of cards of varying height (a missed call carries its actions) and prefetches the next page about 20 cards early; My customers debounces its number search by 400 ms.
 - Stale-while-revalidate for Performance: the last result shows at once and refreshes behind it.
 - 48 dp touch targets, reduced-motion respected, layouts tested at 200% text on a 360×640 phone.
 - A tab label that would wrap (five tabs on a 360 dp phone leave about 72 dp each) takes its short
@@ -1600,9 +1668,10 @@ from the browser or file manager it was opened from.
 - **The app review's fixes (2026-11-20) are tested against fakes only**: the my-day reads' new times
   (every `ready` frame, 60 s, the day's end) and their 401 to the gate, the matched campaign's routing
   read from its My contacts summary, and Don't call again on What happened? (read off the server's
-  route, which takes an ended attempt, but not run against it), and My calls and My customers
+  route, which takes an ended attempt, but not run against it), and My customers
   masking from each row's `phone_display` (tested with the rows' fields set by hand, not against a
-  running server). Nothing of them has run on a phone or against a running server.
+  running server). My calls' rows (P5 of the call log) are tested against fakes and the contract's
+  fixtures in the app; the server's masking is tested against real Postgres on the server. Nothing of them has run on a phone or against a running server.
 - **Read aloud (2026-11-20) has not run on a device.** Nor has its check for an engine and a
   language (`getEngines`, `getLanguages`): which phones answer them how is unverified. `flutter_tts` 4.2.5 resolved from pub.dev and
   its Dart side is tested against a faked channel; no Android or iOS build with it has run here (no

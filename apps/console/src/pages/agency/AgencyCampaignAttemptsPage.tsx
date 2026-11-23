@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Calendar,
@@ -8,32 +8,34 @@ import {
   MicOff,
   PhoneOutgoing,
   Play,
+  Voicemail,
   RefreshCw,
   Search,
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
+import { useMarkMissedHandled } from '../../hooks/useMarkMissedHandled';
+import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { listCampaignAgents } from '../../api/agency';
-import { downloadSpineCsv, getCampaignAttempts } from '../../api/agencySpine';
+import { downloadSpineCsv, getAccountCalls, getCampaignCallLog, type CallLogListOptions } from '../../api/agencySpine';
+import { listAgencyCampaigns } from '../../api/agencyCampaigns';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
-  ATTEMPTS_DESCRIPTION,
   PHONE_FILTER_PLACEHOLDER,
   SPINE_PRIVACY_NOTE,
-  agentCellCopy,
   dispositionLabel,
   exportTruncationNotice,
-  formatSpineTimestamp,
+  formatCallTimestamp,
   formatTalkTime,
   recordingCellCopy,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
-import { CallLogViews } from '../../components/agency/CallLogViews';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -41,36 +43,100 @@ import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
 import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
+import { CallTypeChips } from '../../components/agency/CallTypeChips';
+import { MissedFollowUpCell } from '../../components/agency/MissedFollowUpCell';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
+import { ATTEMPT_OUTCOME_LABELS, type AgencyAttemptFilters } from '../../types/agency-spine';
+import type {
+  AgencyAccountCallsPage,
+  AgencyCallLogCounts,
+  AgencyCallLogInboundRow,
+  AgencyCallLogPage,
+  AgencyCallLogRow,
+  AgencyCallLogStatus,
+  AgencyCallLogTypeFilter,
+} from '../../types/agency-call-log';
 import {
-  ATTEMPT_OUTCOME_LABELS,
-  attemptOutcomeLabel,
-  type AgencyAttempt,
-  type AgencyAttemptFilters,
-} from '../../types/agency-spine';
+  AGENCY_CALLS_NO_CAMPAIGN,
+  AGENCY_CALLS_NO_CAMPAIGN_LABEL,
+  AGENCY_CALL_LOG_TYPE_LABELS,
+  agencyNoCampaignLabel,
+} from '../../types/agency-call-log';
 import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
-import { attemptDateRange } from '../../utils/agencyAttemptFilters';
+import { attemptDateRange, withoutDates } from '../../utils/agencyAttemptFilters';
 import {
   campaignAttemptAgentOptions,
   campaignAttemptFilterChips,
   campaignAttemptFilterRefusal,
   campaignAttemptFiltersFromParams,
-  campaignAttemptFiltersToParams,
-  isCampaignAttemptFiltered,
   phoneFilterUsable,
   phoneFilterDraftError,
   INVERTED_RANGE_COPY,
 } from '../../utils/agencyCampaignAttemptParams';
-import { formatCount } from '../../utils/format/number';
+import { dayOfInstant, localDay } from '../../utils/format/date';
+import {
+  ALL_CALLS_DESCRIPTION,
+  ALL_CALLS_CAMPAIGN_PARAM,
+  CALL_LOG_DESCRIPTION,
+  CALL_LOG_INBOUND_OUTCOME_HINT,
+  CALL_LOG_INBOUND_OUTCOME_OPTIONS,
+  CALL_LOG_STATUS_HINT,
+  CALL_LOG_STATUS_OPTIONS,
+  TO_FOLLOW_UP_DATES_HINT,
+  callLogAgentCell,
+  callLogBadges,
+  callLogCountCopy,
+  callLogEmptyState,
+  callLogOpening,
+  callLogOutcomeFilterLabel,
+  callLogOutcomePlaceholder,
+  callLogParams,
+  callLogRowKey,
+  callLogRowPath,
+  callLogStatusLabel,
+  callLogTypeFacts,
+  callLogViewFromParams,
+  callLogWhatHappened,
+  effectiveCallLogFilters,
+  followUpCopy,
+  isCallLogFiltered,
+  isMissedInbound,
+  isNotDialled,
+  lastSevenDays,
+  manualCallsRedirectPath,
+  onOpeningView,
+  pairedRowKey,
+  toFollowUpNote,
+  visibleCallLogChips,
+  type CallLogView,
+} from '../../utils/agency/callLog';
 import styles from './AgencyCampaignAttemptsPage.module.css';
 import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
 
 const PAGE_SIZE = 50;
+/** The applied-filter chip of the soft-phone status (the attempt filters' chips have their own ids). */
+const STATUS_CHIP = 'softphone_status';
+/** The applied-filter chip of All calls' campaign. */
+const CAMPAIGN_CHIP = 'campaign';
+/** The missed-call Outcome cell's test ids on this list (each is completed with the row's id). */
+const CALL_LOG_FOLLOW_UP_TEST_IDS = { cell: 'call-follow-up', callBack: 'call-back', markHandled: 'mark-handled' };
 
 /**
- * The campaign's Attempts view — one row per dial.
+ * The campaign's Call log: one row per call, whatever it was (decisions CL1, CL11,
+ * `docs/call-log.md`). The dialler's attempts, the soft-phone calls logged to the campaign and
+ * the inbound calls filed under it are one list on one keyset, with type chips ("All · Dialler ·
+ * Soft phone · Inbound") over it and **To follow up**, the campaign's missed calls that are still
+ * open; a row opens the Call page of its own type. A missed call and the soft-phone call that
+ * rang it back point at each other.
+ *
+ * ── What it opens on ────────────────────────────────────────────────────────
+ * With no filter in the URL a live campaign's list shows today's calls, and an empty day
+ * offers the last seven and every date. A finished or archived campaign opens on every date:
+ * "what did this campaign do" is asked after the run, and today would be an empty page. Any
+ * filter in the URL (an Insights number, one contact) means exactly what it says and is never
+ * narrowed to today; `?dates=all` asks for every date (`utils/agency/callLog.ts`).
  *
  * ── Why this is built on attempts, not calls ───────────────────────────────
  * Agency legs do land in `agency_calls`, so a call list could show the ones that
@@ -92,29 +158,25 @@ const PAGE_SIZE = 50;
  * sent to a colleague. Each applied filter is a removable chip, including the
  * ones the form has no control for (a dialled window, a caller ID, a redial flag).
  *
- * The first page asks for the exact total (`?include_total=1`): the server counts
- * the filtered set with the list's own predicate, once per filter change, not per
- * page. That is the number a drill-down is checked against, so it is shown as
- * "N attempts". Later pages keep it; a server that sends none leaves the count at
- * "showing N", never an "N of M" nothing counted.
+ * The first page asks for the chips' counts (`?include_counts=1`): the server counts
+ * the filtered set per type with the list's own predicates, once per filter change, not
+ * per page. The count of the chip that is on is the number a drill-down is checked
+ * against, so it is shown as "N calls". Later pages keep it; a server that sends none
+ * leaves the count at "showing N", never an "N of M" nothing counted.
  */
 export function AgencyCampaignAttemptsPage() {
   const { id } = useParams<{ id: string }>();
-  const { role } = useTenant();
   if (!id) return null;
 
   /*
     In the campaign's workspace, like every campaign screen: its header (name, status,
-    lifecycle), the health strip and the section bar, then Call log's two views (Dialler
-    calls | Soft-phone calls, decision IN14; nothing when only this view is open).
+    lifecycle), the health strip and the section bar.
   */
   return (
-    <CampaignWorkspace
-      campaignId={id}
-      active="attempts"
-      subnav={<CallLogViews campaignId={id} active="attempts" role={role} />}
-    >
-      {(campaign, section) => <AttemptsSection id={id} campaign={campaign} stats={section.stats} />}
+    <CampaignWorkspace campaignId={id} active="attempts">
+      {(campaign, section) => (
+        <CallLogList scope={{ kind: 'campaign', id, campaign, campaignLoading: section.loading, stats: section.stats }} />
+      )}
     </CampaignWorkspace>
   );
 }
@@ -124,15 +186,45 @@ export function AgencyCampaignAttemptsPage() {
  * only: the export's file, the dispositions, the recording note; and the workspace's stats,
  * for whether the campaign holds soft-phone calls.
  */
-function AttemptsSection({ id, campaign, stats }: { id: string; campaign: AgencyCampaign | null; stats: AgencyCampaignStats | null }) {
+export type CallLogListScope =
+  | {
+    kind: 'campaign';
+    id: string;
+    campaign: AgencyCampaign | null;
+    /** The workspace is still reading the campaign: what the list opens on is not known yet. */
+    campaignLoading: boolean;
+    stats: AgencyCampaignStats | null;
+  }
+  /** The account's All calls (`docs/call-log.md` §7): every campaign's calls and the calls filed under none. */
+  | { kind: 'account' };
+
+/** The campaign's breadcrumb and its place in "recently visited": the campaign Call log's alone. */
+function CampaignCallLogCrumbs({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
+  useCampaignCrumbs(id, campaign, 'attempts');
+  return null;
+}
+
+/**
+ * The list of calls at one scope: a campaign's Call log, or the account's All calls. The same
+ * chips, filters, rows and paging; All calls adds the Campaign column and the Campaign filter
+ * (a campaign, or the calls filed under none), opens on today, and has no export.
+ */
+export function CallLogList({ scope }: { scope: CallLogListScope }) {
+  const account = scope.kind === 'account';
+  const campaignScope = scope.kind === 'campaign' ? scope : null;
+  const id = campaignScope?.id ?? null;
+  const campaign = campaignScope?.campaign ?? null;
+  const campaignLoading = campaignScope?.campaignLoading ?? false;
+  const stats = campaignScope?.stats ?? null;
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
+  const navigate = useNavigate();
 
-  useCampaignCrumbs(id, campaign, 'attempts');
-  const [rows, setRows] = useState<AgencyAttempt[]>([]);
+  const [rows, setRows] = useState<AgencyCallLogRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
+  /** The chips' counts for the applied filters, from the first page. */
+  const [counts, setCounts] = useState<AgencyCallLogCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +233,12 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   const [exporting, setExporting] = useState(false);
   /** The campaign's assigned agents, for the Agent filter. A courtesy: rows still name the rest. */
   const [assignedAgents, setAssignedAgents] = useState<AgencyAssignedAgent[]>([]);
+  /** All calls: the account's campaigns, for the Campaign filter and each row's outcome words. */
+  const [accountCampaigns, setAccountCampaigns] = useState<AgencyCampaign[]>([]);
+  /** All calls: the account's "Every call must belong to a campaign" setting, for "Before the rule". */
+  const [rule, setRule] = useState<{ require_campaign: boolean; require_campaign_since: string | null } | null>(null);
+  /** All calls: the Campaign filter in the URL (`?campaign_id=`): a campaign's id, `none`, or nothing. */
+  const campaignFilter = account ? searchParams.get(ALL_CALLS_CAMPAIGN_PARAM) || null : null;
 
   /*
     ── The applied filters live in the URL; the drafts do not ────────────────
@@ -150,13 +248,61 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     the same path: `contact_id` is one more applied filter, so the export and
     "load more" carry it without a second code path.
   */
-  const filters = useMemo(() => campaignAttemptFiltersFromParams(searchParams), [searchParams]);
+  const urlFilters = useMemo(() => campaignAttemptFiltersFromParams(searchParams), [searchParams]);
+  /** The chip that is on, and whether every date was asked for: beside the filters, in the URL. */
+  const view = useMemo(() => callLogViewFromParams(searchParams), [searchParams]);
+  /**
+   * What a URL with no filter opens on: today for a campaign that is live, every date for one
+   * that has finished or is archived (`callLogOpening`). A value, not the campaign object: the
+   * workspace hands over a new object on every poll, and the list must not be read again for it.
+   * Null while the campaign is still being read; if it cannot be read, today.
+   */
+  const opening = account ? 'today' : campaign ? callLogOpening(campaign) : campaignLoading ? null : 'today';
+  /** The reader's day the opening view shows. Taken again on Refresh, so it moves on past midnight. */
+  const [today, setToday] = useState(() => localDay());
+  /**
+   * What the list is read with: the URL's filters, or on the opening view of a live campaign,
+   * today. The form, the chips, the export and every page use this one set, so what is on
+   * screen is what was asked for.
+   */
+  const filters = useMemo(
+    () => effectiveCallLogFilters(urlFilters, view, opening ?? 'today', today),
+    [urlFilters, view, opening, today],
+  );
+  /** The opening view of a campaign not read yet: nothing is asked for until it is known. */
+  const awaitingOpening = opening === null && onOpeningView(urlFilters, view);
   const pinnedContact = filters.contact_id ?? null;
+  const { type, status } = view;
+  /**
+   * To follow up is every open missed call whatever the dates (CL14): while that chip is on the
+   * date fields are switched off and say why, and nothing on the page claims the dates apply.
+   * The dates stay in the URL, so they are back with the next chip.
+   */
+  const datesOff = type === 'to_follow_up';
 
-  /** Applied filters → the URL. The single writer. */
-  const applyToUrl = useCallback((next: AgencyAttemptFilters) => {
-    setSearchParams(campaignAttemptFiltersToParams(next));
-  }, [setSearchParams]);
+  /** Filters and view → the URL. The single writer. All calls keeps its campaign beside them. */
+  const writeUrl = useCallback((next: AgencyAttemptFilters, nextView: CallLogView, nextCampaign: string | null = campaignFilter) => {
+    const params = callLogParams(next, nextView);
+    if (account && nextCampaign) params.set(ALL_CALLS_CAMPAIGN_PARAM, nextCampaign);
+    setSearchParams(params);
+  }, [setSearchParams, account, campaignFilter]);
+
+  /**
+   * An edit to the filters (Apply, a chip removed): the chip stays on. An edit that leaves no
+   * filter at all asked for every date, and the URL says so (`dates=all`); without that an
+   * emptied form would spring back to today.
+   */
+  const applyToUrl = useCallback((
+    next: AgencyAttemptFilters,
+    nextStatus: AgencyCallLogStatus | null = status,
+    nextCampaign: string | null = campaignFilter,
+  ) => {
+    writeUrl(next, { type, allDates: true, status: nextStatus }, nextCampaign);
+  }, [writeUrl, type, status, campaignFilter]);
+
+  const chooseType = useCallback((next: AgencyCallLogTypeFilter) => {
+    writeUrl(urlFilters, { type: next, allDates: view.allDates, status });
+  }, [writeUrl, urlFilters, view.allDates, status]);
 
   // Draft vs applied, so typing does not fire a request per keystroke and the
   // export is guaranteed to match exactly what is on screen.
@@ -165,8 +311,10 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
   const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
-  const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
-  const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
+  const [draftFrom, setDraftFrom] = useState(() => dayOfInstant(filters.from));
+  const [draftTo, setDraftTo] = useState(() => dayOfInstant(filters.to));
+  const [draftStatus, setDraftStatus] = useState<AgencyCallLogStatus | ''>(() => status ?? '');
+  const [draftCampaign, setDraftCampaign] = useState(() => campaignFilter ?? '');
 
   // A link (or the back button) changes the applied set: the form follows it, or
   // the panel shows controls that disagree with the list and Apply silently
@@ -175,11 +323,14 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     setDraftOutcomes(filters.outcome ?? []);
     setDraftPhone(filters.phone ?? '');
     setDraftAgent(filters.agent_user_id ?? '');
-    setDraftFrom(dayOf(filters.from));
-    setDraftTo(dayOf(filters.to));
-  }, [filters]);
+    setDraftFrom(dayOfInstant(filters.from));
+    setDraftTo(dayOfInstant(filters.to));
+    setDraftStatus(status ?? '');
+    setDraftCampaign(campaignFilter ?? '');
+  }, [filters, status, campaignFilter]);
 
-  const canExport = hasPermission(role, 'agency.supervise');
+  // All calls has no export: a campaign's file is its Call log's.
+  const canExport = !account && hasPermission(role, 'agency.supervise');
   /**
    * The export is the campaign's call log (SR6): its dials and the soft-phone calls logged to it,
    * each row's `source` column saying which. Said beside the button while the soft phone is on,
@@ -187,10 +338,18 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
    * use): the file carries them whatever the flag says now.
    */
   const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
-  const exportHoldsSoftphone = softphoneOn || showsSoftphone(stats, false);
+  const exportHoldsSoftphone = (type === 'all' || type === 'soft_phone') && (softphoneOn || showsSoftphone(stats, false));
   const exportTitle = exportHoldsSoftphone
     ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (its source column says which)'
     : 'Download everything matching the filters above, not just the rows on screen';
+  const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
+  const availability = useMemo(() => ({ softphoneEnabled: softphoneOn, inboundEnabled: inboundOn }), [softphoneOn, inboundOn]);
+  /** Mark handled is the Missed list's action, under its permission. */
+  const canMarkHandled = hasPermission(role, 'agency.inbound.read');
+  /** Call back opens the soft phone with the number on the pad: only where the viewer may dial from it. */
+  const canCallBack = softphoneOn && hasPermission(role, 'agency.softphone.dial');
+  /** The other half of the pair under the pointer or the focus: a missed call and its call back light each other. */
+  const [pairLit, setPairLit] = useState<string | null>(null);
 
   /**
    * Guards against a slow first page landing after a newer one — without it,
@@ -199,21 +358,46 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
    * rather than as a race.
    */
   const requestSeq = useRef(0);
+  /**
+   * What the counts on screen were counted for (campaign, filters, status). The chip is not in
+   * it: the counts are of every type whatever chip is on, so choosing a chip reads the rows
+   * again and keeps the counts.
+   */
+  const countedFor = useRef<string | null>(null);
 
-  const load = useCallback(async (active: AgencyAttemptFilters) => {
-    if (!id || !tenantId || !accountId) return;
+  /** One page at this scope: the campaign's Call log, or the account's All calls (which also says the account's rule). */
+  const fetchPage = useCallback((
+    active: AgencyAttemptFilters,
+    options: CallLogListOptions,
+  ): Promise<AgencyCallLogPage & Partial<Pick<AgencyAccountCallsPage, 'rule'>>> => (id
+    ? getCampaignCallLog(id, active, options, tenantId ?? undefined, accountId ?? undefined)
+    : getAccountCalls(active, { ...options, campaign: campaignFilter }, tenantId ?? undefined, accountId ?? undefined)
+  ), [id, campaignFilter, tenantId, accountId]);
+
+  const load = useCallback(async (
+    active: AgencyAttemptFilters,
+    chip: AgencyCallLogTypeFilter,
+    activeStatus: AgencyCallLogStatus | null,
+    recount = false,
+  ) => {
+    if ((!account && !id) || !tenantId || !accountId) return;
     const seq = ++requestSeq.current;
+    const countKey = JSON.stringify([id, campaignFilter, tenantId, accountId, active, activeStatus]);
+    const includeCounts = recount || countedFor.current !== countKey;
     setLoading(true);
     setError(null);
     setFilterRefused(false);
     try {
-      const page = await getCampaignAttempts(
-        id, active, { limit: PAGE_SIZE, includeTotal: true }, tenantId, accountId,
-      );
+      const options = { limit: PAGE_SIZE, type: chip, ...(activeStatus ? { status: activeStatus } : {}), ...(includeCounts ? { includeCounts: true } : {}) };
+      const page = await fetchPage(active, options);
       if (seq !== requestSeq.current) return;
+      if (page.rule) setRule(page.rule);
       setRows(page.rows);
       setNextCursor(page.next_cursor);
-      setTotal(typeof page.total === 'number' ? page.total : null);
+      if (includeCounts) {
+        setCounts(page.counts ?? null);
+        countedFor.current = page.counts ? countKey : null;
+      }
     } catch (err: unknown) {
       if (seq !== requestSeq.current) return;
       /*
@@ -223,14 +407,28 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       */
       setRows([]);
       setNextCursor(null);
-      setTotal(null);
+      setCounts(null);
+      countedFor.current = null;
       const refusal = campaignAttemptFilterRefusal(err);
       setFilterRefused(refusal !== null);
-      setError(refusal ?? getErrorMessage(err, 'Could not load this campaign’s call attempts.'));
+      setError(refusal ?? getErrorMessage(err, account ? 'Could not load this account’s calls.' : 'Could not load this campaign’s call log.'));
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [id, tenantId, accountId]);
+  }, [id, account, campaignFilter, tenantId, accountId, fetchPage]);
+
+  useEffect(() => {
+    // All calls: the account's campaigns, for the Campaign filter. A courtesy: the rows name theirs.
+    setAccountCampaigns([]);
+    if (!account || !tenantId || !accountId) return;
+    let live = true;
+    listAgencyCampaigns(tenantId, accountId)
+      .then((answer) => { if (live) setAccountCampaigns(answer); })
+      .catch(() => { if (live) setAccountCampaigns([]); });
+    return () => {
+      live = false;
+    };
+  }, [account, tenantId, accountId]);
 
   useEffect(() => {
     /*
@@ -251,37 +449,72 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
-    void load(filters);
-  }, [load, filters]);
+    if (awaitingOpening) return;
+    void load(filters, type, status);
+  }, [load, filters, type, status, awaitingOpening]);
+
+  /**
+   * Refresh: the list and its counts again. On the opening view the day is taken again first,
+   * so a list left open past midnight shows the new day (the changed filters are the reload).
+   */
+  const refresh = useCallback(() => {
+    const now = localDay();
+    if (now !== today) {
+      countedFor.current = null;
+      setToday(now);
+      if (onOpeningView(urlFilters, view) && opening === 'today') return;
+    }
+    void load(filters, type, status, true);
+  }, [today, urlFilters, view, opening, load, filters, type, status]);
 
   const onLoadMore = useCallback(async () => {
-    if (!id || !nextCursor || loadingMore) return;
+    if ((!account && !id) || !nextCursor || loadingMore) return;
     const seq = requestSeq.current;
     setLoadingMore(true);
     try {
-      const page = await getCampaignAttempts(
-        id, filters, { cursor: nextCursor, limit: PAGE_SIZE },
-        tenantId ?? undefined, accountId ?? undefined,
-      );
+      const page = await fetchPage(filters, { cursor: nextCursor, limit: PAGE_SIZE, type, ...(status ? { status } : {}) });
       // A filter change mid-request would make these rows belong to a different
       // query than the ones already on screen.
       if (seq !== requestSeq.current) return;
       setRows((current) => [...current, ...page.rows]);
       setNextCursor(page.next_cursor);
     } catch (err: unknown) {
-      showErrorToast(err, 'Could not load more attempts.');
+      showErrorToast(err, 'Could not load older calls.');
     } finally {
       setLoadingMore(false);
     }
-  }, [id, nextCursor, loadingMore, filters, tenantId, accountId, showErrorToast]);
+  }, [id, account, fetchPage, nextCursor, loadingMore, filters, type, status, showErrorToast]);
+
+  /**
+   * Mark handled: the Missed list's own action. The list and its counts are read again, so the
+   * row leaves To follow up and every chip agrees.
+   */
+  const reloadCounted = useCallback(() => {
+    void load(filters, type, status, true);
+  }, [load, filters, type, status]);
+  const { marking, rowError, markHandled } = useMarkMissedHandled(reloadCounted);
+
+  /**
+   * Call back: the soft phone with the caller's number on the pad, this campaign as "Log to",
+   * and the missed call's id, so the call placed is linked to it (CL1). Nothing is dialled until
+   * the agent presses Call.
+   */
+  const callBack = useCallback((row: AgencyCallLogInboundRow) => {
+    if (!row.phone_e164) return;
+    navigate('/dialer/phone', {
+      state: softphonePrefillState({ number: row.phone_e164, campaignId: row.campaign_id, inboundCallId: row.id }),
+    });
+  }, [navigate]);
 
   const onExport = useCallback(async () => {
     if (!id) return;
     setExporting(true);
     try {
+      // The file is what the list shows: its filters (the dates among them), its soft-phone
+      // status, and its chip as the export's `source`.
       const result = await downloadSpineCsv(
         id, 'attempts',
-        filters as Record<string, string | string[] | undefined>,
+        { ...filters, ...(status ? { status } : {}), ...(type !== 'all' ? { source: type } : {}) } as Record<string, string | string[] | undefined>,
         tenantId ?? undefined, accountId ?? undefined,
       );
       const url = URL.createObjectURL(result.blob);
@@ -308,11 +541,11 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
         showToast('Export downloaded.', 'success');
       }
     } catch (err: unknown) {
-      showErrorToast(err, 'Could not export these attempts.');
+      showErrorToast(err, 'Could not export these calls.');
     } finally {
       setExporting(false);
     }
-  }, [id, filters, campaign, tenantId, accountId, showToast, showErrorToast]);
+  }, [id, filters, type, status, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
     // A phone filter with no digit is refused by the server: said under the field, not sent.
@@ -323,10 +556,8 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     // The form's five controls are rebuilt from the drafts; every filter the form
     // has no control for (a link's dialled window, caller ID, flags, write-up,
     // contact) is kept, so Apply narrows a drill-down rather than undoing it.
-    const {
-      outcome: _outcome, phone: _phone, agent_user_id: _agent, from: _from, to: _to, ...kept
-    } = filters;
-    void _outcome; void _phone; void _agent; void _from; void _to;
+    const { outcome: _outcome, phone: _phone, agent_user_id: _agent, ...kept } = withoutDates(filters);
+    void _outcome; void _phone; void _agent;
     applyToUrl({
       ...kept,
       ...(draftOutcomes.length > 0 ? { outcome: draftOutcomes } : {}),
@@ -336,12 +567,23 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       // (`attemptDateRange`): "to 3 August" means the end of the 3rd, and the
       // off-by-one silently drops a whole day of a compliance window.
       ...attemptDateRange(draftFrom, draftTo),
-    });
-  }, [filters, applyToUrl, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo]);
+    }, draftStatus === '' ? null : draftStatus, draftCampaign || null);
+  }, [filters, applyToUrl, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo, draftStatus, draftCampaign]);
 
+  /** Clear: back to the opening view (or the pinned contact), the chip kept. */
   const clearFilters = useCallback(() => {
-    applyToUrl(pinnedContact ? { contact_id: pinnedContact } : {});
-  }, [applyToUrl, pinnedContact]);
+    writeUrl(pinnedContact ? { contact_id: pinnedContact } : {}, { type, allDates: false, status: null }, null);
+  }, [writeUrl, pinnedContact, type]);
+
+  /** An empty day's first way out: the last seven days, today included. */
+  const showLastSevenDays = useCallback(() => {
+    writeUrl({ ...withoutDates(filters), ...lastSevenDays() }, { type, allDates: false, status });
+  }, [writeUrl, filters, type, status]);
+
+  /** Its second: every date (the dates dropped, and the URL saying so). */
+  const showAllDates = useCallback(() => {
+    writeUrl(withoutDates(filters), { type, allDates: true, status });
+  }, [writeUrl, filters, type, status]);
 
   // `contact_id` counts, and leaving it out was a real defect: arriving from a
   // contact with no attempts on a campaign that dialled thousands, the empty
@@ -349,7 +591,40 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
   // An empty result taken as a fact about the campaign rather than about the
   // query is the exact failure this surface exists to prevent. Every URL key
   // counts, by construction.
-  const filtered = useMemo(() => isCampaignAttemptFiltered(filters), [filters]);
+  const filtered = useMemo(
+    () => isCallLogFiltered(urlFilters, view) || view.allDates || campaignFilter !== null,
+    [urlFilters, view, campaignFilter],
+  );
+  const typeChips = useMemo(() => visibleCallLogChips(counts, type, availability), [counts, type, availability]);
+  /** The count for the chip that is on, or null when the server sent none. */
+  const total = counts ? counts[type] : null;
+  const empty = useMemo(
+    () => callLogEmptyState(filters, { type, status }, account ? { where: 'account', campaignChosen: campaignFilter !== null } : undefined),
+    [filters, type, status, account, campaignFilter],
+  );
+  /** All calls: each campaign by id, for the filter's words and a row's outcome words. */
+  const campaignsById = useMemo(() => new Map(accountCampaigns.map((c) => [c.id, c])), [accountCampaigns]);
+  const campaignFilterLabel = campaignFilter === null
+    ? null
+    : campaignFilter === AGENCY_CALLS_NO_CAMPAIGN
+      ? AGENCY_CALLS_NO_CAMPAIGN_LABEL
+      : campaignsById.get(campaignFilter)?.name ?? rows.find((r) => r.campaign_id === campaignFilter)?.campaign_name ?? 'One campaign';
+  /**
+   * The Status filter is the soft phone's: offered while the soft phone is on, while the
+   * filters match soft-phone calls, or while one is applied (so it can be seen and removed).
+   */
+  const offersStatus = softphoneOn || (counts?.soft_phone ?? 0) > 0 || status !== null;
+  /**
+   * What happened's inbound choices (Missed, Voicemail, Abandoned): offered while inbound is on,
+   * while the filters match inbound calls, on an inbound view, or while one is applied.
+   */
+  const offersInboundOutcomes = inboundOn || (counts?.inbound ?? 0) > 0 || type === 'inbound' || type === 'to_follow_up'
+    || (filters.outcome ?? []).some((value) => CALL_LOG_INBOUND_OUTCOME_OPTIONS.some((option) => option.value === value));
+  /** Whether the list is already on the last seven days: the empty state then offers nothing it has done. */
+  const onLastSevenDays = useMemo(() => {
+    const week = lastSevenDays();
+    return filters.from === week.from && filters.to === week.to;
+  }, [filters]);
 
   const agentOptions = useMemo(
     () => campaignAttemptAgentOptions(assignedAgents, rows, filters.agent_user_id),
@@ -360,18 +635,36 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     dispositionLabel: (code) => dispositionLabel(code, campaign?.disposition_catalog),
     agentName: (userId) => agentOptions.find((option) => option.id === userId)?.name ?? null,
   }), [filters, campaign, agentOptions]);
+  /** The attempt filters' chips, then the soft-phone status's. */
+  const shownChips = useMemo(() => [
+    // A What happened chip of an inbound choice says it in the filter's own words.
+    // With To follow up on the dates narrow nothing: a chip saying they are applied would mislead.
+    ...chips.filter((chip) => chip.id !== 'contact_id' && !(datesOff && chip.id === 'created')).map((chip) => (chip.id.startsWith('outcome:')
+      ? { ...chip, label: `Outcome: ${callLogOutcomeFilterLabel(chip.id.slice('outcome:'.length))}` }
+      : chip)),
+    ...(status ? [{ id: STATUS_CHIP, label: `Soft-phone status: ${callLogStatusLabel(status)}` }] : []),
+    ...(campaignFilterLabel ? [{ id: CAMPAIGN_CHIP, label: `Campaign: ${campaignFilterLabel}` }] : []),
+  ], [chips, status, datesOff, campaignFilterLabel]);
 
   const removeChip = useCallback((chipId: string) => {
+    if (chipId === STATUS_CHIP) {
+      applyToUrl(filters, null);
+      return;
+    }
+    if (chipId === CAMPAIGN_CHIP) {
+      applyToUrl(filters, status, null);
+      return;
+    }
     const chip = chips.find((c) => c.id === chipId);
     if (chip) applyToUrl(chip.without);
-  }, [chips, applyToUrl]);
+  }, [chips, applyToUrl, filters, status]);
+
+  const recordingNote = account ? null : recordingDisabledNote(campaign);
 
   // How many independent filter groups are APPLIED (not merely drafted), for
   // the small badge on the filter panel — a supervisor scanning back to this
   // page later should see at a glance that the view is narrowed, not have to
   // re-read every field to notice.
-  const recordingNote = recordingDisabledNote(campaign);
-
   // Groups, not values: three outcomes ticked is one narrowing. The pinned
   // contact has its own note above and is not counted here.
   const activeFilterCount = useMemo(() => {
@@ -388,32 +681,35 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
     if (filters.override_applied) n += 1;
     if (filters.placed) n += 1;
     if (filters.dialed_from || filters.dialed_to) n += 1;
-    if (filters.from || filters.to) n += 1;
+    if ((filters.from || filters.to) && !datesOff) n += 1;
+    if (status) n += 1;
+    if (campaignFilter) n += 1;
     return n;
-  }, [filters]);
+  }, [filters, status, datesOff, campaignFilter]);
 
   // Caught here rather than sent: the server refuses it too (400), but telling the
   // supervisor before they press Apply is the difference between a correction
   // and a support ticket.
-  const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
+  const invertedRange = !datesOff && Boolean(draftFrom && draftTo && draftFrom > draftTo);
   // The server's rule too (a phone filter needs a digit), said here before Apply; a number
   // still being typed ("+") is said only once Apply is pressed (`phoneFilterDraftError`).
   const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
 
   return (
     <div>
+      {id && <CampaignCallLogCrumbs id={id} campaign={campaign} />}
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><PhoneOutgoing size={20} /></span>
-          <h2 className={spine.title}>Call log</h2>
+          {account ? <h1 className={spine.title}>All calls</h1> : <h2 className={spine.title}>Call log</h2>}
         </div>
         <div className={spine.actions}>
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
-            onClick={() => void load(filters)}
+            onClick={refresh}
             disabled={loading}
-            aria-label="Refresh call log"
+            aria-label={account ? 'Refresh all calls' : 'Refresh call log'}
           >
             <RefreshCw size={16} />
             Refresh
@@ -434,22 +730,34 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
       </header>
 
       <PageDescription
-        pageKey="agency-campaign-attempts"
-        description={ATTEMPTS_DESCRIPTION}
-        tips={[
-          'Attempts with no agent are real rows — the call was abandoned, failed, or never answered.',
+        pageKey={account ? 'agency-all-calls' : 'agency-campaign-attempts'}
+        description={account ? ALL_CALLS_DESCRIPTION : CALL_LOG_DESCRIPTION}
+        tips={account ? [
+          'A dialler call with no agent is a real row: the call was abandoned, failed, or never answered.',
+          'Choose Campaign: No campaign to see the calls that are filed under none.',
+          'An inbound call is listed once it has ended. A missed call stays under To follow up until the customer is reached or someone marks it handled.',
+          'To export a campaign’s calls, open that campaign’s Call log.',
+        ] : [
+          'A dialler call with no agent is a real row: the call was abandoned, failed, or never answered.',
+          ...(inboundOn || (counts?.inbound ?? 0) > 0
+            ? ['An inbound call is listed once it has ended. A missed call stays under To follow up until the customer is reached or someone marks it handled.']
+            : []),
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
+          // Not with To follow up on: that view, and its export, are not narrowed by the dates.
+          ...(type === 'to_follow_up'
+            ? []
+            : ['The export follows the dates shown above. Clear the dates to export every call on the campaign.']),
           ...(exportHoldsSoftphone
             ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.']
             : []),
         ]}
       />
 
-      {pinnedContact && (
+      {pinnedContact && id && (
         <p className={styles.pinnedNote} data-testid="attempts-pinned-contact">
-          Showing only this contact’s attempts.{' '}
-          <Link to={`/agency/campaigns/${id}/attempts${withQuery(campaignAttemptFiltersToParams({ ...filters, contact_id: undefined }))}`}>
+          Showing only this contact’s calls.{' '}
+          <Link to={`/agency/campaigns/${id}/attempts${withQuery(callLogParams({ ...filters, contact_id: undefined }, { type, allDates: true, status }))}`}>
             Show the whole campaign
           </Link>
         </p>
@@ -470,11 +778,25 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
         </p>
       )}
 
+      {/*
+        The type chips, with how many calls the filters below match for each (the words Live
+        calls uses). Not a filter in the card: choosing one keeps every filter and its count.
+      */}
+      {typeChips.length > 0 && (
+        <CallTypeChips chips={typeChips} selected={type} onChoose={chooseType} label="Call type" testIdPrefix="call-log" />
+      )}
+      {type === 'to_follow_up' && (
+        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{toFollowUpNote(account ? 'account' : 'campaign')}</p>
+      )}
+
       <FiltersCard activeCount={activeFilterCount}>
         <fieldset className={styles.outcomeFilter}>
             <legend className={spine.filterLegend}>What happened</legend>
             <div className={styles.outcomes}>
-              {Object.entries(ATTEMPT_OUTCOME_LABELS).map(([value, label]) => (
+              {[
+                ...Object.entries(ATTEMPT_OUTCOME_LABELS).map(([value, label]) => ({ value, label })),
+                ...(offersInboundOutcomes ? CALL_LOG_INBOUND_OUTCOME_OPTIONS : []),
+              ].map(({ value, label }) => (
                 <FilterChip
                   key={value}
                   label={label}
@@ -485,6 +807,9 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
                 />
               ))}
             </div>
+            {offersInboundOutcomes && (
+              <span className={styles.fieldHint} data-testid="call-log-inbound-outcome-hint">{CALL_LOG_INBOUND_OUTCOME_HINT}</span>
+            )}
           </fieldset>
 
           <div className={spine.fieldRow}>
@@ -533,6 +858,8 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
                   className={spine.fieldInput}
                   value={draftFrom}
                   onChange={(e) => setDraftFrom(e.target.value)}
+                  disabled={datesOff}
+                  aria-describedby={datesOff ? 'call-log-dates-off' : undefined}
                 />
               </span>
             </label>
@@ -545,9 +872,62 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
                   className={spine.fieldInput}
                   value={draftTo}
                   onChange={(e) => setDraftTo(e.target.value)}
+                  disabled={datesOff}
+                  aria-describedby={datesOff ? 'call-log-dates-off' : undefined}
                 />
               </span>
+              {datesOff && (
+                <span className={styles.fieldHint} id="call-log-dates-off" data-testid="call-log-dates-off">{TO_FOLLOW_UP_DATES_HINT}</span>
+              )}
             </label>
+            {account && (
+              <label className={spine.field}>
+                <span className={spine.fieldLabel}>Campaign</span>
+                <span className={spine.inputWrap}>
+                  <select
+                    className={spine.fieldInput}
+                    value={draftCampaign}
+                    onChange={(e) => setDraftCampaign(e.target.value)}
+                    data-testid="all-calls-campaign-filter"
+                  >
+                    <option value="">All campaigns</option>
+                    <option value={AGENCY_CALLS_NO_CAMPAIGN}>{AGENCY_CALLS_NO_CAMPAIGN_LABEL}</option>
+                    {accountCampaigns.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                    {/* A campaign the list above does not hold (archived since, or still loading). */}
+                    {draftCampaign && draftCampaign !== AGENCY_CALLS_NO_CAMPAIGN && !campaignsById.has(draftCampaign) && (
+                      <option value={draftCampaign}>{campaignFilterLabel ?? 'One campaign'}</option>
+                    )}
+                  </select>
+                </span>
+              </label>
+            )}
+            {/*
+              The campaign's old Soft-phone calls view had this filter. It is the soft phone's:
+              a dialler call has no such status, so with one chosen only soft-phone calls are
+              listed, and the hint says so before it is applied.
+            */}
+            {offersStatus && (
+              <label className={spine.field}>
+                <span className={spine.fieldLabel}>Soft-phone status</span>
+                <span className={spine.inputWrap}>
+                  <select
+                    className={spine.fieldInput}
+                    value={draftStatus}
+                    onChange={(e) => setDraftStatus(e.target.value as AgencyCallLogStatus | '')}
+                    aria-describedby="call-log-status-hint"
+                    data-testid="call-log-status-filter"
+                  >
+                    <option value="">Any</option>
+                    {CALL_LOG_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </span>
+                <span className={styles.fieldHint} id="call-log-status-hint">{CALL_LOG_STATUS_HINT}</span>
+              </label>
+            )}
           </div>
 
           <div className={spine.filterFooter}>
@@ -576,12 +956,12 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
 
       {/* The pinned contact has its own note above, so it is not a chip twice. */}
       <AppliedFilterChips
-        chips={chips.filter((chip) => chip.id !== 'contact_id')}
+        chips={shownChips}
         onRemove={removeChip}
         testIdPrefix="attempts"
       />
 
-      {error && <ErrorAlert message={error} onRetry={filterRefused ? undefined : () => void load(filters)} />}
+      {error && <ErrorAlert message={error} onRetry={filterRefused ? undefined : () => void load(filters, type, status, true)} />}
 
       {/*
         Mounted UNCONDITIONALLY. A screen reader only announces an `aria-live`
@@ -594,102 +974,205 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
         {!loading && rows.length > 0 && (
           <>
             <ListChecks size={14} className={spine.countIcon} aria-hidden="true" />
-            {attemptsCountCopy(rows.length, total, nextCursor !== null)}
+            {callLogCountCopy(rows.length, total, nextCursor !== null)}
           </>
         )}
       </p>
 
-      {loading && <LoadingSpinner />}
+      {(loading || awaitingOpening) && <LoadingSpinner />}
 
-      {!loading && rows.length === 0 && !error && (
+      {!loading && !awaitingOpening && rows.length === 0 && !error && (
         <EmptyState
           icon={<PhoneOutgoing size={32} />}
-          title={filtered ? 'Nothing matches those filters' : 'No calls were placed'}
-          description={
-            filtered
-              ? 'Widen the date range or clear the filters to see every attempt.'
-              : 'This campaign has not dialled anyone yet. Attempts appear here as they are placed, '
-                + 'including the ones that never reach an agent.'
+          title={empty.title}
+          description={empty.description}
+          action={
+            empty.kind === 'dates' ? (
+              <span className={styles.emptyActions}>
+                {!onLastSevenDays && (
+                  <button type="button" className="btn-secondary" onClick={showLastSevenDays} data-testid="call-log-last-7-days">
+                    Show last 7 days
+                  </button>
+                )}
+                <button type="button" className="btn-secondary" onClick={showAllDates} data-testid="call-log-all-dates">
+                  Show all dates
+                </button>
+              </span>
+            ) : empty.kind === 'filtered' && filtered ? (
+              <button type="button" className="btn-secondary" onClick={clearFilters} data-testid="call-log-empty-clear">
+                Clear
+              </button>
+            ) : undefined
           }
         />
       )}
 
-      {!loading && rows.length > 0 && (
+      {!loading && !awaitingOpening && rows.length > 0 && (
         <>
           <div className={spine.tableWrap}>
             <table className={spine.table}>
               <caption className={styles.srOnly}>
-                {`Call attempts on ${campaign?.name ?? 'this campaign'}, newest first`}
+                {account ? 'Calls in this account, newest first' : `Calls on ${campaign?.name ?? 'this campaign'}, newest first`}
               </caption>
               <thead>
                 <tr>
                   <th>When</th>
-                  <th>Number</th>
-                  <th>Try</th>
+                  <th>Type</th>
+                  {account && <th>Campaign</th>}
+                  <th>Customer</th>
                   <th>Agent</th>
+                  <th>What happened</th>
                   <th>Outcome</th>
-                  <th>Disposition</th>
                   <th>Talk time</th>
                   <th>Call</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((attempt) => {
-                  const agent = agentCellCopy(attempt);
-                  const noRecording = recordingCellCopy(attempt);
+                {rows.map((row) => {
+                  const agent = callLogAgentCell(row);
+                  const happened = callLogWhatHappened(row);
+                  const facts = callLogTypeFacts(row);
+                  const badges = callLogBadges(row);
+                  // The row's own campaign: on All calls each row has its own, or none.
+                  const rowCampaign = row.campaign_id ?? id;
+                  // An inbound call filed under no campaign has no Call page (that page is a campaign's).
+                  const path = callLogRowPath(row, id, availability);
+                  // A dialler row with no media leg says why there is nothing to open.
+                  const noRecording = row.type === 'dialler' ? recordingCellCopy(row) : null;
+                  const key = callLogRowKey(row);
+                  const pair = pairedRowKey(row);
+                  const missed = row.type === 'inbound' && isMissedInbound(row) ? row : null;
+                  const followUp = missed ? followUpCopy(missed) : null;
                   return (
-                    <tr key={attempt.id} data-testid={`attempt-row-${attempt.id}`}>
-                      <td className={styles.when}>{formatSpineTimestamp(attempt.created_at)}</td>
+                    <tr
+                      key={key}
+                      data-testid={`attempt-row-${row.id}`}
+                      data-type={row.type}
+                      data-not-dialled={isNotDialled(row) ? '' : undefined}
+                      data-paired={pair ? '' : undefined}
+                      data-pair-lit={pairLit === key ? '' : undefined}
+                      className={[isNotDialled(row) ? styles.notDialled : '', pair ? styles.paired : ''].filter(Boolean).join(' ') || undefined}
+                      onMouseEnter={pair ? () => setPairLit(pair) : undefined}
+                      onMouseLeave={pair ? () => setPairLit(null) : undefined}
+                      onFocus={pair ? () => setPairLit(pair) : undefined}
+                      onBlur={pair ? () => setPairLit(null) : undefined}
+                    >
+                      <td className={styles.when}>{formatCallTimestamp(row.created_at)}</td>
                       <td>
-                        <Link
-                          to={`/agency/campaigns/${id}/contacts/${attempt.contact_id}`}
-                          className={styles.phoneLink}
-                        >
-                          {attempt.phone_e164}
-                        </Link>
+                        <span className={styles.type} data-type={row.type} data-testid={`call-type-${row.id}`}>
+                          {AGENCY_CALL_LOG_TYPE_LABELS[row.type]}
+                        </span>
+                        {facts.length > 0 && (
+                          <span className={styles.secondLine} data-testid={`call-facts-${row.id}`}>{facts.join(' · ')}</span>
+                        )}
+                        {badges.length > 0 && (
+                          <span className={styles.badges}>
+                            {badges.map((badge) => (
+                              <span key={badge.label} className={styles.badge} title={badge.title}>{badge.label}</span>
+                            ))}
+                          </span>
+                        )}
                       </td>
-                      <td className={styles.numeric}>{attempt.attempt_number}</td>
-                      <td className={agent.muted ? styles.mutedCell : undefined}>{agent.text}</td>
+                      {account && (
+                        <td data-testid={`call-campaign-${row.id}`}>
+                          {row.campaign_id ? (
+                            <Link to={`/agency/campaigns/${row.campaign_id}/attempts`} className={styles.phoneLink}>
+                              {row.campaign_name ?? campaignsById.get(row.campaign_id)?.name ?? 'Campaign'}
+                            </Link>
+                          ) : (
+                            <span className={styles.mutedCell}>{agencyNoCampaignLabel(row.created_at, rule)}</span>
+                          )}
+                        </td>
+                      )}
+                      <td>
+                        {row.phone_e164 === null ? (
+                          <span className={styles.mutedCell}>Number withheld</span>
+                        ) : row.contact_id && rowCampaign ? (
+                          <Link
+                            to={`/agency/campaigns/${rowCampaign}/contacts/${row.contact_id}`}
+                            className={styles.phoneLink}
+                          >
+                            {row.phone_e164}
+                          </Link>
+                        ) : (
+                          <>
+                            <span className={styles.numeric}>{row.phone_e164}</span>
+                            <span className={styles.secondLine}>not on the list</span>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        <span className={agent.muted ? styles.mutedCell : undefined}>{agent.text}</span>
+                        {agent.detail && (
+                          <span className={styles.secondLine} data-testid={`call-assignee-${row.id}`}>{agent.detail}</span>
+                        )}
+                      </td>
                       <td>
                         <span
                           className={styles.outcome}
-                          data-outcome={attempt.outcome ?? 'unknown'}
-                          data-testid={`attempt-outcome-${attempt.id}`}
+                          data-outcome={happened.key}
+                          data-testid={`attempt-outcome-${row.id}`}
                         >
-                          {attemptOutcomeLabel(attempt.outcome)}
+                          {happened.text}
                         </span>
+                        {happened.detail && (
+                          <span className={styles.secondLine} data-testid={`call-happened-detail-${row.id}`}>{happened.detail}</span>
+                        )}
                       </td>
                       <td>
-                        <AttemptDispositionCell
-                          attempt={attempt}
-                          catalog={campaign?.disposition_catalog}
-                          placeholder="—"
-                          testIdPrefix="attempt"
-                        />
+                        {missed && followUp ? (
+                          <MissedFollowUpCell
+                            rowId={row.id}
+                            followUp={followUp}
+                            onCallBack={canCallBack && missed.phone_e164 ? () => callBack(missed) : null}
+                            onMarkHandled={canMarkHandled ? () => void markHandled(missed) : null}
+                            marking={marking}
+                            error={rowError?.id === row.id ? rowError.message : null}
+                            testIds={CALL_LOG_FOLLOW_UP_TEST_IDS}
+                          />
+                        ) : (
+                          <AttemptDispositionCell
+                            attempt={row.type === 'dialler' ? row : { ...row, auto_disposition_code: null }}
+                            catalog={account
+                              ? (row.campaign_id ? campaignsById.get(row.campaign_id)?.disposition_catalog : undefined)
+                              : campaign?.disposition_catalog}
+                            placeholder={callLogOutcomePlaceholder(row)}
+                            testIdPrefix="attempt"
+                          />
+                        )}
                       </td>
-                      <td className={styles.numeric}>{formatTalkTime(attempt.talk_seconds)}</td>
+                      <td className={styles.numeric}>{formatTalkTime(row.talk_seconds)}</td>
                       <td>
-                        {noRecording === null ? (
+                        {noRecording !== null ? (
+                          <span className={styles.mutedCell}>{noRecording}</span>
+                        ) : path !== null ? (
                           /*
-                            A link, never an embedded player: the call may have
-                            been purged since — the API keeps this id un-FK'd so the
-                            attempt outlives the call — and the destination page
-                            is where "no longer available" can be said properly.
+                            A link, never an embedded player: the call may have been purged
+                            since (the API keeps the media leg's id un-FK'd so the row outlives
+                            the call), and the destination page is where "no longer available"
+                            can be said properly.
 
-                            Keyed on the ATTEMPT, not the call. That is what lets
-                            the destination exist for a purged call at all: the
-                            attempt is still here, and the page reads it and says
-                            so. It is also what keeps the reader inside this shell.
+                            Keyed on the ROW (the attempt, the soft-phone call, the inbound
+                            call), not the media leg. That is what lets the destination exist
+                            for a purged call at all, and what keeps the reader inside this shell.
+
+                            A missed call that left a voicemail says so: its Call page plays it.
                           */
-                          <Link
-                            to={`/agency/campaigns/${id}/attempts/${attempt.id}`}
-                            className={styles.recordingLink}
-                          >
-                            <Play size={13} aria-hidden="true" />
-                            Open call
+                          <Link to={path} className={styles.recordingLink}>
+                            {row.type === 'inbound' && row.voicemail_seconds !== null ? (
+                              <>
+                                <Voicemail size={13} aria-hidden="true" />
+                                {`Voicemail ${formatTalkTime(row.voicemail_seconds)}`}
+                              </>
+                            ) : (
+                              <>
+                                <Play size={13} aria-hidden="true" />
+                                Open call
+                              </>
+                            )}
                           </Link>
                         ) : (
-                          <span className={styles.mutedCell}>{noRecording}</span>
+                          <span className={styles.mutedCell}>—</span>
                         )}
                       </td>
                     </tr>
@@ -707,7 +1190,7 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
                 onClick={() => void onLoadMore()}
                 disabled={loadingMore}
               >
-                {loadingMore ? 'Loading…' : 'Load older attempts'}
+                {loadingMore ? 'Loading…' : 'Load older calls'}
               </button>
             </div>
           )}
@@ -719,28 +1202,20 @@ function AttemptsSection({ id, campaign, stats }: { id: string; campaign: Agency
 
 export default AgencyCampaignAttemptsPage;
 
-/** A `YYYY-MM-DD` for a date picker from an instant the URL carries, in the viewer's zone. */
-function dayOf(iso: string | undefined): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 function withQuery(params: URLSearchParams): string {
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
 
 /**
- * The count line. With the server's exact total: "1,234 attempts — showing 50". Without one
- * (a server that does not send it): what is on screen, never an "N of M" nothing counted.
+ * `/agency/campaigns/:id/manual-calls`: the campaign's Soft-phone calls view until the Call log
+ * became one list (CL11). Its links and bookmarks land on the Call log with the Soft phone chip
+ * on and their query kept, replacing the entry so Back does not bounce.
  */
-function attemptsCountCopy(shown: number, total: number | null, more: boolean): string {
-  const noun = (n: number) => `attempt${n === 1 ? '' : 's'}`;
-  if (total !== null) {
-    return `${formatCount(total)} ${noun(total)}` + (shown < total ? ` — showing ${formatCount(shown)}` : '');
-  }
-  return `Showing ${shown.toLocaleString()} ${noun(shown)}` + (more ? ' — there are more' : '');
+export function CampaignManualCallsRedirect() {
+  const { id } = useParams<{ id: string }>();
+  const { search } = useLocation();
+  if (!id) return null;
+  // Whatever the old link carried is kept, so a bookmarked filter survives the move.
+  return <Navigate to={manualCallsRedirectPath(id, search)} replace />;
 }

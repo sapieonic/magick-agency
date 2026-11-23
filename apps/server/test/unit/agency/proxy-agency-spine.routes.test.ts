@@ -517,12 +517,52 @@ describe('the CSV exports', () => {
     await app.close();
   });
 
+  it('exports an inbound row and a call back with the three trailing columns; other rows leave them empty', async () => {
+    const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
+    const inbound = {
+      ...ATTEMPT, source: 'inbound', id: 'inbound-1', contact_id: null, attempt_number: null, agent_user_id: null,
+      phone_e164: null, outcome: 'abandoned_in_queue', disposition_code: null, notes: null, dialed_at: null,
+      wrapup_seconds: null, auto_disposition_code: null, webrtc_call_id: 'call-88',
+      inbound: { wait_seconds: 52, follow_up: { reason: 'abandoned_in_queue', assignee_user_id: null } },
+    };
+    const cells = attemptCsvRow(inbound as never).trimEnd().split(',');
+    expect(cells).toHaveLength(ATTEMPT_CSV_COLUMNS.length);
+    expect(cells[at('source')]).toBe('inbound');
+    expect(cells[at('attempt_id')]).toBe('inbound-1');
+    // A withheld caller: an empty phone cell, never the string "null".
+    expect(cells[at('phone')]).toBe('');
+    expect(cells[at('wait_seconds')]).toBe('52');
+    expect(cells[at('missed_reason')]).toBe('abandoned_in_queue');
+    expect(cells[at('callback_of')]).toBe('');
+    // An answered inbound call waited too, and was not missed.
+    const answered = attemptCsvRow({ ...inbound, inbound: { wait_seconds: 18, follow_up: null } } as never).trimEnd().split(',');
+    expect([answered[at('wait_seconds')], answered[at('missed_reason')]]).toEqual(['18', '']);
+    // The soft-phone call that rang it back names it; a plain soft-phone call and a dial name nothing.
+    const callBack = attemptCsvRow({ ...ATTEMPT, source: 'soft_phone', callback_of: { inbound_call_id: 'inbound-1', arrived_at: null } } as never).trimEnd().split(',');
+    expect(callBack[at('callback_of')]).toBe('inbound-1');
+    const dial = attemptCsvRow(ATTEMPT as never).trimEnd().split(',');
+    expect(dial.slice(-3)).toEqual(['', '', '']);
+
+    // Through the route: `source=inbound` and `source=to_follow_up` are forwarded, and the preamble says what an inbound row is.
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([inbound]));
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts.csv?source=to_follow_up` });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual(expect.objectContaining({ source: 'to_follow_up' }));
+    expect(res.body).toContain('An inbound row is a call a customer made to us that is filed under this campaign and has ended');
+    expect(res.body).toContain('one per inbound call filed under it');
+    await app.close();
+  });
+
   it('exports the automatic outcome in its own column, blank when there is none', () => {
     // Appended, so a consumer reading by position keeps every earlier column; and its own
     // column, so `disposition_code` stays what a person recorded (OD4).
     expect(ATTEMPT_CSV_COLUMNS.indexOf('auto_disposition_code')).toBe(22);
     // Followed by `source` (SR6), then the promise-to-pay columns (PT12), each appended in turn.
-    expect(ATTEMPT_CSV_COLUMNS.slice(-4)).toEqual(['auto_disposition_code', 'source', 'promise_date', 'promise_amount']);
+    // Then the inbound columns (docs/call-log.md P2), at the END: every earlier column keeps its place.
+    expect(ATTEMPT_CSV_COLUMNS.slice(-7)).toEqual([
+      'auto_disposition_code', 'source', 'promise_date', 'promise_amount', 'wait_seconds', 'missed_reason', 'callback_of',
+    ]);
     const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
     const auto = {
       ...ATTEMPT, outcome: 'no_answer', disposition_code: null, notes: null,

@@ -14,6 +14,7 @@ import type {
   AgencyContactFilters,
   AgencyRosterContactsPage,
 } from '../types/agency-spine';
+import type { AgencyAccountCallsPage, AgencyCallLogPage, AgencyCallLogStatus, AgencyCallLogTypeFilter, AgencyInboundCallLogDetail } from '../types/agency-call-log';
 
 /**
  * The attempt spine, through the server's `/proxy/agency`.
@@ -94,6 +95,67 @@ export async function getCampaignAttempts(
 ): Promise<AgencyAttemptsListPage> {
   return apiFetch<AgencyAttemptsListPage>(
     `${AGENCY_BASE}/campaigns/${campaignId}/attempts${toQuery({ ...filters }, listExtra(options))}`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/** The Call log's paging: the chip that is on, and the opt-in chip counts. */
+export interface CallLogListOptions {
+  cursor?: string;
+  limit?: number;
+  /** The chip: one type, or `all` (sent as no `type` at all). */
+  type?: AgencyCallLogTypeFilter;
+  /** The soft-phone status filter: soft-phone calls in that status, and no dialler call. */
+  status?: AgencyCallLogStatus | null;
+  /**
+   * Ask for `counts`: how many calls of each type the filters match, across every page and
+   * whatever chip is on (`?include_counts=1`). Asked on the first page only; later pages keep it.
+   */
+  includeCounts?: boolean;
+}
+
+/** The Call log's paging options as query params. */
+function callLogExtra(options: CallLogListOptions): Record<string, string> {
+  const extra: Record<string, string> = {};
+  if (options.cursor) extra['cursor'] = options.cursor;
+  if (options.limit !== undefined) extra['limit'] = String(options.limit);
+  if (options.type && options.type !== 'all') extra['type'] = options.type;
+  if (options.status) extra['status'] = options.status;
+  if (options.includeCounts) extra['include_counts'] = '1';
+  return extra;
+}
+
+/**
+ * The account's All calls (`docs/call-log.md` §7): every call of the account, of the three
+ * types, newest first; the Call log's filters and chips, plus `campaign` (a campaign's id, or
+ * `none` for the calls filed under no campaign).
+ */
+export async function getAccountCalls(
+  filters: AgencyAttemptFilters,
+  options: CallLogListOptions & { campaign?: string | null } = {},
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyAccountCallsPage> {
+  const extra = callLogExtra(options);
+  if (options.campaign) extra['campaign_id'] = options.campaign;
+  return apiFetch<AgencyAccountCallsPage>(`${AGENCY_BASE}/calls${toQuery({ ...filters }, extra)}`, {}, tenantId, accountId);
+}
+
+/**
+ * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
+ * placed it, newest first on one keyset; each row says its `type`. The attempt list's filters.
+ */
+export async function getCampaignCallLog(
+  campaignId: string,
+  filters: AgencyAttemptFilters,
+  options: CallLogListOptions = {},
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCallLogPage> {
+  return apiFetch<AgencyCallLogPage>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log${toQuery({ ...filters }, callLogExtra(options))}`,
     {},
     tenantId,
     accountId,
@@ -255,6 +317,46 @@ export async function fetchAgencyAttemptRecordingBlobUrl(
     return outcome;
   }
 
+  const blob = await res.blob();
+  const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
+  trackAgencyRecordingOutcome({ status: 'ok' });
+  return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
+}
+
+/**
+ * One inbound call of a campaign, for its Call page (`docs/call-log.md`): the Call log's row, the
+ * caller's path, and the media leg in the attempt detail's envelope. `agency.supervise`.
+ */
+export async function getInboundCallLogDetail(
+  campaignId: string,
+  callId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyInboundCallLogDetail> {
+  return apiFetch<AgencyInboundCallLogDetail>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log/inbound/${callId}`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/** An inbound call's recording, fetched with the caller's token and played as a blob URL, as an attempt's is. */
+export async function fetchInboundCallRecordingBlobUrl(
+  campaignId: string,
+  callId: string,
+  tenantId: string,
+  accountId?: string,
+): Promise<RecordingOutcome> {
+  const url = `${AGENCY_BASE}/campaigns/${campaignId}/call-log/inbound/${callId}/recording`;
+  const headers = await buildAuthHeaders(tenantId, accountId);
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    captureApiError(url, res);
+    const outcome = await recordingRefusal(res);
+    if (outcome.status !== 'ready') trackAgencyRecordingOutcome({ status: outcome.status });
+    return outcome;
+  }
   const blob = await res.blob();
   const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
   trackAgencyRecordingOutcome({ status: 'ok' });

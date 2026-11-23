@@ -93,9 +93,14 @@ export {
   AGENCY_INBOUND_ACCEPT_GRACE_MS,
   AGENCY_INBOUND_RING_MAX_MISSES,
   AGENCY_INBOUND_RING_RESULTS,
+  AGENCY_INBOUND_CAMPAIGN_SOURCES,
 } from '../../agency/inbound';
 export type {
   AgencyInboundCall,
+  AgencyInboundCallCampaign,
+  AgencyInboundCallCampaignOption,
+  AgencyInboundCallCampaignOptionsResponse,
+  AgencyInboundCampaignSource,
   AgencyInboundCallDispositionResponse,
   AgencyInboundCallDncResponse,
   AgencyInboundCallMatch,
@@ -157,7 +162,10 @@ export interface AgencyInboundErrorResponse {
     | 'promise_not_expected';
   /** `inbound_clip_invalid`: why the upload was refused. */
   upload_reason?: AgencyInboundClipInvalidReason;
-  /** `inbound_clip_in_use`: the account's live routes that play the recording. */
+  /**
+   * `inbound_clip_in_use`: the account's live routes that play the recording.
+   * `default_campaign_required`: the live routes with no campaign for unknown callers.
+   */
   routes?: AgencyInboundClipRouteRef[];
 }
 
@@ -310,6 +318,9 @@ export type AgencyInboundCallHangupRequest = Record<string, never>;
 /** `POST /inbound/calls/:id/disposition`. */
 export type AgencyInboundCallDispositionRequest = Omit<Core.AgencyInboundCallDispositionRequest, 'agent_user_id' | 'on_behalf'>;
 
+/** `POST /inbound/calls/:id/campaign`: file an unknown caller's call under a campaign → `{ call }`. */
+export type AgencyInboundCallCampaignRequest = Omit<Core.AgencyInboundCallCampaignRequest, 'agent_user_id' | 'on_behalf'>;
+
 /** `POST /inbound/calls/:id/dnc`. */
 export type AgencyInboundCallDncRequest = Omit<Core.AgencyInboundCallDncRequest, 'agent_user_id' | 'on_behalf'>;
 
@@ -378,6 +389,11 @@ export interface AgencyInboundRoute extends AgencyInboundRouteConfig {
 export interface AgencyInboundRoutesResponse {
   /** Oldest first. An account has a handful, so the list is not paged. */
   routes: AgencyInboundRoute[];
+  /**
+   * The account's "Every call must belong to a campaign" is on (docs/call-log.md §5): the editor
+   * marks "Campaign for unknown callers" required. Absent reads as false.
+   */
+  campaign_required?: boolean;
 }
 
 export interface AgencyInboundRouteResponse {
@@ -543,6 +559,14 @@ export interface AgencyInboundMissedCall {
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
   matched_campaign_name: string | null;
+  /**
+   * The campaign the call is filed under (docs/call-log.md §5): the matched caller's own, else the
+   * campaign the route files unknown callers under; NULL when it is under none. What the list
+   * shows as the call's campaign, and what Call back logs the call to. Absent on an older server
+   * (read `matched_campaign_id`).
+   */
+  campaign_id?: string | null;
+  campaign_name?: string | null;
   /** When the callback this call booked on the matched contact is due; NULL: none was booked. */
   callback_due_at: string | null;
   has_voicemail: boolean;

@@ -117,6 +117,49 @@ describe('the live list\'s plan', () => {
   }, 120_000);
   afterAll(closeTestPool);
 
+  it('an inbound call is listed under the campaign it is filed under: an unknown caller filed by its route, a matched caller, an unfiled row by its match; never another account\'s', async () => {
+    const pool = getTestPool();
+    const { rows: [camp, other] } = await pool.query<{ id: string }>(
+      `SELECT id FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2 ORDER BY id LIMIT 2`, [T, A]);
+    const live = async (label: string, account: string, columns: Record<string, string | null>) => {
+      const { rows: [sess] } = await pool.query<{ id: string; agent_user_id: string }>(
+        `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state)
+         VALUES ($1, $2, $3, gen_random_uuid(), 'on_call') RETURNING id, agent_user_id`, [T, account, camp!.id]);
+      const { rows: [leg] } = await pool.query<{ id: string }>(
+        `INSERT INTO agency_calls (tenant_id, account_id, caller_id, destination_phone) VALUES ($1, $2, '+15550000001', '+15557770000') RETURNING id`,
+        [T, account]);
+      const { rows: [call] } = await pool.query<{ id: string }>(
+        `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, from_e164, to_e164, state, bridged_at, answered_by_user_id,
+                                           session_id, offered_at, offer_count, webrtc_call_id, campaign_id, campaign_source, matched_campaign_id)
+         VALUES ($1, $2, $3, '+15557770000', '+15550000001', 'connected', now(), $4, $5, now(), 1, $6, $7, $8, $9) RETURNING id`,
+        [T, account, `filed-${label}`, sess!.agent_user_id, sess!.id, leg!.id,
+          columns['campaign_id'] ?? null, columns['campaign_source'] ?? null, columns['matched_campaign_id'] ?? null]);
+      return call!.id;
+    };
+    const byRoute = await live('route', A, { campaign_id: camp!.id, campaign_source: 'route' });
+    const matched = await live('contact', A, { campaign_id: camp!.id, campaign_source: 'contact', matched_campaign_id: camp!.id });
+    const unfiled = await live('unfiled', A, { matched_campaign_id: camp!.id });
+    const elsewhere = await live('elsewhere', A, { campaign_id: other!.id, campaign_source: 'route' });
+    const none = await live('none', A, {});
+    try {
+      const repo = (await import('../../../src/db/repositories/agency.repository.js')).agencyLiveCallRepository;
+      const rows = await repo.listLive({ tenantId: T, accountId: A, campaignId: camp!.id });
+      const inbound = rows.filter((r) => r.origin === 'inbound');
+      expect(inbound.map((r) => r.correlation_id).sort()).toEqual([byRoute, matched, unfiled].sort());
+      expect(new Set(inbound.map((r) => r.campaign_id))).toEqual(new Set([camp!.id]));
+      expect(inbound.every((r) => typeof r.campaign_name === 'string' && r.campaign_name.length > 0)).toBe(true);
+      // The account's own list names each call's campaign, and none for a call filed under none.
+      const all = new Map((await repo.listLive({ tenantId: T, accountId: A })).map((r) => [r.correlation_id, r.campaign_id]));
+      expect(all.get(byRoute)).toBe(camp!.id);
+      expect(all.get(elsewhere)).toBe(other!.id);
+      expect(all.get(none)).toBeNull();
+      // Scoped by the account, as before: another account asking for the same campaign reads nothing.
+      expect(await repo.listLive({ tenantId: T, accountId: OTHER_ACCOUNT, campaignId: camp!.id })).toEqual([]);
+    } finally {
+      await pool.query(`DELETE FROM agency_inbound_calls WHERE provider_call_id LIKE 'filed-%'`);
+    }
+  });
+
   it(`reads the account's live attempts on ${TARGET_INDEX}, by the account`, async () => {
     const { rows } = await getTestPool().query<{ 'QUERY PLAN': unknown }>(`EXPLAIN (FORMAT JSON) ${LIVE_CALLS_SQL}`, [T, A, null, null]);
     const scans = indexScans(rows[0]!['QUERY PLAN']);

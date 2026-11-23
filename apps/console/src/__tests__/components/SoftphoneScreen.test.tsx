@@ -91,6 +91,126 @@ describe('the customer card follows the call’s campaign’s number setting (AS
   }
 });
 
+// docs/call-log.md §5: the account's "Every call must belong to a campaign", as the bootstrap says it
+// (`campaign_required`). In the station's words (AS15): a campaign is "work".
+describe('every call must be saved to a work', () => {
+  const REQUIRED = { ...BOOTSTRAP, campaign_required: true };
+  const type = (number: string) => fireEvent.change(screen.getByTestId('dial-number'), { target: { value: number } });
+  const select = () => screen.getByTestId('log-to-select') as HTMLSelectElement;
+
+  it('asks for one: "(required)", no "Not in any work" to choose, and Call stays off until one is chosen', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    api.placeManualCall.mockResolvedValue({ ok: true, value: manualCall() });
+    await mount();
+    expect(screen.getByTestId('log-to-required').textContent).toContain('(required)');
+    expect([...select().options].map((o) => o.textContent)).toEqual(['Choose the work', 'Home Loan Renewals']);
+    expect(select().required).toBe(true);
+    expect(screen.queryByText('Not in any work', { selector: 'option' })).toBeNull();
+
+    type('9820461733');
+    expect(screen.getByTestId('dial-call').getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByTestId('dial-reason').textContent).toBe('Choose the work to save this call to.');
+    // Enter does not dial either.
+    await act(async () => {
+      press('Enter');
+    });
+    expect(api.placeManualCall).not.toHaveBeenCalled();
+
+    fireEvent.change(select(), { target: { value: 'camp-1' } });
+    expect(screen.getByTestId('dial-call').getAttribute('aria-disabled')).not.toBe('true');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall).toHaveBeenCalledWith(expect.objectContaining({ to: '9820461733', campaign_id: 'camp-1' }), 't-1', 'a-1');
+  });
+
+  it('with the rule off, "Not in any work" is still the first choice and a call can go without one', async () => {
+    await mount();
+    expect(screen.queryByTestId('log-to-required')).toBeNull();
+    expect([...select().options].map((o) => o.textContent)).toEqual(['Not in any work', 'Home Loan Renewals']);
+    type('9820461733');
+    expect(screen.getByTestId('dial-call').getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('an agent in no work that is running cannot dial: the pad gives way to what to do', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...REQUIRED, taggable_campaigns: [] });
+    await mount();
+    const card = screen.getByTestId('softphone-no-work');
+    expect(card.textContent).toBe('You are not in any work that is running, so you cannot dial.Ask your supervisor to add you to one.');
+    expect(screen.queryByTestId('dial-card')).toBeNull();
+    expect(screen.queryByTestId('log-to-select')).toBeNull();
+  });
+
+  it('a supervisor with no work running is told there is none, not to ask a supervisor', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...REQUIRED, taggable_campaigns: [] });
+    await mount({ supervises: true });
+    expect(screen.getByTestId('softphone-no-work').textContent).toBe('No work is running in this account, so no call can be made.');
+    expect(screen.queryByTestId('dial-card')).toBeNull();
+  });
+
+  // A Missed call's Call back fills the pad as a redial does.
+  it('a Call back of a call saved to no work, or to one that cannot be chosen, leaves the box empty and says why', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: 'camp-gone' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+919820461733');
+    expect(select().value).toBe('');
+    expect(screen.getByTestId('log-to-note').textContent).toBe('This call was not saved to any work. Choose one to call again.');
+    fireEvent.change(select(), { target: { value: 'camp-1' } });
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
+  it('a Call back of a call saved to a work the agent can choose keeps it, with no line; nor is there one while the rule is off', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: 'camp-1' });
+    expect(select().value).toBe('camp-1');
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+    cleanup();
+    api.getSoftphoneBootstrap.mockResolvedValue(BOOTSTRAP);
+    await mount({ presetNumber: '+919820461733', presetCampaignId: null });
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
+  it('a redial of a call saved to no work leaves the box empty and says why; choosing one clears the line', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await mount();
+    fireEvent.click(screen.getByTestId('recent-old-1').querySelector('button')!);
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+919820461733');
+    expect(select().value).toBe('');
+    expect(screen.getByTestId('log-to-note').textContent).toBe('This call was not saved to any work. Choose one to call again.');
+    expect(screen.getByTestId('dial-call').getAttribute('aria-disabled')).toBe('true');
+    fireEvent.change(select(), { target: { value: 'camp-1' } });
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
+  it('a redial of a call saved to a work the agent can still choose keeps it, with no line', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    api.listManualCalls.mockResolvedValue({
+      rows: [manualCall({ id: 'old-2', state: 'ended', outcome: 'no_answer', settled_at: '2026-10-30T09:00:00Z', tag: { campaign_id: 'camp-1', campaign_name: 'Home Loan Renewals' } })],
+      next_cursor: null,
+      limit: 8,
+    });
+    await mount();
+    fireEvent.click(screen.getByTestId('recent-old-2').querySelector('button')!);
+    expect(select().value).toBe('camp-1');
+    expect(screen.queryByTestId('log-to-note')).toBeNull();
+  });
+
+  it('the rule switched on under an open page: the server\'s refusal is said in the station\'s words and the pad reads it again', async () => {
+    api.placeManualCall.mockResolvedValue({
+      ok: false,
+      refusal: { code: 'campaign_required', status: 409, message: 'Choose a campaign before you dial. Every call in this account must belong to a campaign.' },
+    });
+    await mount();
+    type('9820461733');
+    api.getSoftphoneBootstrap.mockResolvedValue(REQUIRED);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(screen.getByTestId('dial-error').textContent).toBe('Choose the work to save this call to, then press Call.');
+    await waitFor(() => expect(screen.getByTestId('log-to-required')).toBeTruthy());
+  });
+});
+
 describe('Ready', () => {
   it('opens on the dial pad with recent calls, the account’s default caller ID and Call disabled', async () => {
     await mount();
@@ -355,6 +475,31 @@ describe('Ready', () => {
     expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
     expect(document.activeElement).toBe(screen.getByTestId('dial-call'));
     expect(api.placeManualCall).not.toHaveBeenCalled();
+  });
+
+  it('a Call back’s dial names the missed call it answers, once, and only while the pad still holds that number (CL1)', async () => {
+    const MISSED = '8f2c1d2e-1111-4222-8333-444455556666';
+    api.placeManualCall.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 502, message: 'no' } });
+    await mount({ presetNumber: '+447700900123', presetCallbackOf: MISSED });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[0]![0]).toMatchObject({ to: '+447700900123', callback_of_inbound_call_id: MISSED });
+    // The agent rings someone else from the same pad: that call is no call back.
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[1]![0]).not.toHaveProperty('callback_of_inbound_call_id');
+  });
+
+  it('a pad filled without a missed call sends no link', async () => {
+    api.placeManualCall.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 502, message: 'no' } });
+    await mount({ presetNumber: '+447700900123' });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(api.placeManualCall.mock.calls[0]![0]).not.toHaveProperty('callback_of_inbound_call_id');
   });
 
   it('a Call back for a campaign the agent cannot log to leaves the call untagged', async () => {

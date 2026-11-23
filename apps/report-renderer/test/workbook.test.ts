@@ -25,6 +25,13 @@ async function build(dataset: ReportDataset, details: Map<string, Buffer>): Prom
   return Buffer.concat(chunks);
 }
 
+/** A sheet's header row, in order. */
+function headers(wb: import('exceljs').Workbook, sheet: string): string[] {
+  const out: string[] = [];
+  wb.getWorksheet(sheet)!.getRow(1).eachCell((cell) => { out.push(String(cell.value)); });
+  return out;
+}
+
 /** The Summary's Definition cell (column C) per metric (column A). */
 function summaryDefinitions(wb: import('exceljs').Workbook): Map<string, unknown> {
   const out = new Map<string, unknown>();
@@ -210,6 +217,9 @@ describe('campaign workbook', async () => {
       ['Abandonment', 'abandonment_rate'],
       ['Callbacks booked', 'callbacks_booked'],
       ['Soft-phone calls placed', 'softphone_calls'],
+      ['Outbound connect rate', 'outbound_connect_rate'],
+      ['Inbound calls received', 'inbound_calls'],
+      ['All call types: calls', 'calls_by_type'],
     ]);
   });
   const summaryRows = (book: import('exceljs').Workbook): Array<[string, unknown]> => {
@@ -219,9 +229,16 @@ describe('campaign workbook', async () => {
   };
   const SOFT_ROWS = [
     'Soft-phone calls placed', 'Soft-phone calls connected', 'People reached on the soft phone', 'Soft-phone connect rate',
-    'All calls placed', 'All calls connected', 'All calls connect rate',
+    'Soft-phone talk time', 'Outbound calls placed', 'Outbound calls connected', 'Outbound connect rate',
   ];
-  it('writes the soft-phone calls logged to the campaign and All calls last on the Summary, beside the dialler\'s (SR1, SR3)', () => {
+  const INBOUND_ROWS = [
+    'Inbound calls received', 'Inbound calls answered', 'Inbound calls missed',
+    'Missed calls still to follow up (as of generation)', 'Inbound talk time', 'Answer rate, open hours',
+  ];
+  const ALL_ROWS = ['All call types: calls', 'All call types: connected', 'All call types: people reached', 'All call types: talk time'];
+  /** The Summary's names for the dialler and the soft phone together before inbound calls joined it (SR8). */
+  const OLD_ALL_CALLS_ROWS = ['All calls placed', 'All calls connected', 'All calls connect rate'];
+  it('writes the soft-phone calls logged to the campaign and the Outbound rate on the Summary, beside the dialler\'s (SR1, SR3, CL7)', () => {
     const rows = summaryRows(wb);
     const at = (metric: string) => rows.find(([m]) => m === metric)?.[1];
     const calls = d.activity.calls;
@@ -234,22 +251,118 @@ describe('campaign workbook', async () => {
     const firstDials = d.trends.buckets.reduce((s, b) => s + b.first_dials, 0);
     expect(at('Connect rate')).toBeUndefined();
     expect(Number(at('Dialler connect rate'))).toBeCloseTo(calls.human_connects / firstDials, 6);
-    // All calls: the two added; its rate over the dialler's first dials and the soft phone's placed.
-    expect(at('All calls placed')).toBe(calls.dials + 42);
-    expect(at('All calls connected')).toBe(calls.connected + 30);
-    expect(Number(at('All calls connect rate'))).toBeCloseTo((calls.human_connects + 18) / (calls.dials - calls.redials.placed + 42), 6);
-    expect(rows.map(([m]) => m).slice(-SOFT_ROWS.length)).toEqual(SOFT_ROWS);
+    // Outbound: the dialler and the soft phone, over the dialler's first dials and the soft
+    // phone's placed. The formula "All calls connect rate" had; no inbound call is in it.
+    expect(Number(at('Outbound connect rate'))).toBeCloseTo((calls.human_connects + 18) / (calls.dials - calls.redials.placed + 42), 6);
+    // The outbound pair beside it: exactly the figures "All calls placed" and "All calls
+    // connected" were, dialler + soft phone, with no inbound call in them.
+    expect(at('Outbound calls placed')).toBe(calls.dials + 42);
+    expect(at('Outbound calls connected')).toBe(calls.connected + 30);
+    // No old name survives with a new meaning: a lookup on one finds nothing.
+    for (const old of OLD_ALL_CALLS_ROWS) expect(at(old), old).toBeUndefined();
   });
-  it('writes neither, and the dialler\'s rate as plain Connect rate, when the window holds no soft-phone call (as the PDF)', async () => {
+  it('writes the inbound calls filed under the campaign and All calls, the three types added, last (call log P4)', () => {
+    const rows = summaryRows(wb);
+    const at = (metric: string) => rows.find(([m]) => m === metric)?.[1];
+    const calls = d.activity.calls;
+    expect(at('Inbound calls received')).toBe(57);
+    expect(at('Inbound calls answered')).toBe(44);
+    expect(at('Inbound calls missed')).toBe(13);
+    expect(at('Missed calls still to follow up (as of generation)')).toBe(6);
+    // Answered over the calls that arrived in open hours (53), not over all 57.
+    expect(Number(at('Answer rate, open hours'))).toBeCloseTo(44 / 53, 6);
+    // One call, one type: the counts add up.
+    expect(at('All call types: calls')).toBe(calls.dials + 42 + 57);
+    expect(at('All call types: connected')).toBe(calls.connected + 30 + 44);
+    expect(at('All call types: people reached')).toBe(calls.human_connects + 18 + 44);
+    // The three-type sums and the outbound pair are different rows with different numbers.
+    expect(at('All call types: calls')).toBe(Number(at('Outbound calls placed')) + 57);
+    expect(at('All call types: connected')).toBe(Number(at('Outbound calls connected')) + 44);
+    // No rate is added across the types.
+    expect(rows.map(([m]) => m).filter((m) => /^All call.*rate/i.test(m))).toEqual([]);
+    expect(rows.map(([m]) => m).slice(-(SOFT_ROWS.length + INBOUND_ROWS.length + ALL_ROWS.length))).toEqual([...SOFT_ROWS, ...INBOUND_ROWS, ...ALL_ROWS]);
+  });
+  const noSoft = (x: typeof d) => {
+    x.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 };
+    x.activity.calls.softphone_calls = 0;
+  };
+  const noInbound = (x: typeof d) => {
+    x.activity.calls.inbound = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 };
+  };
+  it('writes none of them, and the dialler\'s rate as plain Connect rate, when the window holds only dialler calls (as the PDF)', async () => {
     const none = structuredClone(d);
-    none.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0 };
-    none.activity.calls.softphone_calls = 0;
-    const rows = summaryRows(await readWorkbook(await build(none, details)));
-    const metrics = rows.map(([m]) => m);
-    for (const m of SOFT_ROWS) expect(metrics).not.toContain(m);
+    noSoft(none);
+    noInbound(none);
+    const book = await readWorkbook(await build(none, details));
+    const metrics = summaryRows(book).map(([m]) => m);
+    for (const m of [...SOFT_ROWS, ...INBOUND_ROWS, ...ALL_ROWS]) expect(metrics).not.toContain(m);
     expect(metrics).not.toContain('Dialler connect rate');
     expect(metrics).toContain('Connect rate');
     expect(metrics.at(-1)).toBe('Numbers marked Do Not Call');
+    // And the Outcomes sheet is the dialler's alone, as it always was.
+    expect(headers(book, 'Outcomes')).toEqual(['Outcome', 'Code', 'Success', 'Conversations', 'Share']);
+  });
+  it('writes each type\'s rows only when the window holds such a call (the one gate, SR8)', async () => {
+    const softOnly = structuredClone(d);
+    noInbound(softOnly);
+    const softBook = await readWorkbook(await build(softOnly, details));
+    const softMetrics = summaryRows(softBook).map(([m]) => m);
+    for (const m of INBOUND_ROWS) expect(softMetrics).not.toContain(m);
+    expect(softMetrics.slice(-(SOFT_ROWS.length + ALL_ROWS.length))).toEqual([...SOFT_ROWS, ...ALL_ROWS]);
+    expect(headers(softBook, 'Outcomes')).toEqual(['Outcome', 'Code', 'Success', 'Dialler', 'Share of dialler', 'Soft phone', 'Total']);
+
+    const inboundOnly = structuredClone(d);
+    noSoft(inboundOnly);
+    const inboundBook = await readWorkbook(await build(inboundOnly, details));
+    const inboundRows = summaryRows(inboundBook);
+    const inboundMetrics = inboundRows.map(([m]) => m);
+    for (const m of SOFT_ROWS) expect(inboundMetrics).not.toContain(m);
+    // Still the dialler's rate by name: another type's figures sit beside it.
+    expect(inboundMetrics).toContain('Dialler connect rate');
+    expect(inboundRows.find(([m]) => m === 'All call types: calls')?.[1]).toBe(d.activity.calls.dials + 57);
+    // No soft phone, so no Outbound rows: outbound would be the dialler alone.
+    for (const m of ['Outbound calls placed', 'Outbound calls connected', 'Outbound connect rate']) expect(inboundMetrics).not.toContain(m);
+    expect(headers(inboundBook, 'Outcomes')).toEqual(['Outcome', 'Code', 'Success', 'Dialler', 'Share of dialler', 'Inbound', 'Total']);
+  });
+  it('writes the outcomes by type on the Outcomes sheet, the dialler\'s column named as the dialler\'s (as the PDF)', () => {
+    expect(headers(wb, 'Outcomes')).toEqual(['Outcome', 'Code', 'Success', 'Dialler', 'Share of dialler', 'Soft phone', 'Inbound', 'Total']);
+    const sheet = wb.getWorksheet('Outcomes')!;
+    const byType = d.activity.outcomes_by_type;
+    expect(sheet.actualRowCount).toBe(byType.length + 1);
+    sheet.eachRow((row, n) => {
+      if (n === 1) return;
+      const o = byType[n - 2]!;
+      expect(row.getCell(4).value).toBe(o.dialler);
+      expect(row.getCell(6).value).toBe(o.soft_phone);
+      expect(row.getCell(7).value).toBe(o.inbound);
+      expect(row.getCell(8).value).toBe(o.dialler + o.soft_phone + o.inbound);
+    });
+  });
+  it('reads a dataset from a server that predates the inbound counts and the outcomes by type', async () => {
+    const older = structuredClone(d) as unknown as { activity: { calls: Record<string, unknown>; outcomes_by_type?: unknown } };
+    delete older.activity.calls.inbound;
+    delete older.activity.outcomes_by_type;
+    delete (older.activity.calls.softphone as Record<string, unknown>).talk_seconds;
+    const book = await readWorkbook(await build(older as unknown as typeof d, details));
+    const metrics = summaryRows(book).map(([m]) => m);
+    for (const m of INBOUND_ROWS) expect(metrics).not.toContain(m);
+    expect(metrics).toContain('Outbound connect rate');
+    expect(headers(book, 'Outcomes')).toEqual(['Outcome', 'Code', 'Success', 'Conversations', 'Share']);
+    // The soft phone's talk time was not served: a dash, never 0, and All call types' talk time
+    // is the dialler's alone rather than the dialler's plus a made-up nothing.
+    const rows = summaryRows(book);
+    expect(rows.find(([m]) => m === 'Soft-phone talk time')?.[1]).toBe('—');
+    expect(serial(rows.find(([m]) => m === 'All call types: talk time')?.[1]) * 86_400).toBeCloseTo(d.activity.calls.talk_seconds, 3);
+  });
+  it('shows the inbound rows for a window with no inbound call while callers are still owed a call back', async () => {
+    const owed = structuredClone(d);
+    noSoft(owed);
+    owed.activity.calls.inbound = { received: 0, answered: 0, missed: 0, open_follow_ups: 4, talk_seconds: 0, open_hours: 0 };
+    const rows = summaryRows(await readWorkbook(await build(owed, details)));
+    const at = (metric: string) => rows.find(([m]) => m === metric)?.[1];
+    expect(at('Inbound calls received')).toBe(0);
+    expect(at('Missed calls still to follow up (as of generation)')).toBe(4);
+    expect(at('Answer rate, open hours')).toBe('No calls to rate');
   });
   it('writes one Daily row per day and every attempt', () => {
     expect(wb.getWorksheet('Daily')!.actualRowCount).toBe(d.range.days + 1);

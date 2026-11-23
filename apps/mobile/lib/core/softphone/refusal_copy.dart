@@ -56,6 +56,10 @@ const Map<SoftphoneErrorCode, String> softphoneRefusalCopy = {
       'Contact support, or pick a caller ID on another carrier.',
   SoftphoneErrorCode.customerOnInboundCall:
       'This customer is on a call to us right now. Wait for that call to finish, then try again.',
+  // The account's "Every call must belong to a campaign": the server's own sentence, which an
+  // older build shows as it comes.
+  SoftphoneErrorCode.campaignRequired:
+      'Choose a campaign before you dial. Every call in this account must belong to a campaign.',
 };
 
 /// What the refused request was doing, where one code means different things.

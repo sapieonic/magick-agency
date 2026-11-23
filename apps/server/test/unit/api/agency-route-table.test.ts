@@ -67,6 +67,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // the agent's own record the mobile wire mirrors, and the insights rollup oracle cross-checks its
   // day trends against it (`insights-rollup-oracle.test.ts`).
   ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign stats series (no console caller since the Insights tab)'],
+  // The agent's own dial history. My calls was its only console caller and reads `/my-calls` now
+  // (docs/call-log.md §7), which masks the number as each campaign says; this one sends it in full.
+  // Kept for agent app builds from before the one list, and as the twin of the supervisor's read.
+  ['GET /proxy/agency/my-attempts', 'the agent\'s own dials (no console caller since My calls reads /my-calls; older agent app builds)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
   // The report renderer's signed callback (docs/reports.md RP13; the HMAC is the credential).
   ['POST /webhooks/reports/rendered', 'report renderer callback (HMAC-signed, no session)'],

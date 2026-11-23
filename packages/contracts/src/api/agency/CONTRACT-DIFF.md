@@ -188,6 +188,33 @@ handler writes `total` only when the request carries `?include_total=1`; the dia
 too: `AgencyContactWaiting` / `AGENCY_CONTACT_WAITING` (`?waiting=`), `AgencyListFlag` (`1` / `0`),
 and the new keys on `AgencyAttemptFilters` / `AgencyContactFilters` (docs/insights.md, WS F).
 
+The campaign Call log (`call-log.ts`, docs/call-log.md): `AgencyCallLogRow` is a union on `type`
+(`AgencyCallLogDiallerRow`, an `AgencyAttempt` marked `dialler`; `AgencyCallLogSoftphoneRow`, a
+soft-phone call logged to the campaign, under the attempt row's names for the fields the two
+share), with `AgencyCallLogType` / `AGENCY_CALL_LOG_TYPES`, the `?type=` filter
+(`AgencyCallLogTypeFilter`), the chips' `AgencyCallLogCounts` and the page `AgencyCallLogPage`
+(`counts` only with `?include_counts=1`). The public API layer builds the rows from the dialer
+runtime's call-log read (`apps/server/src/agency/campaign-call-log.ts`, whose rows say `source`
+and stay attempt-shaped for the CSV export); that read is not in the dialer contract.
+The same file holds the account's All calls (`AgencyAccountCallsPage`: the Call log's rows with
+`campaign_name`, `campaign_id` null on a soft-phone or inbound row filed under none, and the
+account's `rule`) and the agent's own My calls (`AgencyMyCallRow`, `AgencyMyCallsPage`,
+`AgencyMyCallbackDue`, `AgencyMyCallsCounts`; docs/call-log.md §7). `AgencyMyCallRow` is one
+shape for the three types, with the number as the agent may see it (`phone`, `phone_masked`) and
+no media; it has no dialer-contract twin. The mobile app decodes it (`agency_wire`'s
+`my_calls.dart`, fixtures `reads.json` `my_calls*`).
+
+The account's call settings (`call-settings.ts`, docs/call-log.md §5) are console-side only:
+`AgencyCallSettings` (`require_campaign`, the setting "Every call must belong to a campaign"),
+its readiness (`AgencyCallSettingsReadiness`: the inbound routes with no campaign for unknown
+callers, the agents on no running campaign, the calls filed under none) and the routes a campaign
+receives unknown callers on. The public API layer serves them from its own SQL; the dialer
+contract carries only what a client acts on: `campaign_required` on the soft phone's bootstrap
+and on the inbound call, the inbound call's `campaign` and `campaign_changeable`, and the route's
+`default_campaign_id`. The refusal `campaign_required` is a soft-phone code that the inbound
+outcome route answers too; `default_campaign_required`, `inbound_campaign_fixed` and
+`inbound_campaign_not_allowed` are inbound codes (`errors.ts` §4, §6).
+
 Customer history (`customer-history.ts`, docs/customer-history.md) is console-side only: the
 public API layer reads it directly (no internal handler hop), so every type there
 (`CustomerSearchRequest`, `CustomerSearchResponse`, `CustomerTimelineEntry`, …) has no dialer

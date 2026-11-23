@@ -52,6 +52,7 @@ import type {
 import {
   AGENCY_INBOUND_OUTCOME_LAPSE_MS,
   type AgencyContextDisplay,
+  type AgencyInboundCampaignSource,
   type AgencyInboundDispositionSource,
 } from '@magick-agency/contracts/agency';
 import { AGENCY_INBOUND_MISSED_COUNT_CAP } from '@magick-agency/contracts/api/agency/inbound';
@@ -59,7 +60,9 @@ import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/ke
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
-import { contactNameContextSql, inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
+import {
+  contactNameContextSql, inboundFromDigitsSql, inboundMissedOpenSql, inboundMissedSql, inboundNumberBusySql,
+} from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -105,6 +108,8 @@ export type AgencyInboundDispositionRefusal =
   | 'not_bridged'
   /** Another code is already saved. */
   | 'different_code'
+  /** The call is filed under another campaign than the one the code was validated against. */
+  | 'campaign_changed'
   /** The lapse sweep closed it `no_disposition`. */
   | 'lapsed';
 
@@ -122,6 +127,15 @@ export interface AgencyInboundCallRecord {
   to_e164: string;
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
+  /**
+   * The campaign the call is filed under (0069, `docs/call-log.md`): what the campaign Call log
+   * reads. At arrival the matched contact's campaign, else the route's campaign for unknown
+   * callers (0071); an agent or supervisor may file an unknown caller's call elsewhere at the end
+   * of the call. NULL: none.
+   */
+  campaign_id: string | null;
+  /** How it came by `campaign_id`; set exactly when that is (CHECKed). */
+  campaign_source: AgencyInboundCampaignSource | null;
   caller_dnc: boolean;
   sticky_user_id: string | null;
   sticky_reason: AgencyInboundStickyReason | null;
@@ -228,6 +242,13 @@ export interface AgencyInboundArrivalInput {
    * need not name it; the router always passes the route's.
    */
   wrapupSeconds?: number | null;
+  /**
+   * The route's campaign for unknown callers (`agency_inbound_routes.default_campaign_id`, 0071):
+   * a call that matched no contact is filed under it (`campaign_source = 'route'`), whether or not
+   * the account's setting is on (docs/call-log.md §5, CL4). Absent or null: none. Optional only
+   * for the test callers; the router always passes the route's.
+   */
+  routeDefaultCampaignId?: string | null;
 }
 
 /** How a call ends ({@link AgencyInboundCallRepository.end}). */
@@ -262,6 +283,13 @@ export interface AgencyInboundDispositionInput {
   promiseAmount?: string | null;
   actorUserId: string;
   onBehalf: boolean;
+  /**
+   * The campaign the call was filed under when `code` was validated against its catalog (null:
+   * none). The save is refused `campaign_changed` when the call is under another by now (a
+   * refile between the read and this write): the code may not be in that campaign's catalog.
+   * Absent: not checked.
+   */
+  expectedCampaignId?: string | null;
 }
 
 /** The filters of the Missed list, already parsed and validated by the API layer. */
@@ -285,6 +313,8 @@ export interface AgencyInboundMissedListInput {
 export interface AgencyInboundMissedRow extends AgencyInboundCallRecord {
   route_name: string | null;
   matched_campaign_name: string | null;
+  /** The name of the campaign the call is filed under (`campaign_id`; docs/call-log.md §5), or NULL. */
+  campaign_name: string | null;
   /**
    * How it was handled (0028): `marked` by a person, or `reached` (the customer was put through to
    * an agent afterwards: `agency_inbound_close_reached_missed`). NULL while open, and on a row
@@ -323,7 +353,8 @@ export type AgencyInboundReassignResult =
 
 
 const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_number_id, c.provider, c.telephony_credential_id,
-  c.provider_call_id, c.from_e164, c.to_e164, c.matched_contact_id, c.matched_campaign_id, c.caller_dnc,
+  c.provider_call_id, c.from_e164, c.to_e164, c.matched_contact_id, c.matched_campaign_id,
+  c.campaign_id, c.campaign_source, c.caller_dnc,
   c.sticky_user_id, c.sticky_reason, c.state, c.outcome, c.arrived_at, c.answered_at, c.bridged_at,
   c.answered_by_user_id, c.ended_at, c.talk_seconds, c.webrtc_call_id, c.voicemail_key, c.callback_due_at,
   c.follow_up_status, c.follow_up_reason, c.follow_up_assignee_user_id, c.handled_by_user_id, c.handled_at,
@@ -335,15 +366,17 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.created_at, c.updated_at`;
 
 /**
- * A row's Missed-list joins: the route's name, the matched campaign's, and (IQ54) the matched
+ * A row's Missed-list joins: the route's name, the matched campaign's, the campaign the call is
+ * filed under (`fcam`: the match's, else the route's campaign for unknown callers), and (IQ54) the matched
  * contact's name columns, by primary key. All LEFT, no FK. The campaign's alias `cam` is read by
  * `contactNameContextSql` too.
  */
 const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_inbound_routes r ON r.id = c.route_id
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id
+        LEFT JOIN agency_campaigns fcam ON fcam.id = c.campaign_id AND fcam.tenant_id = c.tenant_id
         LEFT JOIN agency_contacts mc ON mc.id = c.matched_contact_id AND mc.tenant_id = c.tenant_id`;
-const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name,
+const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name, fcam.name AS campaign_name,
   ${contactNameContextSql('mc', 'cam')} AS match_context, cam.context_display AS match_display`;
 
 export class AgencyInboundCallRepository {
@@ -352,6 +385,9 @@ export class AgencyInboundCallRepository {
    * (`origin = 'inbound'`, `inbound_call_id` the spine row, `caller_id` the number rung,
    * `destination_phone` the caller's or `''` when withheld, `provider_call_id` the carrier's call
    * id so the status webhook finds it), linked both ways, in one transaction (or the caller's).
+   * A matched call is filed under its contact's campaign (`campaign_id`, `campaign_source =
+   * 'contact'`, 0069): the column the campaign Call log reads (`docs/call-log.md`). An unmatched
+   * one is filed under the route's campaign for unknown callers when it has one (`'route'`).
    * The leg is written here rather than through `WebRtcCallRepository.create`, which refuses a
    * credential that is not `active`: a call that has already arrived is answered regardless
    * (§10, "a disabled or invalid credential that still verifies").
@@ -377,10 +413,12 @@ export class AgencyInboundCallRepository {
         `INSERT INTO agency_inbound_calls AS c
            (tenant_id, account_id, route_id, phone_number_id, provider, telephony_credential_id, provider_call_id,
             from_e164, to_e164, matched_contact_id, matched_campaign_id, caller_dnc, sticky_user_id, sticky_reason,
-            answered_at, recording_requested, closed_cause, wrapup_seconds)
+            answered_at, recording_requested, closed_cause, wrapup_seconds, campaign_id, campaign_source)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
-                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint)
+                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint,
+                 COALESCE($11::uuid, $19::uuid),
+                 CASE WHEN $11::uuid IS NOT NULL THEN 'contact' WHEN $19::uuid IS NOT NULL THEN 'route' END)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
@@ -388,6 +426,7 @@ export class AgencyInboundCallRepository {
           input.providerCallId, input.fromE164, input.toE164, id.match?.contactId ?? null, id.match?.campaignId ?? null,
           id.callerDnc, id.sticky?.userId ?? null, id.sticky?.reason ?? null, input.answered,
           input.recordingRequested, input.closedCause ?? null, input.wrapupSeconds ?? null,
+          input.routeDefaultCampaignId ?? null,
         ],
       );
       const inserted = rows[0];
@@ -767,6 +806,28 @@ export class AgencyInboundCallRepository {
   }
 
   /**
+   * File an unknown caller's call under a campaign (docs/call-log.md §5, CL4): `campaign_id` and
+   * `campaign_source` (`agent`, or `supervisor` on behalf) on a call that matched no contact and
+   * whose outcome is not saved yet. Null when the call is missing, matched (its campaign is
+   * fixed) or settled; the caller re-reads to tell which. Run it on the transaction that then
+   * saves the outcome, when the two arrive together.
+   */
+  async fileUnderCampaign(
+    input: { id: string; tenantId: string; campaignId: string; source: 'agent' | 'supervisor' },
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET campaign_id = $3::uuid, campaign_source = $4::varchar
+        WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid
+          AND c.matched_campaign_id IS NULL AND c.settled_at IS NULL
+        RETURNING ${CALL_COLUMNS}`,
+      [input.id, input.tenantId, input.campaignId, input.source],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
    * Save the outcome AND settle the call, in one guarded statement (§2 step 8), with the soft
    * phone's discipline (`AgencyManualCallRepository.recordDisposition`): `disposition_code IS NULL
    * OR disposition_code = $code` makes the first write and a same-code replay one successful path
@@ -807,10 +868,12 @@ export class AgencyInboundCallRepository {
           AND c.bridged_at IS NOT NULL
           AND c.disposition_code IS DISTINCT FROM '${AUTO_DISPOSITION_CODE}'
           AND ((c.disposition_code IS NULL AND c.settled_at IS NULL) OR c.disposition_code = $2::varchar)
+          AND (NOT $10::boolean OR c.campaign_id IS NOT DISTINCT FROM $11::uuid)
         RETURNING ${CALL_COLUMNS}, prev.disposition_code AS prev_code`,
       [
         input.id, input.code, input.source, input.notes, input.callbackAt, input.actorUserId, input.onBehalf,
         input.promiseDate ?? null, input.promiseAmount ?? null,
+        input.expectedCampaignId !== undefined, input.expectedCampaignId ?? null,
       ],
     );
     const row = rows[0];
@@ -823,6 +886,10 @@ export class AgencyInboundCallRepository {
     if (call.state !== 'ended') return { ok: false, reason: 'live', call };
     if (call.disposition_code === AUTO_DISPOSITION_CODE) return { ok: false, reason: 'lapsed', call };
     if (call.bridged_at === null) return { ok: false, reason: 'not_bridged', call };
+    if (
+      input.expectedCampaignId !== undefined && call.campaign_id !== input.expectedCampaignId
+      && call.settled_at === null && call.disposition_code === null
+    ) return { ok: false, reason: 'campaign_changed', call };
     return { ok: false, reason: 'different_code', call };
   }
 
@@ -910,6 +977,23 @@ export class AgencyInboundCallRepository {
       bind.values,
     );
     return toKeysetPage(rows, input.limit, ({ cursor_at: _cursor, ...row }) => row);
+  }
+
+  /**
+   * Whether `id` is a Missed row of the account whose caller is `phoneE164` (digits compared, as
+   * the busy probe compares them): what a soft-phone call must name to be linked as that row's
+   * call back (`agency_manual_calls.callback_of_inbound_call_id`, `docs/call-log.md` CL1). Open or
+   * handled: a row already closed may still be rung back. A withheld caller's row matches nothing.
+   */
+  async isMissedCallFrom(tenantId: string, accountId: string, id: string, phoneE164: string): Promise<boolean> {
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM agency_inbound_calls c
+        WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid AND c.account_id = $3::uuid
+          AND ${inboundMissedSql('c')} AND c.from_e164 IS NOT NULL
+          AND ${inboundFromDigitsSql('c')} = regexp_replace($4::text, '[^0-9]', '', 'g')`,
+      [id, tenantId, accountId, phoneE164],
+    );
+    return rows.length > 0;
   }
 
   /** One Missed row of the account (or of the tenant default, `accountId` null), with its joins; null when it is not one. */
@@ -1126,7 +1210,7 @@ export class AgencyInboundCallRepository {
     const { rows } = await getPool().query<{ open: number; has_rows: boolean }>(
       `SELECT (SELECT COUNT(*)::int FROM (
                  SELECT 1 FROM agency_inbound_calls c
-                  WHERE ${where} AND c.follow_up_status = 'open'
+                  WHERE ${where} AND ${inboundMissedOpenSql('c')}
                   LIMIT ${AGENCY_INBOUND_MISSED_COUNT_CAP + 1}
                ) open_rows) AS open,
               EXISTS (

@@ -84,15 +84,18 @@ const AgencyCampaignContactsPage = lazy(() => import('./pages/agency/AgencyCampa
 const AgencyCampaignRosterPage = lazy(() => import('./pages/agency/AgencyCampaignRosterPage'));
 const AgencyCampaignAttemptsPage = lazy(() => import('./pages/agency/AgencyCampaignAttemptsPage'));
 const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCallPage'));
+const AgencyInboundCallPage = lazy(() => import('./pages/agency/AgencyInboundCallPage'));
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
-const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
+const CampaignManualCallsRedirect = lazy(() => import('./pages/agency/AgencyCampaignAttemptsPage').then((m) => ({ default: m.CampaignManualCallsRedirect })));
 const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
 const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
 const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPage'));
-const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
+const AllCallsPage = lazy(() => import('./pages/agency/AllCallsPage'));
+const SoftphoneCallsRedirect = lazy(() => import('./pages/agency/AllCallsPage').then((m) => ({ default: m.SoftphoneCallsRedirect })));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
+const CallsSettingsPage = lazy(() => import('./pages/settings/CallsSettingsPage'));
 const ListeningSettingsPage = lazy(() => import('./pages/settings/ListeningSettingsPage'));
 const CampaignTemplatesPage = lazy(() => import('./pages/settings/campaign-templates/CampaignTemplatesPage'));
 const CampaignTemplateEditorPage = lazy(() => import('./pages/settings/campaign-templates/CampaignTemplateEditorPage'));
@@ -389,10 +392,11 @@ export default function App() {
                   This is the CROSS-campaign list, which is what makes it a separate
                   surface rather than a link into `/agency/campaigns/:id/attempts`:
                   that one is scoped by its URL and floored at `agency.supervise`, so
-                  an agent cannot read even their own rows through it. The server serves
-                  the pair — `my-attempts` for the caller, `agents/:userId/attempts`
-                  for their supervisor — and the supervisor half is read by the
-                  per-agent section on `AgencyAnalyticsPage`, through the same panel.
+                  an agent cannot read even their own rows through it. The page reads
+                  `GET /my-calls` (`MyCallsList`, `docs/call-log.md` §7): the caller's
+                  own calls of every type, the number masked by the server as each
+                  campaign says. A supervisor reads one agent's dials in the per-agent
+                  section on `AgencyAnalyticsPage` (`agents/:userId/attempts`).
 
                   A supervisor who opens this is SERVED rather than bounced, and
                   nothing routes them here. See `AgentAttemptsPage`.
@@ -653,6 +657,15 @@ export default function App() {
                     element={<AgencyAttemptCallPage />}
                   />
                   {/*
+                    One inbound call of the campaign (docs/call-log.md P2): the Call page an
+                    inbound row of the Call log opens. Under the same layout guards; the
+                    server floors its read at `agency.supervise`.
+                  */}
+                  <Route
+                    path="campaigns/:id/calls/inbound/:callId"
+                    element={<AgencyInboundCallPage />}
+                  />
+                  {/*
                     The audit trail lives HERE, in the agency workspace, and not at
                     `/app/audit-log`: a supervisor should not have to leave the
                     campaign to ask what happened to it, and that page is a
@@ -705,25 +718,33 @@ export default function App() {
                     element={<RequireFlag flag="agency_compare_enabled"><CompareAgentsPage /></RequireFlag>}
                   />
                   {/*
-                    The soft phone's supervisor surfaces (`docs/softphone.md` §7):
-                    the account's soft-phone calls, one call's detail, and a
-                    campaign's Manual calls — each behind `agency_softphone_enabled`
-                    on top of the subtree's gates. The server floors the
-                    account-wide reads at `agency.supervise`, as the sidebar entry
-                    and the campaign tab do.
+                    All calls (`docs/call-log.md` P5, CL34): every call of the account in one
+                    list, a tab of Campaigns. The page checks `agency.supervise`, the server's
+                    floor on the account-wide read, as the tab does; it is behind no call
+                    type's flag, since the list holds every type.
+                  */}
+                  <Route path="calls" element={<AllCallsPage />} />
+                  {/*
+                    The account's soft-phone calls page until All calls replaced it (CL34):
+                    redirects (replace) to All calls with its Soft phone chip on, keeping the
+                    rest of the query. One soft-phone call's detail (`docs/softphone.md` §7)
+                    stays, behind `agency_softphone_enabled` on top of the subtree's gates.
                   */}
                   <Route
                     path="softphone"
-                    element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallsPage /></RequireFlag>}
+                    element={<SoftphoneCallsRedirect />}
                   />
                   <Route
                     path="softphone/calls/:callId"
                     element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallDetailPage /></RequireFlag>}
                   />
-                  <Route
-                    path="campaigns/:id/manual-calls"
-                    element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
-                  />
+                  {/*
+                    The campaign's Soft-phone calls view until the Call log became one list
+                    (CL11, `docs/call-log.md`): redirects (replace) to the Call log with the
+                    Soft phone chip on. No flag guard: the Call log has none, and it shows the
+                    chip itself when the campaign holds soft-phone calls.
+                  */}
+                  <Route path="campaigns/:id/manual-calls" element={<CampaignManualCallsRedirect />} />
                   {/*
                     Live calls (`docs/listening.md` §9): the account's calls in progress, and a
                     campaign's (the Calls tab's Live view), behind `agency_live_listen_enabled`
@@ -775,6 +796,9 @@ export default function App() {
                       subject on any of its routes, so there is nobody else it could expose.
                       Gating it would lock people out of their own unsubscribe. */}
                   <Route path="notifications" element={<NotificationSettingsPage />} />
+                  {/* Calls (`docs/call-log.md` §5): "Every call must belong to a campaign". Account admins
+                      (`agency.calls.manage`, which the page checks); behind no flag of its own. */}
+                  <Route path="calls" element={<RequireGate gate={settingsEntry('calls').gate}><CallsSettingsPage /></RequireGate>} />
                   {/* Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
                   <Route path="softphone" element={<RequireGate gate={settingsEntry('softphone').gate}><SoftphoneSettingsPage /></RequireGate>} />
                   {/* Inbound routing (`docs/inbound.md` §8.1): the account's routes. Account

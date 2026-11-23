@@ -187,3 +187,37 @@ describe('offeredUnconnectedActions (P2): what the editor offers for a call nobo
     expect(UNCONNECTED_ACTION_LABELS.voicemail.hint).toMatch(/up to 2 minutes/);
   });
 });
+
+// docs/call-log.md §5: the campaign a caller on no list is filed under.
+describe('the campaign for unknown callers', () => {
+  it('none on a new route; read from the route; sent in the config', () => {
+    expect(newRouteDraft('Europe/Paris').defaultCampaignId).toBeNull();
+    expect(draftFromRoute({ ...ROUTE, default_campaign_id: 'camp-1' }).defaultCampaignId).toBe('camp-1');
+    expect(configFromDraft({ ...draftFromRoute(ROUTE), defaultCampaignId: 'camp-1' }).default_campaign_id).toBe('camp-1');
+    expect(createRequestFromDraft({ ...draftFromRoute(ROUTE), defaultCampaignId: null }).default_campaign_id).toBeNull();
+  });
+
+  it('a route from a server that sends none reads as none, and an untouched draft changes nothing', () => {
+    const draft = draftFromRoute(ROUTE);
+    expect(draft.defaultCampaignId).toBeNull();
+    expect(patchFromDraft(ROUTE, draft)).toEqual({});
+    expect(draftChanged(ROUTE, draft)).toBe(false);
+  });
+
+  it('a PATCH carries it when it changed, to a campaign or back to none', () => {
+    expect(patchFromDraft(ROUTE, { ...draftFromRoute(ROUTE), defaultCampaignId: 'camp-1' })).toEqual({ default_campaign_id: 'camp-1' });
+    const withOne = { ...ROUTE, default_campaign_id: 'camp-1' };
+    expect(patchFromDraft(withOne, { ...draftFromRoute(withOne), defaultCampaignId: null })).toEqual({ default_campaign_id: null });
+    expect(patchFromDraft(withOne, draftFromRoute(withOne))).toEqual({});
+  });
+
+  it('is asked for only while every call must belong to a campaign', () => {
+    const draft = { ...draftFromRoute(ROUTE), name: 'Main line' };
+    expect(validateRouteDraft(draft)).toEqual({});
+    expect(validateRouteDraft(draft, { campaignRequired: false })).toEqual({});
+    expect(validateRouteDraft(draft, { campaignRequired: true })).toEqual({
+      default_campaign_id: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',
+    });
+    expect(validateRouteDraft({ ...draft, defaultCampaignId: 'camp-1' }, { campaignRequired: true })).toEqual({});
+  });
+});

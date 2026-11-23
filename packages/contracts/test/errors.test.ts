@@ -38,6 +38,7 @@ import {
   CUSTOMER_RECORDING_STATES,
   CUSTOMER_SEARCH_BYS,
   CUSTOMER_SEARCH_NUMBER_ERRORS,
+  CUSTOMER_TIMELINE_CHANNEL_LABELS,
   CUSTOMER_TIMELINE_CHANNELS,
   CUSTOMER_TIMELINE_KINDS,
   type CustomerCallbackStatus,
@@ -226,6 +227,8 @@ describe('soft-phone codes', () => {
       'contact_assigned_elsewhere',
       'carrier_account_unavailable',
       'customer_on_inbound_call',
+      // "Every call must belong to a campaign" (docs/call-log.md §5).
+      'campaign_required',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });
@@ -277,8 +280,10 @@ describe('customer-history codes', () => {
 
   it('the vocabularies the app switches on equal their snapshots (SNAPSHOT, written out by hand)', () => {
     expect([...CUSTOMER_SEARCH_BYS]).toEqual(['phone']);
-    expect([...CUSTOMER_TIMELINE_CHANNELS]).toEqual(['campaign', 'softphone']);
-    expect([...CUSTOMER_TIMELINE_KINDS]).toEqual(['campaign_call', 'softphone_call', 'callback', 'dnc_mark', 'roster_entry']);
+    expect([...CUSTOMER_TIMELINE_CHANNELS]).toEqual(['campaign', 'softphone', 'inbound']);
+    // The words the console's Channel filter, live call and last contact say (CL40): the history's own, not the Call log's type words.
+    expect(CUSTOMER_TIMELINE_CHANNEL_LABELS).toEqual({ campaign: 'Campaign call', softphone: 'Soft-phone call', inbound: 'Inbound call' });
+    expect([...CUSTOMER_TIMELINE_KINDS]).toEqual(['campaign_call', 'softphone_call', 'inbound_call', 'callback', 'dnc_mark', 'roster_entry']);
     expect([...CUSTOMER_RECORDING_STATES]).toEqual(['available', 'not_recorded', 'expired', 'no_call']);
     expect([...CUSTOMER_CALLBACK_STATUSES]).toEqual(['kept', 'late', 'missed', 'upcoming', 'due']);
     for (const list of [CUSTOMER_SEARCH_BYS, CUSTOMER_TIMELINE_CHANNELS, CUSTOMER_TIMELINE_KINDS, CUSTOMER_RECORDING_STATES, CUSTOMER_CALLBACK_STATUSES]) {
@@ -356,6 +361,10 @@ describe('inbound codes', () => {
       'ring_not_offered',
       'ring_expired',
       'already_accepted',
+      // "Every call must belong to a campaign" (docs/call-log.md §5).
+      'default_campaign_required',
+      'inbound_campaign_fixed',
+      'inbound_campaign_not_allowed',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });

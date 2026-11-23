@@ -90,7 +90,8 @@ Future<void> startCallBack(BuildContext context, InboundMissedCall call, {VoidCa
     if (notice case (final key, final text)) messenger?.showSnackBar(SnackBar(key: Key(key), content: Text(text)));
   }
 
-  container.read(softphoneActionsProvider).callBack(number, campaignId: call.matchedCampaignId);
+  // The row's id goes with the number: the call placed is this missed call's call back (CL1).
+  container.read(softphoneActionsProvider).callBack(number, campaignId: call.loggedCampaignId, inboundCallId: call.id);
   if (callBackSwitchesStation(signals)) {
     final host = container.read(softphoneHostActionsProvider);
     onLeave?.call();

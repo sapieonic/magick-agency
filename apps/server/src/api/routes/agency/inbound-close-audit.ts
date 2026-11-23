@@ -9,7 +9,11 @@
  */
 export interface InboundCloseAudit {
   inbound_call_id: string;
-  /** The call's matched campaign, when the caller matched one (the audit row's `campaign_id`). */
+  /**
+   * The campaign the call is filed under (its contact's, else its route's campaign for unknown
+   * callers, `docs/call-log.md` §5), else the matched one: the audit row's `campaign_id`, which
+   * puts the row on that campaign's History.
+   */
   campaign_id: string | null;
 }
 

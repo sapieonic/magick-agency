@@ -1,18 +1,20 @@
 import { memo } from 'react';
-import type {
-  CustomerHistoryContact,
-  CustomerHistoryDncEntry,
-  CustomerHistorySummary as Summary,
+import {
+  CUSTOMER_TIMELINE_CHANNEL_LABELS,
+  type CustomerHistoryContact,
+  type CustomerHistoryDncEntry,
+  type CustomerHistorySummary as Summary,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import { attemptOutcomeLabel, contactStateLabel, suppressedReasonLabel } from '@magick-agency/contracts/api/agency/agency-spine';
 import { DNC_SOURCE_LABELS } from '@magick-agency/contracts/api/agency/dnc';
 import { AgencyCampaignStatusBadge } from '../../../pages/agency/AgencyCampaignStatusBadge';
 import {
-  CHANNEL_LABELS,
   CONTACTS_TRUNCATED_NOTE,
   campaignChainLabel,
   dncScopeLabel,
   formatWhen,
+  inboundAnsweredLabel,
+  neverContactedLabel,
   overrideFollowUpLabel,
   overrideGrantLabel,
 } from '../../../utils/customerHistoryCopy';
@@ -94,6 +96,7 @@ export const CustomerHistorySummary = memo(function CustomerHistorySummary({
 }) {
   const { contacts, totals, open } = summary;
   const last = totals.last_contacted;
+  const inbound = totals.inbound;
   const nothingOpen = open.callbacks.length === 0 && open.overrides.length === 0 && open.live_calls.length === 0;
 
   return (
@@ -125,11 +128,20 @@ export const CustomerHistorySummary = memo(function CustomerHistorySummary({
             <dt>Connected</dt>
             <dd data-testid="customer-total-connected">{totals.connected}</dd>
           </div>
+          {/* Apart from the calls placed: no figure adds a call we made to one we received (CL7). */}
+          {inbound && inbound.calls > 0 && (
+            <div>
+              <dt>Calls received</dt>
+              <dd data-testid="customer-total-inbound">
+                {inbound.calls} <span className={styles.muted}>· {inboundAnsweredLabel(inbound.answered)}</span>
+              </dd>
+            </div>
+          )}
         </dl>
         <p className={styles.lastContacted} data-testid="customer-last-contacted">
           {last
-            ? `Last contacted ${formatWhen(last.at)} by ${actorName(last.agent, 'no agent')} · ${CHANNEL_LABELS[last.channel]} · ${attemptOutcomeLabel(last.outcome)}${last.disposition_code ? ` · ${last.disposition_code}` : ''}`
-            : 'Never contacted'}
+            ? `Last contacted ${formatWhen(last.at)} by ${actorName(last.agent, 'no agent')} · ${CUSTOMER_TIMELINE_CHANNEL_LABELS[last.channel]} · ${attemptOutcomeLabel(last.outcome)}${last.disposition_code ? ` · ${last.disposition_code}` : ''}`
+            : neverContactedLabel(inbound?.calls ?? 0)}
         </p>
       </section>
 
@@ -143,7 +155,7 @@ export const CustomerHistorySummary = memo(function CustomerHistorySummary({
           <ul className={styles.list}>
             {open.live_calls.map((call, i) => (
               <li key={`live-${i}`} data-testid="customer-live-call" className={styles.live}>
-                <strong>Live now:</strong> {CHANNEL_LABELS[call.channel]}
+                <strong>Live now:</strong> {CUSTOMER_TIMELINE_CHANNEL_LABELS[call.channel]}
                 {call.campaign ? ` in ${call.campaign.name}` : ''} · {actorName(call.agent, 'no agent yet')} · started{' '}
                 {formatWhen(call.started_at)}
               </li>

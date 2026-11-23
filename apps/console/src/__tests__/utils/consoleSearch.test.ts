@@ -52,7 +52,7 @@ describe('the pages', () => {
       'Campaigns',
       'New campaign',
       'Archived campaigns',
-      'Soft-phone calls',
+      'All calls',
       'Live calls',
       'Listening history',
       'Callbacks',
@@ -100,9 +100,11 @@ describe('the pages', () => {
     expect(titles(pageResults([], ALL_ON('viewer')))).toEqual(['Campaigns', 'Archived campaigns', 'Missed calls', 'Analytics', 'Exports', 'Do Not Call', 'Take calls', 'Customer history']);
   });
 
-  it('hides Soft-phone calls without its flag, Reports without its flag, and Inbound without the missed rule', () => {
+  it('keeps All calls whatever the soft phone’s flag, and hides Reports without its flag and Inbound without the missed rule', () => {
     const off = (flag: string) => ALL_ON('account_admin', { isFlagEnabled: (f) => f !== flag });
-    expect(titles(pageResults([], off('agency_softphone_enabled')))).not.toContain('Soft-phone calls');
+    // All calls holds the dialler's calls too (CL34): no call type's flag hides it. It floors at agency.supervise.
+    expect(titles(pageResults([], off('agency_softphone_enabled')))).toContain('All calls');
+    expect(titles(pageResults([], ALL_ON('viewer')))).not.toContain('All calls');
     expect(titles(pageResults([], off('agency_reports_enabled')))).not.toContain('Exports');
     const noMissed = titles(pageResults([], ALL_ON('account_admin', { missedAvailable: false })));
     expect(noMissed).not.toContain('Missed calls');
@@ -148,7 +150,10 @@ describe('the pages', () => {
   it('finds pages by their section and their words', () => {
     expect(titles(pageResults(searchTokens('inbound'), ALL_ON('account_admin')))).toEqual(['Missed calls', 'Inbound summary']);
     expect(titles(pageResults(searchTokens('pdf'), ALL_ON('account_admin')))).toEqual(['Exports']);
-    expect(titles(pageResults(searchTokens('soft-phone'), ALL_ON('account_admin')))).toContain('Soft-phone calls');
+    // "Soft-phone calls" until it became All calls: the old name still finds it.
+    expect(titles(pageResults(searchTokens('soft-phone'), ALL_ON('account_admin')))).toContain('All calls');
+    expect(titles(pageResults(searchTokens('soft-phone calls'), ALL_ON('account_admin')))).toContain('All calls');
+    expect(titles(pageResults(searchTokens('no campaign'), ALL_ON('account_admin')))).toEqual(['All calls']);
   });
 
   it('finds the agent’s work by its name, My work, and by its old name, My campaigns', () => {

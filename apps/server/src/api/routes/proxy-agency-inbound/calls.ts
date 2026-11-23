@@ -11,8 +11,9 @@
  * Each validates its body (unknown keys stripped, the actor among them), sends the actor this
  * layer derived (`shared.ts`), and writes the audit rows from the internal handler's envelope:
  * `agency_inbound_call.hung_up` (only when this request hung it up), `.dispositioned` (with
- * `replay`), `.dnc_marked`, each with `on_behalf` when the call was another agent's and the
- * matched campaign as `campaign_id`; and `dnc_entry.created` when a mark or a suppress outcome
+ * `replay`), `.dnc_marked`, `.campaign_changed` (an unknown caller's call filed under another
+ * campaign, docs/call-log.md §5), each with `on_behalf` when the call was another agent's and the
+ * campaign the call is filed under as `campaign_id`; and `dnc_entry.created` when a mark or a suppress outcome
  * listed the number anew. Notes and numbers never go in `details`.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -23,6 +24,7 @@ import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { callCore, type CoreCallResult } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import type {
+  InboundCallCampaignAudit,
   InboundCallDispositionAudit,
   InboundCallDncAudit,
   InboundCallHangupAudit,
@@ -44,7 +46,11 @@ const dispositionSchema = z.object({
   // customer's today and the amount's places (`promise_required`, `invalid_promise_*`).
   promise_date: z.string().min(1).max(32).optional(),
   promise_amount: z.string().max(32).optional(),
+  // File an unknown caller's call under this campaign with the outcome (docs/call-log.md §5).
+  // Shape only: whether the caller may log to it is the runtime's (`inbound_campaign_not_allowed`).
+  campaign_id: z.string().uuid().optional(),
 }).strip();
+const campaignSchema = z.object({ campaign_id: z.string().uuid() }).strip();
 /** The client never asserts the scope: the matched campaign's, else the call's account. */
 const dncSchema = z.object({ reason: z.string().max(1000).optional() }).strip();
 const emptyBody = z.object({}).strip();
@@ -175,6 +181,46 @@ export async function registerInboundCallRoutes(app: FastifyInstance): Promise<v
       logDncEntryCreated(request, actor, {
         entry: audit.dnc_entry, callId: audit.call_id, campaignId: audit.campaign_id,
         onBehalf: audit.on_behalf, dispositionCode: audit.disposition_code,
+      });
+    });
+  });
+
+  /**
+   * GET /proxy/agency/inbound/calls/:id/campaigns — `{ campaigns }`
+   * (`AgencyInboundCallCampaignOptionsResponse`): the campaigns the caller may file the call
+   * under, by the soft phone's rule. A call the caller may not act on is the finish routes' 404.
+   */
+  app.get<{ Params: { id: string } }>('/inbound/calls/:id/campaigns', { preHandler: finish }, async (request, reply) => {
+    const actor = inboundActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await callCore({
+      method: 'GET', path: `/agency/inbound/calls/${request.params.id}/campaigns`, query: actorQuery(actor),
+      tenantId: request.tenantId!, accountId: request.accountId,
+    });
+    return reply.code(result.status).send(result.body);
+  });
+
+  /**
+   * POST /proxy/agency/inbound/calls/:id/campaign — file an unknown caller's call under a
+   * campaign before its outcome is saved (`{ call }`, with that campaign's outcomes). Audited
+   * `agency_inbound_call.campaign_changed` when it changed.
+   */
+  app.post<{ Params: { id: string } }>('/inbound/calls/:id/campaign', { preHandler: finish }, async (request, reply) => {
+    const parsed = parseOr400(campaignSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
+    const actor = inboundActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await forward(request, actor, { method: 'POST', path: `/agency/inbound/calls/${request.params.id}/campaign`, body: parsed.data });
+    return sendAudited<InboundCallCampaignAudit>(reply, result, 'POST /inbound/calls/:id/campaign', (audit) => {
+      if (!audit.changed) return;
+      platformAuditLogger.log({
+        ...auditBase(request, audit.call_id, audit.campaign_id),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_inbound_call.campaign_changed',
+        details: {
+          ...(audit.from_campaign_id ? { from_campaign_id: audit.from_campaign_id } : {}),
+          ...onBehalf(audit.on_behalf),
+        },
       });
     });
   });

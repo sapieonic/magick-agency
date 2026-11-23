@@ -35,6 +35,8 @@ const CAMPAIGN_SCOPED_PREFIX = /^(agency_|dnc_)/;
  */
 const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_softphone_settings.updated',
+  // The account's call settings (docs/call-log.md §5).
+  'agency_call_settings.updated',
   'agency_customer_history.searched',
   'agency_customer_history.exported',
   // The account's listening history exported (docs/listening.md §12).

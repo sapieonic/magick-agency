@@ -504,7 +504,9 @@ export type AgencySoftphoneErrorCode =
   /** 409. The carrier account the caller ID's number is on cannot place calls: it is no longer active (disabled, invalid, revoked) or the carrier refused its credentials. Nothing was dialled, and retrying cannot help until support has fixed the account; another caller ID may. */
   | 'carrier_account_unavailable'
   /** 409. The number is on an inbound call to the account right now: the customer is waiting for an agent, talking to one, or their call's outcome is still owed (docs/inbound.md §5.4, MC4). No override; `inbound_call_id` names the call. */
-  | 'customer_on_inbound_call';
+  | 'customer_on_inbound_call'
+  /** 409. The account's setting "Every call must belong to a campaign" is on (`require_campaign`, docs/call-log.md §5) and the dial names no campaign. Checked before `fields_invalid`; a supervisor is not exempt (CL5). The inbound outcome route answers it too, for a call filed under no campaign (as the session routes answer inbound's `inbound_call_live`). */
+  | 'campaign_required';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -535,6 +537,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'contact_assigned_elsewhere',
   'carrier_account_unavailable',
   'customer_on_inbound_call',
+  'campaign_required',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<
@@ -678,7 +681,26 @@ export type AgencyInboundErrorCode =
    * 409 (Mode B, N4). `…/ring/answering` or `…/ring/decline` after the ring was accepted: the
    * station's hang-up is the way out from here.
    */
-  | 'already_accepted';
+  | 'already_accepted'
+  /**
+   * 422. The account's setting "Every call must belong to a campaign" needs a campaign for
+   * unknown callers on every inbound route (docs/call-log.md §5, CL3): a route created or changed
+   * without one while the setting is on, and the setting switched on while a live route has none.
+   * `routes` names the routes that lack one (`{ route_id, name }`); on a route's own save it is
+   * absent (the route being saved is the one).
+   */
+  | 'default_campaign_required'
+  /**
+   * 409. `POST /inbound/calls/:id/disposition` and `/campaign` with a `campaign_id` on a call
+   * whose caller is on a campaign's list: a matched caller's campaign is fixed (CL4).
+   */
+  | 'inbound_campaign_fixed'
+  /**
+   * 403. The `campaign_id` named for an unknown caller is not a campaign the caller may log to:
+   * the soft phone's rule (running or paused, in the account, and one they are staffed on unless
+   * they hold `agency.supervise`).
+   */
+  | 'inbound_campaign_not_allowed';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -706,6 +728,9 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'ring_not_offered',
   'ring_expired',
   'already_accepted',
+  'default_campaign_required',
+  'inbound_campaign_fixed',
+  'inbound_campaign_not_allowed',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

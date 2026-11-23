@@ -10,9 +10,6 @@ const mocks = vi.hoisted(() => ({
   getManualCall: vi.fn(),
   fetchManualCallRecordingBlobUrl: vi.fn(),
   listTenantMembers: vi.fn(),
-  getAgencyCampaign: vi.fn(),
-  getAgencyCampaignStats: vi.fn(),
-  campaignLineage: vi.fn(),
   isEnabled: vi.fn((_c: string) => true),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -29,33 +26,22 @@ vi.mock('../../api/softphone', () => ({
   fetchManualCallRecordingBlobUrl: mocks.fetchManualCallRecordingBlobUrl,
 }));
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
-// The campaign's workspace (header, health strip, bar) around Manual calls reads these.
-vi.mock('../../api/agencyCampaigns', () => ({
-  getAgencyCampaign: mocks.getAgencyCampaign,
-  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
-  campaignLineage: mocks.campaignLineage,
-}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
 }));
 vi.mock('../../api/calls', () => ({ retryAnalysis: vi.fn(), fetchRecordingBlobUrl: vi.fn() }));
 vi.mock('../../components/audio/AudioWaveform', () => ({ AudioWaveform: () => <div data-testid="waveform" /> }));
 
-import SoftphoneCallsPage from '../../pages/agency/softphone/SoftphoneCallsPage';
 import SoftphoneCallDetailPage, { savedByLine } from '../../pages/agency/softphone/SoftphoneCallDetailPage';
-import AgencyCampaignManualCallsPage from '../../pages/agency/AgencyCampaignManualCallsPage';
-import { todayLocal } from '../../utils/softphone/callStats';
 import { BOOTSTRAP, CAMPAIGN, manualCall } from '../helpers/softphone';
-import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { AgencyManualCallListRow } from '../../types/softphone';
 import { ANALYSIS_DELAY_MESSAGES, ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
 
 /**
- * The supervisor's soft-phone surfaces (`docs/softphone.md` §7): the account
- * list with its stats strip, filters and keyset paging; a campaign's Manual
- * calls; and one call's detail, where what the agent entered and what the AI
- * extracted are labelled apart and an override's reason is shown.
+ * A soft-phone call's detail (`docs/softphone.md` §7), where what the agent entered and what
+ * the AI extracted are labelled apart and an override's reason is shown. The account's list of
+ * soft-phone calls is All calls now (`AllCallsPage.test.tsx`, `docs/call-log.md` §7).
  */
 
 const TAGGED: AgencyManualCallListRow = manualCall({
@@ -105,228 +91,6 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
-
-async function renderList() {
-  render(
-    <MemoryRouter>
-      <SoftphoneCallsPage />
-    </MemoryRouter>,
-  );
-  await act(async () => {});
-}
-
-describe('Soft-phone calls (the account list)', () => {
-  it('links to the soft phone’s settings', async () => {
-    await renderList();
-    const link = screen.getByRole('link', { name: 'Soft phone settings' });
-    expect(link.getAttribute('href')).toBe('/settings/softphone');
-  });
-
-  it('does not offer the soft phone’s settings without the `agency` capability', async () => {
-    mocks.isEnabled.mockImplementation((c: string) => c !== 'agency');
-    await renderList();
-    expect(screen.queryByRole('link', { name: 'Soft phone settings' })).toBeNull();
-  });
-
-  it('opens on today, account-wide, newest first', async () => {
-    await renderList();
-    const query = mocks.listManualCalls.mock.calls[0]![0];
-    expect(query.limit).toBe(50);
-    expect(query.from).toBe(new Date(`${todayLocal()}T00:00:00`).toISOString());
-    expect(query.agent_user_id).toBeUndefined();
-  });
-
-  it('counts the calls listed in the stats strip and says what it counts', async () => {
-    await renderList();
-    const strip = screen.getByRole('group', { name: 'Summary of the calls listed' });
-    expect(strip.textContent).toMatch(/Calls3/);
-    expect(strip.textContent).toMatch(/Connected3/);
-    // (277 + 168 + 190) / 3 = 211.7 s, rounded.
-    expect(strip.textContent).toMatch(/Avg talk3:32/);
-    expect(strip.textContent).toMatch(/Not logged to a campaign2/);
-    expect(strip.textContent).toMatch(/Waiting for an outcome1/);
-    expect(screen.getByTestId('softphone-stats-note').textContent).toMatch(/Across the 3 calls listed below — load older calls to include them/);
-  });
-
-  it('reads each outcome against the catalog it was saved with, and marks an override', async () => {
-    await renderList();
-    const tagged = screen.getByTestId('softphone-row-mc-tag');
-    expect(tagged.textContent).toMatch(/Priya Nair/);
-    expect(tagged.textContent).toMatch(/Home Loan Renewals/);
-    expect(tagged.textContent).toMatch(/Callback requested/);
-    expect(tagged.textContent).toMatch(/DNC override/);
-    expect(within(tagged).getByRole('link').getAttribute('href')).toBe('/agency/softphone/calls/mc-tag');
-    const free = screen.getByTestId('softphone-row-mc-free');
-    expect(free.textContent).toMatch(/Not logged to a campaign/);
-    expect(free.textContent).toMatch(/Query resolved/);
-    expect(screen.getByTestId('softphone-row-mc-wait').textContent).toMatch(/No outcome yet/);
-  });
-
-  it('applies the filters as the §6 query: agent, logged to (incl. not logged), what happened, number', async () => {
-    await renderList();
-    fireEvent.change(screen.getByTestId('filter-agent'), { target: { value: 'u-2' } });
-    fireEvent.change(screen.getByTestId('filter-campaign'), { target: { value: 'untagged' } });
-    fireEvent.change(screen.getByTestId('filter-outcome'), { target: { value: 'busy' } });
-    fireEvent.change(screen.getByTestId('filter-phone'), { target: { value: '98204 617' } });
-    expect([...(screen.getByTestId('filter-campaign') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
-      'Any',
-      'Not logged to a campaign',
-      'Home Loan Renewals',
-    ]);
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('filter-apply'));
-    });
-    expect(mocks.listManualCalls.mock.calls[1]![0]).toMatchObject({
-      agent_user_id: 'u-2',
-      campaign_id: 'untagged',
-      outcome: 'busy',
-      phone: '98204617',
-      limit: 50,
-    });
-    expect(screen.getByText('5 active')).toBeTruthy();
-  });
-
-  it('lists what the Waiting for an outcome tile counts: the Status filter sends the server’s status', async () => {
-    await renderList();
-    expect([...(screen.getByTestId('filter-status') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
-      'Any',
-      'On a call now',
-      'Waiting for an outcome',
-      'Done',
-    ]);
-    fireEvent.change(screen.getByTestId('filter-status'), { target: { value: 'awaiting_outcome' } });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('filter-apply'));
-    });
-    expect(mocks.listManualCalls.mock.calls[1]![0]).toMatchObject({ status: 'awaiting_outcome' });
-    expect(screen.getByText('2 active')).toBeTruthy();
-  });
-
-  it('shows each call’s summary stage in the detail’s words, a dash when there is none', async () => {
-    await renderList();
-    const header = screen.getAllByRole('columnheader').map((h) => h.textContent);
-    expect(header).toContain('Summary');
-    const status = (id: string) => within(screen.getByTestId(`softphone-row-${id}`)).getByTestId('summary-status');
-    expect(status('mc-tag').textContent).toBe(ANALYSIS_STATUS_LABELS.completed);
-    expect(status('mc-free').textContent).toBe(ANALYSIS_STATUS_LABELS.pending);
-    expect(status('mc-free').getAttribute('title')).toBe(ANALYSIS_STATUS_MESSAGES.pending);
-    expect(status('mc-wait').textContent).toBe('—');
-  });
-
-  it('says a summary held up by the AI service is delayed, beside one that is simply pending', async () => {
-    mocks.listManualCalls.mockResolvedValue({
-      rows: [
-        { ...TAGGED_ROW, analysis_status: 'pending', analysis_delay: 'vendor_unavailable' },
-        { ...UNTAGGED, analysis_status: 'pending', analysis_delay: null },
-      ],
-      next_cursor: null,
-      limit: 50,
-    });
-    await renderList();
-    const status = (id: string) => within(screen.getByTestId(`softphone-row-${id}`)).getByTestId('summary-status');
-    expect(status('mc-tag').textContent).toBe('Delayed');
-    expect(status('mc-tag').getAttribute('title')).toBe(ANALYSIS_DELAY_MESSAGES.vendor_unavailable);
-    expect(status('mc-free').textContent).toBe(ANALYSIS_STATUS_LABELS.pending);
-    expect(status('mc-free').getAttribute('title')).toBe(ANALYSIS_STATUS_MESSAGES.pending);
-  });
-
-  it('leaves the Summary column out when the account has analysis off', async () => {
-    mocks.isEnabled.mockImplementation(() => false);
-    await renderList();
-    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).not.toContain('Summary');
-    expect(screen.queryByTestId('summary-status')).toBeNull();
-  });
-
-  it('gives the number filter a hint short enough to read whole in its column', async () => {
-    // "Whole number, or the last few digits" was cut to "Whole number, or the last f"
-    // in the 180px-minimum filter column. The hint is the call logs' shared one.
-    await renderList();
-    const input = screen.getByLabelText('Phone number') as HTMLInputElement;
-    expect(input.placeholder).toBe('Number or last digits');
-  });
-
-  it('refuses an inverted date range before it is sent', async () => {
-    await renderList();
-    fireEvent.change(screen.getByTestId('filter-from'), { target: { value: '2026-10-31' } });
-    fireEvent.change(screen.getByTestId('filter-to'), { target: { value: '2026-10-01' } });
-    expect((screen.getByTestId('filter-apply') as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('pages with the keyset cursor and appends', async () => {
-    await renderList();
-    mocks.listManualCalls.mockResolvedValueOnce({ rows: [manualCall({ id: 'mc-older', agent_name: 'X', state: 'ended', settled_at: 'y' })], next_cursor: null, limit: 50 });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('softphone-load-more'));
-    });
-    expect(mocks.listManualCalls.mock.calls[1]![0].cursor).toBe('cur-2');
-    expect(screen.getByTestId('softphone-row-mc-older')).toBeTruthy();
-    expect(screen.getByTestId('softphone-row-mc-tag')).toBeTruthy();
-    expect(screen.queryByTestId('softphone-load-more')).toBeNull();
-  });
-
-  it('says when nothing matches the filters, as a fact about the query', async () => {
-    mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 50 });
-    await renderList();
-    fireEvent.change(screen.getByTestId('filter-outcome'), { target: { value: 'busy' } });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('filter-apply'));
-    });
-    expect(screen.getByText('Nothing matches those filters')).toBeTruthy();
-  });
-
-  it('says a quiet day is a quiet day, not a filter that matched nothing', async () => {
-    mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 50 });
-    await renderList();
-    expect(screen.getByText('No soft-phone calls today')).toBeTruthy();
-    expect(screen.getByText('Widen the date range to see earlier calls.')).toBeTruthy();
-  });
-
-  it('Clear goes back to the view it opened on (today), not to all time', async () => {
-    await renderList();
-    // The opening view is nothing to clear.
-    expect(screen.queryByTestId('filter-clear')).toBeNull();
-    fireEvent.change(screen.getByTestId('filter-from'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByTestId('filter-outcome'), { target: { value: 'busy' } });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('filter-apply'));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('filter-clear'));
-    });
-    const query = mocks.listManualCalls.mock.calls.at(-1)![0];
-    expect(query.from).toBe(new Date(`${todayLocal()}T00:00:00`).toISOString());
-    expect(query.to).toBeDefined();
-    expect(query.outcome).toBeUndefined();
-    expect(screen.queryByTestId('filter-clear')).toBeNull();
-  });
-});
-
-describe('a campaign’s Manual calls', () => {
-  it('is the same list with the tag fixed', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Home Loan Renewals', status: 'running' });
-    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
-    mocks.campaignLineage.mockResolvedValue(noLineage());
-    render(
-      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/manual-calls']}>
-        <Routes>
-          <Route path="/agency/campaigns/:id/manual-calls" element={<AgencyCampaignManualCallsPage />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-    await act(async () => {});
-    expect(mocks.listManualCalls.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1' });
-    expect(screen.queryByTestId('filter-campaign')).toBeNull();
-    // A view of Call log since IN14: the bar marks Call log, the views mark this one.
-    expect(screen.getByTestId('campaign-tab-attempts').getAttribute('aria-current')).toBe('page');
-    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
-    expect(screen.getByTestId('call-log-view-manual').getAttribute('aria-current')).toBe('page');
-    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
-    // In the campaign's workspace: the header names the campaign, the section is Call log.
-    expect(screen.getByTestId('campaign-workspace')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Home Loan Renewals');
-    expect(screen.getByRole('heading', { level: 2, name: 'Call log' })).toBeTruthy();
-  });
-});
 
 const MEDIA: WebRtcCallRecord = {
   id: 'call-9',
@@ -399,9 +163,9 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/ReasonAsked twice/);
     expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
     expect(document.body.textContent).not.toContain('dnc-1');
-    // The trail goes back through the campaign the call was logged to.
+    // The trail goes back through the campaign the call was logged to: its Call log, Soft phone chip on.
     expect(suppliedCrumbs()).toMatch(
-      /^Soft-phone calls→\/agency\/softphone \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/manual-calls \/ .+/,
+      /^All calls→\/agency\/calls \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/attempts\?type=soft_phone \/ .+/,
     );
   });
 
@@ -454,5 +218,8 @@ describe('a soft-phone call’s detail', () => {
     mocks.getManualCall.mockRejectedValue(Object.assign(new Error('Not found'), { statusCode: 404, details: { code: 'call_not_found' } }));
     await renderDetail();
     expect(screen.getByText('We can’t show this call')).toBeTruthy();
+    // Back is All calls with the Soft phone chip on: the Soft-phone calls page is gone (CL35).
+    const back = screen.getByRole('link', { name: 'Back to All calls' });
+    expect(back.getAttribute('href')).toBe('/agency/calls?type=soft_phone');
   });
 });

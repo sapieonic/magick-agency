@@ -106,6 +106,9 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-assignment',
   'GET /proxy/agency/my-assignments',
   'GET /proxy/agency/my-attempts',
+  // The agent's own My calls (docs/call-log.md §7): `agency.station.connect`. The subject is always
+  // the caller, and a number its campaign hides from agents is masked by the route.
+  'GET /proxy/agency/my-calls',
   'GET /proxy/agency/my-campaigns',
   // Contact assignment: the caller's own contacts (`agency.contacts.own`, floored at `agent`).
   // The flag and the staffing check refuse past the guards; the subject is always the caller.
@@ -169,6 +172,8 @@ const EXPECTED_AGENT_REACHABLE = [
   // their rows (another's answers `inbound_missed_call_not_found`); the routes themselves are
   // `agency.inbound.write` (account admin) and refuse an agent.
   'GET /proxy/agency/inbound/missed',
+  // One row of that list by its id, under the list's rules (My calls' Call back reads the number from it).
+  'GET /proxy/agency/inbound/missed/:id',
   'POST /proxy/agency/inbound/missed/:id/handled',
   'POST /proxy/agency/inbound/missed/:id/reopen',
   'GET /proxy/agency/inbound/missed/:id/voicemail',
@@ -186,6 +191,11 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/inbound/calls/:id/hangup',
   'POST /proxy/agency/inbound/calls/:id/disposition',
   'POST /proxy/agency/inbound/calls/:id/dnc',
+  // The campaign an unknown caller's call is filed under (docs/call-log.md §5): the finish routes'
+  // floor and reach. The campaigns offered are the caller's own staffed ones (the soft phone's
+  // rule), and the handler refuses any other (`inbound_campaign_not_allowed`).
+  'GET /proxy/agency/inbound/calls/:id/campaigns',
+  'POST /proxy/agency/inbound/calls/:id/campaign',
   // Reports (docs/reports.md, RP5): `agency.station.connect`, so an agent can export their OWN
   // review and see their own runs. The reach over a subject is the route's (another agent, a
   // campaign or the account is a 403 past the guards; others' runs are 404s). Subscriptions are

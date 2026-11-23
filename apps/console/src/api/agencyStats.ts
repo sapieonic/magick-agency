@@ -359,32 +359,16 @@ function attemptQuery(
 }
 
 /**
- * The agent's own dial history, **across campaigns**.
+ * One agent's dial history, **across campaigns**, for their supervisor. Floored at
+ * `agency.supervise`.
  *
- * Distinct from `getCampaignAttempts` in one way that matters: that route is
- * one campaign's spine and is floored at `agency.supervise`, so an agent cannot
- * read even their own rows through it. This one is cross-campaign and scoped to
- * the caller, which is the only shape that answers "what did I do today" for
- * somebody working two campaigns in one shift.
+ * Distinct from `getCampaignAttempts`: that route is one campaign's spine; this one spans the
+ * campaigns a person worked, which is the only shape that answers "what did they do today" for
+ * somebody working two campaigns in one shift. Rows are the same {@link AgencyAttempt} shape.
  *
- * Rows are the same {@link AgencyAttempt} shape, so the spine's copy helpers and
- * outcome vocabulary apply unchanged.
+ * The agent's own form (`GET /my-attempts`) is not read from the console: My calls reads
+ * `GET /my-calls` (`api/myCalls.ts`), which masks the number as each campaign's setting says.
  */
-export async function getMyAttempts(
-  filters: AgencyAttemptFilters & { campaign_id?: string } = {},
-  options: { cursor?: string; limit?: number } = {},
-  tenantId?: string,
-  accountId?: string,
-): Promise<AgencyKeysetPage<AgencyAttempt>> {
-  return apiFetch<AgencyKeysetPage<AgencyAttempt>>(
-    `${ENDPOINTS.proxy.agency.myAttempts}${attemptQuery(filters, options)}`,
-    {},
-    tenantId,
-    accountId,
-  );
-}
-
-/** The supervisor twin of {@link getMyAttempts}. Floored at `agency.supervise`. */
 export async function getAgentAttempts(
   userId: string,
   filters: AgencyAttemptFilters & { campaign_id?: string } = {},

@@ -14,6 +14,8 @@ import { randomUUID } from 'node:crypto';
  *    soft-phone calls here reach people at a different rate, so blending them in would move it;
  *  - the campaign call export (`attempts.csv`) carries them as `soft_phone` rows beside the
  *    dialler's, newest first on one keyset, with the attempt list's filters (SR6);
+ *  - the Call log's JSON route (`call-log`, CL11) lists the same rows with a `type`, pages them
+ *    on that keyset, and counts each type for its chips;
  *  - untagged calls, calls tagged to another campaign and a row in another tenant carrying this
  *    campaign's id (the tag has no foreign key) are in none of it (SR4).
  */
@@ -30,6 +32,7 @@ import {
   type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
+import { walkKeyset } from '../../helpers/call-log-seed.js';
 import { insightsCache } from '../../../src/agency/insights/cache.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_PAGE_SIZE } from '../../../src/agency/agency-spine.js';
@@ -185,7 +188,7 @@ const rangeQuery = `from=${encodeURIComponent(RANGE.from.toISOString())}&to=${en
 describe('the soft phone\'s campaign figures: one definition, beside the dialler\'s (SR1–SR4)', () => {
   it('/stats: lifetime placed, connected and reached; the dialler\'s connect rate is the dialler\'s alone', async () => {
     const stats = (await get(`/proxy/agency/campaigns/${campaignId}/stats`)).json();
-    expect(stats.softphone).toEqual({ placed: 9, connected: 6, human_connects: 3 });
+    expect(stats.softphone).toEqual({ placed: 9, connected: 6, human_connects: 3, talk_seconds: 0 });
     // The dialler's own counts and rate, as the seed spells them, soft-phone calls nowhere in them.
     expect(stats.first_dials_placed).toBe(10);
     expect(stats.human_connects).toBe(2);
@@ -199,7 +202,7 @@ describe('the soft phone\'s campaign figures: one definition, beside the dialler
     const activity = (await get(`/proxy/agency/campaigns/${campaignId}/insights/activity?${rangeQuery}`)).json();
     expect(activity.range.from).toBe(RANGE.from.toISOString());
     expect(activity.range.to).toBe(RANGE.to.toISOString());
-    expect(activity.calls.softphone).toEqual({ placed: 7, connected: 5, human_connects: 2 });
+    expect(activity.calls.softphone).toEqual({ placed: 7, connected: 5, human_connects: 2, talk_seconds: 0 });
     // The older reader's count is the same number.
     expect(activity.calls.softphone_calls).toBe(7);
     // The dialler's: 10 placed first dials, 2 reached, no redials.
@@ -213,11 +216,11 @@ describe('the soft phone\'s campaign figures: one definition, beside the dialler
   it('a campaign with no soft-phone calls serves zeros, and one with only soft-phone calls serves no dials', async () => {
     const sibling = (await get(`/proxy/agency/campaigns/${siblingCampaignId}/stats`)).json();
     // The sibling has one tagged call and no dials at all.
-    expect(sibling.softphone).toEqual({ placed: 1, connected: 1, human_connects: 1 });
+    expect(sibling.softphone).toEqual({ placed: 1, connected: 1, human_connects: 1, talk_seconds: 0 });
     expect(sibling.first_dials_placed).toBe(0);
     expect(sibling.connect_rate_pct).toBeNull();
     const theirs = (await call(loaded.app, 'GET', `/proxy/agency/campaigns/${other.campaigns[0]}/stats`, other.supervisors[0]!, other)).json();
-    expect(theirs.softphone).toEqual({ placed: 0, connected: 0, human_connects: 0 });
+    expect(theirs.softphone).toEqual({ placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 });
   });
 });
 
@@ -305,6 +308,211 @@ describe('the campaign call export carries the tagged soft-phone calls (SR6)', (
       expect(ids(await exportRows(`&${flag}=1`)).size, `${flag}=1`).toBe(0);
       expect(ids(await exportRows(`&${flag}=0`)).size, `${flag}=0`).toBe(10);
     }
+  });
+});
+
+/** A Call log page as the console reads it. */
+interface LogRow { type: string; id: string; created_at: string; [key: string]: unknown }
+interface LogPage { rows: LogRow[]; next_cursor: string | null; limit: number; counts?: { all: number; dialler: number; soft_phone: number; inbound: number; to_follow_up: number } }
+const logPage = async (params = ''): Promise<LogPage> =>
+  (await get(`/proxy/agency/campaigns/${campaignId}/call-log${params ? `?${params}` : ''}`)).json() as LogPage;
+/** Every page of the Call log, walked by its cursor. */
+const walkLog = (params: string, limit: number): Promise<LogRow[]> =>
+  walkKeyset((paging) => logPage(`${params}${params ? '&' : ''}${paging}`), limit);
+const TAGGED = SOFT.filter((s) => (s.campaign ?? 'self') === 'self' && (s.tenant ?? 'self') === 'self');
+
+describe('the Call log\'s JSON route: one list, every type (CL11)', () => {
+  it('lists the dialler\'s attempts and the tagged soft-phone calls once each, newest first, across pages', async () => {
+    // A page size that splits both types and lands boundaries inside the dialler's run.
+    const rows = await walkLog('', 4);
+    expect(rows).toHaveLength(DIALLER.length + TAGGED.length);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+    expect(rows.filter((r) => r.type === 'dialler')).toHaveLength(DIALLER.length);
+    expect(new Set(rows.filter((r) => r.type === 'soft_phone').map((r) => r.id))).toEqual(new Set(TAGGED.map((s) => softId.get(s.label))));
+    for (const label of ['untagged', 'sibling', 'other-tenant']) {
+      expect(rows.some((r) => r.id === softId.get(label)), label).toBe(false);
+    }
+    const created = rows.map((r) => r.created_at);
+    expect(created).toEqual([...created].sort().reverse());
+    // The same rows, in the same order, as the export's file.
+    expect(rows.map((r) => r.id)).toEqual((await exportRows()).map((r) => r.attempt_id));
+  });
+
+  it('a row of each type carries its own fields, and both name their agent', async () => {
+    const rows = await walkLog('', 50);
+    const dialler = rows.find((r) => r.type === 'dialler' && r.disposition_code === 'interested')!;
+    expect(dialler).toMatchObject({ attempt_number: 1, redial_number: 0, agent_user_id: floor.agents[0]!.id, campaign_id: campaignId });
+    expect(dialler.agent_name).toEqual(expect.any(String));
+    expect(dialler).not.toHaveProperty('source');
+    expect(dialler).not.toHaveProperty('dnc_overridden');
+
+    const reached = rows.find((r) => r.id === softId.get('reached-1'))!;
+    expect(reached).toMatchObject({
+      type: 'soft_phone', campaign_id: campaignId, contact_id: linkedContactId, agent_user_id: floor.agents[1]!.id,
+      state: 'ended', outcome: 'connected', disposition_code: 'interested',
+      dnc_overridden: false, hours_overridden: false, requires_disposition: false,
+    });
+    expect(reached.agent_name).toEqual(expect.any(String));
+    expect(reached.phone_e164).toMatch(/^\+9188/);
+    for (const key of ['source', 'attempt_number', 'wrapup_seconds', 'auto_disposition_code', 'reserved_agent_id']) {
+      expect(reached, key).not.toHaveProperty(key);
+    }
+    // A number on no list, and a row whose dial was never sent: both listed.
+    expect(rows.find((r) => r.id === softId.get('no-answer'))).toMatchObject({ contact_id: null, outcome: 'no_answer' });
+    expect(rows.find((r) => r.id === softId.get('never-placed'))).toMatchObject({ dialed_at: null, state: 'ended' });
+  });
+
+  it('says which soft-phone calls overrode a refusal and which still owe an outcome', async () => {
+    const overridden = softId.get('reached-2')!;
+    const awaiting = softId.get('awaiting')!;
+    const ringing = softId.get('ringing')!;
+    try {
+      await q(`UPDATE agency_manual_calls SET dnc_override_note = 'asked us to ring', dnc_override_entry_id = gen_random_uuid(),
+                      hours_override_note = 'agreed a time' WHERE id = $1`, [overridden]);
+      // One unsettled call per session: the live one ends and settles, so the bridged one can owe its outcome.
+      await q(`UPDATE agency_manual_calls SET state = 'ended', ended_at = created_at, settled_at = created_at WHERE id = $1`, [ringing]);
+      await q(`UPDATE agency_manual_calls SET settled_at = NULL WHERE id = $1`, [awaiting]);
+      const rows = await walkLog('type=soft_phone', 50);
+      expect(rows.find((r) => r.id === overridden)).toMatchObject({ dnc_overridden: true, hours_overridden: true });
+      expect(rows.find((r) => r.id === awaiting)).toMatchObject({ requires_disposition: true, settled_at: null });
+      expect(rows.filter((r) => r.id !== awaiting).every((r) => r.requires_disposition === false)).toBe(true);
+      expect(rows.filter((r) => r.id !== overridden).every((r) => !r.dnc_overridden && !r.hours_overridden)).toBe(true);
+    } finally {
+      await q(`UPDATE agency_manual_calls SET settled_at = ended_at WHERE id = $1`, [awaiting]);
+      await q(`UPDATE agency_manual_calls SET state = 'ringing', ended_at = NULL, settled_at = NULL WHERE id = $1`, [ringing]);
+      await q(`UPDATE agency_manual_calls SET dnc_override_note = NULL, dnc_override_entry_id = NULL, hours_override_note = NULL WHERE id = $1`, [overridden]);
+    }
+  });
+
+  it('type keeps one type; all and no type are the whole list; an unknown type is refused', async () => {
+    expect((await walkLog('type=dialler', 50)).map((r) => r.type)).toEqual(DIALLER.map(() => 'dialler'));
+    expect((await walkLog('type=soft_phone', 50)).map((r) => r.type)).toEqual(TAGGED.map(() => 'soft_phone'));
+    expect(await walkLog('type=all', 50)).toHaveLength(DIALLER.length + TAGGED.length);
+    // `inbound` and `to_follow_up` are types too (docs/call-log.md §4): this campaign holds no inbound call.
+    expect(await walkLog('type=inbound', 50)).toEqual([]);
+    expect(await walkLog('type=to_follow_up', 50)).toEqual([]);
+    for (const bad of ['type=softphone', 'type=missed', 'source=dialler', 'include_counts=yes']) {
+      const refused = await call(loaded.app, 'GET', `/proxy/agency/campaigns/${campaignId}/call-log?${bad}`, floor.supervisors[0]!, floor);
+      expect(refused.statusCode, bad).toBe(400);
+    }
+  });
+
+  it('counts each type for the chips: by the filters, never by the chip or the page', async () => {
+    // Soft phone counts the calls whose dial was sent (9 of the 10 tagged rows); the dialler every attempt.
+    const placed = TAGGED.filter((s) => s.placed).length;
+    const whole = { all: DIALLER.length + placed, dialler: DIALLER.length, soft_phone: placed, inbound: 0, to_follow_up: 0 };
+    expect(placed).toBe(9);
+    expect((await logPage('include_counts=1')).counts).toEqual(whole);
+    // The chip that is on, the page size and the cursor change the rows, not the counts.
+    const first = await logPage('include_counts=1&type=soft_phone&limit=2');
+    expect(first.rows).toHaveLength(2);
+    expect(first.counts).toEqual(whole);
+    expect((await logPage(`include_counts=1&type=dialler&limit=2&cursor=${encodeURIComponent(first.next_cursor!)}`)).counts).toEqual(whole);
+    // Not asked for, not sent.
+    expect(await logPage('type=dialler')).not.toHaveProperty('counts');
+
+    // The filters do: what happened, the dates, the agent, the number.
+    expect((await logPage('include_counts=1&outcome=connected')).counts).toEqual({ all: 11, dialler: 5, soft_phone: 6, inbound: 0, to_follow_up: 0 });
+    expect((await logPage(`include_counts=1&agent_user_id=${floor.agents[1]!.id}`)).counts).toEqual({ all: placed, dialler: 0, soft_phone: placed, inbound: 0, to_follow_up: 0 });
+    expect((await logPage('include_counts=1&phone=00000005')).counts).toEqual({ all: 2, dialler: 1, soft_phone: 1, inbound: 0, to_follow_up: 0 });
+    const upTo = encodeURIComponent(at(32, 30).toISOString());
+    // Created up to 32:30: every dialler attempt (30:10 to 30:20), and before-range, reached-1, reached-2.
+    expect((await logPage(`include_counts=1&to=${upTo}`)).counts).toEqual({ all: DIALLER.length + 3, dialler: DIALLER.length, soft_phone: 3, inbound: 0, to_follow_up: 0 });
+    // A row that never dialled is listed and counted nowhere (SR2); the dialler's queued attempt is an attempt.
+    const never = await logPage('include_counts=1&placed=0');
+    expect(never.counts).toEqual({ all: 1, dialler: 1, soft_phone: 0, inbound: 0, to_follow_up: 0 });
+    expect(never.rows.map((r) => r.type).sort()).toEqual(['dialler', 'soft_phone']);
+    // Each count is the number of rows its chip lists, for rows that dialled.
+    expect((await walkLog('placed=1&type=soft_phone', 50))).toHaveLength(placed);
+  });
+
+  it('a page boundary between an attempt and a soft-phone call created at the same instant drops and repeats neither', async () => {
+    // One row of each table on ONE created_at, alone in their second: the keyset has only the id
+    // to tell them apart, and the two ids come from different tables.
+    const instant = at(50);
+    const { rows: [contact] } = await q(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state)
+       VALUES ($1, $2, $3, '+919400000001', '{}'::jsonb, 'completed') RETURNING id`, [campaignId, floor.tenant, floor.account]);
+    const { rows: [attempt] } = await q(
+      `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, outcome, dialed_at, ended_at, created_at)
+       VALUES ($1, $2, $3, $4, 1, '+919000000001', 'ended', 'no_answer', $5, $5, $5) RETURNING id`,
+      [campaignId, contact.id, floor.tenant, floor.account, instant]);
+    const { rows: [manual] } = await q(
+      `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, campaign_id, destination_e164, caller_id,
+                                        state, outcome, dialed_at, ended_at, settled_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, '+919400000002', '+919000000002', 'ended', 'no_answer', $6, $6, $6, $6) RETURNING id`,
+      [floor.tenant, floor.account, softSession, floor.agents[1]!.id, campaignId, instant]);
+    try {
+      const window = `from=${encodeURIComponent(instant.toISOString())}&to=${encodeURIComponent(instant.toISOString())}`;
+      const ids = [attempt.id as string, manual.id as string];
+      // Newest first, the id breaking the tie: uuid order, as Postgres compares it.
+      const { rows: ordered } = await q(`SELECT u::text AS id FROM unnest($1::uuid[]) u ORDER BY u DESC`, [ids]);
+      const expected = ordered.map((r) => r.id as string);
+
+      const first = await logPage(`${window}&limit=1`);
+      expect(first.rows.map((r) => r.id)).toEqual([expected[0]]);
+      expect(first.next_cursor).toEqual(expect.any(String));
+      const second = await logPage(`${window}&limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`);
+      expect(second.rows.map((r) => r.id)).toEqual([expected[1]]);
+      expect(second.next_cursor).toBeNull();
+      // One of each type, whichever came first.
+      expect([first.rows[0]!.type, second.rows[0]!.type].sort()).toEqual(['dialler', 'soft_phone']);
+      expect(first.rows[0]!.created_at).toBe(second.rows[0]!.created_at);
+    } finally {
+      await q(`DELETE FROM agency_manual_calls WHERE id = $1`, [manual.id]);
+      await q(`DELETE FROM agency_call_attempts WHERE id = $1`, [attempt.id]);
+      await q(`DELETE FROM agency_contacts WHERE id = $1`, [contact.id]);
+    }
+  });
+
+  it('status keeps the soft-phone calls in that status and no dialler call: rows, counts and the export alike', async () => {
+    const ids = (rows: LogRow[]) => new Set(rows.map((r) => r.id));
+    const labels = (...l: string[]) => new Set(l.map((x) => softId.get(x)));
+    // As seeded: one call still ringing; every ended call is settled.
+    const live = await walkLog('status=live', 50);
+    expect(ids(live)).toEqual(labels('ringing'));
+    expect(live.every((r) => r.type === 'soft_phone')).toBe(true);
+    const settled = TAGGED.filter((s) => s.label !== 'ringing');
+    expect(ids(await walkLog('status=settled', 50))).toEqual(new Set(settled.map((s) => softId.get(s.label))));
+    expect(await walkLog('status=awaiting_outcome', 50)).toEqual([]);
+
+    // The counts follow it like any filter: no dialler call has a status, and a row that never
+    // dialled is still counted nowhere.
+    expect((await logPage('include_counts=1&status=live')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1, inbound: 0, to_follow_up: 0 });
+    const placedSettled = settled.filter((s) => s.placed).length;
+    expect((await logPage('include_counts=1&status=settled&type=dialler')).counts).toEqual({ all: placedSettled, dialler: 0, soft_phone: placedSettled, inbound: 0, to_follow_up: 0 });
+    // The Dialler chip with a status on lists nothing.
+    expect((await logPage('status=settled&type=dialler')).rows).toEqual([]);
+    // It ANDs with the other filters.
+    expect(ids(await walkLog('status=settled&outcome=no_answer', 50))).toEqual(labels('no-answer'));
+
+    // A call that ended bridged and is not settled waits for its outcome.
+    const awaiting = softId.get('awaiting')!;
+    const ringing = softId.get('ringing')!;
+    try {
+      await q(`UPDATE agency_manual_calls SET state = 'ended', ended_at = created_at, settled_at = created_at WHERE id = $1`, [ringing]);
+      await q(`UPDATE agency_manual_calls SET settled_at = NULL WHERE id = $1`, [awaiting]);
+      expect(ids(await walkLog('status=awaiting_outcome', 50))).toEqual(labels('awaiting'));
+      expect((await logPage('include_counts=1&status=awaiting_outcome')).counts).toEqual({ all: 1, dialler: 0, soft_phone: 1, inbound: 0, to_follow_up: 0 });
+      // The export is the same list.
+      const file = await exportRows('&status=awaiting_outcome');
+      expect(file.map((r) => r.attempt_id)).toEqual([awaiting]);
+      expect(file[0]!.source).toBe('soft_phone');
+    } finally {
+      await q(`UPDATE agency_manual_calls SET settled_at = ended_at WHERE id = $1`, [awaiting]);
+      await q(`UPDATE agency_manual_calls SET state = 'ringing', ended_at = NULL, settled_at = NULL WHERE id = $1`, [ringing]);
+    }
+    // No status, the file and the list as they were; an unknown one is refused on both.
+    expect(await exportRows()).toHaveLength(DIALLER.length + TAGGED.length);
+    for (const path of ['call-log?status=done', 'attempts.csv?status=done']) {
+      expect((await call(loaded.app, 'GET', `/proxy/agency/campaigns/${campaignId}/${path}`, floor.supervisors[0]!, floor)).statusCode, path).toBe(400);
+    }
+  });
+
+  it('is the supervisor\'s: an agent is refused, and another tenant finds no such campaign', async () => {
+    const path = `/proxy/agency/campaigns/${campaignId}/call-log`;
+    expect((await call(loaded.app, 'GET', path, floor.agents[0]!, floor)).statusCode).toBe(403);
+    expect((await call(loaded.app, 'GET', path, other.supervisors[0]!, other)).statusCode).toBe(404);
   });
 });
 

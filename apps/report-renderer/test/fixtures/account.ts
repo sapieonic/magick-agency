@@ -220,7 +220,7 @@ export function accountFixture(
     subject: { id: ACCOUNT.id, name: ACCOUNT.name },
     // The server's account definitions (`datasets/definitions.ts`): the campaign's, less the per-campaign ones, then its own.
     definitions: [
-      ...campaignDefinitions().filter((x) => !['best_hours', 'agents_online_peak', 'stalls', 'callbacks_on_time', 'callbacks_late', 'callbacks_missed', 'callbacks_pending', 'softphone_calls'].includes(x.key)),
+      ...campaignDefinitions().filter((x) => !['best_hours', 'agents_online_peak', 'stalls', 'callbacks_on_time', 'callbacks_late', 'callbacks_missed', 'callbacks_pending', 'softphone_calls', 'outbound_connect_rate', 'inbound_calls', 'calls_by_type'].includes(x.key)),
       { key: 'totals', label: 'Account totals', text: 'Each figure summed over the covered campaigns; every rate of the totals is worked out again from the summed counts, never averaged across campaigns.' },
       { key: 'agent_rates', label: 'Agent rates', text: 'Each agent\'s connect rate (people reached ÷ first dials), success rate (successes ÷ connected calls) and handle time ((talk + wrap-up) ÷ connected calls) over all the account\'s campaigns. Shown in words below 20 first dials.' },
       { key: 'occupancy', label: 'Occupancy (handling)', text: '(Talk time + wrap-up time) ÷ logged-in time, breaks included, from the recorded state changes.' },

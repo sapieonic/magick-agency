@@ -33,15 +33,16 @@
  */
 import { getPool } from '@magick-agency/db';
 import type { AgencyInboundClosedCause } from '@magick-agency/contracts/agency';
+import { inboundClosedSql, inboundOpenHoursSql } from './sql-fragments.js';
 
 /** Answered with the closed message, whatever the cause (the call's outcome, or its voicemail's reason). */
-const CLOSED_SQL = `(c.outcome = 'closed' OR (c.outcome = 'voicemail' AND c.follow_up_reason = 'closed'))`;
+const CLOSED_SQL = inboundClosedSql('c');
 /** Why a closed call was closed (0030); one with no cause recorded is out of hours with a route, no route without one. */
 const CLOSED_CAUSE_SQL = `COALESCE(c.closed_cause, CASE WHEN c.route_id IS NULL THEN 'no_route' ELSE 'hours' END)`;
 /** Closed for `cause`. */
 const closedFor = (cause: AgencyInboundClosedCause) => `(${CLOSED_SQL} AND ${CLOSED_CAUSE_SQL} = '${cause}')`;
-/** A caller who rang while the line was open and was not refused at the answer. */
-const OPEN_HOURS_SQL = `(NOT ${CLOSED_SQL} AND c.outcome <> 'rejected')`;
+/** A caller who rang while the line was open and was not refused at the answer (shared with a campaign's inbound figures). */
+const OPEN_HOURS_SQL = inboundOpenHoursSql('c');
 /** The range, over `idx_agency_inbound_calls_account_arrived`. */
 const RANGE_SQL = `c.tenant_id = $1::uuid AND c.account_id = $2::uuid
           AND c.arrived_at >= $3::timestamptz AND c.arrived_at < $4::timestamptz AND c.state = 'ended'`;

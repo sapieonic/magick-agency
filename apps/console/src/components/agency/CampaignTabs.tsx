@@ -109,7 +109,7 @@ export function CampaignTabs({
   // at least that. A viewer or operator gets ONLY that (the analytic tabs and the spine
   // tabs floor at `agency.supervise`), and the bar still says where they are.
   // No bar tab carries a flag since Soft-phone calls moved into Call log
-  // (`CallLogViews` reads that flag), so none is passed.
+  // (its Soft phone chip reads that flag), so none is passed.
   const groups = visibleCampaignTabGroups(role);
   const current = barTabFor(active);
   const navRef = useRef<HTMLElement>(null);

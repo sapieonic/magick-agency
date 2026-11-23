@@ -8,60 +8,49 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
+import '../../core/softphone/softphone_view.dart';
 import '../../ui/primitives.dart';
 import '../customers/customer_history_copy.dart' show CustomerHistoryCopy;
+import '../missed/call_back.dart';
 import '../missed/missed_access.dart';
-import '../missed/missed_calls_controller.dart';
 import '../missed/missed_calls_copy.dart';
 import '../missed/missed_calls_list.dart';
 import '../performance/agent_workspace.dart';
-import '../performance/campaign_names.dart';
-import 'calls_controller.dart';
-import 'logic/attempt_copy.dart';
-import 'softphone/softphone_calls_controller.dart';
-import 'softphone/softphone_calls_list.dart';
-import 'widgets/attempt_detail_sheet.dart';
-import 'widgets/attempt_tile.dart';
-import 'widgets/filter_bar.dart';
+import '../performance/performance_controller.dart' show statsClockProvider;
+import 'my_calls_controller.dart';
+import 'my_calls_copy.dart';
+import 'widgets/my_call_card.dart';
 
-/// "My calls": every dial in the agent's name, newest first, across every
-/// campaign, filterable by day, outcome, campaign and number. Keyset-paged:
-/// the next page is fetched while the agent is still a screenful away from
-/// the end, so scrolling never waits on the network.
+/// "My calls": every call the agent made or took, as one list of cards,
+/// newest first (`docs/call-log.md` §7, CL9). The type is a chip over the
+/// list and a line on each card; answered inbound calls are in it.
 ///
-/// Soft-phone calls are a second segment, not rows merged into this list (a
-/// manual call is not an attempt: no try number, its own outcome catalog and
-/// call details), shown where the Phone tab shows or where the agent has
-/// soft-phone calls to look back on ([softphoneCallsVisibleProvider]).
+/// **To follow up** is the first chip: the missed calls that are the agent's
+/// to ring back (Call back, Mark handled), then the callbacks they booked
+/// that are due today or late. It carries what the agent still owes as a
+/// badge. Under it, the Missed calls list is one tap away (the team's
+/// unassigned calls to claim, voicemails, the handled ones).
 ///
-/// Missed calls (inbound calls that reached nobody, the agent's to call back)
-/// are a third segment, shown by [missedCallsAccessProvider], with the open
-/// count as a badge (the Calls tab carries it too). A segment rather than a
-/// sixth tab: the bar holds at most five on a 360 dp phone.
+/// The Soft phone chip shows where the Phone tab shows, and the Inbound and
+/// To follow up chips where Missed calls show ([missedCallsAccessProvider]),
+/// or whenever the agent owes somebody a call.
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
 
-  /// Start fetching the next page when the list builds a row this close to
-  /// the end (about two screens of rows).
+  /// Start fetching the next page when the list builds a card this close to
+  /// the end.
   static const prefetchRows = 20;
 
   @override
   ConsumerState<CallsScreen> createState() => _CallsScreenState();
 }
 
-/// Which list My calls shows.
-enum CallsView { campaign, softphone, missed }
-
 class _CallsScreenState extends ConsumerState<CallsScreen> {
-  /// The segment the agent picked; reads as [CallsView.campaign] whenever the
-  /// soft-phone segment is not shown.
-  CallsView _picked = CallsView.campaign;
-
   @override
   void initState() {
     super.initState();
     Future.microtask(() {
-      if (mounted) unawaited(ref.read(attemptsControllerProvider.notifier).ensureLoaded());
+      if (mounted) unawaited(ref.read(myCallsControllerProvider.notifier).ensureLoaded());
     });
   }
 
@@ -73,15 +62,19 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     ref.listen<String?>(agentWorkspaceProvider, (prev, next) {
       if (next == null || next == prev) return;
       Future.microtask(() {
-        if (mounted) unawaited(ref.read(attemptsControllerProvider.notifier).ensureLoaded());
+        if (mounted) unawaited(ref.read(myCallsControllerProvider.notifier).ensureLoaded());
       });
     });
-    final softphone = ref.watch(softphoneCallsVisibleProvider);
+    final softphone = ref.watch(softphoneAvailabilityProvider.select((a) => a.visible));
     final missed = ref.watch(missedCallsAccessProvider);
-    final shown = [CallsView.campaign, if (softphone) CallsView.softphone, if (missed.visible) CallsView.missed];
-    final view = shown.contains(_picked) ? _picked : CallsView.campaign;
-    // Three segments on a 360 dp phone leave about 105 dp each: the short labels.
-    final short = shown.length > 2;
+    final (type, owed) = ref.watch(myCallsControllerProvider.select((s) => (s.type, s.counts?.toFollowUp ?? 0)));
+    final chips = [
+      if (missed.visible || owed > 0 || type == MyCallsTypeFilter.toFollowUp) MyCallsTypeFilter.toFollowUp,
+      MyCallsTypeFilter.all,
+      MyCallsTypeFilter.dialler,
+      if (softphone || type == MyCallsTypeFilter.softPhone) MyCallsTypeFilter.softPhone,
+      if (missed.visible || type == MyCallsTypeFilter.inbound) MyCallsTypeFilter.inbound,
+    ];
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -89,8 +82,8 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Semantics(header: true, child: const Text('My calls')),
-            _CountLine(view: view),
+            Semantics(header: true, child: const Text(MyCallsCopy.title)),
+            const _CountLine(),
           ],
         ),
         actions: [
@@ -108,146 +101,194 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (shown.length > 1)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
-              child: SegmentedButton<CallsView>(
-                key: const Key('calls-view'),
-                segments: [
-                  ButtonSegment(
-                    value: CallsView.campaign,
-                    label: Text(short ? 'Campaign' : 'Campaign calls',
-                        key: const Key('calls-view-campaign'), maxLines: 1, overflow: TextOverflow.ellipsis),
+          // Wrapped, not scrolled: every chip is on screen, on a second line at large text.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
+            child: Wrap(
+              key: const Key('calls-chips'),
+              spacing: Space.xs,
+              runSpacing: Space.xs,
+              children: [
+                for (final chip in chips)
+                  _TypeChip(
+                    type: chip,
+                    selected: chip == type,
+                    owed: chip == MyCallsTypeFilter.toFollowUp ? owed : 0,
+                    onSelected: () => unawaited(ref.read(myCallsControllerProvider.notifier).choose(chip)),
                   ),
-                  if (softphone)
-                    ButtonSegment(
-                      value: CallsView.softphone,
-                      label: Text(short ? 'Soft phone' : 'Soft-phone calls',
-                          key: const Key('calls-view-softphone'), maxLines: 1, overflow: TextOverflow.ellipsis),
-                    ),
-                  if (missed.visible)
-                    ButtonSegment(
-                      value: CallsView.missed,
-                      label: Badge(
-                        key: const Key('calls-view-missed-badge'),
-                        isLabelVisible: missed.badge.isNotEmpty,
-                        label: Text(missed.badge),
-                        offset: const Offset(14, -6),
-                        child: Text(short ? MissedCopy.segmentShort : MissedCopy.segment,
-                            key: const Key('calls-view-missed'), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      ),
-                    ),
-                ],
-                selected: {view},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setState(() => _picked = s.first),
-              ),
+              ],
             ),
-          if (view == CallsView.missed)
-            const Expanded(child: MissedCallsList())
-          else if (view == CallsView.softphone) ...const [
-            SoftphoneCallsFilterBar(),
-            SizedBox(height: Space.sm),
-            Expanded(child: SoftphoneCallsList()),
-          ] else ...const [
-            AttemptsFilterBar(),
-            SizedBox(height: Space.sm),
-            Expanded(child: _CallsList()),
-          ],
+          ),
+          const Expanded(child: _MyCallsList()),
         ],
       ),
     );
   }
 }
 
-/// "Showing 50 calls — there are more", for the list on screen, announced
-/// when it changes.
-class _CountLine extends ConsumerWidget {
-  const _CountLine({required this.view});
+/// One chip. To follow up is in the warning colour and carries what the agent
+/// still owes ("To follow up 3"), as the Missed badge did on its segment.
+class _TypeChip extends StatelessWidget {
+  const _TypeChip({required this.type, required this.selected, required this.owed, required this.onSelected});
 
-  final CallsView view;
+  final MyCallsTypeFilter type;
+  final bool selected;
+  final int owed;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final warn = type == MyCallsTypeFilter.toFollowUp;
+    final label = MyCallsCopy.chip(type);
+    return Semantics(
+      label: owed > 0 ? '$label, $owed' : label,
+      selected: selected,
+      button: true,
+      excludeSemantics: true,
+      child: ChoiceChip(
+        key: Key('calls-chip-${type.wire}'),
+        selected: selected,
+        showCheckmark: false,
+        // Five chips across a 360 dp phone, as the segments were.
+        visualDensity: VisualDensity.compact,
+        labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+        padding: const EdgeInsets.symmetric(horizontal: Space.xs),
+        onSelected: (_) => onSelected(),
+        side: warn ? BorderSide(color: t.warning) : null,
+        backgroundColor: warn ? t.warningSubtle : null,
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis)),
+            if (owed > 0) ...[
+              const SizedBox(width: Space.xs),
+              Badge(
+                key: const Key('calls-follow-up-badge'),
+                label: Text(owed > 99 ? '99+' : '$owed'),
+                backgroundColor: t.warning,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Showing 50 calls — there are more", announced when it changes.
+class _CountLine extends ConsumerWidget {
+  const _CountLine();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final String line;
-    if (view == CallsView.missed) {
-      line = ref.watch(missedCallsControllerProvider.select(missedCountLine));
-    } else if (view == CallsView.softphone) {
-      line = ref.watch(softphoneCallsControllerProvider.select(softphoneCallsCountLine));
-    } else {
-      final (count, more, ready) = ref.watch(
-        attemptsControllerProvider.select((s) => (s.rows.length, s.hasMore, s.status == AttemptsStatus.ready)),
-      );
-      line = ready && count > 0 ? attemptsCountLine(count, more: more) : '';
-    }
+    final (count, more, ready) = ref.watch(
+      myCallsControllerProvider.select((s) => (s.rows.length, s.hasMore, s.status == MyCallsStatus.ready)),
+    );
     return Semantics(
       liveRegion: true,
       child: Text(
-        line,
-        key: const Key('attempts-count'),
+        ready && count > 0 ? MyCallsCopy.countLine(count, more: more) : '',
+        key: const Key('calls-count'),
         style: Theme.of(context).textTheme.labelMedium,
       ),
     );
   }
 }
 
-class _CallsList extends ConsumerStatefulWidget {
-  const _CallsList();
+class _MyCallsList extends ConsumerStatefulWidget {
+  const _MyCallsList();
 
   @override
-  ConsumerState<_CallsList> createState() => _CallsListState();
+  ConsumerState<_MyCallsList> createState() => _MyCallsListState();
 }
 
-class _CallsListState extends ConsumerState<_CallsList> {
+class _MyCallsListState extends ConsumerState<_MyCallsList> {
   bool _prefetchScheduled = false;
 
-  /// Called from the row builder: providers cannot change during a build,
+  /// The card whose Call back is reading the number for the pad.
+  String? _opening;
+
+  /// Called from the card builder: providers cannot change during a build,
   /// so the request goes out right after this frame (once per frame).
   void _maybePrefetch() {
     if (_prefetchScheduled) return;
     _prefetchScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _prefetchScheduled = false;
-      if (mounted) unawaited(ref.read(attemptsControllerProvider.notifier).loadMore());
+      if (mounted) unawaited(ref.read(myCallsControllerProvider.notifier).loadMore());
     });
   }
 
-  Future<void> _refresh() async {
-    ref.invalidate(myCampaignsProvider);
-    await ref.read(attemptsControllerProvider.notifier).reload(keepRows: true);
+  /// Call back: the Missed row is read for its number (never in this list
+  /// where the campaign hides numbers), then handed to the soft phone exactly
+  /// as the Missed list's own Call back does. Nothing is dialled.
+  Future<void> _callBack(MyCallRow row) async {
+    if (_opening != null) return;
+    setState(() => _opening = row.id);
+    final call = await ref.read(myCallsControllerProvider.notifier).missedCallFor(row);
+    if (!mounted) return;
+    setState(() => _opening = null);
+    if (call != null) await startCallBack(context, call);
+  }
+
+  void _openMissedList() {
+    unawaited(Navigator.of(context).push<void>(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text(MissedCopy.title)),
+        body: const MissedCallsList(),
+      ),
+    )));
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(attemptsControllerProvider);
-    final names = ref.watch(campaignNamesProvider);
-    final controller = ref.read(attemptsControllerProvider.notifier);
-    final today = localToday(ref);
+    final state = ref.watch(myCallsControllerProvider);
+    final controller = ref.read(myCallsControllerProvider.notifier);
+    final canCallBack = callBackOffered(ref.watch(softphoneAvailabilityProvider));
+    final missed = ref.watch(missedCallsAccessProvider);
+    final now = ref.watch(statsClockProvider)();
     final text = Theme.of(context).textTheme;
     final rows = state.rows;
+    final toFollowUp = state.type == MyCallsTypeFilter.toFollowUp;
+    final missedLink = toFollowUp && missed.visible
+        ? SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.sm),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const Key('calls-open-missed-list'),
+                  onPressed: _openMissedList,
+                  child: const Text(MyCallsCopy.openMissedList),
+                ),
+              ),
+            ),
+          )
+        : null;
 
     final List<Widget> slivers;
     switch (state.status) {
-      case AttemptsStatus.loading:
-        slivers = const [SliverToBoxAdapter(child: _SkeletonRows())];
-      case AttemptsStatus.error:
+      case MyCallsStatus.loading:
+        slivers = const [SliverToBoxAdapter(child: _SkeletonCards())];
+      case MyCallsStatus.error:
         slivers = [
           SliverFillRemaining(
             hasScrollBody: false,
             child: LoadErrorView(
-              key: const Key('attempts-error'),
-              message: state.error ?? 'We couldn’t load these calls.',
+              key: const Key('calls-error'),
+              message: state.error ?? MyCallsCopy.loadFailed,
               onRetry: () => unawaited(controller.reload()),
             ),
           ),
         ];
-      case AttemptsStatus.ready when rows.isEmpty:
-        final copy = attemptsEmptyCopy(filtered: state.filters.isFiltered);
+      case MyCallsStatus.ready when state.isEmpty:
+        final copy = MyCallsCopy.empty(state.type);
         slivers = [
           SliverFillRemaining(
             hasScrollBody: false,
             child: Center(
-              key: const Key('attempts-empty'),
+              key: const Key('calls-empty'),
               child: Padding(
                 padding: const EdgeInsets.all(Space.xl),
                 child: Column(
@@ -258,54 +299,82 @@ class _CallsListState extends ConsumerState<_CallsList> {
                     Text(copy.title, textAlign: TextAlign.center, style: text.titleMedium),
                     const SizedBox(height: Space.xs),
                     Text(copy.body, textAlign: TextAlign.center, style: text.bodySmall),
+                    if (toFollowUp && missed.visible) ...[
+                      const SizedBox(height: Space.md),
+                      TextButton(
+                        key: const Key('calls-open-missed-list'),
+                        onPressed: _openMissedList,
+                        child: const Text(MyCallsCopy.openMissedList),
+                      ),
+                    ],
                   ],
                 ),
               ),
             ),
           ),
         ];
-      case AttemptsStatus.ready:
-        final prototype = AttemptTile(row: _prototypeRow, campaign: 'Campaign', today: today);
+      case MyCallsStatus.ready:
         slivers = [
           if (state.error != null)
             SliverToBoxAdapter(
               child: _InlineNotice(
-                key: const Key('attempts-refresh-error'),
+                key: const Key('calls-refresh-error'),
                 message: 'These may be out of date. ${state.error}',
                 onRetry: () => unawaited(controller.reload(keepRows: true)),
               ),
             ),
-          SliverPrototypeExtentList(
-            prototypeItem: prototype,
+          SliverList(
             delegate: SliverChildBuilderDelegate(
               (context, i) {
                 if (i >= rows.length - CallsScreen.prefetchRows && state.hasMore) _maybePrefetch();
                 final row = rows[i];
-                final campaign = attemptCampaign(row, names);
-                return AttemptTile(
-                  key: ValueKey(row.id),
+                final busy = state.marking != null || _opening != null;
+                return MyCallCard(
+                  key: ValueKey('${row.typeRaw}:${row.id}'),
                   row: row,
-                  campaign: campaign,
-                  today: today,
-                  onTap: () => showAttemptDetail(context, row: row, campaign: campaign),
+                  now: now,
+                  callBackOffered: canCallBack,
+                  onCallBack: busy ? null : () => unawaited(_callBack(row)),
+                  onMarkHandled: busy ? null : () => unawaited(controller.markHandled(row)),
+                  marking: state.marking == row.id,
+                  opening: _opening == row.id,
+                  error: state.rowError?.id == row.id ? state.rowError!.message : null,
                 );
               },
               childCount: rows.length,
             ),
           ),
+          if (toFollowUp && state.callbacks.isNotEmpty) ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.sm),
+                child: Semantics(
+                  header: true,
+                  child: Text(MyCallsCopy.callbacksHeading, key: const Key('calls-callbacks-heading'), style: text.titleSmall),
+                ),
+              ),
+            ),
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, i) => CallbackDueCard(callback: state.callbacks[i], now: now),
+                childCount: state.callbacks.length,
+              ),
+            ),
+          ],
+          ?missedLink,
           SliverToBoxAdapter(child: _ListFooter(state: state, onRetryMore: () => unawaited(controller.retryMore()))),
         ];
     }
 
     return RefreshIndicator(
-      onRefresh: _refresh,
+      onRefresh: () => controller.reload(keepRows: true),
       child: Scrollbar(
         child: CustomScrollView(
-          key: const Key('attempts-list'),
+          key: const Key('calls-list'),
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             if (state.refreshing)
-              const SliverToBoxAdapter(child: LinearProgressIndicator(key: Key('attempts-refreshing'), minHeight: 2)),
+              const SliverToBoxAdapter(child: LinearProgressIndicator(key: Key('calls-refreshing'), minHeight: 2)),
             ...slivers,
           ],
         ),
@@ -314,27 +383,10 @@ class _CallsListState extends ConsumerState<_CallsList> {
   }
 }
 
-/// The shape every row is laid out by (see [AttemptTile]).
-final _prototypeRow = AttemptRow(
-  id: 'prototype',
-  campaignId: 'prototype',
-  contactId: 'prototype',
-  attemptNumber: 1,
-  phoneE164: '+910000000000',
-  callerId: '',
-  state: AttemptState.ended,
-  outcome: AttemptOutcome.connected,
-  dispositionCode: 'Prototype',
-  notes: 'Prototype',
-  dispositionedOnBehalf: false,
-  talkSeconds: 0,
-  createdAt: DateTime.utc(2026),
-);
-
 class _ListFooter extends StatelessWidget {
   const _ListFooter({required this.state, required this.onRetryMore});
 
-  final AttemptsState state;
+  final MyCallsState state;
   final VoidCallback onRetryMore;
 
   @override
@@ -342,7 +394,7 @@ class _ListFooter extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final Widget child;
     if (state.moreError != null) {
-      child = _InlineNotice(key: const Key('attempts-more-error'), message: state.moreError!, onRetry: onRetryMore);
+      child = _InlineNotice(key: const Key('calls-more-error'), message: state.moreError!, onRetry: onRetryMore);
     } else if (state.hasMore) {
       // Shown only if the agent outruns the prefetch.
       child = const Padding(
@@ -352,7 +404,7 @@ class _ListFooter extends StatelessWidget {
     } else {
       child = Padding(
         padding: const EdgeInsets.all(Space.lg),
-        child: Text(attemptsPrivacyNote, key: const Key('attempts-end'), textAlign: TextAlign.center, style: text.bodySmall),
+        child: Text(MyCallsCopy.endNote, key: const Key('calls-end'), textAlign: TextAlign.center, style: text.bodySmall),
       );
     }
     return Padding(padding: const EdgeInsets.only(bottom: Space.xl), child: child);
@@ -390,8 +442,8 @@ class _InlineNotice extends StatelessWidget {
   }
 }
 
-class _SkeletonRows extends StatelessWidget {
-  const _SkeletonRows();
+class _SkeletonCards extends StatelessWidget {
+  const _SkeletonCards();
 
   @override
   Widget build(BuildContext context) {
@@ -401,23 +453,25 @@ class _SkeletonRows extends StatelessWidget {
           child: SizedBox(width: w, height: h),
         );
     return Semantics(
-      label: 'Loading your calls',
+      label: MyCallsCopy.loading,
       child: ExcludeSemantics(
         child: Column(
-          key: const Key('attempts-skeleton'),
+          key: const Key('calls-skeleton'),
           children: [
-            for (var i = 0; i < 8; i++)
+            for (var i = 0; i < 6; i++)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.md),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [bar(150, 16), const Spacer(), bar(72, 20)]),
-                    const SizedBox(height: Space.sm),
-                    bar(220, 12),
-                    const SizedBox(height: Space.xs),
-                    bar(120, 12),
-                  ],
+                padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
+                child: AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [bar(110, 12), const Spacer(), bar(56, 12)]),
+                      const SizedBox(height: Space.sm),
+                      bar(170, 16),
+                      const SizedBox(height: Space.xs),
+                      bar(230, 12),
+                    ],
+                  ),
                 ),
               ),
           ],

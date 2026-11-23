@@ -2,8 +2,9 @@
  * The inbound route body (`docs/inbound.md` §8.1): what `POST /inbound/routes` and
  * `PATCH /inbound/routes/:id` accept, as zod schemas, and the full configuration they resolve to.
  * Pure: the account-scoped checks (clip ids naming the account's audio files, the analysis
- * profile and the pool campaigns being the account's, numbers the account may route) need the
- * database and are the API layer's, after this.
+ * profile, the pool campaigns and the campaign for unknown callers being the account's, that
+ * campaign being required while the account's setting is on, numbers the account may route) need
+ * the database and are the API layer's, after this.
  *
  * ── One rule with the database and the schedule ─────────────────────────────
  *  - Every bound is `AGENCY_INBOUND_ROUTE_LIMITS`, which `0024_inbound.sql`'s CHECKs hold too, so a
@@ -113,6 +114,9 @@ const configFields = {
   disposition_catalog: z.array(z.unknown()),
   // IQ52: every inbound call on the route takes this window, with auto-return.
   wrapup_seconds: int(L.WRAPUP_SECONDS.min, L.WRAPUP_SECONDS.max, 'wrapup_seconds'),
+  // "Campaign for unknown callers" (docs/call-log.md §5). That it names a campaign of the account,
+  // and that there is one while the account's setting asks for it, are the API layer's checks.
+  default_campaign_id: uuid.transform((id) => id.toLowerCase()).nullable(),
 };
 
 const phoneNumberIds = z.array(uuid).max(L.NUMBERS_MAX, `At most ${L.NUMBERS_MAX} numbers on one route.`)
@@ -200,6 +204,7 @@ export function parseInboundRouteCreate(body: unknown): InboundRouteParse {
     analysis_profile_id: b.analysis_profile_id ?? d.analysis_profile_id,
     disposition_catalog: (b.disposition_catalog ?? [...d.disposition_catalog]) as AgencyDisposition[],
     wrapup_seconds: b.wrapup_seconds ?? d.wrapup_seconds,
+    default_campaign_id: b.default_campaign_id ?? d.default_campaign_id,
   };
   const issues = [...catalogIssues(config.disposition_catalog), ...crossFieldIssues(config)];
   return issues.length > 0 ? { ok: false, issues } : { ok: true, config, phoneNumberIds: b.phone_number_ids };

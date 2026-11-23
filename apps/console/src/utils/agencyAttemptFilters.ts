@@ -144,6 +144,13 @@ export function attemptDateRange(
  * November" keeps the whole of the 16th. Anchored on noon like {@link attemptDateRange}, for the
  * same reasons: a midnight that does not exist, or happens twice, has no second reading here.
  */
+/** The filters without their created-date range: what a view the dates do not narrow is read with. */
+export function withoutDates<T extends { from?: unknown; to?: unknown }>(filters: T): Omit<T, 'from' | 'to'> {
+  const { from: _from, to: _to, ...rest } = filters;
+  void _from; void _to;
+  return rest;
+}
+
 export function exclusiveDateRange(
   from: DayString,
   to: DayString,

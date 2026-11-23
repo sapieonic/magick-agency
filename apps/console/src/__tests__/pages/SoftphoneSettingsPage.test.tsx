@@ -4,15 +4,15 @@ import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
-  getSoftphoneSettings: vi.fn(),
+  readSoftphoneSettings: vi.fn(),
   putSoftphoneSettings: vi.fn(),
   showToast: vi.fn(),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/softphone', () => ({
-  getSoftphoneSettings: mocks.getSoftphoneSettings,
-  // The page reads the settings with what their outcomes follow (campaign templates); none here.
-  readSoftphoneSettings: async (...args: unknown[]) => ({ settings: await mocks.getSoftphoneSettings(...args), outcomesTemplate: null }),
+  // The page reads the settings with what their outcomes follow (campaign templates; none here)
+  // and whether every call must belong to a campaign.
+  readSoftphoneSettings: mocks.readSoftphoneSettings,
   putSoftphoneSettings: mocks.putSoftphoneSettings,
 }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({
@@ -56,7 +56,7 @@ async function renderPage(role = 'account_admin') {
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
-  mocks.getSoftphoneSettings.mockResolvedValue(SAVED);
+  mocks.readSoftphoneSettings.mockResolvedValue({ settings: SAVED, outcomesTemplate: null, campaignRequired: false });
 });
 afterEach(cleanup);
 
@@ -146,6 +146,26 @@ describe('Settings → Soft phone', () => {
     });
     expect(document.body.textContent).toMatch(/Not one of the account’s numbers\./);
     expect(document.body.textContent).toMatch(/Some settings need fixing\./);
+  });
+
+  // docs/call-log.md §5: with "Every call must belong to a campaign" on, no call is logged to none.
+  it('greys the settings of calls not logged to a campaign while every call must belong to one; the call details stay', async () => {
+    mocks.readSoftphoneSettings.mockResolvedValue({ settings: SAVED, outcomesTemplate: null, campaignRequired: true });
+    await renderPage();
+    expect(screen.getByTestId('softphone-settings-unused').textContent).toBe('Not used while every call must belong to a campaign.');
+    expect(screen.getByTestId('softphone-settings-outcomes-unused').textContent).toBe('Not used while every call must belong to a campaign.');
+    for (const id of ['softphone-settings-record', 'softphone-settings-profile', 'softphone-settings-caller']) {
+      expect((screen.getByTestId(id) as HTMLInputElement).disabled, id).toBe(true);
+    }
+    expect(screen.queryByTestId('softphone-settings-customise')).toBeNull();
+    // The call details apply to every call, logged or not.
+    expect((screen.getByTestId('softphone-settings-add-field') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says nothing of the kind while the rule is off', async () => {
+    await renderPage();
+    expect(screen.queryByTestId('softphone-settings-unused')).toBeNull();
+    expect((screen.getByTestId('softphone-settings-record') as HTMLInputElement).disabled).toBe(false);
   });
 
   it('warns that removing a saved field keeps its values on past calls', async () => {

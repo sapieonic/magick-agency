@@ -30,6 +30,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_contact', label: 'Contact' },
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
+  { value: 'agency_call_settings', label: 'Call settings' },
   { value: 'customer_history', label: 'Customer history search' },
   { value: 'agency_report', label: 'Report' },
   { value: 'agency_report_subscription', label: 'Scheduled report' },

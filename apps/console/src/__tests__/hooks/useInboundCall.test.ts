@@ -7,6 +7,8 @@ const api = vi.hoisted(() => ({
   hangupInboundCall: vi.fn(),
   dispositionInboundCall: vi.fn(),
   markInboundCallDnc: vi.fn(),
+  listInboundCallCampaigns: vi.fn(),
+  setInboundCallCampaign: vi.fn(),
 }));
 vi.mock('../../api/inbound', () => api);
 
@@ -293,6 +295,97 @@ describe('the outcome', () => {
     picked(h, 'resolved');
     await act(async () => h.result.current.saveOutcome());
     expect(h.result.current.padRejection).toBe('This call is saved already.');
+  });
+});
+
+// docs/call-log.md §5: a call from a number on no list is filed under a work (the line's, or one
+// the agent chooses at the end of the call); a customer on a list keeps their own.
+describe('filed under', () => {
+  const routed = (over = {}) => owing({
+    match: null,
+    campaign: { campaign_id: 'c-gen', campaign_name: 'General enquiries', source: 'route' },
+    campaign_changeable: true,
+    campaign_required: true,
+    ...over,
+  });
+  const OTHER_CATALOG = [{ code: 'query', label: 'Query' }];
+
+  it('is shown at the end of a call from a number on no list, with the work it is under; never for a customer on a list, never while on the call', () => {
+    const h = render({ frameCall: routed() });
+    expect(h.result.current.filing).toMatchObject({ shown: true, name: 'General enquiries', campaignId: 'c-gen', changeable: true, missing: false, choosing: false });
+    expect(render({ frameCall: owing({ campaign: { campaign_id: 'c-own', campaign_name: 'Own', source: 'contact' }, campaign_changeable: false }) }).result.current.filing.shown).toBe(false);
+    expect(render({ frameCall: connected({ match: null, campaign: { campaign_id: 'c-gen', campaign_name: 'General enquiries', source: 'route' } }) }).result.current.filing.shown).toBe(false);
+    // An older server sends none of it: nothing shown, nothing asked.
+    expect(render({ frameCall: owing({ match: null }) }).result.current.filing).toMatchObject({ shown: false, missing: false });
+  });
+
+  it('Change loads the works the agent may choose; choosing one files the call, takes its choices and says so', async () => {
+    api.listInboundCallCampaigns.mockResolvedValue([
+      { campaign_id: 'c-gen', campaign_name: 'General enquiries' }, { campaign_id: 'c-gold', campaign_name: 'Gold Loan Renewals' },
+    ]);
+    api.setInboundCallCampaign.mockResolvedValue({
+      ok: true,
+      value: routed({ campaign: { campaign_id: 'c-gold', campaign_name: 'Gold Loan Renewals', source: 'agent' }, disposition_catalog: OTHER_CATALOG }),
+    });
+    const h = render({ frameCall: routed() });
+    // A choice made from the old list.
+    act(() => h.result.current.setForm({ ...h.result.current.form, selectedCode: 'resolved' }));
+    await act(async () => h.result.current.filing.open());
+    expect(api.listInboundCallCampaigns).toHaveBeenCalledWith('ib-1', 't-1', 'a-1');
+    expect(h.result.current.filing).toMatchObject({ choosing: true, loading: false });
+    expect(h.result.current.filing.options?.map((o) => o.campaign_name)).toEqual(['General enquiries', 'Gold Loan Renewals']);
+
+    await act(async () => h.result.current.filing.choose('c-gold'));
+    expect(api.setInboundCallCampaign).toHaveBeenCalledWith('ib-1', 'c-gold', 't-1', 'a-1');
+    expect(h.result.current.filing).toMatchObject({
+      name: 'Gold Loan Renewals', campaignId: 'c-gold', choosing: false,
+      notice: 'What you can choose changed to match Gold Loan Renewals.',
+    });
+    expect(h.result.current.catalog.map((d) => d.code)).toEqual(['query']);
+    // What was chosen from the old list is cleared with it.
+    expect(h.result.current.form.selectedCode).toBeNull();
+    expect(h.result.current.announcement).toBe('What you can choose changed to match Gold Loan Renewals.');
+  });
+
+  it('choosing the work it is already under asks nothing of the server', async () => {
+    api.listInboundCallCampaigns.mockResolvedValue([{ campaign_id: 'c-gen', campaign_name: 'General enquiries' }]);
+    const h = render({ frameCall: routed() });
+    await act(async () => h.result.current.filing.open());
+    await act(async () => h.result.current.filing.choose('c-gen'));
+    expect(api.setInboundCallCampaign).not.toHaveBeenCalled();
+    expect(h.result.current.filing.choosing).toBe(false);
+  });
+
+  it('a list that does not load, and a work the agent may not choose, are said in the station`s words', async () => {
+    api.listInboundCallCampaigns.mockRejectedValue(new Error('down'));
+    const h = render({ frameCall: routed() });
+    await act(async () => h.result.current.filing.open());
+    expect(h.result.current.filing).toMatchObject({ choosing: true, options: null, error: 'We could not load your work. Try again.' });
+
+    api.listInboundCallCampaigns.mockResolvedValue([{ campaign_id: 'c-gold', campaign_name: 'Gold Loan Renewals' }]);
+    api.setInboundCallCampaign.mockResolvedValue({ ok: false, refusal: refusal({ code: 'inbound_campaign_not_allowed', status: 403 }) });
+    await act(async () => h.result.current.filing.open());
+    await act(async () => h.result.current.filing.choose('c-gold'));
+    expect(h.result.current.filing).toMatchObject({ campaignId: 'c-gen', error: 'You cannot file calls under that work. Choose another.' });
+  });
+
+  it('a call under no work, where every call needs one: Save waits for it, and the server`s refusal reads the call again', async () => {
+    const h = render({ frameCall: routed({ campaign: null }) });
+    expect(h.result.current.filing).toMatchObject({ shown: true, name: null, missing: true });
+    act(() => h.result.current.setForm({ ...h.result.current.form, selectedCode: 'resolved' }));
+    expect(h.result.current.saveBlockAt(Date.now())).toBe('work_required');
+    await act(async () => h.result.current.saveOutcome());
+    expect(api.dispositionInboundCall).not.toHaveBeenCalled();
+
+    // The rule came on while the call was open: the pad did not know, the server refuses.
+    api.dispositionInboundCall.mockResolvedValue({ ok: false, refusal: refusal({ code: 'campaign_required' }) });
+    api.getInboundCall.mockResolvedValue(routed({ campaign: null }));
+    const late = render({ frameCall: routed({ campaign: null, campaign_required: false }) });
+    act(() => late.result.current.setForm({ ...late.result.current.form, selectedCode: 'resolved' }));
+    expect(late.result.current.saveBlockAt(Date.now())).toBeNull();
+    await act(async () => late.result.current.saveOutcome());
+    expect(late.result.current.padRejection).toBe('Choose the work to file this call under, then save.');
+    expect(api.getInboundCall).toHaveBeenCalledWith('ib-1', 't-1', 'a-1');
   });
 });
 

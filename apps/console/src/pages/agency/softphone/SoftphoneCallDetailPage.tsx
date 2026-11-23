@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useParams } from 'react-router-dom';
 import { formatPromise } from '../../../utils/format/promise';
 import { usePageCrumbs } from '../../../components/layout/PageCrumbs';
+import { ALL_CALLS_PATH } from '../../../utils/consoleNav';
 import { Info, Lock, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -21,6 +22,7 @@ import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../../utils
 import { fieldLabel, formatFieldValue } from '../../../utils/softphone/callFields';
 import { callEndSummary } from '../../../utils/softphone/callState';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
+import { allCallsPath, campaignCallLogPath } from '../../../utils/agency/callLog';
 import { dncEntryFacts, dncEntryReach } from '../../../utils/softphone/overrides';
 import type {
   AgencyCallField,
@@ -263,14 +265,14 @@ export default function SoftphoneCallDetailPage() {
   }, [detail, bootstrap]);
 
   /*
-    The trail back, in the top bar: "Campaigns / Soft-phone calls / <campaign> / <when>". The
-    campaign the call was logged to leads to that campaign's soft-phone calls.
+    The trail back, in the top bar: "Campaigns / All calls / <campaign> / <when>". The
+    campaign the call was logged to leads to that campaign's Call log, with the Soft phone chip on.
   */
   const current = detail && detail.call.id === callId ? detail : null;
   const tag = current?.call.tag ?? null;
   usePageCrumbs([
-    { label: 'Soft-phone calls', to: '/agency/softphone' },
-    ...(tag ? [{ label: tag.campaign_name, to: `/agency/campaigns/${tag.campaign_id}/manual-calls` }] : []),
+    { label: 'All calls', to: ALL_CALLS_PATH },
+    ...(tag ? [{ label: tag.campaign_name, to: campaignCallLogPath(tag.campaign_id, 'soft_phone') }] : []),
     { label: current ? formatSpineTimestamp(current.call.created_at) : 'Call' },
   ]);
 
@@ -290,7 +292,7 @@ export default function SoftphoneCallDetailPage() {
             icon={<SearchX size={28} />}
             title="We can’t show this call"
             description={error}
-            action={<Link to="/agency/softphone" className="btn-secondary">Back to soft-phone calls</Link>}
+            action={<Link to={allCallsPath({ type: 'soft_phone' })} className="btn-secondary">Back to All calls</Link>}
           />
         ) : (
           <ErrorAlert message={error} onRetry={() => void load()} />

@@ -6,6 +6,8 @@ import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useTenant } from '../../../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../../../utils/inbound/inboundFlag';
+import { OverviewCallsByType } from './CallsByType';
 import { useAfterFirstPaint, useInsightsLive, useInsightsRange } from '../../../../hooks/useCampaignInsights';
 import { formatClockTime } from '../../../../utils/format/date';
 import { rangeFreshness } from '../../../../utils/agency/insights/copy';
@@ -102,6 +104,8 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const { tenantId, accountId } = useTenant();
   // Soft-phone figures show while the soft phone is on, or when the range holds any (SR5).
   const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  // Inbound figures by the same rule: while inbound is on, or when the range holds any.
+  const inboundEnabled = useFeatureFlagEnabled(INBOUND_FLAG);
   // The Agents tab has the floor's own stats poll: the insights reads are read once there.
   const live = useInsightsLive(campaignId, view !== 'agents');
   const summary = live.summary.data;
@@ -220,6 +224,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
     rangeLabel: served.label,
     agentName,
     softphoneEnabled,
+    inboundEnabled,
   };
   const staffedAgents = allocation ? allocation.agents.filter((a) => a.staffed).length : null;
   const zone = range?.timezone ?? summary.settings.timezone;
@@ -369,6 +374,16 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             health={shownHealth}
             unavailable={unavailable}
           />
+          {/* The printout is every tab, and the Calls tab carries the same table: once is enough. */}
+          {printRequested ? null : (
+            <OverviewCallsByType
+              campaignId={campaignId}
+              rangeLabel={served.label}
+              activity={shownActivity}
+              softphoneEnabled={softphoneEnabled}
+              inboundEnabled={inboundEnabled}
+            />
+          )}
           <div className={styles.overviewGrid}>
             <AttentionPanel
               attention={campaignAttention({ summary, allocation, health: shownHealth })}

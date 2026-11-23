@@ -84,7 +84,8 @@ class FakeSoftphoneActions implements SoftphoneActions {
   @override
   void redial(String recentCallId) => _rec('redial', [recentCallId]);
   @override
-  void callBack(String number, {String? campaignId}) => _rec('callBack', [number, campaignId]);
+  void callBack(String number, {String? campaignId, String? inboundCallId}) =>
+      _rec('callBack', [number, campaignId, ?inboundCallId]);
   @override
   void setTag(String? campaignId) => _rec('setTag', [campaignId]);
   @override
@@ -533,9 +534,17 @@ SoftphoneView readyView({
   String announcement = '',
   int announcementSeq = 0,
   String? bootstrapError,
+  bool campaignRequired = false,
+  bool noCampaignToLogTo = false,
+  String? setupNote,
+  String? dialUnavailableReason,
   StationLink link = StationLink.open,
   SoftphoneRail rail = const SoftphoneRail(tone: SoftphoneRailTone.neutral, label: 'Ready to dial'),
 }) => SoftphoneView(
+  campaignRequired: campaignRequired,
+  noCampaignToLogTo: noCampaignToLogTo,
+  setupNote: setupNote,
+  dialUnavailableReason: dialUnavailableReason,
   screen: const SoftphoneScreenActive(),
   link: link,
   rail: rail,

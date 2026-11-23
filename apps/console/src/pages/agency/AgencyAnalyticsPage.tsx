@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ChartNoAxesCombined, Plus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { listAgencyCampaigns, getAgencyCampaignStats } from '../../api/agencyCampaigns';
 import { hasPermission } from '../../utils/permissions';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
@@ -165,6 +166,8 @@ export function AgencyAnalyticsPage() {
   // Each campaign card shows its tagged soft-phone calls while the soft phone is on, or when it
   // holds any (SR5).
   const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  // And the inbound calls filed under it, by the same rule.
+  const inboundEnabled = useFeatureFlagEnabled(INBOUND_FLAG);
   const [campaigns, setCampaigns] = useState<AgencyCampaign[] | null>(null);
   const [stats, setStats] = useState<Record<string, StatsState>>({});
   const [error, setError] = useState<string | null>(null);
@@ -513,7 +516,7 @@ export function AgencyAnalyticsPage() {
                       />
                     )}
 
-                    <CampaignPerformance stats={resolved} wrapupSeconds={campaign.wrapup_seconds} softphoneEnabled={softphoneEnabled} />
+                    <CampaignPerformance stats={resolved} wrapupSeconds={campaign.wrapup_seconds} softphoneEnabled={softphoneEnabled} inboundEnabled={inboundEnabled} />
 
                     {state.status === 'error' && (
                       <p className={styles.statsError}>

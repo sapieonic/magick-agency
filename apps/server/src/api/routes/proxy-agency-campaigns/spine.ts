@@ -8,10 +8,11 @@ import { callCore, forwardCore } from '../../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
-import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
+import { agentNamesOrNone, resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import {
   ATTEMPT_QUERY_PARAMS,
   CALL_LOG_EXPORT_QUERY_PARAMS,
+  CALL_LOG_QUERY_PARAMS,
   CONTACT_QUERY_PARAMS,
   PAGING_QUERY_PARAMS,
   TOTAL_QUERY_PARAMS,
@@ -33,6 +34,14 @@ import {
   type SpineContactRow,
   type SpineExportTruncation,
 } from '../../../agency/agency-spine.js';
+import {
+  callLogPeopleIds,
+  toCallLogWireRow,
+  withCallLogNames,
+  type CampaignCallLogRow,
+} from '../../../agency/campaign-call-log.js';
+import { parseCallLogType } from '../helpers/call-log-query.js';
+import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { drainPages } from '../helpers/drain-pages.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
 import { requireOwnedCampaign } from './ownership.js';
@@ -146,6 +155,66 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       })
       : result.body;
     return reply.code(result.status).send(body);
+  });
+
+  /**
+   * The campaign's Call log (CL11, `docs/call-log.md`): every call on the campaign, whatever
+   * placed it, newest first on one keyset: its dialler attempts, the soft-phone calls logged
+   * to it and the inbound calls filed under it; each row says its `type`.
+   *
+   * Over the same internal read the export drains (`…/call-log`, decision SR6), so a row on
+   * screen and a row in the file cannot disagree. The attempt list's filters and paging, plus
+   * `type=all|dialler|soft_phone|inbound|to_follow_up` (the chip; To follow up is the
+   * campaign's open Missed rows) and `include_counts=1` (how many calls of each type the filters
+   * match, the chip not applied: the chips' numbers).
+   *
+   * `agency.supervise`, the attempt list's floor: this is the same record, with the soft-phone
+   * calls the campaign's Soft-phone calls view listed under the same floor. Not behind the soft
+   * phone's flag: a campaign keeps the soft-phone calls it holds when the flag goes off (SR5),
+   * and the export carries them either way. Nor behind inbound's: the inbound calls a campaign
+   * holds stay in its log when that flag goes off.
+   */
+  app.get<{ Params: { id: string } }>('/campaigns/:id/call-log', {
+    preHandler: requirePermission('agency.supervise'),
+  }, async (request, reply) => {
+    const forwarded = forwardAllowedQuery(
+      request.query, [...ATTEMPT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS, ...CALL_LOG_QUERY_PARAMS],
+    );
+    if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
+    const { type: rawType, ...query } = forwarded.query;
+    const typed = parseCallLogType(rawType, reply);
+    if (!typed) return reply;
+    const { source } = typed;
+
+    const result = await callCore({
+      method: 'GET',
+      path: `/agency-campaigns/${request.params.id}/call-log`,
+      query: { ...query, ...(source ? { source } : {}) },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    // Non-2xx bodies pass through untouched, as on the attempt list.
+    if (result.status < 200 || result.status >= 300) return reply.code(result.status).send(result.body);
+
+    const page = asSpinePage<CampaignCallLogRow>(result.body);
+    if (!page) {
+      return reply.code(502).send({
+        error: 'Bad Gateway',
+        code: 'call_log_unreadable',
+        message: 'The call log could not be read. Try again.',
+      });
+    }
+    const counts = (result.body as { counts?: unknown }).counts;
+    // The internal handler serves only user ids (see the attempt list above). Each row's agent
+    // and, on a missed inbound call, who it is assigned to: one lookup over both, and a lookup
+    // that fails is logged and leaves the names null.
+    const people = await agentNamesOrNone(callLogPeopleIds(page.rows), request.tenantId!, 'agency call log');
+    return reply.send({
+      rows: page.rows.map((row) => toCallLogWireRow(withCallLogNames(row, people))),
+      next_cursor: page.next_cursor,
+      limit: page.limit,
+      ...(counts !== undefined ? { counts } : {}),
+    });
   });
 
   /**

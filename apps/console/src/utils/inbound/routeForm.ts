@@ -65,6 +65,8 @@ export interface InboundRouteDraft {
   recordingNotice: boolean;
   profileId: string | null;
   poolCampaignIds: string[];
+  /** "Campaign for unknown callers" (`docs/call-log.md` §5); null: none. */
+  defaultCampaignId: string | null;
   /** `[]`: the built-in outcomes. */
   catalog: AgencyDisposition[];
   numberIds: string[];
@@ -137,6 +139,7 @@ export function newRouteDraft(browserZone: string | undefined = readerZone() ?? 
     recordingNotice: D.recording_notice,
     profileId: D.analysis_profile_id,
     poolCampaignIds: [],
+    defaultCampaignId: null,
     catalog: [],
     numberIds: [],
   };
@@ -162,6 +165,7 @@ export function draftFromRoute(route: AgencyInboundRoute): InboundRouteDraft {
     recordingNotice: route.recording_notice,
     profileId: route.analysis_profile_id,
     poolCampaignIds: [...route.pool_campaign_ids],
+    defaultCampaignId: route.default_campaign_id ?? null,
     catalog: route.disposition_catalog.map(cloneDisposition),
     numberIds: route.numbers.map((n) => n.phone_number_id),
   };
@@ -189,6 +193,7 @@ export function configFromDraft(draft: InboundRouteDraft): AgencyInboundRouteCon
     recording_notice: draft.recordingNotice,
     analysis_profile_id: draft.profileId,
     disposition_catalog: draft.catalog,
+    default_campaign_id: draft.defaultCampaignId,
   };
 }
 
@@ -209,7 +214,9 @@ export function patchFromDraft(saved: AgencyInboundRoute, draft: InboundRouteDra
   const patch: Record<string, unknown> = {};
   for (const key of Object.keys(next) as Array<keyof AgencyInboundRouteConfig>) {
     if (key === 'clips') continue;
-    if (JSON.stringify(next[key]) !== JSON.stringify(saved[key])) patch[key] = next[key];
+    // A route read from a server that predates the field has none: the same as no campaign.
+    const was = key === 'default_campaign_id' ? (saved.default_campaign_id ?? null) : saved[key];
+    if (JSON.stringify(next[key]) !== JSON.stringify(was)) patch[key] = next[key];
   }
   const clips: Partial<AgencyInboundClips> = {};
   for (const slot of Object.keys(next.clips) as Array<keyof AgencyInboundClips>) {
@@ -233,9 +240,27 @@ function intIssue(raw: string, min: number, max: number, what: string): string |
   return null;
 }
 
-/** What the console can tell before a save, keyed by body path. Empty: nothing found. */
-export function validateRouteDraft(draft: InboundRouteDraft): Record<string, string> {
+/** "Campaign for unknown callers" in the route editor (`docs/call-log.md` §5). */
+export const UNKNOWN_CALLERS_FIELD = {
+  title: 'Unknown callers',
+  label: 'Campaign for unknown callers',
+  required: '(required)',
+  hint: 'Callers whose number is not on any list are filed under this campaign and use its outcomes. '
+    + 'The campaign stays running while it is chosen here, even when nobody is left to dial.',
+  none: 'No campaign',
+  choose: 'Choose a campaign',
+  missing: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',
+  outcomesUnused: 'Not used while unknown callers are filed under a campaign: they use that campaign’s outcomes.',
+} as const;
+
+/**
+ * What the console can tell before a save, keyed by body path. Empty: nothing found.
+ * `campaignRequired`: the account's "Every call must belong to a campaign" is on, so the route
+ * needs a campaign for unknown callers (the server refuses a save without one).
+ */
+export function validateRouteDraft(draft: InboundRouteDraft, opts: { campaignRequired?: boolean } = {}): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (opts.campaignRequired && !draft.defaultCampaignId) errors['default_campaign_id'] = UNKNOWN_CALLERS_FIELD.missing;
   const name = draft.name.trim();
   if (!name) errors['name'] = 'Give the route a name.';
   else if (name.length > L.NAME_MAX) errors['name'] = `Keep the name to ${L.NAME_MAX} characters.`;

@@ -296,6 +296,16 @@
   color: var(--text-primary);
 }
 
+/* The settings of a call logged to no campaign, while every call must belong to one. */
+.unused {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--info-subtle);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* Campaign templates on (CT11): follow the account default template, or set the soft phone own list. */
 .outcomeChoice {
   display: flex;

@@ -9,7 +9,9 @@ import { proxyAgencyListenRoutes } from './routes/proxy-agency-listen.routes.js'
 import { proxyAgencyLiveCallsRoutes } from './routes/proxy-agency-live-calls.routes.js';
 import { proxyAgencyFloorRoutes } from './routes/proxy-agency-floor.routes.js';
 import { proxyAgencyCallbacksRoutes } from './routes/proxy-agency-callbacks.routes.js';
+import { proxyAgencyCallSettingsRoutes } from './routes/proxy-agency-call-settings.routes.js';
 import { proxyAgencyMyDayRoutes } from './routes/proxy-agency-my-day.routes.js';
+import { proxyAgencyCallListsRoutes } from './routes/proxy-agency-call-lists.routes.js';
 import { proxyAgencyFloorAssistRoutes } from './routes/proxy-agency-floor-assist.routes.js';
 import { proxyAgencyListenHistoryRoutes } from './routes/proxy-agency-listen-history.routes.js';
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
@@ -253,10 +255,23 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyCallbacksRoutes, { prefix: P.proxyAgency });
   });
 
+  // ── The account's call settings (`proxy-agency-call-settings.routes.ts`, docs/call-log.md §5): ──
+  // "Every call must belong to a campaign", and the routes that file unknown callers under a
+  // campaign. Its one path param (`/campaigns/:id/inbound-default-routes`) is checked by the route (404).
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyCallSettingsRoutes, { prefix: P.proxyAgency });
+  });
+
   // ── The agent's own day (`proxy-agency-my-day.routes.ts`, agent station BE-1 to BE-3): My day ──
   // on the station. No path params; the query is validated by the route (400 with its code).
   await app.register(async (scope) => {
     await scope.register(proxyAgencyMyDayRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The account's All calls and the agent's My calls (`proxy-agency-call-lists.routes.ts`, ──
+  // docs/call-log.md §7). No path params; each route validates its query (400).
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyCallListsRoutes, { prefix: P.proxyAgency });
   });
 
   // ── The account's listening history (`proxy-agency-listen-history.routes.ts`, docs/listening.md §12) ──

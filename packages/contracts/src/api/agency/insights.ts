@@ -55,7 +55,7 @@ import type {
   AgencyCampaignStatus,
 } from '../../agency/enums';
 import type { AgencyAssignmentMode } from '../../agency/assignment';
-import type { AgencySoftphoneCampaignCounts, AgencyStall, AgencyStallCode, CarrierAccountPauseReason } from '../../agency/campaign-stats';
+import type { AgencyInboundCampaignCounts, AgencySoftphoneCampaignCounts, AgencyStall, AgencyStallCode, CarrierAccountPauseReason } from '../../agency/campaign-stats';
 import type { AllListed } from '../../primitives';
 
 /** Rates on the insights page are withheld below this many calls in the denominator (decision 5). */
@@ -384,10 +384,34 @@ export interface AgencyInsightsCalls {
    * connect rate above is the dialler's alone.
    */
   softphone: AgencySoftphoneCampaignCounts;
+  /**
+   * Inbound calls filed under this campaign that arrived in range ({@link AgencyInboundCampaignCounts};
+   * `open_follow_ups` is as of now, whatever the range). Beside the dialler's and the soft
+   * phone's figures, never in them, and in no connect rate (CL7). Read live, as `softphone` is.
+   */
+  inbound: AgencyInboundCampaignCounts;
   talk_seconds: number;
   wrapup_seconds: number;
   /** Connected calls whose wrap-up was measured (denominator for average wrap-up). */
   wrapup_measured: number;
+}
+
+/**
+ * One outcome of the campaign's one outcome list, counted on each call type (`docs/call-log.md`
+ * §6, CL28). `dialler` is the row's count in `outcomes` (conversations, a redial chain once);
+ * `soft_phone` the placed soft-phone calls logged to the campaign that were put through
+ * (`bridged_at` set), `created_at` in range; `inbound` the inbound calls filed under it that an
+ * agent answered, arrived in range. `total` is the three added: each call is one row of one type.
+ * `code` null groups the calls closed with no outcome. Largest total first.
+ */
+export interface AgencyInsightsOutcomeByTypeRow {
+  code: string | null;
+  label: string | null;
+  is_success: boolean;
+  dialler: number;
+  soft_phone: number;
+  inbound: number;
+  total: number;
 }
 
 /** Conversations by disposition code, largest first; the rows sum to `calls.conversations`. */
@@ -466,6 +490,11 @@ export interface AgencyInsightsActivity {
   range: AgencyInsightsRange;
   calls: AgencyInsightsCalls;
   outcomes: AgencyInsightsOutcomeRow[];
+  /**
+   * The same outcomes on every call type ({@link AgencyInsightsOutcomeByTypeRow}). `outcomes`
+   * above stays the dialler's alone, as every figure that links to the Call log's Dialler chip is.
+   */
+  outcomes_by_type: AgencyInsightsOutcomeByTypeRow[];
   callbacks: AgencyInsightsCallbacks;
   overrides: AgencyInsightsOverrideRow[];
   /** Connected calls closed with no outcome (lapsed wrap-ups), by how wrap-up ended. */

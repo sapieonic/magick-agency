@@ -13,7 +13,6 @@ import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
-import 'package:magick_agency_agent/features/calls/calls_screen.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_list.dart';
 import 'package:magick_agency_agent/features/missed/missed_count_controller.dart' show missedRereadOnEntryAfter;
@@ -22,7 +21,6 @@ import '../../core/auth/support/harness.dart' show testSignalsProvider;
 import '../../core/softphone/fake_softphone_host.dart'
     show FakeSoftphoneHost, campaignHost, copyHost, hostView, softphoneCoreOverrides;
 import '../../core/softphone/manual_calls.dart' show bootstrapJson, manualCallJson;
-import '../calls/softphone_support.dart' show FakeSoftphoneCallsApi, softphoneCallsOverrides;
 import '../softphone/softphone_harness.dart' show FakeSoftphoneActions;
 import 'support.dart';
 
@@ -181,7 +179,8 @@ void main() {
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(actions.calls, ['callBack'], reason: 'only the hand-off: the screen dials nothing itself');
-      expect(actions.args['callBack'], ['+918765432109', 'camp-1']);
+      // The row's id goes with the number: the call placed is this missed call's call back (CL1).
+      expect(actions.args['callBack'], ['+918765432109', 'camp-1', 'm1']);
       expect(find.text('at /phone'), findsOneWidget);
       expect(find.byType(SnackBar), findsNothing, reason: 'the pad is filled at once');
     });
@@ -560,45 +559,5 @@ void main() {
     await tester.tap(find.text('Any reason').last);
     await tester.pumpAndSettle();
     expect(api.queries.last.toQuery(), {'status': 'open', 'assignee': 'me', 'limit': '50'});
-  });
-
-  group('on My calls', () {
-    late FakeSoftphoneCallsApi soft;
-
-    setUp(() => soft = FakeSoftphoneCallsApi());
-
-    Future<void> openCalls(WidgetTester tester, {bool inboundOn = true}) async {
-      await setPhoneSize(tester);
-      await tester.pumpWidget(harness(const CallsScreen(), [
-        ...softphoneCallsOverrides(soft),
-        ...missedOverrides(api, inboundOn: inboundOn, base: false),
-        softphoneActionsProvider.overrideWithValue(actions),
-      ]));
-      await flush(tester);
-      await flush(tester);
-    }
-
-    testWidgets('a third segment, short labels, with the open count as a badge', (tester) async {
-      api.autoPage = missedPage([missed('m1')]);
-      await openCalls(tester);
-      expect(find.text('Campaign'), findsOneWidget);
-      expect(find.text('Soft phone'), findsOneWidget);
-      expect(find.text('Missed'), findsOneWidget);
-      final badge = tester.widget<Badge>(find.byKey(const Key('calls-view-missed-badge')));
-      expect(badge.isLabelVisible, isTrue);
-      expect((badge.label! as Text).data, '3');
-
-      await tester.tap(find.byKey(const Key('calls-view-missed')));
-      await flush(tester);
-      expect(find.byKey(const Key('missed-row-m1')), findsOneWidget);
-      expect(find.text('Showing 1 call'), findsOneWidget);
-    });
-
-    testWidgets('no segment where the list is hidden (a 403 on the count)', (tester) async {
-      api.countAnswer = forbidden;
-      await openCalls(tester);
-      expect(find.byKey(const Key('calls-view-missed')), findsNothing);
-      expect(find.text('Campaign calls'), findsOneWidget, reason: 'two segments keep their long labels');
-    });
   });
 }

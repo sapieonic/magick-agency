@@ -29,6 +29,8 @@ const repos = vi.hoisted(() => ({
   campaign: { findById: vi.fn(), list: vi.fn(), listSoftphoneTaggable: vi.fn() },
   manual: { findById: vi.fn(), listForAgent: vi.fn(), listForAccount: vi.fn() },
   settings: { get: vi.fn(), upsert: vi.fn() },
+  // The account's "Every call must belong to a campaign" (docs/call-log.md §5): off by default.
+  callSettings: { requireCampaign: vi.fn(async () => ({ on: false, since: null as Date | null })) },
   numbers: { findAvailableForAccount: vi.fn() },
   staffing: { listActiveForUser: vi.fn() },
   profiles: { findByIdScoped: vi.fn() },
@@ -44,6 +46,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', async (importOrigin
     agencyCampaignRepository: repos.campaign,
     agencyManualCallRepository: repos.manual,
     agencySoftphoneSettingsRepository: repos.settings,
+    agencyCallSettingsRepository: repos.callSettings,
     agencyAttemptRepository: {},
     agencyContactRepository: {},
   };
@@ -168,6 +171,7 @@ describe('POST /softphone/calls', () => {
     { code: 'manual_call_live', call: call as never }, { code: 'outcome_pending', call: call as never },
     { code: 'concurrency_limit' }, { code: 'station_unavailable' }, { code: 'dial_failed' },
     { code: 'customer_on_inbound_call', inbound_call_id: 'ib' },
+    { code: 'campaign_required' },
     // The inbound family's code (the return from the soft phone), answered 409 by the same helper.
     { code: 'inbound_call_live', inbound_call_id: 'ib' },
   ];
@@ -203,8 +207,8 @@ describe('the call actions', () => {
       .toEqual({ on_behalf: false, campaign_id: null, hung_up: false });
 
     runtime.softphone.submitDisposition.mockResolvedValue({
-      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true },
-      response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, disposition_code: 'sold' } },
+      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true, scope: 'campaign' },
+      response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, contact: { contact_id: 'contact-1' }, disposition_code: 'sold' } },
     });
     const disposed = await post(`/softphone/calls/${CALL}/disposition`, { agent_user_id: AGENT, code: 'sold', callback_at: 'x', notes: 'n' });
     expect(runtime.softphone.submitDisposition).toHaveBeenCalledWith(
@@ -213,6 +217,18 @@ describe('the call actions', () => {
     expect(disposed.json().audit).toEqual({
       on_behalf: false, campaign_id: CAMPAIGN, disposition_code: 'sold', replay: false,
       dnc_entry: { id: 'entry-1', created: true, scope: 'campaign' },
+    });
+
+    // CL6: a call logged to a campaign whose number is on no list has that campaign only as a
+    // filing choice, so its suppress outcome's mark is the account's, and the audit says so.
+    runtime.softphone.submitDisposition.mockResolvedValue({
+      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1b', created: true, scope: 'account' },
+      response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, contact: null, disposition_code: 'dnc' } },
+    });
+    const filedOnly = await post(`/softphone/calls/${CALL}/disposition`, { agent_user_id: AGENT, code: 'dnc' });
+    expect(filedOnly.json().audit).toEqual({
+      on_behalf: false, campaign_id: CAMPAIGN, disposition_code: 'dnc', replay: false,
+      dnc_entry: { id: 'entry-1b', created: true, scope: 'account' },
     });
 
     runtime.softphone.markDnc.mockResolvedValue({

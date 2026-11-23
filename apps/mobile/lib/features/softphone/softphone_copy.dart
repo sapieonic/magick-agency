@@ -44,6 +44,10 @@ abstract final class SoftphoneCopy {
 
   // ── Setup ──
   static const logTo = 'Log to';
+  // Every call must belong to a campaign (the account's setting).
+  static const logToRequired = 'Log to (required)';
+  static const chooseCampaign = 'Choose a campaign';
+  static const askSupervisorForCampaign = 'Ask your supervisor to add you to one.';
   static const fixedForThisCall = 'Fixed for this call';
   static const usesCampaign = 'Uses this campaign’s outcomes, caller IDs and summary profile';
   static const usesUntagged = 'Uses the soft phone’s own outcomes and your account’s numbers';

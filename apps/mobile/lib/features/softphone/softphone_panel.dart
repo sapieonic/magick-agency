@@ -136,6 +136,8 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final phase = ref.watch(softphoneViewProvider.select((v) => v.phase));
     final callId = ref.watch(softphoneViewProvider.select((v) => v.callId));
     final finishOnly = ref.watch(softphoneViewProvider.select((v) => v.finishOnly));
+    // Every call must belong to a campaign and the agent is on none: nothing to dial from.
+    final noCampaign = ref.watch(softphoneViewProvider.select((v) => v.noCampaignToLogTo));
     ref.listen(softphoneViewProvider.select((v) => v.focusCallToken), (prev, next) {
       if (next != prev && next > 0) _focusCall();
     });
@@ -150,7 +152,9 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final ready = phase == SoftphonePhase.ready;
     final Widget bottom;
     if (ready) {
-      bottom = finishOnly ? const SizedBox.shrink() : _CallArea(onDial: _dial, focusNode: _callFocus, buttonKey: _callKey);
+      bottom = finishOnly || noCampaign
+          ? const SizedBox.shrink()
+          : _CallArea(onDial: _dial, focusNode: _callFocus, buttonKey: _callKey);
     } else if (phase == SoftphonePhase.outcome) {
       bottom = const OutcomeSaveArea();
     } else {
@@ -166,7 +170,7 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
       const ListenFirstNoticeCard(),
       const _BootstrapError(),
       const _MicProblem(),
-      if (ready) ..._ready(finishOnly) else ..._onCall(phase, callKey),
+      if (ready) ..._ready(finishOnly, noCampaign) else ..._onCall(phase, callKey),
     ];
 
     return Column(
@@ -198,10 +202,14 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     );
   }
 
-  List<Widget> _ready(bool finishOnly) => [
+  List<Widget> _ready(bool finishOnly, bool noCampaign) => [
     if (finishOnly) ...[
       FinishNotice(surface: widget.surface),
       const SizedBox(height: Space.lg),
+    ] else if (noCampaign) ...[
+      const NoCampaignNotice(),
+      const SizedBox(height: Space.lg),
+      const RecentCalls(),
     ] else ...[
       const _DialHead(),
       const SizedBox(height: Space.sm),
@@ -210,11 +218,13 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
       const DialPad(),
       const SizedBox(height: Space.lg),
     ],
-    const SetupSection(),
-    const SizedBox(height: Space.lg),
-    const CallFieldsForm(key: ValueKey('fields-idle')),
-    const SizedBox(height: Space.lg),
-    const RecentCalls(),
+    if (finishOnly || !noCampaign) ...[
+      const SetupSection(),
+      const SizedBox(height: Space.lg),
+      const CallFieldsForm(key: ValueKey('fields-idle')),
+      const SizedBox(height: Space.lg),
+      const RecentCalls(),
+    ],
   ];
 
   List<Widget> _onCall(SoftphonePhase phase, String callKey) => [
@@ -274,6 +284,9 @@ class _Header extends ConsumerWidget {
           recording: v.recording,
           micMuted: v.micMuted && v.callLive,
           tag: v.campaigns.firstWhereOrNull((c) => c.campaignId == v.tagCampaignId)?.name,
+          // Every call must belong to a campaign and none is chosen yet: nothing is being
+          // logged anywhere, so the pill does not say "Not logged to a campaign".
+          tagAsked: v.campaignRequired && v.tagCampaignId == null && !v.callOnScreen,
           canClose: v.canClose,
           closeReason: v.closeBlockedReason,
           canReturn: v.canReturn,
@@ -358,11 +371,12 @@ class _Header extends ConsumerWidget {
                   tone: Tone.warn,
                   leading: Icon(Icons.mic_off, size: 14, color: t.warning),
                 ),
-              StatusPill(
-                SoftphoneCopy.loggingTo(s.tag),
-                key: const Key('softphone-logging-to'),
-                tone: s.tag == null ? Tone.neutral : Tone.accent,
-              ),
+              if (!s.tagAsked)
+                StatusPill(
+                  SoftphoneCopy.loggingTo(s.tag),
+                  key: const Key('softphone-logging-to'),
+                  tone: s.tag == null ? Tone.neutral : Tone.accent,
+                ),
             ],
           ),
           const SizedBox(height: Space.sm),

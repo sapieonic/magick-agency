@@ -2570,6 +2570,221 @@ it an end. A session used to stay open until the agent pressed Leave; closing th
 Every new guard was mutation-checked. **Not verified:** not run against a real browser or phone;
 the 2 h cutoff is a default (open decisions, below).
 
+### One call log per campaign, P1 2026-11-22 (CL1–CL12, [`call-log.md`](call-log.md))
+
+Manas approved the proposal on 2026-11-22: a call's type and campaign are columns of one list,
+built in six phases. P1 is built; P2 to P6 were not when this was written, and have all been built since (the entries below; [`call-log.md`](call-log.md) §2 and §9).
+
+- **The campaign Call log is one list.** Its dialler attempts and the soft-phone calls logged to
+  it, newest first, with type chips "All · Dialler · Soft phone" and their counts; columns When,
+  Type, Customer, Agent, What happened, Outcome, Talk time, Call. A live campaign opens on today
+  (an empty day offers the last seven days and every date); a finished or archived one on every
+  date. The Soft-phone calls view is gone: `/manual-calls` redirects to
+  `/attempts?type=soft_phone`, its query kept, and its Status filter is the Call log's
+  Soft-phone status.
+- **Review fixes (same day, an independent review of the first commit):** every Insights and
+  Compare agents drill-down lands on the Dialler chip, so its count is the figure clicked (SR1),
+  held by the drill-down parity test against the Call log's own count; the opening dates by the
+  campaign's state; Show all dates; the Status filter restored; a page boundary across the two
+  tables on one `created_at` pinned; the counts not asked for again when only the chip changed;
+  the day taken again on Refresh.
+- **The route.** `GET /proxy/agency/campaigns/:id/call-log` (`agency.supervise`), over the read
+  the export has drained since SR6, with `type` and the chips' counts. No migration. The export,
+  its columns and `source` are unchanged.
+- **Decisions.** CL1–CL12 recorded, all default, pending Manas; SR6 and IN14 amended in place.
+
+**Not verified:** not run in a real browser. The counts were not timed on a large campaign;
+their plan's shape was read on the test database (sequential scans off): for a date window the
+dialler's count is a range of `idx_agency_attempts_keyset` (the attempt list's existing
+`include_total` count) and the soft phone's a range of `idx_agency_manual_calls_campaign`.
+
+### One call log per campaign, P2: inbound in the log 2026-11-22 (CL13–CL16, [`call-log.md`](call-log.md) §4)
+
+P2 of six is built; P3 to P6 were not when this was written, and have all been built since (below).
+
+- **Inbound calls carry a campaign.** `0069_call_log_inbound_campaign.sql` adds
+  `agency_inbound_calls.campaign_id` and `campaign_source` (the arrival files a matched call under
+  its contact's campaign; existing matched calls backfilled, unmatched ones left unfiled, CL10)
+  and `agency_manual_calls.callback_of_inbound_call_id`; `0070_call_log_inbound_indexes.sql` adds
+  their two indexes.
+- **The Call log lists them.** A third branch on the same keyset, an inbound call placed by when
+  it arrived: ended, served calls filed under the campaign. Chips "All · Dialler · Soft phone ·
+  Inbound · To follow up"; To follow up is the campaign's open Missed rows (the Missed list's own
+  rule), whatever the dates, with Mark handled and Call back on each row. Every filter has a stated
+  meaning on an inbound call or leaves inbound calls out (CL13); What happened gains Missed,
+  Voicemail and Abandoned (hung up while waiting). Insights drill-downs still land on the Dialler
+  chip; Compare agents' next steps still open every type.
+- **A missed call and its call back point at each other.** A soft-phone call placed from a Missed
+  row's Call back stays a Soft phone call and carries the missed call's id, kept only when it is
+  that account's Missed row from the number dialled (CL15); the console and the app send it. A dial
+  the customer's own call stopped reads "Stopped: customer rang us".
+- **The inbound Call page** (`/agency/campaigns/:id/calls/inbound/:callId`, `agency.supervise`):
+  the caller's path, the outcome or the follow-up, the voicemail, and the recording and summary
+  under the account's settings.
+- **The export** gains `inbound` rows and three columns at the end (`wait_seconds`,
+  `missed_reason`, `callback_of`).
+
+- **Review fixes (same day, an independent review of the two commits):** 0069 can follow a
+  pre-deploy backfill on a large table (`ADD COLUMN IF NOT EXISTS`, the types checked, the CHECK
+  validated in 0070), with the steps and the repair after a rollback in `DEPLOYMENT.md`; a
+  malformed call-back link is dropped at the edge instead of refused; under To follow up the agent
+  filter is the assignee, the date fields are switched off and the export's dates tip is hidden;
+  every time on the Call log and the inbound Call page reads with AM / PM in capitals.
+
+**Not verified:** not run in a real browser, on a phone or against a carrier. The inbound branch
+is planned on 0070's index on the test database; nothing was timed on a large table. Until P3
+files unknown callers, a missed call from a number on no roster is in no campaign's log (it is on
+Inbound › Missed calls).
+
+### One call log per campaign, P3: every call must belong to a campaign 2026-11-22 (CL17–CL24, [`call-log.md`](call-log.md) §5)
+
+P3 of six is built; P4 to P6 are not (P4 since: below).
+
+- **The setting.** An account admin can switch on **Every call must belong to a campaign**
+  (Settings › Calls, `agency.calls.manage`; `0071_call_settings.sql`, its own table). Off by
+  default. The server enforces it: a soft-phone dial with no campaign is refused
+  (`campaign_required`, agents and supervisors alike), an inbound call's outcome is refused until
+  the call is filed under one, an inbound route cannot be saved without a campaign for unknown
+  callers, and the switch itself is refused, naming them, while a route has none.
+- **Unknown callers are filed.** An inbound route has a **Campaign for unknown callers**
+  (`default_campaign_id`). A caller on no list is filed under it when the call arrives, setting or
+  no setting, missed calls included; the agent may move it at the end of the call ("Filed under …
+  Change"), a supervisor on their behalf. A caller on a list keeps their own campaign.
+- **Do Not Call keeps its reach.** A mark from a call that is only filed under a campaign (by the
+  route, the agent or a supervisor; a soft-phone call logged to a campaign whose list does not
+  hold the number) is written for the whole account (CL6).
+- **A catch-all campaign stays usable.** A campaign a live route files unknown callers under may
+  be started with nothing to dial and is not completed when its list runs out (CL8); stopping or
+  archiving it asks first, naming the inbound numbers (CL21).
+- **Nothing old is touched.** No call is given a campaign after the fact (CL10), and a call that
+  began before the switch finishes as it is (CL19).
+- **The clients.** The console's soft phone and the agent app ask for a campaign before Call and
+  no longer offer "none"; an agent on no running campaign is told to ask their supervisor.
+  Settings › Soft phone greys what no call uses any more.
+
+**Not verified:** not run in a real browser, on a phone or against a carrier. The agent app's
+inbound call screen has no Change (a call arrives filed, so it is not needed for the setting to
+hold). The two counts on Settings › Calls are ranges of existing account indexes; neither was
+timed on a large account.
+
+### One call log per campaign, P4: reports and Insights by type 2026-11-22 (CL7, CL25–CL30, [`call-log.md`](call-log.md) §6)
+
+P4 of six is built; P5 and P6 are not (P5 since: below).
+
+- **A campaign's inbound calls are in its figures.** Insights' activity serves `calls.inbound`
+  (received, answered, missed, the calls still to follow up, talk time, open-hours calls) and
+  `/stats` serves `inbound`, counted by the Call log's own rule for an inbound row (filed under
+  the campaign, ended, served, by when it arrived). Read live, like the soft phone's; no
+  migration and no rollup column (CL25).
+- **Calls by type.** The Overview and the Calls tab, and the campaign report's PDF and workbook,
+  show Dialler · Soft phone · Inbound · All calls: counts, people reached and talk time add up.
+  No rate is added: each type keeps its own (Dialler connect rate, Soft-phone connect rate,
+  Answer rate, open hours). A column shows while its flag is on or the window holds such a call
+  (inbound's also while calls are still to follow up); with only the dialler, the console's
+  pages are what they were and the report gains only three definitions.
+- **Outcomes by type**, on the Calls tab and the report.
+- **"All calls connect rate" is "Outbound connect rate"** everywhere it showed; the formula is
+  the same and an inbound call is in no connect rate (CL7).
+- **The dialler's figures did not change:** its connect rate, abandonment, pacing, stalls,
+  caller-ID health, carrier failures, best hours, retries, list progress and Trends.
+- **The report dataset** stays version 1; the renderer reads a dataset from an older server.
+
+- **Review fixes (same day, an independent review of the four commits):** the workbook's
+  Summary keeps the dialler-plus-soft-phone pair as "Outbound calls placed / connected" and names
+  the three-type sums "All call types: …", so no old row name changes meaning; the Inbound column
+  stays while callers are owed a call back; a talk time an older server did not serve is a dash;
+  `no_disposition` reads "No outcome chosen" in the by-type tables; the console draws the
+  proposal's bar above the table; the calls still to follow up are read from the account's open
+  Missed rows; the parity test's seed holds a wrap-up redial, a never-dialled attempt and calls
+  at the window's end. CL30's departure from the proposal's words is stated as an open question.
+
+**Not verified:** not run in a real browser. The PDF was rendered from the renderer's fixture
+and looked at (the report stays four pages). The inbound statement's plan was read on the test
+database (the window on `idx_agency_inbound_calls_campaign`); nothing was timed on a large
+table. `/stats` now runs one more statement per read.
+
+### One call log per campaign, P5: My calls and All calls 2026-11-22 (CL9, CL31–CL38, [`call-log.md`](call-log.md) §7)
+
+P5 of six is built; P6 (inbound calls in customer history) is not (P6 since: below).
+
+- **One read, three scopes.** The campaign Call log's read (`listCallLog`) also serves the
+  account and one agent: the same branches, keyset, filters and inbound row rule (CL31).
+- **My calls is one list** (console `/dialer/attempts`, the app's My calls tab): the agent's
+  dials, soft-phone calls, the inbound calls they answered and their open missed calls, with
+  chips, To follow up first. To follow up is their open missed calls, then the callbacks they
+  booked that are due today or late ("Due 4:00 PM", "Late by 2 hours"); empty, "Nobody is
+  waiting for a call from you." `GET /proxy/agency/my-calls` (`agency.station.connect`).
+- **Numbers are masked by the server on My calls.** A number its campaign hides from agents
+  (`phone_display: masked`) is never sent on that route, on any type of row, and the rows carry
+  no media (CL32). Before this, My calls masked only in the console's browser, on dialler rows.
+  The Missed list, the soft phone and the station still receive numbers, as AS9 says.
+- **All calls** (`/agency/calls`, `GET /proxy/agency/calls`, `agency.supervise`) took the
+  account's Soft-phone calls' place: the Call log's table over the whole account, with a
+  Campaign column and a Campaign filter, "No campaign" among its choices. A call filed under
+  none that is older than the account's switch-on of the rule reads "Before the rule" (CL35).
+  `/agency/softphone` redirects there with the Soft phone chip on. Settings › Calls links its
+  count of unfiled calls to them.
+- **One index.** `0072_attempts_account_created_index.sql`: an account's dialler attempts by
+  when they were created, measured before it was added (CL37). On a table of more than about a
+  million attempts, build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
+- **Old URLs.** `?view=softphone` on My calls opens the Soft phone chip; `/dialer/missed` and
+  its badge are unchanged.
+- **The app.** The three segments are chips over one list of cards; the attempts list, the
+  soft-phone calls list, their filters and detail sheets were removed (CL38). An older build
+  keeps its segments on the old routes, which are still served, and still shows numbers in full.
+
+- **After review, the same day.** The `/agency/calls` route was not declared in `App.tsx`, so
+  every link to All calls opened "Page not found"; it is declared, and a test now checks every
+  path the shell offers against the routes `App.tsx` declares. To follow up's callbacks follow
+  the Campaign filter. My calls shows a number only where the campaign says exactly `full`, and
+  masks an inbound call filed under no campaign by its matched contact's campaign. Call back
+  reads its Missed row by id (`GET /proxy/agency/inbound/missed/:id`), not from the list's first
+  100 rows. To follow up's badge follows the live Missed count. The console no longer reads
+  `my-attempts`, which sends numbers in full.
+
+**Not verified:** not run in a real browser or on a phone. The account read was timed on a
+throwaway copy of the test database (2.2 million attempts, 200,000 soft-phone calls, 300,000
+inbound calls), not on production data. Left as they were: the Missed list still sends numbers
+in full to the agent a row is assigned to; My calls has no filter by outcome or by number, and
+its soft-phone rows no longer show "DNC override" and "Hours override"; the app has no page for
+one soft-phone call; All calls has no export, stats strip or Summary column ([`call-log.md`](call-log.md) §7 "What P5
+left as it was").
+
+### One call log per campaign, P6: inbound calls in customer history 2026-11-22 (CL39–CL42, [`call-log.md`](call-log.md) §8)
+
+P6 of six is built: the work the proposal named is done. What waits for Manas, and what was
+left out, is [`call-log.md`](call-log.md) §9.
+
+- **A number's history holds the calls it made to us.** Customer history's timeline gains
+  `inbound_call` entries: every call from the number, in the accounts the reader can see, that
+  ended and that we served, **filed under a campaign or under none** (CL39). A rejected call, a
+  withheld number and a call with no account are never rows; a live call is under Open now.
+  Inbound's own flag hides nothing. The number is found however it is typed.
+- **The row is the Call log's inbound row**, by the same SQL and the same words: answered or
+  missed and why, the wait, who answered or who it is assigned to, the voicemail's length, To
+  follow up, "Called back 3:31 PM", the number rung. Console and app.
+- **Counted apart.** "Calls received 3 · 2 answered" beside Calls placed and Connected; the last
+  contact is still the last call we placed (CL40). The Channel filter and the app's chips offer
+  inbound calls; a callback booked on an inbound call is a callback entry; the export has a line
+  per inbound call.
+- **Who sees what did not widen** (CL42). Still `agency.customer_history.read` with the search's
+  audit, whose count now includes the inbound entries. Notes go to `agency.campaigns.read` or
+  the agent who answered; the Call page to `agency.supervise`, and only for a call filed under
+  a campaign; no recording or voicemail link is sent to anyone.
+- **One index.** `0073_inbound_calls_from_index.sql`: an account's inbound calls by caller,
+  measured before it was added (CL41). On a table of more than about a million inbound calls,
+  build it `CONCURRENTLY` before the deploy (`DEPLOYMENT.md` 12).
+- **Still open for Manas:** CL30's question (a dial stopped because the customer rang us is two
+  calls in the Calls row of Calls by type), and every CL ruling, each a default he has not
+  ruled on. **Not built:** filing old calls with no campaign by hand, and "Customers reached".
+
+**Not verified:** not run in a real browser or on a phone. The lookup was timed on a throwaway
+copy of the test database (2 million inbound calls in 10 accounts), not on production data.
+Left as they were: the last contact is the newest call we placed; the history has no Call back
+or Mark handled, and no Missed, Voicemail or Abandoned in its outcome filter; an older app build
+shows an inbound entry as one it cannot show yet ([`call-log.md`](call-log.md) §8 "What P6 left
+as it was").
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon

@@ -16,7 +16,9 @@ import {
   clampLimit,
   parseAttemptFilters,
   parseContactFilters,
+  parseFlagParam,
   parseIncludeTotal,
+  type FilterIssue,
 } from '../../../agency/spine-filters.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyAttemptRow } from '@magick-agency/contracts/agency';
@@ -32,7 +34,8 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
-import { CAMPAIGN_CALL_SOURCES, isCampaignCallSource } from '../../../agency/campaign-call-log.js';
+import { inboundJourney, type CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
+import { parseCallLogQuery } from '../../../agency/call-lists.js';
 
 /*
  * Route params reaching a `::uuid` cast are shape-checked first, against the shared
@@ -152,36 +155,137 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   // ── GET /api/v1/agency-campaigns/:id/call-log ───────────────────────────
   //
   // The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts and the
-  // soft-phone calls tagged to it, newest first on one keyset, each row marked with its
-  // `source`. The attempt list's filters and paging, plus `source=dialler|soft_phone` to keep
-  // one of the two. What the campaign call export drains; the Call log's JSON views stay one
-  // source each (Dialler calls, Soft-phone calls).
+  // soft-phone calls tagged to it and the inbound calls filed under it, newest first on one
+  // keyset, each row marked with its `source`. The attempt list's filters and paging, plus
+  // `source=dialler|soft_phone|inbound` to keep one of the three, or `source=to_follow_up` for
+  // the campaign's open Missed rows (inbound rows, whatever the dates). `outcome` also takes
+  // `missed`, `voicemail` and `abandoned_in_queue`, which only an inbound call matches. What the campaign call export drains, and what the console's Call log reads
+  // (CL11, `docs/call-log.md`): for it, `include_counts=1` adds `counts`, how many rows of each
+  // source the filters match across every page, `source` and cursor not applied (the chips).
+  // `status=live|awaiting_outcome|settled` keeps the soft-phone calls in that status; an attempt
+  // or an inbound call has none, so with a status neither matches (rows and counts alike).
   app.get<{ Params: { id: string } }>('/:id/call-log', async (request, reply) => {
     const owned = await spinePageCampaign(request, reply);
     if (!owned) return reply;
 
     const query = (request.query ?? {}) as Record<string, unknown>;
-    const parsed = parseAttemptFilters(query);
-    if (!parsed.ok) return replyValidationFailed(reply, parsed.issues);
-    if (parsed.filters.agentUserId !== undefined && !UUID_RE.test(parsed.filters.agentUserId)) {
-      return replyValidationFailed(reply, [{ param: 'agent_user_id', message: 'must be an agent id' }]);
-    }
-    const rawSource = query['source'];
-    if (rawSource !== undefined && !isCampaignCallSource(rawSource)) {
-      return replyValidationFailed(reply, [{ param: 'source', message: `must be one of: ${CAMPAIGN_CALL_SOURCES.join(', ')}` }]);
-    }
+    // One parse for every scope the log is read at (`agency/call-lists.ts`).
+    const parsedQuery = parseCallLogQuery(query);
+    if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
+    const { filters, source, includeCounts, ...narrowed } = parsedQuery.value;
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
-    return reply.send(await agencyAttemptRepository.listCallLogForCampaign({
-      campaignId: owned.id,
-      tenantId: getTenantId(request),
-      filters: parsed.filters,
-      source: rawSource === undefined ? null : rawSource,
-      ...(cursor ? { after: cursor } : {}),
-      limit: clampLimit((query as { limit?: unknown }).limit),
-    }));
+    // The counts are of the whole filtered log (no cursor, no source), by the page's own WHERE
+    // terms; the two reads run side by side.
+    const tenantId = getTenantId(request);
+    const [page, counts] = await Promise.all([
+      agencyAttemptRepository.listCallLogForCampaign({
+        campaignId: owned.id,
+        tenantId,
+        filters,
+        source,
+        ...narrowed,
+        ...(cursor ? { after: cursor } : {}),
+        limit: clampLimit((query as { limit?: unknown }).limit),
+      }),
+      includeCounts
+        ? agencyAttemptRepository.countCallLogForCampaign({
+          campaignId: owned.id, tenantId, filters, ...narrowed,
+        })
+        : Promise.resolve(null),
+    ]);
+    return reply.send(counts === null ? page : { ...page, counts });
   });
+
+  // ── GET /api/v1/agency-campaigns/:id/call-log/inbound/:callId ───────────
+  //
+  // One inbound call of the campaign, for its Call page (`docs/call-log.md`): the call log's own
+  // row (so the page and the list it was opened from cannot disagree), the caller's path in
+  // order, who saved the outcome, where a voicemail plays from, and the media leg in the
+  // attempt detail's envelope (`call`, `call_availability`). Campaign-scoped like the attempt
+  // detail: the campaign's ownership check authorises the read, and a call filed under another
+  // campaign, live, or `rejected` is a 404.
+  async function readInboundCall(
+    request: FastifyRequest<{ Params: { id: string; callId: string } }>,
+    reply: FastifyReply,
+  ): Promise<{
+    inbound: CampaignInboundLogRow;
+    call: WebRtcCallRecord | null;
+    availability: 'available' | 'purged' | 'never_placed';
+  } | null> {
+    const campaign = campaignOf(request);
+    const notFound = () => {
+      reply.code(404).send({
+        error: 'Not Found', code: 'inbound_call_not_found', message: 'Inbound call not found on this campaign',
+      });
+      return null;
+    };
+    // Before the query: a malformed id would reach the `uuid` cast as `22P02` (a 500).
+    if (!UUID_RE.test(request.params.callId)) return notFound();
+    const inbound = await agencyAttemptRepository.findInboundForCampaign(campaign.id, getTenantId(request), request.params.callId);
+    if (!inbound) return notFound();
+    if (!inbound.webrtc_call_id) return { inbound, call: null, availability: 'never_placed' };
+    const call = await webrtcCallRepository.findByIdScoped(
+      inbound.webrtc_call_id, getTenantId(request), getAccountId(request), 'agency',
+    );
+    return call ? { inbound, call, availability: 'available' } : { inbound, call: null, availability: 'purged' };
+  }
+
+  /** Where this surface serves an inbound call's recording bytes. */
+  function inboundRecordingPath(campaignId: string, callId: string): string {
+    return `/api/v1/agency-campaigns/${campaignId}/call-log/inbound/${callId}/recording`;
+  }
+
+  app.get<{ Params: { id: string; callId: string } }>(
+    '/:id/call-log/inbound/:callId',
+    { preHandler: ownedCampaign({ gated: true }) },
+    async (request, reply) => {
+      const found = await readInboundCall(request, reply);
+      if (!found) return reply;
+      return reply.send({
+        inbound: found.inbound,
+        journey: inboundJourney(found.inbound),
+        // Relative to the public proxy, as a Missed row's `voicemail_url` is: the Missed list's
+        // own route plays it, under that route's rules.
+        voicemail_url: found.inbound.inbound.voicemail_seconds !== null
+          ? `/inbound/missed/${found.inbound.id}/voicemail`
+          : null,
+        call: found.call
+          ? formatWebRtcCallResponse(
+              found.call,
+              inboundRecordingPath(request.params.id, found.inbound.id),
+              await analysisDelayForRecord(found.call),
+            )
+          : null,
+        call_availability: found.availability,
+      });
+    },
+  );
+
+  // ── GET /api/v1/agency-campaigns/:id/call-log/inbound/:callId/recording ──
+  //
+  // The bytes, through the authenticated proxy, as the attempt's recording is served.
+  app.get<{ Params: { id: string; callId: string } }>(
+    '/:id/call-log/inbound/:callId/recording',
+    { preHandler: ownedCampaign({ gated: true }) },
+    async (request, reply) => {
+      const found = await readInboundCall(request, reply);
+      if (!found) return reply;
+      if (!found.call) {
+        return reply.code(404).send({
+          error: 'Not Found',
+          code: found.availability === 'purged' ? 'call_purged' : 'call_never_placed',
+          message: found.availability === 'purged'
+            ? 'The recording of this call is no longer available'
+            : 'This call has no recording',
+        });
+      }
+      const { proxyCallRecording } = await import('../../../utils/recording-proxy.js');
+      const { getRecordingAccessResolver } = await import('../../../telephony/recording-access.js');
+      return proxyCallRecording(found.call, request, reply, await getRecordingAccessResolver());
+    },
+  );
 
   // ── The agency-native call read ──────────────────────────────
   //

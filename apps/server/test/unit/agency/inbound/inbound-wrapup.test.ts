@@ -44,7 +44,7 @@ describe('the panel`s outcome_due_at follows the window', () => {
     talk_seconds: 318, settled_at: null, disposition_code: null, notes: null, callback_at: null,
     dispositioned_by_user_id: null, dispositioned_on_behalf: false, wrapup_seconds: 45,
   } as unknown as AgencyInboundCallRecord;
-  const ctx = { route: null, match: null, catalogSource: 'builtin' as const, catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], stickyCandidates: [] };
+  const ctx = { route: null, match: null, campaign: null, requireCampaign: { on: false, since: null }, catalogSource: 'builtin' as const, catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], stickyCandidates: [] };
 
   it('the call`s captured window after the end; the default when it has none; nothing once settled', () => {
     expect(inboundCallToWire(ended, ctx, null).outcome_due_at).toBe('2026-11-09T12:05:45.000Z');

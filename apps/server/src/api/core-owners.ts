@@ -86,6 +86,7 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'DELETE /inbound/clips/:id': 'none',
   'GET /inbound/clips/:id/audio': 'none',
   'GET /inbound/missed': 'none',
+  'GET /inbound/missed/:id': 'none',
   'POST /inbound/missed/:id/handled': 'none',
   'POST /inbound/missed/:id/reopen': 'none',
   'GET /inbound/missed/:id/voicemail': 'none',
@@ -101,6 +102,10 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'POST /inbound/calls/:id/hangup': 'none',
   'POST /inbound/calls/:id/disposition': 'none',
   'POST /inbound/calls/:id/dnc': 'none',
+  // The campaign an unknown caller's call is filed under (docs/call-log.md §5): the call's own agent
+  // or a supervisor, on the call's row; no campaign leader.
+  'GET /inbound/calls/:id/campaigns': 'none',
+  'POST /inbound/calls/:id/campaign': 'none',
   'GET /inbound/queue': 'none',
   // Mode B: the ring of an away agent's phone (`agency/inbound-ring.ts`). A ring has no station
   // socket (the app parked it), and inbound callers are connected in one process (IB8): the

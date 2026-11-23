@@ -41,6 +41,7 @@ import type { AgencyManualCallRecord } from '../../models/agency.model.js';
 // owed an outcome gets the same one, so "auto-closed" reads the same on both spines.
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
+import { softphoneStatusSql } from './softphone-campaign-sql.js';
 import { projectManualCallRow, type AgencyManualCallJoinedRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
@@ -103,6 +104,11 @@ export interface AgencyManualCallCreateInput {
   dncOverride: { note: string; entryId: string } | null;
   /** SP2. */
   hoursOverrideNote: string | null;
+  /**
+   * The Missed inbound call this call rings back (0069, `docs/call-log.md` CL1), already checked
+   * by the caller (the account's Missed row, from the number dialled); null: not a call back.
+   */
+  callbackOfInboundCallId: string | null;
 }
 
 /** Filters of the two list reads, already parsed and validated by the API layer from `AgencyManualCallListQuery`. */
@@ -177,8 +183,8 @@ export class AgencyManualCallRepository {
           contact_id, contact_claimed, contact_prior_state,
           destination_e164, caller_id, state, fields,
           recording_requested, analysis_profile_id,
-          dnc_override_note, dnc_override_entry_id, hours_override_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11::jsonb, $12, $13, $14, $15, $16)
+          dnc_override_note, dnc_override_entry_id, hours_override_note, callback_of_inbound_call_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', $11::jsonb, $12, $13, $14, $15, $16, $17)
        ON CONFLICT (session_id) WHERE settled_at IS NULL DO NOTHING
        RETURNING *`,
       [
@@ -189,7 +195,7 @@ export class AgencyManualCallRepository {
         input.destinationE164, input.callerId, JSON.stringify(input.fields),
         input.recordingRequested, input.analysisProfileId,
         input.dncOverride?.note ?? null, input.dncOverride?.entryId ?? null,
-        input.hoursOverrideNote,
+        input.hoursOverrideNote, input.callbackOfInboundCallId,
       ],
     );
     const call = rows[0];
@@ -697,9 +703,7 @@ export class AgencyManualCallRepository {
     if (f.agentUserId) conditions.push(`m.agent_user_id = ${bind.add(f.agentUserId)}::uuid`);
     if (f.campaign === 'untagged') conditions.push('m.campaign_id IS NULL');
     else if (f.campaign) conditions.push(`m.campaign_id = ${bind.add(f.campaign.campaignId)}::uuid`);
-    if (f.status === 'live') conditions.push("m.state <> 'ended'");
-    else if (f.status === 'awaiting_outcome') conditions.push("m.state = 'ended' AND m.settled_at IS NULL");
-    else if (f.status === 'settled') conditions.push('m.settled_at IS NOT NULL');
+    if (f.status) conditions.push(softphoneStatusSql(f.status));
     if (f.outcome) conditions.push(`m.outcome = ${bind.add(f.outcome)}::varchar`);
     if (f.dispositionCode) conditions.push(`m.disposition_code = ${bind.add(f.dispositionCode)}::varchar`);
     if (f.contactId) conditions.push(`m.contact_id = ${bind.add(f.contactId)}::uuid`);

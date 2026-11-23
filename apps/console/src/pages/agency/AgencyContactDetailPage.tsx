@@ -29,6 +29,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
 import type { AgencyManualCallListRow } from '../../types/softphone';
 import { listManualCalls } from '../../api/softphone';
 import { manualCallOutcome } from '../../utils/softphone/callLabels';
+import { allCallsPath } from '../../utils/agency/callLog';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { usePermission } from '../../hooks/usePermission';
 import styles from './AgencyContactDetailPage.module.css';
@@ -526,7 +527,7 @@ export function AgencyContactDetailPage() {
               {manualMore && (
                 <p className={styles.mutedNote}>
                   Showing the latest {manualCalls.length}.{' '}
-                  <Link to="/agency/softphone" className={styles.sectionLink}>All soft-phone calls</Link>
+                  <Link to={allCallsPath({ type: 'soft_phone' })} className={styles.sectionLink}>All calls</Link>
                 </p>
               )}
             </div>

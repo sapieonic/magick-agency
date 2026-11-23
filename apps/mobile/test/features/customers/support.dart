@@ -101,6 +101,59 @@ Map<String, Object?> softphoneCallJson(
       'call_page': null,
     };
 
+/// An inbound call as an agent reads it: by default missed while the caller
+/// queued, a voicemail left, filed under no campaign, still to follow up and
+/// assigned to Priya. [answeredBy] makes it an answered call.
+Map<String, Object?> inboundCallJson(
+  int n, {
+  Map<String, Object?>? campaign,
+  String? answeredBy,
+  String followUpStatus = 'open',
+  String? handledReason,
+  String? calledBackAt,
+  String? notes,
+  bool notesHidden = false,
+  bool viaStickyAgent = false,
+}) =>
+    {
+      'key': 'inbound_call:i$n',
+      'kind': 'inbound_call',
+      'at': DateTime.utc(2026, 11, 5, 9, 42).subtract(Duration(days: n)).toIso8601String(),
+      'account_id': 'a1',
+      'inbound_call_id': 'i$n',
+      'campaign': campaign,
+      'campaign_source': campaign == null ? null : 'contact',
+      'contact_id': null,
+      'line_e164': '+918045550100',
+      'route_name': 'Collections line',
+      'agent': answeredBy == null ? null : {'user_id': 'u2', 'name': answeredBy},
+      'outcome': answeredBy == null ? 'voicemail' : 'answered',
+      'disposition_code': answeredBy == null ? null : 'ptp',
+      'talk_seconds': answeredBy == null ? null : 252,
+      'notes': notes,
+      'notes_hidden': notesHidden,
+      'callback_at': null,
+      'promise_date': null,
+      'promise_amount': null,
+      'wait_seconds': answeredBy == null ? 100 : 18,
+      'queued': answeredBy == null,
+      'via_sticky_agent': viaStickyAgent,
+      'voicemail_seconds': answeredBy == null ? 22 : null,
+      'follow_up': answeredBy != null
+          ? null
+          : {
+              'status': followUpStatus,
+              'reason': 'overflow',
+              'closed_cause': null,
+              'assignee': {'user_id': 'u1', 'name': 'Priya Nair'},
+              'handled_reason': handledReason,
+              'handled_at': followUpStatus == 'handled' ? '2026-11-05T11:00:00.000Z' : null,
+            },
+      'called_back_at': calledBackAt,
+      'recording': answeredBy == null ? 'no_call' : 'available',
+      'call_page': null,
+    };
+
 Map<String, Object?> dncJson() => {
       'id': 'd1',
       'scope': 'campaign',
@@ -209,6 +262,7 @@ CustomerSearchResponse answer({
   List<Map<String, Object?>> overrides = const [],
   Map<String, Object?>? filterOptions,
   bool contactsTruncated = false,
+  Map<String, Object?>? inboundTotals,
 }) =>
     CustomerSearchResponse.fromJson({
       'search_id': searchId,
@@ -242,6 +296,7 @@ CustomerSearchResponse answer({
         'totals': {
           'calls': empty ? 0 : 4,
           'connected': empty ? 0 : 2,
+          'inbound': ?inboundTotals,
           'last_contacted': empty
               ? null
               : {

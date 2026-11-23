@@ -148,6 +148,8 @@ describe('0024 — agency_inbound_routes', () => {
       'deleted_at timestamp with time zone', 'deleted_by uuid',
       // 0032: the route's wrap-up window, IQ52 (inbound-route-wrapup-migration.test.ts pins it).
       'wrapup_seconds smallint not null',
+      // 0071: the campaign unknown callers are filed under (call-settings-migration.test.ts pins it).
+      'default_campaign_id uuid',
     ]);
     const d = AGENCY_INBOUND_ROUTE_DEFAULTS;
     expect(await route()).toMatchObject({
@@ -302,6 +304,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'ring_result character varying', 'ring_count smallint not null',
       // 0041: the promise to pay recorded with the outcome (promise-to-pay-migration.test.ts pins them).
       'promise_date date', 'promise_amount numeric',
+      // 0069: the campaign the call is filed under (call-log-inbound-migration.test.ts pins them).
+      'campaign_id uuid', 'campaign_source character varying',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -606,7 +610,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(59); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1, 0032's 1, 0036's 5 and 0041's 2
+    expect((await columns('agency_inbound_calls')).length).toBe(61); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1, 0032's 1, 0036's 5, 0041's 2 and 0069's 2
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

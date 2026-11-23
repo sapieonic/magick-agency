@@ -176,7 +176,9 @@ interface OldAgencyCampaignStats {
   // Added deliberately (IN10): the connect rate's own denominator, for its fraction and floor.
   first_dials_placed?: number;
   // Added deliberately (SR1–SR3): the tagged soft-phone calls, beside the dialler's figures.
-  softphone?: { placed: number; connected: number; human_connects: number };
+  softphone?: { placed: number; connected: number; human_connects: number; talk_seconds: number };
+  // Added deliberately (call log P4, CL25): the inbound calls filed under the campaign, beside both.
+  inbound?: { received: number; answered: number; missed: number; open_follow_ups: number; talk_seconds: number; open_hours: number };
   human_connects?: number;
   machine_connects?: number;
   unclassified_connects?: number;

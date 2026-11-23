@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Ban, Info, MicOff, PhoneIncoming, TriangleAlert, UserRound } from 'lucide-react';
 import type { DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import { StationBanner, StationFrame } from '../station/StationFrame';
@@ -23,7 +23,7 @@ import { STATION_COPY } from '../../../utils/agency/stationCopy';
 import { SIDE_COPY, STICKY_WORDS, sideSaveBlockLine, waitedFor } from '../../../utils/agency/sideViewCopy';
 import { inboundCustomerCard, inboundLastCalls } from '../../../utils/agency/sideViewCustomer';
 import { sideViewBand, type SideCallPhase } from '../../../utils/agency/stationView';
-import type { InboundCallState } from '../../../hooks/useInboundCall';
+import type { InboundCallState, InboundFiling } from '../../../hooks/useInboundCall';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import type { StationConnection } from '../../../hooks/agencyStation/types';
 import type { AgencyInboundCall } from '../../../types/inbound';
@@ -251,6 +251,7 @@ export function InboundCallView({
           shake={shake}
         />
         <div className={styles.col}>
+          {ib.filing.shown ? <FiledUnderCard filing={ib.filing} /> : null}
           <CustomerCardView card={card} compact />
           {noteCard}
         </div>
@@ -309,6 +310,58 @@ export function InboundCallView({
   );
 }
 
+/**
+ * "Filed under" at the end of a call from a number on no list (docs/call-log.md §5): the work the
+ * call is saved under, and Change while it can still be moved. Changing it loads that work's
+ * choices; the note under it says so.
+ */
+function FiledUnderCard({ filing }: { filing: InboundFiling }) {
+  const selectId = useId();
+  return (
+    <section className={styles.card} data-testid="inbound-filed-under" data-missing={filing.missing ? 'true' : 'false'}>
+      <p className={side.filed}>
+        <span className={side.filedLabel}>{SIDE_COPY.filedUnder}:</span>{' '}
+        <strong data-testid="inbound-filed-name">{filing.name ?? SIDE_COPY.noWork}</strong>{' '}
+        <span className={side.filedWhy}>({SIDE_COPY.notOnAnyList.charAt(0).toLowerCase()}{SIDE_COPY.notOnAnyList.slice(1)})</span>
+        {filing.changeable && !filing.choosing ? (
+          <button
+            type="button"
+            className={side.linkButton}
+            onClick={filing.open}
+            aria-label={SIDE_COPY.changeWorkLabel}
+            data-testid="inbound-filed-change"
+          >
+            {filing.name ? SIDE_COPY.changeWork : SIDE_COPY.chooseWork}
+          </button>
+        ) : null}
+      </p>
+      {filing.choosing ? (
+        <div className={side.field}>
+          <label className={side.fieldLabel} htmlFor={selectId}>{SIDE_COPY.chooseWork}</label>
+          <select
+            id={selectId}
+            className={side.select}
+            value={filing.campaignId ?? ''}
+            disabled={filing.loading || filing.changing || !filing.options}
+            onChange={(event) => filing.choose(event.target.value)}
+            data-testid="inbound-filed-select"
+          >
+            <option value="" disabled>{filing.loading ? SIDE_COPY.loading : filing.changing ? SIDE_COPY.changingWork : SIDE_COPY.chooseWork}</option>
+            {/* The work it is under now may not be one the agent can choose: still shown, as chosen. */}
+            {filing.campaignId && !(filing.options ?? []).some((o) => o.campaign_id === filing.campaignId)
+              ? <option value={filing.campaignId}>{filing.name}</option>
+              : null}
+            {(filing.options ?? []).map((o) => <option key={o.campaign_id} value={o.campaign_id}>{o.campaign_name}</option>)}
+          </select>
+        </div>
+      ) : null}
+      {filing.missing && !filing.choosing ? <p className={side.hint} data-testid="inbound-filed-missing">{SIDE_COPY.chooseWorkToSave}</p> : null}
+      {filing.error ? <p className={styles.refusal} role="alert" data-testid="inbound-filed-error">{filing.error}</p> : null}
+      {filing.notice ? <p className={side.hint} role="status" data-testid="inbound-filed-notice">{filing.notice}</p> : null}
+    </section>
+  );
+}
+
 function whoLine(card: CustomerCard): string {
   return [card.name, card.phone].filter(Boolean).join(' · ');
 }
@@ -352,7 +405,8 @@ function AboutCallCard({ call }: { call: AgencyInboundCall }) {
         </div>
         <div>
           <dt>{SIDE_COPY.work}</dt>
-          <dd data-testid="inbound-campaign">{call.match?.campaign_name ?? SIDE_COPY.noWork}</dd>
+          {/* Where the call is filed (docs/call-log.md §5): their own work, else the line's. */}
+          <dd data-testid="inbound-campaign">{call.campaign?.campaign_name || call.match?.campaign_name || SIDE_COPY.noWork}</dd>
         </div>
       </dl>
       {call.match ? null : (

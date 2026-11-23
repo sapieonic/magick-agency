@@ -16,6 +16,13 @@
  *    the tag's index; the definition is `softphone-campaign-sql.ts`, SR1–SR3). Outside every
  *    other count: a manual call is not an attempt row (docs/softphone.md), and the dialler's
  *    connect rate is the dialler's alone (SR1). Untagged calls are in no campaign (SR4).
+ *  - `calls.inbound`: the inbound calls filed under the campaign that arrived in range, and its
+ *    open Missed rows as of now (`inboundCalls`; the definition is `inbound-campaign-sql.ts`, the
+ *    Call log's own rule for an inbound row, CL16). Beside the dialler's and the soft phone's,
+ *    in neither and in no connect rate (CL7). Read live, as the soft phone's are (CL25).
+ *  - `outcomes_by_type`: `outcomes` (the dialler's conversations by code) beside the same codes
+ *    on the soft-phone and inbound calls (`outcomesByType`), labelled from the campaign's
+ *    CURRENT catalog (CL28).
  *  - `callbacks`: `booked` from the rollup (by the booking dial's time); the IN4 timing classes and
  *    `by_owner` from `callbackTiming` (the callbacks whose booked time is in range); `open_due_today`
  *    and `open_overdue` are as of now, the allocation's totals, read through the shared cache
@@ -34,7 +41,9 @@
 import type {
   AgencyInsightsActivity,
   AgencyInsightsAgentActivityRow,
+  AgencyInsightsOutcomeByTypeRow,
 } from '@magick-agency/contracts/api/agency/insights';
+import { AGENCY_SYSTEM_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/call-log';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import {
@@ -47,6 +56,43 @@ import { cachedAllocation } from './allocation.js';
 import { campaignZone, rangeWire, type ServedInsightsRange } from './range.js';
 import { InsightsCampaignGone, overrideCodes, successCodes, userIdOf } from './shared.js';
 
+/**
+ * One row per outcome code across the three call types (CL28): the dialler's conversations
+ * (the rollup's rows), the soft phone's and inbound's (`outcomesByType`), each call under the
+ * one type it is. Largest total first, then by code so the order is stable.
+ */
+export function outcomesByType(
+  dialler: ReadonlyArray<{ code: string | null; count: number }>,
+  others: ReadonlyArray<{ source: 'soft_phone' | 'inbound'; code: string | null; count: number }>,
+  labels: ReadonlyMap<string, string | null>,
+  success: ReadonlySet<string>,
+): AgencyInsightsOutcomeByTypeRow[] {
+  const rows = new Map<string | null, AgencyInsightsOutcomeByTypeRow>();
+  const row = (code: string | null) => {
+    let r = rows.get(code);
+    if (!r) {
+      r = {
+        code,
+        // The catalog's label; for a system code no catalog lists (`no_disposition`), its words.
+        label: code === null ? null : labels.get(code) ?? AGENCY_SYSTEM_OUTCOME_LABELS[code] ?? null,
+        is_success: code !== null && success.has(code),
+        dialler: 0,
+        soft_phone: 0,
+        inbound: 0,
+        total: 0,
+      };
+      rows.set(code, r);
+    }
+    return r;
+  };
+  for (const o of dialler) row(o.code).dialler += o.count;
+  for (const o of others) row(o.code)[o.source] += o.count;
+  return [...rows.values()]
+    .map((r) => ({ ...r, total: r.dialler + r.soft_phone + r.inbound }))
+    .filter((r) => r.total > 0)
+    .sort((a, b) => b.total - a.total || String(a.code).localeCompare(String(b.code)));
+}
+
 const NO_STATE = { online_seconds: 0, available: 0, on_call: 0, wrapup: 0, break_by_reason: {} as Record<string, number> };
 
 export async function computeActivity(
@@ -57,13 +103,15 @@ export async function computeActivity(
   const now = opts.now ?? new Date();
   const q = { campaignId: campaign.id, tenantId: campaign.tenant_id, from: range.from, to: range.to };
   const catalog = campaign.disposition_catalog;
-  const [rollup, freshness, callbacks, states, pacing, softphone, dnc, staffing, allocation] = await Promise.all([
+  const [rollup, freshness, callbacks, states, pacing, softphone, inbound, otherOutcomes, dnc, staffing, allocation] = await Promise.all([
     agencyInsightsRollupRepository.activity({ ...q, successCodes: successCodes(catalog), overrideCodes: overrideCodes(catalog) }),
     agencyInsightsRollupRepository.asOf(q),
     agencyInsightsRollupRepository.callbackTiming({ ...q, now }),
     agencyInsightsRollupRepository.agentStateSeconds(q),
     agencyInsightsPacingRepository.pacingHistory(campaign.id, campaign.tenant_id, range, { now }),
     agencyInsightsReadRepository.softphoneCalls(q),
+    agencyInsightsReadRepository.inboundCalls(q),
+    agencyInsightsReadRepository.outcomesByType(q),
     agencyInsightsReadRepository.dncMarked(q),
     agencyCampaignAgentRepository.listActiveForCampaign(campaign.id, campaign.tenant_id),
     cachedAllocation(campaign),
@@ -118,6 +166,7 @@ export async function computeActivity(
       agent_retries: c.agent_retries,
       softphone_calls: softphone.placed,
       softphone,
+      inbound,
       talk_seconds: c.talk_seconds,
       wrapup_seconds: c.wrapup_seconds,
       wrapup_measured: c.wrapup_measured,
@@ -128,6 +177,7 @@ export async function computeActivity(
       is_success: o.code !== null && success.has(o.code),
       count: o.count,
     })),
+    outcomes_by_type: outcomesByType(rollup.outcomes, otherOutcomes, labels, success),
     callbacks: {
       booked: c.callbacks_booked,
       open_due_today: allocation.totals.callbacks_due_today,

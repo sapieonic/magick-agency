@@ -58,8 +58,15 @@ describe('the Missed list query', () => {
 describe('the soft phone prefill', () => {
   it('round-trips through history state, and anything malformed reads as none', () => {
     const state = softphonePrefillState({ number: '+447700900123', campaignId: 'c-1' });
-    expect(readSoftphonePrefill(state)).toEqual({ number: '+447700900123', campaignId: 'c-1' });
-    expect(readSoftphonePrefill(softphonePrefillState({ number: '+447700900123', campaignId: null }))).toEqual({ number: '+447700900123', campaignId: null });
+    expect(readSoftphonePrefill(state)).toEqual({ number: '+447700900123', campaignId: 'c-1', inboundCallId: null });
+    expect(readSoftphonePrefill(softphonePrefillState({ number: '+447700900123', campaignId: null })))
+      .toEqual({ number: '+447700900123', campaignId: null, inboundCallId: null });
+    // A Missed row's Call back carries the row's id, so the call placed is linked to it (CL1).
+    const missed = '8f2c1d2e-1111-4222-8333-444455556666';
+    expect(readSoftphonePrefill(softphonePrefillState({ number: '+447700900123', campaignId: 'c-1', inboundCallId: missed })))
+      .toEqual({ number: '+447700900123', campaignId: 'c-1', inboundCallId: missed });
+    // Anything that is not an id reads as no link: the server would refuse it, and that must not stop a dial.
+    expect(readSoftphonePrefill({ softphonePrefill: { number: '+447700900123', campaignId: null, inboundCallId: 'row-1' } })?.inboundCallId).toBeNull();
     for (const bad of [null, 'x', {}, { softphonePrefill: null }, { softphonePrefill: { number: '07700 900123' } }, { softphonePrefill: { number: 447700900123 } }]) {
       expect(readSoftphonePrefill(bad)).toBeNull();
     }

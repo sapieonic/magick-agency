@@ -45,7 +45,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn
 
 const { campaigns, attempts, contacts } = vi.hoisted(() => ({
   campaigns: { findById: vi.fn() },
-  attempts: { listForCampaign: vi.fn(), listCallLogForCampaign: vi.fn() },
+  attempts: { listForCampaign: vi.fn(), listCallLogForCampaign: vi.fn(), countCallLogForCampaign: vi.fn() },
   contacts: { listForCampaign: vi.fn(), findDetailScoped: vi.fn() },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -473,11 +473,79 @@ describe('GET /:id/call-log: the campaign call log the export drains (SR6)', () 
     await app.close();
   });
 
+  it('counts each source for the Call log\'s chips only when asked, by the filters and never by `source` or the cursor (CL11)', async () => {
+    const app = await makeApp();
+    const counts = { all: 12, dialler: 9, soft_phone: 3 };
+    attempts.countCallLogForCampaign.mockResolvedValue(counts);
+    const plain = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?source=dialler', headers: HEADERS });
+    expect(plain.json()).not.toHaveProperty('counts');
+    expect(attempts.countCallLogForCampaign).not.toHaveBeenCalled();
+
+    const cursor = encodeKeysetCursor({ at: '2026-08-17T09:00:00.123456Z', id: '11111111-1111-4111-8111-111111111111' });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/agency-campaigns/c1/call-log?source=dialler&outcome=connected&include_counts=1&cursor=${encodeURIComponent(cursor)}`,
+      headers: HEADERS,
+    });
+    expect(res.json().counts).toEqual(counts);
+    const input = attempts.countCallLogForCampaign.mock.calls[0]![0];
+    expect(Object.keys(input).sort()).toEqual(['campaignId', 'filters', 'tenantId']);
+    expect(input).toMatchObject({ campaignId: 'c1', tenantId: 't1' });
+    expect(input.filters.outcomes).toEqual(['connected']);
+
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include_counts=yes', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('passes the soft-phone status to the list and the count, and refuses one it does not know', async () => {
+    const app = await makeApp();
+    attempts.countCallLogForCampaign.mockResolvedValue({ all: 1, dialler: 0, soft_phone: 1 });
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?status=awaiting_outcome&include_counts=1', headers: HEADERS });
+    expect(attempts.listCallLogForCampaign.mock.calls[0]![0]).toMatchObject({ softphoneStatus: 'awaiting_outcome', source: null });
+    expect(attempts.countCallLogForCampaign.mock.calls[0]![0]).toMatchObject({ softphoneStatus: 'awaiting_outcome' });
+    // Absent: no key at all, so the list is as the export has always read it.
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log', headers: HEADERS });
+    expect(attempts.listCallLogForCampaign.mock.calls[1]![0]).not.toHaveProperty('softphoneStatus');
+
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?status=done', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().details).toEqual([{ param: 'status', message: 'must be one of: live, awaiting_outcome, settled' }]);
+    expect(attempts.listCallLogForCampaign).toHaveBeenCalledTimes(2);
+    await app.close();
+  });
+
+  it('splits What happened: attempt outcomes to the filters, the inbound-only ones beside them, to list and count alike', async () => {
+    const app = await makeApp();
+    attempts.countCallLogForCampaign.mockResolvedValue({ all: 0, dialler: 0, soft_phone: 0, inbound: 0, to_follow_up: 0 });
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=missed,connected,voicemail&include_counts=1&source=to_follow_up', headers: HEADERS,
+    });
+    expect(res.statusCode).toBe(200);
+    for (const input of [attempts.listCallLogForCampaign.mock.calls[0]![0], attempts.countCallLogForCampaign.mock.calls[0]![0]]) {
+      expect(input.filters.outcomes).toEqual(['connected']);
+      expect(input.inboundOutcomes).toEqual(['missed', 'voicemail']);
+    }
+    expect(attempts.listCallLogForCampaign.mock.calls[0]![0].source).toBe('to_follow_up');
+    // Only inbound happenings: no attempt outcome is invented, and none is absent as a key.
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=abandoned_in_queue', headers: HEADERS });
+    const only = attempts.listCallLogForCampaign.mock.calls[1]![0];
+    expect(only.filters.outcomes).toBeUndefined();
+    expect(only.inboundOutcomes).toEqual(['abandoned_in_queue']);
+    // None: the key is not sent at all, so the read is as it was.
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=busy', headers: HEADERS });
+    expect(attempts.listCallLogForCampaign.mock.calls[2]![0]).not.toHaveProperty('inboundOutcomes');
+    // A word neither vocabulary knows is still the attempt parser's 400.
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?outcome=missed,nonsense', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('refuses an unknown source and a malformed agent before any read', async () => {
     const app = await makeApp();
     const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?source=softphone', headers: HEADERS });
     expect(bad.statusCode).toBe(400);
-    expect(bad.json().details).toEqual([{ param: 'source', message: 'must be one of: dialler, soft_phone' }]);
+    expect(bad.json().details).toEqual([{ param: 'source', message: 'must be one of: dialler, soft_phone, inbound, to_follow_up' }]);
     const agent = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?agent_user_id=nope', headers: HEADERS });
     expect(agent.statusCode).toBe(400);
     expect(attempts.listCallLogForCampaign).not.toHaveBeenCalled();

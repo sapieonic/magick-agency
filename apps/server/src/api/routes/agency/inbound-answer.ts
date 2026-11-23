@@ -14,6 +14,8 @@ import type {
   AgencyInboundRoute,
   AgencyInboundRouteConfig,
 } from '@magick-agency/contracts/api/agency/inbound';
+import type { AgencySoftphoneCampaignRequiredRefusal } from '@magick-agency/contracts/agency';
+import { CAMPAIGN_REQUIRED_OUTCOME_MESSAGE } from '../../../agency/softphone/types.js';
 import type { AgencyInboundMissedRow } from '../../../db/repositories/agency.repository.js';
 import { matchName } from '../../../agency/inbound/match-name.js';
 import type { InboundCallRefusal } from '../../../agency/inbound/inbound-disposition.js';
@@ -50,6 +52,10 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   ring_not_offered: 404,
   ring_expired: 409,
   already_accepted: 409,
+  // "Every call must belong to a campaign" (docs/call-log.md §5).
+  default_campaign_required: 422,
+  inbound_campaign_fixed: 409,
+  inbound_campaign_not_allowed: 403,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -78,6 +84,9 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   ring_not_offered: 'This call is not ringing for you.',
   ring_expired: 'This call stopped ringing or someone else took it.',
   already_accepted: 'You have already answered this call. Hang up from the call screen.',
+  default_campaign_required: 'Choose a campaign for unknown callers. Every call in this account must belong to a campaign.',
+  inbound_campaign_fixed: 'This caller is on a campaign’s list, so the call stays under that campaign.',
+  inbound_campaign_not_allowed: 'You cannot file a call under that campaign.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
@@ -86,6 +95,7 @@ const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
   404: 'Not Found',
   409: 'Conflict',
   413: 'Payload Too Large',
+  422: 'Unprocessable Entity',
   503: 'Service Unavailable',
 };
 
@@ -96,8 +106,11 @@ export type InboundRefusal =
       AgencyInboundErrorCode,
       'inbound_route_invalid' | 'inbound_number_not_found' | 'inbound_number_not_linked' | 'inbound_number_in_use'
       | 'inbound_call_live' | 'inbound_disposition_invalid' | 'inbound_clip_in_use' | 'inbound_clip_invalid'
+      | 'default_campaign_required'
     >;
   }
+  /** `routes`: the live routes with no campaign for unknown callers (absent on a route's own save). */
+  | { code: 'default_campaign_required'; routes?: AgencyInboundClipRouteRef[] }
   | { code: 'inbound_clip_in_use'; routes: AgencyInboundClipRouteRef[] }
   | { code: 'inbound_clip_invalid'; upload_reason: AgencyInboundClipInvalidReason; message?: string }
   | { code: 'inbound_call_live'; inbound_call_id: string }
@@ -112,7 +125,14 @@ export type InboundRefusal =
  * is 413, as the multipart limit answers it; a refusal that carries its own `message` (an upload's
  * reason) says that instead of the code's.
  */
-export function inboundRefusalBody(refusal: InboundRefusal): { status: number; body: AgencyInboundErrorResponse & Record<string, unknown> } {
+export function inboundRefusalBody(
+  refusal: InboundRefusal,
+): { status: number; body: (AgencyInboundErrorResponse | AgencySoftphoneCampaignRequiredRefusal) & Record<string, unknown> } {
+  // `campaign_required` is the soft phone family's code (409), answered by the outcome of an
+  // inbound call filed under no campaign while the account's setting is on (docs/call-log.md §5).
+  if (refusal.code === 'campaign_required') {
+    return { status: 409, body: { error: 'Conflict', message: CAMPAIGN_REQUIRED_OUTCOME_MESSAGE, ...refusal } };
+  }
   const status = refusal.code === 'inbound_clip_invalid' && refusal.upload_reason === 'too_large'
     ? 413
     : INBOUND_REFUSAL_STATUS[refusal.code];
@@ -245,6 +265,17 @@ export interface InboundCallDispositionAudit {
   dnc_entry: InboundDncEntryAudit | null;
 }
 
+/** `POST /inbound/calls/:id/campaign`: `changed` false when the call was already under it (not audited). */
+export interface InboundCallCampaignAudit {
+  call_id: string;
+  on_behalf: boolean;
+  /** The campaign the call is filed under now. */
+  campaign_id: string | null;
+  /** The campaign it was under before; null: none. */
+  from_campaign_id: string | null;
+  changed: boolean;
+}
+
 /** `POST /inbound/calls/:id/dnc`. */
 export interface InboundCallDncAudit {
   call_id: string;
@@ -303,6 +334,10 @@ export function inboundMissedToWire(
     matched_contact_id: row.matched_contact_id,
     matched_campaign_id: row.matched_campaign_id,
     matched_campaign_name: row.matched_campaign_name,
+    // The campaign the call is filed under (docs/call-log.md §5): a matched caller's own, else
+    // the route's campaign for unknown callers. What Call back logs the call to.
+    campaign_id: row.campaign_id ?? null,
+    campaign_name: row.campaign_name ?? null,
     callback_due_at: iso(row.callback_due_at),
     has_voicemail: row.voicemail_key !== null,
     // Relative to the proxy, as the console resolves it (`voicemailFetchUrl`).

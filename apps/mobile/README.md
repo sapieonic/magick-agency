@@ -31,8 +31,9 @@ apps/mobile/
       flags/            the client flag map (`GET /feature-flags`), per workspace, fail-closed
     features/           one folder per screen family: auth, join, accounts, campaigns, preflight,
                         station (inbound calls' screens included), softphone (the Phone tab),
-                        performance, calls, missed (My calls' Missed calls segment, with Call
-                        back into the soft phone), contacts (My contacts: contact assignment),
+                        performance, calls (My calls: one list of every call type, with
+                        chips), missed (the Missed list, opened from My calls' To follow up, with
+                        Call back into the soft phone), contacts (My contacts: contact assignment),
                         customers (Customer history: search one number from the Calls tab,
                         docs/customer-history.md), settings
     ui/                 shared primitives (pills, cards, the live dot)

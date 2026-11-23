@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG, type AgencyDisposition } from '@magick-agency/contracts/agency';
 import { inboundContactSettlement } from '../../../src/agency/inbound/inbound-settlement.js';
 import { resolveDispositionDecision } from '../../../src/agency/disposition-policy.js';
-import { resolveInboundCatalog, inboundCallToWire } from '../../../src/agency/inbound/inbound-call-wire.js';
+import { campaignRequiredFor, resolveInboundCatalog, inboundCallToWire } from '../../../src/agency/inbound/inbound-call-wire.js';
 import { unconnectedOutcome } from '../../../src/agency/inbound/inbound-connector.js';
 import type { AgencyInboundCallRecord } from '../../../src/db/repositories/agency.repository.js';
 
@@ -61,6 +61,43 @@ describe('resolveInboundCatalog (IQ10)', () => {
     expect(resolveInboundCatalog(false, null, { disposition_catalog: [] })).toMatchObject({ source: 'builtin', stored: 'route' });
     expect(resolveInboundCatalog(false, null, null)).toMatchObject({ source: 'builtin', stored: 'route' });
   });
+  // docs/call-log.md §5 (CL4, CL12, CL20): an unknown caller's call filed under a campaign.
+  it('filed under a campaign the caller is not on: that campaign`s catalog, shown `campaign`, stored `route`; the route`s own is not used', () => {
+    expect(resolveInboundCatalog(false, null, { disposition_catalog: routeCatalog }, { campaign: { disposition_catalog: campaignCatalog } }))
+      .toEqual({ catalog: campaignCatalog, source: 'campaign', stored: 'route' });
+  });
+  it('filed: an outcome that asks for a promise is left out (no contact to keep it on); with nothing left, or the campaign gone, the built-in', () => {
+    const withPromise: AgencyDisposition[] = [
+      { code: 'sale', label: 'Sale' },
+      { code: 'will_pay', label: 'Will pay', requires_promise: true },
+    ];
+    expect(resolveInboundCatalog(false, null, null, { campaign: { disposition_catalog: withPromise } }).catalog).toEqual([{ code: 'sale', label: 'Sale' }]);
+    for (const campaign of [{ disposition_catalog: [withPromise[1]!] }, { disposition_catalog: [] }, null]) {
+      expect(resolveInboundCatalog(false, null, { disposition_catalog: routeCatalog }, { campaign }))
+        .toEqual({ catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG], source: 'campaign', stored: 'route' });
+    }
+  });
+  it('a matched caller keeps every outcome of their campaign, promise included, whatever is passed as filed', () => {
+    const withPromise: AgencyDisposition[] = [{ code: 'will_pay', label: 'Will pay', requires_promise: true }];
+    expect(resolveInboundCatalog(true, { disposition_catalog: withPromise }, null, { campaign: { disposition_catalog: campaignCatalog } }))
+      .toEqual({ catalog: withPromise, source: 'campaign', stored: 'campaign' });
+  });
+});
+
+describe('campaignRequiredFor (CL19): the setting applies to calls that arrive once it is on', () => {
+  const at = (iso: string) => ({ arrived_at: new Date(iso) });
+  it('off: never', () => {
+    expect(campaignRequiredFor(at('2026-11-22T10:00:00Z'), { on: false, since: null })).toBe(false);
+  });
+  it('on: a call that arrived at or after the switch, not one that arrived before it', () => {
+    const since = new Date('2026-11-22T10:00:00Z');
+    expect(campaignRequiredFor(at('2026-11-22T09:59:59.999Z'), { on: true, since })).toBe(false);
+    expect(campaignRequiredFor(at('2026-11-22T10:00:00Z'), { on: true, since })).toBe(true);
+    expect(campaignRequiredFor(at('2026-11-22T10:00:01Z'), { on: true, since })).toBe(true);
+  });
+  it('on with no instant recorded: every call', () => {
+    expect(campaignRequiredFor(at('2020-01-01T00:00:00Z'), { on: true, since: null })).toBe(true);
+  });
 });
 
 describe('unconnectedOutcome: a call nobody took', () => {
@@ -84,7 +121,7 @@ describe('inboundCallToWire', () => {
     dispositioned_on_behalf: false,
   } as unknown as AgencyInboundCallRecord;
   const ctx = {
-    route: { id: 'r1', name: 'Main' }, match: null, catalogSource: 'builtin' as const,
+    route: { id: 'r1', name: 'Main' }, match: null, campaign: null, requireCampaign: { on: false, since: null }, catalogSource: 'builtin' as const,
     catalog: [...AGENCY_DEFAULT_DISPOSITION_CATALOG],
     stickyCandidates: [{ userId: 'u-owner', reason: 'owner' as const }, { userId: 'u-last', reason: 'last_connected' as const }],
   };
@@ -94,6 +131,29 @@ describe('inboundCallToWire', () => {
       state: 'offered', connects_at: '2026-11-09T11:59:41.500Z', waited_seconds: 30, recording: true,
       sticky: { reason: 'owner', is_you: true }, outcome_due_at: null, talk_seconds: null,
     });
+  });
+  it('the campaign it is filed under: named from the context; changeable only for an unknown caller at wrap-up; required by the setting', () => {
+    const ended = { ...base, state: 'ended', outcome: 'answered', bridged_at: new Date('2026-11-09T11:59:42Z'), ended_at: new Date('2026-11-09T12:05:00Z') };
+    const filed = { campaign_id: 'c-gen', campaign_name: 'General enquiries', source: 'route' as const };
+    const on = { on: true, since: new Date('2026-11-09T00:00:00Z') };
+    // An unknown caller at wrap-up, filed by the route.
+    expect(inboundCallToWire({ ...ended, matched_campaign_id: null, campaign_id: 'c-gen' } as unknown as AgencyInboundCallRecord,
+      { ...ctx, campaign: filed, requireCampaign: on }, 'u-owner'))
+      .toMatchObject({ campaign: filed, campaign_changeable: true, campaign_required: true });
+    // Still on the line: not yet.
+    expect(inboundCallToWire({ ...base, matched_campaign_id: null, campaign_id: 'c-gen' } as unknown as AgencyInboundCallRecord,
+      { ...ctx, campaign: filed }, 'u-owner')).toMatchObject({ campaign: filed, campaign_changeable: false, campaign_required: false });
+    // A matched caller, and a settled call: fixed.
+    expect(inboundCallToWire({ ...ended, matched_campaign_id: 'c-own', campaign_id: 'c-own' } as unknown as AgencyInboundCallRecord,
+      { ...ctx, campaign: { campaign_id: 'c-own', campaign_name: 'Own', source: 'contact' } }, 'u-owner').campaign_changeable).toBe(false);
+    expect(inboundCallToWire({ ...ended, matched_campaign_id: null, campaign_id: 'c-gen', settled_at: new Date() } as unknown as AgencyInboundCallRecord,
+      { ...ctx, campaign: filed }, 'u-owner').campaign_changeable).toBe(false);
+    // A context read before the call was moved never names the old campaign for the new one.
+    expect(inboundCallToWire({ ...ended, matched_campaign_id: null, campaign_id: 'c-other' } as unknown as AgencyInboundCallRecord,
+      { ...ctx, campaign: filed }, 'u-owner').campaign).toBeNull();
+    // Under none, with the setting on: required, and nothing to show.
+    expect(inboundCallToWire({ ...ended, matched_campaign_id: null, campaign_id: null } as unknown as AgencyInboundCallRecord,
+      { ...ctx, requireCampaign: on }, 'u-owner')).toMatchObject({ campaign: null, campaign_changeable: true, campaign_required: true });
   });
   it('BE-13: an outcome\'s icon the contract does not list is dropped from the catalog the agent is sent; a known one is kept', () => {
     const catalog = [

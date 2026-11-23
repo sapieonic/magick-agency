@@ -15,7 +15,7 @@ import {
 } from '../../../agency/spine-filters.js';
 import type { AgencyPromiseFilter, AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
-import { contactPhoneDigitsSql } from './sql-fragments.js';
+import { contactPhoneDigitsSql, inboundAnsweredSql, inboundFromDigitsSql, inboundMissedSql } from './sql-fragments.js';
 import { endsWithDigitsSql } from '../../sql-utils.js';
 import {
   agentManualAttemptSql,
@@ -507,6 +507,71 @@ export function softphoneLogFilterConditions(f: AgencyAttemptFilters, bind: Retu
     conditions.push(placedDialSql('m'));
   }
   if (f.placed === false) conditions.push('m.dialed_at IS NULL');
+  return conditions;
+}
+
+/**
+ * The attempt list's filters on an INBOUND call filed under the campaign (`i`), for the campaign
+ * call log's `inbound` rows (`docs/call-log.md` "How a filter reads on each type"). A filter
+ * that means something on an inbound call reads the inbound call's own column; one that does not
+ * leaves inbound calls out (`FALSE`), as the soft-phone status leaves the dialler's out:
+ *
+ *  - agent: who ANSWERED (`answered_by_user_id`). A call nobody answered has no agent, so with
+ *    an agent chosen no missed call matches. `agentIs: 'assignee'` (the To follow up view) reads
+ *    who the Missed row is ASSIGNED to instead (`follow_up_assignee_user_id`, the Missed list's
+ *    own assignee): "what does Arjun still owe" is the question that view is asked.
+ *  - outcome code: the outcome the agent saved (`disposition_code`).
+ *  - what happened (`outcomes` and `inboundOutcomes`, one OR-ed set): `connected` is a call an
+ *    agent answered; `missed` any call with a Missed row; `voicemail` one that left a voicemail;
+ *    `abandoned_in_queue` a caller who hung up while waiting. Any other attempt outcome matches
+ *    no inbound call.
+ *  - state: every row here is `ended`.
+ *  - contact: the matched roster contact. phone: the CALLER's number, by its digits.
+ *  - caller ID: the number they rang (`to_e164`), which is a caller ID we dial from.
+ *  - `from` / `to`: inclusive on `arrived_at`, the column this branch is ordered by.
+ *  - redial, agent's own dial, reopened dial, override, placed, and the dialled window are all
+ *    about a DIAL. An inbound call is not one: any of them leaves inbound calls out.
+ */
+export function inboundLogFilterConditions(
+  f: AgencyAttemptFilters,
+  inboundOutcomes: readonly string[],
+  bind: ReturnType<typeof params>,
+  agentIs: 'answerer' | 'assignee' = 'answerer',
+): string[] {
+  const conditions: string[] = [];
+  if (f.states?.length && !f.states.includes('ended')) conditions.push('FALSE');
+  if (f.outcomes?.length || inboundOutcomes.length > 0) {
+    const any: string[] = [];
+    if (f.outcomes?.includes('connected')) any.push(inboundAnsweredSql('i'));
+    if (inboundOutcomes.includes('missed')) any.push(inboundMissedSql('i'));
+    if (inboundOutcomes.includes('voicemail')) any.push("i.outcome = 'voicemail'");
+    if (inboundOutcomes.includes('abandoned_in_queue')) any.push("i.outcome = 'abandoned_in_queue'");
+    conditions.push(any.length > 0 ? `(${any.join(' OR ')})` : 'FALSE');
+  }
+  if (f.dispositionCodes?.length) {
+    conditions.push(`i.disposition_code = ANY(${bind.add(f.dispositionCodes)}::varchar[])`);
+  }
+  if (f.agentUserId) {
+    const column = agentIs === 'assignee' ? 'i.follow_up_assignee_user_id' : 'i.answered_by_user_id';
+    conditions.push(`${column} = ${bind.add(f.agentUserId)}::uuid`);
+  }
+  if (f.contactId) conditions.push(`i.matched_contact_id = ${bind.add(f.contactId)}::uuid`);
+  if (f.phone) {
+    const digits = inboundFromDigitsSql('i');
+    const term = f.phone.value.replace(/\D/g, '');
+    conditions.push(term.length === 0
+      ? 'FALSE'
+      : f.phone.mode === 'exact' ? `${digits} = ${bind.add(term)}` : endsWithDigitsSql(digits, term, bind.add));
+  }
+  if (f.from) conditions.push(`i.arrived_at >= ${bind.add(f.from)}`);
+  if (f.to) conditions.push(`i.arrived_at <= ${bind.add(f.to)}`);
+  if (f.callerId) conditions.push(`i.to_e164 = ${bind.add(f.callerId)}`);
+  if (
+    f.redial === true || f.agentManual === true || f.agentReopened === true || f.overrideApplied === true
+    || f.placed !== undefined || f.dialedFrom || f.dialedTo
+  ) {
+    conditions.push('FALSE');
+  }
   return conditions;
 }
 

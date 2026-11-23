@@ -106,6 +106,27 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
   });
 
   /**
+   * GET /proxy/agency/inbound/missed/:id — one Missed row, by its id: the list's row, under the
+   * list's permission and rules (the account's row; without `agency.supervise`, one assigned to
+   * the caller or an open one assigned to nobody). My calls' Call back reads the caller's number
+   * from it, so an agent with more open rows than one page of the list can still call back.
+   */
+  app.get<{ Params: { id: string } }>('/inbound/missed/:id', { preHandler: read }, async (request, reply) => {
+    const actor = inboundActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await callCore({
+      method: 'GET',
+      path: `/agency/inbound/missed/${request.params.id}`,
+      query: actorQuery(actor),
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    if (result.status !== 200 || !isMissedRow(result.body)) return reply.code(result.status).send(result.body);
+    const [row] = await withNames([result.body], request.tenantId!, request.accountId);
+    return reply.send(row);
+  });
+
+  /**
    * GET /proxy/agency/inbound/missed/:id/voicemail — the row's voicemail (`audio/wav`), streamed
    * from the bucket (docs/inbound.md §7). The internal handler applies the list's rules (the
    * account's row; without `agency.supervise`, one assigned to the caller) and says where the

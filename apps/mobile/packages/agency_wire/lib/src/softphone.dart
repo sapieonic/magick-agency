@@ -847,6 +847,7 @@ final class SoftphoneSessionSummary {
 final class SoftphoneBootstrap {
   SoftphoneBootstrap({
     required this.softphoneEnabled,
+    this.campaignRequired = false,
     required List<SoftphoneCampaign> taggableCampaigns,
     required this.untagged,
     required List<CallField> callFields,
@@ -863,6 +864,8 @@ final class SoftphoneBootstrap {
     final callCampaign = j.objOrNull('call_campaign');
     return SoftphoneBootstrap(
       softphoneEnabled: j.boolean('softphone_enabled'),
+      // Absent on a server from before the setting: off.
+      campaignRequired: j.boolOrNull('campaign_required') ?? false,
       taggableCampaigns: j.list('taggable_campaigns', SoftphoneCampaign.fromJson),
       untagged: SoftphoneUntagged.fromJson(j.obj('untagged')),
       callFields: j.list('call_fields', CallField.fromJson),
@@ -875,6 +878,12 @@ final class SoftphoneBootstrap {
 
   /// `agency_softphone_enabled` for the tenant and account. False: finish mode.
   final bool softphoneEnabled;
+
+  /// The account's setting "Every call must belong to a campaign" is on: a
+  /// dial with no campaign is refused `campaign_required`, so the pad offers
+  /// no "Not logged to a campaign" and keeps Call off until one is chosen.
+  /// With [taggableCampaigns] empty the agent cannot dial at all.
+  final bool campaignRequired;
   final List<SoftphoneCampaign> taggableCampaigns;
   final SoftphoneUntagged untagged;
 
@@ -907,6 +916,7 @@ final class SoftphoneBootstrap {
   bool operator ==(Object other) =>
       other is SoftphoneBootstrap &&
       other.softphoneEnabled == softphoneEnabled &&
+      other.campaignRequired == campaignRequired &&
       listEquals(other.taggableCampaigns, taggableCampaigns) &&
       other.untagged == untagged &&
       listEquals(other.callFields, callFields) &&
@@ -1042,7 +1052,10 @@ final class ManualCallOverridesRequest {
 ///
 /// `campaign_id` is always sent (null: untagged); [fields] and [overrides]
 /// only when given, so a request built before the field set loaded never
-/// clears values the server holds.
+/// clears values the server holds. [callbackOfInboundCallId] is the Missed
+/// inbound call this dial rings back (its Call back): sent only when set, and
+/// kept by the server only when it is a Missed row of the account from the
+/// number dialled (`docs/call-log.md`, CL1).
 ///
 /// Contract: `AgencyApi.AgencyManualCallCreateRequest`.
 @immutable
@@ -1054,6 +1067,7 @@ final class ManualCallCreateRequest {
     this.campaignId,
     Map<String, Object?>? fields,
     this.overrides,
+    this.callbackOfInboundCallId,
   }) : fields = fields == null ? null : frozenMap(fields);
 
   /// The live session, on the soft phone.
@@ -1070,6 +1084,9 @@ final class ManualCallCreateRequest {
   final Map<String, Object?>? fields;
   final ManualCallOverridesRequest? overrides;
 
+  /// The Missed inbound call this call rings back; null: not a call back.
+  final String? callbackOfInboundCallId;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'session_id': sessionId, 'to': to};
     putIfSet(json, 'caller_id', callerId);
@@ -1077,6 +1094,7 @@ final class ManualCallCreateRequest {
     putIfSet(json, 'fields', fields);
     final o = overrides;
     if (o != null && !o.isEmpty) json['overrides'] = o.toJson();
+    putIfSet(json, 'callback_of_inbound_call_id', callbackOfInboundCallId);
     return json;
   }
 
@@ -1088,10 +1106,12 @@ final class ManualCallCreateRequest {
       other.callerId == callerId &&
       other.campaignId == campaignId &&
       jsonEquals(other.fields, fields) &&
-      other.overrides == overrides;
+      other.overrides == overrides &&
+      other.callbackOfInboundCallId == callbackOfInboundCallId;
 
   @override
-  int get hashCode => Object.hash(sessionId, to, callerId, campaignId, jsonHash(fields), overrides);
+  int get hashCode =>
+      Object.hash(sessionId, to, callerId, campaignId, jsonHash(fields), overrides, callbackOfInboundCallId);
 }
 
 /// `PATCH /proxy/agency/softphone/calls/:id` while the call is live or owes
@@ -1939,6 +1959,11 @@ enum SoftphoneErrorCode implements WireEnum {
   /// 409: the number is on an inbound call to the account right now (waiting, connected, or its
   /// outcome owed). No override.
   customerOnInboundCall('customer_on_inbound_call'),
+
+  /// 409: the account's "Every call must belong to a campaign" is on and the
+  /// dial named none. Also from the inbound outcome route, for a call filed
+  /// under no campaign.
+  campaignRequired('campaign_required'),
   unknown('');
 
   const SoftphoneErrorCode(this.wire);

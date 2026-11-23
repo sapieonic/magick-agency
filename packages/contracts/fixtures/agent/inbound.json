@@ -63,6 +63,13 @@
           }
         ]
       },
+      "campaign": {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "source": "contact"
+      },
+      "campaign_changeable": false,
+      "campaign_required": false,
       "catalog_source": "campaign",
       "disposition_catalog": [
         {
@@ -384,6 +391,8 @@
         "matched_contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
         "matched_campaign_id": "c0ffee00-1111-4222-8333-444455556666",
         "matched_campaign_name": "Q4 Renewals — Pune",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
         "callback_due_at": "2026-11-02T03:30:00.000Z"
       },
       {

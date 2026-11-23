@@ -272,7 +272,9 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
       redials: { placed: 41, connected: 29, chains_at_limit: 3, refused_at_limit: 1 },
       agent_retries: { reopened_dials: 6, reopened_connected: 2, manual_dials: 8, manual_connected: 3 },
       softphone_calls: 7,
-      softphone: { placed: 7, connected: 4, human_connects: 3 },
+      softphone: { placed: 7, connected: 4, human_connects: 3, talk_seconds: 480 },
+      // No inbound call filed under the campaign in range: a test that wants some sets them.
+      inbound: { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 },
       talk_seconds: 400 * 178,
       wrapup_seconds: 380 * 43,
       wrapup_measured: 380,
@@ -283,6 +285,13 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
       { code: 'not_interested', label: 'Not interested', is_success: false, count: 120 },
       { code: 'callback', label: 'Call back', is_success: false, count: 60 },
       { code: null, label: null, is_success: false, count: 20 },
+    ],
+    outcomes_by_type: [
+      { code: 'ptp', label: 'Promise to pay', is_success: true, dialler: 150, soft_phone: 2, inbound: 0, total: 152 },
+      { code: 'not_interested', label: 'Not interested', is_success: false, dialler: 120, soft_phone: 1, inbound: 0, total: 121 },
+      { code: 'callback', label: 'Call back', is_success: false, dialler: 60, soft_phone: 1, inbound: 0, total: 61 },
+      { code: 'paid', label: 'Paid', is_success: true, dialler: 50, soft_phone: 0, inbound: 0, total: 50 },
+      { code: null, label: null, is_success: false, dialler: 20, soft_phone: 0, inbound: 0, total: 20 },
     ],
     callbacks: {
       booked: 80,

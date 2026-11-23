@@ -1,6 +1,7 @@
 {
   "bootstrap_enabled": {
     "softphone_enabled": true,
+    "campaign_required": false,
     "taggable_campaigns": [
       {
         "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
@@ -349,6 +350,7 @@
   },
   "bootstrap_idle": {
     "softphone_enabled": true,
+    "campaign_required": true,
     "taggable_campaigns": [
       {
         "campaign_id": "d00dfeed-2222-4333-8444-555566667777",

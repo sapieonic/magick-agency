@@ -32,6 +32,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import {
   agencyAgentSessionRepository,
+  agencyCallSettingsRepository,
   agencyCampaignRepository,
   agencyManualCallRepository,
   agencySoftphoneSettingsRepository,
@@ -44,6 +45,7 @@ import { resolveManualCatalog } from '../../../agency/softphone/manual-dispositi
 import { followedOutcomesTemplate, untaggedCatalog } from '../../../agency/softphone/untagged-outcomes.js';
 import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
+import { listTaggableCampaigns } from '../../../agency/softphone/taggable-campaign.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { withDialableCallerIdsAll } from '../../../agency/campaign-dialability.js';
 import { dncEntryScope } from '../../../agency/dnc-registry.js';
@@ -72,13 +74,6 @@ import {
 import { dispositionsWithKnownIcons, phoneDisplayOf } from '../../../agency/station-tiles.js';
 
 const log = createChildLogger({ component: 'agency-softphone-routes' });
-
-/**
- * At most this many campaigns are offered as tags, newest first. Applied AFTER the status
- * and staffing filters (`listSoftphoneTaggable`), so it bounds a supervisor's whole-account
- * list and never cuts an agent's staffed campaigns behind the account's newer ones.
- */
-const TAGGABLE_CAMPAIGNS_MAX = 500;
 
 /** Where this instance serves a manual call's recording bytes (the public layer repoints it). */
 export function softphoneRecordingPath(callId: string): string {
@@ -201,16 +196,14 @@ async function buildBootstrap(
   actor: SoftphoneActor,
 ): Promise<Omit<AgencySoftphoneBootstrap, 'softphone_enabled'>> {
   const { tenantId, accountId } = actor;
-  const [settings, numbers, taggable, live] = await Promise.all([
+  const [settings, required, numbers, taggable, live] = await Promise.all([
     agencySoftphoneSettingsRepository.get(tenantId, accountId),
+    // "Every call must belong to a campaign" (docs/call-log.md §5): the pad asks for one.
+    agencyCallSettingsRepository.requireCampaign(tenantId, accountId),
     tenantPhoneAssignmentRepository.findAvailableForAccount(tenantId, accountId),
     // The same rule as `SoftphoneService.taggable`: in the account, running or paused, and
     // staffed unless a supervisor — filtered in the query, before the cap.
-    agencyCampaignRepository.listSoftphoneTaggable(tenantId, accountId, {
-      statuses: SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
-      staffedUserId: actor.supervise ? null : actor.userId,
-      limit: TAGGABLE_CAMPAIGNS_MAX,
-    }),
+    listTaggableCampaigns(actor),
     agencyAgentSessionRepository.findLiveForAgent(tenantId, actor.userId),
   ]);
 
@@ -272,6 +265,7 @@ async function buildBootstrap(
   const dialableTaggable = await withDialableCallerIdsAll(taggable);
 
   return {
+    campaign_required: required.on,
     taggable_campaigns: dialableTaggable.map((c) => taggableCampaign(c, profiles, settings, now)),
     untagged: {
       caller_ids: callerIds,
@@ -421,6 +415,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const body = request.body as {
       session_id?: unknown; to?: unknown; caller_id?: unknown; campaign_id?: unknown;
       fields?: AgencyCallFieldValues; overrides?: { dnc_note?: string; hours_note?: string };
+      callback_of_inbound_call_id?: unknown;
     };
     if (typeof body.session_id !== 'string' || typeof body.to !== 'string') {
       return reply.code(400).send({ error: 'Validation failed', details: { session_id: 'required', to: 'required' } });
@@ -432,6 +427,9 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaignId: typeof body.campaign_id === 'string' ? body.campaign_id : null,
       ...(body.fields !== undefined ? { fields: body.fields } : {}),
       ...(body.overrides !== undefined ? { overrides: body.overrides } : {}),
+      ...(typeof body.callback_of_inbound_call_id === 'string'
+        ? { callbackOfInboundCallId: body.callback_of_inbound_call_id }
+        : {}),
     });
     if (!placed.ok) return sendSoftphoneRefusal(reply, placed.refusal);
     const audit: SoftphonePlaceAudit = {
@@ -604,7 +602,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaign_id: campaignId,
       disposition_code: saved.response.call.disposition_code ?? body.code,
       replay: saved.replay,
-      dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: campaignId ? 'campaign' : 'account' } : null,
+      // With the scope the mark was written at (CL6), as the service that wrote it says.
+      dnc_entry: saved.dncEntry,
     };
     return answer(reply, 200, saved.response, audit);
   });
@@ -634,8 +633,18 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
   // on for the account, whether or not the soft phone sets its own list; null only when they are off.
   sub.get('/softphone/settings', async (request, reply) => {
     const scope = { tenantId: getTenantId(request), accountId: getAccountId(request) };
-    const settings = await agencySoftphoneSettingsRepository.get(scope.tenantId, scope.accountId);
-    const body: AgencySoftphoneSettingsResponse = { settings, outcomes_template: await followedOutcomesTemplate(scope) };
+    const [settings, required, outcomesTemplate] = await Promise.all([
+      agencySoftphoneSettingsRepository.get(scope.tenantId, scope.accountId),
+      agencyCallSettingsRepository.requireCampaign(scope.tenantId, scope.accountId),
+      followedOutcomesTemplate(scope),
+    ]);
+    // With "Every call must belong to a campaign" on, no call uses the untagged settings: the
+    // page greys them (docs/call-log.md §5).
+    const body: AgencySoftphoneSettingsResponse = {
+      settings,
+      campaign_required: required.on,
+      outcomes_template: outcomesTemplate,
+    };
     return reply.send(body);
   });
 

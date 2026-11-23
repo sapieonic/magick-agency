@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/softphone/softphone_view.dart';
 import '../../../ui/primitives.dart';
+import '../softphone_copy.dart';
 
 /// Finish mode: the soft phone was turned off for the account while the agent
 /// had it. What still works (the call on screen, hang-up, its outcome) and
@@ -36,6 +37,48 @@ class FinishNotice extends ConsumerWidget {
             Icon(Icons.phone_disabled_outlined, color: t.warning, size: 20),
             const SizedBox(width: Space.sm),
             Expanded(child: Text(notice, style: text.bodyMedium)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Every call must belong to a campaign, and the agent is on none a call can
+/// be logged to: what stands in for the pad. It says what is wrong and who can
+/// put it right; there is nothing here for the agent to press.
+class NoCampaignNotice extends ConsumerWidget {
+  const NoCampaignNotice({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // The core's own sentence for why Call is off: "You are not on any running campaign, …".
+    final why = ref.watch(softphoneViewProvider.select((v) => v.dialUnavailableReason));
+    if (why == null) return const SizedBox.shrink();
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: AppCard(
+        key: const Key('softphone-no-campaign'),
+        color: t.warningSubtle,
+        borderColor: t.warning.withValues(alpha: 0.4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.phone_disabled_outlined, color: t.warning, size: 20),
+            const SizedBox(width: Space.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(why, style: text.bodyMedium),
+                  const SizedBox(height: Space.xs),
+                  Text(SoftphoneCopy.askSupervisorForCampaign, style: text.bodySmall),
+                ],
+              ),
+            ),
           ],
         ),
       ),

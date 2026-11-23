@@ -182,6 +182,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_manual_call.dispositioned', label: 'Soft-phone call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_softphone_settings.updated', label: 'Soft-phone settings changed', group: 'Calls', product: 'agency' },
+  { value: 'agency_call_settings.updated', label: 'Call settings changed', group: 'Calls', product: 'agency' },
   { value: 'agency_customer_history.searched', label: 'Customer history searched', group: 'Calls', product: 'agency' },
   { value: 'agency_customer_history.exported', label: 'Customer history exported', group: 'Calls', product: 'agency' },
 
@@ -203,6 +204,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_call.hung_up', label: 'Inbound call ended', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.campaign_changed', label: 'Inbound call filed under another campaign', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.ring_declined', label: 'Agent declined an inbound call ringing their phone', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.ring_accepted', label: 'Agent answered an inbound call ringing their phone', group: 'Calls', product: 'agency' },

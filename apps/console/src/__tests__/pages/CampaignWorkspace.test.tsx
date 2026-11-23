@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   campaignLineage: vi.fn(),
   transitionAgencyCampaign: vi.fn(),
   setAgencyCampaignArchived: vi.fn(),
+  getCampaignInboundDefaultRoutes: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -32,6 +33,7 @@ vi.mock('../../api/agencyInsights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
   getInsightsAllocation: () => new Promise(() => {}),
 }));
+vi.mock('../../api/callSettings', () => ({ getCampaignInboundDefaultRoutes: mocks.getCampaignInboundDefaultRoutes }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   getAgencyCampaignStats: mocks.getAgencyCampaignStats,
@@ -97,6 +99,7 @@ beforeEach(() => {
   mocks.getAgencyCampaign.mockImplementation(async (id: string) => campaign(id));
   mocks.getAgencyCampaignStats.mockImplementation(async (id: string) => workspaceStats({ campaign_id: id }));
   mocks.campaignLineage.mockImplementation(async (id: string) => noLineage(id));
+  mocks.getCampaignInboundDefaultRoutes.mockResolvedValue([]);
   mocks.transitionAgencyCampaign.mockImplementation(async (id: string, action: string) =>
     campaign(id, { status: action === 'stop' ? 'stopping' : 'paused' }));
 });
@@ -137,6 +140,24 @@ describe('campaign workspace — only ever the campaign the URL names', () => {
 
     expect(screen.queryByText('Stop this campaign?')).toBeNull();
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  // docs/call-log.md §5 (CL21): a campaign an inbound number files its unknown callers under.
+  it('Stop asks first for a campaign that receives unknown callers, naming the number; for the campaign the URL names only', async () => {
+    mocks.getCampaignInboundDefaultRoutes.mockImplementation(async (id: string) => (id === 'camp-1' ? [{ route_id: 'r-1', name: 'Sales line' }] : []));
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain(
+      'This campaign receives unknown callers on Sales line. Choose another campaign for that route first.',
+    ));
+    expect(mocks.getCampaignInboundDefaultRoutes).toHaveBeenCalledWith('camp-1', expect.any(String), expect.any(String));
+    // Asked, not held back: Stop still stops.
+    expect(screen.getByRole('button', { name: 'Stop campaign' })).toBeTruthy();
+
+    act(() => go('/agency/campaigns/camp-2/contacts'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+    await act(async () => {});
+    expect(screen.getByRole('dialog').textContent).not.toContain('unknown callers');
   });
 
   it('paints nothing that lands for the previous campaign after the move', async () => {

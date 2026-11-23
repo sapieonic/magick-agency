@@ -307,7 +307,8 @@
       "settings_invalid",
       "contact_assigned_elsewhere",
       "carrier_account_unavailable",
-      "customer_on_inbound_call"
+      "customer_on_inbound_call",
+      "campaign_required"
     ]
   },
   "manual_call_states": {
@@ -512,6 +513,24 @@
       "feature_disabled"
     ]
   },
+  "call_log_types": {
+    "source": "packages/contracts/src/api/agency/call-log.ts#AGENCY_CALL_LOG_TYPES",
+    "values": [
+      "dialler",
+      "soft_phone",
+      "inbound"
+    ]
+  },
+  "my_calls_type_filters": {
+    "source": "packages/contracts/src/api/agency/call-log.ts#AGENCY_MY_CALLS_TYPE_FILTERS",
+    "values": [
+      "to_follow_up",
+      "all",
+      "dialler",
+      "soft_phone",
+      "inbound"
+    ]
+  },
   "customer_search_bys": {
     "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_SEARCH_BYS",
     "values": [
@@ -522,7 +541,8 @@
     "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_TIMELINE_CHANNELS",
     "values": [
       "campaign",
-      "softphone"
+      "softphone",
+      "inbound"
     ]
   },
   "customer_timeline_kinds": {
@@ -530,6 +550,7 @@
     "values": [
       "campaign_call",
       "softphone_call",
+      "inbound_call",
       "callback",
       "dnc_mark",
       "roster_entry"
@@ -673,7 +694,10 @@
       "inbound_missed_call_claimed",
       "ring_not_offered",
       "ring_expired",
-      "already_accepted"
+      "already_accepted",
+      "default_campaign_required",
+      "inbound_campaign_fixed",
+      "inbound_campaign_not_allowed"
     ]
   },
   "inbound_disposition_rules": {

@@ -117,29 +117,32 @@ describe('the work sections', () => {
 });
 
 describe('the tab bar of a grouped page', () => {
-  it('shows Campaigns and Soft-phone calls to a supervisor with the soft phone on', () => {
+  it('shows Campaigns and All calls to a supervisor', () => {
     const bar = tabBarFor('/agency/campaigns', input('account_admin'));
-    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls', 'Live calls', 'Listening history']);
+    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'All calls', 'Live calls', 'Listening history']);
     expect(bar?.activeId).toBe('campaigns');
-    expect(tabBarFor('/agency/softphone', input('account_admin'))?.activeId).toBe('softphone');
+    expect(tabBarFor('/agency/calls', input('account_admin'))?.activeId).toBe('calls');
+    // Soft-phone calls' old URL is only a redirect to All calls now (CL34): no page, no bar.
+    expect(tabBarFor('/agency/softphone', input('account_admin'))).toBeNull();
     expect(tabBarFor('/agency/live', input('account_admin'))?.activeId).toBe('live');
     expect(tabBarFor('/agency/listening-history', input('account_admin'))?.activeId).toBe('listen-history');
   });
 
-  it('offers Live calls beside Soft-phone calls only to a supervisor with the listening flag on', () => {
+  it('offers Live calls beside All calls only to a supervisor with the listening flag on', () => {
     const labels = (i: GateInput) => tabBarFor('/agency/campaigns', i)?.tabs.map((t) => t.label) ?? [];
     // The Listening history stays with the flag off (LS19, amended 2026-11-17): past listens are not hidden.
-    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
+    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'All calls', 'Listening history']);
     expect(labels(input('viewer'))).toEqual([]);
-    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls', 'Listening history']);
+    // All calls holds the dialler's calls too, so it is behind no call type's flag.
+    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'All calls', 'Live calls', 'Listening history']);
   });
 
   it('is not shown when only one tab is left', () => {
-    // Soft-phone calls floors at agency.supervise and needs its flag.
+    // All calls floors at agency.supervise.
     expect(tabBarFor('/agency/campaigns', input('viewer'))).toBeNull();
-    // With both flags off, Campaigns and the Listening history are left: still a bar of two.
+    // With both flags off, Campaigns, All calls and the Listening history are left.
     expect(tabBarFor('/agency/listening-history', input('account_admin', { flagsOff: ['agency_softphone_enabled', 'agency_live_listen_enabled'] }))?.tabs.map((t) => t.label))
-      .toEqual(['Campaigns', 'Listening history']);
+      .toEqual(['Campaigns', 'All calls', 'Listening history']);
     // The summary floors at agency.supervise.
     expect(tabBarFor('/agency/inbound/missed', input('viewer'))).toBeNull();
     expect(tabBarFor('/agency/analytics', input('account_admin', { flagsOff: ['agency_reports_enabled'] }))).toBeNull();
@@ -172,6 +175,7 @@ describe('the active sidebar entry', () => {
     ['/agency/campaigns', 'campaigns'],
     ['/agency/campaigns/new', 'campaigns'],
     ['/agency/campaigns/c-1/agents', 'campaigns'],
+    ['/agency/calls', 'campaigns'],
     ['/agency/softphone', 'campaigns'],
     ['/agency/softphone/calls/x', 'campaigns'],
     ['/agency/live', 'campaigns'],
@@ -260,9 +264,10 @@ describe('the breadcrumb', () => {
       { label: 'Report' },
     ]);
     expect(breadcrumbFor('/agency/reports')).toEqual([{ label: 'Reports', to: '/agency/analytics' }, { label: 'Exports' }]);
+    // A soft-phone call's page kept its URL when its list became All calls (CL34): still that tab's sub-page.
     expect(breadcrumbFor('/agency/softphone/calls/x')).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
-      { label: 'Soft-phone calls', to: '/agency/softphone' },
+      { label: 'All calls', to: '/agency/calls' },
       { label: 'Soft-phone call' },
     ]);
   });
@@ -270,13 +275,13 @@ describe('the breadcrumb', () => {
   it('leaves out a supplied crumb that links where the trail already does', () => {
     // The soft-phone call's page names its list, which the trail already has as the parent tab.
     const page = [
-      { label: 'Soft-phone calls', to: '/agency/softphone' },
-      { label: 'Diwali renewals', to: '/agency/campaigns/c-1/manual-calls' },
+      { label: 'All calls', to: '/agency/calls' },
+      { label: 'Diwali renewals', to: '/agency/campaigns/c-1/attempts?type=soft_phone' },
       { label: '12 Nov, 10:04' },
     ];
     expect(breadcrumbFor('/agency/softphone/calls/x', page)).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
-      { label: 'Soft-phone calls', to: '/agency/softphone' },
+      { label: 'All calls', to: '/agency/calls' },
       page[1],
       page[2],
     ]);
@@ -419,7 +424,7 @@ describe('the Settings hub', () => {
     const groups = visibleSettingsGroups(input('account_admin'));
     expect(groups.map((g) => [g.scope, g.entries.map((e) => e.label)])).toEqual([
       ['you', ['Profile and appearance', 'Email notifications']],
-      ['account', ['Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
+      ['account', ['Calls', 'Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
       ['tenant', ['Team']],
     ]);
   });

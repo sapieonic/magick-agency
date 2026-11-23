@@ -104,7 +104,7 @@ describe('drill-down links', () => {
     ).toBe(
       '/agency/campaigns/c1/attempts?outcome=no_answer&outcome=busy&disposition_code=ptp&agent_user_id=usr_a'
       + '&caller_id=%2B9120&redial=1&agent_manual=1&agent_reopened=1&placed=1'
-      + '&dialed_from=2026-11-03T18%3A30%3A00.000Z&dialed_to=2026-11-04T18%3A30%3A00.000Z',
+      + '&dialed_from=2026-11-03T18%3A30%3A00.000Z&dialed_to=2026-11-04T18%3A30%3A00.000Z&type=dialler',
     );
   });
 
@@ -117,7 +117,26 @@ describe('drill-down links', () => {
   });
 
   it('marks every attempts link placed-only, so a lifetime number lists placed dials', () => {
-    expect(attemptsLink('c1')).toBe('/agency/campaigns/c1/attempts?placed=1');
+    expect(attemptsLink('c1')).toBe('/agency/campaigns/c1/attempts?placed=1&type=dialler');
+  });
+
+  it('opens on every call type only when asked: Compare agents’ next steps take soft-phone calls too (CP2)', () => {
+    expect(attemptsLink('c1', { type: 'all', agent_user_id: 'u1' })).toBe('/agency/campaigns/c1/attempts?agent_user_id=u1&placed=1');
+    expect(attemptsLink('c1', { type: 'dialler', agent_user_id: 'u1' })).toBe('/agency/campaigns/c1/attempts?agent_user_id=u1&placed=1&type=dialler');
+  });
+
+  it('opens the Call log on its Dialler chip, whatever the filter: every figure that links here is the dialler’s alone (SR1)', () => {
+    // The Call log lists every call type (CL11). Without the chip, the soft-phone calls logged
+    // to the campaign that match the same filters would be in the list and in its count.
+    const filters: Parameters<typeof attemptsLink>[1][] = [
+      {}, { outcome: 'connected' }, { disposition: ['ptp'] }, { agent_user_id: 'usr_a' }, { caller_id: '+9120' },
+      { redial: false }, { redial: true }, { agent_manual: true }, { override_applied: true },
+      { from: '2026-11-03T18:30:00.000Z', to: '2026-11-04T18:30:00.000Z' },
+    ];
+    for (const filter of filters) {
+      const url = new URL(attemptsLink('c1', filter), 'http://x');
+      expect(url.searchParams.getAll('type'), JSON.stringify(filter)).toEqual(['dialler']);
+    }
   });
 
   it('round-trips: what a link writes is what the list page reads', () => {

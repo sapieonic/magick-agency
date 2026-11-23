@@ -10,7 +10,6 @@ import {
   Search,
 } from 'lucide-react';
 import { useAgentAttempts, type AgentAttemptsSubject } from '../../hooks/useAgentAttempts';
-import { phoneForDisplay } from '../../utils/agency/stationFormat';
 import { campaignLabel } from '../../utils/agencyAgentPerformance';
 import {
   ATTEMPT_RANGE_NOTE,
@@ -58,10 +57,8 @@ import styles from './AgentAttemptsPanel.module.css';
  * none. So the difference between the two surfaces is the shell around this panel
  * and which route filled it, nothing else.
  *
- * The `subject` discriminator is what makes that safe rather than merely tidy: it
- * decides which of the two paired routes is read (see `useAgentAttempts`) and it
- * decides the second person of the copy — "you haven't taken any calls" is a
- * sentence a supervisor must never be shown about somebody else.
+ * `subject` names whose dials are read (see `useAgentAttempts`); the copy speaks of that person
+ * in the third person, since the reader is their supervisor.
  *
  * ── Cross-campaign is the entire point, so Campaign is a real column ──────
  * `/campaigns/:id/attempts` needs no campaign column: its URL is the answer. This
@@ -107,31 +104,17 @@ import styles from './AgentAttemptsPanel.module.css';
  * the next param this surface sends can no longer fail invisibly. So the search
  * is real and the input is back.
  *
- * ── The link to the call is conditional on `subject`, and that is the whole ─
- *
- * It used to be absent on both surfaces, for a reason that is only true of one of
- * them. The agency-native call detail lives under `/agency`, and
- * `AgencyHomeRedirect` sends a dedicated agent to `/dialer` — so an
- * `agent` (hierarchy level 5) cannot reach it, and a row link that lands them
- * somewhere they are bounced out of is the same trap `/dialer` exists to avoid,
- * one shell along. That still holds for `subject.kind === 'me'` at
- * `/dialer/attempts`, and reaching it from there needs a `/dialer/...` twin
- * outside the console shell; it does **not** need the `agent` role raised, which
- * stays at level 5 deliberately.
- *
- * But `subject.kind === 'agent'` is a SUPERVISOR reading somebody else's shift
- * from inside `AgencyAnalyticsPage` — the prop's own contract requires
- * `agency.supervise` — and their stated reason for being there is that a connect
- * rate which looks wrong is a claim about individual calls. Withholding the link
- * there left two lists of the same rows, one of which was a dead end, and sent
- * the supervisor to the campaign's own attempts view to find a row they were
- * already looking at. So the link renders for the supervisor and not for the
- * agent, keyed on the discriminator that already decides which route filled this
- * panel and which person the copy addresses.
+ * ── A supervisor's panel only ──────────────────────────────────────────────
+ * This was also the agent's own My calls (`{ kind: 'me' }`, `GET /my-attempts`) until My calls
+ * became one list of every call type read from `GET /my-calls` (`MyCallsList`,
+ * `docs/call-log.md` §7), where the server masks the number as each campaign's setting says.
+ * The console no longer reads `/my-attempts`, which sends the number in full. What is left is a
+ * supervisor reading one person's dials from `AgencyAnalyticsPage`, with a link from each row to
+ * the call's own page: a connect rate that looks wrong is a claim about individual calls.
  */
 
 export interface AgentAttemptsPanelProps {
-  /** Whose calls. `{ kind: 'agent' }` REQUIRES `hasPermission(role, 'agency.supervise')`. */
+  /** Whose calls. The caller REQUIRES `hasPermission(role, 'agency.supervise')`. */
   subject: AgentAttemptsSubject;
   /**
    * Campaign id → name, for the campaign column and the campaign filter.
@@ -150,7 +133,6 @@ export interface AgentAttemptsPanelProps {
 }
 
 export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAttemptsPanelProps) {
-  const mine = subject.kind === 'me';
   const { page, filters, applyFilters, reload, loadMore, loadingMore, moreError } =
     useAgentAttempts(subject);
 
@@ -281,10 +263,8 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
     <div className={styles.panel}>
       <div className={styles.toolbar}>
         <p className={styles.privacyNote}>
-          {mine
-            ? 'Phone numbers are shown in full. There is no export from this view.'
-            : 'These are one person’s calls, with phone numbers in full — treat what is on screen '
-              + 'as personal data. There is no export from this view.'}
+          {'These are one person’s calls, with phone numbers in full — treat what is on screen '
+            + 'as personal data. There is no export from this view.'}
         </p>
         <button
           type="button"
@@ -535,26 +515,19 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
           The third absence, and the one a naive render loses. A failed read is
           above this block; a null field on a row is inside the table. THIS is a
           steady state — somebody took no calls in the range they asked about —
-          and it must not be dressed as either of the other two. The unfiltered
-          copy is second-person or third-person by `subject`, because telling a
-          supervisor "you haven't taken any calls" about somebody else is simply
-          the wrong sentence.
+          and it must not be dressed as either of the other two.
         */
         <EmptyState
           icon={<PhoneOutgoing size={32} />}
           title={
             filtered
               ? 'No calls match those filters'
-              : mine
-                ? 'You haven’t taken any calls yet'
-                : 'No calls on record for this person'
+              : 'No calls on record for this person'
           }
           description={
             filtered
               ? 'Widen the days or clear the filters to see every call on record.'
-              : mine
-                ? 'Calls appear here as you take them — including the ones that never connected.'
-                : 'Nothing has been dialled under this person’s name yet, on any campaign.'
+              : 'Nothing has been dialled under this person’s name yet, on any campaign.'
           }
         />
       )}
@@ -574,7 +547,7 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
                   <th scope="col">Outcome</th>
                   <th scope="col">Write-up</th>
                   <th scope="col">Talk time</th>
-                  {!mine && <th scope="col">Call</th>}
+                  <th scope="col">Call</th>
                 </tr>
               </thead>
               <tbody>
@@ -583,8 +556,6 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
                     key={attempt.id}
                     attempt={attempt}
                     campaignNames={campaignNames}
-                    linkToCall={!mine}
-                    mine={mine}
                   />
                 ))}
               </tbody>
@@ -630,26 +601,16 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
 function AttemptRow({
   attempt,
   campaignNames,
-  linkToCall,
-  mine,
 }: {
   attempt: AgencyAttempt;
   campaignNames: ReadonlyMap<string, string | null>;
-  /** Whether this reader can reach the agency call detail — see the header. */
-  linkToCall: boolean;
-  /**
-   * The agent's own My calls (AS9): the number as the row's campaign shows it (the server's
-   * `phone_display` on each row, so it masks however the page was opened; `phoneForDisplay`, the
-   * station's one rule). A supervisor's view shows it as stored.
-   */
-  mine: boolean;
 }) {
   const resolved = campaignNames.get(attempt.campaign_id);
   return (
     <tr data-testid={`my-attempt-row-${attempt.id}`}>
       <td className={styles.when}>{formatSpineTimestamp(attempt.created_at)}</td>
       <td className={styles.numeric} data-testid={`my-attempt-phone-${attempt.id}`}>
-        {mine ? phoneForDisplay(attempt.phone_e164, attempt.phone_display ?? 'full') : attempt.phone_e164}
+        {attempt.phone_e164}
       </td>
       <td
         className={resolved ? undefined : styles.mutedCell}
@@ -692,33 +653,31 @@ function AttemptRow({
       <td className={styles.numeric} data-testid={`my-attempt-talk-${attempt.id}`}>
         {formatTalkTime(attempt.talk_seconds)}
       </td>
-      {linkToCall && (
-        <td data-testid={`my-attempt-call-${attempt.id}`}>
-          {/*
-            Keyed on the ATTEMPT and its own `campaign_id`, which is why this list
-            can link at all: the rows here span campaigns, so the destination
-            cannot come from the URL the way it does on the campaign-scoped view.
+      <td data-testid={`my-attempt-call-${attempt.id}`}>
+        {/*
+          Keyed on the ATTEMPT and its own `campaign_id`, which is why this list
+          can link at all: the rows here span campaigns, so the destination
+          cannot come from the URL the way it does on the campaign-scoped view.
 
-            `recordingCellCopy` decides whether there is anything to open, with the
-            same words the campaign attempts view uses — an attempt that never
-            produced a media leg has nothing to link to, and that is a fact rather
-            than a failure. Whether the CALL still exists is the destination page's
-            answer to give (the API keeps the id un-FK'd so the attempt outlives it),
-            which is exactly why this is a link and never an embedded player.
-          */}
-          {recordingCellCopy(attempt) === null ? (
-            <Link
-              to={`/agency/campaigns/${attempt.campaign_id}/attempts/${attempt.id}`}
-              className={styles.callLink}
-            >
-              <Play size={13} aria-hidden="true" />
-              Open call
-            </Link>
-          ) : (
-            <span className={styles.mutedCell}>{recordingCellCopy(attempt)}</span>
-          )}
-        </td>
-      )}
+          `recordingCellCopy` decides whether there is anything to open, with the
+          same words the campaign attempts view uses — an attempt that never
+          produced a media leg has nothing to link to, and that is a fact rather
+          than a failure. Whether the CALL still exists is the destination page's
+          answer to give (the API keeps the id un-FK'd so the attempt outlives it),
+          which is exactly why this is a link and never an embedded player.
+        */}
+        {recordingCellCopy(attempt) === null ? (
+          <Link
+            to={`/agency/campaigns/${attempt.campaign_id}/attempts/${attempt.id}`}
+            className={styles.callLink}
+          >
+            <Play size={13} aria-hidden="true" />
+            Open call
+          </Link>
+        ) : (
+          <span className={styles.mutedCell}>{recordingCellCopy(attempt)}</span>
+        )}
+      </td>
     </tr>
   );
 }

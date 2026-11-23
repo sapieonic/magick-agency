@@ -32,6 +32,7 @@
  * A leaf beside `sql-fragments.ts`, whose two codes it reads so the dialler's rule and this one
  * cannot spell them apart.
  */
+import type { AgencyCallLogStatus } from '@magick-agency/contracts/api/agency/call-log';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { VOICEMAIL_DISPOSITION_CODE } from './sql-fragments.js';
 
@@ -50,11 +51,29 @@ export const SOFTPHONE_HUMAN_CONNECT_SQL = `m.bridged_at IS NOT NULL
            AND m.disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'
            AND m.disposition_code <> '${AUTO_DISPOSITION_CODE}'`;
 
-/** A soft-phone campaign count: placed, connected and reached a person. */
+/**
+ * Where a soft-phone call stands: the Soft-phone calls list's and the campaign Call log's Status
+ * filter (the contract's `status` values).
+ */
+export type SoftphoneCallStatus = AgencyCallLogStatus;
+
+/**
+ * A soft-phone call in one status. `live`: not ended; `awaiting_outcome`: ended and not
+ * settled; `settled`: outcome saved, lapsed, or closed with none owed. One spelling for the
+ * account's Soft-phone calls list and the campaign Call log. Names the manual call `m`.
+ */
+export function softphoneStatusSql(status: SoftphoneCallStatus): string {
+  if (status === 'live') return "m.state <> 'ended'";
+  if (status === 'awaiting_outcome') return "m.state = 'ended' AND m.settled_at IS NULL";
+  return 'm.settled_at IS NOT NULL';
+}
+
+/** A soft-phone campaign count: placed, connected, reached a person, and the placed calls' talk time. */
 export interface SoftphoneCampaignCounts {
   placed: number;
   connected: number;
   human_connects: number;
+  talk_seconds: number;
 }
 
 /**
@@ -90,7 +109,8 @@ export function softphoneCampaignCountsStatement(q: {
     text: `
       SELECT count(*) FILTER (WHERE ${SOFTPHONE_PLACED_SQL})::int AS placed,
              count(*) FILTER (WHERE ${SOFTPHONE_CONNECTED_SQL})::int AS connected,
-             count(*) FILTER (WHERE ${SOFTPHONE_HUMAN_CONNECT_SQL})::int AS human_connects
+             count(*) FILTER (WHERE ${SOFTPHONE_HUMAN_CONNECT_SQL})::int AS human_connects,
+             COALESCE(sum(m.talk_seconds) FILTER (WHERE ${SOFTPHONE_PLACED_SQL}), 0)::int AS talk_seconds
         FROM agency_manual_calls m
        WHERE m.campaign_id = $1::uuid
          ${range.join('\n         ')}
@@ -99,8 +119,18 @@ export function softphoneCampaignCountsStatement(q: {
   };
 }
 
+/** One count of a row as `pg` returns it (`::int`), read defensively: anything that is not a number is 0. */
+export function readCount(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0;
+}
+
 /** A count row as `pg` returns it (`::int`), read defensively. */
 export function readSoftphoneCampaignCounts(row: Partial<Record<keyof SoftphoneCampaignCounts, unknown>> | undefined): SoftphoneCampaignCounts {
-  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0);
-  return { placed: n(row?.placed), connected: n(row?.connected), human_connects: n(row?.human_connects) };
+  const n = readCount;
+  return {
+    placed: n(row?.placed),
+    connected: n(row?.connected),
+    human_connects: n(row?.human_connects),
+    talk_seconds: n(row?.talk_seconds),
+  };
 }

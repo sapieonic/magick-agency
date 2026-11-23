@@ -77,6 +77,8 @@ const FLOORS: ReadonlyArray<{
   { permission: 'agency.inbound.write', floor: 'account_admin', masterName: null, masterLine: null },
   // Live call listening (docs/listening.md, LS3): a supervisor's act, at account_admin.
   { permission: 'agency.calls.listen', floor: 'account_admin', masterName: null, masterLine: null },
+  // The account's call settings (docs/call-log.md §5), at account_admin.
+  { permission: 'agency.calls.manage', floor: 'account_admin', masterName: null, masterLine: null },
   // Campaign templates (docs/campaign-templates.md, CT3): a supervisor's setting, at account_admin.
   { permission: 'agency.campaign_templates.manage', floor: 'account_admin', masterName: null, masterLine: null },
 ];

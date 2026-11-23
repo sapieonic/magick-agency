@@ -136,6 +136,17 @@ export interface UseSoftphoneOptions {
    * outcome, and in finish mode.
    */
   presetNumber?: string | null;
+  /**
+   * The Missed inbound call `presetNumber` is the Call back of (`docs/call-log.md`, CL1). Sent
+   * with the first dial of that number so the call is linked to the missed call; dropped once
+   * the agent changes the number on the pad (the server checks the same thing).
+   */
+  presetCallbackOf?: string | null;
+  /**
+   * The user may save a call to any work of the account that is running (`agency.supervise`):
+   * with none to choose from, the pad says there is none, not "ask your supervisor".
+   */
+  supervises?: boolean;
   /** Which host this is, for copy and analytics. */
   surface: 'softphone_page' | 'station';
   /** The agent's cue volume (0–100), for the ringback. */
@@ -216,6 +227,14 @@ export interface SoftphoneState {
 
   // ── Log to / caller ID ──
   taggableCampaigns: AgencySoftphoneCampaign[];
+  /** The account asks for a work on every call (`docs/call-log.md` §5): none is not a choice. */
+  campaignRequired: boolean;
+  /** `campaignRequired` and nothing to save a call to: the pad gives way to what to do about it. */
+  noWorkToDial: boolean;
+  /** What that card says: an agent asks their supervisor; a supervisor is told no work is running. */
+  noWorkCopy: { title: string; body: string | null };
+  /** A line under "Save this call to": why it was left empty; null when there is nothing to say. */
+  setupNote: string | null;
   /** The draft's tag before dialling; the call's tag once dialled. */
   tagCampaignId: string | null;
   setTagCampaignId: (id: string | null) => void;
@@ -329,6 +348,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     audio,
     presetCampaignId = null,
     presetNumber = null,
+    presetCallbackOf = null,
+    supervises = false,
     surface,
     cueVolume = 70,
     enabled = true,
@@ -410,6 +431,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const [form, setFormState] = useState<DispositionFormState>(EMPTY_DISPOSITION_FORM);
   const [catalogOverride, setCatalogOverride] = useState<{ callId: string; catalog: AgencyDisposition[] } | null>(null);
   const [padRejection, setPadRejection] = useState<string | null>(null);
+  /** A line under "Save this call to": why it was left empty (a redial of a call saved to no work). */
+  const [setupNote, setSetupNote] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [dialError, setDialError] = useState<string | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<OverridePrompt | null>(null);
@@ -431,6 +454,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const presetAppliedRef = useRef(false);
 
   const taggableCampaigns = useMemo(() => bootstrap?.taggable_campaigns ?? [], [bootstrap]);
+  /**
+   * The account's "Every call must belong to a campaign" (`docs/call-log.md` §5): the pad offers
+   * no "Not in any work", asks for one, and keeps Call off until one is chosen. The server
+   * refuses a dial without one whatever the pad does (`campaign_required`).
+   */
+  const campaignRequired = bootstrap?.campaign_required === true;
+  /** Nothing the agent could save a call to: with the setting on they cannot dial at all. */
+  const noWorkToDial = campaignRequired && bootstrap !== null && taggableCampaigns.length === 0;
   const fields = useMemo(() => bootstrap?.call_fields ?? [], [bootstrap]);
   /**
    * Whether the field set is known. Until the bootstrap lands, `fields` is `[]`
@@ -562,14 +593,23 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   // or owes its outcome keeps the screen: the number waits until it settles, and is filled then.
   // Declared after the settle effect above, which empties the pad, so it fills the emptied pad.
   const presetNumberAppliedRef = useRef(false);
+  // The Missed call the number on the pad is the Call back of, with the number as it was
+  // filled: the link goes with a dial only while the pad still holds that number (CL1).
+  const callbackOfRef = useRef<{ inboundCallId: string; number: string } | null>(null);
   useEffect(() => {
     if (presetNumberAppliedRef.current || !bootstrap || !presetNumber || finishOnly) return;
     if (call !== null) return;
     presetNumberAppliedRef.current = true;
     entryRef.current = 'inbound_callback';
-    setNumberState(sanitiseDialInput(presetNumber));
+    const filled = sanitiseDialInput(presetNumber);
+    callbackOfRef.current = presetCallbackOf ? { inboundCallId: presetCallbackOf, number: filled } : null;
+    setNumberState(filled);
     setFocusCallToken((n) => n + 1);
-  }, [bootstrap, presetNumber, call, finishOnly]);
+    // The missed call was saved to no work, or to one that cannot be chosen here: with every
+    // call needing one, the box is empty and says why, as after a redial.
+    const tagOk = presetCampaignId !== null && bootstrap.taggable_campaigns.some((c) => c.campaign_id === presetCampaignId);
+    if (bootstrap.campaign_required === true && !tagOk) setSetupNote(SIDE_COPY.redialNoWork);
+  }, [bootstrap, presetNumber, presetCallbackOf, presetCampaignId, call, finishOnly]);
 
   /**
    * The field set arriving after the call (a reload where the `manual_call` frame
@@ -682,9 +722,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
           ? phase === 'outcome'
             ? SOFTPHONE_REFUSAL_COPY.outcome_pending
             : SIDE_COPY.callGoingOn
-          : callerIdOptions.length === 0
-            ? SIDE_COPY.noCallerId
-            : null);
+          // Before the numbers: with no work chosen the list of numbers is not the call's own.
+          : noWorkToDial
+            ? SIDE_COPY.noRunningWorkTitle
+            : campaignRequired && tagDraft === null
+              ? SIDE_COPY.chooseWorkHint
+              : callerIdOptions.length === 0
+                ? SIDE_COPY.noCallerId
+                : null);
   const canDial = dialUnavailableReason === null && dialBlock === null && !placing;
 
   /**
@@ -702,6 +747,9 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setDialError(null);
       setOverrideError(null);
       const cleanFields = cleanFieldValues(fields, fieldValues);
+      const callbackOf = callbackOfRef.current && callbackOfRef.current.number === number
+        ? callbackOfRef.current.inboundCallId
+        : null;
       const result = await placeManualCall(
         {
           session_id: sessionId,
@@ -710,6 +758,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
           campaign_id: tagDraft,
           ...(Object.keys(cleanFields).length > 0 ? { fields: cleanFields } : {}),
           ...(overrides.dnc_note || overrides.hours_note ? { overrides } : {}),
+          ...(callbackOf ? { callback_of_inbound_call_id: callbackOf } : {}),
         },
         tenantId,
         accountId,
@@ -717,6 +766,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       placingRef.current = false;
       setPlacing(false);
       if (result.ok) {
+        // One call back per press of Call back: a later dial from this pad is its own call.
+        callbackOfRef.current = null;
         setOverridePrompt(null);
         adoptCall(result.value);
         trackAgencySoftphoneCallPlaced({
@@ -796,6 +847,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         return;
       case 'caller_id_not_allowed':
       case 'campaign_not_taggable':
+      // The account began asking for a work on every call under an open page.
+      case 'campaign_required':
         setOverridePrompt(null);
         setDialError(SOFTPHONE_REFUSAL_COPY[refusal.code]);
         // What may be called from, and logged to, has changed under us: re-read it.
@@ -839,6 +892,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     (id: string | null) => {
       if (!setupEditable) return;
       setTagDraft(id);
+      setSetupNote(null);
       // The caller-ID set belongs to the tag; a pick from the old set would be refused.
       setCallerDraft(null);
       setDialError(null);
@@ -1086,7 +1140,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setNumberState(sanitiseDialInput(from.destination_e164));
       const tagId = from.tag?.campaign_id ?? null;
       const tagOk = tagId === null || taggableCampaigns.some((c) => c.campaign_id === tagId);
-      setTagDraft(tagOk ? tagId : null);
+      const nextTag = tagOk ? tagId : null;
+      setTagDraft(nextTag);
+      // The call it repeats was saved to no work, or to one that can no longer be chosen: with
+      // every call needing one, the box is left empty and says why.
+      setSetupNote(campaignRequired && nextTag === null ? SIDE_COPY.redialNoWork : null);
       // The number it went from, tagged or not: a redial goes out from the same number
       // (as WR7's wrap-up redial). On a tagged call the server still dials from the
       // contact's agent number when it has one (DN4), whatever is sent, and from the
@@ -1096,7 +1154,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setDialError(null);
       setFocusCallToken((n) => n + 1);
     },
-    [call, placing, finishOnly, taggableCampaigns],
+    [call, placing, finishOnly, taggableCampaigns, campaignRequired],
   );
 
   return {
@@ -1121,6 +1179,12 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     dialError,
     dial,
     taggableCampaigns,
+    campaignRequired,
+    noWorkToDial,
+    noWorkCopy: supervises
+      ? { title: SIDE_COPY.noRunningWorkAnywhere, body: null }
+      : { title: SIDE_COPY.noRunningWorkTitle, body: SIDE_COPY.noRunningWorkBody },
+    setupNote,
     tagCampaignId,
     setTagCampaignId,
     campaign,

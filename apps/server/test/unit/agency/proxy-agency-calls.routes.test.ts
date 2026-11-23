@@ -1226,3 +1226,166 @@ describe('owning-account settings', () => {
     await app.close();
   });
 });
+
+/**
+ * ─── THE INBOUND CALL OF A CAMPAIGN (docs/call-log.md, P2) ──────────────────
+ * `GET /campaigns/:id/call-log/inbound/:callId{,/recording}`: the attempt detail's rules on
+ * an inbound call. The floor, the media strip and the recording gate are asserted here for
+ * this route by itself: a second route beside a gated one is where a gate goes missing.
+ */
+describe('the inbound call of a campaign', () => {
+  const INBOUND = '77777777-7777-4777-8777-777777777777';
+  const INBOUND_DETAIL = `${PREFIX}/campaigns/${CAMPAIGN}/call-log/inbound/${INBOUND}`;
+  const INBOUND_RECORDING = `${INBOUND_DETAIL}/recording`;
+  const PRIYA = 'u-priya';
+
+  /** The internal handler's envelope: the call log's inbound row, its path, and the media leg. */
+  function inboundBody() {
+    return {
+      inbound: {
+        source: 'inbound', id: INBOUND, campaign_id: CAMPAIGN, contact_id: 'contact-1', attempt_number: null,
+        phone_e164: '+919876504821', caller_id: '+919000000001', agent_user_id: 'u-ravi', reserved_agent_id: null,
+        state: 'ended', outcome: 'answered', disposition_code: 'will_pay', auto_disposition_code: null,
+        notes: 'Salary on 24th', callback_at: null, promise_date: '2026-11-25', promise_amount: '4850.00',
+        dispositioned_by_user_id: PRIYA, dispositioned_at: '2026-11-22T10:17:00.000Z', dispositioned_on_behalf: true,
+        webrtc_call_id: 'call-1', dialed_at: null, answered_at: '2026-11-22T10:12:01.000Z',
+        bridged_at: '2026-11-22T10:12:19.000Z', ended_at: '2026-11-22T10:16:31.000Z', talk_seconds: 252,
+        wrapup_seconds: null, redial_of_attempt_id: null, redial_number: null,
+        dnc_overridden: false, hours_overridden: false, requires_disposition: false, settled_at: '2026-11-22T10:17:00.000Z',
+        inbound: {
+          campaign_source: 'contact', route_name: 'Sales line', wait_seconds: 18, queued: true, via_sticky_agent: true,
+          voicemail_seconds: null, follow_up: null, called_back: null,
+        },
+        created_at: '2026-11-22T10:12:01.000Z',
+      },
+      journey: [{ kind: 'rang', at: '2026-11-22T10:12:01.000Z', seconds: null }],
+      voicemail_url: null,
+      call: {
+        ...availableBody().call,
+        recording_url: `/api/v1/agency-campaigns/${CAMPAIGN}/call-log/inbound/${INBOUND}/recording`,
+      },
+      call_availability: 'available',
+    };
+  }
+
+  beforeEach(() => {
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: inboundBody() });
+    mocks.findDisplayNamesInTenant.mockResolvedValue(new Map([['u-ravi', 'Ravi Menon'], [PRIYA, 'Priya Nair']]));
+  });
+
+  it('is floored at agency.supervise: an agent, a viewer and an operator are refused before the handler is called', async () => {
+    expect(PERMISSION_MATRIX['agency.supervise']).toBe('account_admin');
+    for (const role of ['agent', 'viewer', 'operator'] as const) {
+      const app = await buildApp(role);
+      for (const url of [INBOUND_DETAIL, INBOUND_RECORDING]) {
+        expect((await app.inject({ method: 'GET', url })).statusCode, `${role} ${url}`).toBe(403);
+      }
+      await app.close();
+    }
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+  });
+
+  it('serves the row as the Call log serves it, with the names, the path and the media leg repointed at this route', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: INBOUND_DETAIL });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[0]![0]).toMatchObject({
+      method: 'GET', path: `/agency-campaigns/${CAMPAIGN}/call-log/inbound/${INBOUND}`, tenantId: TENANT, accountId: ACCOUNT,
+    });
+    const body = res.json();
+    expect(body.inbound).toMatchObject({
+      type: 'inbound', id: INBOUND, agent_user_id: 'u-ravi', agent_name: 'Ravi Menon', outcome: 'answered',
+      wait_seconds: 18, via_sticky_agent: true, route_name: 'Sales line', follow_up: null,
+    });
+    expect(body.inbound).not.toHaveProperty('source');
+    expect(body.inbound).not.toHaveProperty('inbound');
+    expect(body.dispositioned_by_name).toBe('Priya Nair');
+    expect(body.journey).toEqual(inboundBody().journey);
+    expect(body.call_availability).toBe('available');
+    expect(body.call.recording_url).toBe(`${INBOUND_DETAIL}/recording`);
+    expect(body.call.call_analysis).toEqual({ summary: 'customer declined' });
+    await app.close();
+  });
+
+  it('strips the analysis without the analytics grant and the recording link without the recording grant', async () => {
+    setGrants({ recording: false, analytics: false });
+    const app = await buildApp();
+    const body = (await app.inject({ method: 'GET', url: INBOUND_DETAIL })).json();
+    expect(body.call.recording_url).toBeNull();
+    expect(body.call.call_analysis ?? null).toBeNull();
+    expect(body.call.conversation_log ?? null).toBeNull();
+    // The call record itself is still there: who, when, the outcome.
+    expect(body.inbound.disposition_code).toBe('will_pay');
+    await app.close();
+  });
+
+  it('names who a missed call is assigned to, and carries the voicemail link', async () => {
+    const missed = inboundBody();
+    Object.assign(missed.inbound, { agent_user_id: null, outcome: 'voicemail', bridged_at: null, dispositioned_by_user_id: null });
+    Object.assign(missed.inbound.inbound, {
+      voicemail_seconds: 22,
+      follow_up: { status: 'open', reason: 'overflow', closed_cause: null, assignee_user_id: PRIYA, handled_reason: null, handled_at: null },
+    });
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: { ...missed, voicemail_url: `/inbound/missed/${INBOUND}/voicemail` } });
+    const app = await buildApp();
+    const body = (await app.inject({ method: 'GET', url: INBOUND_DETAIL })).json();
+    expect(body.inbound.agent_name).toBeNull();
+    expect(body.inbound.follow_up).toMatchObject({ status: 'open', assignee_user_id: PRIYA, assignee_name: 'Priya Nair' });
+    expect(body.dispositioned_by_name).toBeNull();
+    expect(body.voicemail_url).toBe(`/inbound/missed/${INBOUND}/voicemail`);
+    await app.close();
+  });
+
+  it('forwards the handler\'s 404 untouched, and withholds an envelope it does not recognise', async () => {
+    const app = await buildApp();
+    const notFound = { error: 'Not Found', code: 'inbound_call_not_found', message: 'Inbound call not found on this campaign' };
+    mocks.proxyToCore.mockResolvedValue({ status: 404, body: notFound });
+    const refused = await app.inject({ method: 'GET', url: INBOUND_DETAIL });
+    expect(refused.statusCode).toBe(404);
+    expect(refused.json()).toEqual(notFound);
+
+    for (const body of [[inboundBody()], { inbound: inboundBody().inbound }, { ...inboundBody(), call: 'call-1' }, { ...inboundBody(), inbound: null }]) {
+      mocks.proxyToCore.mockResolvedValue({ status: 200, body });
+      const res = await app.inject({ method: 'GET', url: INBOUND_DETAIL });
+      expect(res.statusCode).toBe(502);
+      expect(res.json().code).toBe('core_response_unrecognised');
+    }
+    await app.close();
+  });
+
+  it('gates the recording on the owning account\'s recording grant, and decodes a refusal to JSON', async () => {
+    setGrants({ recording: false, analytics: true });
+    const closed = await buildApp();
+    const denied = await closed.inject({ method: 'GET', url: INBOUND_RECORDING });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toEqual({ error: 'capability_disabled', capability: 'agency.recording' });
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await closed.close();
+
+    setGrants({ recording: true, analytics: true });
+    const app = await buildApp();
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: Buffer.from('audio'), headers: new Headers({ 'content-type': 'audio/wav' }) });
+    const ok = await app.inject({ method: 'GET', url: INBOUND_RECORDING });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-type']).toBe('audio/wav');
+    expect(mocks.proxyToCore.mock.calls.at(-1)![0]).toMatchObject({
+      path: `/agency-campaigns/${CAMPAIGN}/call-log/inbound/${INBOUND}/recording`, rawResponse: true,
+    });
+    mocks.proxyToCore.mockResolvedValue({
+      status: 404, body: Buffer.from(JSON.stringify({ error: 'Not Found', code: 'call_purged' })), headers: new Headers(),
+    });
+    const purged = await app.inject({ method: 'GET', url: INBOUND_RECORDING });
+    expect(purged.statusCode).toBe(404);
+    expect(purged.json().code).toBe('call_purged');
+    await app.close();
+  });
+
+  it('refuses a call id that is not a UUID before the handler is called', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/call-log/inbound/not-an-id` });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
+});

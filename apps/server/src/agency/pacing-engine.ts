@@ -6,6 +6,7 @@ import {
   agencyAttemptRepository,
   agencyCampaignRepository,
   agencyContactRepository,
+  agencyInboundRouteRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
@@ -1573,8 +1574,16 @@ export class PacingEngine {
       // the probe's instant, which lies within this tick before any transition just as the
       // count's own would. Completion cannot be due; the next tick (this one is not
       // quiescent) evaluates it again.
-      if (!openPendingSeen) await this.maybeFinalize(campaign);
-      quiescent = willBeQuiescent;
+      const heldAsDefault = openPendingSeen ? false : await this.maybeFinalize(campaign);
+      // A drained campaign kept running as a route's default (CL8) has nothing to dial and no
+      // time passing can change that: nothing of its roster is pending or live. It is quiescent
+      // whatever the plan said, or it would claim, count and ask the routes every round for as
+      // long as an agent sits available on it. Contacts arriving or reopened
+      // (`contacts_changed`), the campaign row changing and a route taking or dropping it as
+      // its default (`campaign_changed`) wake it; the safety tick bounds a contact made
+      // pending by a path that publishes nothing. Its skipped rounds replay `no_contacts`.
+      if (heldAsDefault && !willBeQuiescent) idle = 'no_contacts';
+      quiescent = willBeQuiescent || heldAsDefault;
     } finally {
       inRound?.withdraw(campaignId);
       // Whatever this tick was granted and did not insert leaves the ledger now, on every
@@ -2689,12 +2698,28 @@ export class PacingEngine {
    * a terminal campaign, and wrap-up lives in one replica's memory where a leader
    * on another cannot see it. The observable is the attempt.
    */
-  private async maybeFinalize(campaign: AgencyCampaignRecord): Promise<void> {
-    if (campaign.status !== 'running' && campaign.status !== 'stopping') return;
+  private async maybeFinalize(campaign: AgencyCampaignRecord): Promise<boolean> {
+    if (campaign.status !== 'running' && campaign.status !== 'stopping') return false;
     const outstanding = campaign.status === 'stopping'
       ? await agencyAttemptRepository.countLive(campaign.id)
       : await agencyCampaignRepository.countOutstanding(campaign.id);
-    if (outstanding > 0) return;
+    if (outstanding > 0) return false;
+    // A running campaign that an inbound route files its unknown callers under is not completed
+    // when its list runs out (docs/call-log.md §5, CL8): it is there to be logged to, by callers
+    // who ring in and by agents on the soft phone, and a completed campaign can be chosen by
+    // neither. It stays running until a supervisor stops it (`stopping → stopped` below is
+    // untouched). Asked only here, once nothing is outstanding: one read of a partial index on a
+    // table of a few rows. A read that fails completes nothing this tick; the next one asks again.
+    // Answers true only for that campaign (drained, running, held open as a default): the tick
+    // that asked is then quiescent (`runTick`).
+    if (campaign.status === 'running') {
+      try {
+        if ((await agencyInboundRouteRepository.listDefaultingTo(campaign.tenant_id, campaign.id)).length > 0) return true;
+      } catch (err) {
+        log.warn({ err, campaignId: campaign.id }, 'Could not check whether an inbound route files callers under the campaign — not completing it this tick');
+        return false;
+      }
+    }
     // A stopping campaign whose in-flight attempts have drained is stopped; a
     // running one that has run out of work is completed.
     const to = campaign.status === 'stopping' ? 'stopped' : 'completed';
@@ -2745,6 +2770,7 @@ export class PacingEngine {
       this.lastStatus.delete(campaign.id);
       await this.relinquish(campaign.id);
     }
+    return false;
   }
 
   /** Last status we told agents about, per led campaign. */

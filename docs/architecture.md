@@ -971,7 +971,7 @@ It is never a rate-limit key and never an auth input.
   offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`;
   the campaign list is kept per tenant and account for the session, `hooks/useSearchCampaigns.ts`).
   Escape closes only the topmost layer (search, then the phone's drawer). A section that groups
-  pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and Soft-phone calls,
+  pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and All calls,
   Missed calls and Summary, Analytics and Exports, each tab gated as its page. The navigation
   model, with every entry's gate, is `utils/consoleNav.ts`; `navRouteGates.test.ts` checks every
   offer against the route it opens, for every role and flag. Settings is a hub at `/settings/*`

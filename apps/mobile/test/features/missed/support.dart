@@ -110,6 +110,10 @@ class FakeMissedCallsApi implements MissedCallsApi {
   Object? reopenAnswer;
   Object? claimAnswer;
 
+  /// The ids read one at a time, and what such a read answers (by default the row).
+  final List<String> read = [];
+  Object? oneAnswer;
+
   Future<T> _answer<T>(Object a) => switch (a) {
         final Future<T> f => f,
         final T v => Future.value(v),
@@ -130,6 +134,12 @@ class FakeMissedCallsApi implements MissedCallsApi {
     countReads++;
     countSince.add(since);
     return _answer(since != null ? (sinceAnswer ?? countAnswer) : countAnswer);
+  }
+
+  @override
+  Future<InboundMissedCall> one(String id) {
+    read.add(id);
+    return _answer(oneAnswer ?? missed(id));
   }
 
   @override

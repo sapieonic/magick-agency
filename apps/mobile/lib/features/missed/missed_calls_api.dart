@@ -24,6 +24,7 @@ class MissedCallsApi {
 
   static const listPath = '/proxy/agency/inbound/missed';
   static const countPath = '/proxy/agency/inbound/missed/count';
+  static String onePath(String id) => '/proxy/agency/inbound/missed/${Uri.encodeComponent(id)}';
   static String handledPath(String id) => '/proxy/agency/inbound/missed/${Uri.encodeComponent(id)}/handled';
   static String reopenPath(String id) => '/proxy/agency/inbound/missed/${Uri.encodeComponent(id)}/reopen';
   static String claimPath(String id) => '/proxy/agency/inbound/missed/${Uri.encodeComponent(id)}/claim';
@@ -32,6 +33,15 @@ class MissedCallsApi {
   Future<InboundMissedPage> list(InboundMissedQuery query) async {
     final body = await _api.get(listPath, query: query.toQuery());
     return decodeBody(listPath, body, decodeInboundMissedPage);
+  }
+
+  /// `GET /inbound/missed/:id`: one row by its id, under the list's rules (the
+  /// agent's own row, or an open one nobody has). Refused 404
+  /// `inbound_missed_call_not_found` for a row they may not read.
+  Future<InboundMissedCall> one(String id) async {
+    final path = onePath(id);
+    final body = await _api.get(path);
+    return decodeBody(path, body, InboundMissedCall.fromJson);
   }
 
   /// `GET /inbound/missed/count?assignee=me`: the badge (the agent's own open

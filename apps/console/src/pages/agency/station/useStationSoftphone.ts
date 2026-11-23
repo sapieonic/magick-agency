@@ -71,6 +71,7 @@ export function useStationSoftphone({
 }): StationSoftphone {
   const available = useSoftphoneAvailable();
   const mayDial = usePermission('agency.softphone.dial');
+  const supervises = usePermission('agency.supervise');
   const { station, clock, audio } = cons;
   const reason = station.breakReasonCode;
   const onBreak = station.agentState === 'break';
@@ -86,6 +87,7 @@ export function useStationSoftphone({
     clock,
     audio,
     presetCampaignId: bootstrap?.campaign_id ?? null,
+    supervises,
     surface: 'station',
     cueVolume: cons.cuePrefs.volume,
     enabled: candidate,

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   flags: { agency_inbound_enabled: true } as Record<string, boolean>,
   showToast: vi.fn(),
   listInboundRoutes: vi.fn(),
+  listInboundRoutesWithRule: vi.fn(),
   getInboundRoute: vi.fn(),
   createInboundRoute: vi.fn(),
   updateInboundRoute: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('../../api/inbound', async () => {
   return {
     ...actual,
     listInboundRoutes: mocks.listInboundRoutes,
+    listInboundRoutesWithRule: mocks.listInboundRoutesWithRule,
     getInboundRoute: mocks.getInboundRoute,
     createInboundRoute: mocks.createInboundRoute,
     updateInboundRoute: mocks.updateInboundRoute,
@@ -101,6 +103,7 @@ beforeEach(() => {
   mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
   mocks.flags = { agency_inbound_enabled: true };
   mocks.listInboundRoutes.mockResolvedValue([ROUTE]);
+  mocks.listInboundRoutesWithRule.mockResolvedValue({ routes: [ROUTE], campaignRequired: false });
   mocks.getInboundRoute.mockResolvedValue(ROUTE);
   mocks.listInboundNumbers.mockResolvedValue({ numbers: NUMBERS });
   mocks.listInboundClips.mockResolvedValue({
@@ -312,5 +315,81 @@ describe('the route editor', () => {
     mocks.getInboundRoute.mockRejectedValue(Object.assign(new Error('Inbound route not found.'), { statusCode: 404 }));
     await renderAt('/settings/inbound/r-gone');
     expect(screen.getByRole('alert').textContent).toMatch(/not found/);
+  });
+});
+
+// docs/call-log.md §5: the campaign a caller on no list is filed under.
+describe('the route editor: Campaign for unknown callers', () => {
+  const field = () => screen.getByTestId('inbound-default-campaign') as HTMLSelectElement;
+
+  it('offers the account’s campaigns and "No campaign", in the proposal’s words; choosing one is the only thing the PATCH carries', async () => {
+    mocks.updateInboundRoute.mockResolvedValue({ ok: true, value: { ...ROUTE, default_campaign_id: 'camp-1' } });
+    await renderAt('/settings/inbound/r-1');
+    const card = screen.getByTestId('inbound-route-unknown-callers');
+    expect(within(card).getByLabelText('Campaign for unknown callers')).toBe(field());
+    expect(card.textContent).toContain('Callers whose number is not on any list are filed under this campaign and use its outcomes.');
+    // CL8: it is not completed when its list runs out, and the editor says so.
+    expect(card.textContent).toContain('The campaign stays running while it is chosen here, even when nobody is left to dial.');
+    expect([...field().options].map((o) => o.textContent)).toEqual(['No campaign', 'Renewals']);
+    expect(field().value).toBe('');
+    expect(screen.queryByTestId('inbound-default-campaign-required')).toBeNull();
+    expect(screen.queryByTestId('inbound-outcomes-unused')).toBeNull();
+
+    fireEvent.change(field(), { target: { value: 'camp-1' } });
+    // The route's own outcomes are for callers with no campaign: with one chosen they are not used.
+    expect(screen.getByTestId('inbound-outcomes-unused').textContent).toMatch(/^Not used while unknown callers are filed under a campaign/);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    });
+    expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { default_campaign_id: 'camp-1' }, 'tenant-1', 'account-1');
+  });
+
+  it('is required while every call must belong to a campaign: marked, no "No campaign", and a save without one is stopped here', async () => {
+    mocks.listInboundRoutesWithRule.mockResolvedValue({ routes: [ROUTE], campaignRequired: true });
+    await renderAt('/settings/inbound/r-1');
+    expect(screen.getByTestId('inbound-default-campaign-required').textContent).toContain('(required)');
+    expect([...field().options].map((o) => o.textContent)).toEqual(['Choose a campaign', 'Renewals']);
+    expect(field().required).toBe(true);
+    // Something else changes, so there is a save to try.
+    fireEvent.click(screen.getByTestId('inbound-record'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    });
+    expect(mocks.updateInboundRoute).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Choose a campaign for unknown callers. Every call in this account must belong to a campaign.');
+  });
+
+  it('a route saved while the rule came on since the page loaded: the server’s refusal marks the field and asks for it from then on', async () => {
+    mocks.updateInboundRoute.mockResolvedValue({
+      ok: false,
+      refusal: { code: 'default_campaign_required', status: 422, message: 'x', details: [], phoneNumberId: null, routeId: null, inboundCallId: null, allowedCodes: null, reason: null },
+    });
+    await renderAt('/settings/inbound/r-1');
+    fireEvent.click(screen.getByTestId('inbound-record'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    });
+    expect(mocks.updateInboundRoute).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('inbound-default-campaign-required')).toBeTruthy();
+    expect(screen.getByTestId('inbound-route-unknown-callers').textContent).toContain('Choose a campaign for unknown callers.');
+  });
+
+  it('a campaign archived since it was chosen stays in the list, marked, so it can be changed', async () => {
+    mocks.getInboundRoute.mockResolvedValue({ ...ROUTE, default_campaign_id: 'camp-old' });
+    mocks.listArchivedAgencyCampaigns.mockResolvedValue([{ id: 'camp-old', name: 'Old enquiries', status: 'stopped', archived_at: '2026-11-01T00:00:00Z' }]);
+    await renderAt('/settings/inbound/r-1');
+    expect(field().value).toBe('camp-old');
+    expect([...field().options].map((o) => o.textContent)).toEqual(['No campaign', 'Renewals', 'Old enquiries (archived)']);
+  });
+
+  it('a new route sends the campaign chosen with everything else', async () => {
+    mocks.createInboundRoute.mockResolvedValue({ ok: true, value: { ...ROUTE, id: 'r-2', default_campaign_id: 'camp-1' } });
+    await renderAt('/settings/inbound/new');
+    fireEvent.change(screen.getByTestId('inbound-route-name'), { target: { value: 'Sales line' } });
+    fireEvent.change(field(), { target: { value: 'camp-1' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Create|Save/ }));
+    });
+    expect(mocks.createInboundRoute.mock.calls[0]![0]).toMatchObject({ name: 'Sales line', default_campaign_id: 'camp-1' });
   });
 });

@@ -11,6 +11,9 @@ import { agencyCampaignRepository } from '../../db/repositories/agency.repositor
 import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../settings/agency-account-settings.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { enrichAttemptAgentName } from '../../agency/agency-spine.js';
+import {
+  callLogPeopleIds, toInboundWireRow, withCallLogNames, type CampaignInboundLogRow,
+} from '../../agency/campaign-call-log.js';
 import { callListenSessions } from './helpers/listen.js';
 import { noStore } from './helpers/no-store.js';
 
@@ -257,6 +260,23 @@ export function decodeRawErrorBody(body: unknown): unknown {
     // Not JSON — fall through to the envelope below.
   }
   return { error: 'Upstream Error', message: 'The recording could not be returned.' };
+}
+
+/**
+ * Pass a recording read (`callCore` with `rawResponse`) through to the client: the bytes with
+ * their type and length, cacheable privately for an hour.
+ *
+ * A refusal is decoded, not forwarded as bytes (see {@link decodeRawErrorBody}): the attempt's
+ * `call_purged` is load-bearing for the console, and a refusal typed `application/octet-stream`
+ * is one no console can parse.
+ */
+function sendRecording(reply: FastifyReply, result: { status: number; headers: Headers; body: unknown }): FastifyReply {
+  if (result.status >= 400) return reply.code(result.status).send(decodeRawErrorBody(result.body));
+  reply.header('Content-Type', result.headers.get('content-type') || 'audio/mpeg');
+  const contentLength = result.headers.get('content-length');
+  if (contentLength) reply.header('Content-Length', contentLength);
+  reply.header('Cache-Control', 'private, max-age=3600');
+  return reply.send(result.body);
 }
 
 /** The envelope the internal handler's attempt read answers with. */
@@ -582,21 +602,97 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         rawResponse: true,
       });
 
-      // Decoded, not forwarded as bytes — see `decodeRawErrorBody`. This is the
-      // route whose `call_purged` is load-bearing for the console, and a refusal
-      // typed `application/octet-stream` is one no console can parse.
-      if (result.status >= 400) {
-        return reply.code(result.status).send(decodeRawErrorBody(result.body));
+      return sendRecording(reply, result);
+    },
+  );
+
+  /**
+   * GET /proxy/agency/campaigns/:id/call-log/inbound/:callId — one inbound call of the campaign,
+   * for its Call page (`docs/call-log.md`): the Call log's row, the caller's path, and the media
+   * leg in the attempt detail's envelope.
+   *
+   * `agency.supervise`, the Call log's floor and the attempt detail's: an agent never reads a
+   * call's recording, transcript or summary. The media leg gets the attempt detail's entitlement
+   * strip ({@link shapeMediaCall}: analysis content without the account's analytics grant, the
+   * recording link without its recording grant), failing closed on an envelope it does not know.
+   */
+  app.get<{ Params: { id: string; callId: string } }>(
+    '/campaigns/:id/call-log/inbound/:callId',
+    { preHandler: [requirePermission('agency.supervise')] },
+    async (request, reply) => {
+      const tenantId = request.tenantId!;
+      const result = await callCore({
+        method: 'GET',
+        path: `/agency-campaigns/${request.params.id}/call-log/inbound/${request.params.callId}`,
+        tenantId,
+        accountId: request.accountId,
+      });
+      if (result.status >= 400) return reply.code(result.status).send(result.body);
+
+      const body = result.body as Record<string, unknown> | null;
+      const inbound = body?.['inbound'];
+      const media = body?.['call'];
+      if (
+        body === null || typeof body !== 'object' || Array.isArray(body)
+        || inbound === null || typeof inbound !== 'object' || Array.isArray(inbound)
+        || !('call_availability' in body)
+        || (media !== null && (typeof media !== 'object' || Array.isArray(media)))
+      ) {
+        log.error(
+          { tenantId, campaignId: request.params.id, inboundCallId: request.params.callId },
+          'agency inbound call read: the internal handler returned an unrecognised envelope and it was withheld',
+        );
+        return reply.code(502).send({
+          error: 'Bad Gateway', code: 'core_response_unrecognised', message: 'The call could not be returned.',
+        });
       }
 
-      const contentType = result.headers.get('content-type') || 'audio/mpeg';
-      const contentLength = result.headers.get('content-length');
+      const grants = await resolveOwningAccountGrants(request);
+      const call = media
+        ? shapeMediaCall(
+          media as Record<string, unknown>,
+          { analytics: grants.kind === 'resolved' && grants.analytics, recording: grants.kind === 'resolved' && grants.recording },
+          `/proxy/agency/campaigns/${request.params.id}/call-log/inbound/${request.params.callId}/recording`,
+        )
+        : null;
+      const row = inbound as CampaignInboundLogRow;
+      const savedBy = row.dispositioned_by_user_id;
+      const callId = call && typeof call['id'] === 'string' ? call['id'] : null;
+      // Who answered, who the Missed row is assigned to and who saved the outcome: one lookup.
+      const [people, listenSessions] = await Promise.all([
+        agentNamesOrNone([...callLogPeopleIds([row]), savedBy], tenantId, 'agency inbound call read'),
+        callId && request.accountId ? callListenSessions(tenantId, request.accountId, callId) : null,
+      ]);
+      if (listenSessions) noStore(reply);
+      return reply.send({
+        inbound: toInboundWireRow(withCallLogNames(row, people)),
+        journey: body['journey'],
+        dispositioned_by_name: savedBy ? people.get(savedBy) ?? null : null,
+        voicemail_url: typeof body['voicemail_url'] === 'string' ? body['voicemail_url'] : null,
+        call,
+        call_availability: body['call_availability'],
+        ...(listenSessions ? { listen_sessions: listenSessions } : {}),
+      });
+    },
+  );
 
-      reply.header('Content-Type', contentType);
-      if (contentLength) reply.header('Content-Length', contentLength);
-      reply.header('Cache-Control', 'private, max-age=3600');
-
-      return reply.send(result.body);
+  /**
+   * GET /proxy/agency/campaigns/:id/call-log/inbound/:callId/recording — the bytes (buffered by
+   * `callCore`), under `agency.supervise` and the owning account's recording grant, exactly as
+   * the attempt's recording: refusals decoded to JSON, never bytes.
+   */
+  app.get<{ Params: { id: string; callId: string } }>(
+    '/campaigns/:id/call-log/inbound/:callId/recording',
+    { preHandler: [requirePermission('agency.supervise'), requireOwningAccountRecording] },
+    async (request, reply) => {
+      const result = await callCore({
+        method: 'GET',
+        path: `/agency-campaigns/${request.params.id}/call-log/inbound/${request.params.callId}/recording`,
+        tenantId: request.tenantId!,
+        accountId: request.accountId,
+        rawResponse: true,
+      });
+      return sendRecording(reply, result);
     },
   );
 }

@@ -417,6 +417,41 @@ export interface AgencySoftphoneCampaignCounts {
   connected: number;
   /** Bridged and written up with neither voicemail nor `no_disposition`: the connect rate's numerator. */
   human_connects: number;
+  /** Talk time of the placed calls, in seconds: what Calls by type adds up (`docs/call-log.md` §6). */
+  talk_seconds: number;
+}
+
+/**
+ * Inbound calls filed under a campaign (`docs/call-log.md` §6, CL25–CL27): the calls the
+ * campaign's Call log lists as Inbound, by that list's own rule for what an inbound row is
+ * (CL16): filed under the campaign (`campaign_id`, however it came by it), in its tenant, ENDED,
+ * and served (a `rejected` call is not a row). The window is on when the call ARRIVED.
+ *
+ * Beside the dialler's and the soft phone's figures, never in them, and never in a connect
+ * rate: a customer who rings us always "connects" from their end (CL7). Counts only; the console
+ * and the report derive the answer rate (`answered` over `open_hours`).
+ */
+export interface AgencyInboundCampaignCounts {
+  /** Every inbound call of the campaign in the window: the Call log's Inbound chip. */
+  received: number;
+  /** An agent answered (outcome `answered`): the Call log's inbound rows under "Connected". */
+  answered: number;
+  /** The call reached nobody and left a Missed row, handled since or not: the Call log's "Missed". */
+  missed: number;
+  /**
+   * The campaign's Missed rows that are still open: the Call log's **To follow up**, by its own
+   * rule (CL14). As of now and NOT cut by the window, as that chip is not: a caller owed a call
+   * back yesterday is still owed one today. So it can be larger than `missed`.
+   */
+  open_follow_ups: number;
+  /** Talk time of the answered calls, in seconds. */
+  talk_seconds: number;
+  /**
+   * The answer rate's denominator: the calls that arrived while the line was open (the inbound
+   * summary's "open-hours calls", `docs/inbound.md` §11): `received` less the calls answered with
+   * the closed message, which nobody could have answered.
+   */
+  open_hours: number;
 }
 
 export interface AgencyCampaignStats {
@@ -595,6 +630,13 @@ export interface AgencyCampaignStats {
    * phone's flag says; the console shows them while the flag is on or when there are any (SR5).
    */
   softphone: AgencySoftphoneCampaignCounts;
+  /**
+   * The inbound calls filed under the campaign over its whole life
+   * ({@link AgencyInboundCampaignCounts}): beside the figures above, never in them. Served
+   * whatever inbound's flag says; the console shows them while the flag is on or when there
+   * are any (SR5's rule).
+   */
+  inbound: AgencyInboundCampaignCounts;
 
   /**
    * Bridged attempts whose disposition maps to a catalog entry flagged
@@ -815,6 +857,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   connect_rate_pct: true,
   first_dials_placed: true,
   softphone: true,
+  inbound: true,
   attempts_success: true,
   success_rate_pct: true,
   aht_seconds: true,

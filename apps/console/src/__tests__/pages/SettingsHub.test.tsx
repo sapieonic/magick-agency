@@ -97,6 +97,7 @@ describe('the sub-nav', () => {
       'Email notifications',
     ]);
     expect(within(groups[1]!).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+      '/settings/calls',
       '/settings/softphone',
       '/settings/inbound',
       '/settings/call-summaries',
@@ -126,6 +127,7 @@ describe('the sub-nav', () => {
     expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
       'Profile and appearance',
       'Email notifications',
+      'Calls',
       'Soft phone',
       'Inbound routing',
       'Call summaries',
@@ -342,6 +344,11 @@ describe('"Find a setting"', () => {
     expect(entries()).toEqual(['Inbound routing']);
     fireEvent.change(filter(), { target: { value: 'dark mode' } });
     expect(entries()).toEqual(['Profile and appearance']);
+    // Settings › Calls, by its one setting's words (docs/call-log.md §5).
+    fireEvent.change(filter(), { target: { value: 'must belong' } });
+    expect(entries()).toEqual(['Calls']);
+    fireEvent.change(filter(), { target: { value: 'unknown callers' } });
+    expect(entries()).toEqual(['Inbound routing']);
   });
 
   it('drops a group with nothing left in it', () => {

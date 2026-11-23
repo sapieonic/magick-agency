@@ -57,6 +57,18 @@ with media workers the station directory's (`station.send` over IPC), both typed
 Beside it, `api/routes/proxy-agency-callbacks.routes.ts`
 (decisions LF1, LF22): the account's `GET /proxy/agency/callbacks`, with the same hooks and gate,
 served by the public layer from SQL (no `callCore`), its query validated with its own 400.
+`api/routes/proxy-agency-call-lists.routes.ts` (docs/call-log.md §7) is the same kind:
+`GET /proxy/agency/calls` (`agency.supervise`) and `GET /proxy/agency/my-calls`
+(`agency.station.connect`), no path params, its hooks the session, the tenant context and
+`Cache-Control: no-store`, behind the dialer's flag, served from SQL (the call log read at the
+account's and an agent's scope); each validates its query with its own 400. No seam, config key
+or bootstrap is added.
+`api/routes/proxy-agency-call-settings.routes.ts` (docs/call-log.md §5) is the same kind:
+`GET` / `PUT /proxy/agency/call-settings` (`agency.calls.manage`) and
+`GET /proxy/agency/campaigns/:id/inbound-default-routes` (`agency.supervise`), its hooks the
+session and the tenant context, behind no flag, served from SQL; its one path id is checked by
+the route (404). No seam, config key or bootstrap is added: the setting is read by the agency
+area's own repository where calls are made and saved.
 `api/routes/proxy-agency-compare.routes.ts` (Compare agents, docs/compare-agents.md §8) is the same
 kind: `POST /proxy/agency/compare/query`, `GET /proxy/agency/compare/options` and the saved views
 (`GET|POST /compare/views`, `PATCH|DELETE /compare/views/:id`), its hooks the session, the tenant

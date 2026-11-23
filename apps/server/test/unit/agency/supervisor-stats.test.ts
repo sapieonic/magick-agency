@@ -298,9 +298,9 @@ describe('the aggregates stay in one statement, the roster is the second', () =>
     ]) {
       expect(sql, alias).toContain(alias);
     }
-    // The roster is the second, and the tagged soft-phone counts (SR1–SR3) the third: neither
-    // holds a rate of the dialler's.
-    expect(pool.query).toHaveBeenCalledTimes(3);
+    // The roster is the second, the tagged soft-phone counts (SR1–SR3) the third and the inbound
+    // calls filed under the campaign (call log P4) the fourth: none holds a rate of the dialler's.
+    expect(pool.query).toHaveBeenCalledTimes(4);
   });
 
   it('reads the floor from live sessions only, counting bridged attempts per session', async () => {

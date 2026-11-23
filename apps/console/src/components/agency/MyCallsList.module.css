@@ -1,0 +1,58 @@
+/* My calls: the chips with Refresh beside them, and the callbacks due under To follow up. */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.callbacks {
+  margin-top: 20px;
+}
+
+.callbacksTitle {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.callbackList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.callback {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.callbackWho {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.due {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.late {
+  color: var(--danger);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.callback > :last-child {
+  grid-column: 1 / -1;
+}

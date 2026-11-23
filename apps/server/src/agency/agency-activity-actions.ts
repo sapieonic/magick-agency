@@ -72,6 +72,8 @@ type CampaignScopedAuditAction = Exclude<
   Extract<PlatformAuditAction, `agency_${string}` | `dnc_${string}`>,
   // The account's soft-phone settings are account-wide: no row of it carries a campaign.
   | 'agency_softphone_settings.updated'
+  // The account's call settings are account-wide too (docs/call-log.md §5).
+  | 'agency_call_settings.updated'
   // A customer-history search or export reads one number across the tenant (CH10): no campaign.
   | 'agency_customer_history.searched'
   | 'agency_customer_history.exported'
@@ -209,6 +211,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_inbound_call.hung_up', label: 'Inbound call ended', group: 'Calls' },
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls' },
+  { value: 'agency_inbound_call.campaign_changed', label: 'Inbound call filed under another campaign', group: 'Calls' },
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls' },
   // Live call listening (docs/listening.md): a supervisor listened to a call of this campaign
   // (the rows carry the call's campaign as `campaign_id`; a call with none is not on this trail).

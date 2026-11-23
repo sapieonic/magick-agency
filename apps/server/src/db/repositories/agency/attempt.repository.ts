@@ -17,7 +17,7 @@ import {
 // MICROSECOND precision — see that module for why a millisecond round-trip
 // silently drops rows.
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
-import type { AgencyAttemptFilters } from '../../../agency/spine-filters.js';
+import { withoutDates, type AgencyAttemptFilters } from '../../../agency/spine-filters.js';
 import { PRIOR_ATTEMPT_LIMIT } from '@magick-agency/domain/retry-campaign-bounds';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import type {
@@ -31,14 +31,30 @@ import type {
 } from '@magick-agency/contracts/agency';
 import {
   attemptFilterConditions,
+  inboundLogFilterConditions,
   keysetCondition,
   params,
   softphoneLogFilterConditions,
   toKeysetPage,
 } from './query-builders.js';
 import { attemptAgentUserSql } from './drilldown-sql.js';
-import { projectAttemptRow, projectSoftphoneLogRow, type SoftphoneLogRaw } from './projections.js';
-import type { CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
+import {
+  projectAttemptRow,
+  projectInboundLogRow,
+  projectSoftphoneLogRow,
+  type InboundLogRaw,
+  type SoftphoneLogRaw,
+} from './projections.js';
+import type {
+  CampaignCallLogRow,
+  CampaignCallLogSourceFilter,
+  CampaignCallSource,
+  CampaignInboundLogRow,
+} from '../../../agency/campaign-call-log.js';
+import type { AgencyCallLogCounts, AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
+import { inboundCampaignRowConditions, inboundMissedOpenSql } from './sql-fragments.js';
+import { INBOUND_LOG_SELECT_SQL } from './inbound-log-sql.js';
+import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
@@ -102,6 +118,234 @@ function campaignAttemptConditions(
       ? attemptAgentUserSql('a', bind.add(campaignId), bind.add(f.agentUserId))
       : null)),
   ];
+}
+
+/**
+ * Whether a dialler attempt or a soft-phone call can match the What happened filter. With only
+ * inbound happenings chosen (Missed, Voicemail, Abandoned) none can: those are things a caller
+ * does to us. With an attempt outcome beside them, the attempt outcome is what they match on.
+ */
+function outboundMatches(f: AgencyAttemptFilters, inboundOutcomes: readonly string[]): boolean {
+  return inboundOutcomes.length === 0 || Boolean(f.outcomes?.length);
+}
+
+/**
+ * The call log's soft-phone facts as JSON (`extra`): the Missed inbound call the call rang back
+ * (CL1) and when that call arrived, in the call's tenant; NULL when it is not a call back.
+ */
+const SOFTPHONE_LOG_EXTRA_SQL = `CASE WHEN m.callback_of_inbound_call_id IS NOT NULL THEN jsonb_build_object(
+                 'callback_of', jsonb_build_object(
+                   'inbound_call_id', m.callback_of_inbound_call_id,
+                   'arrived_at', (SELECT cb.arrived_at FROM agency_inbound_calls cb
+                                   WHERE cb.id = m.callback_of_inbound_call_id AND cb.tenant_id = m.tenant_id))) END`;
+
+/** The leading terms of one campaign's inbound rows in the tenant (`idx_agency_inbound_calls_campaign`). */
+function campaignInboundScopeTerms(campaignId: string, tenantId: string, bind: ReturnType<typeof params>): string[] {
+  return [
+    `i.campaign_id = ${bind.add(campaignId)}::uuid`,
+    `i.tenant_id = ${bind.add(tenantId)}::uuid`,
+  ];
+}
+
+/**
+ * The WHERE terms of the call log's inbound rows, shared by the page, the counts and the Call
+ * page's read so all three mean one thing by "an inbound call": `scopeTerms` first (whose calls:
+ * a campaign's, filed under it in the tenant by `campaign_id`, 0069; or the account's), then
+ * ENDED and served (never `rejected`), then the filters (`inboundLogFilterConditions`).
+ * `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`, the Missed list's rule), drops
+ * the dates (a caller still owed a call is owed it whatever day they rang), and reads the agent
+ * filter as the row's ASSIGNEE: nobody answered a missed call, and "who still owes these" is
+ * what that view is asked.
+ */
+function inboundLogConditions(
+  scopeTerms: readonly string[],
+  q: { filters: AgencyAttemptFilters; inboundOutcomes: readonly string[]; toFollowUp: boolean },
+  bind: ReturnType<typeof params>,
+): string[] {
+  return [
+    ...scopeTerms,
+    // Ended and served, the rule the campaign's inbound figures share (`inboundCampaignRowConditions`).
+    ...inboundCampaignRowConditions('i'),
+    ...inboundLogFilterConditions(
+      q.toFollowUp ? withoutDates(q.filters) : q.filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer',
+    ),
+    ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
+  ];
+}
+
+/**
+ * Whose calls a call-log read lists (`docs/call-log.md` §7): one campaign's (the campaign Call
+ * log), the account's (All calls) or one agent's own in the account (My calls). The three are
+ * the same read with a different term fixed, so a row means one thing on every list.
+ *
+ *  - `campaign`: the attempts of the campaign, the soft-phone calls tagged to it and the inbound
+ *    calls filed under it, in the tenant.
+ *  - `account`: every call of the account, or with `campaign: 'none'` the calls filed under
+ *    none (no dialler call is: an attempt always has one). One campaign's calls at the account's
+ *    scope are the `campaign` scope itself, once the caller has checked the campaign is the
+ *    account's.
+ *  - `agent`: the attempts of the agent's sessions in the account, the soft-phone calls they
+ *    placed, the inbound calls they ANSWERED, and their OPEN Missed rows (assigned to them, the
+ *    Missed list's own rule for an agent). Never anybody else's row. `campaign` narrows it to
+ *    one campaign's, or to the calls filed under none. **A campaign named here must be one the
+ *    caller has checked is the account's**: with it the dialler and answered-inbound branches
+ *    are keyed on the campaign (its own indexes, as the campaign Call log's are) and carry no
+ *    account term of their own.
+ */
+export type CallLogScope =
+  | { kind: 'campaign'; campaignId: string; tenantId: string }
+  | { kind: 'account'; tenantId: string; accountId: string; campaign?: 'none' }
+  | { kind: 'agent'; tenantId: string; accountId: string; agentUserId: string; campaign?: string | 'none' };
+
+/**
+ * The attempts of agent USER `userParam` in the account: `reserved_agent_id` is one of their
+ * sessions there (`attemptAgentUserSql`'s form and reasoning, without the campaign).
+ */
+function accountAgentAttemptSql(tenantParam: string, accountParam: string, userParam: string): string {
+  return `a.reserved_agent_id = ANY(ARRAY(
+           SELECT id FROM agency_agent_sessions
+            WHERE agent_user_id = ${userParam}::uuid AND tenant_id = ${tenantParam}::uuid
+              AND account_id = ${accountParam}::uuid))`;
+}
+
+/** When agent USER `userParam` first joined a session in the account; NULL (no row matches) when they never did. */
+function accountAgentFirstSessionSql(tenantParam: string, accountParam: string, userParam: string): string {
+  return `(SELECT min(joined_at) FROM agency_agent_sessions
+            WHERE agent_user_id = ${userParam}::uuid AND tenant_id = ${tenantParam}::uuid
+              AND account_id = ${accountParam}::uuid)`;
+}
+
+/**
+ * The dialler branch's WHERE terms under a scope, or null when the scope holds no dialler call
+ * (the calls filed under no campaign). At the account's and the agent's scope the attempt's own
+ * `tenant_id` / `account_id` lead (`idx_agency_attempts_account_created`, 0072), and the agent
+ * is a set of session ids, never a join condition.
+ */
+function scopedAttemptConditions(
+  scope: CallLogScope,
+  f: AgencyAttemptFilters,
+  bind: ReturnType<typeof params>,
+): string[] | null {
+  if (scope.kind === 'campaign') return campaignAttemptConditions(scope.campaignId, f, bind);
+  if (scope.campaign === 'none') return null;
+  if (scope.kind === 'agent' && scope.campaign) {
+    // One campaign's attempts by this agent: the campaign Call log's own agent filter
+    // (`attemptAgentUserSql`: their sessions on the campaign), on the campaign's keyset index.
+    return campaignAttemptConditions(scope.campaign, { ...f, agentUserId: scope.agentUserId }, bind);
+  }
+  const tenant = bind.add(scope.tenantId);
+  const account = bind.add(scope.accountId);
+  // An agent's own list is theirs whatever `agent_user_id` asks; the account's reads the filter.
+  const agent = scope.kind === 'agent' ? scope.agentUserId : f.agentUserId;
+  const user = agent ? bind.add(agent) : null;
+  return [
+    `a.tenant_id = ${tenant}::uuid`,
+    `a.account_id = ${account}::uuid`,
+    // No attempt of theirs is older than their first session here. Without the bound, somebody
+    // who never dialled (a supervisor opening My calls) walks the account's whole range to find
+    // nothing: measured 361 ms on 2 million attempts, against 0 with it.
+    //
+    // Why the bound cannot drop a row of theirs: `reserved_agent_id` is written once, by the two
+    // INSERTs of this file (`create` and the redial), and no UPDATE sets it; it references
+    // `agency_agent_sessions(id)`, so the session row was committed before the attempt was
+    // inserted. Neither INSERT sets `created_at` (DEFAULT now()), and a session's `joined_at`
+    // is DEFAULT now() at its INSERT and never written again: a rejoin reuses the row through an
+    // upsert that leaves `joined_at`, `account_id` and `agent_user_id` alone (`upsertLiveSession`, and
+    // `sql-fragments.ts` on the session events, which rests on the same fact). So an attempt's
+    // `created_at` is at or after its own session's `joined_at`, which is at or after the
+    // earliest of that agent's sessions in the account. Both clocks are the database's.
+    ...(user ? [`a.created_at >= ${accountAgentFirstSessionSql(tenant, account, user)}`] : []),
+    ...attemptFilterConditions(f, bind, () => (user ? accountAgentAttemptSql(tenant, account, user) : null)),
+  ];
+}
+
+/** The campaign term of a soft-phone or inbound branch at the account's or an agent's scope. */
+function scopedCampaignTerm(
+  scope: Exclude<CallLogScope, { kind: 'campaign' }>,
+  alias: 'm' | 'i',
+  bind: ReturnType<typeof params>,
+): string[] {
+  if (scope.campaign === 'none') return [`${alias}.campaign_id IS NULL`];
+  return scope.campaign ? [`${alias}.campaign_id = ${bind.add(scope.campaign)}::uuid`] : [];
+}
+
+/** The soft-phone branch's WHERE terms under a scope (the filters without the status and the keyset). */
+function scopedSoftphoneConditions(
+  scope: CallLogScope,
+  f: AgencyAttemptFilters,
+  bind: ReturnType<typeof params>,
+): string[] {
+  if (scope.kind === 'campaign') {
+    return [
+      `m.campaign_id = ${bind.add(scope.campaignId)}::uuid`,
+      `m.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+      ...softphoneLogFilterConditions(f, bind),
+    ];
+  }
+  const { agentUserId: _asked, ...withoutAgent } = f;
+  void _asked;
+  return [
+    `m.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+    `m.account_id = ${bind.add(scope.accountId)}::uuid`,
+    ...(scope.kind === 'agent' ? [`m.agent_user_id = ${bind.add(scope.agentUserId)}::uuid`] : []),
+    ...scopedCampaignTerm(scope, 'm', bind),
+    ...softphoneLogFilterConditions(scope.kind === 'agent' ? withoutAgent : f, bind),
+  ];
+}
+
+/**
+ * The inbound branches' WHERE terms under a scope: one set per branch. A campaign's and the
+ * account's are one branch (`inboundLogConditions`' rule: ended, served, the filters; To follow
+ * up the open Missed rows without the dates, its agent the assignee). An agent's are two, each
+ * its own index range and never the same row twice (a missed call has no answerer): the calls
+ * they answered, and their open Missed rows; To follow up keeps the second alone.
+ */
+function scopedInboundConditions(
+  scope: CallLogScope,
+  q: { filters: AgencyAttemptFilters; inboundOutcomes: readonly string[]; toFollowUp: boolean },
+  bind: ReturnType<typeof params>,
+): string[][] {
+  if (scope.kind === 'campaign') {
+    return [inboundLogConditions(campaignInboundScopeTerms(scope.campaignId, scope.tenantId, bind), q, bind)];
+  }
+  const accountTerms = (): string[] => [
+    `i.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
+    `i.account_id = ${bind.add(scope.accountId)}::uuid`,
+    ...scopedCampaignTerm(scope, 'i', bind),
+  ];
+  if (scope.kind === 'account') return [inboundLogConditions(accountTerms(), q, bind)];
+  const base = (): string[] => [...accountTerms(), ...inboundCampaignRowConditions('i')];
+  const filters = q.toFollowUp ? withoutDates(q.filters) : q.filters;
+  const { agentUserId: _asked, ...mine } = filters;
+  void _asked;
+  const me = (): string => `${bind.add(scope.agentUserId)}::uuid`;
+  const openMissed = [
+    ...base(),
+    `i.follow_up_assignee_user_id = ${me()}`,
+    inboundMissedOpenSql('i'),
+    ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind),
+  ];
+  if (q.toFollowUp) return [openMissed];
+  // The calls they answered. With a campaign, keyed on it alone (`idx_agency_inbound_calls_campaign`):
+  // beside the account term the planner walks the account's whole range for a campaign and an
+  // agent that share no call (measured 223 ms on 300,000 inbound calls, against the campaign's own
+  // few thousand rows). The campaign is the account's (see `CallLogScope`).
+  const answeredBase = scope.campaign && scope.campaign !== 'none'
+    ? [...campaignInboundScopeTerms(scope.campaign, scope.tenantId, bind), ...inboundCampaignRowConditions('i')]
+    : base();
+  return [
+    [...answeredBase, `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
+    openMissed,
+  ];
+}
+
+/** A row of the call log's union → its source's projection. */
+function projectCallLogRow(row: AgencyCallAttemptRecord & {
+  source: CampaignCallSource; phone_e164: string; agent_user_id: string | null;
+}): CampaignCallLogRow {
+  if (row.source === 'dialler') return { source: 'dialler', ...projectAttemptRow(row) };
+  if (row.source === 'inbound') return projectInboundLogRow(row as unknown as InboundLogRaw);
+  return projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw);
 }
 
 export class AgencyAttemptRepository {
@@ -774,33 +1018,84 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts, as
-   * {@link listForCampaign} lists them, and the soft-phone calls tagged to it in the tenant,
-   * newest first on ONE keyset `(created_at DESC, id DESC)` across both, so a page boundary
-   * neither drops nor repeats a row of either. `source` limits it to one of the two.
+   * The campaign's call log (decisions SR6, CL11; `agency/campaign-call-log.ts`): its attempts,
+   * as {@link listForCampaign} lists them, the soft-phone calls tagged to it and the inbound
+   * calls filed under it in the tenant, newest first on ONE keyset `(created_at DESC, id DESC)`
+   * across the three, so a page boundary neither drops nor repeats a row of any. An inbound
+   * call's place in it is when it ARRIVED (`arrived_at`, served as `created_at`). `source`
+   * limits it to one of the three, or to `to_follow_up`.
    *
    * One statement: each branch is its own keyset range with its own `LIMIT n + 1` (the
    * attempts on `idx_agency_attempts_campaign_created`, the tagged calls on
-   * `idx_agency_manual_calls_campaign`), and the outer sort takes the newest `n + 1` of the at
-   * most `2n + 2`. The filters mean on a soft-phone call what they mean on an attempt
-   * (`softphoneLogFilterConditions`). An untagged soft-phone call belongs to no campaign (SR4).
+   * `idx_agency_manual_calls_campaign`, the inbound calls on `idx_agency_inbound_calls_campaign`),
+   * and the outer sort takes the newest `n + 1` of the at most `3n + 3`. The filters mean on a
+   * soft-phone call what they mean on an attempt (`softphoneLogFilterConditions`), and on an
+   * inbound call what `inboundLogFilterConditions` says. An untagged soft-phone call belongs to
+   * no campaign (SR4), as does an inbound call filed under none.
+   *
+   * ── A filter with no meaning on a type leaves that type out ────────────────
+   * `softphoneStatus` (the Call log's Status filter) keeps the soft-phone calls in that status
+   * (`softphoneStatusSql`); an attempt and an inbound call have no such status, so neither
+   * matches. `inboundOutcomes` (Missed, Voicemail, Abandoned) are things only an inbound call
+   * does: with one chosen and no attempt outcome beside it, no attempt and no soft-phone call
+   * matches. The counts ({@link countCallLogForCampaign}) follow both.
+   *
+   * ── Inbound rows ────────────────────────────────────────────────────────────
+   * Only ENDED calls (a live one is on Live calls, and has no outcome to list), and never a
+   * `rejected` one (we turned it away unserved). `to_follow_up` is the campaign's OPEN Missed
+   * rows (`inboundMissedOpenSql`, the Missed list's own rule) under the same filters WITHOUT
+   * the dates (`from` / `to`): a caller owed a call back yesterday is still owed one today.
    */
   async listCallLogForCampaign(input: {
     campaignId: string;
     tenantId: string;
     filters: AgencyAttemptFilters;
-    source: CampaignCallSource | null;
+    source: CampaignCallLogSourceFilter | null;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+    after?: AgencyKeysetPosition;
+    limit: number;
+  }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
+    const { campaignId, tenantId, ...rest } = input;
+    return this.listCallLog({ scope: { kind: 'campaign', campaignId, tenantId }, ...rest });
+  }
+
+  /**
+   * {@link listCallLogForCampaign}'s read under any {@link CallLogScope}: the campaign Call log,
+   * the account's All calls and the agent's My calls are this one statement with a different
+   * term fixed (`docs/call-log.md` §7). The branches, the keyset, the filters' meaning on each
+   * type and what an inbound row is are the same on all three.
+   *
+   * At the account's scope each branch is still its own index range: the attempts on
+   * `idx_agency_attempts_account_created` (0072), the soft-phone calls on
+   * `idx_agency_manual_calls_account`, the inbound calls on
+   * `idx_agency_inbound_calls_account_arrived`. At an agent's, the soft-phone calls on
+   * `idx_agency_manual_calls_agent`, the open Missed rows on
+   * `idx_agency_inbound_calls_missed_assignee`; the attempts and the answered inbound calls are
+   * the account's range filtered to the agent (their sessions; `answered_by_user_id`).
+   */
+  async listCallLog(input: {
+    scope: CallLogScope;
+    filters: AgencyAttemptFilters;
+    source: CampaignCallLogSourceFilter | null;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
     const bind = params();
     const limit = bind.add(input.limit + 1);
+    const inboundOutcomes = input.inboundOutcomes ?? [];
+    const outbound = outboundMatches(input.filters, inboundOutcomes);
     const branches: string[] = [];
-    if (input.source !== 'soft_phone') {
-      const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
-      if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
-      branches.push(`(
+    if ((input.source === null || input.source === 'dialler') && !input.softphoneStatus && outbound) {
+      const conditions = scopedAttemptConditions(input.scope, input.filters, bind);
+      if (conditions) {
+        if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
+        branches.push(`(
         SELECT 'dialler'::text AS source, ${ATTEMPT_ROW_SELECT_SQL},
+               false AS dnc_overridden, false AS hours_overridden, NULL::timestamptz AS settled_at,
+               NULL::jsonb AS extra,
                ${keysetAtSql('a.created_at')} AS cursor_at
           FROM agency_call_attempts a
           ${ATTEMPT_CONTACT_JOIN_SQL}
@@ -808,15 +1103,15 @@ export class AgencyAttemptRepository {
          WHERE ${conditions.join(' AND ')}
          ORDER BY a.created_at DESC, a.id DESC
          LIMIT ${limit})`);
+      }
     }
-    if (input.source !== 'dialler') {
-      const conditions = [
-        `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
-        `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
-        ...softphoneLogFilterConditions(input.filters, bind),
-      ];
+    if ((input.source === null || input.source === 'soft_phone') && outbound) {
+      const conditions = scopedSoftphoneConditions(input.scope, input.filters, bind);
+      if (input.softphoneStatus) conditions.push(softphoneStatusSql(input.softphoneStatus));
       if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
       // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
+      // Then the soft phone's own (overrides, settled, and under `extra` the missed call it rang
+      // back), which the dialler branch fills with constants: the Call log's rows read them.
       branches.push(`(
         SELECT 'soft_phone'::text AS source, m.id, m.campaign_id, m.contact_id, NULL::int AS attempt_number,
                m.destination_e164 AS phone_e164, m.caller_id,
@@ -827,12 +1122,35 @@ export class AgencyAttemptRepository {
                m.webrtc_call_id, m.dialed_at, m.answered_at, m.bridged_at, m.ended_at,
                m.talk_seconds, NULL::int AS wrapup_seconds, NULL::uuid AS redial_of_attempt_id,
                NULL::int AS redial_number, m.created_at,
+               (m.dnc_override_note IS NOT NULL) AS dnc_overridden,
+               (m.hours_override_note IS NOT NULL) AS hours_overridden, m.settled_at,
+               ${SOFTPHONE_LOG_EXTRA_SQL} AS extra,
                ${keysetAtSql('m.created_at')} AS cursor_at
           FROM agency_manual_calls m
          WHERE ${conditions.join(' AND ')}
          ORDER BY m.created_at DESC, m.id DESC
          LIMIT ${limit})`);
     }
+    if ((input.source === null || input.source === 'inbound' || input.source === 'to_follow_up') && !input.softphoneStatus) {
+      const sets = scopedInboundConditions(input.scope, {
+        filters: input.filters,
+        inboundOutcomes,
+        toFollowUp: input.source === 'to_follow_up',
+      }, bind);
+      for (const conditions of sets) {
+        if (input.after) conditions.push(keysetCondition(input.after, 'i', bind, 'arrived_at'));
+        branches.push(`(
+        SELECT ${INBOUND_LOG_SELECT_SQL},
+               ${keysetAtSql('i.arrived_at')} AS cursor_at
+          FROM agency_inbound_calls i
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY i.arrived_at DESC, i.id DESC
+         LIMIT ${limit})`);
+      }
+    }
+    // A filter no type left in the read can match (a status with `source: 'dialler'`, an
+    // inbound-only outcome with `source: 'soft_phone'`): there is no branch to read.
+    if (branches.length === 0) return { rows: [], next_cursor: null, limit: input.limit };
     const sql = `
       SELECT * FROM (${branches.join('\n        UNION ALL\n        ')}) log
        ORDER BY log.created_at DESC, log.id DESC
@@ -842,9 +1160,100 @@ export class AgencyAttemptRepository {
       source: CampaignCallSource; phone_e164: string; agent_user_id: string | null; cursor_at: string;
     }>(sql, bind.values);
 
-    return toKeysetPage(rows, input.limit, (row): CampaignCallLogRow => (row.source === 'dialler'
-      ? { source: 'dialler', ...projectAttemptRow(row) }
-      : projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw)));
+    return toKeysetPage(rows, input.limit, projectCallLogRow);
+  }
+
+  /**
+   * The Call log's chips (`docs/call-log.md`): how many rows of each source
+   * {@link listCallLogForCampaign} would list with these filters, across every page, in one
+   * statement. The same WHERE terms as the list's branches, no keyset, no limit and no
+   * `source` (a chip says what choosing it would list).
+   *
+   * `dialler` is {@link countListed}'s count. `soft_phone` counts the tagged calls whose dial was
+   * sent (`SOFTPHONE_PLACED_SQL`, the campaign figures' definition of a soft-phone call, SR2): a
+   * row that failed before it dialled is listed, greyed, and is not a call. `inbound` counts
+   * every inbound row listed; `all` is the three added. `to_follow_up` is the open Missed rows
+   * under the filters without the dates, as the list's `to_follow_up` reads them; they are
+   * inbound calls, so `all` does not take them a second time. A filter with no meaning on a
+   * type counts none of that type (see {@link listCallLogForCampaign}).
+   */
+  async countCallLogForCampaign(input: {
+    campaignId: string;
+    tenantId: string;
+    filters: AgencyAttemptFilters;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+  }): Promise<AgencyCallLogCounts> {
+    const { campaignId, tenantId, ...rest } = input;
+    return this.countCallLog({ scope: { kind: 'campaign', campaignId, tenantId }, ...rest });
+  }
+
+  /** {@link countCallLogForCampaign}'s counts under any {@link CallLogScope}, by {@link listCallLog}'s own WHERE terms. */
+  async countCallLog(input: {
+    scope: CallLogScope;
+    filters: AgencyAttemptFilters;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+  }): Promise<AgencyCallLogCounts> {
+    const bind = params();
+    const inboundOutcomes = input.inboundOutcomes ?? [];
+    const outbound = outboundMatches(input.filters, inboundOutcomes);
+    const attempt = scopedAttemptConditions(input.scope, input.filters, bind) ?? ['FALSE'];
+    if (input.softphoneStatus || !outbound) attempt.push('FALSE');
+    const soft = [
+      ...scopedSoftphoneConditions(input.scope, input.filters, bind),
+      ...(input.softphoneStatus ? [softphoneStatusSql(input.softphoneStatus)] : []),
+      ...(outbound ? [] : ['FALSE']),
+      SOFTPHONE_PLACED_SQL,
+    ];
+    const q = { filters: input.filters, inboundOutcomes };
+    const inbound = scopedInboundConditions(input.scope, { ...q, toFollowUp: false }, bind);
+    const followUp = scopedInboundConditions(input.scope, { ...q, toFollowUp: true }, bind);
+    if (input.softphoneStatus) for (const set of [...inbound, ...followUp]) set.push('FALSE');
+    const inboundCountSql = (sets: string[][]): string => sets
+      .map((set) => `(SELECT count(*) FROM agency_inbound_calls i WHERE ${set.join(' AND ')})`)
+      .join(' + ');
+    const { rows } = await getPool().query<{ dialler: string; soft_phone: string; inbound: string; to_follow_up: string }>(
+      `SELECT (SELECT count(*)
+                 FROM agency_call_attempts a
+                 ${input.filters.phone ? ATTEMPT_CONTACT_JOIN_SQL : ''}
+                WHERE ${attempt.join(' AND ')})::text AS dialler,
+              (SELECT count(*)
+                 FROM agency_manual_calls m
+                WHERE ${soft.join(' AND ')})::text AS soft_phone,
+              (${inboundCountSql(inbound)})::text AS inbound,
+              (${inboundCountSql(followUp)})::text AS to_follow_up`,
+      bind.values,
+    );
+    const dialler = Number(rows[0]?.dialler ?? 0);
+    const softPhone = Number(rows[0]?.soft_phone ?? 0);
+    const inboundCount = Number(rows[0]?.inbound ?? 0);
+    return {
+      all: dialler + softPhone + inboundCount,
+      dialler,
+      soft_phone: softPhone,
+      inbound: inboundCount,
+      to_follow_up: Number(rows[0]?.to_follow_up ?? 0),
+    };
+  }
+
+  /**
+   * One inbound call of the campaign, in the call log's own row (the list's SELECT and its
+   * rule for what an inbound row is: ended, served, filed under this campaign in this tenant),
+   * for its Call page. Null when it is not one, so an id from another campaign or tenant cannot
+   * be substituted in the path.
+   */
+  async findInboundForCampaign(campaignId: string, tenantId: string, inboundCallId: string): Promise<CampaignInboundLogRow | null> {
+    const bind = params();
+    const conditions = inboundLogConditions(
+      campaignInboundScopeTerms(campaignId, tenantId, bind), { filters: {}, inboundOutcomes: [], toFollowUp: false }, bind,
+    );
+    conditions.push(`i.id = ${bind.add(inboundCallId)}::uuid`);
+    const { rows } = await getPool().query<InboundLogRaw>(
+      `SELECT ${INBOUND_LOG_SELECT_SQL} FROM agency_inbound_calls i WHERE ${conditions.join(' AND ')}`,
+      bind.values,
+    );
+    return rows[0] ? projectInboundLogRow(rows[0]) : null;
   }
 
   /**

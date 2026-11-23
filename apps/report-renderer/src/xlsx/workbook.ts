@@ -20,10 +20,11 @@ import type {
   ReportDetailFile,
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
+import { AGENCY_CALL_LOG_TYPE_LABELS, AGENCY_CALLS_BY_TYPE_RATE_LABELS, AGENCY_OUTBOUND_CONNECT_RATE_LABEL } from '@magick-agency/contracts/reports';
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, unknownUser, type Rate } from '../format';
 import { definitionText as def } from '../definitions';
 import type { DetailReader } from '../io';
-import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, campaignSoftphoneFigures, recordingShare, rosterSuccessReportable } from '../rates';
+import { accountFigures, agentConnectRate, agentSuccessRate, campaignCallsByType, campaignFigures, campaignOutcomeRows, recordingShare, rosterSuccessReportable } from '../rates';
 import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
 
 type Row = unknown[];
@@ -367,7 +368,9 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
   const calls = d.activity.calls;
   const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const roster = d.summary.roster;
-  const soft = campaignSoftphoneFigures(d);
+  const byType = campaignCallsByType(d);
+  const soft = byType?.soft ?? null;
+  const inbound = byType?.inbound ?? null;
   await writeSummary(wb, d, 'Campaign report', [
     { metric: 'Status (as of generation)', value: d.campaign.status, type: 'text' },
     { metric: 'Contacts in the list (as of generation)', value: roster.total, type: 'int' },
@@ -378,8 +381,8 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Connected', value: calls.connected, type: 'int', definition: def(d, 'connected') },
     { metric: 'Conversations', value: calls.conversations, type: 'int' },
     { metric: 'People reached', value: calls.human_connects, type: 'int' },
-    // "Dialler connect rate" where the soft phone's rows follow (SR1).
-    { metric: soft ? 'Dialler connect rate' : 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
+    // "Dialler connect rate" where another type's rows follow (SR1).
+    { metric: byType ? AGENCY_CALLS_BY_TYPE_RATE_LABELS.dialler : 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: calls.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(success), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Answered', value: answered, type: 'int' },
@@ -391,18 +394,43 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Wrap-up redials placed', value: calls.redials.placed, type: 'int' },
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
-    // The soft-phone calls logged to the campaign and All calls (SR1-SR3), last, beside the
-    // dialler's figures above and in none of them; only when the window holds any, as the PDF
-    // (`campaignSoftphoneFigures`). A dataset from a server that predates them carries none.
+    // Calls by type, last (`docs/call-log.md` §6): the soft-phone calls logged to the campaign
+    // (SR1-SR3), the dialler and the soft phone together (Outbound), the inbound calls filed
+    // under it, and the call types added. Beside the dialler's figures above and in none of
+    // them; each block only when the report shows that type, as the PDF (`campaignCallsByType`).
+    // No rate is added across types (CL7). The Outbound rows are the figures the Summary called
+    // "All calls placed / connected / connect rate" before inbound calls joined it: the names
+    // "All calls ..." are not reused for the three-type sums, so a lookup on an old name finds
+    // nothing rather than a different number (CL29). A dataset from a server that predates a
+    // block carries none.
     ...(soft
       ? [
         { metric: 'Soft-phone calls placed', value: soft.placed, type: 'int' as const, definition: def(d, 'softphone_calls') },
         { metric: 'Soft-phone calls connected', value: soft.connected, type: 'int' as const },
         { metric: 'People reached on the soft phone', value: soft.humanConnects, type: 'int' as const },
         { metric: 'Soft-phone connect rate', value: rateCell(soft.connect), type: 'percent' as const },
-        { metric: 'All calls placed', value: soft.all.placed, type: 'int' as const },
-        { metric: 'All calls connected', value: soft.all.connected, type: 'int' as const },
-        { metric: 'All calls connect rate', value: rateCell(soft.all.connect), type: 'percent' as const },
+        { metric: 'Soft-phone talk time', value: soft.talkSeconds ?? '—', type: 'duration_s' as const },
+        { metric: 'Outbound calls placed', value: soft.outbound.placed, type: 'int' as const },
+        { metric: 'Outbound calls connected', value: soft.outbound.connected, type: 'int' as const },
+        { metric: AGENCY_OUTBOUND_CONNECT_RATE_LABEL, value: rateCell(soft.outbound.connect), type: 'percent' as const, definition: def(d, 'outbound_connect_rate') },
+      ]
+      : []),
+    ...(inbound
+      ? [
+        { metric: 'Inbound calls received', value: inbound.received, type: 'int' as const, definition: def(d, 'inbound_calls') },
+        { metric: 'Inbound calls answered', value: inbound.answered, type: 'int' as const },
+        { metric: 'Inbound calls missed', value: inbound.missed, type: 'int' as const },
+        { metric: 'Missed calls still to follow up (as of generation)', value: inbound.openFollowUps, type: 'int' as const },
+        { metric: 'Inbound talk time', value: inbound.talkSeconds, type: 'duration_s' as const },
+        { metric: AGENCY_CALLS_BY_TYPE_RATE_LABELS.inbound, value: rateCell(inbound.answer), type: 'percent' as const },
+      ]
+      : []),
+    ...(byType
+      ? [
+        { metric: 'All call types: calls', value: byType.all.calls, type: 'int' as const, definition: def(d, 'calls_by_type') },
+        { metric: 'All call types: connected', value: byType.all.connected, type: 'int' as const },
+        { metric: 'All call types: people reached', value: byType.all.reached, type: 'int' as const },
+        { metric: 'All call types: talk time', value: byType.all.talk_seconds, type: 'duration_s' as const },
       ]
       : []),
   ]);
@@ -440,6 +468,8 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     d.trends.best_hours.map((h) => [h.hour, h.dials, h.first_dials, h.connected, h.human_connects, rateCell(rate(h.human_connects, h.first_dials, floor))]),
     { zone },
   );
+  const typed = byType && d.activity.outcomes_by_type ? byType : null;
+  const outcomeRows = campaignOutcomeRows(d, typed);
   await writeTable(
     wb,
     'Outcomes',
@@ -447,10 +477,20 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
       { header: 'Outcome', type: 'text' },
       { header: 'Code', type: 'text' },
       { header: 'Success', type: 'bool' },
-      { header: 'Conversations', type: 'int' },
-      { header: 'Share', type: 'percent' },
+      // The dialler's conversations and their share of the dialler's. Named as the dialler's
+      // where the other types' columns follow, as the PDF's table.
+      { header: typed ? AGENCY_CALL_LOG_TYPE_LABELS.dialler : 'Conversations', type: 'int' },
+      { header: typed ? 'Share of dialler' : 'Share', type: 'percent' },
+      // By type, where the report shows more than the dialler (CL28): the same outcome on the
+      // soft-phone and inbound calls, and the columns added.
+      ...(typed ? typed.columns.filter((c) => c.type !== 'dialler').map((c) => ({ header: c.label, type: 'int' as const })) : []),
+      ...(typed ? [{ header: 'Total', type: 'int' as const }] : []),
     ],
-    d.activity.outcomes.map((o) => [o.label ?? (o.code === null ? 'No outcome written' : `${o.code} (retired)`), o.code, o.is_success, o.count, share(o.count, calls.conversations)]),
+    outcomeRows.map((o) => [
+      o.label ?? (o.code === null ? 'No outcome written' : `${o.code} (retired)`), o.code, o.is_success, o.dialler, share(o.dialler, calls.conversations),
+      ...(typed ? typed.columns.filter((c) => c.type !== 'dialler').map((c) => o[c.type]) : []),
+      ...(typed ? [o.total] : []),
+    ]),
     { zone },
   );
   const name = (id: string | null, served?: string | null) => (id === null ? 'Not reserved to an agent' : (served ?? d.agent_names[id] ?? unknownUser(id)));

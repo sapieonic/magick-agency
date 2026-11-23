@@ -164,3 +164,166 @@
   flex-shrink: 0;
   color: var(--warning);
 }
+
+/*
+  The type's own colour on its cell: the word still says which, the dot only helps a scan. The
+  type chips over the list, with the same colours, are `components/agency/CallTypeChips`.
+*/
+.type::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+
+.type[data-type='dialler']::before {
+  background: var(--accent);
+}
+
+.type[data-type='soft_phone']::before {
+  background: var(--info);
+}
+
+.type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A row's second line: the facts only its type has ("Try 2 · redial", "not on the list"). */
+.secondLine {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  white-space: nowrap;
+}
+
+/* A soft-phone row whose dial was never sent (SR2): listed, greyed, in no count. */
+.notDialled td {
+  color: var(--text-muted);
+}
+
+.notDialled .type,
+.notDialled .phoneLink {
+  color: var(--text-muted);
+}
+
+/* Under a filter control: what it does that its label cannot say. */
+.fieldHint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* An empty list's ways out, side by side. */
+.emptyActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Inbound (P2): the third type's colour, and the calls it has that the others do not. */
+.type[data-type='inbound']::before {
+  background: var(--success, #2f9e44);
+}
+
+.followUpNote {
+  margin: -4px 0 12px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.outcome[data-outcome='missed'] {
+  background: var(--warning-subtle, rgba(245, 166, 35, 0.12));
+  color: var(--warning, #f5a623);
+}
+
+.followUp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.calledBack {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.toFollowUp {
+  font-weight: 600;
+  color: var(--warning, #f5a623);
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rowAction:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.rowAction:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.rowError {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--danger, #d64545);
+}
+
+/* A missed call and its call back: a quiet tint on both, and the other one lit while one is under the pointer. */
+.paired td {
+  background: var(--accent-subtle);
+}
+
+.paired[data-pair-lit] td {
+  background: var(--accent-glow);
+}

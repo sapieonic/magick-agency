@@ -775,6 +775,9 @@ enum CustomerSearchBy implements WireEnum {
 enum CustomerTimelineChannel implements WireEnum {
   campaign('campaign'),
   softphone('softphone'),
+
+  /// A call the customer made to us (`docs/call-log.md` CL39).
+  inbound('inbound'),
   unknown('');
 
   const CustomerTimelineChannel(this.wire);
@@ -792,6 +795,7 @@ enum CustomerTimelineChannel implements WireEnum {
 enum CustomerTimelineKind implements WireEnum {
   campaignCall('campaign_call'),
   softphoneCall('softphone_call'),
+  inboundCall('inbound_call'),
   callback('callback'),
   dncMark('dnc_mark'),
   rosterEntry('roster_entry'),
@@ -1251,4 +1255,39 @@ enum PromiseState implements WireEnum {
 
   static final _byWire = wireIndex(values);
   static PromiseState fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// What a call on My calls was: the campaign's dialler placed it, the agent's
+/// soft phone did, or the customer rang.
+///
+/// Contract: `AgencyCallLogType` / `AGENCY_CALL_LOG_TYPES` (`api/agency/call-log.ts`).
+enum CallLogType implements WireEnum {
+  dialler('dialler'),
+  softPhone('soft_phone'),
+  inbound('inbound'),
+  unknown('');
+
+  const CallLogType(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CallLogType fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// The chips of My calls, in their order: To follow up first. The app SENDS
+/// these as `type=`.
+///
+/// Contract: `AgencyCallLogTypeFilter` / `AGENCY_MY_CALLS_TYPE_FILTERS`.
+enum MyCallsTypeFilter implements WireEnum {
+  /// The agent's open Missed rows, then the callbacks they booked that are due.
+  toFollowUp('to_follow_up'),
+  all('all'),
+  dialler('dialler'),
+  softPhone('soft_phone'),
+  inbound('inbound');
+
+  const MyCallsTypeFilter(this.wire);
+  @override
+  final String wire;
 }

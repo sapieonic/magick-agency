@@ -627,7 +627,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       const closing = await runtime.inboundCalls.closeOwedForSupervisor(session.id);
       if (closing.kind === 'live') return reply.code(409).send(inboundCallLive(closing.inboundCallId, FORCE_INBOUND_MESSAGE));
       if (closing.kind === 'closed') {
-        inboundClosed = { [INBOUND_CLOSE_AUDIT_KEY]: { inbound_call_id: closing.call.id, campaign_id: closing.call.matched_campaign_id } };
+        inboundClosed = { [INBOUND_CLOSE_AUDIT_KEY]: { inbound_call_id: closing.call.id, campaign_id: closing.call.campaign_id ?? closing.call.matched_campaign_id } };
       }
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an

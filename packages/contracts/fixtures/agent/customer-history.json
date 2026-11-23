@@ -107,6 +107,10 @@
       "totals": {
         "calls": 5,
         "connected": 2,
+        "inbound": {
+          "calls": 1,
+          "answered": 0
+        },
         "last_contacted": {
           "at": "2026-11-05T11:20:00.000Z",
           "channel": "softphone",
@@ -348,6 +352,45 @@
             "retry_generation": 0
           },
           "upload_file_name": "october-dues.csv"
+        },
+        {
+          "key": "inbound_call:e5d4c3b2-a1f0-4e9d-8c7b-6a5948372615",
+          "kind": "inbound_call",
+          "at": "2026-09-28T09:42:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "inbound_call_id": "e5d4c3b2-a1f0-4e9d-8c7b-6a5948372615",
+          "campaign": null,
+          "campaign_source": null,
+          "contact_id": null,
+          "line_e164": "+918045550100",
+          "route_name": "Collections line",
+          "agent": null,
+          "outcome": "voicemail",
+          "disposition_code": null,
+          "talk_seconds": null,
+          "notes": null,
+          "notes_hidden": false,
+          "callback_at": null,
+          "promise_date": null,
+          "promise_amount": null,
+          "wait_seconds": 100,
+          "queued": true,
+          "via_sticky_agent": false,
+          "voicemail_seconds": 22,
+          "follow_up": {
+            "status": "handled",
+            "reason": "overflow",
+            "closed_cause": null,
+            "assignee": {
+              "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "name": "Priya Nair"
+            },
+            "handled_reason": "marked",
+            "handled_at": "2026-09-28T11:05:00.000Z"
+          },
+          "called_back_at": "2026-09-28T10:58:00.000Z",
+          "recording": "no_call",
+          "call_page": null
         }
       ],
       "next_cursor": "eyJhdCI6IjIwMjYtMTAtMDFUMDk6MDA6MDAuMDAwMDAwWiIsImtleSI6InJvc3Rlcl9lbnRyeTo5ZThkN2M2Yi01YTQ5LTQzODItYTcxNi0wNWY0ZTNkMmMxYjAifQ"
@@ -479,6 +522,45 @@
       "retry_generation": 0
     },
     "upload_file_name": "october-dues.csv"
+  },
+  "entry_inbound_call": {
+    "key": "inbound_call:e5d4c3b2-a1f0-4e9d-8c7b-6a5948372615",
+    "kind": "inbound_call",
+    "at": "2026-09-28T09:42:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "inbound_call_id": "e5d4c3b2-a1f0-4e9d-8c7b-6a5948372615",
+    "campaign": null,
+    "campaign_source": null,
+    "contact_id": null,
+    "line_e164": "+918045550100",
+    "route_name": "Collections line",
+    "agent": null,
+    "outcome": "voicemail",
+    "disposition_code": null,
+    "talk_seconds": null,
+    "notes": null,
+    "notes_hidden": false,
+    "callback_at": null,
+    "promise_date": null,
+    "promise_amount": null,
+    "wait_seconds": 100,
+    "queued": true,
+    "via_sticky_agent": false,
+    "voicemail_seconds": 22,
+    "follow_up": {
+      "status": "handled",
+      "reason": "overflow",
+      "closed_cause": null,
+      "assignee": {
+        "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Priya Nair"
+      },
+      "handled_reason": "marked",
+      "handled_at": "2026-09-28T11:05:00.000Z"
+    },
+    "called_back_at": "2026-09-28T10:58:00.000Z",
+    "recording": "no_call",
+    "call_page": null
   },
   "search_response_empty": {
     "search_id": "chs_00112233445566778899aabbccddeeff",

@@ -1,5 +1,5 @@
 import { Headphones } from 'lucide-react';
-import { formatClockTime, formatDayMonth } from '../../utils/format/date';
+import { formatClockTime, formatDayMonth, upperDayPeriod } from '../../utils/format/date';
 import { initialsFor } from '../../utils/initials';
 import { LISTENED_TO_BY_COPY, listenedDurationLabel, listeningSinceLabel } from '../../utils/listen/listenCopy';
 import { isoMs, mergeListenVisits, type ListenVisit } from '../../utils/listen/listenVisits';
@@ -8,15 +8,18 @@ import detail from '../../pages/calls/CallDetailPage.module.css';
 import styles from './ListenedToBy.module.css';
 
 /** A session's "14:02–14:05", with the day when it is not the start's, or "since 14:02" while open. */
-export function listenSpanLabel(session: Pick<AgencyCallListenSession, 'started_at' | 'ended_at'>): string {
+export function listenSpanLabel(
+  session: Pick<AgencyCallListenSession, 'started_at' | 'ended_at'>,
+  formatClock: (date: Date) => string = formatClockTime,
+): string {
   const start = new Date(session.started_at);
   if (Number.isNaN(start.getTime())) return '—';
-  const from = formatClockTime(start);
+  const from = formatClock(start);
   if (!session.ended_at) return listeningSinceLabel(from);
   const end = new Date(session.ended_at);
   if (Number.isNaN(end.getTime())) return from;
   const sameDay = start.toDateString() === end.toDateString();
-  return `${from}–${sameDay ? '' : `${formatDayMonth(end)} `}${formatClockTime(end)}`;
+  return `${from}–${sameDay ? '' : `${formatDayMonth(end)} `}${formatClock(end)}`;
 }
 
 /** One listen as the section shows it: a supervisor's sessions merged (LS19 b's rule). */
@@ -45,7 +48,12 @@ function visitsOf(sessions: readonly AgencyCallListenSession[]): ListenVisit<Age
  * one is open) are one listen here, as on the Listening history page (`mergeListenVisits`): its
  * first start to its last end, the time listened counted once.
  */
-export function ListenedToBy({ sessions }: { sessions: readonly AgencyCallListenSession[] | undefined }) {
+export function ListenedToBy({ sessions, upperCaseTimes = false }: {
+  sessions: readonly AgencyCallListenSession[] | undefined;
+  /** AM / PM in capitals: the inbound Call page says every time so (`upperDayPeriod`). */
+  upperCaseTimes?: boolean;
+}) {
+  const formatClock = upperCaseTimes ? (date: Date) => upperDayPeriod(formatClockTime(date)) : formatClockTime;
   if (!sessions || sessions.length === 0) return null;
   const visits = visitsOf(sessions);
   if (visits.length === 0) return null;
@@ -68,7 +76,7 @@ export function ListenedToBy({ sessions }: { sessions: readonly AgencyCallListen
                 {initialsFor(listenerName)}
               </span>
               <span className={styles.name}>{name}</span>
-              <span className={styles.span}>{listenSpanLabel({ started_at: first.started_at, ended_at: ended })}</span>
+              <span className={styles.span}>{listenSpanLabel({ started_at: first.started_at, ended_at: ended }, formatClock)}</span>
               <span className={styles.duration}>{listenedDurationLabel(seconds, ended)}</span>
             </li>
           );

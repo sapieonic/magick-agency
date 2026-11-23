@@ -332,6 +332,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/contacts",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",
@@ -357,6 +364,20 @@
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",
       "reason": "agency call read (proxy-agency-calls.routes.ts); the console fetches these bytes itself and plays a blob URL (it never follows `recording_url`)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log/inbound/:callId",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency call read (proxy-agency-calls.routes.ts): one inbound call of the campaign, for its Call page (docs/call-log.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log/inbound/:callId/recording",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "agency call read (proxy-agency-calls.routes.ts); the console fetches these bytes itself and plays a blob URL"
     },
     {
       "method": "GET",
@@ -406,13 +427,6 @@
       "source": "apps/console/src/api/agencyStats.ts",
       "status": "served",
       "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.agentsGroupedStats)"
-    },
-    {
-      "method": "GET",
-      "path": "/proxy/agency/my-attempts",
-      "source": "apps/console/src/api/agencyStats.ts",
-      "status": "served",
-      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.myAttempts)"
     },
     {
       "method": "GET",
@@ -2578,6 +2592,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/missed/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "one Missed row by its id, under the list's permission and rules; My calls' Call back reads the caller's number from it (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/missed/:id/voicemail",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",
@@ -2645,6 +2666,55 @@
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",
       "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/calls/:id/campaigns",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the campaign an unknown caller’s call is filed under at wrap-up, served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/campaign",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the campaign an unknown caller’s call is filed under at wrap-up, served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/call-settings",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the account’s call settings (“Every call must belong to a campaign”), served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/agency/call-settings",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the account’s call settings (“Every call must belong to a campaign”), served by the public API layer at the console path (docs/call-log.md §5, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/calls",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "the account’s All calls (every call of the account, of the three types), served by the public API layer at the console path (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-calls",
+      "source": "apps/console/src/api/myCalls.ts",
+      "status": "served",
+      "reason": "the agent’s own My calls (their calls of the three types, numbers masked where the campaign hides them), served by the public API layer at the console path (docs/call-log.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/inbound-default-routes",
+      "source": "apps/console/src/api/callSettings.ts",
+      "status": "served",
+      "reason": "the inbound routes that file unknown callers under a campaign, asked before it is stopped or archived (docs/call-log.md §5, decision B16)"
     },
     {
       "method": "GET",

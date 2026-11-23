@@ -191,8 +191,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   // ── the derived figures ─────────────────────────────────────────────────
   connect_rate_pct: { consumedIn: PERFORMANCE },
   first_dials_placed: { consumedIn: PERFORMANCE },
-  // The tagged soft-phone calls (SR1–SR5): the soft phone's and the all-calls cards.
+  // The tagged soft-phone calls (SR1–SR5): the soft phone's and the outbound cards.
   softphone: { consumedIn: PERFORMANCE },
+  // The inbound calls filed under the campaign (call log P4): the answer-rate card.
+  inbound: { consumedIn: PERFORMANCE },
   human_connects: { consumedIn: PERFORMANCE },
   machine_connects: { consumedIn: PERFORMANCE },
   unclassified_connects: { consumedIn: PERFORMANCE },

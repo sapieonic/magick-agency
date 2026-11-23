@@ -15,7 +15,6 @@ import {
   dispositionManualCall,
   getManualCall,
   getSoftphoneBootstrap,
-  getSoftphoneSettings,
   hangupManualCall,
   listManualCalls,
   markManualCallDnc,
@@ -117,7 +116,11 @@ describe('the routes, methods and bodies of §6', () => {
     await getManualCall('mc-1', 't', 'a');
     expect(lastRequest().url).toBe('/proxy/agency/softphone/calls/mc-1');
     mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true } }));
-    expect(await getSoftphoneSettings('t', 'a')).toEqual({ record_calls: true });
+    expect(await readSoftphoneSettings('t', 'a')).toEqual({ settings: { record_calls: true }, outcomesTemplate: null, campaignRequired: false });
+    // The account asks for a campaign on every call (docs/call-log.md §5): the page greys the untagged settings.
+    mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true }, campaign_required: true }));
+    expect((await readSoftphoneSettings('t', 'a')).campaignRequired).toBe(true);
+    mocks.fetch.mockResolvedValue(respond(200, { settings: { record_calls: true } }));
     const payload = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: null };
     const saved = await putSoftphoneSettings(payload, 't', 'a');
     expect(saved).toEqual({ ok: true, value: { settings: { record_calls: true }, outcomesTemplate: undefined } });
@@ -253,7 +256,7 @@ describe('the soft phone’s settings read (CT11)', () => {
   it('reads what the outcomes follow when the answer carries it', async () => {
     const follows = { template: { id: 'tp-1', name: 'Collections', version: 3, scope: 'account' }, disposition_catalog: [{ code: 'will_pay', label: 'Will pay' }] };
     mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
-    expect(await readSoftphoneSettings('t-1', 'a-1')).toEqual({ settings: SETTINGS, outcomesTemplate: follows });
+    expect(await readSoftphoneSettings('t-1', 'a-1')).toEqual({ settings: SETTINGS, outcomesTemplate: follows, campaignRequired: false });
   });
 
   it('reads none when the answer has no such field, or a malformed one', async () => {

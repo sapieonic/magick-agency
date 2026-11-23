@@ -6,7 +6,6 @@ import {
   campaignLandingPath,
   campaignPanelFromPath,
   canOpenCampaignScreen,
-  visibleCallLogViews,
   visibleCallsViews,
   visibleCampaignTabGroups,
   visibleCampaignTabs,
@@ -215,21 +214,13 @@ describe('campaign tabs — the groups', () => {
   });
 });
 
-describe('Call log’s views', () => {
-  const flagOn = (flag: string) => flag === 'agency_softphone_enabled';
-
-  it('offers Soft-phone calls after Dialler calls only with the soft phone’s flag on', () => {
-    expect(visibleCallLogViews('account_admin').map((v) => v.label)).toEqual(['Dialler calls']);
-    expect(visibleCallLogViews('account_admin', flagOn).map((v) => v.label)).toEqual([
-      'Dialler calls',
-      'Soft-phone calls',
-    ]);
-  });
-
-  it('offers neither below `agency.supervise`, flag or not', () => {
-    for (const role of ['agent', 'viewer', 'operator'] as Role[]) {
-      expect(visibleCallLogViews(role, flagOn)).toEqual([]);
-    }
+describe('Call log’s soft-phone calls', () => {
+  it('are the Call log with the Soft phone chip on, not a view of their own (CL11)', () => {
+    const tab = CAMPAIGN_TABS.find((t) => t.id === 'manual')!;
+    expect(tab.group).toBeNull();
+    expect(tab.path('camp-1')).toBe('/agency/campaigns/camp-1/attempts?type=soft_phone');
+    expect(tab.permission).toBe(CAMPAIGN_TABS.find((t) => t.id === 'attempts')!.permission);
+    expect(tab.flag).toBe('agency_softphone_enabled');
   });
 });
 

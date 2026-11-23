@@ -36,8 +36,9 @@ moved to Settings. `…/insights` redirects to Overview. Detail in [`decisions.m
 IN14 (2026-11-11, the navigation redesign) groups the campaign's bar without nesting it: **Monitor**
 (Overview, Calls, Agents, Callbacks, Health), **Data** (Contacts, Call log) and **Set up**
 (Settings), each still one tab per question. Call attempts is now **Call log** (still `/attempts`),
-with Dialler calls and Soft-phone calls (`/manual-calls`, behind the soft phone's flag) as its two
-views; Activity left the bar for a **History** button in the campaign header (still `/activity`).
+one list of the campaign's dialler, soft-phone and inbound calls with type chips since CL11
+([`call-log.md`](call-log.md); it had two views, Dialler calls and Soft-phone calls at
+`/manual-calls`, which now redirects); Activity left the bar for a **History** button in the campaign header (still `/activity`).
 Settings is split into anchored sections (`utils/campaignSettingsSections.ts`, `…/settings#<id>`),
 with Lifecycle and uploads the last.
 
@@ -334,7 +335,9 @@ or four times its compute time.
 |---|---|
 | `activity.calls`, `outcomes`, `overrides`, `no_outcome`, the agents' dial columns, `reconciliation`, `as_of` | the rollup's `activity` read: ONE `REPEATABLE READ` snapshot, so every reconciliation is checked against the numbers served beside it |
 | `calls.redials.refused_at_limit` | the pacing history |
-| `calls.softphone` (and `calls.softphone_calls`, its `placed`) | `agency_manual_calls` tagged to the campaign, `created_at` in range: placed, connected and reached a person by the soft phone's one definition (`softphone-campaign-sql.ts`, SR2), one statement on `idx_agency_manual_calls_campaign`. Beside the dialler's figures, never in them (SR1): the console adds the soft phone's connect rate and All calls, and shows them while the soft phone is on or the range holds any (SR5). Read live, not from the rollup: All calls adds these to the rollup's counts as of its `as_of`, normally seconds older |
+| `calls.softphone` (and `calls.softphone_calls`, its `placed`) | `agency_manual_calls` tagged to the campaign, `created_at` in range: placed, connected, reached a person and the placed calls' talk time, by the soft phone's one definition (`softphone-campaign-sql.ts`, SR2), one statement on `idx_agency_manual_calls_campaign`. Beside the dialler's figures, never in them (SR1): the console shows them as the Soft phone column of **Calls by type**, while the soft phone is on or the range holds any (SR5). Read live, not from the rollup: All calls adds these to the rollup's counts as of its `as_of`, normally seconds older |
+| `calls.inbound` | `agency_inbound_calls` filed under the campaign (`campaign_id`), ended and served, `arrived_at` in range: received, answered, missed, talk time and the calls that arrived in open hours; and `open_follow_ups`, the campaign's open Missed rows **as of now, whatever the range** (the Call log's To follow up, CL27). One statement (`inbound-campaign-sql.ts`) in the Call log's own SQL for what an inbound row is (CL16), the window on `idx_agency_inbound_calls_campaign`. Beside the dialler's and the soft phone's, in neither and in no connect rate (CL7): the Inbound column of Calls by type, shown while inbound is on, the range holds any, or the campaign has calls still to follow up. Read live: the rollup is the dialler's alone (CL25) |
+| `outcomes_by_type` | `outcomes` (the rollup's conversations by code, the Dialler column) beside the same codes on the soft-phone calls put through and the inbound calls answered in range (`outcomesByTypeStatement`), labelled from the campaign's current catalog (CL28). `outcomes` itself is unchanged |
 | `callbacks.booked` | the rollup (by the booking dial's time) |
 | `callbacks` timing classes, `by_owner` | `callbackTiming` (IN4), the callbacks whose booked time is in range |
 | `callbacks.open_due_today`, `open_overdue` | as of now: the allocation's totals, through the cache under the allocation's own key (the polled allocation and this read share one computation) |
@@ -393,6 +396,15 @@ redials_placed`), and it is one dial per clash, which is rare.
   pins Insights, `/stats`, the roster and the scorecard to one number on a seed with voicemail,
   no-disposition and unwritten connects, redial chains and never-placed queued attempts.
 - `range.clamped` (IN12) and `health.carrier_failures_by_code` (0014) added.
+- **Calls by type** (call log P4, 2026-11-22, [`call-log.md`](call-log.md) §6): `calls.inbound`
+  `{ received, answered, missed, open_follow_ups, talk_seconds, open_hours }`, `talk_seconds` on
+  `calls.softphone`, and `outcomes_by_type`. The Overview and the Calls tab draw a **Calls by
+  type** table (Dialler · Soft phone · Inbound · All calls), with a bar of the split above it, once a second type shows: counts,
+  people reached and talk time add up, and no rate is added. The dialler and the soft phone
+  together are the **Outbound connect rate** (it was "All calls connect rate", CL7). Every
+  dialler figure, drill-down and reconciliation is as it was.
+  `test/integration/api/agency-calls-by-type.test.ts` holds the figures to the Call log's chip
+  counts for the same campaign and window.
 - `calls.softphone` `{ placed, connected, human_connects }` (SR1–SR3, 2026-11-15): the tagged
   soft-phone calls by their one definition; `softphone_calls` stays, equal to `placed`.
   `test/integration/api/agency-softphone-campaign-results.test.ts` checks the counts on real rows

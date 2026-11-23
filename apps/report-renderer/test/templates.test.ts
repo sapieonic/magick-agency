@@ -177,33 +177,143 @@ describe('campaign report', () => {
     expect(text(block(html, 'data-kpi', 'success_rate'))).toContain(pct((calls.successes / calls.conversations) * 100));
   });
 
-  it('prints the soft-phone calls logged to the campaign and All calls beside the dialler\'s figures, and only when there are any (SR1, SR3)', () => {
-    const line = text(block(html, 'data-testid', 'softphone-calls'));
-    expect(line).toContain('42 calls placed and logged to this campaign, 30 connected, 18 people reached');
-    expect(line).toContain(`connect rate ${pct((18 / 42) * 100)}`);
-    expect(line).toContain('not in the dialler’s figures above');
-    // The dialler's rate is labelled as the dialler's where the soft phone's figures show.
+  /** The Calls by type table's rows: `data-row` → its cells' text, the row label first. */
+  const byTypeRows = (page: string): Record<string, string[]> => {
+    const table = block(page, 'data-testid', 'calls-by-type');
+    const out: Record<string, string[]> = {};
+    for (const m of table.matchAll(/<tr data-row="(\w+)">(.*?)<\/tr>/gs)) {
+      out[m[1]!] = [...m[2]!.matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map((c) => text(c[1]!).trim());
+    }
+    return out;
+  };
+  const byTypeHead = (page: string): string[] =>
+    [...block(page, 'data-testid', 'calls-by-type').split('</thead>')[0]!.matchAll(/<th[^>]*>(.*?)<\/th>/gs)].map((c) => text(c[1]!).trim()).filter((h) => h !== '');
+  const noSoft = (x: typeof d) => { x.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0, talk_seconds: 0 }; };
+  const noInbound = (x: typeof d) => { x.activity.calls.inbound = { received: 0, answered: 0, missed: 0, open_follow_ups: 0, talk_seconds: 0, open_hours: 0 }; };
+
+  it('prints Calls by type: a column per type and All calls, counts added and no rate added (call log P4, CL7)', () => {
+    expect(byTypeHead(html)).toEqual(['Dialler', 'Soft phone', 'Inbound', 'All calls']);
+    const rows = byTypeRows(html);
+    expect(rows.calls).toEqual(['Calls', `${count(calls.dials)} dialled`, '42 dialled', '57 received', count(calls.dials + 42 + 57)]);
+    expect(rows.connected).toEqual(['Connected', count(calls.connected), '30', '44 answered', count(calls.connected + 30 + 44)]);
+    expect(rows.reached).toEqual(['Reached a person', count(calls.human_connects), '18', '44', count(calls.human_connects + 18 + 44)]);
+    expect(rows.talk).toEqual(['Talk time', duration(calls.talk_seconds), duration(5400), duration(10500), duration(calls.talk_seconds + 5400 + 10500)]);
+    expect(rows.missed).toEqual(['Missed by us', '—', '—', '13 (6 to follow up)', '13']);
+    const firstDials = calls.dials - calls.redials.placed;
+    expect(rows.rate).toEqual([
+      'Rate',
+      `${pct((calls.human_connects / firstDials) * 100)} Dialler connect rate`,
+      `${pct((18 / 42) * 100)} Soft-phone connect rate`,
+      // Answered over the 53 that arrived in open hours, not the 57 received.
+      `${pct((44 / 53) * 100)} Answer rate, open hours`,
+      'not added',
+    ]);
+    expect(text(block(html, 'data-testid', 'calls-by-type-note'))).toContain(
+      'All calls adds the three types. Each call is counted once, under the type it was. Rates are not added together: '
+      + 'the dialler’s measures the list and the pacing, the soft phone’s the numbers agents chose, and inbound’s how many callers we answered.',
+    );
+    // The dialler's rate is labelled as the dialler's where another type's figures show.
     expect(text(block(html, 'data-kpi', 'connect_rate'))).toContain('Dialler connect rate');
-    const all = text(block(html, 'data-testid', 'all-calls'));
+  });
+
+  it('calls the dialler and the soft phone together the Outbound connect rate, inbound never in it (CL7)', () => {
+    const line = text(block(html, 'data-testid', 'outbound-connect-rate'));
     const firstCalls = calls.dials - calls.redials.placed + 42;
-    expect(all).toContain(`${count(calls.dials + 42)} calls placed by the dialler and the soft phone together, ${count(calls.connected + 30)} connected, ${count(calls.human_connects + 18)} people reached`);
-    expect(all).toContain(`connect rate ${pct(((calls.human_connects + 18) / firstCalls) * 100)}, over ${count(firstCalls)} first dials and soft-phone calls`);
+    expect(line).toContain(`Outbound connect rate: ${pct(((calls.human_connects + 18) / firstCalls) * 100)}`);
+    expect(line).toContain(`${count(calls.human_connects + 18)} people reached of ${count(firstCalls)} first dials and soft-phone calls`);
+    expect(text(html)).not.toMatch(/all calls connect rate/i);
+    // The same figure with no inbound call in the window.
+    const quiet = structuredClone(d);
+    noInbound(quiet);
+    expect(text(block(renderReportHtml(quiet, NO_FONTS), 'data-testid', 'outbound-connect-rate'))).toContain(`Outbound connect rate: ${pct(((calls.human_connects + 18) / firstCalls) * 100)}`);
+  });
+
+  it('draws each type\'s column only when the window holds such a call, and no table for the dialler alone (SR8\'s gate)', () => {
+    const softOnly = structuredClone(d);
+    noInbound(softOnly);
+    const softHtml = renderReportHtml(softOnly, NO_FONTS);
+    expect(byTypeHead(softHtml)).toEqual(['Dialler', 'Soft phone', 'All calls']);
+    expect(byTypeRows(softHtml).missed).toBeUndefined();
+    expect(text(block(softHtml, 'data-testid', 'calls-by-type-note'))).toContain('All calls adds the two types.');
+
+    const inboundOnly = structuredClone(d);
+    noSoft(inboundOnly);
+    const inboundHtml = renderReportHtml(inboundOnly, NO_FONTS);
+    expect(byTypeHead(inboundHtml)).toEqual(['Dialler', 'Inbound', 'All calls']);
+    expect(inboundHtml).not.toContain('data-testid="outbound-connect-rate"');
+    expect(text(block(inboundHtml, 'data-kpi', 'connect_rate'))).toContain('Dialler connect rate');
+
     const none = structuredClone(d);
-    none.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0 };
+    noSoft(none);
+    noInbound(none);
     const plain = renderReportHtml(none, NO_FONTS);
-    expect(plain).not.toContain('data-testid="softphone-calls"');
-    expect(plain).not.toContain('data-testid="all-calls"');
+    expect(plain).not.toContain('data-testid="calls-by-type"');
+    expect(plain).not.toContain('data-testid="outcomes-by-type"');
+    expect(plain).not.toContain('data-testid="outbound-connect-rate"');
     expect(text(block(plain, 'data-kpi', 'connect_rate'))).not.toContain('Dialler');
     expect(text(block(plain, 'data-kpi', 'connect_rate'))).toContain('Connect rate');
   });
 
-  it('withholds the All calls rate below the floor on its own denominator (SR3)', () => {
+  it('withholds each rate below the floor on its own denominator (SR3)', () => {
     const small = structuredClone(d);
-    // A dialler with no dials and 10 soft-phone calls: 10 first calls, under the floor of 25.
-    small.activity.calls = { ...small.activity.calls, dials: 0, connected: 0, human_connects: 0, redials: { ...small.activity.calls.redials, placed: 0 }, softphone: { placed: 10, connected: 6, human_connects: 4 } };
-    const all = text(block(renderReportHtml(small, NO_FONTS), 'data-testid', 'all-calls'));
-    expect(all).toContain('10 calls placed');
-    expect(all).toContain('connect rate Not enough calls to rate');
+    // A dialler with no dials, 10 soft-phone calls and 10 inbound calls: each under the floor of 25.
+    small.activity.calls = {
+      ...small.activity.calls, dials: 0, connected: 0, human_connects: 0, redials: { ...small.activity.calls.redials, placed: 0 },
+      softphone: { placed: 10, connected: 6, human_connects: 4, talk_seconds: 0 },
+      inbound: { received: 10, answered: 8, missed: 2, open_follow_ups: 0, talk_seconds: 0, open_hours: 10 },
+    };
+    const page = renderReportHtml(small, NO_FONTS);
+    expect(byTypeRows(page).rate).toEqual(['Rate', 'No calls to rate Dialler connect rate', 'Not enough calls to rate Soft-phone connect rate', 'Not enough calls to rate Answer rate, open hours', 'not added']);
+    expect(text(block(page, 'data-testid', 'outbound-connect-rate'))).toContain('Outbound connect rate: Not enough calls to rate');
+  });
+
+  it('prints the outcomes by type, each call under its own type and the Total their sum', () => {
+    const table = block(html, 'data-testid', 'outcomes-by-type');
+    expect([...table.split('</thead>')[0]!.matchAll(/<th[^>]*>(.*?)<\/th>/gs)].map((c) => text(c[1]!).trim())).toEqual(['Outcome', 'Dialler', 'Share of dialler', 'Soft phone', 'Inbound', 'Total']);
+    const top = d.activity.outcomes_by_type[0]!;
+    const firstRow = [...table.split('<tbody>')[1]!.split('</tr>')[0]!.matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map((c) => text(c[1]!).trim());
+    // The dialler's share stays its share of the dialler's conversations.
+    expect(firstRow.slice(1)).toEqual([count(top.dialler), pct((top.dialler / calls.conversations) * 100), count(top.soft_phone), count(top.inbound), count(top.total)]);
+  });
+
+  it('reads a dataset from a server that predates the inbound counts', () => {
+    const older = structuredClone(d) as unknown as { activity: { calls: Record<string, unknown>; outcomes_by_type?: unknown } };
+    delete older.activity.calls.inbound;
+    delete older.activity.outcomes_by_type;
+    const page = renderReportHtml(older as unknown as typeof d, NO_FONTS);
+    expect(byTypeHead(page)).toEqual(['Dialler', 'Soft phone', 'All calls']);
+    expect(page).not.toContain('data-testid="outcomes-by-type"');
+  });
+
+  it('prints a dash for a talk time the dataset does not carry, and adds it to nothing', () => {
+    const older = structuredClone(d) as unknown as { activity: { calls: { softphone: Record<string, unknown> } } };
+    delete older.activity.calls.softphone.talk_seconds;
+    const rows = byTypeRows(renderReportHtml(older as unknown as typeof d, NO_FONTS));
+    // Dialler, Soft phone (unknown), Inbound, All calls: the two that are known.
+    expect(rows.talk).toEqual(['Talk time', duration(calls.talk_seconds), '—', duration(10500), duration(calls.talk_seconds + 10500)]);
+  });
+
+  it('draws the Inbound column for a window with no inbound call while callers are still owed a call back', () => {
+    const owed = structuredClone(d);
+    noSoft(owed);
+    owed.activity.calls.inbound = { received: 0, answered: 0, missed: 0, open_follow_ups: 4, talk_seconds: 0, open_hours: 0 };
+    const page = renderReportHtml(owed, NO_FONTS);
+    expect(byTypeHead(page)).toEqual(['Dialler', 'Inbound', 'All calls']);
+    expect(byTypeRows(page).calls?.[2]).toBe('0 received');
+    expect(byTypeRows(page).missed).toEqual(['Missed by us', '—', '0 (4 to follow up)', '0']);
+    // And with none owed either, the report is the dialler's alone.
+    owed.activity.calls.inbound.open_follow_ups = 0;
+    expect(renderReportHtml(owed, NO_FONTS)).not.toContain('data-testid="calls-by-type"');
+  });
+
+  it('heads the Outcomes table with what it holds: every type\'s conversations, the share the dialler\'s', () => {
+    const total = d.activity.outcomes_by_type.reduce((sum, o) => sum + o.total, 0);
+    const head = text(block(html, 'data-block', 'outcomes')).split('Outcome ')[0]!;
+    expect(head).toContain(`${count(total)} conversations across the call types; share is of the dialler’s ${count(calls.conversations)}`);
+    const plain = structuredClone(d);
+    noSoft(plain);
+    noInbound(plain);
+    expect(text(block(renderReportHtml(plain, NO_FONTS), 'data-block', 'outcomes'))).toContain(`over ${count(calls.conversations)} conversations`);
   });
 
   it('draws trends, best hours, agents, callbacks and health', () => {

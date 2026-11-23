@@ -6,6 +6,7 @@ import type {
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryInboundCallRow,
   CustomerHistoryManualCallRow,
   CustomerHistorySummaryContactRow,
 } from '../../../../src/db/repositories/agency.repository.js';
@@ -91,6 +92,25 @@ function manual(id: string, createdIso: string, over: Partial<CustomerHistoryMan
     callback_at: null, promise_date: null, promise_amount: null, fields: {}, dnc_override_note: null, hours_override_note: null, recording_requested: false,
     dialed_at: created, ended_at: created, talk_seconds: null, dispositioned_by_user_id: null, dispositioned_at: null,
     created_at: created, at: micro(createdIso), ...over,
+  };
+}
+
+/** An inbound call from the number: answered by `OTHER`, filed under `ROOT`, unless `over` says otherwise. */
+function inboundCall(id: string, arrivedIso: string, over: Partial<CustomerHistoryInboundCallRow> = {}): CustomerHistoryInboundCallRow {
+  const { inbound: facts, ...rest } = over;
+  return {
+    source: 'inbound', id, campaign_id: ROOT, contact_id: null, attempt_number: null, phone_e164: '+919876543210',
+    caller_id: '+918000000009', agent_user_id: OTHER, reserved_agent_id: null, state: 'ended', outcome: 'answered',
+    disposition_code: 'ptp', auto_disposition_code: null, notes: 'Rang about her EMI', callback_at: null, promise_date: null,
+    promise_amount: null, dispositioned_by_user_id: OTHER, dispositioned_at: arrivedIso, dispositioned_on_behalf: false,
+    webrtc_call_id: null, dialed_at: null, answered_at: arrivedIso, bridged_at: arrivedIso, ended_at: arrivedIso, talk_seconds: 75,
+    wrapup_seconds: null, redial_of_attempt_id: null, redial_number: null, dnc_overridden: false, hours_overridden: false,
+    requires_disposition: false, settled_at: arrivedIso, created_at: arrivedIso,
+    inbound: {
+      campaign_source: 'contact', route_name: 'Collections line', wait_seconds: 18, queued: false, via_sticky_agent: true,
+      voicemail_seconds: null, follow_up: null, called_back: null, ...facts,
+    },
+    account_id: ACC_A, recording_requested: false, at: micro(arrivedIso), ...rest,
   };
 }
 
@@ -225,6 +245,8 @@ describe('paging: the per-source bound and the merge of the heads', () => {
     expect(sourceBound('roster_entry', cursor)).toEqual({ at, id: UUID_NIL });
     expect(sourceBound('softphone_call', cursor)).toEqual({ at, id: UUID_NIL });
     expect(sourceBound('roster_entry', null)).toEqual({ at: 'infinity', id: UUID_MAX });
+    // `inbound_call` sorts after `dnc_mark` (the cursor's kind): none of its rows at the cursor's instant are still to come.
+    expect(sourceBound('inbound_call', cursor)).toEqual({ at, id: UUID_NIL });
   });
 
   /**
@@ -237,6 +259,7 @@ describe('paging: the per-source bound and the merge of the heads', () => {
     const all: TimelineSourceRows = {
       attempts: Array.from({ length: 9 }, (_, i) => ({ ...attempt(uid(1000 + i), '2026-10-02T10:00:00Z'), at: pick(i) })),
       manualCalls: Array.from({ length: 5 }, (_, i) => ({ ...manual(uid(2000 + i), '2026-10-02T10:00:00Z'), at: pick(i + 1) })),
+      inboundCalls: Array.from({ length: 5 }, (_, i) => ({ ...inboundCall(uid(6000 + i), '2026-10-02T10:00:00Z'), at: pick(i + 2) })),
       callbacks: Array.from({ length: 4 }, (_, i) => callback(uid(3000 + i), '2026-10-02T10:00:00Z', { at: pick(i + 2) })),
       dnc: Array.from({ length: 3 }, (_, i) => ({ ...dnc(uid(4000 + i), '2026-10-02T10:00:00Z'), at: pick(i) })),
       contacts: Array.from({ length: 4 }, (_, i) => ({ ...contact(uid(5000 + i)), at: pick(i + 1) })),
@@ -254,6 +277,7 @@ describe('paging: the per-source bound and the merge of the heads', () => {
       const cut = cutPage({
         attempts: head(all.attempts, 'campaign_call', cursor),
         manualCalls: head(all.manualCalls, 'softphone_call', cursor),
+        inboundCalls: head(all.inboundCalls, 'inbound_call', cursor),
         callbacks: head(all.callbacks, 'callback', cursor),
         dnc: head(all.dnc, 'dnc_mark', cursor),
         contacts: head(all.contacts, 'roster_entry', cursor),
@@ -269,6 +293,7 @@ describe('paging: the per-source bound and the merge of the heads', () => {
     const expected = [
       ...all.attempts.map((r) => ({ at: r.at, key: `campaign_call:${r.id}` })),
       ...all.manualCalls.map((r) => ({ at: r.at, key: `softphone_call:${r.id}` })),
+      ...all.inboundCalls.map((r) => ({ at: r.at, key: `inbound_call:${r.id}` })),
       ...all.callbacks.map((r) => ({ at: r.at, key: `callback:${r.id}` })),
       ...all.dnc.map((r) => ({ at: r.at, key: `dnc_mark:${r.id}` })),
       ...all.contacts.map((r) => ({ at: r.at, key: `roster_entry:${r.id}` })),
@@ -277,9 +302,9 @@ describe('paging: the per-source bound and the merge of the heads', () => {
   }
 
   it('every page size walks every entry once, in order, across kinds sharing one instant', () => {
-    for (const limit of [1, 2, 3, 4, 7, 24, 25, 100]) {
+    for (const limit of [1, 2, 3, 4, 7, 29, 30, 100]) {
       const { keys, expected } = simulate(limit);
-      expect(expected).toHaveLength(25);
+      expect(expected).toHaveLength(30);
       expect(keys, `limit ${limit}`).toEqual(expected);
     }
   });
@@ -404,7 +429,7 @@ describe('the timeline page', () => {
 });
 
 const STATS: CustomerHistoryCallStatsRow = {
-  contact_entries: 2, call_entries: 6, callback_entries: 1, calls: 6, connected: 4,
+  contact_entries: 2, call_entries: 6, callback_entries: 1, calls: 6, connected: 4, inbound_calls: 0, inbound_answered: 0,
   agent_ids: [ME, OTHER], outcomes: ['no_answer', 'connected'], disposition_codes: ['ptp', 'callback'], campaign_ids: [ROOT, RETRY],
 };
 
@@ -425,6 +450,74 @@ function summaryData(over: Partial<CustomerHistorySummaryData> = {}): CustomerHi
     ...over,
   };
 }
+
+describe('inbound calls (CL39–CL42)', () => {
+  const missedCall = (id: string, iso: string) => inboundCall(id, iso, {
+    campaign_id: null, agent_user_id: null, outcome: 'voicemail', disposition_code: null, notes: null, talk_seconds: null,
+    inbound: {
+      campaign_source: null, route_name: null, wait_seconds: 100, queued: true, via_sticky_agent: false, voicemail_seconds: 22,
+      follow_up: { status: 'open', reason: 'overflow', closed_cause: null, assignee_user_id: ME, handled_reason: null, handled_at: null },
+      called_back: { call_id: uid(900), at: '2026-10-05T10:20:00.000Z' },
+    },
+  });
+
+  it('a supervisor: the Call log\'s row facts, the notes, the Call page of a call filed under a campaign; none for a call filed under none', () => {
+    const entries = buildTimeline(page({
+      inboundCalls: [inboundCall(uid(700), '2026-10-06T10:00:00Z', { webrtc_call_id: 'leg-1', recording_requested: true }), missedCall(uid(701), '2026-10-05T10:00:00Z')],
+      mediaLegs: new Map([['leg-1', { recording_url: 'https://r/1' }]]),
+    }));
+    expect(entries.map((e) => e.key)).toEqual([`inbound_call:${uid(700)}`, `inbound_call:${uid(701)}`]);
+    expect(entries[0]).toEqual({
+      key: `inbound_call:${uid(700)}`, kind: 'inbound_call', at: '2026-10-06T10:00:00.000Z', account_id: ACC_A,
+      inbound_call_id: uid(700), campaign: { id: ROOT, name: 'Campaign 30', status: 'running', account_id: ACC_A, root_id: ROOT, retry_generation: 0 },
+      campaign_source: 'contact', contact_id: null, line_e164: '+918000000009', route_name: 'Collections line',
+      agent: { user_id: OTHER, name: 'Karan Shah' }, outcome: 'answered', disposition_code: 'ptp', talk_seconds: 75,
+      notes: 'Rang about her EMI', notes_hidden: false, callback_at: null, promise_date: null, promise_amount: null,
+      wait_seconds: 18, queued: false, via_sticky_agent: true, voicemail_seconds: null, follow_up: null, called_back_at: null,
+      recording: 'available', call_page: { account_id: ACC_A, campaign_id: ROOT, inbound_call_id: uid(700) },
+    });
+    expect(entries[1]).toMatchObject({
+      campaign: null, campaign_source: null, agent: null, outcome: 'voicemail', voicemail_seconds: 22, queued: true,
+      follow_up: { status: 'open', reason: 'overflow', assignee: { user_id: ME, name: 'Me' }, handled_reason: null },
+      called_back_at: '2026-10-05T10:20:00.000Z', recording: 'no_call', call_page: null,
+    });
+    // The row carries no key of the media: not the leg, not a link.
+    expect(Object.keys(entries[0]!).filter((k) => /webrtc|url|voicemail_key/.test(k))).toEqual([]);
+  });
+
+  it('an agent: notes hidden on a call somebody else answered, shown on one they answered; never a Call page', () => {
+    const entries = buildTimeline(page({
+      viewer: viewerAs('agent'),
+      inboundCalls: [inboundCall(uid(700), '2026-10-06T10:00:00Z'), inboundCall(uid(702), '2026-10-04T10:00:00Z', { agent_user_id: ME, notes: 'Mine' })],
+    }));
+    expect(entries[0]).toMatchObject({ notes: null, notes_hidden: true, call_page: null, disposition_code: 'ptp' });
+    expect(entries[1]).toMatchObject({ notes: 'Mine', notes_hidden: false, call_page: null });
+  });
+
+  it('a campaign the read did not return is no campaign and no Call page, never a dangling id', () => {
+    const [entry] = buildTimeline(page({ inboundCalls: [inboundCall(uid(700), '2026-10-06T10:00:00Z', { campaign_id: uid(39) })] }));
+    expect(entry).toMatchObject({ campaign: null, campaign_source: null, call_page: null });
+  });
+
+  it('the summary counts the calls received apart from the calls placed', () => {
+    const s = buildSummary(summaryData({ stats: { ...STATS, inbound_calls: 3, inbound_answered: 2 } }));
+    expect(s.totals).toMatchObject({ calls: 6, connected: 4, inbound: { calls: 3, answered: 2 } });
+  });
+
+  it('the CSV: an inbound call\'s line, its outcome as the wire writes it, what only it has in Details', () => {
+    const entries = buildTimeline(page({
+      inboundCalls: [inboundCall(uid(700), '2026-10-06T10:00:00Z', { promise_date: '2026-11-25', promise_amount: '4500.00' }), missedCall(uid(701), '2026-10-05T10:00:00Z')],
+    }));
+    const lines = customerHistoryCsv(entries, '+919876543210', () => 'North').trim().split('\n');
+    expect(lines[1]).toBe([
+      '2026-10-06T10:00:00.000Z', 'Inbound call', "'+919876543210", 'North', 'Campaign 30', 'Karan Shah', 'answered', 'ptp', '75',
+      'Rang about her EMI', '', '', 'No call',
+      '"Rang +918000000009; Route: Collections line; Waited 18 seconds; Came through their agent; Promised to pay: 2026-11-25, amount 4500.00"',
+    ].join(','));
+    expect(lines[2]).toContain('voicemail');
+    expect(lines[2]).toContain('Rang +918000000009; Waited 100 seconds; Voicemail 22 seconds; Missed: overflow; Follow-up: open; Assigned to: Me; Called back 2026-10-05T10:20:00.000Z (UTC)');
+  });
+});
 
 describe('the summary', () => {
   it('one row per retry chain, totals, open callbacks and overrides, live calls, filter options', () => {
@@ -451,7 +544,7 @@ describe('the summary', () => {
       entered_at: '2026-10-01T09:00:00.000Z',
     });
     expect('contacts_truncated' in s).toBe(false);
-    expect(s.totals).toEqual({ calls: 6, connected: 4, last_contacted: {
+    expect(s.totals).toEqual({ calls: 6, connected: 4, inbound: { calls: 0, answered: 0 }, last_contacted: {
       at: '2026-11-06T09:59:30.000Z', channel: 'campaign', agent: { user_id: OTHER, name: 'Karan Shah' }, outcome: null, disposition_code: null,
     } });
     expect(s.open.callbacks).toEqual([expect.objectContaining({
@@ -498,7 +591,7 @@ describe('the summary', () => {
 
   it('nothing: an empty answer', () => {
     expect(buildSummary(summaryData())).toEqual({
-      contacts: [], totals: { calls: 0, connected: 0, last_contacted: null }, dnc: [],
+      contacts: [], totals: { calls: 0, connected: 0, inbound: { calls: 0, answered: 0 }, last_contacted: null }, dnc: [],
       open: { callbacks: [], overrides: [], live_calls: [] },
       filter_options: { campaigns: [], agents: [], outcomes: [], disposition_codes: [] },
     });

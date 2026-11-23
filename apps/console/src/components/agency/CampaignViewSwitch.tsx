@@ -1,14 +1,14 @@
 import { Link } from 'react-router-dom';
 import { campaignTabHref, type CampaignTabId } from '../../utils/agencyCampaignTabs';
-import styles from './CallLogViews.module.css';
+import styles from './CampaignViewSwitch.module.css';
 
 interface CampaignViewSwitchProps<Id extends CampaignTabId> {
   campaignId: string;
-  /** The views the reader can open, in segment order (`visibleCallLogViews`, `visibleCallsViews`). */
+  /** The views the reader can open, in segment order (`visibleCallsViews`). */
   views: readonly { id: Id; label: string }[];
   /** The view showing. */
   active: Id;
-  /** The control's accessible name ("Call log views"). */
+  /** The control's accessible name ("Calls views"). */
   ariaLabel: string;
   /** The control's test id; each link's is `<linkTestIdPrefix>-<view id>`. */
   testId: string;
@@ -20,10 +20,11 @@ interface CampaignViewSwitchProps<Id extends CampaignTabId> {
 }
 
 /**
- * A campaign screen's views as a segmented control (Call log's "Dialler calls | Soft-phone
- * calls", IN14; the Calls tab's "Summary | Live", `docs/listening.md` §9): links with
- * `aria-current`, not a radio group, because picking one is a navigation and each view is its
- * own page and URL. With one view left there is nothing to choose, so nothing renders.
+ * A campaign screen's views as a segmented control (the Calls tab's "Summary | Live",
+ * `docs/listening.md` §9): links with `aria-current`, not a radio group, because picking one
+ * is a navigation and each view is its own page and URL. With one view left there is nothing
+ * to choose, so nothing renders. (Call log had one, "Dialler calls | Soft-phone calls", until
+ * it became one list with type chips, CL11.)
  */
 export function CampaignViewSwitch<Id extends CampaignTabId>({
   campaignId,

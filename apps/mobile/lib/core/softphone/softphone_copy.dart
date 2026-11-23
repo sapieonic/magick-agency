@@ -35,6 +35,18 @@ const softphoneSaveBeforeDialCopy = 'Save this call’s outcome before you dial 
 const softphoneCallInProgressCopy = 'A call is in progress.';
 const softphoneNoCallerIdCopy = 'There’s no caller ID to call from. Ask your supervisor to assign a number.';
 
+/// Every call must belong to a campaign (the account's setting, `campaign_required` on the
+/// bootstrap): Call stays off until "Log to" names one.
+const softphoneChooseCampaignCopy = 'Choose a campaign to log this call to.';
+
+/// The same setting, for an agent on no campaign a call can be logged to: there is nothing to
+/// dial from, so the pad gives way to this.
+const softphoneNoRunningCampaignCopy = 'You are not on any running campaign, so you cannot dial.';
+
+/// A redial of a call that was logged to no campaign, or to one that can no longer be chosen,
+/// while every call needs one: "Log to" is left empty and says why.
+const softphoneRedialNoCampaignCopy = 'This call was not logged to a campaign. Choose one to call again.';
+
 /// A campaign session not yet on the soft phone (a switch still queued).
 const softphoneNotSwitchedYetCopy = 'You’re not on the soft phone yet. Wait for the switch to finish.';
 

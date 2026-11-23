@@ -45,15 +45,18 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
-const { campaigns } = vi.hoisted(() => ({
+const { campaigns, inboundRoutes } = vi.hoisted(() => ({
   campaigns: {
     findById: vi.fn(),
     transitionStatus: vi.fn(),
     rosterCounts: vi.fn(),
   },
+  // The live inbound routes that file unknown callers under a campaign (docs/call-log.md §5, CL8).
+  inboundRoutes: { listDefaultingTo: vi.fn() },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,
+  agencyInboundRouteRepository: inboundRoutes,
 }));
 // Start and resume read the carrier's concurrency allocation (PL14): a legacy total here.
 vi.mock('@magick-agency/db/repositories/provider-concurrency.repository', () => ({
@@ -105,6 +108,7 @@ beforeEach(() => {
     ...DRAFT, status: to,
   }));
   campaigns.rosterCounts.mockResolvedValue({ total: 250, dialable: 250 });
+  inboundRoutes.listDefaultingTo.mockResolvedValue([]);
 });
 
 describe('POST /:id/start — the roster gate', () => {
@@ -128,6 +132,27 @@ describe('POST /:id/start — the roster gate', () => {
     expect(res.json().message).toMatch(/upload a contact roster/i);
     // And the status never moved — a campaign that 409s must not be left `running`.
     expect(campaigns.transitionStatus).not.toHaveBeenCalled();
+  });
+
+  // docs/call-log.md §5, CL8: the campaign an inbound route files its unknown callers under is
+  // started to be logged to, not dialled. Refusing it for an empty list would leave it a draft
+  // nobody can choose on the soft phone.
+  it('starts a campaign with nothing to dial when an inbound route files unknown callers under it', async () => {
+    for (const roster of [{ total: 0, dialable: 0 }, { total: 250, dialable: 0 }]) {
+      campaigns.rosterCounts.mockResolvedValue(roster);
+      inboundRoutes.listDefaultingTo.mockResolvedValue([{ id: 'route-1', name: 'Sales line', account_id: 'a1' }]);
+      const app = await makeApp();
+      const res = await app.inject({ method: 'POST', url: '/api/v1/agency-campaigns/camp-1/start', headers: HEADERS });
+
+      expect(res.statusCode, JSON.stringify(roster)).toBe(200);
+      expect(inboundRoutes.listDefaultingTo).toHaveBeenCalledWith(DRAFT.tenant_id, 'camp-1');
+    }
+  });
+
+  it('does not ask about inbound routes when there is work to do', async () => {
+    const app = await makeApp();
+    await app.inject({ method: 'POST', url: '/api/v1/agency-campaigns/camp-1/start', headers: HEADERS });
+    expect(inboundRoutes.listDefaultingTo).not.toHaveBeenCalled();
   });
 
   it('distinguishes an EXHAUSTED campaign from an empty one', async () => {

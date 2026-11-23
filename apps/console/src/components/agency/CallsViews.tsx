@@ -15,8 +15,8 @@ interface CallsViewsProps {
 
 /**
  * The Calls tab's two views (`docs/listening.md` §9): "Summary" (`…/calls`, the analytic panel)
- * and "Live" (`…/calls/live`, the campaign's calls in progress). The same segmented control as
- * Call log's (`CampaignViewSwitch`), the bar marking Calls for both. Live is offered only with
+ * and "Live" (`…/calls/live`, the campaign's calls in progress), as a segmented control
+ * (`CampaignViewSwitch`), the bar marking Calls for both. Live is offered only with
  * the listening flag on (LS1); with one view left there is nothing to choose, so nothing renders.
  */
 export function CallsViews({ campaignId, active, role, liveCount = null }: CallsViewsProps) {

@@ -6,14 +6,19 @@ import type {
   CustomerHistoryErrorCode,
   CustomerHistoryOpenOverride,
   CustomerRecordingState,
-  CustomerTimelineChannel,
+  CustomerTimelineInboundCall,
 } from '@magick-agency/contracts/api/agency/customer-history';
-import { CUSTOMER_HISTORY_ERROR_CODES } from '@magick-agency/contracts/api/agency/customer-history';
+import {
+  CUSTOMER_HISTORY_ERROR_CODES,
+} from '@magick-agency/contracts/api/agency/customer-history';
 import type { AgencyOverrideKind } from '@magick-agency/contracts/agency/session';
 import type { SearchCountry } from '@magick-agency/domain/customer-search-number';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { ApiError } from '../api/client';
-import { dateFormatter } from './format/date';
+import { dateFormatter, upperDayPeriod } from './format/date';
+import { followUpWords, inboundWhatHappened } from './agency/callLog';
+import { actorName } from './agency/insights/copy';
+import { formatTalkTime } from './agencySpineCopy';
 
 /**
  * The words of the customer-history box and page (`docs/customer-history.md`).
@@ -117,17 +122,62 @@ const WHEN: Intl.DateTimeFormatOptions = {
   minute: '2-digit',
 };
 
-/** `5 Nov 2026, 11:20 am`, on the reader's clock. */
+/**
+ * `5 Nov 2026, 11:20 AM`, on the reader's clock. AM / PM in capitals, the house style (AS15,
+ * `upperDayPeriod`): the page's inbound rows say their times as the Call log does, and one page
+ * never mixes the two.
+ */
 export function formatWhen(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return dateFormatter(WHEN).format(date);
+  return upperDayPeriod(dateFormatter(WHEN).format(date));
 }
 
-export const CHANNEL_LABELS: Record<CustomerTimelineChannel, string> = {
-  campaign: 'Campaign call',
-  softphone: 'Soft-phone call',
-};
+/** The Channel filter's choices: every channel (the default), then each alone. */
+export const CHANNEL_FILTER_ALL_LABEL = 'Every call type';
+
+/** The summary's line under the totals when no call was ever placed to the number. */
+export function neverContactedLabel(inboundCalls: number): string {
+  return inboundCalls > 0 ? 'We have not called this number' : 'Never contacted';
+}
+
+/**
+ * An inbound entry's facts, in the Call log's own words (`inboundWhatHappened`, `followUpWords`,
+ * `utils/agency/callLog.ts`): what happened with its detail, who has the call when nobody answered,
+ * the number they rang, the voicemail's length, and where the follow-up stands.
+ */
+export function inboundEntryCopy(entry: CustomerTimelineInboundCall): {
+  /** "Answered · waited 0:18", "Missed · nobody free to answer · waited 1:40", or "Missed" alone. */
+  happened: string;
+  agent: string;
+  rang: string;
+  voicemail: string | null;
+  followUp: string | null;
+  calledBack: string | null;
+  open: boolean;
+} {
+  const happened = inboundWhatHappened(entry);
+  const followUp = followUpWords({ calledBackAt: entry.called_back_at, arrivedAt: entry.at, followUp: entry.follow_up });
+  const assignee = entry.follow_up?.assignee;
+  return {
+    // A call that could not be answered and left no Missed row has no reason and no wait to add:
+    // "Missed", never "Missed · ".
+    happened: happened.detail ? `${happened.text} · ${happened.detail}` : happened.text,
+    agent: entry.agent
+      ? `Answered by ${actorName(entry.agent)}`
+      : assignee ? `Nobody answered · assigned to ${actorName(assignee)}` : 'Nobody answered',
+    rang: entry.route_name ? `Rang ${entry.line_e164} (${entry.route_name})` : `Rang ${entry.line_e164}`,
+    voicemail: entry.voicemail_seconds === null ? null : `Voicemail ${formatTalkTime(entry.voicemail_seconds)}`,
+    followUp: followUp.status,
+    calledBack: followUp.calledBack,
+    open: followUp.open,
+  };
+}
+
+/** `Calls received 3 · 2 answered`'s second half. */
+export function inboundAnsweredLabel(answered: number): string {
+  return `${answered} answered`;
+}
 
 export const RECORDING_LABELS: Record<CustomerRecordingState, string> = {
   available: 'Recording available',

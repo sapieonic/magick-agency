@@ -469,7 +469,11 @@ cannot be read is `503 listen_unavailable` on every route, which the console ret
 (owner `none`; `?campaign_id=`, `?call_id=`): `AgencyLiveCallRepository.listLive`, the three spines
 on their live indexes joined to `agency_calls` (the spine's `webrtc_call_id`), the session, the
 campaign, the inbound route and the contact, tenant and account scoped in each spine and again on
-the leg; the account's open sessions of those calls (`listOpenForCalls`); each campaign's AHT, both read together. The public layer
+the leg (an inbound call's campaign is the one it is **filed under**, `campaign_id`, else its
+matched one: since 2026-11-22 an unknown caller filed by its route is listed under that campaign
+and in its Live view, `docs/call-log.md` §5; who may listen does not read the campaign, only
+`agency.supervise` in the account, so nothing about access changed, and the listen session and
+its audit rows are put on the filed campaign's History); the account's open sessions of those calls (`listOpenForCalls`); each campaign's AHT, both read together. The public layer
 adds the agent's and the listeners' names (`agentNamesOrNone`), masks the number (`maskPhone`) and
 computes `listenable` / `not_listenable_reason` for the caller (`notListenableReason`: their own
 call, LS4, the per-call cap not counting their own listen), and says a withheld number so
@@ -709,7 +713,7 @@ listening* row charts each series above.
 ## 9. The console and the agent
 
 British English throughout. **Live calls** at `/agency/live`, a nav entry in the Campaigns section
-beside "Soft-phone calls" (gated by `agency.supervise` and the flag); a campaign's
+beside "All calls" (gated by `agency.supervise` and the flag); a campaign's
 `/agency/campaigns/:id/calls/live` with a "Summary | Live" control on its Calls tab. The table:
 "Live calls", "N in progress", "Updated N s ago"; filters for campaign (account page only), agent
 and type (All, Dialler, Soft phone, Inbound), with Clear filters while any is in force; columns
@@ -1286,8 +1290,8 @@ On with why, not the reason dialog; the tenant tab's dialog already shows the wa
   `agency.supervise` in the page and the nav entry's gate, and no flag (LS19, amended 2026-11-17),
   so the tab, the route and search's words "listened", "who listened", "monitoring log" stay while
   listening is off (`navRouteGates.test.ts`; `ListenHistoryPage.test.tsx` pins the route in
-  `App.tsx` free of `RequireFlag`). With Live calls hidden the bar is Campaigns and Listening
-  history (and Soft-phone calls when its flag is on): every supervisor has Campaigns, so the tab
+  `App.tsx` free of `RequireFlag`). With Live calls hidden the bar is Campaigns, All calls and
+  Listening history: every supervisor has Campaigns, so the tab
   never stands alone. Columns Supervisor, Agent, Call type ("Dialler", "Soft phone", "Inbound: <route>"),
   Customer (the name as the live table words it, "Unknown caller" and "No name" included, over the
   masked number or "Withheld"), Started, Time listened ("2m 10s", "Listening now" while open), How it

@@ -111,7 +111,8 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'home:home': ['home', 'attention', 'needs attention', 'needs you now', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue', 'dashboard'],
   'callbacks:callbacks': ['callbacks', 'call-backs', 'call backs', 'follow-ups', 'late callbacks', 'overdue callbacks'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
-  'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
+  // "Soft-phone calls" until it became All calls (CL34): the old name still finds it.
+  'campaigns:calls': ['all calls', 'calls', 'soft phone', 'softphone', 'soft-phone calls', 'manual calls', 'no campaign'],
   'campaigns:live': ['live', 'live calls', 'in progress', 'listen', 'listen in', 'monitor', 'calls'],
   'campaigns:listen-history': ['listening history', 'listened', 'who listened', 'listens', 'monitoring log', 'audit', 'supervisor'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
@@ -259,6 +260,16 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
       { label: 'Call details fields', keywords: ['call details', 'custom fields', 'fields'] },
     ],
   },
+  calls: {
+    // Not "log": "call log" is a campaign's page, and must find only that.
+    keywords: ['calls', 'call settings', 'campaign required', 'require campaign', 'untagged calls', 'no campaign'],
+    settings: [
+      {
+        label: 'Every call must belong to a campaign',
+        keywords: ['every call', 'must belong', 'belong to a campaign', 'require a campaign', 'filed under'],
+      },
+    ],
+  },
   inbound: {
     keywords: ['inbound', 'routing', 'route', 'incoming calls', 'ivr'],
     settings: [
@@ -268,6 +279,7 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
       { label: 'Numbers that ring your agents', keywords: ['numbers', 'phone number'] },
       { label: 'When nobody answers', keywords: ['unanswered', 'missed', 'call back', 'callback'] },
       { label: 'Waiting and limits', keywords: ['queue', 'wait', 'longest wait'] },
+      { label: 'Campaign for unknown callers', keywords: ['unknown callers', 'unknown caller', 'catch-all', 'not on any list'] },
     ],
   },
   'call-summaries': {
@@ -403,7 +415,7 @@ export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
   callbacks: ['callbacks', 'callback', 'overdue', 'promised'],
   health: ['health', 'abandonment', 'stalls', 'carrier failures'],
   contacts: ['contacts', 'roster', 'contact list'],
-  attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls'],
+  attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls', 'inbound calls', 'missed calls', 'to follow up'],
   manual: ['soft phone calls', 'softphone calls', 'manual calls'],
   live: ['live calls', 'in progress', 'listen', 'listen in', 'monitor'],
   activity: ['activity', 'history', 'audit', 'audit trail', 'who did what', 'changes'],

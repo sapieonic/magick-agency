@@ -992,6 +992,16 @@ describe('/force-available answers what it did', () => {
     expect(h.runtime.dialer.releaseAgent).not.toHaveBeenCalled();
   });
 
+  it('the close names the campaign the call is FILED under (an unknown caller filed by its route), not only a matched one', async () => {
+    h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'ok' });
+    // Filed by the route: no match.
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-4', campaign_id: 'c-filed', matched_campaign_id: null } });
+    expect((await asSupervisor()).json()).toMatchObject({ inbound_closed: { inbound_call_id: 'ib-4', campaign_id: 'c-filed' } });
+    // Filed under none: none.
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-5', campaign_id: null, matched_campaign_id: null } });
+    expect((await asSupervisor()).json()).toMatchObject({ inbound_closed: { inbound_call_id: 'ib-5', campaign_id: null } });
+  });
+
   it('an owed inbound outcome is closed and the agent released; the answer carries the close for the audit', async () => {
     h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-2', matched_campaign_id: 'c-9' } });
     h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'ok' });

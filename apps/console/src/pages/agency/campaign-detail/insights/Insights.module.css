@@ -897,3 +897,72 @@
     border-bottom: none;
   }
 }
+
+/*
+  Calls by type: the split above the table. The colours are the Call log's type
+  swatches (accent, info, success), so a type is one colour on both pages.
+*/
+.typeStack {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.typeStackBar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.typeStackSegment {
+  flex-basis: 0;
+  min-width: 2px;
+  background: var(--text-muted);
+}
+
+.typeStackLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.typeStackLegend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.typeStackLegend strong {
+  color: var(--text-primary, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.typeStackSwatch {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+
+.typeStackSegment[data-type='dialler'],
+.typeStackSwatch[data-type='dialler'] {
+  background: var(--accent);
+}
+
+.typeStackSegment[data-type='soft_phone'],
+.typeStackSwatch[data-type='soft_phone'] {
+  background: var(--info);
+}
+
+.typeStackSegment[data-type='inbound'],
+.typeStackSwatch[data-type='inbound'] {
+  background: var(--success, #2f9e44);
+}

@@ -11,11 +11,13 @@ import { formatCount, plural } from '../../../../utils/format/number';
 import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import {
   abandonmentRate,
-  allCallsConnectRate,
-  allCallsCounts,
   callsConnectRate,
+  inboundAnswerRate,
+  outboundConnectRate,
+  outboundCounts,
   firstDials,
   penetrationRate,
+  showInboundFigures,
   showSoftphoneFigures,
   softphoneConnectRate,
   successRate,
@@ -78,9 +80,14 @@ export function OverviewKpis({
   const connect = calls ? rateFigure(callsConnectRate(calls)) : null;
   // The soft phone's tagged calls beside the dialler's rate, never in it (SR1, SR5).
   const soft = calls && showSoftphoneFigures(ctx.softphoneEnabled ?? false, calls.softphone) ? calls.softphone : null;
-  const softAndAll = calls && soft
-    ? ` · soft phone ${rateFigure(softphoneConnectRate(soft)).value} · all calls ${rateFigure(allCallsConnectRate(allCallsCounts(calls, soft))).value}`
-    : '';
+  // Inbound's answer rate beside them, in neither (CL7). "Outbound" is the dialler and the soft phone together.
+  const inbound = calls && showInboundFigures(ctx.inboundEnabled ?? false, calls.inbound) ? calls.inbound : null;
+  const besideIt = [
+    calls && soft ? `soft phone ${rateFigure(softphoneConnectRate(soft)).value}` : null,
+    calls && soft ? `outbound ${rateFigure(outboundConnectRate(outboundCounts(calls, soft))).value}` : null,
+    inbound ? `inbound answered ${rateFigure(inboundAnswerRate(inbound)).value}` : null,
+  ].filter((part): part is string => part !== null);
+  const softAndAll = besideIt.length > 0 ? ` · ${besideIt.join(' · ')}` : '';
   const success = calls ? rateFigure(successRate(calls.successes, calls.conversations)) : null;
   const abandonment = health ? rateFigure(abandonmentRate(health.abandonment.rolling_24h)) : null;
   const overdue = allocation?.totals.callbacks_overdue ?? null;
@@ -104,7 +111,7 @@ export function OverviewKpis({
         testId="overview-kpi-dials"
       />
       <Kpi
-        label={`${connectRateName(soft !== null)} · ${rangeLabel}`}
+        label={`${connectRateName(soft !== null || inbound !== null)} · ${rangeLabel}`}
         value={connect ? connect.value : pending('activity')}
         withheld={!connect || connect.withheld}
         sub={calls ? `${peopleAnsweredOfFirstDials(calls.human_connects, firstDials(calls))}${softAndAll}` : undefined}

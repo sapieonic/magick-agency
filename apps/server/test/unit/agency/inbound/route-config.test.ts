@@ -130,6 +130,17 @@ describe('parseInboundRouteCreate', () => {
     expect(parseInboundRouteUpdate({ wrapup_seconds: 5 }, current)).toMatchObject({ ok: false, issues: [{ path: 'wrapup_seconds' }] });
   });
 
+  it('the campaign for unknown callers (docs/call-log.md §5): none by default, an id lower-cased, null accepted, anything else refused', () => {
+    const none = parseInboundRouteCreate(MIN);
+    expect(none.ok && none.config.default_campaign_id).toBeNull();
+    const id = randomUUID();
+    const set = parseInboundRouteCreate({ ...MIN, default_campaign_id: id.toUpperCase() });
+    expect(set.ok && set.config.default_campaign_id).toBe(id);
+    const cleared = parseInboundRouteCreate({ ...MIN, default_campaign_id: null });
+    expect(cleared.ok && cleared.config.default_campaign_id).toBeNull();
+    for (const bad of ['general', '', 7, {}]) expect(paths({ ...MIN, default_campaign_id: bad }), String(bad)).toEqual(['default_campaign_id']);
+  });
+
   it('refuses unknown values, unknown fields, malformed ids and a catalog the campaign rules refuse', () => {
     expect(paths({ ...MIN, sticky_mode: 'sticky' })).toEqual(['sticky_mode']);
     expect(paths({ ...MIN, overflow_action: 'hangup' })).toEqual(['overflow_action']);
@@ -175,6 +186,19 @@ describe('parseInboundRouteUpdate', () => {
     expect(parseInboundRouteUpdate({}, stored)).toEqual({ ok: true, patch: {}, config: stored, changed: [], phoneNumberIds: undefined });
     expect(parseInboundRouteUpdate({ phone_number_ids: [] }, stored)).toMatchObject({ ok: true, phoneNumberIds: [] });
     expect(parseInboundRouteUpdate({ phone_number_ids: [n] }, stored)).toMatchObject({ ok: true, patch: {}, phoneNumberIds: [n] });
+  });
+
+  it('the campaign for unknown callers: a patch that leaves it out keeps the stored one; null clears it, and is a change', () => {
+    const campaign = randomUUID();
+    const withDefault = { ...stored, default_campaign_id: campaign };
+    const renamed = parseInboundRouteUpdate({ name: 'Sales' }, withDefault);
+    expect(renamed.ok && renamed.config.default_campaign_id).toBe(campaign);
+    expect(renamed.ok && renamed.changed).toEqual(['name']);
+    const cleared = parseInboundRouteUpdate({ default_campaign_id: null }, withDefault);
+    if (!cleared.ok) throw new Error(JSON.stringify(cleared.issues));
+    expect(cleared.patch).toEqual({ default_campaign_id: null });
+    expect(cleared.config.default_campaign_id).toBeNull();
+    expect(cleared.changed).toEqual(['default_campaign_id']);
   });
 
   it('judges the route the patch makes: a lower max_concurrent under the stored max_waiting is refused', () => {

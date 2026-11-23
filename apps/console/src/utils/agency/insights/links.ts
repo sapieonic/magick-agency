@@ -62,6 +62,12 @@ export interface InsightsAttemptsFilter {
   /** The insights range, half-open `[from, to)`; sent as `dialed_from` / `dialed_to`. */
   from?: string;
   to?: string;
+  /**
+   * The Call log's chip. `dialler` (the default) for a figure that counts the dialler's dials
+   * alone (SR1); `all` for a link that is not a count of dials: Compare agents' next steps, whose
+   * metrics (promises, CP2) take soft-phone calls too.
+   */
+  type?: 'dialler' | 'all';
 }
 
 function campaignBase(campaignId: string): string {
@@ -87,7 +93,16 @@ export function contactsLink(campaignId: string, filter: InsightsContactsFilter 
   return withQuery(`${campaignBase(campaignId)}/contacts`, params);
 }
 
-/** `/agency/campaigns/:id/attempts?…`: placed dials, the range half-open on `dialed_at`. */
+/**
+ * `/agency/campaigns/:id/attempts?…`: placed dials, the range half-open on `dialed_at`.
+ *
+ * `type=dialler` unless `filter.type` is `all`. The page is the campaign's Call log, every call
+ * type in one list (CL11, `docs/call-log.md`), and every Insights figure that links here counts
+ * the DIALLER's dials alone (SR1). Without the chip the list would also hold the soft-phone calls
+ * logged to the campaign that match the same filters (a window, an agent, an outcome, a caller
+ * ID), and its count would not be the number that was clicked. Compare agents' next steps are
+ * not counts, and their metrics take soft-phone calls too (CP2), so they pass `all`.
+ */
 export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter = {}): string {
   const params = new URLSearchParams();
   const outcomes = filter.outcome === undefined ? [] : Array.isArray(filter.outcome) ? filter.outcome : [filter.outcome];
@@ -103,7 +118,17 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   params.set('placed', '1');
   if (filter.from) params.set('dialed_from', filter.from);
   if (filter.to) params.set('dialed_to', filter.to);
+  if (filter.type !== 'all') params.set('type', 'dialler');
   return withQuery(`${campaignBase(campaignId)}/attempts`, params);
+}
+
+/**
+ * The campaign Call log's **To follow up** view: its missed calls still owed a call back. No
+ * dates: that view ignores them (CL14), and so does the figure that links here
+ * (`calls.inbound.open_follow_ups`), so the list's count is the number clicked.
+ */
+export function toFollowUpLink(campaignId: string): string {
+  return `${campaignBase(campaignId)}/attempts?type=to_follow_up`;
 }
 
 /** The campaign's Agents tab. */

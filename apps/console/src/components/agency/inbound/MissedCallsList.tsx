@@ -83,7 +83,8 @@ export interface MissedCallsListProps {
  * The Missed calls list (`docs/inbound.md` §7): inbound calls that reached nobody, newest first,
  * Open or Handled, with filters (reason, dates; for a supervisor, who it is assigned to) and keyset
  * paging. Each open row offers **Call back** — the soft phone with the caller's number on the pad
- * and the matched campaign as its "Log to" (nothing is dialled until the agent presses Call, and
+ * and the campaign the call is filed under (the caller's own, else the campaign its inbound number
+ * files unknown callers under; `docs/call-log.md` §5) as its "Log to" (nothing is dialled until the agent presses Call, and
  * a caller on a DNC list meets the soft phone's own DNC check and override note) — and **Mark
  * handled**, which the server makes idempotent. A row also closes on its own once the customer is
  * reached by an agent of the account (`reached`, shown on the Handled tab). A handled row offers
@@ -291,7 +292,8 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   const callBack = (call: AgencyInboundMissedCall) => {
     if (!call.from_e164) return;
     navigate('/dialer/phone', {
-      state: softphonePrefillState({ number: call.from_e164, campaignId: call.matched_campaign_id }),
+      // The row's id goes with the number: the call placed is this missed call's call back (CL1).
+      state: softphonePrefillState({ number: call.from_e164, campaignId: call.campaign_id ?? call.matched_campaign_id, inboundCallId: call.id }),
     });
   };
 
@@ -522,7 +524,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                       ) : null}
                     </td>
                     <td data-label="Campaign">
-                      {call.matched_campaign_name ?? <span className={styles.muted}>Not matched</span>}
+                      {call.campaign_name ?? call.matched_campaign_name ?? <span className={styles.muted}>Not matched</span>}
                       {call.callback_due_at ? (
                         <span className={styles.sub}>Callback booked for {formatSpineTimestamp(call.callback_due_at)}</span>
                       ) : null}

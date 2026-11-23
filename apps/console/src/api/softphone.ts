@@ -342,11 +342,15 @@ function settingsRead(res: AgencySoftphoneSettingsResponse): SoftphoneSettingsRe
   return { settings: res.settings, outcomesTemplate: usable };
 }
 
-/** `GET /settings` with what the outcomes follow (`outcomes_template`; null when the answer names none). */
+/**
+ * `GET /settings` with what the outcomes follow (`outcomes_template`; null when the answer names
+ * none) and `campaignRequired`: the account asks for a campaign on every call (`docs/call-log.md`
+ * §5), so the settings of a call logged to none are not used and the page greys them.
+ */
 export async function readSoftphoneSettings(
   tenantId?: string,
   accountId?: string,
-): Promise<{ settings: AgencySoftphoneSettings; outcomesTemplate: SoftphoneOutcomesTemplate | null }> {
+): Promise<{ settings: AgencySoftphoneSettings; outcomesTemplate: SoftphoneOutcomesTemplate | null; campaignRequired: boolean }> {
   const res = await apiFetch<AgencySoftphoneSettingsResponse>(
     `${SOFTPHONE_BASE}/settings`,
     {},
@@ -354,7 +358,7 @@ export async function readSoftphoneSettings(
     accountId,
   );
   const read = settingsRead(res);
-  return { settings: read.settings, outcomesTemplate: read.outcomesTemplate ?? null };
+  return { settings: read.settings, outcomesTemplate: read.outcomesTemplate ?? null, campaignRequired: res.campaign_required === true };
 }
 
 /**
