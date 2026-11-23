@@ -176,7 +176,21 @@ function searchTargets(r: Reader): string[] {
   return results.map((res) => (res.target.type === 'path' ? res.target.to : '/agency/customers'));
 }
 
+/**
+ * Each reader's offers, worked out once: the per-role sweeps and the App.tsx read walk the same
+ * readers, and search over every query is the costly part.
+ */
+const OFFERS = new Map<Reader, { from: string; to: string }[]>();
+
 function offers(r: Reader): { from: string; to: string }[] {
+  const held = OFFERS.get(r);
+  if (held) return held;
+  const out = offersOf(r);
+  OFFERS.set(r, out);
+  return out;
+}
+
+function offersOf(r: Reader): { from: string; to: string }[] {
   const gate = gateInput(r);
   const out: { from: string; to: string }[] = [];
   for (const { section, href } of visibleSections(gate)) out.push({ from: `sidebar ${section.id}`, to: href });
@@ -276,7 +290,8 @@ describe('every offer passes the gate of the route it opens', () => {
     expect(offered.size).toBeGreaterThan(25);
     const unrouted = [...offered].filter((path) => !isDeclared(path, declared));
     expect(unrouted).toEqual([]);
-  });
+  // It walks every reader's offers: held from the sweeps above, else worked out here (run alone).
+  }, 30_000);
 
   it('routes every path the hand-written rules name, so a rule cannot outlive its route', () => {
     const declared = declaredPaths();
