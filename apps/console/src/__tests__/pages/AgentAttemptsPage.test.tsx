@@ -315,6 +315,66 @@ describe('My calls: To follow up', () => {
   });
 });
 
+describe('My calls: what is owed is counted when it can have changed, not on every chip or filter', () => {
+  const badge = () => screen.getByTestId('my-calls-count-to_follow_up').textContent;
+  const asksForCounts = () => lastQuery()['includeCounts'] === true;
+
+  it('asks for the counts on the first load, and keeps them on a chip tap without asking again', async () => {
+    await renderPage();
+    expect(asksForCounts()).toBe(true);
+    expect(badge()).toBe('3');
+    // The server sends no counts unless asked: the badge must be the one already held.
+    mocks.getMyCalls.mockResolvedValue(page([ANSWERED], { counts: undefined }));
+    fireEvent.click(screen.getByTestId('my-calls-type-inbound'));
+    await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'inbound' }));
+    expect(asksForCounts()).toBe(false);
+    await act(async () => {});
+    expect(badge()).toBe('3');
+  });
+
+  it('keeps the counts on a filter change without asking again', async () => {
+    await renderPage();
+    mocks.getMyCalls.mockResolvedValue(page([DIALLER], { counts: undefined }));
+    fireEvent.change(screen.getByTestId('my-calls-campaign-filter'), { target: { value: 'c-1' } });
+    fireEvent.click(screen.getByTestId('my-calls-apply'));
+    await waitFor(() => expect(lastQuery()).toMatchObject({ campaign: 'c-1' }));
+    expect(asksForCounts()).toBe(false);
+    await act(async () => {});
+    expect(badge()).toBe('3');
+  });
+
+  it('asks for them again on Refresh, and shows the new number', async () => {
+    await renderPage();
+    fireEvent.click(screen.getByTestId('my-calls-type-inbound'));
+    await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'inbound' }));
+    expect(asksForCounts()).toBe(false);
+    mocks.getMyCalls.mockResolvedValue(page([ANSWERED], { counts: { to_follow_up: 7, missed_open: 6, callbacks_due: 1 } }));
+    const reads = mocks.getMyCalls.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh my calls' }));
+    await waitFor(() => expect(mocks.getMyCalls.mock.calls.length).toBe(reads + 1));
+    expect(lastQuery()).toMatchObject({ type: 'inbound', includeCounts: true });
+    await waitFor(() => expect(badge()).toBe('7'));
+  });
+
+  it('asks for them again after Mark handled: what is owed has changed', async () => {
+    mocks.markMissedInboundCallHandled.mockResolvedValue({ ok: true, value: {} });
+    mocks.getMyCalls.mockResolvedValue(page([MISSED_MASKED, MISSED_FULL], { callbacks_due: [CALLBACK] }));
+    await renderPage('/dialer/attempts?type=to_follow_up');
+    const reads = mocks.getMyCalls.mock.calls.length;
+    fireEvent.click(screen.getByTestId('my-call-handled-m-2'));
+    await waitFor(() => expect(mocks.getMyCalls.mock.calls.length).toBe(reads + 1));
+    expect(asksForCounts()).toBe(true);
+  });
+
+  it('asks again on the next read when the first one failed', async () => {
+    mocks.getMyCalls.mockRejectedValueOnce(new Error('The server is busy.'));
+    await renderPage();
+    fireEvent.click(screen.getByTestId('my-calls-type-dialler'));
+    await waitFor(() => expect(lastQuery()).toMatchObject({ type: 'dialler' }));
+    expect(asksForCounts()).toBe(true);
+  });
+});
+
 describe('My calls: the To follow up badge and the Missed calls badge count the same rows', () => {
   const owed = (missed: number) => ({ to_follow_up: missed + 1, missed_open: missed, callbacks_due: 1 });
   const badge = () => screen.getByTestId('my-calls-count-to_follow_up').textContent;

@@ -108,6 +108,12 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   const [moreError, setMoreError] = useState<string | null>(null);
   const [calling, setCalling] = useState<string | null>(null);
   const seq = useRef(0);
+  /**
+   * Whose counts are on screen (tenant and account). The chip and the filters are not in it:
+   * the counts are what the reader still owes, whatever chip is on and whatever narrows the
+   * rows, so a chip tap or a filter change reads the rows again and keeps the counts.
+   */
+  const countedFor = useRef<string | null>(null);
 
   const canMarkHandled = hasPermission(role, 'agency.inbound.read');
 
@@ -128,18 +134,25 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
     };
   }, [tenantId, accountId]);
 
-  const load = useCallback(async (chip: AgencyCallLogTypeFilter, active: MyCallsFilters) => {
+  const load = useCallback(async (chip: AgencyCallLogTypeFilter, active: MyCallsFilters, recount = false) => {
     if (!tenantId || !accountId) return;
     const mine = ++seq.current;
+    const countKey = `${tenantId}/${accountId}`;
+    const includeCounts = recount || countedFor.current !== countKey;
     setLoading(true);
     setError(null);
     setMoreError(null);
     try {
-      const page = await getMyCalls({ type: chip, ...sent(active), limit: PAGE_SIZE, includeCounts: true }, tenantId, accountId);
+      const page = await getMyCalls(
+        { type: chip, ...sent(active), limit: PAGE_SIZE, ...(includeCounts ? { includeCounts: true } : {}) }, tenantId, accountId,
+      );
       if (mine !== seq.current) return;
       setRows(page.rows);
       setCallbacks(page.callbacks_due ?? []);
-      setCounts(page.counts ?? null);
+      if (includeCounts) {
+        setCounts(page.counts ?? null);
+        countedFor.current = page.counts ? countKey : null;
+      }
       setNextCursor(page.next_cursor);
     } catch (err: unknown) {
       if (mine !== seq.current) return;
@@ -160,7 +173,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   /**
    * The Missed calls badge moved (a call was just missed, or one was handled on the Missed
    * list): read what is owed again. Under To follow up the list itself changed, so it is read
-   * again; under another chip only the counts are, and the rows and pages on screen stay.
+   * again with its counts; under another chip only the counts are, and the rows and pages on screen stay.
    * Asked once for each number the badge shows, so a count the two reads never agree on (a row
    * changing between them) cannot loop.
    */
@@ -174,7 +187,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
     if (followedMissed.current === missedOpen) return;
     followedMissed.current = missedOpen;
     if (type === 'to_follow_up') {
-      void load(type, filters);
+      void load(type, filters, true);
       return;
     }
     const mine = seq.current;
@@ -207,10 +220,11 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
     setParams(myCallsParamsForType(params, next), { replace: true });
   }, [params, setParams]);
 
-  /** Mark handled: the Missed list's own action. The list and the badge are read again. */
+  /** Refresh, and after Mark handled: the list and what is owed, both read again. */
   const reload = useCallback(() => {
-    void load(type, filters);
+    void load(type, filters, true);
   }, [load, type, filters]);
+  /** Mark handled: the Missed list's own action. The list and the badge are read again. */
   const { marking, rowError, setRowError, markHandled } = useMarkMissedHandled(reload);
 
   /**
@@ -263,7 +277,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
     <div>
       <div className={own.bar}>
         <CallTypeChips chips={chips} selected={type} onChoose={choose} label="Which calls" testIdPrefix="my-calls" badgesOnly />
-        <button type="button" className={`${spine.actionButton} btn-secondary`} onClick={() => void load(type, filters)} disabled={loading} aria-label="Refresh my calls">
+        <button type="button" className={`${spine.actionButton} btn-secondary`} onClick={reload} disabled={loading} aria-label="Refresh my calls">
           <RefreshCw size={16} />
           Refresh
         </button>

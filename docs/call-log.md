@@ -975,7 +975,9 @@ is not a parameter the route takes (a 400).
 - **`counts`** (`include_counts=1`) is what the agent still owes: `to_follow_up` (the open Missed
   rows and the callbacks due), `missed_open` (the Missed calls badge's own count) and
   `callbacks_due`. The other chips carry no number. No filter narrows them: the badge says
-  everything owed, whichever campaign is chosen.
+  everything owed, whichever campaign is chosen. So the console and the app ask for them on the
+  first page, on Refresh, after Mark handled and when the Missed calls badge moves; a chip or a
+  filter change reads the rows again and keeps the counts held.
 - **Filters:** `type`, `campaign_id` (a campaign or `none`), `from`, `to`. A campaign that is
   not the account's is a 404: with a campaign named, the dialler branch is the campaign Call
   log's own agent filter and the answered inbound calls are read on the campaign's index, so the

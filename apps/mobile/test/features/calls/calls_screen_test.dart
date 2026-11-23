@@ -141,7 +141,8 @@ void main() {
   testWidgets('a chip reads that type', (tester) async {
     await open(tester);
     await choose(tester, 'dialler');
-    expect(api.queries.last.toQuery(), {'type': 'dialler', 'limit': '50', 'include_counts': '1'});
+    // What is owed does not depend on the chip: the counts held are not asked for again.
+    expect(api.queries.last.toQuery(), {'type': 'dialler', 'limit': '50'});
     expect(find.byKey(const Key('my-call-type-i1')), findsNothing);
     expect(find.byKey(const Key('my-call-type-d1')), findsOneWidget);
   });

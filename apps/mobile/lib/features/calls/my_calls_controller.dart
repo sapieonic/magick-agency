@@ -203,20 +203,26 @@ class MyCallsController extends Notifier<MyCallsState> {
   Future<void> ensureLoaded() {
     final current = state; // brings the workspace up to date first
     if (_requested && current.status != MyCallsStatus.error) return Future.value();
-    return _loadFirst(current.type, keepRows: false);
+    return _loadFirst(current.type, keepRows: false, recount: false);
   }
 
   /// Choose a chip and read its first page. A no-op for the chip already on.
+  /// What the agent owes does not depend on the chip, so the counts already
+  /// held are kept and not asked for again.
   Future<void> choose(MyCallsTypeFilter type) {
     if (type == state.type && _requested && state.status != MyCallsStatus.error) return Future.value();
-    return _loadFirst(type, keepRows: false);
+    return _loadFirst(type, keepRows: false, recount: false);
   }
 
-  /// Read the first page again. With [keepRows] (pull to refresh) the old
-  /// rows stay until the new page lands.
-  Future<void> reload({bool keepRows = false}) => _loadFirst(state.type, keepRows: keepRows && !state.isEmpty);
+  /// Read the first page again, and what is owed with it (pull to refresh,
+  /// Retry, after Mark handled, the Missed badge moving under To follow up).
+  /// With [keepRows] the old rows stay until the new page lands.
+  Future<void> reload({bool keepRows = false}) =>
+      _loadFirst(state.type, keepRows: keepRows && !state.isEmpty, recount: true);
 
-  Future<void> _loadFirst(MyCallsTypeFilter type, {required bool keepRows}) async {
+  /// [recount] asks for the counts again; without it they are asked for only
+  /// while none are held (the first page, or after one that failed).
+  Future<void> _loadFirst(MyCallsTypeFilter type, {required bool keepRows, required bool recount}) async {
     // Signed out (or between accounts): there is nobody to read for.
     if (_workspace == null) return;
     _requested = true;
@@ -228,7 +234,7 @@ class MyCallsController extends Notifier<MyCallsState> {
     try {
       final page = await ref
           .read(myCallsApiProvider)
-          .myCalls(MyCallsQuery(type: type, limit: myCallsPageSize, includeCounts: true));
+          .myCalls(MyCallsQuery(type: type, limit: myCallsPageSize, includeCounts: recount || counts == null));
       if (!ref.mounted || mine != _generation) return;
       state = MyCallsState(
         type: type,

@@ -48,14 +48,43 @@ void main() {
     expect(state().type, MyCallsTypeFilter.toFollowUp);
     expect(state().rows, isEmpty);
     expect(state().counts!.toFollowUp, 2, reason: 'the badge does not blink away');
-    expect(api.q(1), {'type': 'to_follow_up', 'limit': '50', 'include_counts': '1'});
-    api.answer(1, myCallsPage([missedRow('m1')], callbacks: [callbackDue('k1', fixedNow)]));
+    // What is owed does not depend on the chip: the counts held are not asked for again.
+    expect(api.q(1), {'type': 'to_follow_up', 'limit': '50'});
+    // As the server answers a page it was not asked to count.
+    api.answer(1, myCallsPage([missedRow('m1')], counts: null, callbacks: [callbackDue('k1', fixedNow)]));
     await chosen;
     expect(state().rows.single.id, 'm1');
     expect(state().callbacks.single.contactId, 'k1');
+    expect(state().counts!.toFollowUp, 2, reason: 'the counts held are kept');
     // The chip already on is not read again.
     await controller().choose(MyCallsTypeFilter.toFollowUp);
     expect(api.queries, hasLength(2));
+  });
+
+  test('refresh asks for the counts again, under whatever chip is on', () async {
+    final first = controller().ensureLoaded();
+    api.answer(0, myCallsPage([myCall('a1')], counts: const MyCallsCounts(toFollowUp: 2, missedOpen: 2, callbacksDue: 0)));
+    await first;
+    final chosen = controller().choose(MyCallsTypeFilter.dialler);
+    expect(api.q(1), {'type': 'dialler', 'limit': '50'});
+    api.answer(1, myCallsPage([myCall('d1')], counts: null));
+    await chosen;
+    final refresh = controller().reload(keepRows: true);
+    expect(api.q(2), {'type': 'dialler', 'limit': '50', 'include_counts': '1'});
+    api.answer(2, myCallsPage([myCall('d1')], counts: const MyCallsCounts(toFollowUp: 5, missedOpen: 4, callbacksDue: 1)));
+    await refresh;
+    expect(state().counts!.toFollowUp, 5);
+  });
+
+  test('a chip chosen while no counts are held asks for them: the first page failed', () async {
+    final first = controller().ensureLoaded();
+    api.fail(0);
+    await first;
+    expect(state().counts, isNull);
+    final chosen = controller().choose(MyCallsTypeFilter.dialler);
+    expect(api.q(1), {'type': 'dialler', 'limit': '50', 'include_counts': '1'});
+    api.answer(1, myCallsPage([myCall('d1')]));
+    await chosen;
   });
 
   test('drops a page that a newer chip overtook', () async {
@@ -159,6 +188,7 @@ void main() {
     final counted = missed.countReads;
     expect(await controller().markHandled(state().rows.first), isTrue);
     await pumpEventQueue();
+    expect(api.queries.last.toQuery(), {'type': 'to_follow_up', 'limit': '50', 'include_counts': '1'}, reason: 'what is owed has changed');
     expect(missed.handled, ['m1']);
     expect(missed.countReads, greaterThan(counted));
     expect(state().rows.single.id, 'm2');
