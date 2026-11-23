@@ -672,12 +672,12 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     if (chip) applyToUrl(chip.without);
   }, [chips, applyToUrl, filters, status]);
 
+  const recordingNote = account ? null : recordingDisabledNote(campaign);
+
   // How many independent filter groups are APPLIED (not merely drafted), for
   // the small badge on the filter panel — a supervisor scanning back to this
   // page later should see at a glance that the view is narrowed, not have to
   // re-read every field to notice.
-  const recordingNote = account ? null : recordingDisabledNote(campaign);
-
   // Groups, not values: three outcomes ticked is one narrowing. The pinned
   // contact has its own note above and is not counted here.
   const activeFilterCount = useMemo(() => {
@@ -909,11 +909,6 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
                 <span className={styles.fieldHint} id="call-log-dates-off" data-testid="call-log-dates-off">{TO_FOLLOW_UP_DATES_HINT}</span>
               )}
             </label>
-            {/*
-              The campaign's old Soft-phone calls view had this filter. It is the soft phone's:
-              a dialler call has no such status, so with one chosen only soft-phone calls are
-              listed, and the hint says so before it is applied.
-            */}
             {account && (
               <label className={spine.field}>
                 <span className={spine.fieldLabel}>Campaign</span>
@@ -937,6 +932,11 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
                 </span>
               </label>
             )}
+            {/*
+              The campaign's old Soft-phone calls view had this filter. It is the soft phone's:
+              a dialler call has no such status, so with one chosen only soft-phone calls are
+              listed, and the hint says so before it is applied.
+            */}
             {offersStatus && (
               <label className={spine.field}>
                 <span className={spine.fieldLabel}>Soft-phone status</span>
