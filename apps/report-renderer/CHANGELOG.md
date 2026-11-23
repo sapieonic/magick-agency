@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/sapieonic/magick-agency/compare/report-renderer-v0.5.1...report-renderer-v0.6.0) (2026-11-23)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** one call log for dialler, soft-phone and inbound calls, and "Every call must belong to a campaign" ([#120](https://github.com/sapieonic/magick-agency/issues/120)) ([9f4e07e](https://github.com/sapieonic/magick-agency/commit/9f4e07e60ff3468bf21a284c8369f1d6aa0e8f49))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.30.0
+
 ## [0.5.1](https://github.com/sapieonic/magick-agency/compare/report-renderer-v0.5.0...report-renderer-v0.5.1) (2026-11-21)
 
 

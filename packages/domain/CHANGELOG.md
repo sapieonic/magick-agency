@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.15.0...domain-v0.16.0) (2026-11-23)
+
+
+### Features
+
+* **server,console:** reusable campaign templates for organisations and accounts ([#118](https://github.com/sapieonic/magick-agency/issues/118)) ([4e94476](https://github.com/sapieonic/magick-agency/commit/4e94476d3b3845778d7283a477785d314c908c07))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.30.0
+
 ## [0.15.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.14.0...domain-v0.15.0) (2026-11-21)
 
 

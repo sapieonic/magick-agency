@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.30.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.29.0...contracts-v0.30.0) (2026-11-23)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** one call log for dialler, soft-phone and inbound calls, and "Every call must belong to a campaign" ([#120](https://github.com/sapieonic/magick-agency/issues/120)) ([9f4e07e](https://github.com/sapieonic/magick-agency/commit/9f4e07e60ff3468bf21a284c8369f1d6aa0e8f49))
+* **server,console:** reusable campaign templates for organisations and accounts ([#118](https://github.com/sapieonic/magick-agency/issues/118)) ([4e94476](https://github.com/sapieonic/magick-agency/commit/4e94476d3b3845778d7283a477785d314c908c07))
+
 ## [0.29.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.28.0...contracts-v0.29.0) (2026-11-21)
 
 
