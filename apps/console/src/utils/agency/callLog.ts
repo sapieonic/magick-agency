@@ -17,7 +17,7 @@ import {
 import { isTerminalCampaignStatus } from '../agencyCampaignControls';
 import type { AgencyAttemptFilters } from '../../types/agency-spine';
 import { attemptOutcomeLabel } from '../../types/agency-spine';
-import { attemptDateRange } from '../agencyAttemptFilters';
+import { attemptDateRange, withoutDates } from '../agencyAttemptFilters';
 import {
   campaignAttemptFiltersToParams,
   isCampaignAttemptFiltered,
@@ -363,9 +363,7 @@ export function callLogEmptyState(
   const campaignChosen = scope.where === 'account' && scope.campaignChosen;
   // To follow up is not narrowed by the dates: an empty one is never about them.
   if (type === 'to_follow_up') {
-    const { from: _from, to: _to, ...rest } = filters;
-    void _from; void _to;
-    return isCallLogFiltered(rest, view) || campaignChosen
+    return isCallLogFiltered(withoutDates(filters), view) || campaignChosen
       ? {
         kind: 'filtered',
         title: 'Nothing matches those filters',

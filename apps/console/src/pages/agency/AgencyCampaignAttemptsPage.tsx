@@ -61,7 +61,7 @@ import { AGENCY_CALLS_NO_CAMPAIGN, AGENCY_CALLS_NO_CAMPAIGN_LABEL, agencyNoCampa
 import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
-import { attemptDateRange } from '../../utils/agencyAttemptFilters';
+import { attemptDateRange, withoutDates } from '../../utils/agencyAttemptFilters';
 import {
   campaignAttemptAgentOptions,
   campaignAttemptFilterChips,
@@ -562,10 +562,8 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     // The form's five controls are rebuilt from the drafts; every filter the form
     // has no control for (a link's dialled window, caller ID, flags, write-up,
     // contact) is kept, so Apply narrows a drill-down rather than undoing it.
-    const {
-      outcome: _outcome, phone: _phone, agent_user_id: _agent, from: _from, to: _to, ...kept
-    } = filters;
-    void _outcome; void _phone; void _agent; void _from; void _to;
+    const { outcome: _outcome, phone: _phone, agent_user_id: _agent, ...kept } = withoutDates(filters);
+    void _outcome; void _phone; void _agent;
     applyToUrl({
       ...kept,
       ...(draftOutcomes.length > 0 ? { outcome: draftOutcomes } : {}),
@@ -585,16 +583,12 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
 
   /** An empty day's first way out: the last seven days, today included. */
   const showLastSevenDays = useCallback(() => {
-    const { from: _from, to: _to, ...kept } = filters;
-    void _from; void _to;
-    writeUrl({ ...kept, ...lastSevenDays() }, { type, allDates: false, status });
+    writeUrl({ ...withoutDates(filters), ...lastSevenDays() }, { type, allDates: false, status });
   }, [writeUrl, filters, type, status]);
 
   /** Its second: every date (the dates dropped, and the URL saying so). */
   const showAllDates = useCallback(() => {
-    const { from: _from, to: _to, ...kept } = filters;
-    void _from; void _to;
-    writeUrl(kept, { type, allDates: true, status });
+    writeUrl(withoutDates(filters), { type, allDates: true, status });
   }, [writeUrl, filters, type, status]);
 
   // `contact_id` counts, and leaving it out was a real defect: arriving from a
