@@ -31,11 +31,11 @@ import {
   assignmentCommitSchema,
   parseAssignmentOperation,
   receivingAgents,
-  zodDetails,
   type CanonicalAssignment,
 } from '../../../agency/assignment/operation.js';
 import { guardSupervisedCampaign, refuse } from './shared.js';
 import { isUuid } from '../../../utils/uuid.js';
+import { zodDetails } from '../../../utils/zod-details.js';
 import { sendRefusal } from '../helpers/refusal.js';
 
 const log = createChildLogger({ component: 'proxy-agency-assignment' });

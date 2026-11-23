@@ -142,6 +142,13 @@ describe('a callback due', () => {
     expect(callbackDueCopy(callback('2026-11-22T14:40:00.000Z'), now).due).toBe('Late by 1 hour');
     expect(callbackDueCopy(callback('2026-11-19T15:00:00.000Z'), now).due).toBe('Late by 3 days');
   });
+
+  it('says the booked day too when it is not today, and never fails on an unreadable clock', () => {
+    expect(callbackDueCopy(callback('2026-11-19T15:00:00.000Z'), now).booked).not.toBe('you booked it for 3:00 PM');
+    expect(callbackDueCopy(callback('2026-11-19T15:00:00.000Z'), now).booked).toContain('19 Nov');
+    expect(() => callbackDueCopy(callback('2026-11-22T16:00:00.000Z'), new Date(Number.NaN))).not.toThrow();
+    expect(callbackDueCopy(callback('2026-11-22T16:00:00.000Z'), new Date(Number.NaN)).booked).not.toContain('NaN');
+  });
 });
 
 describe('an empty list', () => {

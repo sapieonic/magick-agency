@@ -151,9 +151,13 @@ export function staffingFailureMessage(result: StaffingApplyResult): string | nu
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
-export function useCampaignStaffing(campaignId: string | null): UseCampaignStaffing {
+/**
+ * `campaignId` null: no campaign yet (New campaign before its first save), so nobody is assigned.
+ * `enabled` false: nothing is read at all, the team included (a reader below `agency.supervise`).
+ */
+export function useCampaignStaffing(campaignId: string | null, enabled = true): UseCampaignStaffing {
   const { tenantId, accountId } = useTenant();
-  const team = useTeam();
+  const team = useTeam({ enabled });
   const navInput = useNavGate();
 
   const fetchAssigned = useCallback(
@@ -164,7 +168,7 @@ export function useCampaignStaffing(campaignId: string | null): UseCampaignStaff
   const assigned = useAsyncResource(fetchAssigned, {
     initialData: NO_ASSIGNMENTS,
     errorMessage: 'Could not load who is on this campaign.',
-    enabled: campaignId !== null && tenantId !== null && accountId !== null,
+    enabled: enabled && campaignId !== null && tenantId !== null && accountId !== null,
   });
   const reloadAssigned = assigned.reload;
 
@@ -219,8 +223,8 @@ export function useCampaignStaffing(campaignId: string | null): UseCampaignStaff
 
   const reloadTeam = team.reload;
   const reload = useCallback(async () => {
-    await Promise.all([reloadTeam(), campaignId !== null ? reloadAssigned() : Promise.resolve()]);
-  }, [reloadTeam, campaignId, reloadAssigned]);
+    await Promise.all([reloadTeam(), enabled && campaignId !== null ? reloadAssigned() : Promise.resolve()]);
+  }, [reloadTeam, enabled, campaignId, reloadAssigned]);
 
   const invitePath = passesGate(settingsEntry('team').gate, navInput) ? settingsEntry('team').path : null;
   const error = [team.error, campaignId !== null ? assigned.error : null].filter(Boolean).join(' ') || null;

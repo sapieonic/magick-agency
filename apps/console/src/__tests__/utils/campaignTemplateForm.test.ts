@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { builtinTemplateSections, diffSections, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
+import { builtinTemplateSections, diffSections, sectionOfPath, sectionsFromCampaign } from '@magick-agency/domain/campaign-templates';
 import {
   campaignFieldsOfForm,
   filledConfig,
   formOfConfig,
   sameSection,
-  sectionOfPath,
   sectionsOfForm,
   templateFormErrors,
   templateScriptKeys,
@@ -109,8 +108,6 @@ describe('the form round trip', () => {
     expect(Object.keys(templateFormErrors(broken, ['wrapup']))).toEqual([]);
     const found = templateFormErrors(broken, ['hours', 'numbers']);
     expect(Object.keys(found).map(sectionOfPath)).toEqual(expect.arrayContaining(['hours', 'numbers']));
-    expect(sectionOfPath('disposition_catalog[2].code')).toBe('outcomes');
-    expect(sectionOfPath('name')).toBeNull();
   });
 });
 

@@ -10,21 +10,20 @@ import {
   type AgencyMyCallRow,
   type AgencyMyCallsCounts,
 } from '../../types/agency-call-log';
-import { attemptOutcomeLabel } from '../../types/agency-spine';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
 import { formatDayMonth } from '../format/date';
-import { formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
+import { formatTalkTime } from '../agencySpineCopy';
 import { formatDialNumber } from '../softphone/phoneInput';
 import {
+  calledBackTo,
   callLogTypeFromParams,
-  clockTime,
   followUpWords,
   isMissedInbound,
-  isNotDialled,
   missedDetail,
+  outboundWhatHappened,
   pairedTime,
-  stoppedByInbound,
 } from './callLog';
+import { clockTime } from './stationFormat';
 
 /**
  * The agent's own My calls (`docs/call-log.md` §7, CL9): one list of their calls of every type,
@@ -137,10 +136,7 @@ export function myCallTypeLine(row: AgencyMyCallRow): string {
 
 /** Under a call back: which missed call it answered ("to the 3:12 PM missed call"). */
 export function myCallBackOf(row: AgencyMyCallRow): string | null {
-  if (row.type !== 'soft_phone' || !row.callback_of) return null;
-  return row.callback_of.arrived_at
-    ? `to the ${pairedTime(row.callback_of.arrived_at, row.created_at)} missed call`
-    : 'to a missed call';
+  return calledBackTo(row);
 }
 
 /**
@@ -162,12 +158,7 @@ export function myCallWhatHappened(row: AgencyMyCallRow): { text: string; key: s
     const detail = missedDetail(row);
     return { text: 'Missed', key: 'missed', ...(detail ? { detail } : {}) };
   }
-  if (isNotDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
-  if (row.type === 'soft_phone' && row.state !== 'ended') return { text: 'On a call now', key: 'live' };
-  if (stoppedByInbound(row)) {
-    return { text: 'Stopped: customer rang us', key: row.outcome ?? 'canceled' };
-  }
-  return { text: attemptOutcomeLabel(row.outcome as Parameters<typeof attemptOutcomeLabel>[0]), key: row.outcome ?? 'unknown' };
+  return outboundWhatHappened(row);
 }
 
 /** "25 Nov": a promised or booked day. */
@@ -204,11 +195,10 @@ export function myCallOutcomePlaceholder(row: AgencyMyCallRow): string {
 
 /** A callback's lines: "Due 4:00 PM" or "Late by 2 hours", and "you booked it for 1:45 PM". */
 export function callbackDueCopy(callback: AgencyMyCallbackDue, now: Date = new Date()): { due: string; late: boolean; booked: string } {
-  const sameDay = new Date(callback.due_at).toDateString() === now.toDateString();
   return {
-    due: agencyCallbackDueLabel(callback.due_at, now, clockTime(callback.due_at)),
+    due: agencyCallbackDueLabel(callback.due_at, now, clockTime(Date.parse(callback.due_at))),
     late: Date.parse(callback.due_at) < now.getTime(),
-    booked: `you booked it for ${sameDay ? clockTime(callback.due_at) : formatCallTimestamp(callback.due_at)}`,
+    booked: `you booked it for ${pairedTime(callback.due_at, now)}`,
   };
 }
 

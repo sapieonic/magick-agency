@@ -16,6 +16,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { zodDetails } from '../../utils/zod-details.js';
 import {
   AGENCY_ASSIGNMENT_AGENTS_MAX,
   AGENCY_ASSIGNMENT_COLUMN_NAME_MAX,
@@ -116,26 +117,13 @@ const lower = (id: string) => id.toLowerCase();
 const uniqSorted = <T extends string>(xs: readonly T[]) => [...new Set(xs)].sort();
 
 /**
- * Zod issues → `{ "field.path": message }` (the first message per path), the
- * `assignment_invalid` details. An issue on the root is keyed `rootKey`.
- */
-export function zodDetails(error: z.ZodError, rootKey = 'operation'): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const key = issue.path.length ? issue.path.join('.') : rootKey;
-    out[key] ??= issue.message;
-  }
-  return out;
-}
-
-/**
  * Validate and normalise an operation. `phase` decides the seed rule: a preview without a
  * seed gets one picked here (the response returns it); a commit of a random order must send
  * the preview's seed back, since a fresh seed would be a split nobody previewed.
  */
 export function parseAssignmentOperation(raw: unknown, phase: 'preview' | 'commit'): AssignmentParse {
   const parsed = assignmentOperationSchema.safeParse(raw);
-  if (!parsed.success) return { ok: false, details: zodDetails(parsed.error) };
+  if (!parsed.success) return { ok: false, details: zodDetails(parsed.error, 'operation') };
   const o = parsed.data as AgencyAssignmentOperation | AgencyLateCallbacksToLiveAgents;
   const group = o.group_same_number ?? true;
   const needsSeed = o.kind === 'random_split' || (o.kind === 'filter' && o.agent_user_ids.length > 1);

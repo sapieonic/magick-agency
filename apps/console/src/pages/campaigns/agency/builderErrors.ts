@@ -1,4 +1,4 @@
-import { SETUP_STEPS, setupStep, type SetupStepId } from '../../../utils/campaignSetup/setupSteps';
+import { SETUP_STEPS, setupStep, setupStepOfField, type SetupStepId } from '../../../utils/campaignSetup/setupSteps';
 import { joinAnd } from '../../../utils/agencyCampaignConfigForm';
 
 /*
@@ -10,32 +10,15 @@ import { joinAnd } from '../../../utils/agencyCampaignConfigForm';
   has to say WHICH step holds a finding. Without that, a finding on a step the operator is not
   looking at is a disabled Save beside "Fix the highlighted fields" with nothing highlighted.
   With the Review step gone (CS1), the step cards' needs-fixing marks and the footer's line are
-  the only places a finding elsewhere is named.
+  the only places a finding elsewhere is named. Which step a field is on is `setupStepOfField`,
+  the rule campaign Settings' tabs use too; this file counts findings by it and words the footer.
 */
-
-// Not produced by `validateConfig`: keys of a server refusal, mapped so a finding on them
-// names Name & number. The page shows such a refusal on the step's own fields.
-const BASICS_FIELDS = new Set(['name', 'caller_ids', 'telephony_provider', 'telephony_credential_id']);
-
-/**
- * The step whose editor renders this field: the buttons, the automatic outcomes for
- * unanswered calls and a template's script are on Purpose & buttons; the name, numbers and carrier on Name & number;
- * everything else (hours, retries, wrap-up, assignment, inbound, the abandonment limit,
- * recording, the call summary, the agent screen and break limits) on Agents & timing.
- */
-export function stepForConfigField(field: string): SetupStepId {
-  if (BASICS_FIELDS.has(field)) return 'basics';
-  if (field.startsWith('disposition_catalog') || field.startsWith('outcome_dispositions')) return 'purpose';
-  // A campaign template's script is shown and fixed under the buttons (CS19).
-  if (field.startsWith('agent_script')) return 'purpose';
-  return 'agents';
-}
 
 /** How many findings each step holds, in step order. Steps with none are left out. */
 export function findingsByStep(errors: Record<string, string>): Map<SetupStepId, number> {
   const counts = new Map<SetupStepId, number>();
   for (const field of Object.keys(errors)) {
-    const step = stepForConfigField(field);
+    const step = setupStepOfField(field);
     counts.set(step, (counts.get(step) ?? 0) + 1);
   }
   const ordered = new Map<SetupStepId, number>();

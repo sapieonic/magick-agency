@@ -2,6 +2,7 @@ import type { AgencyRetryPolicy } from '../db/models/agency.model.js';
 import {
   AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
   AGENCY_OUR_FAULT_REDIAL_BOUND,
+  AGENCY_UNANSWERED_RETRY_DEFAULTS,
   type AgencyAttemptOutcome,
   type AgencyContactState,
 } from '@magick-agency/contracts/agency';
@@ -56,9 +57,10 @@ import {
  * for `invalid` and `connected`.
  */
 export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
-  no_answer: { delay_minutes: 60, max_attempts: 3 },
-  busy: { delay_minutes: 15, max_attempts: 4 },
-  failed: { delay_minutes: 120, max_attempts: 2 },
+  // The customer's own "did not pick up" rows: the contract's, which New campaign says as the default.
+  no_answer: { ...AGENCY_UNANSWERED_RETRY_DEFAULTS.no_answer },
+  busy: { ...AGENCY_UNANSWERED_RETRY_DEFAULTS.busy },
+  failed: { ...AGENCY_UNANSWERED_RETRY_DEFAULTS.failed },
   abandoned: { delay_minutes: 5, max_attempts: 2 },
   // Never retried: a bad number does not become good, and a connected call is
   // terminal unless the agent's disposition says otherwise (`disposition-policy.ts`).

@@ -197,6 +197,44 @@ export interface EffectiveTemplate {
   chain: TemplateChain;
 }
 
+/** Whether the template's call-summary profile cannot be used by the account (false when it names none). */
+async function profileUnavailable(
+  scope: TemplateAccountScope,
+  profileId: string | null | undefined,
+  can: TemplateAccountCapabilities,
+): Promise<boolean> {
+  if (!profileId) return false;
+  // A malformed id (a template saved before the route checked it) is unusable, never a `22P02`.
+  return !can.analyze || !UUID_RE.test(profileId)
+    || await preflightAnalysisProfile(profileId, scope.tenantId, scope.accountId, 'agency') !== null;
+}
+
+/**
+ * What is wrong with an account template's numbers now: `'carrier'` when its carrier is gone (the
+ * section falls back to built-in), the numbers the account can no longer use, or null when all is well.
+ */
+async function numbersUnavailable(
+  scope: TemplateAccountScope,
+  numbers: ResolvedTemplateSections['sections']['numbers'],
+): Promise<'carrier' | { dropped: string[] } | null> {
+  const credentialId = numbers.telephony_credential_id;
+  if (credentialId) {
+    const credential = await telephonyCredentialRepository.findById(credentialId);
+    if (!credential || credential.tenant_id !== scope.tenantId
+      || credential.provider !== numbers.telephony_provider || credential.status !== 'active') {
+      return 'carrier';
+    }
+  }
+  const usable = new Set(credentialId
+    ? await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
+      scope.tenantId, scope.accountId, credentialId, numbers.caller_ids)
+    : (await tenantPhoneAssignmentRepository.findAvailableForAccount(scope.tenantId, scope.accountId))
+      .filter((n) => n.telephony_credential_id === null)
+      .map((n) => n.phone_number));
+  const dropped = numbers.caller_ids.filter((n) => !usable.has(n));
+  return dropped.length > 0 ? { dropped } : null;
+}
+
 /** The server's notes (module note), applied in place to a copy of the domain's answer. */
 async function withServerNotes(
   scope: TemplateAccountScope,
@@ -207,44 +245,23 @@ async function withServerNotes(
   const sources = { ...resolved.sources };
   const notes: AgencyCampaignTemplateNote[] = [...resolved.notes];
 
-  const profileId = sections.recording.analysis_profile_id;
-  if (profileId) {
-    // A malformed id (a template saved before the route checked it) is unusable, never a `22P02`.
-    const refused = !can.analyze || !UUID_RE.test(profileId)
-      || await preflightAnalysisProfile(profileId, scope.tenantId, scope.accountId, 'agency') !== null;
-    if (refused) {
-      sections.recording.analysis_profile_id = null;
-      notes.push({ code: 'analysis_profile_unavailable', section: 'recording' });
-    }
+  // The profile's note and the numbers' note read independent rows: read them together, apply in order.
+  const [profileRefused, numbersNote] = await Promise.all([
+    profileUnavailable(scope, sections.recording.analysis_profile_id, can),
+    // Only numbers an account template set (it names at least one): the built-in pool is empty.
+    sources.numbers === 'account' ? numbersUnavailable(scope, sections.numbers) : null,
+  ]);
+  if (profileRefused) {
+    sections.recording.analysis_profile_id = null;
+    notes.push({ code: 'analysis_profile_unavailable', section: 'recording' });
   }
-
-  // Only numbers an account template set (it names at least one): the built-in pool is empty.
-  if (sources.numbers === 'account') {
-    const numbers = sections.numbers;
-    const credentialId = numbers.telephony_credential_id;
-    let carrierGone = false;
-    if (credentialId) {
-      const credential = await telephonyCredentialRepository.findById(credentialId);
-      carrierGone = !credential || credential.tenant_id !== scope.tenantId
-        || credential.provider !== numbers.telephony_provider || credential.status !== 'active';
-    }
-    if (carrierGone) {
-      sections.numbers = structuredClone(builtinTemplateSections().numbers);
-      sources.numbers = 'builtin';
-      notes.push({ code: 'carrier_unavailable', section: 'numbers' });
-    } else {
-      const usable = new Set(credentialId
-        ? await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
-          scope.tenantId, scope.accountId, credentialId, numbers.caller_ids)
-        : (await tenantPhoneAssignmentRepository.findAvailableForAccount(scope.tenantId, scope.accountId))
-          .filter((n) => n.telephony_credential_id === null)
-          .map((n) => n.phone_number));
-      const dropped = numbers.caller_ids.filter((n) => !usable.has(n));
-      if (dropped.length > 0) {
-        numbers.caller_ids = numbers.caller_ids.filter((n) => usable.has(n));
-        notes.push({ code: 'numbers_unavailable', section: 'numbers', numbers: dropped });
-      }
-    }
+  if (numbersNote === 'carrier') {
+    sections.numbers = structuredClone(builtinTemplateSections().numbers);
+    sources.numbers = 'builtin';
+    notes.push({ code: 'carrier_unavailable', section: 'numbers' });
+  } else if (numbersNote) {
+    sections.numbers.caller_ids = sections.numbers.caller_ids.filter((n) => !numbersNote.dropped.includes(n));
+    notes.push({ code: 'numbers_unavailable', section: 'numbers', numbers: numbersNote.dropped });
   }
 
   return { config: configOfSections(sections), sections, sources, notes };

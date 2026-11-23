@@ -37,7 +37,7 @@ import {
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { withBuiltinFields } from '@magick-agency/domain/campaign-templates';
+import { sectionOfPath, withBuiltinFields } from '@magick-agency/domain/campaign-templates';
 import { visibleNameSchema } from '../../validators/account.validator.js';
 import { validateAgencyCampaignConfig as validatePublicConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS, validateAgencyCampaignConfig as validateStoredConfig } from '../../../agency/campaign-config.js';
@@ -48,12 +48,6 @@ import { storedSettingValues } from '../../../agency/campaign-stored-values.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 
 const SECTION_KEYS: ReadonlySet<string> = new Set(AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS);
-
-/** Each campaign field a section holds → that section. */
-const SECTION_OF_FIELD: ReadonlyMap<string, AgencyCampaignTemplateSectionKey> = new Map(
-  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((key) =>
-    (AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[]).map((field) => [field, key] as const)),
-);
 
 const uuid = z.string().regex(UUID_RE, 'must be an id');
 
@@ -123,16 +117,6 @@ export const effectiveQuerySchema = z.object({
   template_id: z.string().optional(),
 }).strip();
 
-/** A zod error as `{ path: message }` (the first message per path), the template refusals' `details`. */
-export function zodDetails(error: z.ZodError): Record<string, string> {
-  const details: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const path = issue.path.length > 0 ? issue.path.join('.') : 'body';
-    if (!(path in details)) details[path] = issue.message;
-  }
-  return details;
-}
-
 /** The sections' keys and fields (module note): `{ 'sections.<key>[.<field>]': message }`, empty when well-formed. */
 export function sectionsShapeIssues(sections: Record<string, Record<string, unknown>>): Record<string, string> {
   const details: Record<string, string> = {};
@@ -153,11 +137,6 @@ export function sectionsShapeIssues(sections: Record<string, Record<string, unkn
 export interface SectionIssues {
   sections: AgencyCampaignTemplateSectionKey[];
   details: Record<string, string>;
-}
-
-/** The section a campaign field path (`calling_window_end`, `disposition_catalog[2].code`) belongs to. */
-export function sectionOfPath(path: string): AgencyCampaignTemplateSectionKey | null {
-  return SECTION_OF_FIELD.get(path.split(/[.[]/)[0]!) ?? null;
 }
 
 function issuesOf(details: Record<string, string>): SectionIssues | null {

@@ -1,6 +1,7 @@
 import type { AgencyAttemptOutcome } from '../../../types/agency';
 import type { AgencyInsightsRoster } from '../../../types/agency-insights';
 import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/agency-spine';
+import { campaignCallLogPath } from '../callLog';
 
 /**
  * Every drill-down link on the Insights tab: a number opens the list whose rows
@@ -128,7 +129,7 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
  * (`calls.inbound.open_follow_ups`), so the list's count is the number clicked.
  */
 export function toFollowUpLink(campaignId: string): string {
-  return `${campaignBase(campaignId)}/attempts?type=to_follow_up`;
+  return campaignCallLogPath(campaignId, 'to_follow_up');
 }
 
 /** The campaign's Agents tab. */

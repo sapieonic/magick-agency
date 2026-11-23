@@ -29,7 +29,8 @@ import {
   versionSummaryToWire,
   versionToWire,
 } from './shared.js';
-import { effectiveQuerySchema, listQuerySchema, versionsQuerySchema, zodDetails } from './validate.js';
+import { effectiveQuerySchema, listQuerySchema, versionsQuerySchema } from './validate.js';
+import { zodDetails } from '../../../utils/zod-details.js';
 
 export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): Promise<void> {
   const read = templateGuards('agency.campaigns.write');
@@ -37,7 +38,7 @@ export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): 
   // ── GET /campaign-templates[?archived=true] ─────────────────────────────────
   app.get('/campaign-templates', read, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     const reader = readerOf(request);
     const rows = await agencyCampaignTemplateRepository.list(reader, { archived: parsed.data.archived === 'true' });
     const [names, templates] = await Promise.all([namesFor(rows, reader.tenantId), basedOnFor(reader, rows)]);
@@ -52,7 +53,7 @@ export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): 
     const accountId = accountOrRefuse(request.accountId, reply);
     if (!accountId) return reply;
     const parsed = effectiveQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     // Absent (or blank): the default chain. A query cannot say `null`; the built-in settings are
     // the domain's `builtinTemplateSections()`, which the console reads itself.
     let templateId: string | undefined;
@@ -79,7 +80,7 @@ export async function registerCampaignTemplateReadRoutes(app: FastifyInstance): 
   // ── GET /campaign-templates/:id/versions ────────────────────────────────────
   app.get<{ Params: { id: string } }>('/campaign-templates/:id/versions', read, async (request, reply) => {
     const parsed = versionsQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     const id = templateIdOf(request.params.id);
     const reader = readerOf(request);
     // One page, newest first (the contract's query): never the whole history at once.

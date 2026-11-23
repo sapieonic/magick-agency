@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  pairedTime,
   CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_OPTIONS,
   callBackFact,
@@ -471,5 +472,17 @@ describe('a missed call and its call back', () => {
     expect(callLogWhatHappened(stopped)).toEqual({ text: 'Stopped: customer rang us', key: 'canceled' });
     expect(stoppedByInbound(DIAL)).toBe(false);
     expect(callLogWhatHappened(DIAL).text).toBe('Stopped by us before answer');
+  });
+});
+
+describe('pairedTime', () => {
+  it('says the clock time on the same day, the day too on another', () => {
+    expect(pairedTime('2026-11-21T15:12:00.000Z', '2026-11-21T18:00:00.000Z')).toBe('3:12 PM');
+    expect(pairedTime('2026-11-20T15:12:00.000Z', new Date('2026-11-21T18:00:00.000Z'))).toContain('20 Nov');
+  });
+
+  it('never says "NaN" when a time cannot be read', () => {
+    expect(pairedTime('not a time', 'not a time')).not.toContain('NaN');
+    expect(pairedTime('2026-11-21T15:12:00.000Z', new Date(Number.NaN))).not.toContain('NaN');
   });
 });
