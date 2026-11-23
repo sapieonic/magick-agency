@@ -133,6 +133,17 @@ async function priorsFor(contact: AgencyContactRecord, callId: string) {
 }
 
 /**
+ * What a caller of {@link loadInboundPanelContext} already holds from this same request, so the
+ * panel does not read it a second time: campaign rows (used only for the ids the call names;
+ * any other is ignored) and the account's call settings. The contact is never among them: the
+ * panel shows its state, which the request may just have changed.
+ */
+export interface InboundPanelPreloaded {
+  campaigns?: ReadonlyArray<AgencyCampaignRecord | null>;
+  requireCampaign?: RequireCampaign;
+}
+
+/**
  * Read what the panel needs beside the row (see the header). Never throws: a read that fails
  * leaves that part empty (no match shown, the built-in catalog), logged, so a caller is never
  * kept from an agent by a panel read.
@@ -140,7 +151,10 @@ async function priorsFor(contact: AgencyContactRecord, callId: string) {
 export async function loadInboundPanelContext(
   call: Pick<AgencyInboundCallRecord,
     'id' | 'tenant_id' | 'account_id' | 'route_id' | 'matched_contact_id' | 'matched_campaign_id' | 'campaign_id' | 'campaign_source'>,
-  opts: { stickyCandidates?: ReadonlyArray<{ userId: string; reason: AgencyInboundStickyReason }> } = {},
+  opts: {
+    stickyCandidates?: ReadonlyArray<{ userId: string; reason: AgencyInboundStickyReason }>;
+    preloaded?: InboundPanelPreloaded;
+  } = {},
 ): Promise<InboundPanelContext> {
   const safe = <T>(what: string, p: () => Promise<T>): Promise<T | null> => Promise.resolve().then(p).catch((err: unknown) => {
     log.warn({ err, inboundCallId: call.id, what }, 'Could not read part of an inbound call\'s panel');
@@ -148,13 +162,16 @@ export async function loadInboundPanelContext(
   });
   // The campaign the call is filed under, when it is not the match's (an unknown caller's).
   const filedId = call.campaign_id && call.campaign_id !== call.matched_campaign_id ? call.campaign_id : null;
+  const campaignRead = (what: string, id: string): AgencyCampaignRecord | Promise<AgencyCampaignRecord | null> =>
+    opts.preloaded?.campaigns?.find((held) => held?.id === id) ?? safe(what, () => agencyCampaignRepository.findById(id));
   const [route, contact, campaign, filedRead, required] = await Promise.all([
     call.route_id ? safe('route', () => agencyInboundRouteRepository.findForCall(call.tenant_id, call.route_id!)) : null,
     call.matched_contact_id ? safe('contact', () => agencyContactRepository.findById(call.matched_contact_id!)) : null,
-    call.matched_campaign_id ? safe('campaign', () => agencyCampaignRepository.findById(call.matched_campaign_id!)) : null,
-    filedId ? safe('filed campaign', () => agencyCampaignRepository.findById(filedId)) : null,
-    // Display only (the panel's "required" mark): the outcome's own check reads it again.
-    call.account_id ? safe('call settings', () => agencyCallSettingsRepository.requireCampaign(call.tenant_id, call.account_id!)) : null,
+    call.matched_campaign_id ? campaignRead('campaign', call.matched_campaign_id) : null,
+    filedId ? campaignRead('filed campaign', filedId) : null,
+    // Display only (the panel's "required" mark): the outcome's own check reads it itself.
+    opts.preloaded?.requireCampaign
+      ?? (call.account_id ? safe('call settings', () => agencyCallSettingsRepository.requireCampaign(call.tenant_id, call.account_id!)) : null),
   ]);
   const ownCampaign = campaign && campaign.tenant_id === call.tenant_id ? campaign : null;
   const filedCampaign = filedRead && filedRead.tenant_id === call.tenant_id ? filedRead : null;

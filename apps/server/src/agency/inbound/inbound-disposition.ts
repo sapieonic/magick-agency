@@ -64,6 +64,7 @@ import {
   agencyInboundRouteRepository,
   promiseDateText,
   type AgencyInboundCallRecord,
+  type RequireCampaign,
 } from '../../db/repositories/agency.repository.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 import type { AgentLiveState, AgentStateMachine } from '../agent-state-machine.js';
@@ -76,7 +77,9 @@ import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { withTimeoutOr } from '../../utils/with-timeout.js';
-import { campaignRequiredFor, inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
+import {
+  campaignRequiredFor, inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog, type InboundPanelPreloaded,
+} from './inbound-call-wire.js';
 import { findTaggableCampaign, listTaggableCampaigns } from '../softphone/taggable-campaign.js';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
@@ -156,15 +159,19 @@ export class InboundCallService {
     return session?.agent_user_id ?? null;
   }
 
-  /** The panel row of `call`, as the station frames send it. */
-  async wire(call: AgencyInboundCallRecord, takerUserId?: string | null): Promise<AgencyInboundCall> {
+  /** The panel row of `call`, as the station frames send it. `preloaded`: what this request already read. */
+  async wire(call: AgencyInboundCallRecord, takerUserId?: string | null, preloaded?: InboundPanelPreloaded): Promise<AgencyInboundCall> {
     const taker = takerUserId === undefined ? await this.takerOf(call) : takerUserId;
-    return inboundCallToWire(call, await loadInboundPanelContext(call), taker);
+    return inboundCallToWire(call, await loadInboundPanelContext(call, preloaded ? { preloaded } : {}), taker);
   }
 
   /** Tell the call's session (its panel follows every change). Never throws. */
-  private async sendFrame(call: AgencyInboundCallRecord, takerUserId: string | null): Promise<AgencyInboundCall> {
-    const wire = await this.wire(call, takerUserId);
+  private async sendFrame(
+    call: AgencyInboundCallRecord,
+    takerUserId: string | null,
+    preloaded?: InboundPanelPreloaded,
+  ): Promise<AgencyInboundCall> {
+    const wire = await this.wire(call, takerUserId, preloaded);
     if (call.session_id) this.deps.stations.send(call.session_id, { event: 'inbound_call', call: wire });
     return wire;
   }
@@ -258,8 +265,9 @@ export class InboundCallService {
     }
     // With the account's setting on, a call filed under no campaign takes no outcome (CL3): not
     // a replay of one already saved, and not a call that arrived before the switch (CL19).
+    let required: RequireCampaign | undefined;
     if (!filing && row.campaign_id === null && row.disposition_code === null && row.account_id !== null) {
-      const required = await agencyCallSettingsRepository.requireCampaign(row.tenant_id, row.account_id);
+      required = await agencyCallSettingsRepository.requireCampaign(row.tenant_id, row.account_id);
       if (campaignRequiredFor(row, required)) return refuse({ code: 'campaign_required' });
     }
     // The campaign whose catalog applies when the caller is on no list: the one being filed, else
@@ -397,7 +405,10 @@ export class InboundCallService {
     if ('refusal' in saved) return refuse(saved.refusal);
 
     if (!saved.replay) await this.returnAgent(saved.call);
-    const call = await this.sendFrame(saved.call, found.takerUserId);
+    // The panel's rebuild reads the campaigns and the call settings held above, not a second time.
+    const call = await this.sendFrame(saved.call, found.takerUserId, {
+      campaigns: [campaign, filedRead], ...(required ? { requireCampaign: required } : {}),
+    });
     return {
       ok: true,
       onBehalf: found.onBehalf,
@@ -457,7 +468,7 @@ export class InboundCallService {
     });
     if (!filed) return refuse({ code: 'inbound_outcome_already_saved' });
     return {
-      ok: true, call: await this.sendFrame(filed, found.takerUserId), onBehalf: found.onBehalf,
+      ok: true, call: await this.sendFrame(filed, found.takerUserId, { campaigns: [chosen.campaign] }), onBehalf: found.onBehalf,
       changed: true, fromCampaignId: row.campaign_id,
     };
   }
