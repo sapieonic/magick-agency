@@ -86,6 +86,13 @@ import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/aba
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import type { AgencyCampaignTemplateSectionSource } from '@magick-agency/contracts/api/agency/campaign-templates';
+import { SOURCE_CHIP_LABELS, sectionSummary, wrapupSummary } from '../../../utils/agency/campaignTemplates/templateCopy';
+import { useBuilderTemplate } from '../../../components/agency/campaignTemplates/useBuilderTemplate';
+import { StartFromPanel } from '../../../components/agency/campaignTemplates/StartFromPanel';
+import { ReviewScriptFix } from '../../../components/agency/campaignTemplates/ReviewScriptFix';
+import templateStyles from '../../../components/agency/campaignTemplates/CampaignTemplates.module.css';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -263,6 +270,46 @@ export default function CampaignBuilderPage() {
   // `undefined` is dropped from the JSON body, so the server's default applies.
   const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
 
+  /*
+    Campaign templates (`docs/campaign-templates.md` §7). With the flag on and the right to create
+    campaigns, the form opens filled in from the account's default chain and "Start from" switches
+    it; the create names the template (`template_id`, CT8). With the flag off, or either read
+    failing, nothing of it runs and the page is as it was before templates.
+  */
+  const template = useBuilderTemplate({
+    campaignId,
+    config,
+    recording,
+    callerIds,
+    chosenCarrier,
+    carrier,
+    recordingEnabled,
+    analyticsEnabled,
+    assignmentEnabled,
+    apply: (next, how) => {
+      if (next.config) setConfig(next.config);
+      // The flag and the call summary profile together: the template's recording section (CT5).
+      if (next.recording) setRecording(next.recording);
+      if (next.callerIds) setCallerIds(next.callerIds);
+      if ('chosenCarrier' in next) setChosenCarrier(next.chosenCarrier ?? null);
+      if (how.outcomes) setCatalogEpoch((n) => n + 1);
+      setConfigSaved(false);
+      const baseline = how.baseline;
+      if (baseline) {
+        initialDispositionOrderRef.current = baseline.config.dispositions.map((d) => d.code);
+        // Before a draft exists, what the template fills in is the starting point, not an edit.
+        setSavedForm((saved) => ({
+          ...saved,
+          callerIds: baseline.callerIds,
+          carrier: baseline.chosenCarrier,
+          recording: baseline.recording,
+          config: baseline.config,
+        }));
+      }
+    },
+    onReadFailed: (message) => setError(message),
+  });
+
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
     if (campaignId) return campaignId;
@@ -281,6 +328,7 @@ export default function CampaignBuilderPage() {
           telephony_provider: carrier.telephony_provider,
           telephony_credential_id: carrier.telephony_credential_id,
           abandonment_ceiling_pct: ceilingForCreate,
+          ...template.createFields,
         },
         tenantId ?? undefined,
         accountId ?? undefined,
@@ -291,11 +339,12 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    template.draft.created();
     serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
     // The draft has the basics now; the rest is saved by Save campaign.
     setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
-  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft, tenantId, accountId]);
 
   const {
     limits,
@@ -337,7 +386,8 @@ export default function CampaignBuilderPage() {
       if (display.facts) {
         await updateAgencyCampaign(
           id,
-          { context_display: display } as never,
+          // A template's script that uses keys this card lacks is held back (CTC10): Review says so.
+          { context_display: display, ...template.draft.cardFields(display) } as never,
           tenantId ?? undefined,
           accountId ?? undefined,
         );
@@ -382,12 +432,14 @@ export default function CampaignBuilderPage() {
       const sendName = server === null || trimmedName !== server.name;
       const sendCarrier = server === null || !sameCarrier(carrier, server.carrier);
       const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
+      const scriptFields = template.draft.saveFields();
       try {
         await updateAgencyCampaign(
           id,
           {
             ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
             ...recordingFields,
+            ...scriptFields,
             ...(sendName ? { name: trimmedName } : {}),
             ...(sendCallerIds ? { caller_ids: callerIds } : {}),
             ...(sendCarrier
@@ -405,6 +457,7 @@ export default function CampaignBuilderPage() {
         throw withCarrierRefusalCopy(err);
       }
       serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
+      template.draft.saved(scriptFields);
       setConfigSaved(true);
       setSavedOnce(true);
       setSavedForm({ name, callerIds, carrier: chosenCarrier, recording, config });
@@ -478,7 +531,7 @@ export default function CampaignBuilderPage() {
     }
   }, [
     config, recording, recordingEnabled, analyticsEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
-    name, callerIds, carrier, chosenCarrier, goToFinding,
+    name, callerIds, carrier, chosenCarrier, goToFinding, template.draft,
   ]);
 
   const backToMapping = useCallback(() => {
@@ -582,7 +635,9 @@ export default function CampaignBuilderPage() {
   const settingsChanged = changedSettings(
     { ...savedForm, carrier: savedForm.carrier ?? carrier },
     { name, callerIds, carrier, recording, config },
-  ).length > 0;
+  ).length > 0
+    // A script changed on Review that the draft does not hold yet (CTC10).
+    || (campaignId !== null && template.draft.saveFields().agent_script !== undefined);
   const unsaved = settingsChanged || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
   const leaveGuard = useUnsavedChangesGuard(unsaved);
 
@@ -612,7 +667,7 @@ export default function CampaignBuilderPage() {
     rowFindings.has(row) ? goToFinding(target) : goTo(target);
 
   const continueDisabled = step === 'basics' && basicsBlock !== null;
-  const saveDisabled = savingConfig || configBlock || !basicsReady;
+  const saveDisabled = savingConfig || configBlock || !basicsReady || template.scriptBlocked;
 
   return (
     <div className={styles.page}>
@@ -622,6 +677,8 @@ export default function CampaignBuilderPage() {
           Set up one thing at a time. You can jump back to any finished step.
         </p>
       </header>
+
+      {template.panel ? <StartFromPanel {...template.panel} /> : null}
 
       <BuilderStepper
         current={step}
@@ -983,6 +1040,7 @@ export default function CampaignBuilderPage() {
                     }
                     errors={rowFindings.get('callFrom')}
                     onEdit={editRow('callFrom', 'basics')}
+                    {...template.sourceProps('numbers')}
                   />
                   <ReviewRow
                     label="Contacts"
@@ -999,32 +1057,38 @@ export default function CampaignBuilderPage() {
                     value={callingWindowEcho(config.window)}
                     errors={rowFindings.get('hours')}
                     onEdit={editRow('hours', 'hours')}
+                    {...template.sourceProps('hours')}
                   />
                   <ReviewRow
                     label="Outcomes"
                     value={config.dispositions.map((entry) => entry.label || entry.code).join(', ')}
                     errors={rowFindings.get('outcomes')}
                     onEdit={editRow('outcomes', 'behaviour')}
+                    {...template.sourceProps('outcomes')}
                   />
+                  {/* Part of the Outcomes section: its chip, and Outcomes' Reset puts both back (N8). */}
                   <ReviewRow
                     label="Unanswered calls"
                     value={outcomeDispositionsSummary(config.outcomeDispositions, config.dispositions)}
                     errors={rowFindings.get('unanswered')}
                     onEdit={editRow('unanswered', 'behaviour')}
+                    source={template.sourceProps('outcomes').source}
+                    note={template.startFrom ? 'Goes with Outcomes: Reset there puts both back.' : undefined}
                   />
+                  {template.startFrom ? (
+                    <ReviewRow
+                      label="Retries"
+                      value={sectionSummary('retries', template.builderFields ?? {})}
+                      onEdit={() => goTo('behaviour')}
+                      {...template.sourceProps('retries')}
+                    />
+                  ) : null}
                   <ReviewRow
                     label="Wrap-up"
-                    value={`${
-                      config.wrapupSeconds === 0
-                        ? 'None — agents go straight back to available.'
-                        : `${config.wrapupSeconds}s${
-                            config.autoReturn
-                              ? ', then agents return on their own'
-                              : ', then agents mark themselves ready'
-                          }`
-                    }${config.allowWrapupRedial ? ' · Redial from wrap-up allowed' : ''}`}
+                    value={wrapupSummary(config.wrapupSeconds, config.autoReturn, config.allowWrapupRedial)}
                     errors={rowFindings.get('wrapup')}
                     onEdit={editRow('wrapup', 'behaviour')}
+                    {...template.sourceProps('wrapup')}
                   />
                   {assignmentEnabled ? (
                     <ReviewRow
@@ -1036,6 +1100,7 @@ export default function CampaignBuilderPage() {
                       }`}
                       errors={rowFindings.get('assignment')}
                       onEdit={editRow('assignment', 'behaviour')}
+                      {...template.sourceProps('assignment')}
                     />
                   ) : null}
                   <ReviewRow
@@ -1044,12 +1109,14 @@ export default function CampaignBuilderPage() {
                     warning={ceilingAboveReference(config.abandonmentCeilingPct)}
                     errors={rowFindings.get('abandonment')}
                     onEdit={editRow('abandonment', 'behaviour')}
+                    {...template.sourceProps('safety')}
                   />
                   <ReviewRow
                     label="Recording"
                     value={recording.record ? 'Every call is recorded' : 'Off'}
                     errors={rowFindings.get('recording')}
                     onEdit={editRow('recording', 'behaviour')}
+                    {...template.sourceProps('recording')}
                   />
                   {analyticsEnabled ? (
                     <ReviewRow
@@ -1061,7 +1128,24 @@ export default function CampaignBuilderPage() {
                       }
                       errors={rowFindings.get('summary')}
                       onEdit={editRow('summary', 'behaviour')}
+                      {...template.sourceProps('recording')}
                     />
+                  ) : null}
+                  {template.builderFields ? (
+                    <>
+                      {inboundEnabled ? (
+                        <ReviewRow
+                          label="Customers who ring in"
+                          value={sectionSummary('inbound', template.builderFields)}
+                          onEdit={() => goTo('behaviour')}
+                          {...template.sourceProps('inbound')}
+                        />
+                      ) : null}
+                      {/* Not edited in New campaign: as the template fills them in; change them in the campaign's Settings. */}
+                      <ReviewRow label="Breaks" value={sectionSummary('breaks', template.builderFields)} {...template.sourceProps('breaks')} />
+                      <ReviewRow label="What agents see" value={sectionSummary('agent_screen', template.builderFields)} {...template.sourceProps('agent_screen')} />
+                      {template.script ? <ReviewScriptFix script={template.script} /> : null}
+                    </>
                   ) : null}
                   <p className={styles.reviewNote}>
                     Saving creates a draft. Nothing is dialled until you open the campaign and start it.
@@ -1133,6 +1217,11 @@ export default function CampaignBuilderPage() {
                 ) : null}
               </span>
             ) : null}
+            {template.scriptBlocked && !blockCopy ? (
+              <span className={styles.blockReason} data-testid="script-block">
+                Change the script on Review before you save.
+              </span>
+            ) : null}
             {configSaved ? (
               <span className={styles.saved} role="status">
                 Saved.
@@ -1164,6 +1253,14 @@ export default function CampaignBuilderPage() {
       </div>
 
       <LeaveUnsavedDialog guard={leaveGuard} message={leaveMessage} />
+      <ConfirmDialog
+        open={template.confirm.open}
+        title="Replace your changes?"
+        message={template.confirm.message}
+        confirmLabel="Start from it"
+        onConfirm={template.confirm.onConfirm}
+        onCancel={template.confirm.onCancel}
+      />
     </div>
   );
 }
@@ -1178,12 +1275,22 @@ function ReviewRow({
   warning = false,
   errors,
   onEdit,
+  source,
+  onReset,
+  note,
 }: {
   label: string;
   value: string;
+  /** A line under the value: how the row goes with another. */
+  note?: string;
   warning?: boolean;
   errors?: readonly string[];
-  onEdit: () => void;
+  /** Absent: the setting is not edited in New campaign (it is the template's). */
+  onEdit?: () => void;
+  /** Where the section came from (campaign templates); absent without templates. */
+  source?: AgencyCampaignTemplateSectionSource | null;
+  /** Put the section back as the template filled it in; offered once it is changed. */
+  onReset?: () => void;
 }) {
   const errorsId = useId();
   const fixing = errors !== undefined && errors.length > 0;
@@ -1194,8 +1301,19 @@ function ReviewRow({
       data-invalid={fixing || undefined}
     >
       <div className={styles.reviewText}>
-        <p className={styles.reviewLabel}>{label}</p>
+        <p className={styles.reviewLabel}>
+          {label}
+          {source ? (
+            <>
+              {' '}
+              <span className={templateStyles.source} data-source={source} data-testid={`review-source-${label}`}>
+                {SOURCE_CHIP_LABELS[source]}
+              </span>
+            </>
+          ) : null}
+        </p>
         <p className={styles.reviewValue}>{value}</p>
+        {note ? <p className={styles.reviewValue} data-testid={`review-note-${label}`}>{note}</p> : null}
         {fixing ? (
           <ul className={styles.reviewErrors} id={errorsId} data-testid="review-row-errors">
             {errors.map((line, index) => (
@@ -1204,15 +1322,22 @@ function ReviewRow({
           </ul>
         ) : null}
       </div>
-      <button
-        type="button"
-        className={fixing ? 'btn-primary' : 'btn-secondary'}
-        onClick={onEdit}
-        aria-label={`${fixing ? 'Fix' : 'Edit'} ${label}`}
-        aria-describedby={fixing ? errorsId : undefined}
-      >
-        {fixing ? 'Fix' : 'Edit'}
-      </button>
+      {source === 'campaign' && onReset ? (
+        <button type="button" className="btn-secondary" onClick={onReset} aria-label={`Reset ${label} to the template`}>
+          Reset
+        </button>
+      ) : null}
+      {onEdit ? (
+        <button
+          type="button"
+          className={fixing ? 'btn-primary' : 'btn-secondary'}
+          onClick={onEdit}
+          aria-label={`${fixing ? 'Fix' : 'Edit'} ${label}`}
+          aria-describedby={fixing ? errorsId : undefined}
+        >
+          {fixing ? 'Fix' : 'Edit'}
+        </button>
+      ) : null}
     </div>
   );
 }

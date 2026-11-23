@@ -41,6 +41,12 @@ operator applies to Supabase or to the server's environment (sections 2 to 6).
 | A break over its limit (BE-12): two nullable columns with a NOT VALID CHECK on `agency_agent_session_events` | `0060_session_event_break_overrun.sql` | Catalog only, instant, no rewrite (ACCESS EXCLUSIVE on the event log for the moment it takes) |
 | The break limit column's comment corrected (no schema change: the limit as the catalog stood when the break ended) | `0061_session_event_break_limit_comment.sql` | Catalog only, instant: one `COMMENT ON COLUMN` (a brief lock on the event log) |
 | The start of a break a station drop suspended (BE-12): one nullable column on `agency_agent_sessions` | `0062_session_suspended_break.sql` | Catalog only, instant, no rewrite (ACCESS EXCLUSIVE on the sessions table for the moment it takes) |
+| Archived campaigns (AR1–AR6): `archived_at`, `archived_by_user_id` and `archived_by_name`, nullable with no default, and a validated CHECK that only a draft or stopped campaign is archived | `0063_campaign_archive.sql` | Columns catalog only, no rewrite; the CHECK reads `agency_campaigns` once to validate (a few rows per account, every value NULL). ACCESS EXCLUSIVE on `agency_campaigns` for the moment it takes |
+| Compare agents' saved views (CP1–CP18): a new table, its indexes and a partial unique index for one default per campaign | `0064_compare_views.sql` | A new, empty table; its foreign keys take SHARE ROW EXCLUSIVE on `agency_campaigns` and `tenants` until commit (a short transaction) |
+| A session's offline boundaries, for Compare agents' trend days: a partial index on `agency_agent_session_events` | `0065_session_events_offline_index.sql` | Builds 1 index on the event log; see section 2 for large tables. Fails if a pre-built one is invalid |
+| The events that ended a break over its limit, by campaign and time, for Compare agents: a partial index on `agency_agent_session_events` | `0066_session_events_break_overrun_index.sql` | Builds 1 index on the event log; see section 2 for large tables. Fails if a pre-built one is invalid |
+| Campaign templates (CT1–CT23): two new tables (templates and their versions) with a partial unique index for one live default per scope and a scope index, and `agency_campaigns.template_source`, nullable JSONB with no default | `0067_campaign_templates.sql` | New, empty tables; the column is catalog only, no rewrite (ACCESS EXCLUSIVE on `agency_campaigns` for the moment it takes). Versions are never purged: each save keeps a copy of at most 256 KiB |
+| A scope's archived campaign templates, for the Archived list (CT14): a partial index on `agency_campaign_templates`, the twin of 0067's live scope index | `0068_campaign_templates_archived_index.sql` | Builds 1 index on a small table (a few templates per account): SHARE on `agency_campaign_templates` until commit, reads go on, template writes wait. Fails if a pre-built one is invalid |
 | `SET LOCAL lock_timeout = '10s'` in each new migration | each migration file above | A migration blocked by a lock fails in 10 s instead of hanging the deploy (section 6 says what to do then) |
 | Every connection carries an `application_name` (`magick-agency-server`, `-media<N>`, `-analysis<N>`, `-migrate`, `-cli`), sent at connect and set again as SQL | `packages/db/src/connection.ts`, `apps/server/src/db-session.ts` | `pg_stat_activity` shows which process holds each connection |
 | TCP keepalive on pool connections, first probe after 30 s idle | `packages/db/src/connection.ts` | A connection dropped on the network path is found dead in minutes instead of hours |
@@ -94,13 +100,18 @@ node-pg-migrate runs each SQL file in a transaction. `0045_promise_contacts_inde
 be built this way (its column is 0041's, in the same release); its build writes an empty index.
 Neither can `0058_contact_callback_booker_index.sql`'s (its column is 0057's, in the same release):
 on the release that adds them its build writes an empty index after one read of `agency_contacts`.
+If `agency_agent_session_events` holds more than about a million rows, build
+`0065_session_events_offline_index.sql`'s and `0066_session_events_break_overrun_index.sql`'s
+indexes beforehand the same way: each holds a sliver of the event log, but each build reads it
+whole while state changes wait.
 
 Check the sizes first (Supabase SQL editor):
 
 ```sql
 SELECT relname, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS size
   FROM pg_stat_user_tables
- WHERE relname IN ('agency_calls', 'agency_inbound_calls', 'agency_call_attempts', 'agency_manual_calls')
+ WHERE relname IN ('agency_calls', 'agency_inbound_calls', 'agency_call_attempts', 'agency_manual_calls',
+                   'agency_agent_session_events')
  ORDER BY n_live_tup DESC;
 ```
 
@@ -148,6 +159,18 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_inbound_calls_promise_written
   WHERE promise_date IS NOT NULL;
 ```
 
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_session_events_offline
+  ON agency_agent_session_events (session_id, at)
+  WHERE to_state = 'offline' OR from_state = 'offline';
+```
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_session_events_break_overrun
+  ON agency_agent_session_events (campaign_id, at)
+  WHERE break_overrun_seconds IS NOT NULL;
+```
+
 Check what was built. `IF NOT EXISTS` checks the name only, so the definitions must match the
 migration exactly, and a build that was cancelled or failed leaves an **invalid** index under the
 name (the migration refuses to run on one):
@@ -157,12 +180,14 @@ SELECT c.relname, i.indisvalid, pg_get_indexdef(i.indexrelid) AS definition
   FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
  WHERE c.relname IN ('idx_agency_calls_transcript_pending', 'idx_agency_inbound_calls_voicemail',
                      'idx_agency_calls_recording_unrequested', 'idx_agency_attempts_promise_written',
-                     'idx_agency_manual_calls_promise_written', 'idx_agency_inbound_calls_promise_written');
+                     'idx_agency_manual_calls_promise_written', 'idx_agency_inbound_calls_promise_written',
+                     'idx_agency_session_events_offline', 'idx_agency_session_events_break_overrun');
 ```
 
 Every `indisvalid` must be `t`, and each definition must read as in
-`packages/db/migrations/0039_retention_purge_indexes.sql`, `0046_unrequested_recordings_index.sql` or
-`0050_promise_summary_indexes.sql`
+`packages/db/migrations/0039_retention_purge_indexes.sql`, `0046_unrequested_recordings_index.sql`,
+`0050_promise_summary_indexes.sql`, `0065_session_events_offline_index.sql` or
+`0066_session_events_break_overrun_index.sql`
 (Postgres adds `public.`, `USING btree` and brackets). For a wrong or invalid one: `DROP INDEX CONCURRENTLY <name>;` and build it again.
 
 As before every release with a migration, take a dump or a provider snapshot first

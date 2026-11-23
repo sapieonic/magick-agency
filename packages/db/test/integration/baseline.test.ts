@@ -85,6 +85,8 @@ const EXPECTED_TABLES = [
   'agency_supervisor_messages',
   // Compare agents' saved views (0064, docs/compare-agents.md)
   'agency_compare_views',
+  // campaign templates and their versions (0067, docs/campaign-templates.md)
+  'agency_campaign_templates', 'agency_campaign_template_versions',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [

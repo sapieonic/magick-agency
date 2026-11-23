@@ -3044,6 +3044,90 @@
       "source": "apps/console/src/api/listenHistory.ts",
       "status": "served",
       "reason": "listening history route (docs/listening.md §12, LS19): the history as CSV with the page's filters, numbers masked, audited (agency.supervise, the agency_live_listen_enabled flag)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaign-templates",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: the list"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaign-templates/effective",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: New campaign's filled-in form"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaign-templates/:id",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: one template"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaign-templates/:id/versions",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: the history"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaign-templates/:id/versions/:n",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: one saved state"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaign-templates",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: create"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/agency/campaign-templates/:id",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: replace"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaign-templates/:id/default",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: make the default"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/campaign-templates/:id/default",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: no default"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaign-templates/:id/archive",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: archive"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaign-templates/:id/restore",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: restore"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaign-templates/:id/apply",
+      "source": "apps/console/src/api/campaignTemplates.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); campaign templates: apply to draft campaigns, CT16"
     }
   ]
 }

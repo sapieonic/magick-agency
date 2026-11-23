@@ -2,18 +2,22 @@
  * The summary's `settings` block: the campaign row as the page shows it. Part of
  * `src/agency/insights/` (docs/insights.md "API").
  */
-import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
+import { AGENCY_CAMPAIGN_COLUMN_DEFAULTS, AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 import type { AgencyInsightsSettings } from '@magick-agency/contracts/api/agency/insights';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { DEFAULT_RETRY_POLICY } from '../retry-policy.js';
 import { grantsOverride } from './shared.js';
 
 /**
- * The calling-hours column defaults (0001: `calling_window_start` 09:00, `calling_window_end`
- * 20:00, `calling_days` `{1,2,3,4,5}`). A campaign still on all three has never had its hours set:
- * the launch checklist warns (decision IN7) and `calling_hours_default` is true.
+ * The calling-hours column defaults (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS`: 09:00 to 20:00, Monday to
+ * Friday), as `HH:MM`. A campaign still on all three has never had its hours set: the launch
+ * checklist warns (decision IN7) and `calling_hours_default` is true.
  */
-export const CALLING_HOURS_DEFAULT = { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5] } as const;
+export const CALLING_HOURS_DEFAULT = {
+  start: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start.slice(0, 5),
+  end: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end.slice(0, 5),
+  days: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_days,
+} as const;
 
 /** `HH:MM` of a Postgres `TIME` (`09:00:00`), `24:00` kept. */
 export function hhmm(time: string): string {

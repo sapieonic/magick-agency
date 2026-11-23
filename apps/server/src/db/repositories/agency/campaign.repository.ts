@@ -14,6 +14,12 @@ import {
   type AgencyCampaignRecord,
   type CarrierAccountPauseReason,
 } from '../../models/agency.model.js';
+import {
+  AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
+  AGENCY_CONTACT_ASSIGNMENT_DEFAULTS,
+  AGENCY_PHONE_DISPLAY_DEFAULT,
+} from '@magick-agency/contracts/agency';
+import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 import type {
   AgencyAssignmentMode,
   AgencyPhoneDisplay,
@@ -167,62 +173,56 @@ export class AgencyCampaignRepository {
     phone_display?: AgencyPhoneDisplay;
     /** Agent station (0056, BE-8), already normalised (`normalizeAgentScript`). Omitted ⇒ `{}`, no script. */
     agent_script?: unknown;
+    /** Campaign templates (0067, CT9): the template it was made from. Omitted or null ⇒ NULL, made without one. */
+    template_source?: AgencyCampaignTemplateSource | null;
   }): Promise<AgencyCampaignRecord> {
-    // ── Every placeholder inside a COALESCE must carry its column's type ───────
+    // ── Every placeholder carries its column's type ──────────────────────────────
     //
-    // A bare `$n` in `VALUES (...)` gets its type from the target column, which is
-    // why `$1`/`$4`/`$6`/`$18`/`$20` need no help. A `$n` inside `COALESCE(...)`
-    // does NOT: COALESCE resolves its own result type from its arguments alone,
-    // and an untyped placeholder beside an untyped quoted literal makes both
-    // `text`. Postgres then refuses to assign `text` to any column it has no
-    // assignment cast to — which is exactly the 42804 that made campaign creation
-    // fail outright in 1.73.1 on `calling_window_start`:
-    //
-    //   column "calling_window_start" is of type time without time zone
-    //   but expression is of type text
-    //
-    // `calling_window_end` (TIME) and `calling_days` (SMALLINT[]) are the same
-    // defect; the error only ever named the first column Postgres reached. The
-    // other COALESCEd parameters are safe for a reason, not by luck: `$5`/`$10`
-    // target VARCHAR (text→varchar is assignment-castable), `$11`/`$12`/`$17` sit
-    // beside `30`/`true`/`false` which are already-typed literals that pull the
-    // placeholder to integer/boolean, and `$13`–`$16` carry an explicit `::jsonb`
-    // on the whole expression. `$21` (`allow_wrapup_redial`) sits beside `false`
-    // for the same reason. `$22`–`$28` (the 0009 assignment settings) each carry
-    // their column's type on the placeholder, which is the safe spelling whatever
-    // the literal beside it. `update()` is unaffected throughout: it writes
+    // A `$n` inside `COALESCE(...)` gets no type from the target column: COALESCE
+    // resolves its own result type from its arguments alone, and an untyped
+    // placeholder beside an untyped quoted literal makes both `text`, which Postgres
+    // will not assign to a TIME or SMALLINT[] column. That 42804 made campaign
+    // creation fail outright in 1.73.1 on `calling_window_start`. So every setting's
+    // placeholder is cast to its column's type, COALESCEd or not, which is the safe
+    // spelling whatever surrounds it. `update()` is unaffected: it writes
     // `col = $n`, so the column supplies the type.
     //
-    // NOTE (drift): the defaults below duplicate the schema's column defaults,
-    // and `CAMPAIGN_CONFIG_COLUMN_DEFAULTS` in `src/agency/campaign-config.ts`
-    // duplicates them a third time. Omitting the NULL columns from the INSERT
-    // entirely and letting the DB defaults apply would collapse this copy — a
-    // worthwhile follow-up, deliberately not bundled into a production hotfix.
-    // If you change a default here, change it in the schema too.
+    // ── The defaults are the contract's, applied here in JS ─────────────────────
+    // An omitted setting is bound as its column DEFAULT from the contract's one
+    // declaration (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS`, `AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`,
+    // `AGENCY_PHONE_DISPLAY_DEFAULT`, `DEFAULT_ABANDONMENT_CEILING_PCT`), never restated
+    // as a SQL literal: campaign templates' built-in settings read the same constants,
+    // and `campaign-template-repository.test.ts` pins each one to the column DEFAULT.
+    // Each placeholder still carries its column's type. Only the JSONB columns'
+    // empty values (`'{}'`, `'[]'`) stay COALESCEd in SQL: they are "nothing", not a choice.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
-         (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls, phone_display, agent_script)
-       VALUES ($1,$2,$3,$4,COALESCE($5,'voicelink'),
-               COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
-               COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
-               COALESCE($14,'{}')::jsonb,COALESCE($15,'[]')::jsonb,COALESCE($16,false),$17,$18,
-               $19, $20, COALESCE($21,false),
-               COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
-               COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true),
-               $32::integer,COALESCE($33::varchar,'full'),COALESCE($34::jsonb,'{}'::jsonb))
+         (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls, phone_display, agent_script, template_source)
+       VALUES ($1,$2,$3,$4,$5::varchar,
+               $6::time,$7::time,$8::smallint[],$9::varchar,
+               $10::integer,$11::boolean,COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
+               COALESCE($14,'{}')::jsonb,COALESCE($15,'[]')::jsonb,$16::boolean,$17,$18,
+               $19, $20, $21::boolean,
+               $22::varchar,$23::varchar,$24::integer,
+               $25::varchar,$26::boolean,$27::smallint,
+               $28::integer,$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),$31::boolean,
+               $32::integer,$33::varchar,COALESCE($34::jsonb,'{}'::jsonb),$35::jsonb)
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
-        input.telephony_provider ?? null,
-        input.calling_window_start ?? null, input.calling_window_end ?? null,
-        input.calling_days ?? null, input.default_timezone ?? null,
-        input.wrapup_seconds ?? null, input.wrapup_auto_return ?? null,
+        input.telephony_provider ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.telephony_provider,
+        input.calling_window_start ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start,
+        input.calling_window_end ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end,
+        input.calling_days ?? [...AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_days],
+        input.default_timezone ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.default_timezone,
+        input.wrapup_seconds ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.wrapup_seconds,
+        input.wrapup_auto_return ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.wrapup_auto_return,
         input.retry_policy ? JSON.stringify(input.retry_policy) : null,
         input.disposition_catalog ? JSON.stringify(input.disposition_catalog) : null,
         input.context_display ? JSON.stringify(input.context_display) : null,
         input.break_reasons ? JSON.stringify(input.break_reasons) : null,
-        input.record_calls ?? null, input.analysis_profile_id ?? null, input.created_by ?? null,
+        input.record_calls ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.record_calls,
+        input.analysis_profile_id ?? null, input.created_by ?? null,
         input.abandon_announcement_id ?? null,
         // NOT a SQL COALESCE to a literal, unlike its neighbours above: the
         // column's DEFAULT and this fallback are the SAME constant, so the
@@ -230,25 +230,30 @@ export class AgencyCampaignRepository {
         // a third copy in SQL. `?? `, not `||`, so an explicit 0 would still
         // reach the CHECK and be refused rather than silently become 3.
         input.abandonment_ceiling_pct ?? DEFAULT_ABANDONMENT_CEILING_PCT,
-        // The column's DEFAULT (`false`, 0008), applied in SQL beside its neighbours.
-        input.allow_wrapup_redial ?? null,
-        // The 0009 column DEFAULTs (`AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`), applied in SQL.
-        input.assignment_mode ?? null, input.on_unstaff ?? null,
-        input.callback_owner_grace_minutes ?? null, input.callback_fallback ?? null,
-        input.allow_agent_retry ?? null, input.agent_retry_rounds ?? null,
-        input.agent_retry_cooldown_minutes ?? null,
+        // The column's DEFAULT (`false`, 0008).
+        input.allow_wrapup_redial ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.allow_wrapup_redial,
+        // The 0009 column DEFAULTs (`AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`).
+        input.assignment_mode ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.assignment_mode,
+        input.on_unstaff ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.on_unstaff,
+        input.callback_owner_grace_minutes ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.callback_owner_grace_minutes,
+        input.callback_fallback ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.callback_fallback,
+        input.allow_agent_retry ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.allow_agent_retry,
+        input.agent_retry_rounds ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.agent_retry_rounds,
+        input.agent_retry_cooldown_minutes ?? AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.agent_retry_cooldown_minutes,
         // The tenant carrier credential it dials on (0002); NULL = the service's own account.
         input.telephony_credential_id ?? null,
         // Automatic outcomes (0022). Omitted ⇒ `{}`, the column DEFAULT: nothing mapped.
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
         // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
-        input.inbound_sticky_enabled ?? null,
+        input.inbound_sticky_enabled ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.inbound_sticky_enabled,
         // The agent station's settings (0056): outside the shared column list, so the retry
         // create's positions do not move (it copies the parent's itself). The target NULL (none),
         // the number display `'full'` and the script `{}` (none) when omitted: the column DEFAULTs.
         input.daily_target_calls ?? null,
-        input.phone_display ?? null,
+        input.phone_display ?? AGENCY_PHONE_DISPLAY_DEFAULT,
         input.agent_script !== undefined ? JSON.stringify(input.agent_script) : null,
+        // Campaign templates (0067, CT9): the record of the template it was made from, or NULL.
+        input.template_source ? JSON.stringify(input.template_source) : null,
       ],
     );
     return rows[0]!;
@@ -530,12 +535,18 @@ export class AgencyCampaignRepository {
    * gone). For a check that must hold at the write against rows whose writers lock this
    * campaign `FOR SHARE`: the campaign PATCH's dedicated caller ID guard (DN6), which a
    * concurrent dedication PUT (`AgencyAgentCallerIdRepository.set`) either waits for or sees.
-   * Announced after the commit, as {@link update}.
+   *
+   * `recordAfter` (campaign templates, CT9): asked with the row as written, still under the lock;
+   * a non-null answer is stored as its `template_source` in the same transaction, so a settings
+   * PATCH and the record of where its sections came from commit together or not at all. The record
+   * write moves `updated_at` as every settings write does (the same instant within the
+   * transaction). Announced after the commit, as {@link update}.
    */
   async updateLocked<R>(
     id: string,
     patch: Record<string, unknown>,
     refuse: (row: AgencyCampaignRecord, client: PoolClient) => Promise<R | null>,
+    recordAfter?: (row: AgencyCampaignRecord) => Promise<AgencyCampaignTemplateSource | null>,
   ): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> {
     const outcome = await withTransaction(async (client): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> => {
       const locked = await client.query<AgencyCampaignRecord>(
@@ -545,8 +556,14 @@ export class AgencyCampaignRepository {
       const refused = await refuse(row, client);
       if (refused !== null) return { refused };
       const statement = campaignUpdateStatement(id, patch);
-      if (!statement) return { row };
-      const { rows } = await client.query<AgencyCampaignRecord>(statement.text, statement.values);
+      const written = statement ? (await client.query<AgencyCampaignRecord>(statement.text, statement.values)).rows[0] ?? null : row;
+      if (!written || !recordAfter) return { row: written };
+      const record = await recordAfter(written);
+      if (record === null) return { row: written };
+      const { rows } = await client.query<AgencyCampaignRecord>(
+        'UPDATE agency_campaigns SET template_source = $2::jsonb, updated_at = now() WHERE id = $1 RETURNING *',
+        [id, JSON.stringify(record)],
+      );
       return { row: rows[0] ?? null };
     }, { pool: getPool() });
     if ('row' in outcome) announceCampaignChanged(outcome.row);

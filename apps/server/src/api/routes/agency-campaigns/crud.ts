@@ -21,7 +21,7 @@ import type {
 // definition — see its header for why it is derived from the record rather than
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
-import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
+import { CONFIG_CHANGE_HEADER, TEMPLATE_APPLY_HEADER } from '../../middleware/headers.js';
 import { campaignConfigChange, encodeConfigChange, withCarrierAccountLabels } from '../../../agency/campaign-config-audit.js';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
@@ -33,7 +33,17 @@ import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
 import { contextColumnsRejected } from './guards.js';
 import { normalizeAgentScript } from '../../../agency/agent-script.js';
+import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
+import {
+  patchNamesSectionField,
+  templateApplyRefsOf,
+  templateSourceApplied,
+  templateSourceIssue,
+  templateSourceRecompute,
+  type TemplateSourceRefs,
+} from '../../../agency/campaign-templates/template-source.js';
+import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 
 /** Every campaign status, as a record so a status added to the type must be added here. */
@@ -134,20 +144,35 @@ export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly st
  * read after the lock, against the row as locked, and a dedication PUT (which reads the row
  * `FOR SHARE` and validates the number there) either committed before the lock, and is seen,
  * or waits and then sees the new `caller_ids`. So a number cannot be dedicated as it is
- * dropped, and never silently reactivates when it is added back. Without `caller_ids`, the
- * plain update.
+ * dropped, and never silently reactivates when it is added back.
+ *
+ * A campaign made from a template (`template_source`, CT9) has its record recomputed from the row
+ * as written, in the same transaction (`templateSourceRecompute`), when the body names a section
+ * field: a section changed away from the template reads `campaign`, one changed back reads the
+ * template's source again. Best effort: a template read that fails leaves the record, never fails
+ * the PATCH (the record is never read at run time, CT1). A body that names no section field (a
+ * rename) cannot change it and reads no template. A template's apply (CT16) names the templates it
+ * applies (`applied`): the record is switched to them in the same transaction, and a failure to read
+ * them fails the PATCH, so the settings and the record are written together or not at all. Every
+ * settings PATCH comes here, the public one and an apply alike. Without any of these, the plain
+ * update.
  */
 export async function writeCampaignPatch(
   campaign: AgencyCampaignRecord,
   body: Record<string, unknown>,
+  applied: TemplateSourceRefs | null = null,
 ): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] }> {
-  if (!('caller_ids' in body)) return { row: await agencyCampaignRepository.update(campaign.id, body) };
-  const next = body.caller_ids as string[];
+  const recordAfter = applied
+    ? await templateSourceApplied(campaign, applied)
+    : patchNamesSectionField(body) ? await templateSourceRecompute(campaign) : null;
+  if (!('caller_ids' in body) && !recordAfter) return { row: await agencyCampaignRepository.update(campaign.id, body) };
+  const next = 'caller_ids' in body ? body.caller_ids as string[] : null;
   return agencyCampaignRepository.updateLocked(campaign.id, body, async (row, client) => {
+    if (next === null) return null;
     const dedicated = await agencyAgentCallerIdRepository.mapForCampaign(row.id, client);
     const dropped = droppedDedicatedCallerIds(row, dedicated.values(), next);
     return dropped.length > 0 ? dropped : null;
-  });
+  }, ...(recordAfter ? [recordAfter] : []));
 }
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
@@ -165,7 +190,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
         ...(callerIdsError ? { caller_ids: callerIdsError } : {}),
       });
     }
-    const callerIds = (body!.caller_ids as string[]).map((id) => id.trim());
+    const callerIds = trimCallerIds(body!.caller_ids as string[]);
 
     // Before the announcement lookup: this is pure and costs no round trip, and a
     // body that is going to be refused should not spend a DB read first.
@@ -175,6 +200,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // '20:00' }` alone stores 20:00–20:00 and never dials. Validating the body in
     // isolation cannot see that, and the default path is the ordinary one.
     if (configRejected(reply, body, CAMPAIGN_CONFIG_COLUMN_DEFAULTS)) return reply;
+
+    // Campaign templates (CT9): the record of the template the public create filled the body from.
+    // Only the public layer writes it (it takes out any a client sent, `create-fill.ts`); a
+    // malformed one is refused, never stored.
+    const templateSource = body?.template_source ?? null;
+    if (templateSource !== null) {
+      const issue = templateSourceIssue(templateSource);
+      if (issue) return replyValidationFailed(reply, { template_source: issue });
+    }
 
     if (await abandonAnnouncementRejected(request, reply, body?.abandon_announcement_id)) return reply;
 
@@ -225,6 +259,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
       agent_script: body?.agent_script !== undefined ? normalizeAgentScript(body.agent_script) : undefined,
       context_display: body?.context_display,
+      // The break catalog (LF6), stored as the PATCH stores it and checked by the same rule
+      // (`validateBreakReasons`, in `configRejected` above). Omitted ⇒ `[]`: the built-in reasons.
+      break_reasons: body?.break_reasons,
+      // Campaign templates (0067, CT9): checked above; omitted ⇒ NULL, made without a template.
+      template_source: templateSource as AgencyCampaignTemplateSource | null,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,
       abandon_announcement_id: (body?.abandon_announcement_id as string | null) ?? null,
@@ -324,6 +363,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     const campaign = campaignOf(request);
 
     const body = { ...(request.body as Record<string, unknown> | undefined) };
+    // A template's apply (CT16) names the templates whose record the write stores with the settings.
+    const applied = templateApplyRefsOf(request.headers[TEMPLATE_APPLY_HEADER]);
+    if (applied === 'invalid') {
+      return replyValidationFailed(reply, { template_source: 'the applied template is not one' });
+    }
     if ('status' in body) {
       return replyValidationFailed(reply, { status: 'status is not editable — use /start, /pause, /resume or /stop' });
     }
@@ -347,7 +391,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       if (issue) {
         return replyValidationFailed(reply, { caller_ids: issue });
       }
-      body.caller_ids = (body.caller_ids as string[]).map((id) => id.trim());
+      body.caller_ids = trimCallerIds(body.caller_ids as string[]);
     }
 
     // AS19: this also checks the script's keys against the card both ways (`agentScriptIssues`,
@@ -382,7 +426,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       && await analysisProfileRejected(request, reply, body.analysis_profile_id)) return reply;
     // DN6: never drop a dedicated caller ID. Checked at the write, under the campaign row's
     // lock (`writeCampaignPatch`), so after every other refusal.
-    const written = await writeCampaignPatch(campaign, body);
+    const written = await writeCampaignPatch(campaign, body, applied);
     if ('refused' in written) return replyCallerIdDedicated(reply, written.refused);
     const updated = written.row;
     // `update` can only return null if the row vanished between the ownership

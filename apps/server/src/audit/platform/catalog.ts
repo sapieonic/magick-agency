@@ -209,6 +209,21 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // (`agency_listen_sessions`) is the record; these can be lost with the audit buffer.
   'agency_call.listen_started',
   'agency_call.listen_ended',
+  // ── Campaign templates (docs/campaign-templates.md CT9) ───────────────────────
+  // A template created, its content replaced (a new version: `details.sections_changed`, the
+  // versions `from` and `to`), archived, restored, made its scope's default (`details.replaced`,
+  // the default it took over from) or no longer the default, and applied to draft campaigns
+  // (CT16; `details.sections`, the campaigns applied and refused; each campaign's own
+  // `agency_campaign.config_changed` row is written by the PATCH path it goes through). Filed under
+  // the template (`resource_id`); an account template's under its account, an organisation
+  // template's under the tenant alone. Never campaign-scoped.
+  'campaign_template.created',
+  'campaign_template.updated',
+  'campaign_template.archived',
+  'campaign_template.restored',
+  'campaign_template.default_set',
+  'campaign_template.default_cleared',
+  'campaign_template.applied',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -263,6 +278,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_push_device',
   // One call (`agency_calls.id`), whatever its origin: a supervisor listening to it.
   'agency_call',
+  // One campaign template (`agency_campaign_templates.id`), an organisation's or an account's.
+  'campaign_template',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

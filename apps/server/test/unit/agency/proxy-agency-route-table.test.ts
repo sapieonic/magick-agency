@@ -454,3 +454,56 @@ describe('every agent action route carries its RBAC permission', () => {
     expect(registrations).toHaveLength(EXPECTED.length);
   });
 });
+
+// ── Campaign templates (docs/campaign-templates.md §6) ──────────────────────
+
+/**
+ * The campaign template plugin's registered surface (`proxy-agency-campaign-templates.routes.ts`),
+ * from Fastify's router, and `effective`, a static segment beside the `:id`-terminal read, routed
+ * as itself and never taken for a template id.
+ */
+const EXPECTED_TEMPLATE_ROUTES = [
+  'DELETE /proxy/agency/campaign-templates/:id/default',
+  'GET /proxy/agency/campaign-templates',
+  'GET /proxy/agency/campaign-templates/:id',
+  'GET /proxy/agency/campaign-templates/:id/versions',
+  'GET /proxy/agency/campaign-templates/:id/versions/:n',
+  'GET /proxy/agency/campaign-templates/effective',
+  'POST /proxy/agency/campaign-templates',
+  'POST /proxy/agency/campaign-templates/:id/apply',
+  'POST /proxy/agency/campaign-templates/:id/archive',
+  'POST /proxy/agency/campaign-templates/:id/default',
+  'POST /proxy/agency/campaign-templates/:id/restore',
+  'PUT /proxy/agency/campaign-templates/:id',
+];
+
+describe('the campaign template proxy registers its surface', () => {
+  async function buildTemplateApp(): Promise<{ app: FastifyInstance; routes: string[]; matched: string[] }> {
+    const { proxyAgencyCampaignTemplatesRoutes } = await import('../../../src/api/routes/proxy-agency-campaign-templates.routes.js');
+    const app = Fastify({ logger: false });
+    const routes: string[] = [];
+    const matched: string[] = [];
+    app.addHook('onRoute', (route) => {
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      for (const method of methods) if (method !== 'HEAD') routes.push(`${method} ${route.url}`);
+    });
+    app.addHook('onRequest', async (request) => { matched.push(request.routeOptions.url ?? ''); });
+    await app.register(proxyAgencyCampaignTemplatesRoutes, { prefix: PREFIX });
+    await app.ready();
+    return { app, routes, matched };
+  }
+
+  it('registers exactly this set', async () => {
+    const { app, routes } = await buildTemplateApp();
+    expect([...routes].sort()).toEqual(EXPECTED_TEMPLATE_ROUTES);
+    await app.close();
+  });
+
+  it('`effective` is its own route, not a template id', async () => {
+    const { app, matched } = await buildTemplateApp();
+    // The guards are not wired here: which route matched is the question, not its answer.
+    await app.inject({ method: 'GET', url: `${PREFIX}/campaign-templates/effective` });
+    expect(matched).toEqual([`${PREFIX}/campaign-templates/effective`]);
+    await app.close();
+  });
+});

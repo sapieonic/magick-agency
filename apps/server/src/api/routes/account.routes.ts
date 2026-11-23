@@ -9,6 +9,7 @@ import { createAccountSchema } from '../validators/account.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { sendRefusal } from './helpers/refusal.js';
 import { createTenantAccount } from './helpers/create-account.js';
+import { tenantWideSeatRefused } from './helpers/tenant-wide-seat.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 import { createChildLogger } from '@magick-agency/observability';
@@ -48,14 +49,11 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
   app.post('/', {
     preHandler: [requirePermission('account.create')],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    if ((request.membership?.account_id ?? null) !== null) {
-      return sendRefusal<CreateAccountErrorCode>(
-        reply,
-        403,
-        'tenant_wide_membership_required',
-        'Your admin access covers one account, not the whole organisation, so you cannot create accounts. Ask an admin with access to the whole organisation.',
-      );
-    }
+    if (tenantWideSeatRefused(
+      request,
+      reply,
+      'Your admin access covers one account, not the whole organisation, so you cannot create accounts. Ask an admin with access to the whole organisation.',
+    )) return reply;
 
     const parsed = parseOr400(createAccountSchema, request.body, reply, 'platform');
     if (!parsed) return reply;

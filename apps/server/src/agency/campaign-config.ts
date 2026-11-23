@@ -24,6 +24,7 @@ import {
   type AgencyAttemptOutcome,
   type AgencyAutoDispositionOutcome,
   type AgencyReservedBreakReason,
+  AGENCY_CAMPAIGN_COLUMN_DEFAULTS,
 } from '@magick-agency/contracts/agency';
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '@magick-agency/contracts/api/agency/agency-campaign';
@@ -186,7 +187,8 @@ const MAX_TIMEZONE_LENGTH = 64;
 /**
  * The `agency_campaigns` column defaults, which are what an omitted field becomes.
  *
- * Duplicated from SQL on purpose and kept narrow: the cross-field
+ * Kept narrow, and the window's two sides are the contract's `AGENCY_CAMPAIGN_COLUMN_DEFAULTS`
+ * (one declaration, pinned to the column DEFAULTs by a server integration test). The cross-field
  * `start !== end` rule cannot be evaluated on a body that carries only one side,
  * and on a POST the other side is the column default rather than nothing. Without
  * this, `POST { calling_window_start: '20:00' }` stores 20:00–20:00 — a campaign
@@ -195,8 +197,8 @@ const MAX_TIMEZONE_LENGTH = 64;
  * configured one.
  */
 export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
-  calling_window_start: '09:00:00',
-  calling_window_end: '20:00:00',
+  calling_window_start: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_start,
+  calling_window_end: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.calling_window_end,
   // The automatic-outcome pair's defaults, so a create's map is checked against the
   // catalog it will actually store (`validateOutcomeDispositions`): none sent ⇒ `[]`.
   disposition_catalog: [],
@@ -383,6 +385,25 @@ export function validateDailyTargetCalls(record: Record<string, unknown>): Campa
   }];
 }
 
+/**
+ * The attributes of catalog entry `entry` that `options` refuse: `override` where overrides are not
+ * allowed (`allowDispositionOverride: false`), and a promise to pay asked (`requires_promise: true`)
+ * or its follow-up (`promise_follow_up_days`) where promises are not (`allowPromise: false`). The
+ * catalog validator refuses an entry carrying any ({@link dispositionOverrideIssues},
+ * {@link dispositionPromiseIssues}); the soft phone leaves them out of the template catalog its
+ * untagged calls follow (`asSoftphoneCatalog`, CT11). One rule, so the soft phone never offers an
+ * outcome its own settings would refuse.
+ */
+export function catalogEntryAttributesRefused(entry: Record<string, unknown>, options: CampaignConfigOptions): string[] {
+  const refused: string[] = [];
+  if (options.allowDispositionOverride === false && entry['override'] !== undefined) refused.push('override');
+  if (options.allowPromise === false) {
+    if (entry['requires_promise'] === true) refused.push('requires_promise');
+    if (entry['promise_follow_up_days'] !== undefined) refused.push('promise_follow_up_days');
+  }
+  return refused;
+}
+
 /** The keys an outcome's `override` may carry (`AgencyDispositionOverride`). */
 const OVERRIDE_KEYS: ReadonlySet<string> = new Set(['extra_attempts', 'retry_delay', 'calling_hours']);
 
@@ -413,6 +434,7 @@ export function dispositionOverrideIssues(
   if (override === undefined) return [];
   const field = `${at}.override`;
   if (!allowed) {
+    if (catalogEntryAttributesRefused(entry, { allowDispositionOverride: false }).length === 0) return [];
     return [{
       field,
       message: "Overrides are a campaign feature: the soft phone's outcome catalogue cannot grant one.",
@@ -492,7 +514,7 @@ export function dispositionPromiseIssues(
   if (asks === undefined && days === undefined) return [];
   const issues: CampaignConfigIssue[] = [];
   if (!allowed) {
-    if (asks === true || days !== undefined) {
+    if (catalogEntryAttributesRefused(entry, { allowPromise: false }).length > 0) {
       issues.push({
         field: `${at}.requires_promise`,
         message: 'Only a campaign\'s outcome list can ask for a promise to pay: calls from this list have no campaign contact to keep the promise on.',

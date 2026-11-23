@@ -22,6 +22,7 @@ import {
   openSoftphoneSession,
   placeManualCall,
   putSoftphoneSettings,
+  readSoftphoneSettings,
   returnFromSoftphone,
   switchToSoftphone,
   updateManualCall,
@@ -119,7 +120,7 @@ describe('the routes, methods and bodies of §6', () => {
     expect(await getSoftphoneSettings('t', 'a')).toEqual({ record_calls: true });
     const payload = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: null };
     const saved = await putSoftphoneSettings(payload, 't', 'a');
-    expect(saved).toEqual({ ok: true, value: { record_calls: true } });
+    expect(saved).toEqual({ ok: true, value: { settings: { record_calls: true }, outcomesTemplate: undefined } });
     expect(lastRequest()).toMatchObject({ url: '/proxy/agency/softphone/settings', method: 'PUT', body: payload });
   });
 
@@ -241,5 +242,41 @@ describe('refusals become typed results', () => {
     mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
     const network = await place();
     expect(!network.ok && network.refusal).toMatchObject({ code: 'unknown', status: null, message: 'Failed to fetch' });
+  });
+});
+
+// Campaign templates (CT11): the settings read with what the outcomes follow, read as optional
+// (`outcomes_template`, added by the server's templates step).
+describe('the soft phone’s settings read (CT11)', () => {
+  const SETTINGS = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null, updated_at: null };
+
+  it('reads what the outcomes follow when the answer carries it', async () => {
+    const follows = { template: { id: 'tp-1', name: 'Collections', version: 3, scope: 'account' }, disposition_catalog: [{ code: 'will_pay', label: 'Will pay' }] };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect(await readSoftphoneSettings('t-1', 'a-1')).toEqual({ settings: SETTINGS, outcomesTemplate: follows });
+  });
+
+  it('reads none when the answer has no such field, or a malformed one', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: { template: null } }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toBeNull();
+  });
+
+  it('reads the built-in outcomes Follow gives when no template is in the chain', async () => {
+    const follows = { template: null, disposition_catalog: [{ code: 'interested', label: 'Interested' }] };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect((await readSoftphoneSettings('t-1', 'a-1')).outcomesTemplate).toEqual(follows);
+  });
+
+  it('keeps what the outcomes follow from the PUT answer, and says when the answer has none', async () => {
+    const follows = { template: { id: 'tp-2', name: 'Recovery', version: 1, scope: 'organisation' }, disposition_catalog: [{ code: 'paid', label: 'Paid' }] };
+    const body = { disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: false, default_caller_id: null };
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: follows }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: follows } });
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS, outcomes_template: null }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: null } });
+    mocks.fetch.mockResolvedValue(respond(200, { settings: SETTINGS }));
+    expect(await putSoftphoneSettings(body, 't-1', 'a-1')).toEqual({ ok: true, value: { settings: SETTINGS, outcomesTemplate: undefined } });
   });
 });

@@ -22,6 +22,7 @@ import {
   type AgencySoftphoneProfileSummary,
   type AgencySoftphoneSessionResponse,
   type AgencySoftphoneSessionSummary,
+  type AgencySoftphoneSettingsResponse,
   type AgencySoftphoneSettingsUpdateRequest,
 } from '@magick-agency/contracts/agency';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
@@ -40,6 +41,7 @@ import type { AgencyCampaignRecord, AgencyManualCallRecord } from '../../../db/m
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { resolveManualCatalog } from '../../../agency/softphone/manual-disposition.js';
+import { followedOutcomesTemplate, untaggedCatalog } from '../../../agency/softphone/untagged-outcomes.js';
 import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
@@ -181,7 +183,7 @@ function taggableCampaign(
     status: campaign.status,
     caller_ids: usableCallerIds(campaign),
     // BE-13: an icon the contract does not list is dropped, never sent (`station-tiles.ts`).
-    disposition_catalog: dispositionsWithKnownIcons(resolveManualCatalog(campaign, true, { disposition_catalog: [] }).catalog),
+    disposition_catalog: dispositionsWithKnownIcons(resolveManualCatalog(campaign, true, { disposition_catalog: [] }, []).catalog),
     calling_window: window,
     calling_window_open: callingWindowState(window, now) === 'open',
     record_calls: campaign.record_calls,
@@ -274,7 +276,8 @@ async function buildBootstrap(
     untagged: {
       caller_ids: callerIds,
       default_caller_id: defaultCallerId,
-      disposition_catalog: dispositionsWithKnownIcons(resolveManualCatalog(null, false, settings).catalog),
+      // CT11: the soft phone's own outcomes, else the account's template chain's, else built-in.
+      disposition_catalog: dispositionsWithKnownIcons(await untaggedCatalog({ tenantId, accountId }, settings)),
       record_calls: settings.record_calls,
       analysis_profile: settings.analysis_profile_id ? profiles.get(settings.analysis_profile_id) ?? null : null,
     },
@@ -627,9 +630,13 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
   });
 
   // ── GET /softphone/settings ───────────────────────────────────────────────
+  // `outcomes_template`: what "Follow campaign template" gives (CT11), sent whenever templates are
+  // on for the account, whether or not the soft phone sets its own list; null only when they are off.
   sub.get('/softphone/settings', async (request, reply) => {
-    const settings = await agencySoftphoneSettingsRepository.get(getTenantId(request), getAccountId(request));
-    return reply.send({ settings });
+    const scope = { tenantId: getTenantId(request), accountId: getAccountId(request) };
+    const settings = await agencySoftphoneSettingsRepository.get(scope.tenantId, scope.accountId);
+    const body: AgencySoftphoneSettingsResponse = { settings, outcomes_template: await followedOutcomesTemplate(scope) };
+    return reply.send(body);
   });
 
   // ── PUT /softphone/settings — replace the account's settings ──────────────
@@ -650,7 +657,17 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const audit: SoftphoneSettingsAudit = {
       changed: SETTINGS_KEYS.filter((key) => JSON.stringify(before[key]) !== JSON.stringify(settings[key])),
     };
-    return answer(reply, 200, { settings }, audit);
+    // The settings are saved: the answer (and with it the public layer's audit row) must follow.
+    // What Follow gives is display only, so a template read that fails here leaves it out (the
+    // console reads an answer without it as "not known"), never turns the save into a 500.
+    let followed: AgencySoftphoneSettingsResponse['outcomes_template'];
+    try {
+      followed = await followedOutcomesTemplate({ tenantId, accountId });
+    } catch (err) {
+      log.warn({ err, tenantId, accountId }, 'Soft-phone settings saved; what the outcomes follow could not be read');
+    }
+    const body: AgencySoftphoneSettingsResponse = { settings, ...(followed !== undefined ? { outcomes_template: followed } : {}) };
+    return answer(reply, 200, body, audit);
   });
 
   // ── POST /sessions/:id/softphone — switch a campaign session to the soft phone (§4.2) ──

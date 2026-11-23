@@ -37,7 +37,7 @@ export function getRoleColor(role: Role): string {
  */
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   tenant_owner: 'Everything an admin does, and can change or remove admins.',
-  tenant_admin: 'Everything a supervisor does, and can create accounts, change people’s roles and remove them.',
+  tenant_admin: 'Everything a supervisor does, and can create accounts, keep the organisation’s campaign templates, change people’s roles and remove them.',
   account_admin: 'Runs campaigns and live calls, edits the account’s settings and the Do Not Call list, and invites people. Can take calls too.',
   operator: 'The same as Viewer: sees campaigns, results and the Do Not Call list, and can take calls. Can’t change campaigns or settings.',
   viewer: 'Sees campaigns, results and the Do Not Call list, and can take calls. Can’t change campaigns or settings.',

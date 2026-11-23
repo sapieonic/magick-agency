@@ -97,6 +97,7 @@ export {
   SOFTPHONE_SETTINGS_DEFAULTS,
   SoftphoneSettingsInvalidError,
   validateSoftphoneSettings,
+  asSoftphoneCatalog,
 } from './agency/softphone-settings.repository.js';
 export type { SoftphoneSettingsIssue } from './agency/softphone-settings.repository.js';
 export {
@@ -360,3 +361,21 @@ export { AgencyCompareReadRepository, agencyCompareReadRepository, ZERO_CALLBACK
 export type { CompareCallbackClasses, CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
 export { AgencyCompareViewRepository, agencyCompareViewRepository } from './agency/compare-view.repository.js';
 export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';
+// Campaign templates (0067, docs/campaign-templates.md): the templates and their versions.
+export { AgencyCampaignTemplateRepository, agencyCampaignTemplateRepository } from './agency/campaign-template.repository.js';
+export type {
+  CampaignTemplateArchiveResult,
+  CampaignTemplateBasedOnRow,
+  CampaignTemplateClearDefaultResult,
+  CampaignTemplateContent,
+  CampaignTemplateCreateResult,
+  CampaignTemplateDefaultResult,
+  CampaignTemplateReader,
+  CampaignTemplateRecord,
+  CampaignTemplateRef,
+  CampaignTemplateReplaceResult,
+  CampaignTemplateRestoreResult,
+  CampaignTemplateScope,
+  CampaignTemplateVersionRecord,
+  CampaignTemplateVersionSummaryRecord,
+} from './agency/campaign-template.repository.js';

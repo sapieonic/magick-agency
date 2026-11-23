@@ -265,7 +265,7 @@ function scriptUnknowns(script: ScriptForm, allowed: Iterable<string>): string[]
 }
 
 /** `a`, `a and b`, `a, b and c`. */
-function listed(words: readonly string[]): string {
+export function listed(words: readonly string[]): string {
   return words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
@@ -276,12 +276,22 @@ function unknownKeysMessage(tokens: readonly string[]): string {
     : `The script uses ${listed(tokens)}, which are not facts on the card. Add them as facts or take them out.`;
 }
 
-function textError(text: string, max: number, what: string, required: boolean, allowed: readonly string[]): string | null {
+/** What a script says of the `{word}`s it may not use, given those words. */
+export type UnknownKeysMessage = (tokens: readonly string[]) => string;
+
+function textError(
+  text: string,
+  max: number,
+  what: string,
+  required: boolean,
+  allowed: readonly string[],
+  unknownMessage: UnknownKeysMessage,
+): string | null {
   const length = scriptLength(text);
   if (length === 0) return required ? `Write ${what.toLowerCase()}, or remove it.` : null;
   if (length > max) return `${what} is ${formatCount(length)} characters. Keep it to ${formatCount(max)}.`;
   const unknown = unknownPlaceholdersIn(text, allowed);
-  return unknown.length > 0 ? unknownKeysMessage(unknown) : null;
+  return unknown.length > 0 ? unknownMessage(unknown) : null;
 }
 
 /** The script's field path for the opening line (the server's `details` key). */
@@ -296,13 +306,19 @@ export function scriptStepField(index: number): string {
  * An empty opening is no opening; an empty step must be written or removed (the server refuses it).
  *
  * @param allowed the keys the script may use (the card's: {@link stationPlan}'s `allowed`)
+ * @param unknownMessage what a key outside `allowed` is told: by default the card's words (add it as
+ *        a fact); a script with no card (a campaign template's) says its own
  */
-export function scriptErrors(script: ScriptForm, allowed: readonly string[]): Record<string, string> {
+export function scriptErrors(
+  script: ScriptForm,
+  allowed: readonly string[],
+  unknownMessage: UnknownKeysMessage = unknownKeysMessage,
+): Record<string, string> {
   const errors: Record<string, string> = {};
-  const opening = textError(script.opening, AGENCY_SCRIPT_OPENING_MAX_CHARS, 'The opening line', false, allowed);
+  const opening = textError(script.opening, AGENCY_SCRIPT_OPENING_MAX_CHARS, 'The opening line', false, allowed, unknownMessage);
   if (opening) errors[SCRIPT_OPENING_FIELD] = opening;
   script.steps.forEach((step, i) => {
-    const error = textError(step, AGENCY_SCRIPT_STEP_MAX_CHARS, `Step ${i + 1}`, true, allowed);
+    const error = textError(step, AGENCY_SCRIPT_STEP_MAX_CHARS, `Step ${i + 1}`, true, allowed, unknownMessage);
     if (error) errors[scriptStepField(i)] = error;
   });
   if (script.steps.length > AGENCY_SCRIPT_STEPS_MAX) {

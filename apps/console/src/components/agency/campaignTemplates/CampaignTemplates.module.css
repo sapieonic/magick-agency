@@ -1,0 +1,548 @@
+/* Campaign templates: Settings' list and editor, New campaign's picker and chips, campaign
+   Settings' "Started from". Tokens only, both themes. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1100px;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.heading {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.description,
+.meta,
+.muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Where a section came from (New campaign's Review). */
+.source {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.source[data-source='account'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.source[data-source='organisation'] {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.source[data-source='builtin'] {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.source[data-source='campaign'] {
+  background: var(--ember-subtle);
+  color: var(--ember);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.linkButton {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.linkButton:focus-visible,
+.segment input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The editor's section card. */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cardHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.summary {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.summary[data-inherited] {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-primary);
+}
+
+.segmented legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.segment span {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.segment input:checked + span {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* The editor: the template's name and the like at the top, the cards, then the save bar. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.aboutFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.aboutFields > :global(.form-group) {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+}
+
+/*
+  Only Discard and Save stick to the bottom (U4): one row, the note beside the buttons in at most
+  two short lines, so on a phone the bar is one button high (about 58px at 375px wide) and never
+  covers the controls it sits over.
+*/
+.saveBar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.saveBarNote {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.saveBarNote .linkButton {
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.saveBarActions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .saveBar {
+    padding: 6px 8px;
+  }
+
+  .saveBarActions > button {
+    padding-inline: 12px;
+  }
+}
+
+@media print {
+  .saveBar {
+    display: none;
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* A section with a field to fix (U13): the border and a chip in words. */
+.card[data-invalid] {
+  border-color: var(--danger);
+}
+
+.invalidChip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cardHeading {
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.cardTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.fieldError {
+  margin: 4px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* New campaign's banner and the campaign Settings note: violet, as the account template chip. */
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
+
+.picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.picker select {
+  min-width: 240px;
+  max-width: 100%;
+}
+
+/* A comparison, per section. */
+.diff {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diffRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr 1fr;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  font-size: 13px;
+}
+
+.diffRow p {
+  margin: 0;
+}
+
+.diffLabel {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.diffSide {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.diffHead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .diffRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 14px;
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.result[data-result='refused'] {
+  color: var(--danger);
+}
+
+.plain {
+  margin: 0;
+}
+
+/* Long unbroken names wrap rather than push the page sideways on a phone (U6). */
+.name,
+.cardTitle,
+.heading,
+.diffLabel,
+.banner,
+.description,
+.meta,
+.summary {
+  overflow-wrap: anywhere;
+}
+
+/* What new campaigns of an account start from (the account's templates page, L4). */
+.effectiveName {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.effective {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.effectiveRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 160px 1fr;
+  gap: 4px 12px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.effectiveRow > .source {
+  justify-self: start;
+}
+
+@media (max-width: 640px) {
+  .effectiveRow {
+    grid-template-columns: 1fr auto;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .effectiveRow > :last-child {
+    grid-column: 1 / -1;
+  }
+}

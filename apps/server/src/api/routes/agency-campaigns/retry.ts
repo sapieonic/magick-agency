@@ -30,6 +30,7 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, contextColumnsRejected, ownedCampaign } from './guards.js';
 import { ACTOR_NAME_MAX, ACTOR_USER_ID_MAX } from './lifecycle.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -313,7 +314,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       if (issue) {
         return replyValidationFailed(reply, { caller_ids: issue });
       }
-      overrides['caller_ids'] = (overrides['caller_ids'] as string[]).map((id) => id.trim());
+      overrides['caller_ids'] = trimCallerIds(overrides['caller_ids'] as string[]);
     }
 
     // ── Validated exactly as a PATCH is, and that is the deliberate choice ──

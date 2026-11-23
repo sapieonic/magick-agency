@@ -128,9 +128,10 @@ function enablesAnything(config: unknown): boolean {
 /**
  * The effective settings row for the target (tenant, account), or `null` when
  * there is no context to resolve against. A NULL column is the documented
- * default (`false`). Throws on a read failure; the caller fails closed.
+ * default (`false`). Throws on a read failure; the caller fails closed. Exported for
+ * campaign templates' fill-in (CT5: what the account may record and summarise).
  */
-async function resolveBehavioralSettings(target: BehavioralTarget): Promise<BehavioralSettings | null> {
+export async function resolveBehavioralSettings(target: BehavioralTarget): Promise<BehavioralSettings | null> {
   const { tenantId, accountId } = target;
   if (!tenantId || !accountId) return null;
   const row = await accountSettingsRepository.findByTenantAndAccount(tenantId, accountId);
@@ -162,9 +163,30 @@ export async function assertBehavioralCapabilitiesForConfig(
   /** The account that owns the campaign (see the module header). */
   target: BehavioralTarget,
 ): Promise<boolean> {
+  const refusal = await behavioralCapabilityRefusal(config, target);
+  if (refusal) {
+    reply.code(403).send(refusal);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * {@link assertBehavioralCapabilitiesForConfig}'s decision without a reply: the 403 body
+ * (`{ error: 'capability_disabled', capability }`), or null to proceed. For a caller that
+ * answers the refusal its own way: the campaign PATCH path (`api/routes/helpers/campaign-patch.ts`),
+ * which a template apply also runs (CT16). The same rules: a config that enables nothing passes
+ * unread; no context or a failed read fails closed.
+ */
+export async function behavioralCapabilityRefusal(
+  /** The exact object the caller persists (see the module header). */
+  config: unknown,
+  /** The account that owns the campaign (see the module header). */
+  target: BehavioralTarget,
+): Promise<BehavioralRefusal | null> {
   // A body that enables nothing passes without a settings read, which is what
   // keeps the on→off write available to an account that has LOST the permission.
-  if (!enablesAnything(config)) return true;
+  if (!enablesAnything(config)) return null;
 
   let settings: BehavioralSettings | null;
   try {
@@ -174,12 +196,7 @@ export async function assertBehavioralCapabilitiesForConfig(
     settings = null;
   }
   // No context, or a failed read ⇒ every enabling field is refused (fail closed).
-  const refusal = behavioralRefusalForConfig(config, settings ?? { allow_recording: false, analyze_calls: false });
-  if (refusal) {
-    reply.code(403).send(refusal);
-    return false;
-  }
-  return true;
+  return behavioralRefusalForConfig(config, settings ?? { allow_recording: false, analyze_calls: false });
 }
 
 /**

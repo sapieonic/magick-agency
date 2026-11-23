@@ -504,6 +504,35 @@ export function trackAgencyCampaignConfigBlocked(props: EventCatalog['agency_cam
   track('agency_campaign_config_blocked', props);
 }
 
+// --- Campaign templates (docs/campaign-templates.md) -------------------------
+//
+// Scopes, counts and enum labels only: never a template's or a campaign's name.
+
+/** A campaign template was saved from its editor (a new one, or a new version). */
+export function trackAgencyCampaignTemplateSaved(props: EventCatalog['agency_campaign_template_saved']): void {
+  track('agency_campaign_template_saved', props);
+}
+
+/** A template was made the default, stopped being it, archived or restored. */
+export function trackAgencyCampaignTemplateAction(props: EventCatalog['agency_campaign_template_action']): void {
+  track('agency_campaign_template_action', props);
+}
+
+/** A template was applied to draft campaigns (CT16). */
+export function trackAgencyCampaignTemplateApplied(props: EventCatalog['agency_campaign_template_applied']): void {
+  track('agency_campaign_template_applied', props);
+}
+
+/** New campaign was filled in from a template (or the built-in settings): on open, and on each switch. */
+export function trackAgencyCampaignTemplateStartedFrom(props: EventCatalog['agency_campaign_template_started_from']): void {
+  track('agency_campaign_template_started_from', props);
+}
+
+/** Campaign Settings' "Save as template…" went through. */
+export function trackAgencyCampaignSavedAsTemplate(props: EventCatalog['agency_campaign_saved_as_template']): void {
+  track('agency_campaign_saved_as_template', props);
+}
+
 // --- Contact assignment (supervisor) and My contacts (agent) ----------------
 //
 // The mobile app sends the same names for the agent's events. Ids, enum labels,
@@ -1323,6 +1352,40 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
   agency_campaign_config_blocked: {
     source: 'builder' | 'settings';
     field_error_count: number;
+  };
+  /** {@link trackAgencyCampaignTemplateSaved} */
+  agency_campaign_template_saved: {
+    scope: 'organisation' | 'account';
+    created: boolean;
+    /** How many sections the template sets. */
+    sections_set: number;
+    version: number;
+  };
+  /** {@link trackAgencyCampaignTemplateAction} */
+  agency_campaign_template_action: {
+    scope: 'organisation' | 'account';
+    action: 'make_default' | 'clear_default' | 'archive' | 'restore';
+  };
+  /** {@link trackAgencyCampaignTemplateApplied} */
+  agency_campaign_template_applied: {
+    scope: 'organisation' | 'account';
+    campaign_count: number;
+    applied_count: number;
+    refused_count: number;
+    section_count: number;
+  };
+  /** {@link trackAgencyCampaignTemplateStartedFrom} */
+  agency_campaign_template_started_from: {
+    /** Where the template the form was filled from belongs; `builtin` for the built-in settings. */
+    source: 'account' | 'organisation' | 'builtin';
+    /** The account's default chain, as New campaign opened; false for a switch with the picker. */
+    preselected: boolean;
+    note_count: number;
+  };
+  /** {@link trackAgencyCampaignSavedAsTemplate} */
+  agency_campaign_saved_as_template: {
+    mode: 'new' | 'replace';
+    scope: 'organisation' | 'account';
   };
   /** {@link trackAgencyAssignmentPreviewed} */
   agency_assignment_previewed: {

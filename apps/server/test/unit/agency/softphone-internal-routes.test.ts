@@ -417,7 +417,11 @@ describe('the settings', () => {
     repos.settings.upsert.mockResolvedValue({ ...valid, updated_at: 'now' });
     const res = await putSettings(valid);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ answer: { settings: { ...valid, updated_at: 'now' } }, audit: { changed: ['record_calls', 'default_caller_id'] } });
+    // `outcomes_template` null: campaign templates are off here (CT11; their own suite follows them).
+    expect(res.json()).toEqual({
+      answer: { settings: { ...valid, updated_at: 'now' }, outcomes_template: null },
+      audit: { changed: ['record_calls', 'default_caller_id'] },
+    });
     expect(repos.settings.upsert).toHaveBeenCalledWith(TENANT, ACCOUNT, valid);
   });
 });

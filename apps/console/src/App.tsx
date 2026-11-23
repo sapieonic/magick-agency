@@ -94,6 +94,8 @@ const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/Softphone
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
 const ListeningSettingsPage = lazy(() => import('./pages/settings/ListeningSettingsPage'));
+const CampaignTemplatesPage = lazy(() => import('./pages/settings/campaign-templates/CampaignTemplatesPage'));
+const CampaignTemplateEditorPage = lazy(() => import('./pages/settings/campaign-templates/CampaignTemplateEditorPage'));
 const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPage'));
 const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
@@ -784,6 +786,14 @@ export default function App() {
                   {/* Live call listening (`docs/listening.md` §12, LS20 c): a read-only line from the
                       client flags, on or off; supervisors (`agency.supervise`, which the page checks). */}
                   <Route path="listening" element={<RequireGate gate={settingsEntry('listening').gate}><ListeningSettingsPage /></RequireGate>} />
+                  {/* Campaign templates (`docs/campaign-templates.md` §7): the account's, and the
+                      organisation's. Behind `agency_campaign_templates_enabled`; the pages check
+                      `agency.campaign_templates.manage` (and, for the organisation's, an
+                      organisation-wide seat of tenant admin or above). */}
+                  <Route path="campaign-templates" element={<RequireGate gate={settingsEntry('campaign-templates').gate}><CampaignTemplatesPage scope="account" /></RequireGate>} />
+                  <Route path="campaign-templates/:id" element={<RequireGate gate={settingsEntry('campaign-templates').gate}><CampaignTemplateEditorPage scope="account" /></RequireGate>} />
+                  <Route path="organisation-campaign-templates" element={<RequireGate gate={settingsEntry('organisation-campaign-templates').gate}><CampaignTemplatesPage scope="organisation" /></RequireGate>} />
+                  <Route path="organisation-campaign-templates/:id" element={<RequireGate gate={settingsEntry('organisation-campaign-templates').gate}><CampaignTemplateEditorPage scope="organisation" /></RequireGate>} />
                   <Route path="team" element={<TeamPage />} />
                   {/* The tenant's accounts. Linked for `account.create` only; the route itself
                       is ungated (the list is `account.read`, which the server enforces), and
