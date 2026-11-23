@@ -30,7 +30,7 @@
  * IS NOT NULL` (0068) orders. Read live: the Insights rollup is a pure function of
  * `agency_call_attempts` and holds the dialler's figures alone (CL25).
  */
-import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
+import { SOFTPHONE_PLACED_SQL, readCount } from './softphone-campaign-sql.js';
 import {
   inboundAnsweredSql,
   inboundCampaignRowConditions,
@@ -126,7 +126,7 @@ export function inboundCampaignCountsStatement(q: CampaignRange): { text: string
 
 /** A count row as `pg` returns it (`::int`), read defensively. */
 export function readInboundCampaignCounts(row: Partial<Record<keyof InboundCampaignCounts, unknown>> | undefined): InboundCampaignCounts {
-  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0);
+  const n = readCount;
   return {
     received: n(row?.received),
     answered: n(row?.answered),

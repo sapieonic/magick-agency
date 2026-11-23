@@ -384,24 +384,12 @@ export const AGENCY_CALLS_NO_CAMPAIGN_LABEL = 'No campaign';
 export const AGENCY_CALLS_BEFORE_THE_RULE_LABEL = 'Before the rule';
 
 /**
- * `GET /proxy/agency/calls` query (`agency.supervise`): the campaign Call log's
- * ({@link AgencyCallLogQuery}), at the account's scope, plus the campaign.
- */
-export interface AgencyAccountCallsQuery extends AgencyCallLogQuery {
-  /** A campaign's id, or {@link AGENCY_CALLS_NO_CAMPAIGN}. */
-  campaign_id?: string;
-}
-
-/** A row of the account's All calls: the Call log's row, with its campaign named. */
-export type AgencyAccountCallRow = AgencyCallLogRow;
-
-/**
  * `GET /proxy/agency/calls` (`agency.supervise`): every call of the account, of the three
  * types, newest first on one keyset. `to_follow_up` is the account's open Missed rows. `rule`
  * is the account's "Every call must belong to a campaign" setting, for the Campaign column's
  * {@link AGENCY_CALLS_BEFORE_THE_RULE_LABEL}.
  */
-export interface AgencyAccountCallsPage extends AgencyKeysetPage<AgencyAccountCallRow> {
+export interface AgencyAccountCallsPage extends AgencyKeysetPage<AgencyCallLogRow> {
   counts?: AgencyCallLogCounts;
   rule: { require_campaign: boolean; require_campaign_since: string | null };
 }
@@ -535,23 +523,6 @@ export interface AgencyMyCallsCounts {
   to_follow_up: number;
   missed_open: number;
   callbacks_due: number;
-}
-
-/**
- * `GET /proxy/agency/my-calls` query (`agency.station.connect`). The subject is the session's
- * user: nothing here can name another agent.
- */
-export interface AgencyMyCallsQuery {
-  type?: AgencyCallLogTypeFilter;
-  /** A campaign's id, or {@link AGENCY_CALLS_NO_CAMPAIGN}. */
-  campaign_id?: string;
-  /** Inclusive, ISO-8601, on when the call began. Not applied to To follow up (CL14). */
-  from?: string;
-  to?: string;
-  cursor?: string;
-  limit?: number;
-  /** `1`: add `counts`. */
-  include_counts?: string;
 }
 
 /**

@@ -38,25 +38,22 @@ import type {
 import {
   AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS,
   AGENCY_CALL_LOG_STATUSES,
+  AGENCY_CALL_LOG_TYPES,
   AGENCY_CALL_LOG_TYPE_FILTERS,
   type AgencyCallLogInboundOutcomeFilter,
   type AgencyCallLogInboundRow,
   type AgencyCallLogStatus,
-  type AgencyCallLogCounts,
   type AgencyCallLogRow,
+  type AgencyCallLogType,
   type AgencyCallLogTypeFilter,
   type AgencyInboundJourneyStep,
 } from '@magick-agency/contracts/api/agency/call-log';
 
-/** Where a call-log row came from: the campaign's dialler, an agent's soft phone, or the customer's own call. */
-export type CampaignCallSource = 'dialler' | 'soft_phone' | 'inbound';
-
-/** Every {@link CampaignCallSource}, in the order a reader meets them. */
-export const CAMPAIGN_CALL_SOURCES = ['dialler', 'soft_phone', 'inbound'] as const satisfies readonly CampaignCallSource[];
-
-export function isCampaignCallSource(value: unknown): value is CampaignCallSource {
-  return typeof value === 'string' && (CAMPAIGN_CALL_SOURCES as readonly string[]).includes(value);
-}
+/**
+ * Where a call-log row came from: the campaign's dialler, an agent's soft phone, or the
+ * customer's own call. The contract's call types, under the internal read's word for them.
+ */
+export type CampaignCallSource = AgencyCallLogType;
 
 /**
  * What the internal read's `?source=` keeps: one source, or `to_follow_up`, the campaign's open
@@ -65,7 +62,7 @@ export function isCampaignCallSource(value: unknown): value is CampaignCallSourc
 export type CampaignCallLogSourceFilter = CampaignCallSource | 'to_follow_up';
 
 export const CAMPAIGN_CALL_LOG_SOURCE_FILTERS = [
-  ...CAMPAIGN_CALL_SOURCES, 'to_follow_up',
+  ...AGENCY_CALL_LOG_TYPES, 'to_follow_up',
 ] as const satisfies readonly CampaignCallLogSourceFilter[];
 
 export function isCampaignCallLogSourceFilter(value: unknown): value is CampaignCallLogSourceFilter {
@@ -222,23 +219,6 @@ export interface CampaignInboundLogRow {
 }
 
 export type CampaignCallLogRow = CampaignDiallerLogRow | CampaignSoftphoneLogRow | CampaignInboundLogRow;
-
-/**
- * How many rows of each source the filters match, across every page (the `type` filter and
- * the cursor not applied): the Call log's chips. `dialler` is every attempt the list would
- * show; `soft_phone` the tagged calls whose dial was sent (a row that never dialled is listed
- * and counted nowhere, SR2); `inbound` every inbound row listed; `all` the sum of the three;
- * `to_follow_up` the open Missed rows under the same filters without the dates.
- */
-export type CampaignCallLogCounts = AgencyCallLogCounts;
-
-/** The internal read's page: `counts` only with `?include_counts=1`. */
-export interface CampaignCallLogPage {
-  rows: CampaignCallLogRow[];
-  next_cursor: string | null;
-  limit: number;
-  counts?: CampaignCallLogCounts;
-}
 
 // ─── The public JSON route's vocabulary ─────────────────────────────────────
 

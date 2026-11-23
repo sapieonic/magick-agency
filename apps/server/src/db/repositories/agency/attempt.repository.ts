@@ -46,13 +46,12 @@ import {
   type SoftphoneLogRaw,
 } from './projections.js';
 import type {
-  CampaignCallLogCounts,
   CampaignCallLogRow,
   CampaignCallLogSourceFilter,
   CampaignCallSource,
   CampaignInboundLogRow,
 } from '../../../agency/campaign-call-log.js';
-import type { AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
+import type { AgencyCallLogCounts, AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
 import { inboundCampaignRowConditions, inboundMissedOpenSql } from './sql-fragments.js';
 import { INBOUND_LOG_SELECT_SQL } from './inbound-log-sql.js';
 import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
@@ -1184,7 +1183,7 @@ export class AgencyAttemptRepository {
     filters: AgencyAttemptFilters;
     softphoneStatus?: SoftphoneCallStatus;
     inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
-  }): Promise<CampaignCallLogCounts> {
+  }): Promise<AgencyCallLogCounts> {
     const { campaignId, tenantId, ...rest } = input;
     return this.countCallLog({ scope: { kind: 'campaign', campaignId, tenantId }, ...rest });
   }
@@ -1195,7 +1194,7 @@ export class AgencyAttemptRepository {
     filters: AgencyAttemptFilters;
     softphoneStatus?: SoftphoneCallStatus;
     inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
-  }): Promise<CampaignCallLogCounts> {
+  }): Promise<AgencyCallLogCounts> {
     const bind = params();
     const inboundOutcomes = input.inboundOutcomes ?? [];
     const outbound = outboundMatches(input.filters, inboundOutcomes);

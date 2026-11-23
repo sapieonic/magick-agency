@@ -32,6 +32,7 @@
  * A leaf beside `sql-fragments.ts`, whose two codes it reads so the dialler's rule and this one
  * cannot spell them apart.
  */
+import type { AgencyCallLogStatus } from '@magick-agency/contracts/api/agency/call-log';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { VOICEMAIL_DISPOSITION_CODE } from './sql-fragments.js';
 
@@ -50,8 +51,11 @@ export const SOFTPHONE_HUMAN_CONNECT_SQL = `m.bridged_at IS NOT NULL
            AND m.disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'
            AND m.disposition_code <> '${AUTO_DISPOSITION_CODE}'`;
 
-/** Where a soft-phone call stands: the Soft-phone calls list's and the campaign Call log's Status filter. */
-export type SoftphoneCallStatus = 'live' | 'awaiting_outcome' | 'settled';
+/**
+ * Where a soft-phone call stands: the Soft-phone calls list's and the campaign Call log's Status
+ * filter (the contract's `status` values).
+ */
+export type SoftphoneCallStatus = AgencyCallLogStatus;
 
 /**
  * A soft-phone call in one status. `live`: not ended; `awaiting_outcome`: ended and not
@@ -115,9 +119,14 @@ export function softphoneCampaignCountsStatement(q: {
   };
 }
 
+/** One count of a row as `pg` returns it (`::int`), read defensively: anything that is not a number is 0. */
+export function readCount(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0;
+}
+
 /** A count row as `pg` returns it (`::int`), read defensively. */
 export function readSoftphoneCampaignCounts(row: Partial<Record<keyof SoftphoneCampaignCounts, unknown>> | undefined): SoftphoneCampaignCounts {
-  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v ?? 0) || 0);
+  const n = readCount;
   return {
     placed: n(row?.placed),
     connected: n(row?.connected),
