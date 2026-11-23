@@ -77,3 +77,4 @@ campaign, then Settings.
   it (CS16). Customers holds the card editor and Lifecycle and uploads; Purpose & buttons holds the
   Script under the buttons; Agents & timing stages the ticked agents with the save bar and applies
   them after the PATCH, a failed tick staying unsaved (CS10).
+- **The template editor** (CS21): built; its tabs and section editors are in `docs/campaign-templates.md` §7.

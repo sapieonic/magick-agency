@@ -272,8 +272,8 @@ Build notes (fresh-context review, server fixes, 2026-11-22; the IDs are in §8 
 
 - **Settings › Campaign templates**: listed in the account group and the organisation group of
   `SETTINGS_ENTRIES`, gated by the flag and the permission. A list (name, default badge, based
-  on, sections set, updated by and when, Make default, Archive) and an editor page that composes
-  the existing campaign editors per section, each with "Use <based-on or built-in>" or "Set in
+  on, sections set, updated by and when, Make default, Archive) and an editor page laid out as the
+  campaign setup's steps (CS21, below), each section with "Use <based-on or built-in>" or "Set in
   this template". "Copy from a campaign", the Collections set (AS4) on the outcomes editor,
   History with a side-by-side comparison, and "Apply to draft campaigns" (CT16) with a preview.
 - **New campaign** (the four setup steps, `docs/campaign-setup.md` CS17–CS20; there is no Review
@@ -348,6 +348,53 @@ buttons (a fill, or Reset on Outcomes) bumps Purpose & buttons' `buttonsReplaced
 which rows follow their names and which row each unanswered outcome follows, and closes an open
 row. Step 3's starting points (CS2) are "What is this campaign for?", never called templates (CS20).
 
+Build notes (the template editor on the setup steps, CS21, 2026-11-23). The editor speaks the
+language of New campaign and campaign Settings (`docs/campaign-setup.md`) and is built from the same
+parts. "About this template" (name, description, Based on) is a `SetupCard` at the top. Under it,
+the setup steps are tabs (`StepCards` in tabs mode, as Settings has them): `SETUP_STEPS` less
+Customers, since a template holds no roster or card (§3), and only the steps holding a section the
+editor shows (`utils/agency/campaignTemplates/templateTabs.ts`). The slim bar with Discard and Save
+stays at the bottom.
+
+| Tab | Sections, in order | Notes |
+|---|---|---|
+| Name & number | `numbers` | Account templates only (CT15): an organisation template has no such tab and opens on Purpose & buttons |
+| Purpose & buttons | `outcomes`, `agent_screen` | The agent screen sits here whole, with its script |
+| Agents & timing | `hours`, `retries`, `wrapup`, `recording`, `breaks`, `safety`, `assignment`, `inbound` | Assignment and inbound only where their flags are on (`useTemplateSectionKeys`) |
+
+A section is one Use/Set choice (CT2), so it lives whole on one tab. The agent screen holds the
+script, how the number is shown and the daily target; it is on Purpose & buttons because the script
+is most of it, both campaign pages show the script there under the buttons (CS19), and the number
+display is also about what the agent sees beside the buttons, while Agents & timing already holds
+eight sections.
+
+Each section is a `SetupCard` (`TemplateSectionCard`): its name, its values in one line (dimmed
+when inherited), "Needs a fix" when a field in it has a finding, and the choice as a `PillGroup`
+("Use <what it follows>" or "Set in this template"; the checked pill is where it comes from). Unset,
+the card is its header alone. Set, it opens on the block of the steps that edits exactly that
+section (`TemplateSectionEditors`):
+
+| Section | Its editor |
+|---|---|
+| `numbers` | Name & number's carrier and numbers as cards (`CallerNumbersBlock`) |
+| `outcomes` | Purpose & buttons whole: the starting points, the buttons as sentences, the agent's view, and under Advanced the full editor and the unanswered calls (`PurposeButtonsStep` with `framed={false}`) |
+| `agent_screen` | The number display and daily target rows (`AgentScreenRows`), then the Script, on the legacy six keys (CT22) |
+| `hours` | The hour presets or Custom, and the day pills (`CallingHoursBlock`) |
+| `retries` | The one "doesn't pick up" sentence (`UnansweredRuleBlock`), with the full table right below it |
+| `wrapup` | The wrap-up row (`WrapupRow`), then what agents do after it and redial from wrap-up |
+| `recording` | The record and call summary rows (`RecordingRows`); an organisation template has the record row only (CT5) |
+| `breaks`, `safety`, `assignment`, `inbound` | The blocks Agents & timing keeps under Advanced |
+
+The steps' blocks were extracted into `pages/campaigns/agency/setup/` and the steps use them too, so
+there is one implementation; the rules stay in `utils/campaignSetup/*`,
+`utils/agencyCampaignConfigForm.ts` and `templateForm.ts`. A tab with a section to fix carries the
+needs-fixing mark, and one with a section changed since the save carries the unsaved dot (a change
+of name, description or Based on marks no tab). "Fix the marked settings to save." brings forward
+the tab holding the finding (the one on screen first) and focuses its field. All panels stay
+mounted, so no editor loses its place on a tab change. The read-only View (L4a, N7) has the same
+tabs, each card with its summary and a chip saying where it comes from, and no choices, editors or
+bar.
+
 Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 step 5):
 
 - **The script** (U1, CT22). A template's script editor takes what the server takes for a script
@@ -365,9 +412,10 @@ Build notes (fresh-context review, 2026-11-22; the review's item IDs are in §8 
   the refusal's details as sentences under "Not changed". An answer that lands after the dialog
   closed is dropped; the preview reads six drafts at a time; the results are announced and take the
   focus.
-- **The editor's layout** (U4, U6, U8, U9, U13, N9). An "About this template" card at the top holds
-  the name, the description and Based on; only a slim bar with Discard and Save, and a short note
-  beside them, sticks to the bottom (one button high on a phone). Long names wrap. A section with a
+- **The editor's layout** (U4, U6, U8, U9, U13, N9; since CS21 on the setup steps' tabs, above). An
+  "About this template" card at the top holds the name, the description and Based on; only a slim
+  bar with Discard and Save, and a short note beside them, sticks to the bottom (one button high on
+  a phone). Long names wrap. A section with a
   field to fix carries a danger border and "Needs a fix", and the bar's "Fix the marked settings to
   save." takes the focus to the field. Unset numbers read "Pick them in each campaign", never an
   organisation template. When the template it follows cannot be read, the editor says so with

@@ -153,13 +153,12 @@
   text-decoration: underline;
 }
 
-.linkButton:focus-visible,
-.segment input:focus-visible + span {
+.linkButton:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* The editor's section card. */
+/* A card on the list page and the editor's History. */
 .card {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -169,14 +168,6 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-}
-
-.cardHeader {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: space-between;
-  align-items: flex-start;
 }
 
 .cardTitle {
@@ -197,53 +188,6 @@
   opacity: 0.8;
 }
 
-.segmented {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 3px;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-primary);
-}
-
-.segmented legend {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-.segment {
-  position: relative;
-  display: inline-flex;
-  cursor: pointer;
-}
-
-.segment input {
-  position: absolute;
-  opacity: 0;
-  inset: 0;
-  margin: 0;
-  cursor: pointer;
-}
-
-.segment span {
-  padding: 5px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.segment input:checked + span {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
 .cardBody {
   display: flex;
   flex-direction: column;
@@ -251,7 +195,7 @@
   min-width: 0;
 }
 
-/* The editor: the template's name and the like at the top, the cards, then the save bar. */
+/* The editor: "About this template" at the top, the step tabs and their panels, then the save bar. */
 .form {
   display: flex;
   flex-direction: column;
@@ -341,32 +285,39 @@
   white-space: nowrap;
 }
 
-/* A section with a field to fix (U13): the border and a chip in words. */
-.card[data-invalid] {
+/*
+  The editor's section card (CS21): a campaign setup card (`SetupCard`) in a wrapper carrying the
+  section's state. A section with a field to fix: the card's border, and its "Needs a fix" chip.
+*/
+.sectionCard {
+  min-width: 0;
+}
+
+.sectionCard[data-invalid] > section {
   border-color: var(--danger);
 }
 
-.invalidChip {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--danger-subtle);
-  color: var(--danger);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.cardHeading {
-  min-width: 0;
-  flex: 1 1 200px;
-}
-
-.cardTitleRow {
+/* A tab's panel: its section cards in a column. */
+.panel {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* `hidden` is the panel's own attribute; the flex above would otherwise show it. */
+.panel[hidden] {
+  display: none;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius);
 }
 
 .fieldError {

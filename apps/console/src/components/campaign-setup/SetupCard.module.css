@@ -72,6 +72,11 @@
   padding-top: 12px;
 }
 
+/* A card with nothing under its header (a template section left unset) is its header alone. */
+.body:empty {
+  display: none;
+}
+
 /* A slim card: one line of controls and a note (New campaign's "Start from"). */
 .card[data-density='slim'] .header {
   padding: 12px 16px 4px;

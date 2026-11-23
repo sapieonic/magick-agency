@@ -1,8 +1,7 @@
 import { useId, type Ref } from 'react';
 import { SetupCard } from '../../../../components/campaign-setup';
-import { CampaignCarrierField } from '../../../../components/agency/CampaignCarrierField';
-import { CallerIdPicker } from '../../../agency/CallerIdPicker';
-import { carrierName, sameCarrier, type CarrierChoice, type CarrierOption } from '../../../../utils/agencyCarriers';
+import type { CarrierChoice, CarrierOption } from '../../../../utils/agencyCarriers';
+import { CallerNumbersBlock } from './CallerNumbersBlock';
 import type { SetupSectionSources } from './sectionSources';
 import styles from './NameNumberStep.module.css';
 
@@ -47,8 +46,8 @@ export interface NameNumberStepProps {
 }
 
 /**
- * Step 1 of the campaign setup, "Name & number" (CS1): the campaign's name, the carrier when
- * there is a choice, and the caller IDs as large cards. Controlled: the page owns the values, the
+ * Step 1 of the campaign setup, "Name & number" (CS1): the campaign's name, then the carrier when
+ * there is a choice and the caller IDs as large cards (`CallerNumbersBlock`). Controlled: the page owns the values, the
  * carrier default and the saves.
  */
 export function NameNumberStep({
@@ -109,46 +108,22 @@ export function NameNumberStep({
         ) : null}
       </div>
 
-      {carrierChoices.length > 1 && readOnly ? (
-        <p className={styles.hint} data-testid="campaign-carrier-readonly">
-          {`Carrier: ${carrierChoices.find((o) => sameCarrier(o, carrier))?.name ?? carrierName(carrier)}`}
-        </p>
-      ) : carrierChoices.length > 1 ? (
-        <div className={styles.carrier}>
-          <CampaignCarrierField
-            options={carrierChoices}
-            value={carrier}
-            onChange={onCarrier}
-            disabled={carrierLocked}
-            notice={carrierNotice}
-            error={carrierError}
-          />
-        </div>
-      ) : null}
-
-      <div className={styles.numbers} data-testid="caller-id-field" id={anchors?.numbers}>
-        {sectionSources?.numbers ? <div className={styles.sectionSource}>{sectionSources.numbers}</div> : null}
-        <CallerIdPicker
-          layout="cards"
-          legend={
-            <>
-              Customers will see this number<span className="required-star">*</span>
-            </>
-          }
-          selected={callerIds}
-          onChange={onCallerIds}
-          carrier={carrier}
-          carrierLabel={carrierLabel}
-          carrierActive={carrierActive}
-          disabled={readOnly}
-        />
-        {callerIdsError ? (
-          // `data-field-error`: the picker marks no control invalid, so this is what "Show me" finds.
-          <p className="error-text" role="alert" data-field-error>
-            {callerIdsError}
-          </p>
-        ) : null}
-      </div>
+      <CallerNumbersBlock
+        carrierChoices={carrierChoices}
+        carrier={carrier}
+        onCarrier={onCarrier}
+        carrierLocked={carrierLocked}
+        carrierNotice={carrierNotice}
+        carrierError={carrierError}
+        carrierLabel={carrierLabel}
+        carrierActive={carrierActive}
+        callerIds={callerIds}
+        onCallerIds={onCallerIds}
+        callerIdsError={callerIdsError}
+        readOnly={readOnly}
+        numbersId={anchors?.numbers}
+        source={sectionSources?.numbers}
+      />
     </SetupCard>
   );
 }

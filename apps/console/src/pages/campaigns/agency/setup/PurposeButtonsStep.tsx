@@ -64,6 +64,12 @@ export interface PurposeButtonsStepProps {
    * the automatic outcomes for unanswered calls under Advanced too.
    */
   sectionSources?: SetupSectionSources;
+  /**
+   * `false`: drawn as a titled block (`SetupSection`) rather than a card of its own, for a page
+   * that puts it inside its own card (a campaign template's Outcomes section, CS21). Everything
+   * else is the same.
+   */
+  framed?: boolean;
 }
 
 /** Above this many buttons the count chip turns to a warning: the station's tiles go small. */
@@ -122,6 +128,7 @@ export function PurposeButtonsStep({
   overrides = false,
   buttonsReplaced = 0,
   sectionSources,
+  framed = true,
 }: PurposeButtonsStepProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
   const mappedRows = useRef<MappedRows>({});
@@ -266,8 +273,9 @@ export function PurposeButtonsStep({
   const count = dispositions.length;
   const over = count > BUTTONS_KEPT_TO;
 
+  const Frame = framed ? SetupCard : SetupSection;
   return (
-    <SetupCard
+    <Frame
       title="What is this campaign for?"
       helper="Pick a starting point. It fills in the buttons and rules below, and you can change any of them."
       testId="purpose-buttons-step"
@@ -379,7 +387,7 @@ export function PurposeButtonsStep({
         }}
         onCancel={() => setPendingPreset(null)}
       />
-    </SetupCard>
+    </Frame>
   );
 }
 
