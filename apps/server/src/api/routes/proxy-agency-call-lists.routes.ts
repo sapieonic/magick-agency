@@ -22,13 +22,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENCY_CALLS_NO_CAMPAIGN,
-  AGENCY_CALL_LOG_TYPE_FILTERS,
   type AgencyAccountCallsPage,
   type AgencyMyCallbackDue,
   type AgencyMyCallsPage,
 } from '@magick-agency/contracts/api/agency/call-log';
 import { AGENCY_MY_CALL_LATER_ROWS_MAX } from '@magick-agency/contracts/api/agency/my-day';
-import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { createChildLogger } from '@magick-agency/observability';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
@@ -43,6 +41,7 @@ import {
   agencyMyDayRepository,
   type CallLogScope,
   type MyCallLatersInput,
+  type StaffedCampaign,
 } from '../../db/repositories/agency.repository.js';
 import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
 import {
@@ -52,14 +51,8 @@ import {
   forwardAllowedQuery,
   unknownQueryParamsError,
 } from '../../agency/agency-spine.js';
-import { resolveAgentNames } from '../../agency/agency-agent-identity.js';
-import {
-  callLogSourceForType,
-  isCallLogTypeFilter,
-  nameCallLogAssignees,
-  toCallLogWireRow,
-  type CampaignCallLogRow,
-} from '../../agency/campaign-call-log.js';
+import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
+import { callLogPeopleIds, toCallLogWireRow, withCallLogNames } from '../../agency/campaign-call-log.js';
 import {
   callListLabelIds,
   unfiledInboundIds,
@@ -72,12 +65,12 @@ import { myCallLater, myDayWindow, type MyCallLaterRead } from '../../agency/my-
 import { ownerModeOf } from '../../agency/pacing/agent-queue.js';
 import { clampLimit } from '../../agency/spine-filters.js';
 import { UUID_RE } from '../../utils/uuid.js';
-import { accountOrRefuse } from './helpers/account-scope.js';
+import { accountCampaignOrRefuse, accountOrRefuse } from './helpers/account-scope.js';
+import { parseCallLogType } from './helpers/call-log-query.js';
 import { dialerEnabled } from './helpers/dialer-gate.js';
 import { noStoreHook } from './helpers/no-store.js';
 import { replyValidationFailed } from './helpers/parse-or-400.js';
 import { readKeysetCursor } from './helpers/read-cursor.js';
-import { sendRefusal } from './helpers/refusal.js';
 import { resolveMyAgentId } from './proxy-agency-staffing.routes.js';
 
 const log = createChildLogger({ component: 'proxy-agency-call-lists' });
@@ -91,8 +84,8 @@ export const MY_CALLS_QUERY_PARAMS = ['type', 'campaign_id', 'from', 'to', 'incl
 /** What the routes read; injectable for the route tests. */
 export interface CallListsRouteDeps {
   campaign(campaignId: string): Promise<AgencyCampaignRecord | null>;
-  /** The campaigns the user is actively staffed on in the tenant. */
-  activeCampaignIds(tenantId: string, userId: string): Promise<string[]>;
+  /** The account's campaigns the user is actively staffed on, archived ones left out. */
+  staffedCampaigns(tenantId: string, accountId: string, userId: string): Promise<StaffedCampaign[]>;
   callLaters(input: MyCallLatersInput): Promise<MyCallLaterRead>;
   dialerEnabled(request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   now(): Date;
@@ -100,8 +93,7 @@ export interface CallListsRouteDeps {
 
 const defaultDeps: CallListsRouteDeps = {
   campaign: (id) => agencyCampaignRepository.findById(id),
-  activeCampaignIds: async (tenantId, userId) =>
-    (await agencyCampaignAgentRepository.listActiveForUser(tenantId, userId)).map((a) => a.campaign_id),
+  staffedCampaigns: (tenantId, accountId, userId) => agencyCallListRepository.staffedCampaigns(tenantId, accountId, userId),
   callLaters: (input) => agencyMyDayRepository.callLaters(input),
   dialerEnabled,
   now: () => new Date(),
@@ -111,22 +103,11 @@ export interface ProxyAgencyCallListsOptions {
   deps?: Partial<CallListsRouteDeps>;
 }
 
-/** `?type=` (the public word) checked, and turned into the read's `source`. False once it has replied. */
-function sourceForType(rawType: string | undefined, reply: FastifyReply): { source: ReturnType<typeof callLogSourceForType> } | null {
-  if (rawType !== undefined && !isCallLogTypeFilter(rawType)) {
-    void replyValidationFailed(reply, [
-      { param: 'type', message: `must be one of: ${AGENCY_CALL_LOG_TYPE_FILTERS.join(', ')}` },
-    ]);
-    return null;
-  }
-  return { source: callLogSourceForType(rawType) };
-}
-
 /**
  * The callbacks the agent booked that are due today or late: My day's call-later read
  * (`myCallLaterStatement`, its rule for whose callbacks they are, per assignment mode) on each
  * campaign of the account they are actively on, to the end of that campaign's day. Archived
- * campaigns are left out: nothing is dialled on one.
+ * campaigns are left out: nothing is dialled on one (`staffedCampaigns`, one read).
  *
  * `campaign` is the list's Campaign filter: the rows of that campaign alone, and none under "No
  * campaign" (a callback is booked on a campaign's contact, so it always has one). `total` stays
@@ -136,12 +117,8 @@ export async function myCallbacksDue(
   deps: CallListsRouteDeps,
   q: { tenantId: string; accountId: string; userId: string; now: Date; campaign?: string },
 ): Promise<{ rows: AgencyMyCallbackDue[]; total: number }> {
-  const ids = await deps.activeCampaignIds(q.tenantId, q.userId);
-  const lists = await Promise.all(ids.map(async (id) => {
-    const campaign = await deps.campaign(id);
-    if (!campaign || campaign.tenant_id !== q.tenantId || campaign.account_id !== q.accountId || campaign.archived_at) {
-      return { rows: [] as AgencyMyCallbackDue[], total: 0 };
-    }
+  const staffed = await deps.staffedCampaigns(q.tenantId, q.accountId, q.userId);
+  const lists = await Promise.all(staffed.map(async (campaign) => {
     const read = await deps.callLaters({
       campaignId: campaign.id,
       agentUserId: q.userId,
@@ -166,7 +143,7 @@ export async function myCallbacksDue(
   }));
   const shown = q.campaign === undefined
     ? lists
-    : lists.filter((l, i) => q.campaign !== AGENCY_CALLS_NO_CAMPAIGN && ids[i] === q.campaign);
+    : lists.filter((l, i) => q.campaign !== AGENCY_CALLS_NO_CAMPAIGN && staffed[i]!.id === q.campaign);
   return { rows: mergeCallbacksDue(shown.map((l) => l.rows)), total: lists.reduce((n, l) => n + l.total, 0) };
 }
 
@@ -197,7 +174,7 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const { type: rawType, campaign_id: rawCampaign, ...query } = forwarded.query;
-    const typed = sourceForType(rawType, reply);
+    const typed = parseCallLogType(rawType, reply);
     if (!typed) return reply;
     const parsed = parseCallLogQuery({ ...query, ...(typed.source ? { source: typed.source } : {}) });
     if (!parsed.ok) return replyValidationFailed(reply, parsed.issues);
@@ -209,20 +186,14 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
       if (!UUID_RE.test(rawCampaign)) {
         return replyValidationFailed(reply, [{ param: 'campaign_id', message: `must be a campaign id or ${AGENCY_CALLS_NO_CAMPAIGN}` }]);
       }
-      const campaign = await deps.campaign(rawCampaign);
-      if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
-        return sendRefusal(reply, 404, 'campaign_not_found', 'Campaign not found.');
-      }
+      const campaign = await accountCampaignOrRefuse(reply, deps.campaign, rawCampaign, tenantId, accountId);
+      if (!campaign) return reply;
       scope = { kind: 'campaign', campaignId: campaign.id, tenantId };
     }
 
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
-    const { filters, source, includeCounts } = parsed.value;
-    const narrowed = {
-      ...(parsed.value.softphoneStatus ? { softphoneStatus: parsed.value.softphoneStatus } : {}),
-      ...(parsed.value.inboundOutcomes ? { inboundOutcomes: parsed.value.inboundOutcomes } : {}),
-    };
+    const { filters, source, includeCounts, ...narrowed } = parsed.value;
     const [page, counts, rule] = await Promise.all([
       agencyAttemptRepository.listCallLog({
         scope, filters, source, ...narrowed,
@@ -234,22 +205,22 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     ]);
 
     // Names are a courtesy on top of the calls: a failed lookup serves the rows without them.
-    const warn = (what: string) => (err: unknown) => log.warn(
-      { tenantId, err: err instanceof Error ? err.message : String(err) }, `all calls: ${what} could not be read`,
-    );
-    const agentIds = [...new Set(page.rows.map((r) => r.agent_user_id).filter((id): id is string => typeof id === 'string'))];
-    const [agentNames, campaigns, assigned] = await Promise.all([
-      agentIds.length > 0
-        ? resolveAgentNames(agentIds, tenantId).catch((err: unknown) => { warn('the agents\' names')(err); return new Map<string, string | null>(); })
-        : new Map<string, string | null>(),
-      agencyCallListRepository.campaigns(tenantId, accountId, callListLabelIds(page.rows).campaignIds)
-        .catch((err: unknown) => { warn('the campaigns\' names')(err); return new Map<string, { name: string }>(); }),
-      nameCallLogAssignees(page.rows, tenantId, resolveAgentNames, warn('the assignees\' names')),
+    // The agents and the Missed rows' assignees are one lookup over both.
+    const [people, campaignNames] = await Promise.all([
+      agentNamesOrNone(callLogPeopleIds(page.rows), tenantId, 'all calls'),
+      agencyCallListRepository.campaignNames(tenantId, accountId, callListLabelIds(page.rows).campaignIds)
+        .catch((err: unknown) => {
+          log.warn(
+            { tenantId, err: err instanceof Error ? err.message : String(err) },
+            'all calls: the campaigns\' names could not be read',
+          );
+          return new Map<string, string>();
+        }),
     ]);
     const body: AgencyAccountCallsPage = {
-      rows: assigned.map((row: CampaignCallLogRow) => ({
-        ...toCallLogWireRow({ ...row, agent_name: row.agent_user_id ? agentNames.get(row.agent_user_id) ?? null : null }),
-        campaign_name: row.campaign_id ? campaigns.get(row.campaign_id)?.name ?? null : null,
+      rows: page.rows.map((row) => ({
+        ...toCallLogWireRow(withCallLogNames(row, people)),
+        campaign_name: row.campaign_id ? campaignNames.get(row.campaign_id) ?? null : null,
       })),
       next_cursor: page.next_cursor,
       limit: page.limit,
@@ -275,7 +246,7 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     const forwarded = forwardAllowedQuery(request.query, MY_CALLS_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const { type: rawType, campaign_id: rawCampaign, from, to, include_counts: rawCounts } = forwarded.query;
-    const typed = sourceForType(rawType, reply);
+    const typed = parseCallLogType(rawType, reply);
     if (!typed) return reply;
     if (rawCampaign !== undefined && rawCampaign !== AGENCY_CALLS_NO_CAMPAIGN) {
       if (!UUID_RE.test(rawCampaign)) {
@@ -283,10 +254,7 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
       }
       // The read keys two of its branches on the campaign alone, so the campaign is checked to be
       // this account's first; another account's or tenant's is as unknown as one that does not exist.
-      const campaign = await deps.campaign(rawCampaign);
-      if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
-        return sendRefusal(reply, 404, 'campaign_not_found', 'Campaign not found.');
-      }
+      if (!(await accountCampaignOrRefuse(reply, deps.campaign, rawCampaign, tenantId, accountId))) return reply;
     }
     const parsed = parseCallLogQuery({
       ...(from !== undefined ? { from } : {}),
@@ -323,10 +291,17 @@ export async function proxyAgencyCallListsRoutes(app: FastifyInstance, opts: Pro
     ]);
 
     const ids = callListLabelIds(page.rows);
-    // An inbound row filed under no campaign is masked by its matched contact's campaign, when it has one.
-    const matchedCampaignIds = await agencyCallListRepository.inboundMatchedCampaigns(tenantId, accountId, unfiledInboundIds(page.rows));
-    const [campaigns, contacts] = await Promise.all([
-      agencyCallListRepository.campaigns(tenantId, accountId, [...new Set([...ids.campaignIds, ...matchedCampaignIds.values()])]),
+    // An inbound row filed under no campaign is masked by its matched contact's campaign, when it
+    // has one: only the campaigns' read waits for those; the contacts' names are read beside both.
+    const campaignLabels = async () => {
+      const matched = await agencyCallListRepository.inboundMatchedCampaigns(tenantId, accountId, unfiledInboundIds(page.rows));
+      return {
+        matchedCampaignIds: matched,
+        campaigns: await agencyCallListRepository.campaigns(tenantId, accountId, [...new Set([...ids.campaignIds, ...matched.values()])]),
+      };
+    };
+    const [{ matchedCampaignIds, campaigns }, contacts] = await Promise.all([
+      campaignLabels(),
       agencyCallListRepository.contactNames(tenantId, accountId, ids.contactIds),
     ]);
     const labels = { campaigns, contactNames: contactNameMap(contacts), matchedCampaignIds };

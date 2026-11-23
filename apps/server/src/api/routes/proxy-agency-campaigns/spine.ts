@@ -8,7 +8,7 @@ import { callCore, forwardCore } from '../../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
-import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
+import { agentNamesOrNone, resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import {
   ATTEMPT_QUERY_PARAMS,
   CALL_LOG_EXPORT_QUERY_PARAMS,
@@ -35,13 +35,12 @@ import {
   type SpineExportTruncation,
 } from '../../../agency/agency-spine.js';
 import {
-  callLogSourceForType,
-  isCallLogTypeFilter,
-  nameCallLogAssignees,
+  callLogPeopleIds,
   toCallLogWireRow,
-  type NamedCampaignCallLogRow,
+  withCallLogNames,
+  type CampaignCallLogRow,
 } from '../../../agency/campaign-call-log.js';
-import { AGENCY_CALL_LOG_TYPE_FILTERS } from '@magick-agency/contracts/api/agency/call-log';
+import { parseCallLogType } from '../helpers/call-log-query.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { drainPages } from '../helpers/drain-pages.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
@@ -183,12 +182,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const { type: rawType, ...query } = forwarded.query;
-    if (rawType !== undefined && !isCallLogTypeFilter(rawType)) {
-      return replyValidationFailed(reply, [
-        { param: 'type', message: `must be one of: ${AGENCY_CALL_LOG_TYPE_FILTERS.join(', ')}` },
-      ]);
-    }
-    const source = callLogSourceForType(rawType);
+    const typed = parseCallLogType(rawType, reply);
+    if (!typed) return reply;
+    const { source } = typed;
 
     const result = await callCore({
       method: 'GET',
@@ -200,13 +196,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     // Non-2xx bodies pass through untouched, as on the attempt list.
     if (result.status < 200 || result.status >= 300) return reply.code(result.status).send(result.body);
 
-    const named = await enrichAttemptAgentNames(result.body, request.tenantId!, resolveAgentNames, (err) => {
-      log.warn(
-        { tenantId: request.tenantId, err: err instanceof Error ? err.message : String(err) },
-        'agency call log: agent name resolution failed; emitting agent_name: null',
-      );
-    });
-    const page = asSpinePage<NamedCampaignCallLogRow>(named);
+    const page = asSpinePage<CampaignCallLogRow>(result.body);
     if (!page) {
       return reply.code(502).send({
         error: 'Bad Gateway',
@@ -214,16 +204,13 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         message: 'The call log could not be read. Try again.',
       });
     }
-    const counts = (named as { counts?: unknown }).counts;
-    // A missed inbound call names who it is assigned to, beside the agents above.
-    const rows = await nameCallLogAssignees(page.rows, request.tenantId!, resolveAgentNames, (err) => {
-      log.warn(
-        { tenantId: request.tenantId, err: err instanceof Error ? err.message : String(err) },
-        'agency call log: assignee name resolution failed; emitting assignee_name: null',
-      );
-    });
+    const counts = (result.body as { counts?: unknown }).counts;
+    // The internal handler serves only user ids (see the attempt list above). Each row's agent
+    // and, on a missed inbound call, who it is assigned to: one lookup over both, and a lookup
+    // that fails is logged and leaves the names null.
+    const people = await agentNamesOrNone(callLogPeopleIds(page.rows), request.tenantId!, 'agency call log');
     return reply.send({
-      rows: rows.map(toCallLogWireRow),
+      rows: page.rows.map((row) => toCallLogWireRow(withCallLogNames(row, people))),
       next_cursor: page.next_cursor,
       limit: page.limit,
       ...(counts !== undefined ? { counts } : {}),

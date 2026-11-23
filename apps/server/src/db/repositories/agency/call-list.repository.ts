@@ -7,6 +7,7 @@
 import { getPool } from '@magick-agency/db';
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 import type { CustomerNameDisplay } from '@magick-agency/domain/customer-name';
+import type { AgencyCampaignRecord } from '../../models/agency.model.js';
 import { contactNameContextSql } from './sql-fragments.js';
 
 /** A campaign as a call list labels it. */
@@ -17,6 +18,15 @@ export interface CallListCampaign {
   phone_display: string | null;
   disposition_catalog: AgencyDisposition[] | null;
 }
+
+/**
+ * A campaign the agent is actively staffed on, with what their callbacks due are read by
+ * (`myCallbacksDue`): its day (`default_timezone`), whose callbacks they are (`assignment_mode`,
+ * `callback_fallback`), which outcomes book one (`disposition_catalog`) and how a contact is
+ * named (`context_display`).
+ */
+export type StaffedCampaign = Pick<AgencyCampaignRecord,
+  'id' | 'name' | 'default_timezone' | 'assignment_mode' | 'callback_fallback' | 'context_display' | 'disposition_catalog'>;
 
 /** A roster contact's name columns and its campaign's display rules, for `matchName`. */
 export interface CallListContactName {
@@ -36,6 +46,40 @@ export class AgencyCallListRepository {
       [tenantId, accountId, [...ids]],
     );
     return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  /** The names of the account's campaigns among `ids`: what a list that only names each row's campaign reads. */
+  async campaignNames(tenantId: string, accountId: string, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; name: string }>(
+      `SELECT id, name
+         FROM agency_campaigns
+        WHERE id = ANY($3::uuid[]) AND tenant_id = $1::uuid AND account_id = $2::uuid`,
+      [tenantId, accountId, [...ids]],
+    );
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /**
+   * The account's campaigns the user is actively staffed on (`unassigned_at IS NULL`), archived
+   * ones left out, oldest staffing first (`assigned_at`, then the staffing row's id: a total
+   * order). One read: the staffing rows of the user in the tenant
+   * (`uq_agency_campaign_agent_active_campaign`) joined to their campaigns by primary key, the
+   * account and the archive checked in the statement, so a campaign of another account the
+   * user is also on is never read.
+   */
+  async staffedCampaigns(tenantId: string, accountId: string, userId: string): Promise<StaffedCampaign[]> {
+    const { rows } = await getPool().query<StaffedCampaign>(
+      `SELECT c.id, c.name, c.default_timezone, c.assignment_mode, c.callback_fallback,
+              c.context_display, c.disposition_catalog
+         FROM agency_campaign_agents ca
+         JOIN agency_campaigns c ON c.id = ca.campaign_id
+        WHERE ca.tenant_id = $1::uuid AND ca.user_id = $3::uuid AND ca.unassigned_at IS NULL
+          AND c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.archived_at IS NULL
+        ORDER BY ca.assigned_at ASC, ca.id ASC`,
+      [tenantId, accountId, userId],
+    );
+    return rows;
   }
 
   /**

@@ -33,7 +33,11 @@ import {
 import { matchName } from './inbound/match-name.js';
 import { UUID_RE } from '../utils/uuid.js';
 
-/** The Call log's query, parsed ({@link parseCallLogQuery}). */
+/**
+ * The Call log's query, parsed ({@link parseCallLogQuery}). `softphoneStatus` and
+ * `inboundOutcomes` are the read's narrowing, each ABSENT when the query has none: a caller takes
+ * `{ filters, source, includeCounts, ...narrowed }` and spreads `narrowed` into the read.
+ */
 export interface ParsedCallLogQuery {
   filters: AgencyAttemptFilters;
   source: CampaignCallLogSourceFilter | null;

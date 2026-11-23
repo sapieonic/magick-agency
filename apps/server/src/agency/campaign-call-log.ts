@@ -349,34 +349,35 @@ export function toInboundWireRow(row: CampaignInboundLogRow & { agent_name?: str
 }
 
 /**
- * Put the assignee's name on each inbound row's Missed row (`follow_up.assignee_name`): one
- * lookup for the page, the key always present, and a lookup that throws degrades to nulls
- * (`onError`), as the agent names do (`enrichAttemptAgentNames`).
+ * Everybody a page of call-log rows names: each row's agent and each inbound row's Missed-row
+ * assignee, so the page's names are ONE lookup over the union (`agentNamesOrNone`), never one
+ * per kind of person. Nulls are left in for the lookup to drop.
  */
-export async function nameCallLogAssignees<R extends CampaignCallLogRow>(
-  rows: readonly R[],
-  tenantId: string,
-  resolveNames: (ids: readonly string[], tenantId: string) => Promise<Map<string, string | null>>,
-  onError?: (err: unknown) => void,
-): Promise<R[]> {
-  const idOf = (row: CampaignCallLogRow) => (row.source === 'inbound' ? row.inbound?.follow_up?.assignee_user_id ?? null : null);
-  const ids = [...new Set(rows.map(idOf).filter((id): id is string => typeof id === 'string' && id.length > 0))];
-  let names = new Map<string, string | null>();
-  if (ids.length > 0) {
-    try {
-      names = await resolveNames(ids, tenantId);
-    } catch (err) {
-      onError?.(err);
-    }
-  }
-  return rows.map((row) => {
-    if (row.source !== 'inbound' || !row.inbound?.follow_up) return row;
-    const id = row.inbound.follow_up.assignee_user_id;
-    return {
-      ...row,
-      inbound: { ...row.inbound, follow_up: { ...row.inbound.follow_up, assignee_name: id ? names.get(id) ?? null : null } },
-    };
-  });
+export function callLogPeopleIds(rows: readonly CampaignCallLogRow[]): Array<string | null> {
+  return rows.flatMap((row) => [
+    row.agent_user_id ?? null,
+    row.source === 'inbound' ? row.inbound?.follow_up?.assignee_user_id ?? null : null,
+  ]);
+}
+
+/**
+ * Put the names on a row: `agent_name` beside `agent_user_id`, and on an inbound row's Missed
+ * row `follow_up.assignee_name`. Both keys are always present; an id the lookup did not name
+ * (or a lookup that failed and answered nothing) is `null`, never a failed read.
+ */
+export function withCallLogNames<R extends CampaignCallLogRow>(
+  row: R,
+  names: ReadonlyMap<string, string | null>,
+): R & { agent_name: string | null } {
+  const nameOf = (id: string | null | undefined): string | null => (id ? names.get(id) ?? null : null);
+  const agent_name = nameOf(row.agent_user_id);
+  if (row.source !== 'inbound' || !row.inbound?.follow_up) return { ...row, agent_name };
+  const followUp = row.inbound.follow_up;
+  const inbound: CampaignInboundFacts = {
+    ...row.inbound, follow_up: { ...followUp, assignee_name: nameOf(followUp.assignee_user_id) },
+  };
+  const withAssignee: R = { ...row, inbound };
+  return { ...withAssignee, agent_name };
 }
 
 /**

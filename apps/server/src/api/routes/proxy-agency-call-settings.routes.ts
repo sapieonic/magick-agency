@@ -24,9 +24,8 @@ import {
   type AgencyCallSettingsRecord,
 } from '../../db/repositories/agency.repository.js';
 import { getFeatureFlagService, FLAGS } from '../../feature-flags/index.js';
-import { UUID_RE } from '../../utils/uuid.js';
 import { inboundRefusalBody } from './agency/inbound-answer.js';
-import { accountOrRefuse } from './helpers/account-scope.js';
+import { accountCampaignOrRefuse, accountOrRefuse } from './helpers/account-scope.js';
 import { noStoreHook } from './helpers/no-store.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 
@@ -172,12 +171,13 @@ export async function proxyAgencyCallSettingsRoutes(app: FastifyInstance): Promi
       const accountId = accountOrRefuse(request.accountId, reply);
       if (!accountId) return reply;
       const tenantId = request.tenantId!;
-      const notFound = () => reply.code(404).send({ error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found.' });
-      // The tenant context middleware lower-cased the header ids; a path id is checked here (`22P02`).
-      if (!UUID_RE.test(request.params.id)) return notFound();
+      // The tenant context middleware lower-cased the header ids; a path id is checked (`22P02`)
+      // and lower-cased here.
       const campaignId = request.params.id.toLowerCase();
-      const campaign = await agencyCampaignRepository.findById(campaignId);
-      if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) return notFound();
+      const campaign = await accountCampaignOrRefuse(
+        reply, (id) => agencyCampaignRepository.findById(id), campaignId, tenantId, accountId,
+      );
+      if (!campaign) return reply;
       // The campaign is the account's (above), and a route names only a campaign of its own
       // account (checked on every route save), so every route found is the account's.
       const routes = await agencyInboundRouteRepository.listDefaultingTo(tenantId, campaignId);

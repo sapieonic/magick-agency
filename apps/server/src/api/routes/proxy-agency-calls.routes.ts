@@ -11,7 +11,9 @@ import { agencyCampaignRepository } from '../../db/repositories/agency.repositor
 import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../settings/agency-account-settings.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { enrichAttemptAgentName } from '../../agency/agency-spine.js';
-import { nameCallLogAssignees, toInboundWireRow, type CampaignInboundLogRow } from '../../agency/campaign-call-log.js';
+import {
+  callLogPeopleIds, toInboundWireRow, withCallLogNames, type CampaignInboundLogRow,
+} from '../../agency/campaign-call-log.js';
 import { callListenSessions } from './helpers/listen.js';
 import { noStore } from './helpers/no-store.js';
 
@@ -258,6 +260,23 @@ export function decodeRawErrorBody(body: unknown): unknown {
     // Not JSON — fall through to the envelope below.
   }
   return { error: 'Upstream Error', message: 'The recording could not be returned.' };
+}
+
+/**
+ * Pass a recording read (`callCore` with `rawResponse`) through to the client: the bytes with
+ * their type and length, cacheable privately for an hour.
+ *
+ * A refusal is decoded, not forwarded as bytes (see {@link decodeRawErrorBody}): the attempt's
+ * `call_purged` is load-bearing for the console, and a refusal typed `application/octet-stream`
+ * is one no console can parse.
+ */
+function sendRecording(reply: FastifyReply, result: { status: number; headers: Headers; body: unknown }): FastifyReply {
+  if (result.status >= 400) return reply.code(result.status).send(decodeRawErrorBody(result.body));
+  reply.header('Content-Type', result.headers.get('content-type') || 'audio/mpeg');
+  const contentLength = result.headers.get('content-length');
+  if (contentLength) reply.header('Content-Length', contentLength);
+  reply.header('Cache-Control', 'private, max-age=3600');
+  return reply.send(result.body);
 }
 
 /** The envelope the internal handler's attempt read answers with. */
@@ -583,21 +602,7 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         rawResponse: true,
       });
 
-      // Decoded, not forwarded as bytes — see `decodeRawErrorBody`. This is the
-      // route whose `call_purged` is load-bearing for the console, and a refusal
-      // typed `application/octet-stream` is one no console can parse.
-      if (result.status >= 400) {
-        return reply.code(result.status).send(decodeRawErrorBody(result.body));
-      }
-
-      const contentType = result.headers.get('content-type') || 'audio/mpeg';
-      const contentLength = result.headers.get('content-length');
-
-      reply.header('Content-Type', contentType);
-      if (contentLength) reply.header('Content-Length', contentLength);
-      reply.header('Cache-Control', 'private, max-age=3600');
-
-      return reply.send(result.body);
+      return sendRecording(reply, result);
     },
   );
 
@@ -651,20 +656,18 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         )
         : null;
       const row = inbound as CampaignInboundLogRow;
-      const names = (ids: readonly string[], t: string) => agentNamesOrNone(ids, t, 'agency inbound call read');
       const savedBy = row.dispositioned_by_user_id;
       const callId = call && typeof call['id'] === 'string' ? call['id'] : null;
-      const [named, [withAssignee], savedByNames, listenSessions] = await Promise.all([
-        enrichAttemptAgentName(row, tenantId, names),
-        nameCallLogAssignees([row], tenantId, names),
-        savedBy ? names([savedBy], tenantId) : Promise.resolve(new Map<string, string | null>()),
+      // Who answered, who the Missed row is assigned to and who saved the outcome: one lookup.
+      const [people, listenSessions] = await Promise.all([
+        agentNamesOrNone([...callLogPeopleIds([row]), savedBy], tenantId, 'agency inbound call read'),
         callId && request.accountId ? callListenSessions(tenantId, request.accountId, callId) : null,
       ]);
       if (listenSessions) noStore(reply);
       return reply.send({
-        inbound: toInboundWireRow({ ...named, inbound: withAssignee!.inbound }),
+        inbound: toInboundWireRow(withCallLogNames(row, people)),
         journey: body['journey'],
-        dispositioned_by_name: savedBy ? savedByNames.get(savedBy) ?? null : null,
+        dispositioned_by_name: savedBy ? people.get(savedBy) ?? null : null,
         voicemail_url: typeof body['voicemail_url'] === 'string' ? body['voicemail_url'] : null,
         call,
         call_availability: body['call_availability'],
@@ -689,12 +692,7 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         accountId: request.accountId,
         rawResponse: true,
       });
-      if (result.status >= 400) return reply.code(result.status).send(decodeRawErrorBody(result.body));
-      reply.header('Content-Type', result.headers.get('content-type') || 'audio/mpeg');
-      const contentLength = result.headers.get('content-length');
-      if (contentLength) reply.header('Content-Length', contentLength);
-      reply.header('Cache-Control', 'private, max-age=3600');
-      return reply.send(result.body);
+      return sendRecording(reply, result);
     },
   );
 }

@@ -172,9 +172,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     // One parse for every scope the log is read at (`agency/call-lists.ts`).
     const parsedQuery = parseCallLogQuery(query);
     if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
-    const { filters, source, includeCounts } = parsedQuery.value;
-    const softphoneStatus = parsedQuery.value.softphoneStatus ? { softphoneStatus: parsedQuery.value.softphoneStatus } : {};
-    const inboundOutcomes = parsedQuery.value.inboundOutcomes ? { inboundOutcomes: parsedQuery.value.inboundOutcomes } : {};
+    const { filters, source, includeCounts, ...narrowed } = parsedQuery.value;
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
@@ -187,14 +185,13 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         tenantId,
         filters,
         source,
-        ...softphoneStatus,
-        ...inboundOutcomes,
+        ...narrowed,
         ...(cursor ? { after: cursor } : {}),
         limit: clampLimit((query as { limit?: unknown }).limit),
       }),
       includeCounts
         ? agencyAttemptRepository.countCallLogForCampaign({
-          campaignId: owned.id, tenantId, filters, ...softphoneStatus, ...inboundOutcomes,
+          campaignId: owned.id, tenantId, filters, ...narrowed,
         })
         : Promise.resolve(null),
     ]);
