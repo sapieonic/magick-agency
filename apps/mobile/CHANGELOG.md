@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.18.0...mobile-v0.19.0) (2026-11-23)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** one call log for dialler, soft-phone and inbound calls, and "Every call must belong to a campaign" ([#120](https://github.com/sapieonic/magick-agency/issues/120)) ([9f4e07e](https://github.com/sapieonic/magick-agency/commit/9f4e07e60ff3468bf21a284c8369f1d6aa0e8f49))
+
 ## [0.18.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.17.0...mobile-v0.18.0) (2026-11-21)
 
 
