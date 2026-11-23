@@ -5,9 +5,7 @@ import {
   Calendar,
   Download,
   ListChecks,
-  Check,
   MicOff,
-  Phone,
   PhoneOutgoing,
   Play,
   Voicemail,
@@ -18,9 +16,7 @@ import {
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
-import { markMissedInboundCallHandled } from '../../api/inbound';
-import { refreshMissedCallsCount } from '../../hooks/useMissedCallsCount';
-import { inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
+import { useMarkMissedHandled } from '../../hooks/useMarkMissedHandled';
 import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -47,6 +43,8 @@ import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
 import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
+import { CallTypeChips } from '../../components/agency/CallTypeChips';
+import { MissedFollowUpCell } from '../../components/agency/MissedFollowUpCell';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import { ATTEMPT_OUTCOME_LABELS, type AgencyAttemptFilters } from '../../types/agency-spine';
 import type {
@@ -78,7 +76,6 @@ import {
   INVERTED_RANGE_COPY,
 } from '../../utils/agencyCampaignAttemptParams';
 import { dayOfInstant, localDay } from '../../utils/format/date';
-import { formatCount } from '../../utils/format/number';
 import {
   ALL_CALLS_DESCRIPTION,
   ALL_CALLS_CAMPAIGN_PARAM,
@@ -123,6 +120,8 @@ const PAGE_SIZE = 50;
 const STATUS_CHIP = 'softphone_status';
 /** The applied-filter chip of All calls' campaign. */
 const CAMPAIGN_CHIP = 'campaign';
+/** The missed-call Outcome cell's test ids on this list (each is completed with the row's id). */
+const CALL_LOG_FOLLOW_UP_TEST_IDS = { cell: 'call-follow-up', callBack: 'call-back', markHandled: 'mark-handled' };
 
 /**
  * The campaign's Call log: one row per call, whatever it was (decisions CL1, CL11,
@@ -349,9 +348,6 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
   const canMarkHandled = hasPermission(role, 'agency.inbound.read');
   /** Call back opens the soft phone with the number on the pad: only where the viewer may dial from it. */
   const canCallBack = softphoneOn && hasPermission(role, 'agency.softphone.dial');
-  /** The Missed row being marked handled, and a refusal said on its row. */
-  const [marking, setMarking] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   /** The other half of the pair under the pointer or the focus: a missed call and its call back light each other. */
   const [pairLit, setPairLit] = useState<string | null>(null);
 
@@ -490,22 +486,13 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
   }, [id, account, fetchPage, nextCursor, loadingMore, filters, type, status, showErrorToast]);
 
   /**
-   * Mark handled: the Missed list's own action (`POST /inbound/missed/:id/handled`, idempotent).
-   * The list and its counts are read again, so the row leaves To follow up and every chip agrees.
+   * Mark handled: the Missed list's own action. The list and its counts are read again, so the
+   * row leaves To follow up and every chip agrees.
    */
-  const markHandled = useCallback(async (row: AgencyCallLogInboundRow) => {
-    if (marking) return;
-    setMarking(row.id);
-    setRowError(null);
-    const result = await markMissedInboundCallHandled(row.id, tenantId ?? undefined, accountId ?? undefined);
-    setMarking(null);
-    if (!result.ok) {
-      setRowError({ id: row.id, message: inboundRefusalCopy(result.refusal) });
-      return;
-    }
-    refreshMissedCallsCount();
+  const reloadCounted = useCallback(() => {
     void load(filters, type, status, true);
-  }, [marking, tenantId, accountId, load, filters, type, status]);
+  }, [load, filters, type, status]);
+  const { marking, rowError, markHandled } = useMarkMissedHandled(reloadCounted);
 
   /**
    * Call back: the soft phone with the caller's number on the pad, this campaign as "Log to",
@@ -796,23 +783,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
         calls uses). Not a filter in the card: choosing one keeps every filter and its count.
       */}
       {typeChips.length > 0 && (
-        <div className={styles.typeChips} role="group" aria-label="Call type" data-testid="call-log-types">
-          {typeChips.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              className={styles.typeChip}
-              aria-pressed={type === chip.id}
-              onClick={() => chooseType(chip.id)}
-              data-testid={`call-log-type-${chip.id}`}
-              data-warning={chip.warning ? '' : undefined}
-            >
-              {chip.id !== 'all' && !chip.warning && <span className={styles.typeSwatch} data-type={chip.id} aria-hidden="true" />}
-              {chip.label}
-              {chip.count !== null && <span className={styles.typeCount}>{formatCount(chip.count)}</span>}
-            </button>
-          ))}
-        </div>
+        <CallTypeChips chips={typeChips} selected={type} onChoose={chooseType} label="Call type" testIdPrefix="call-log" />
       )}
       {type === 'to_follow_up' && (
         <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{toFollowUpNote(account ? 'account' : 'campaign')}</p>
@@ -1150,51 +1121,15 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
                       </td>
                       <td>
                         {missed && followUp ? (
-                          /*
-                            A missed call has no outcome of its own: this cell says where its
-                            follow-up stands. Rung back ("Called back 3:31 PM", the pair's other
-                            row), still owed ("To follow up", with the Missed list's two actions),
-                            or closed.
-                          */
-                          <span className={styles.followUp} data-testid={`call-follow-up-${row.id}`}>
-                            {followUp.calledBack && <span className={styles.calledBack}>{followUp.calledBack}</span>}
-                            {followUp.status && (
-                              <span className={followUp.open ? styles.toFollowUp : styles.mutedCell}>{followUp.status}</span>
-                            )}
-                            {followUp.open && (canMarkHandled || (canCallBack && missed.phone_e164)) && (
-                              <span className={styles.rowActions}>
-                                {canCallBack && missed.phone_e164 && (
-                                  <button
-                                    type="button"
-                                    className={styles.rowAction}
-                                    onClick={() => callBack(missed)}
-                                    data-testid={`call-back-${row.id}`}
-                                  >
-                                    <Phone size={12} aria-hidden="true" />
-                                    Call back
-                                  </button>
-                                )}
-                                {canMarkHandled && (
-                                  <button
-                                    type="button"
-                                    className={styles.rowAction}
-                                    onClick={() => void markHandled(missed)}
-                                    disabled={marking !== null}
-                                    data-testid={`mark-handled-${row.id}`}
-                                  >
-                                    <Check size={12} aria-hidden="true" />
-                                    {marking === row.id ? 'Marking…' : 'Mark handled'}
-                                  </button>
-                                )}
-                              </span>
-                            )}
-                            {rowError?.id === row.id && (
-                              <span className={styles.rowError} role="alert">
-                                <AlertCircle size={12} aria-hidden="true" />
-                                {rowError.message}
-                              </span>
-                            )}
-                          </span>
+                          <MissedFollowUpCell
+                            rowId={row.id}
+                            followUp={followUp}
+                            onCallBack={canCallBack && missed.phone_e164 ? () => callBack(missed) : null}
+                            onMarkHandled={canMarkHandled ? () => void markHandled(missed) : null}
+                            marking={marking}
+                            error={rowError?.id === row.id ? rowError.message : null}
+                            testIds={CALL_LOG_FOLLOW_UP_TEST_IDS}
+                          />
                         ) : (
                           <AttemptDispositionCell
                             attempt={row.type === 'dialler' ? row : { ...row, auto_disposition_code: null }}

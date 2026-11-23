@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Calendar, Check, Phone, PhoneOutgoing, RefreshCw } from 'lucide-react';
+import { AlertCircle, Calendar, PhoneOutgoing, RefreshCw } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -10,15 +10,15 @@ import { getMyCalls } from '../../api/myCalls';
 import { getMyCampaigns } from '../../api/agencyStats';
 import { attemptDateRange } from '../../utils/agencyAttemptFilters';
 import { INVERTED_RANGE_COPY } from '../../utils/agencyCampaignAttemptParams';
+import { CallTypeChips } from './CallTypeChips';
 import { FiltersCard } from './FiltersCard';
-import { getMissedInboundCall, markMissedInboundCallHandled } from '../../api/inbound';
-import { refreshMissedCallsCount } from '../../hooks/useMissedCallsCount';
+import { MissedFollowUpCell } from './MissedFollowUpCell';
+import { getMissedInboundCall } from '../../api/inbound';
+import { useMarkMissedHandled } from '../../hooks/useMarkMissedHandled';
 import { hasPermission } from '../../utils/permissions';
-import { inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
 import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { formatCallTimestamp, formatTalkTime } from '../../utils/agencySpineCopy';
 import { dayOfInstant } from '../../utils/format/date';
-import { formatCount } from '../../utils/format/number';
 import {
   AGENCY_CALLS_NO_CAMPAIGN,
   AGENCY_CALLS_NO_CAMPAIGN_LABEL,
@@ -52,6 +52,8 @@ import styles from '../../pages/agency/AgencyCampaignAttemptsPage.module.css';
 import own from './MyCallsList.module.css';
 
 const PAGE_SIZE = 50;
+/** The missed-call Outcome cell's test ids on this list (each is completed with the row's id). */
+const MY_CALLS_FOLLOW_UP_TEST_IDS = { cell: 'my-call-follow-up', callBack: 'my-call-back', markHandled: 'my-call-handled' };
 
 /**
  * The signed-in person's own calls as one list (`docs/call-log.md` §7, CL9): their dials, the
@@ -104,9 +106,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
-  const [marking, setMarking] = useState<string | null>(null);
   const [calling, setCalling] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   const seq = useRef(0);
 
   const canMarkHandled = hasPermission(role, 'agency.inbound.read');
@@ -208,19 +208,10 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   }, [params, setParams]);
 
   /** Mark handled: the Missed list's own action. The list and the badge are read again. */
-  const markHandled = useCallback(async (row: AgencyMyCallRow) => {
-    if (marking) return;
-    setMarking(row.id);
-    setRowError(null);
-    const result = await markMissedInboundCallHandled(row.id, tenantId ?? undefined, accountId ?? undefined);
-    setMarking(null);
-    if (!result.ok) {
-      setRowError({ id: row.id, message: inboundRefusalCopy(result.refusal) });
-      return;
-    }
-    refreshMissedCallsCount();
+  const reload = useCallback(() => {
     void load(type, filters);
-  }, [marking, tenantId, accountId, load, type, filters]);
+  }, [load, type, filters]);
+  const { marking, rowError, setRowError, markHandled } = useMarkMissedHandled(reload);
 
   /**
    * Call back: the soft phone with the caller's number on the pad, the call's campaign chosen
@@ -250,7 +241,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
     navigate('/dialer/phone', {
       state: softphonePrefillState({ number, campaignId: row.campaign_id, inboundCallId: row.id }),
     });
-  }, [calling, tenantId, accountId, navigate]);
+  }, [calling, tenantId, accountId, navigate, setRowError]);
 
   const chips = useMemo(() => myCallsChips(counts, type, { softphone, inbound }), [counts, type, softphone, inbound]);
   /** To follow up is everyone still owed a call, whatever the dates (CL14): the date fields say so. */
@@ -271,25 +262,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   return (
     <div>
       <div className={own.bar}>
-        <div className={styles.typeChips} role="group" aria-label="Which calls" data-testid="my-calls-types">
-          {chips.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              className={styles.typeChip}
-              aria-pressed={type === chip.id}
-              onClick={() => choose(chip.id)}
-              data-testid={`my-calls-type-${chip.id}`}
-              data-warning={chip.warning ? '' : undefined}
-            >
-              {chip.id !== 'all' && !chip.warning && <span className={styles.typeSwatch} data-type={chip.id} aria-hidden="true" />}
-              {chip.label}
-              {chip.count !== null && chip.count > 0 && (
-                <span className={styles.typeCount} data-testid={`my-calls-count-${chip.id}`}>{formatCount(chip.count)}</span>
-              )}
-            </button>
-          ))}
-        </div>
+        <CallTypeChips chips={chips} selected={type} onChoose={choose} label="Which calls" testIdPrefix="my-calls" badgesOnly />
         <button type="button" className={`${spine.actionButton} btn-secondary`} onClick={() => void load(type, filters)} disabled={loading} aria-label="Refresh my calls">
           <RefreshCw size={16} />
           Refresh
@@ -413,44 +386,16 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
                     </td>
                     <td>
                       {followUp ? (
-                        <span className={styles.followUp} data-testid={`my-call-follow-up-${row.id}`}>
-                          {followUp.calledBack && <span className={styles.calledBack}>{followUp.calledBack}</span>}
-                          {followUp.status && <span className={followUp.open ? styles.toFollowUp : styles.mutedCell}>{followUp.status}</span>}
-                          {followUp.open && (canMarkHandled || (softphone && row.phone !== null)) && (
-                            <span className={styles.rowActions}>
-                              {softphone && row.phone !== null && (
-                                <button
-                                  type="button"
-                                  className={styles.rowAction}
-                                  onClick={() => void callBack(row)}
-                                  disabled={calling !== null}
-                                  data-testid={`my-call-back-${row.id}`}
-                                >
-                                  <Phone size={12} aria-hidden="true" />
-                                  Call back
-                                </button>
-                              )}
-                              {canMarkHandled && (
-                                <button
-                                  type="button"
-                                  className={styles.rowAction}
-                                  onClick={() => void markHandled(row)}
-                                  disabled={marking !== null}
-                                  data-testid={`my-call-handled-${row.id}`}
-                                >
-                                  <Check size={12} aria-hidden="true" />
-                                  {marking === row.id ? 'Marking…' : 'Mark handled'}
-                                </button>
-                              )}
-                            </span>
-                          )}
-                          {rowError?.id === row.id && (
-                            <span className={styles.rowError} role="alert">
-                              <AlertCircle size={12} aria-hidden="true" />
-                              {rowError.message}
-                            </span>
-                          )}
-                        </span>
+                        <MissedFollowUpCell
+                          rowId={row.id}
+                          followUp={followUp}
+                          onCallBack={softphone && row.phone !== null ? () => void callBack(row) : null}
+                          callBackDisabled={calling !== null}
+                          onMarkHandled={canMarkHandled ? () => void markHandled(row) : null}
+                          marking={marking}
+                          error={rowError?.id === row.id ? rowError.message : null}
+                          testIds={MY_CALLS_FOLLOW_UP_TEST_IDS}
+                        />
                       ) : (
                         <>
                           <span className={outcome ? undefined : styles.mutedCell} data-testid={`my-call-outcome-${row.id}`}>
