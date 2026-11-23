@@ -11,6 +11,7 @@
 import type * as Core from '../../agency';
 import type { AgencyAgentState, AgencyBreakReason, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
+import type { AgencyCampaignTemplateSource } from './campaign-templates';
 import type {
   AgencyAgentScript,
   AgencyAssignmentMode,
@@ -520,6 +521,12 @@ export interface AgencyCampaign {
   id: string;
   name: string;
   status: string;
+  /**
+   * When the campaign row was created (the row's `created_at`; `formatAgencyCampaignResponse`
+   * spreads the row, so every campaign payload has always carried it). Typed for campaign
+   * Settings' "Started from <template> · created <date>" (`docs/campaign-templates.md` §7).
+   */
+  created_at?: string;
   account_id?: string | null;
   /**
    * ⚠️ **There is no `description`, and one must not be added back here.**
@@ -793,6 +800,16 @@ export interface AgencyCampaign {
    * archived, and on one archived by a caller with no user id.
    */
   archived_by?: AgencyCampaignActor | null;
+
+  // ── Campaign templates (docs/campaign-templates.md, CT9) ────────────────────
+
+  /**
+   * The template this campaign was made from, as it was then, and where each section came from
+   * (`./campaign-templates.ts`). `null` on a campaign made without the feature and on a retry
+   * campaign (CT7). Written by the create path and by an apply to a draft (CT16); never sent by a
+   * client, and never read at run time (CT1).
+   */
+  template_source?: AgencyCampaignTemplateSource | null;
 }
 
 /**

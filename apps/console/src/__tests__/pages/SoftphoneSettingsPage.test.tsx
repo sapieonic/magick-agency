@@ -4,13 +4,15 @@ import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
-  getSoftphoneSettingsWithRule: vi.fn(),
+  readSoftphoneSettings: vi.fn(),
   putSoftphoneSettings: vi.fn(),
   showToast: vi.fn(),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/softphone', () => ({
-  getSoftphoneSettingsWithRule: mocks.getSoftphoneSettingsWithRule,
+  // The page reads the settings with what their outcomes follow (campaign templates; none here)
+  // and whether every call must belong to a campaign.
+  readSoftphoneSettings: mocks.readSoftphoneSettings,
   putSoftphoneSettings: mocks.putSoftphoneSettings,
 }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({
@@ -54,7 +56,7 @@ async function renderPage(role = 'account_admin') {
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
-  mocks.getSoftphoneSettingsWithRule.mockResolvedValue({ settings: SAVED, campaignRequired: false });
+  mocks.readSoftphoneSettings.mockResolvedValue({ settings: SAVED, outcomesTemplate: null, campaignRequired: false });
 });
 afterEach(cleanup);
 
@@ -110,7 +112,7 @@ describe('Settings → Soft phone', () => {
   });
 
   it('saves the whole row: record, profile, default caller ID, fields', async () => {
-    mocks.putSoftphoneSettings.mockImplementation(async (body: Record<string, unknown>) => ({ ok: true, value: { ...SAVED, ...body } }));
+    mocks.putSoftphoneSettings.mockImplementation(async (body: Record<string, unknown>) => ({ ok: true, value: { settings: { ...SAVED, ...body }, outcomesTemplate: undefined } }));
     await renderPage();
     fireEvent.click(screen.getByTestId('softphone-settings-record'));
     fireEvent.change(screen.getByTestId('softphone-settings-profile'), { target: { value: 'prof-1' } });
@@ -148,7 +150,7 @@ describe('Settings → Soft phone', () => {
 
   // docs/call-log.md §5: with "Every call must belong to a campaign" on, no call is logged to none.
   it('greys the settings of calls not logged to a campaign while every call must belong to one; the call details stay', async () => {
-    mocks.getSoftphoneSettingsWithRule.mockResolvedValue({ settings: SAVED, campaignRequired: true });
+    mocks.readSoftphoneSettings.mockResolvedValue({ settings: SAVED, outcomesTemplate: null, campaignRequired: true });
     await renderPage();
     expect(screen.getByTestId('softphone-settings-unused').textContent).toBe('Not used while every call must belong to a campaign.');
     expect(screen.getByTestId('softphone-settings-outcomes-unused').textContent).toBe('Not used while every call must belong to a campaign.');

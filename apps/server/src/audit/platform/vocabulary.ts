@@ -154,6 +154,15 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_campaign.roster_upload_completed', label: 'Campaign roster upload completed', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.roster_upload_failed', label: 'Campaign roster upload failed or cancelled', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.roster_cleared', label: 'Campaign roster cleared', group: 'Campaign', product: 'agency' },
+  // Campaign templates (docs/campaign-templates.md CT9): "template" in every label, so none reads
+  // as an act on a campaign.
+  { value: 'campaign_template.created', label: 'Campaign template created', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.updated', label: 'Campaign template changed', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.archived', label: 'Campaign template archived', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.restored', label: 'Campaign template restored from the archive', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.default_set', label: 'Campaign template made the default', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.default_cleared', label: 'Campaign template no longer the default', group: 'Campaign', product: 'agency' },
+  { value: 'campaign_template.applied', label: 'Campaign template applied to draft campaigns', group: 'Campaign', product: 'agency' },
 
   { value: 'agency_disposition.created', label: 'Call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },

@@ -79,6 +79,8 @@ const FLOORS: ReadonlyArray<{
   { permission: 'agency.calls.listen', floor: 'account_admin', masterName: null, masterLine: null },
   // The account's call settings (docs/call-log.md §5), at account_admin.
   { permission: 'agency.calls.manage', floor: 'account_admin', masterName: null, masterLine: null },
+  // Campaign templates (docs/campaign-templates.md, CT3): a supervisor's setting, at account_admin.
+  { permission: 'agency.campaign_templates.manage', floor: 'account_admin', masterName: null, masterLine: null },
 ];
 
 describe('permission floors', () => {
@@ -142,6 +144,15 @@ describe('the agent role', () => {
     expect(hasPermission('agent', 'agency.inbound.write')).toBe(false);
     expect(hasPermission('operator', 'agency.inbound.write')).toBe(false);
     expect(hasPermission('account_admin', 'agency.inbound.write')).toBe(true);
+  });
+
+  it('cannot write campaign templates (CT3): a supervisor writes them, as whoever creates campaigns reads them', () => {
+    for (const role of ['agent', 'viewer', 'operator'] as const) {
+      expect(hasPermission(role, 'agency.campaign_templates.manage'), role).toBe(false);
+    }
+    for (const role of ROLES) {
+      expect(hasPermission(role, 'agency.campaign_templates.manage'), role).toBe(hasPermission(role, 'agency.campaigns.write'));
+    }
   });
 });
 

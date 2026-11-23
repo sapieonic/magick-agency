@@ -5,6 +5,7 @@
 // State vocabularies are imported from the contract rather than re-declared, so
 // a DB state and a wire state can never drift apart.
 
+import type { AgencyCampaignTemplateSource } from '@magick-agency/contracts/api/agency/campaign-templates';
 import type {
   AgencyAbandonReason,
   AgencyAgentState,
@@ -228,6 +229,13 @@ export interface AgencyCampaignRecord {
   archived_by_user_id: string | null;
   /** Their display name when they archived it (a snapshot), or NULL. Served folded into `archived_by`. */
   archived_by_name: string | null;
+  /**
+   * Campaign templates (0067, CT9): the template it was made from, as it was then, and where each
+   * section came from (`AgencyCampaignTemplateSource`). NULL on a campaign made without the
+   * feature and on a retry campaign, which copies its parent's settings, never a template (CT7):
+   * not in {@link AgencyCampaignConfigColumns}. A record only: nothing at run time reads it (CT1).
+   */
+  template_source: AgencyCampaignTemplateSource | null;
   /**
    * LEGACY spelling of {@link ended_at}. Same value, always.
    *

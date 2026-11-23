@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PERMISSIONS, ROLES, canManageRole, hasPermission, type Permission, type Role } from '@magick-agency/contracts/rbac';
+import { PERMISSIONS, ROLES, ROLE_HIERARCHY, canManageRole, hasPermission, type Permission, type Role } from '@magick-agency/contracts/rbac';
 import { CHANGE_ROLES, INVITE_ROLES, ROLE_DESCRIPTIONS } from '../../pages/team/teamRoles';
 
 /**
@@ -24,16 +24,27 @@ const CLAIMS: Array<{ phrase: RegExp; truth: (role: Role) => boolean }> = [
   { phrase: /sees campaigns, results and the Do Not Call list/i, truth: (r) => holds(r, 'agency.campaigns.read', 'agency.dnc.read') },
   {
     phrase: /Can’t change campaigns or settings/,
-    truth: (r) => holdsNone(r, 'agency.campaigns.write', 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write'),
+    truth: (r) => holdsNone(
+      r, 'agency.campaigns.write', 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write',
+      'agency.campaign_templates.manage',
+    ),
   },
   // Live calls: supervising them and listening in to them (docs/listening.md, LS3).
   { phrase: /Runs campaigns and live calls/, truth: (r) => holds(r, 'agency.campaigns.write', 'agency.supervise', 'agency.calls.listen') },
   {
     phrase: /edits the account’s settings and the Do Not Call list/,
-    truth: (r) => holds(r, 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write', 'agency.dnc.manage'),
+    truth: (r) => holds(
+      r, 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write', 'agency.dnc.manage',
+      'agency.campaign_templates.manage',
+    ),
   },
   { phrase: /invites people/, truth: (r) => holds(r, 'user.invite') },
   { phrase: /create accounts/, truth: (r) => holds(r, 'account.create') },
+  // Organisation templates need tenant_admin or above as well as the permission (CT3).
+  {
+    phrase: /keep the organisation’s campaign templates/,
+    truth: (r) => holds(r, 'agency.campaign_templates.manage') && ROLE_HIERARCHY[r] >= ROLE_HIERARCHY.tenant_admin,
+  },
   { phrase: /change people’s roles and remove them/, truth: (r) => holds(r, 'user.update_role', 'user.remove') },
   { phrase: /Everything a supervisor does/, truth: (r) => covers(r, 'account_admin') },
   { phrase: /Everything an admin does/, truth: (r) => covers(r, 'tenant_admin') },

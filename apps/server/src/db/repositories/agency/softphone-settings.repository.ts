@@ -27,7 +27,11 @@ import {
 import type { AgencySoftphoneSettingsRecord } from '../../models/agency.model.js';
 // The campaign catalog's validator, reused so a soft-phone catalog is held to exactly
 // the campaign's rules (code shape, uniqueness, label, flags, retry rule).
-import { validateAgencyCampaignConfig } from '../../../agency/campaign-config.js';
+import {
+  catalogEntryAttributesRefused,
+  validateAgencyCampaignConfig,
+  type CampaignConfigOptions,
+} from '../../../agency/campaign-config.js';
 
 /** One problem with a settings body: `path` into it and what is wrong (`settings_invalid`'s `details`). */
 export interface SoftphoneSettingsIssue {
@@ -108,6 +112,29 @@ function callFieldIssues(raw: unknown, at: string): SoftphoneSettingsIssue[] {
 }
 
 /**
+ * The soft phone's outcome catalog rules: the campaign catalog's, without `override` (a soft-phone
+ * call has no roster contact to carry a grant; overrides are a campaign feature) and without a
+ * promise to pay (no campaign contact to keep it on). Its own catalog is validated with them, and
+ * a template catalog its untagged calls follow is passed through them ({@link asSoftphoneCatalog}).
+ */
+export const SOFTPHONE_CATALOG_OPTIONS: CampaignConfigOptions = { allowDispositionOverride: false, allowPromise: false };
+
+/**
+ * A catalog (the template outcomes untagged calls follow, CT11) as the soft phone may offer it:
+ * each entry without the attributes {@link SOFTPHONE_CATALOG_OPTIONS} refuse
+ * (`catalogEntryAttributesRefused`), the outcome itself kept. Pure; the entries are copied.
+ */
+export function asSoftphoneCatalog(catalog: readonly AgencyDisposition[]): AgencyDisposition[] {
+  return catalog.map((entry) => {
+    const refused = catalogEntryAttributesRefused(entry as unknown as Record<string, unknown>, SOFTPHONE_CATALOG_OPTIONS);
+    if (refused.length === 0) return entry;
+    const out: Record<string, unknown> = { ...entry };
+    for (const key of refused) delete out[key];
+    return out as unknown as AgencyDisposition;
+  });
+}
+
+/**
  * Every problem with a `PUT /settings` body (docs/softphone.md §3), or none. Pure.
  *
  * - `disposition_catalog`: an array held to the campaign catalog's rules; `[]` is
@@ -127,10 +154,7 @@ export function validateSoftphoneSettings(body: unknown): SoftphoneSettingsIssue
   if (!Array.isArray(catalog)) {
     issues.push({ path: 'disposition_catalog', message: 'disposition_catalog must be an array.' });
   } else {
-    // The campaign catalog's rules, minus `override`: a soft-phone call has no roster
-    // contact to carry a grant (overrides are a campaign feature).
-    const noOverride = { allowDispositionOverride: false, allowPromise: false };
-    for (const issue of validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, noOverride)) {
+    for (const issue of validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, SOFTPHONE_CATALOG_OPTIONS)) {
       issues.push({ path: issue.field, message: issue.message });
     }
   }

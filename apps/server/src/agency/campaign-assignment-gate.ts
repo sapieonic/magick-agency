@@ -92,20 +92,44 @@ export async function assertAssignmentSettingsAllowed(
   target: { tenantId: string; accountId?: string | null },
   loadStored?: () => Promise<unknown>,
 ): Promise<boolean> {
-  if (assignmentFieldsRequested(config).length === 0) return true;
+  const refusal = await assignmentSettingsRefusal(config, target, loadStored);
+  if (!refusal) return true;
+  reply.code(refusal.status).send(refusal.body);
+  return false;
+}
+
+/** The 403 {@link assignmentSettingsRefusal} answers. */
+export interface AssignmentSettingsRefusal {
+  status: 403;
+  body: { error: string; code: 'feature_disabled'; message: string; details: Record<string, string> };
+}
+
+/**
+ * {@link assertAssignmentSettingsAllowed}'s decision without a reply: the 403 to send, or null to
+ * proceed. Same reads, same rules; for the campaign PATCH path a template apply also runs
+ * (`api/routes/helpers/campaign-patch.ts`, CT16).
+ */
+export async function assignmentSettingsRefusal(
+  config: unknown,
+  target: { tenantId: string; accountId?: string | null },
+  loadStored?: () => Promise<unknown>,
+): Promise<AssignmentSettingsRefusal | null> {
+  if (assignmentFieldsRequested(config).length === 0) return null;
   // Something differs from the defaults: judge it against what the campaign already holds.
   const fields = loadStored ? assignmentFieldsRequested(config, await loadStored()) : assignmentFieldsRequested(config);
-  if (fields.length === 0) return true;
+  if (fields.length === 0) return null;
   const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_contact_assignment_enabled, {
     tenantId: target.tenantId,
     ...(target.accountId ? { accountId: target.accountId } : {}),
   });
-  if (enabled) return true;
-  reply.code(403).send({
-    error: 'Feature Not Enabled',
-    code: 'feature_disabled',
-    message: 'Contact assignment is not enabled for this account. Leave these settings at their defaults.',
-    details: Object.fromEntries(fields.map((field) => [field, 'needs contact assignment, which is not enabled'])),
-  });
-  return false;
+  if (enabled) return null;
+  return {
+    status: 403,
+    body: {
+      error: 'Feature Not Enabled',
+      code: 'feature_disabled',
+      message: 'Contact assignment is not enabled for this account. Leave these settings at their defaults.',
+      details: Object.fromEntries(fields.map((field) => [field, 'needs contact assignment, which is not enabled'])),
+    },
+  };
 }

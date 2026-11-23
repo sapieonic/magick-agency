@@ -826,6 +826,50 @@ staging). Turn it on in Super-admin console → the tenant → Feature flags →
 To turn it off: Off for the tenant or account. Saved views stay in `agency_compare_views` and come
 back when it is turned on again.
 
+## Enabling campaign templates for a tenant
+
+`agency_campaign_templates_enabled` (off by default; global, tenant; client-exposed; CT17) gates
+Settings › Campaign templates and Organisation campaign templates, New campaign's Start from, and
+every `/proxy/agency/campaign-templates/*` route ([`campaign-templates.md`](campaign-templates.md)
+§6): while it is off they answer `403 feature_disabled` and the console hides them. An ordinary
+flag: no handling policy. `FF_AGENCY_CAMPAIGN_TEMPLATES=true` turns it on for every tenant (dev
+and staging).
+
+Turning it on changes more than the pages; tell the tenant first:
+
+1. **API creates.** `POST /proxy/agency/campaigns` fills every section a body leaves out from the
+   template named by `template_id`, else the account's default chain: the account's default
+   template, else the organisation's, else the built-in settings (CT8). A body that sends a section
+   keeps it as sent, and a field it leaves out of that section is the built-in value.
+2. **Hours in India time.** A body that leaves out the calling hours now stores 09:00–20:00 Monday
+   to Friday in `Asia/Kolkata`, not `UTC` (CT18), even with no template saved. A body that sends
+   hours but no `default_timezone` also stores `Asia/Kolkata`, where it stored `UTC` before: the
+   same window moves by 5:30. The console always sends the time zone; check any other client that
+   creates campaigns before turning the flag on.
+3. **The soft phone.** Untagged calls on an account whose soft phone lists no outcomes of its own
+   use the outcomes of the account's default template, else the organisation's, else the built-in
+   ones, read at each call (CT11), without agent overrides or a promise (CT21). With no template
+   saved nothing changes.
+4. **Who.** Supervisors keep their account's templates. Organisation templates need a tenant
+   admin or owner on an organisation-wide seat (CT3).
+5. **Turn it on.** Super-admin console → the tenant → Feature flags →
+   `agency_campaign_templates_enabled` → On, at tenant scope (there is no account scope:
+   organisation templates are shared by every account).
+6. **Check it.** A supervisor saves an account template and makes it the default. Settings ›
+   Campaign templates opens on "New campaigns in this account start from" naming it; New campaign
+   opens filled in from it, its Review rows say "Account template", and the created campaign's
+   Settings read "Started from <template>, version 1". The Audit Log shows
+   `campaign_template.created` and `.default_set`.
+
+To turn it off (roll back): Off for the tenant. Templates and their versions stay in
+`agency_campaign_templates` and `agency_campaign_template_versions` and come back when it is
+turned on again. Campaigns keep their settings (a copy, CT1) and their `template_source`. API
+creates fill nothing in and store `UTC` hours again, and the soft phone's untagged outcomes go back
+to the built-in ones (a soft phone with its own list is unchanged either way). One change is not
+behind the flag and stays: a create's `break_reasons` is stored (it used to be dropped). Versions
+are never purged: each save keeps a copy of at most 256 KiB
+(`AGENCY_CAMPAIGN_TEMPLATE_SECTIONS_MAX_BYTES`).
+
 ## Recordings
 
 VoiceLink recordings are public MP3s on the carrier's host. The fetcher accepts only `https` URLs

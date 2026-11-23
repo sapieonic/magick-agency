@@ -290,6 +290,24 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
     keywords: ['listening', 'listen', 'listen in', 'live call listening', 'monitoring', 'monitor'],
     settings: [{ label: 'Calls that are not recorded', keywords: ['unrecorded', 'unrecorded calls', 'not recorded'] }],
   },
+  'campaign-templates': {
+    keywords: [
+      'campaign templates', 'template', 'templates', 'default settings', 'campaign defaults',
+      // The words the feature was asked for in (L21): its outcomes and hours are what a template sets.
+      'default outcomes', 'default dispositions', 'outcome defaults', 'default calling hours', 'calling hours defaults',
+    ],
+    settings: [
+      { label: 'Default template for new campaigns', keywords: ['default template', 'new campaign default'] },
+      { label: 'Apply a template to draft campaigns', keywords: ['apply template', 'drafts'] },
+    ],
+  },
+  'organisation-campaign-templates': {
+    keywords: [
+      'organisation templates', 'campaign templates', 'template', 'templates', 'default settings',
+      'default outcomes', 'default dispositions', 'outcome defaults', 'default calling hours', 'calling hours defaults',
+    ],
+    settings: [{ label: 'Default organisation template', keywords: ['default template', 'organisation default'] }],
+  },
   team: {
     keywords: ['team', 'member', 'members', 'invite', 'invitation', 'role', 'roles', 'people', 'user', 'users', 'access'],
     settings: [],

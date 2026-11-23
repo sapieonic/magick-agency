@@ -189,7 +189,7 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.
-    expect(pairs).toHaveLength(34);
+    expect(pairs).toHaveLength(35);
     expect(types['calling_window_start']).toBe('time');
     expect(types['calling_window_end']).toBe('time');
     expect(types['calling_days']).toBe('smallint[]');
@@ -208,6 +208,8 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     expect(types['telephony_credential_id']).toBe('uuid');
     // From 0022: the automatic-outcome map, beside an explicit `::jsonb` in the INSERT.
     expect(types['outcome_dispositions']).toBe('jsonb');
+    // From 0067: the template a campaign was made from.
+    expect(types['template_source']).toBe('jsonb');
     for (const { column } of pairs) {
       expect(types[column], `no declared type found for ${column}`).toBeTruthy();
     }
@@ -241,10 +243,19 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
   });
 
   it('casts the three placeholders the production failure named (belt and braces)', () => {
-    // Explicit, so a parser regression above cannot make this file pass on nothing.
+    // Explicit, so a parser regression above cannot make this file pass on nothing. Their
+    // defaults are bound from the contract's AGENCY_CAMPAIGN_COLUMN_DEFAULTS now, not COALESCEd
+    // to a SQL literal, so each is its cast placeholder alone.
     const byColumn = Object.fromEntries(pairs.map((p) => [p.column, p.expr]));
-    expect(byColumn['calling_window_start']).toBe("COALESCE($6::time,'09:00')");
-    expect(byColumn['calling_window_end']).toBe("COALESCE($7::time,'20:00')");
-    expect(byColumn['calling_days']).toBe("COALESCE($8::smallint[],'{1,2,3,4,5}')");
+    expect(byColumn['calling_window_start']).toBe('$6::time');
+    expect(byColumn['calling_window_end']).toBe('$7::time');
+    expect(byColumn['calling_days']).toBe('$8::smallint[]');
+  });
+
+  it('binds no non-JSONB setting\'s default as a SQL literal: the contract\'s constants are the one copy', () => {
+    const literalDefaults = pairs
+      .filter(({ column, expr }) => expr.startsWith('COALESCE(') && types[column] !== 'jsonb')
+      .map(({ column }) => column);
+    expect(literalDefaults).toEqual([]);
   });
 });

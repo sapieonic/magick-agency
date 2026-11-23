@@ -15,6 +15,7 @@ import {
   sectionLandingPath,
   sectionRootFor,
   SETTINGS_ENTRIES,
+  settingsEntry,
   settingsEntryForPath,
   settingsGroupTitle,
   canSeeHome,
@@ -490,6 +491,53 @@ describe('the Settings hub', () => {
     expect(settingsIds(input('account_admin', { capsOff: ['agency.analytics'] }))).not.toContain('call-summaries');
     // A gate is per entry, not global.
     expect(settingsIds(input('account_admin', { capsOff: ['agency.analytics'] }))).toContain('team');
+  });
+
+  describe('campaign templates (CT3, CT17)', () => {
+    const TEMPLATES = 'agency_campaign_templates_enabled';
+    const withTemplates = (role: Role | undefined, organisationRole?: Role, flagOn = true): GateInput => {
+      const base = input(role);
+      return {
+        ...base,
+        isFlagEnabled: (f) => (f === TEMPLATES ? flagOn : base.isFlagEnabled(f)),
+        ...(organisationRole ? { organisationRole } : {}),
+      };
+    };
+
+    it('offers a supervisor the account’s templates only', () => {
+      const ids = settingsIds(withTemplates('account_admin'));
+      expect(ids).toContain('campaign-templates');
+      expect(ids).not.toContain('organisation-campaign-templates');
+      expect(visibleSettingsGroups(withTemplates('account_admin')).find((g) => g.scope === 'account')?.entries.map((e) => e.id))
+        .toContain('campaign-templates');
+    });
+
+    it('offers the organisation’s templates to a tenant admin or owner on an organisation-wide seat only', () => {
+      expect(settingsIds(withTemplates('tenant_admin', 'tenant_admin'))).toContain('organisation-campaign-templates');
+      expect(settingsIds(withTemplates('tenant_owner', 'tenant_owner'))).toContain('organisation-campaign-templates');
+      // The same role on a seat scoped to one account: the server refuses it, so it is not offered.
+      expect(settingsIds(withTemplates('tenant_admin'))).not.toContain('organisation-campaign-templates');
+      // An organisation-wide seat below tenant admin.
+      expect(settingsIds(withTemplates('account_admin', 'account_admin'))).not.toContain('organisation-campaign-templates');
+      expect(settingsEntry('organisation-campaign-templates').scope).toBe('tenant');
+    });
+
+    it('offers neither to anyone below a supervisor, nor to anyone with the flag off', () => {
+      for (const role of ['operator', 'viewer', 'agent'] as const) {
+        expect(settingsIds(withTemplates(role))).not.toContain('campaign-templates');
+      }
+      for (const role of ['account_admin', 'tenant_admin', 'tenant_owner'] as const) {
+        const ids = settingsIds(withTemplates(role, role, false));
+        expect(ids).not.toContain('campaign-templates');
+        expect(ids).not.toContain('organisation-campaign-templates');
+      }
+    });
+
+    it('finds the editor pages under their entries', () => {
+      expect(settingsEntryForPath('/settings/campaign-templates/t-1')?.id).toBe('campaign-templates');
+      expect(settingsEntryForPath('/settings/organisation-campaign-templates/new')?.id).toBe('organisation-campaign-templates');
+      expect(breadcrumbFor('/settings/campaign-templates/new').at(-1)).toEqual({ label: 'New campaign template' });
+    });
   });
 
   it('finds the entry for a nested path', () => {

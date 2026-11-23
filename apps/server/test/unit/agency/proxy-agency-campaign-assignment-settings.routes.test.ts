@@ -32,9 +32,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
   (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
+// The campaign templates flag (CT8) answers off, outside `flagEnabled`, so the create is what it
+// was without templates and "the flag is not read" speaks of the assignment flag alone; the
+// create's fill-in has its own suites (`campaign-templates-create.test.ts`).
 vi.mock('../../../src/feature-flags/index.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/feature-flags/index.js')>()),
-  getFeatureFlagService: () => ({ isEnabled: mocks.flagEnabled }),
+  getFeatureFlagService: () => ({
+    isEnabled: (flag: { key: string }, ctx: unknown) =>
+      (flag.key === 'agency_campaign_templates_enabled' ? Promise.resolve(false) : mocks.flagEnabled(flag, ctx)),
+  }),
 }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),

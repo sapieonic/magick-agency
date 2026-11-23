@@ -106,6 +106,8 @@ const ALL_MIGRATIONS = [
   '0064_compare_views',
   '0065_session_events_offline_index',
   '0066_session_events_break_overrun_index',
+  '0067_campaign_templates',
+  '0068_campaign_templates_archived_index',
   '0069_call_log_inbound_campaign',
   '0070_call_log_inbound_indexes',
   '0071_call_settings',

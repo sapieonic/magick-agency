@@ -34,7 +34,9 @@ before writing a repository or a migration.
   suspended, 0063 archived campaigns: `archived_at` and who archived it, and the CHECK that only a
   draft or stopped campaign is archived, 0064 Compare agents' saved views, 0065 a session's offline
   boundaries by session, for Compare agents' trend days, 0066 the events that ended a break over its
-  limit by campaign, for Compare agents' breaks over their limit, 0069 one call log per campaign: the campaign an
+  limit by campaign, for Compare agents' breaks over their limit, 0067 campaign templates: the
+  templates, their versions and the campaign's `template_source`, 0068 the archived templates'
+  index, by scope, 0069 one call log per campaign: the campaign an
   inbound call is filed under (`campaign_id`, `campaign_source`, backfilled from the match) and the
   missed call a soft-phone call rang back (`callback_of_inbound_call_id`), 0070 their two indexes, 0071
   the account's call settings ("Every call must belong to a campaign") and the campaign an inbound

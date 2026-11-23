@@ -134,7 +134,10 @@ export type Permission =
   // Live call listening (docs/listening.md, LS3): listen in silently to a call in progress.
   | 'agency.calls.listen'
   // The account's call settings (docs/call-log.md §5): "Every call must belong to a campaign".
-  | 'agency.calls.manage';
+  | 'agency.calls.manage'
+  // Campaign templates (docs/campaign-templates.md, CT3): write the account's and the
+  // organisation's templates.
+  | 'agency.campaign_templates.manage';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -325,6 +328,17 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // (`listen_own_call`), and every one requires the `agency_live_listen_enabled` flag (the
   // consent gate, LS1). Each listen is a session row and two audit rows (LS6).
   'agency.calls.listen': 'account_admin',
+  // ── Campaign templates (docs/campaign-templates.md, CT3) ─────────────────
+  // Floors at `account_admin`: a template fills in every new campaign of the account (or, for an
+  // organisation template, of every account), a supervisory setting as the soft phone's
+  // outcomes are (`agency.softphone.manage`). Writing an ORGANISATION template also needs
+  // `tenant_admin` or above with an organisation-wide seat, which the routes check (AA1's rule:
+  // `403 tenant_wide_membership_required`); a floor cannot say "this scope only". READING
+  // templates (the list, one template, the filled-in form New campaign opens on) is part of
+  // `agency.campaigns.write`, since whoever creates campaigns starts from them; applying a
+  // template to draft campaigns (CT16) needs both. Every route also requires the
+  // `agency_campaign_templates_enabled` flag.
+  'agency.campaign_templates.manage': 'account_admin',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

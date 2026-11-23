@@ -947,3 +947,69 @@ export const AGENCY_COMPARE_ERROR_STATUS = {
   compare_view_invalid: 400,
   compare_view_limit: 409,
 } as const satisfies Record<AgencyCompareErrorCode, number>;
+
+// ─── 10. Campaign template refusals ─────────────────────────────────────────
+//
+// The codes of the campaign template routes (`/proxy/agency/campaign-templates/*`,
+// docs/campaign-templates.md §6; shapes in `./api/agency/campaign-templates`). The body is
+// `{ error, code, message }`, plus the fields each code's comment names. HTTP status beside each
+// code. The flag gate (`agency_campaign_templates_enabled` off) answers `403 feature_disabled`, a
+// caller without the permission the RBAC 403, and an organisation template written without an
+// organisation-wide seat `403 tenant_wide_membership_required` (CT3, as AA1): none of these.
+
+/** Why a campaign template route refused. */
+export type AgencyCampaignTemplateErrorCode =
+  /**
+   * 404. No such template the caller may see: another tenant's, another account's, or a bad id;
+   * also a `template_id` (create, effective) or `based_on_template_id` that names none. Uniform: it
+   * never says a template exists elsewhere.
+   */
+  | 'campaign_template_not_found'
+  /** 409. `expected_version` is not the template's version: someone saved in between (CT6). Carries `current_version`. */
+  | 'campaign_template_changed'
+  /** 409. Another live template of the same scope has this name, ignoring case and repeated spaces (CT13). Carries `template` (its id and name). */
+  | 'campaign_template_name_taken'
+  /** 409. Archive of an organisation template that live account templates are based on (CT14). Carries `templates`, naming them. */
+  | 'campaign_template_in_use'
+  /**
+   * 400. The scope does not fit: `organisation` sent with an account context or `account` without
+   * one; `based_on_template_id` on an organisation template, or naming an account template; an
+   * account-only section or field on an organisation template (CT5).
+   */
+  | 'campaign_template_scope_invalid'
+  /** 400. A section fails the checks a campaign create runs (CT4). Carries `details`, keyed by the campaign's own field names. */
+  | 'campaign_template_section_invalid'
+  /** 409. The template is archived: it cannot be edited, made a default, applied, or started from; and a `based_on` may not name one. Restore it first. */
+  | 'campaign_template_archived'
+  /** 400. The name (trimmed, 1–80 characters, no control or invisible format characters, CT13) or the description (at most 280) is invalid, or the body is malformed. Carries `details`. */
+  | 'campaign_template_invalid';
+
+/** Runtime list of {@link AgencyCampaignTemplateErrorCode}, in declaration order. */
+export const AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES = [
+  'campaign_template_not_found',
+  'campaign_template_changed',
+  'campaign_template_name_taken',
+  'campaign_template_in_use',
+  'campaign_template_scope_invalid',
+  'campaign_template_section_invalid',
+  'campaign_template_archived',
+  'campaign_template_invalid',
+] as const satisfies readonly AgencyCampaignTemplateErrorCode[];
+
+const _allCampaignTemplateCodesListed: AllListed<
+  AgencyCampaignTemplateErrorCode,
+  typeof AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES
+> = true;
+void _allCampaignTemplateCodesListed;
+
+/** The HTTP status of each campaign template refusal, for the server's replies and the route tests. */
+export const AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS = {
+  campaign_template_not_found: 404,
+  campaign_template_changed: 409,
+  campaign_template_name_taken: 409,
+  campaign_template_in_use: 409,
+  campaign_template_scope_invalid: 400,
+  campaign_template_section_invalid: 400,
+  campaign_template_archived: 409,
+  campaign_template_invalid: 400,
+} as const satisfies Record<AgencyCampaignTemplateErrorCode, number>;

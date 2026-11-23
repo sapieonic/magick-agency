@@ -87,8 +87,14 @@ warning and its screen-reader confirm text).
 - `agency_calls`: `origin VARCHAR(16) NOT NULL DEFAULT 'campaign'` (`campaign|manual`),
   `manual_call_id UUID` (correlation, no FK, like `agency_attempt_id`).
 - `agency_softphone_settings`, one row per (tenant, account), all optional: `disposition_catalog`
-  (`[]` = the built-in catalog), `call_fields` (`[]` = none), `analysis_profile_id`,
-  `record_calls`, `default_caller_id`. Used for untagged calls; call fields apply to every call.
+  (`[]` = follow the account's campaign template chain while campaign templates are on, CT11
+  ([`campaign-templates.md`](campaign-templates.md)): the account's default template, else the
+  organisation's, else the built-in catalog, read at each call and passed through the soft phone's
+  own catalog rules, so no agent override and no promise (CT21); with templates off, the built-in
+  catalog), `call_fields` (`[]` = none), `analysis_profile_id`, `record_calls`,
+  `default_caller_id`. Used for untagged calls; call fields apply to every call. The one function
+  that decides the untagged list is `agency/softphone/untagged-outcomes.ts`: the bootstrap's pad,
+  the outcome's settlement and the settings answer's `outcomes_template` all read it.
 
 `call_fields` entries: `{ key, label, type: 'text'|'number'|'choice'|'boolean'|'date', options?,
 required? }`, at most 20, snake_case keys up to 50 chars, unique, and none of the names a plain
@@ -222,9 +228,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    live set until its `ended` row is written, so the orphan sweep (step 10) cannot end it
    `orphaned` mid-teardown.
 7. **Outcome** (`manual-disposition.ts`): the existing pure functions (`resolveDisposition`,
-   `validateDispositionFields`, `resolveDispositionDecision`) against the tag's catalog or the
-   settings / built-in catalog (a tag whose catalog is empty falls back to the built-in, still
-   source `campaign`: a bridged call always owes an outcome); call fields with `required`
+   `validateDispositionFields`, `resolveDispositionDecision`) against the tag's catalog or, untagged,
+   the settings' catalog, else (empty) the followed template catalog or the built-in one
+   (`untagged-outcomes.ts`, CT11, read again at the outcome; a tag whose catalog is empty falls
+   back to the built-in, still source `campaign`: a bridged call always owes an outcome); call fields with `required`
    enforced; suppress codes write DNC in the same transaction (B8; campaign scope when the call
    is tagged **and its number is on that campaign's list**, else the call's ACCOUNT: a call with
    no tag, and since 2026-11-22 a tagged call whose number matched no roster contact, whose tag
@@ -373,7 +380,7 @@ from `audit` (a success without the envelope is a 502).
 
 | Method and path (`/proxy/agency`) | Permission | What |
 |---|---|---|
-| `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); `campaign_required` (the account's "Every call must belong to a campaign": the pad then asks for a campaign and offers no "none", `docs/call-log.md` §5); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`account_id`, the account it is in; `on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
+| `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); `campaign_required` (the account's "Every call must belong to a campaign": the pad then asks for a campaign and offers no "none", `docs/call-log.md` §5); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog (the soft phone's own, else the followed template's or the built-in, `untagged-outcomes.ts`, CT11) and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`account_id`, the account it is in; `on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
 | `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session in THIS account: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`, `account_id` and `account_name` (the account the campaign session is in, which may be a sibling one: the switch is scoped to it); 409 `session_on_softphone` with `session_id`, `account_id` and `account_name` when the agent's soft-phone session is in another account of the tenant, which is never rehydrated here (the join upsert's rehydrate arm matches the account as well as the kind and campaign: `joinSoftphone`'s `softphone_elsewhere`), since every route on it is scoped to its account. `account_name` is best-effort (NULL when the read failed). With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? }, callback_of_inbound_call_id? }` → 201 `AgencyManualCall`. With the account's setting **Every call must belong to a campaign** on (`docs/call-log.md` §5), a dial with no `campaign_id` is refused `409 campaign_required`, whoever dials, before the call details are judged. `callback_of_inbound_call_id` is the Missed inbound call the dial rings back: kept on the call only when it is a Missed row of the account from the number dialled, else dropped without refusing the dial, a string that is not an id included (CL15, `docs/call-log.md` §4) |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
@@ -383,8 +390,8 @@ from `audit` (a success without the envelope is a 502).
 | `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `contact_id` (the roster contact the call matched, claimed or linked, settled calls included: `idx_agency_manual_calls_contact_history`; an agent still sees only their own calls), `from`, `to` (exclusive). Rows carry `agent_name`, the media leg's `analysis_status` and, beside a `pending` one, `analysis_delay` (`vendor_unavailable` while the AI service refuses, decision AD1). Since 2026-11-22 the console's lists do not read it (the account's is All calls, the agent's is My calls: [`call-log.md`](call-log.md) §7); a roster contact's soft-phone calls (`contact_id`) and app builds from before then do |
 | `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, `call_availability`, and — with supervise only — the media leg (recording, transcript, AI analysis) with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account). An agent reading their own call gets the call record with `media: null`: a call's media is `agency.supervise`'s, as a campaign call's is (`rbac.ts`); the internal handler and the public route both withhold it |
 | `GET /softphone/calls/:id/recording` | `agency.supervise` | the bytes through the authenticated proxy (no signed URL), range forwarded; 403 `capability_disabled` without `allow_recording`; 404 `call_never_placed` / `call_purged` / no recording; any call of the account. An agent's own call is refused too (RBAC 403; the internal handler refuses a non-supervise actor itself) |
-| `GET /softphone/settings` | `softphone.dial` | `{ settings, campaign_required }`: `campaign_required` is the account's "Every call must belong to a campaign", under which the untagged settings are not used and the page greys them |
-| `PUT /softphone/settings` | `softphone.manage` | the whole row; 400 `settings_invalid` with `details[].path` (`disposition_catalog[i].code`, `call_fields[i].key`, `default_caller_id` not one of the account's numbers, `analysis_profile_id` not an active profile of the account, …) |
+| `GET /softphone/settings` | `softphone.dial` | `{ settings, campaign_required, outcomes_template }`: `campaign_required` is the account's "Every call must belong to a campaign", under which the untagged settings are not used and the page greys them; `outcomes_template` is what "Follow campaign template" gives (the template it follows, or null for the built-in outcomes, and the catalog), sent whenever campaign templates are on, whether or not the soft phone sets its own list; `null` while they are off (CT11, CT21) |
+| `PUT /softphone/settings` | `softphone.manage` | the whole row; answers `{ settings, outcomes_template }`; 400 `settings_invalid` with `details[].path` (`disposition_catalog[i].code`, `call_fields[i].key`, `default_caller_id` not one of the account's numbers, `analysis_profile_id` not an active profile of the account, …) |
 | `POST /sessions/:id/softphone` | `softphone.dial` | switch a campaign session to the soft phone (§4.2), queued while reserved, on a call or in wrap-up; `wrong_session_kind` on a soft-phone session |
 | `POST /sessions/:id/softphone/return` | `softphone.dial` | back to `available`, or withdraw a queued switch; 409 `manual_call_live` (with the call) while a call is live or awaiting its outcome |
 
@@ -608,10 +615,15 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   soft-phone calls logged to it beside its dialler calls, in one list with type chips ("All ·
   Dialler · Soft phone"; CL11, [`call-log.md`](call-log.md)); the old view's path,
   `/manual-calls`, redirects to `/attempts?type=soft_phone`. **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
-  otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
+  otherwise): the untagged outcome list (while campaign templates are on, "Follow campaign template
+  (<name>)" or "Set for the soft phone", CT11: Follow reads "Calls not logged to a campaign use the
+  outcomes of <template>, the account's (or organisation's) default campaign template", or "… use
+  the built-in outcomes" when no template is the default; which of the two is chosen comes from the
+  soft phone's own list, empty or not), the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID. While the account's **Every call must belong to a campaign**
-  is on (Settings → Calls, [`call-log.md`](call-log.md) §5) the untagged settings are greyed with
-  "Not used while every call must belong to a campaign."; the call fields still apply to every call.
+  is on (Settings → Calls, [`call-log.md`](call-log.md) §5) the untagged settings, the outcome list's
+  template choice included, are greyed with "Not used while every call must belong to a campaign.";
+  the call fields still apply to every call.
 - **Campaign results** (SR1–SR10, [`decisions.md`](decisions.md)). A tagged call is counted on its
   campaign by one definition (`db/repositories/agency/softphone-campaign-sql.ts`): placed
   (`dialed_at` set), connected (outcome `connected`), reached a person (bridged, coded neither

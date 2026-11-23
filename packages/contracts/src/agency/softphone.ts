@@ -18,6 +18,7 @@
  */
 
 import type { AgencySoftphoneErrorCode } from '../errors';
+import type { AgencyCampaignTemplateRef, AgencyCampaignTemplateScope } from '../api/agency/campaign-templates';
 import type { AllListed } from '../primitives';
 import type { AgencyActorFields } from './actions';
 import type {
@@ -297,6 +298,21 @@ export interface AgencySoftphoneSettings {
 /** `PUT /settings`: replaces the whole row. `agency.softphone.manage`. */
 export type AgencySoftphoneSettingsUpdateRequest = Omit<AgencySoftphoneSettings, 'updated_at'>;
 
+/**
+ * What untagged calls' outcomes follow while the soft phone sets none of its own
+ * (`disposition_catalog: []`) and campaign templates are on for the account
+ * (`docs/campaign-templates.md` CT11): the outcomes of the account's default template chain,
+ * read live at each call. `template` is the account's default template, else the
+ * organisation's (`scope` says which; the ref and scope New campaign's filled-in form names a
+ * template by), or `null` when neither has one: the built-in outcomes. `disposition_catalog` is
+ * the list untagged calls are saved against now (a template's empty list reads as the built-in
+ * one), the bootstrap's `untagged.disposition_catalog`.
+ */
+export interface AgencySoftphoneOutcomesTemplate {
+  template: (AgencyCampaignTemplateRef & { scope: AgencyCampaignTemplateScope }) | null;
+  disposition_catalog: AgencyDisposition[];
+}
+
 /** `GET /settings` and `PUT /settings`. */
 export interface AgencySoftphoneSettingsResponse {
   settings: AgencySoftphoneSettings;
@@ -306,6 +322,15 @@ export interface AgencySoftphoneSettingsResponse {
    * recording, analysis profile and caller ID) are not used. Absent reads as false.
    */
   campaign_required?: boolean;
+  /**
+   * The settings page's "Follow campaign template (<name>)" (CT11): what untagged outcomes follow,
+   * or would follow, while the soft phone sets none of its own. Sent whenever campaign templates
+   * are on for the account, WHETHER OR NOT the soft phone sets its own list
+   * (`settings.disposition_catalog` not empty says it does), so the page can name what "Follow"
+   * would give before the operator chooses it; `null` only when templates are off. Carried by the
+   * `PUT /settings` answer too. Always sent by this server; optional for a client of an older one.
+   */
+  outcomes_template?: AgencySoftphoneOutcomesTemplate | null;
 }
 
 // ─── The manual call, on the wire ───────────────────────────────────────────

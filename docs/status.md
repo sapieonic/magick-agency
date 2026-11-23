@@ -2524,6 +2524,32 @@ Not built: phase 2 (the New joiner lens) and phase 4 (analysis questions as metr
 (`compare-agents.md` §9). Turning it on and what to watch: [`operations.md`](operations.md),
 "Compare agents".
 
+### Campaign templates 2026-11-22 (CT1–CT23, [`campaign-templates.md`](campaign-templates.md))
+
+Named campaign templates at the organisation and at each account; New campaign starts from the
+account's default (else the organisation's, else the built-in settings), section by section, and
+each campaign keeps its own copy and a record of where each section came from. A template can be
+applied, on purpose, to draft campaigns, and the soft phone's untagged outcomes follow the
+account's default when the soft phone sets none of its own. Built on the contracts, the domain, the
+database, the server and the console behind `agency_campaign_templates_enabled` (off by default;
+global, tenant), reviewed twice and fixed, then given a fresh-context review whose console fixes are
+in and whose server fixes are in progress (`campaign-templates.md` §8); the test counts are in the
+PR.
+
+| Part | What |
+|---|---|
+| Wire | `agency/campaign-template-sections.ts` (the section map), `api/agency/campaign-templates.ts`, the template codes in `errors.ts`, the flag, `agency.campaign_templates.manage`, `outcomes_template` on the soft-phone settings |
+| Rules | `packages/domain/src/campaign-templates.ts` |
+| Database | `0067_campaign_templates.sql` (templates, versions, `agency_campaigns.template_source`) |
+| Server | `/proxy/agency/campaign-templates/*` (12 routes), the create's fill-in (CT8), the record (CT9), apply to drafts (CT16), the soft phone following the template (CT11) |
+| Console | Settings › Campaign templates (with "New campaigns in this account start from") and Organisation campaign templates, the editor with History and apply, New campaign's Start from, campaign Settings' Started from and Save as template, the soft phone's Follow / Set |
+
+Not built: locked sections (CT12, not in phase 1); a separate outcome category field (CT23 reads
+the task's categories as the behaviour flags). Not verified: not yet run in a real browser, against
+real Firebase sign-in, or with the agent app's Dart tests (CI's mobile job runs them). Turning it
+on, and what it changes beyond the pages: [`operations.md`](operations.md), "Enabling campaign
+templates for a tenant".
+
 ### Sessions forgotten offline are ended 2026-11-21 (OS9, [`decisions.md`](decisions.md) "One station per agent")
 
 Manas, on Live floor's red "Connection lost" cards whose clocks ran for days: sweep them and call

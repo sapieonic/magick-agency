@@ -7,6 +7,7 @@ import {
   passesGate,
   settingsLandingPath,
   tabBarFor,
+  SETTINGS_ENTRIES,
   visibleSections,
   visibleSettingsGroups,
   type GateInput,
@@ -41,6 +42,7 @@ const FLAGS = [
   'agency_contact_assignment_enabled',
   'agency_live_listen_enabled',
   'agency_compare_enabled',
+  'agency_campaign_templates_enabled',
 ] as const;
 const CAPABILITIES = ['agency', 'agency.analytics'] as const;
 const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
@@ -50,6 +52,8 @@ interface Reader {
   flags: ReadonlySet<string>;
   caps: ReadonlySet<string>;
   missed: boolean;
+  /** The reader's role holds an organisation-wide seat (`GateInput.organisationRole`), not one scoped to an account. */
+  organisationWide: boolean;
 }
 
 function gateInput(r: Reader): GateInput {
@@ -58,6 +62,7 @@ function gateInput(r: Reader): GateInput {
     isFlagEnabled: (f) => r.flags.has(f),
     isCapabilityEnabled: (c) => r.caps.has(c),
     missedAvailable: r.missed,
+    ...(r.organisationWide && r.role ? { organisationRole: r.role } : {}),
   };
 }
 
@@ -65,10 +70,23 @@ function subsets<T>(items: readonly T[]): T[][] {
   return items.reduce<T[][]>((all, item) => all.flatMap((s) => [s, [...s, item]]), [[]]);
 }
 
+/** The seats a reader is swept with: both only where the seat can change what is offered. */
+function organisationSeatsFor(role: Role | undefined, flags: readonly string[]): boolean[] {
+  const tenantRole = role === 'tenant_admin' || role === 'tenant_owner';
+  return tenantRole && flags.includes('agency_campaign_templates_enabled') ? [true, false] : [false];
+}
+
 const READERS: Reader[] = ROLES.flatMap((role) =>
   subsets(FLAGS).flatMap((flags) =>
     subsets(CAPABILITIES).flatMap((caps) =>
-      [true, false].map((missed) => ({ role, flags: new Set(flags), caps: new Set(caps), missed })),
+      [true, false].flatMap((missed) =>
+        // Whether the seat is organisation-wide matters only from tenant admin up, and only to the
+        // organisation's campaign templates (CT3), the one gate that reads it: varied only there,
+        // so the sweep does not do every other tenant reader's work twice.
+        organisationSeatsFor(role, flags).map((organisationWide) => ({
+          role, flags: new Set(flags), caps: new Set(caps), missed, organisationWide,
+        })),
+      ),
     ),
   ),
 );
@@ -122,6 +140,10 @@ const ROUTES: RouteRule[] = [
   [/^\/settings\/inbound$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_inbound_enabled') && can(r, 'agency.inbound.write')],
   // Read-only, so shown whether listening is on or off (it says which).
   [/^\/settings\/listening$/, (r) => keptInShell(r) && r.caps.has('agency') && can(r, 'agency.supervise')],
+  // The pages check `agency.campaign_templates.manage`; the organisation's, an organisation-wide seat of tenant admin or above.
+  [/^\/settings\/campaign-templates$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_campaign_templates_enabled') && can(r, 'agency.campaign_templates.manage')],
+  [/^\/settings\/organisation-campaign-templates$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_campaign_templates_enabled')
+    && can(r, 'agency.campaign_templates.manage') && r.organisationWide && (r.role === 'tenant_admin' || r.role === 'tenant_owner')],
   [/^\/settings\/call-summaries$/, (r) => keptInShell(r) && r.caps.has('agency.analytics') && r.flags.has('agency_call_analysis') && can(r, 'agency.analysis_profiles.read')],
 ];
 
@@ -175,7 +197,7 @@ function offers(r: Reader): { from: string; to: string }[] {
 }
 
 function describeReader(r: Reader): string {
-  return `${r.role ?? 'unresolved'} flags=[${[...r.flags].join(',')}] caps=[${[...r.caps].join(',')}] missed=${r.missed}`;
+  return `${r.role ?? 'unresolved'} flags=[${[...r.flags].join(',')}] caps=[${[...r.caps].join(',')}] missed=${r.missed} organisationWide=${r.organisationWide}`;
 }
 
 describe('every offer passes the gate of the route it opens', () => {
@@ -195,7 +217,25 @@ describe('every offer passes the gate of the route it opens', () => {
       // The sweep reached destinations, not only an empty shell (the unresolved role is offered Settings).
       expect(checked).toBeGreaterThan(readers.length);
     },
+    // A backstop on a loaded machine, not the budget: alone, the largest role takes 2 to 3 seconds.
+    30_000,
   );
+
+  it('varies the seat only where a gate can read it: behind the campaign templates flag', () => {
+    // The sweep sweeps an organisation-wide seat only for readers with that flag (organisationSeatsFor).
+    // A gate that asks for the seat without the flag would be checked for one seat only: say so here.
+    const seated: Array<{ organisationSeat?: unknown; flags?: readonly string[] }> = [];
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value !== null && typeof value === 'object') {
+        if ('organisationSeat' in value) seated.push(value as (typeof seated)[number]);
+        Object.values(value).forEach(walk);
+      }
+    };
+    walk([SETTINGS_ENTRIES, CONSOLE_SECTIONS]);
+    expect(seated.length).toBeGreaterThan(0);
+    for (const gate of seated) expect(gate.flags ?? []).toContain('agency_campaign_templates_enabled');
+  });
 
   it('offers the dialler to whoever takes calls but does not supervise', () => {
     const everything = (role: Role) => READERS.find((r) => r.role === role && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length)!;
@@ -208,7 +248,7 @@ describe('every offer passes the gate of the route it opens', () => {
   });
 
   it('covers every route search and the sidebar can offer', () => {
-    const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
+    const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.organisationWide && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/calls', '/agency/inbound/missed',
@@ -216,6 +256,7 @@ describe('every offer passes the gate of the route it opens', () => {
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
+      '/settings/campaign-templates', '/settings/organisation-campaign-templates',
     ]) {
       expect(targets, path).toContain(path);
     }

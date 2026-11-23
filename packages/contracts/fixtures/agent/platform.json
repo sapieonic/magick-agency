@@ -119,7 +119,8 @@
     "agency_live_listen_enabled": false,
     "agency_live_listen_unrecorded": true,
     "agency_floor_assist_enabled": false,
-    "agency_compare_enabled": false
+    "agency_compare_enabled": false,
+    "agency_campaign_templates_enabled": false
   },
   "notification_preferences": {
     "events": [

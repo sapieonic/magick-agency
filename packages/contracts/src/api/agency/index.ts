@@ -10,6 +10,7 @@
 
 export * from './agency';
 export * from './agency-campaign';
+export * from './campaign-templates';
 export * from './agency-spine';
 export * from './call-log';
 export * from './call-settings';

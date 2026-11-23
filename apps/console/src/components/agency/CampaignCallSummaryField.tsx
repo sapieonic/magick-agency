@@ -11,7 +11,8 @@ import styles from './CampaignCallSummaryField.module.css';
 
 /**
  * "Call summary": the campaign's call-analysis profile (its custom dimensions), shared by the
- * create wizard and the campaign settings page, as `CampaignRecordingField` is for recording.
+ * create wizard, the campaign settings page and an account's campaign template
+ * (`docs/campaign-templates.md` §7), as `CampaignRecordingField` is for recording.
  *
  * `capabilityEnabled` is the account's `agency.analytics`. With it on, the profiles are a
  * picker. With it off the field only says whether a profile is set and offers to remove it:
@@ -37,11 +38,14 @@ export function CampaignCallSummaryField(props: {
   /** No edit permission: locked. */
   readOnly?: boolean;
   error?: string;
+  /** What the hints name: the campaign's calls, or those of campaigns made from a template. */
+  subject?: 'campaign' | 'template';
 }) {
   const {
     profileId, savedProfileId, onChange, capabilityEnabled, profiles, loading, loadError, loadErrorConsequence,
-    readOnly = false, error,
+    readOnly = false, error, subject = 'campaign',
   } = props;
+  const whose = subject === 'template' ? 'campaigns made from this template' : 'this campaign';
   const id = useId();
   const selectId = `${id}-select`;
   const errorId = `${id}-error`;
@@ -82,7 +86,9 @@ export function CampaignCallSummaryField(props: {
           </select>
           <p className={styles.hint}>
             {storedProfileId === null
-              ? 'No summary is written for this campaign’s calls.'
+              ? subject === 'template'
+                ? 'No summary is written for the calls of campaigns made from this template.'
+                : 'No summary is written for this campaign’s calls.'
               : 'Every connected call is summarised against this profile once it ends. ' +
                 'A summary needs a recording, so leave recording on above.'}
           </p>
@@ -96,8 +102,8 @@ export function CampaignCallSummaryField(props: {
         <>
           <p className={styles.hint}>
             {storedProfileId === null
-              ? 'No summary profile is set for this campaign.'
-              : 'A summary profile is set for this campaign.'}
+              ? `No summary profile is set for ${whose}.`
+              : `A summary profile is set for ${whose}.`}
           </p>
           {gate.notice && (
             <p className={styles.gateNotice} role="note">

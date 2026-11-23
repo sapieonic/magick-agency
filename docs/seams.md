@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation and §3.1's `hasActiveCall` on 2026-11-17.
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation and §3.1's `hasActiveCall` on 2026-11-17; §2's campaign templates family on 2026-11-22.
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -77,6 +77,28 @@ context and `Cache-Control: no-store`, `agency.supervise` then the `agency_compa
 read), served from SQL by `agency/compare/` (no `callCore`), its ids validated by its own routes (no wrapper
 id guard). It owns one `CompareReads` per registration (the read's caches and its limiter: per
 tenant and process-wide), cleared when the app closes. No config key, bootstrap or seam is added.
+`api/routes/proxy-agency-campaign-templates.routes.ts` (campaign templates, docs/campaign-templates.md
+§6) is the same kind, its routes in `api/routes/proxy-agency-campaign-templates/` (`read.ts`,
+`write.ts`, `apply.ts`, with `shared.ts` and `validate.ts`): the twelve
+`/proxy/agency/campaign-templates*` routes (list, `effective`, one template, its versions and one
+version, create, replace, make and clear the default, archive, restore, apply), its hooks the
+session, the tenant context and `Cache-Control: no-store`, then each route's own preHandlers
+(`templateGuards` in `shared.ts`: the RBAC floor, then the `agency_campaign_templates_enabled`
+flag, before any body is read), served from SQL by `AgencyCampaignTemplateRepository` (no
+`callCore`), its ids validated by its own routes (a malformed id is the uniform 404; no wrapper id
+guard). Only apply reaches the internal handler, through the campaign settings PATCH as one
+function, `api/routes/helpers/campaign-patch.ts` (`patchCampaignConfig`, its checks and its
+`config_changed` audit), which `PATCH /proxy/agency/campaigns/:id` now calls too, so an apply can
+never write what the PATCH would refuse. An apply names the templates it applies in `callCore`'s
+typed `templateApply`, which sets the internal `x-mgkvc-template-apply` header (base64url JSON of
+the template and its based-on), so the internal PATCH stores the campaign's `template_source` in
+the settings' own transaction; `callCore` strips that header from forwarded headers, as it does
+the tenancy and proven-campaign ones, so a client can never send it (`test/unit/api/core-dispatch.test.ts`).
+Beside it in `helpers/`, `tenant-wide-seat.ts`
+(`tenantWideSeatRefused`, AA1's organisation-wide seat check) is shared by `POST /accounts` and the
+organisation template writes (CT3), and `campaign-template-refusal.ts` (the template refusal body,
+its words and status per code) by the template routes and the campaign create, whose `template_id`
+can be refused (CT8). No config key, bootstrap or seam is added.
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:

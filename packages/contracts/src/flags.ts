@@ -370,9 +370,29 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency compare agents: supervisors compare up to three agents of a campaign against its other agents, with findings',
   },
+  // ── Campaign templates (docs/campaign-templates.md, CT17) ────────────────────
+  //
+  // Gates every `/proxy/agency/campaign-templates/*` route (`403 feature_disabled` when off), New
+  // campaign's "Start from" picker and filled-in form, the create path's fill-in for sections a
+  // create leaves out (CT8) and the soft phone following the account's default template (CT11).
+  // Off, New campaign and an API create work exactly as before, and a campaign already made from
+  // a template keeps its settings (a copy, CT1). Scoped `global` and `tenant` only: organisation
+  // templates are shared by every account of the tenant, so the feature is the tenant's, not an
+  // account's. Off by default: a super-admin turns it on per tenant with an override row.
+  // Client-exposed: the console shows or hides Settings › Campaign templates and the picker.
+  agency_campaign_templates_enabled: {
+    key: 'agency_campaign_templates_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_CAMPAIGN_TEMPLATES', // staging: FF_AGENCY_CAMPAIGN_TEMPLATES=true
+    scopes: ['global', 'tenant'],
+    clientExposed: true, // the console shows/hides Campaign templates and New campaign's picker
+    owner: 'voice',
+    description: 'Agency campaign templates: named organisation and account templates fill in New campaign and API creates (hours default to Asia/Kolkata), and untagged soft-phone calls follow the default template\'s outcomes when the soft phone sets none of its own',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The thirteen agency flag keys. */
+/** The fourteen agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -389,6 +409,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_live_listen_unrecorded',
   'agency_floor_assist_enabled',
   'agency_compare_enabled',
+  'agency_campaign_templates_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

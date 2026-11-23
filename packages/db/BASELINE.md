@@ -231,6 +231,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
 | `uq_agency_agent_caller_id_agent` (0018) | `agency_campaign_agent_caller_ids` |
 | `uq_agency_agent_caller_id_number` (0018) | `agency_campaign_agent_caller_ids` |
+| `uq_agency_campaign_templates_default` (0067) | `agency_campaign_templates` |
 
 ## Triggers and functions
 
@@ -1876,6 +1877,49 @@ table; an invalid index left under the name by a failed concurrent build fails t
 (the definition and comment, a statement repeating the predicate uses it, the invalid-index refusal,
 down then up), the server's `test/integration/agency/compare-break-overrun-index.test.ts` (the read's
 own statement is planned on it) and the down → up inventory suite.
+
+### 0067 — `migrations/0067_campaign_templates.sql`
+
+Campaign templates (docs/campaign-templates.md, CT1–CT21; wire shapes in
+`packages/contracts/src/api/agency/campaign-templates.ts`). **`agency_campaign_templates`** (new): `id`,
+`tenant_id`, `account_id` NULL (NULL = an organisation template, shared by the tenant's accounts; no FK on
+either, as `account_settings`, open question 2), `name` `VARCHAR(80)`, `description` `VARCHAR(280)` NULL,
+`based_on_template_id` NULL (self FK, no cascade: templates are archived, never deleted; CHECK
+**`ck_agency_campaign_templates_based_on`**: an organisation template is based on none), `sections` JSONB
+(default `{}`; CHECK **`ck_agency_campaign_templates_sections`**: an object, keyed by section, an absent key
+following the next level; the server checks each section as a campaign create would), `is_default`,
+`version` (default 1, bumped by every content save), `created_by`, `updated_by`, `archived_by` (user ids,
+no FK), `created_at`, `updated_at` (no trigger; the repository's content writes set it), `archived_at`.
+**`uq_agency_campaign_templates_default`** `(tenant_id, account_id) NULLS NOT DISTINCT WHERE is_default AND
+archived_at IS NULL`: one live default per scope, the organisation scope included; an archived default is
+not counted. **`idx_agency_campaign_templates_scope`** `(tenant_id, account_id) WHERE archived_at IS NULL`:
+the list, the name check and the in-use check. Name uniqueness (CT13: case and repeated spaces folded) is
+NOT an index: the write's transaction checks it under a transaction advisory lock on the scope.
+**`agency_campaign_template_versions`** (new): `(template_id, version)` primary key, `template_id` FK ON
+DELETE CASCADE, `name`, `based_on_template_id`, `sections`, `saved_by`, `saved_at`: every saved state,
+written in the transaction that bumps the version. **`agency_campaigns.template_source`** JSONB NULL: the
+template a campaign was made from and each section's source (CT9), a record never read at run time; NULL
+without one (and on a retry campaign, CT7). Two new empty tables; the ADD COLUMN is catalog-only but takes
+ACCESS EXCLUSIVE on `agency_campaigns`, so the Up starts with `SET LOCAL lock_timeout = '10s'`. **Down**
+drops the column and both tables (every template, its history and every campaign's record of it).
+**Tests**: `test/integration/db/campaign-templates-migration.test.ts` (both tables' columns, both CHECKs
+both ways, the default index per scope including the organisation's and an archived default, the
+versions' key and cascade, `template_source`, the lock timeout, down then up), the server's
+`test/integration/agency/campaign-template-repository.test.ts` (the repository, and the contract's column
+defaults pinned to `agency_campaigns`' DEFAULTs) and the down → up inventory suite.
+
+### 0068 — `migrations/0068_campaign_templates_archived_index.sql`
+
+Campaign templates' Archived list (docs/campaign-templates.md CT14).
+**`idx_agency_campaign_templates_archived`** `(tenant_id, account_id) WHERE archived_at IS NOT NULL` on
+`agency_campaign_templates`: the twin of 0067's live `idx_agency_campaign_templates_scope`, so
+`GET /proxy/agency/campaign-templates?archived=true` reads one scope's archive instead of scanning every
+tenant's templates. The repository's list names `archived_at IS NOT NULL` (or `IS NULL`) in its statement,
+so the planner proves which index applies. `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout =
+'10s'`, so a deployment may build it `CONCURRENTLY` first; an invalid index left under the name by a failed
+concurrent build fails the migration. **Down** drops it. **Tests**:
+`test/integration/db/campaign-templates-archived-index-migration.test.ts` (the definition and comment, the
+list's statement uses it, the invalid-index refusal, down then up) and the down → up inventory suite.
 
 ### 0069 — `migrations/0069_call_log_inbound_campaign.sql`
 

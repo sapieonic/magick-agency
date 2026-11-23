@@ -1,4 +1,5 @@
-import { hasPermission, type Permission } from './permissions';
+import { getRoleLevel, hasPermission, type Permission } from './permissions';
+import { CAMPAIGN_TEMPLATES_FLAG } from './agency/campaignTemplates/templatesFlag';
 import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { REPORTS_FLAG } from './reports/reportsFlag';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
@@ -42,6 +43,12 @@ export interface Gate {
   missed?: boolean;
   withoutPermission?: Permission;
   agentLanding?: boolean;
+  /**
+   * The reader must hold at least this role on an organisation-wide seat (`GateInput.organisationRole`):
+   * what the server asks of an organisation-only write (AA1's rule, CT3), which no permission floor
+   * can say.
+   */
+  organisationSeat?: Role;
 }
 
 export interface GateInput {
@@ -50,6 +57,8 @@ export interface GateInput {
   isCapabilityEnabled: (capability: string) => boolean;
   /** `useMissedCallsAccess().available`; false when the caller did not read it. */
   missedAvailable?: boolean;
+  /** The role of the reader's organisation-wide seat (`TenantContext.organisationRole`); absent when none. */
+  organisationRole?: Role;
 }
 
 export function passesGate(gate: Gate, input: GateInput): boolean {
@@ -59,7 +68,13 @@ export function passesGate(gate: Gate, input: GateInput): boolean {
   if (gate.capabilities && !gate.capabilities.every((cap) => input.isCapabilityEnabled(cap))) return false;
   if (gate.missed && input.missedAvailable !== true) return false;
   if (gate.agentLanding && isDedicatedAgent(input.role) && dialerOn(input)) return false;
+  if (gate.organisationSeat && !holdsOrganisationSeat(input.organisationRole, gate.organisationSeat)) return false;
   return true;
+}
+
+/** Whether an organisation-wide seat's role reaches `floor` (none never does). */
+export function holdsOrganisationSeat(organisationRole: Role | undefined, floor: Role): boolean {
+  return organisationRole !== undefined && getRoleLevel(organisationRole) >= getRoleLevel(floor);
 }
 
 /** The `agency` capability and the dialer flag: what every `/agency` route is behind. */
@@ -565,6 +580,16 @@ function settingsGate(gate: Gate): Gate {
   return { ...gate, ...SETTINGS_GATE };
 }
 
+/** Settings › Campaign templates: the account's templates, and the organisation's read-only. */
+export const CAMPAIGN_TEMPLATES_PATH = '/settings/campaign-templates';
+/** Settings › Organisation campaign templates. */
+export const ORGANISATION_CAMPAIGN_TEMPLATES_PATH = '/settings/organisation-campaign-templates';
+
+/** The editor of template `id` (`'new'` for a new one) of the given scope. */
+export function campaignTemplatePath(scope: 'account' | 'organisation', id: string): string {
+  return `${scope === 'organisation' ? ORGANISATION_CAMPAIGN_TEMPLATES_PATH : CAMPAIGN_TEMPLATES_PATH}/${encodeURIComponent(id)}`;
+}
+
 /**
  * The Settings hub's entries, in sub-nav order. Each gate is the one its old sidebar entry had
  * (the union, where both shells listed it) plus {@link SETTINGS_GATE}. A route's capability and
@@ -609,6 +634,18 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
     scope: 'account',
     gate: settingsGate({ permission: 'agency.analysis_profiles.read', flags: [CALL_ANALYSIS_FLAG], capabilities: ['agency.analytics'] }),
   },
+  /*
+    Campaign templates (`docs/campaign-templates.md` §7, CT3): the account's, for whoever manages
+    them (`agency.campaign_templates.manage`, account admins and above), behind the templates flag.
+  */
+  {
+    id: 'campaign-templates',
+    label: 'Campaign templates',
+    path: CAMPAIGN_TEMPLATES_PATH,
+    scope: 'account',
+    gate: settingsGate({ permission: 'agency.campaign_templates.manage', flags: [CAMPAIGN_TEMPLATES_FLAG], capabilities: ['agency'] }),
+    subPage: { label: 'Campaign template', named: { new: 'New campaign template' } },
+  },
   /* `docs/listening.md` §12 (LS20 c): read-only, both client flags; offered whether listening is on
      or off (it says which), to those who would listen. */
   {
@@ -621,6 +658,20 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
   { id: 'team', label: 'Team', path: '/settings/team', scope: 'tenant', gate: settingsGate({ permission: 'user.invite' }) },
   /* The roles that can create accounts (decision AA1); everyone else uses the switcher. */
   { id: 'accounts', label: 'Accounts', path: '/settings/accounts', scope: 'tenant', gate: settingsGate({ permission: 'account.create' }) },
+  /* The organisation's campaign templates (CT3): tenant admins and owners on an organisation-wide seat. */
+  {
+    id: 'organisation-campaign-templates',
+    label: 'Organisation campaign templates',
+    path: ORGANISATION_CAMPAIGN_TEMPLATES_PATH,
+    scope: 'tenant',
+    gate: settingsGate({
+      permission: 'agency.campaign_templates.manage',
+      organisationSeat: 'tenant_admin',
+      flags: [CAMPAIGN_TEMPLATES_FLAG],
+      capabilities: ['agency'],
+    }),
+    subPage: { label: 'Organisation campaign template', named: { new: 'New organisation campaign template' } },
+  },
 ];
 
 export const SETTINGS_SCOPES: readonly SettingsScope[] = ['you', 'account', 'tenant'];

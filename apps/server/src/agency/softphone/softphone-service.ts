@@ -60,6 +60,7 @@ import type { StationRegistry } from '../station-registry.js';
 import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import { runManualPredial, softphoneCarrier } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
+import { untaggedOutcomesTemplate } from './untagged-outcomes.js';
 import { promiseZoneFor, resolveDisposition } from '../disposition.js';
 import { contactPromiseWrite, promiseFollowUpAt } from '../promise-to-pay.js';
 import { todayIn } from '@magick-agency/domain/promise-to-pay';
@@ -567,7 +568,10 @@ export class SoftphoneService {
 
     const tag = row.campaign_id ? await agencyCampaignRepository.findById(row.campaign_id) : null;
     const settings = await agencySoftphoneSettingsRepository.get(actor.tenantId, actor.accountId);
-    const { catalog, source } = resolveManualCatalog(tag, row.campaign_id !== null, settings);
+    // Untagged: the soft phone's own outcomes, else the account's template chain's, read now (CT11).
+    const tagged = row.campaign_id !== null;
+    const follow = tagged ? null : await untaggedOutcomesTemplate({ tenantId: actor.tenantId, accountId: actor.accountId }, settings);
+    const { catalog, source } = resolveManualCatalog(tag, tagged, settings, follow?.disposition_catalog ?? []);
     // A promise needs a contact this call settles (PT13): one it CLAIMED from the tag's roster.
     // With no contact there is nowhere to keep it, and a contact the call only linked (one
     // already closed, exhausted or suppressed) is not settled by it, so a follow-up would never
@@ -598,7 +602,8 @@ export class SoftphoneService {
     if (!prepared.ok) return prepared;
     const { entry, notes, callbackAt, promise } = prepared.prepared;
     // A promise is only ever asked by a campaign catalogue (the soft phone's own refuses
-    // `requires_promise`), and only on a call that claimed its contact (above). Its follow-up
+    // `requires_promise`, and the template catalogue it follows is passed through the same rules,
+    // `asSoftphoneCatalog`), and only on a call that claimed its contact (above). Its follow-up
     // (PT2) takes the callback arm; without one a promise books nothing (PT3).
     const followUpAt = promiseFollowUpAt(entry, promise, promiseZone);
     const { decision, nextAttemptAt } = manualDispositionDecision({

@@ -101,6 +101,7 @@ describe('the sub-nav', () => {
       '/settings/softphone',
       '/settings/inbound',
       '/settings/call-summaries',
+      '/settings/campaign-templates',
       '/settings/listening',
     ]);
     expect(screen.getByTestId('settings-nav-team').getAttribute('aria-current')).toBe('page');
@@ -130,6 +131,7 @@ describe('the sub-nav', () => {
       'Soft phone',
       'Inbound routing',
       'Call summaries',
+      'Campaign templates',
       'Live call listening',
       'Team',
     ]);

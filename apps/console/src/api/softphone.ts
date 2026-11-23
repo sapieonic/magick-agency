@@ -22,6 +22,7 @@ import {
   type AgencySoftphoneContactInFlightRefusal,
   type AgencySoftphoneDncListedRefusal,
   type AgencySoftphoneErrorCode,
+  type AgencySoftphoneOutcomesTemplate,
   type AgencySoftphoneOutsideHoursRefusal,
   type AgencySoftphoneSessionOnCampaignRefusal,
   type AgencySoftphoneSessionOnSoftphoneRefusal,
@@ -315,17 +316,49 @@ export function getManualCall(callId: string, tenantId?: string, accountId?: str
   );
 }
 
+/** `GET /settings`, at the agent floor. */
+export async function getSoftphoneSettings(tenantId?: string, accountId?: string): Promise<AgencySoftphoneSettings> {
+  return (await readSoftphoneSettings(tenantId, accountId)).settings;
+}
+
+/** What untagged outcomes follow (CT11): the contract's type under the console's name. */
+export type SoftphoneOutcomesTemplate = AgencySoftphoneOutcomesTemplate;
+
 /**
- * `GET /settings`, at the agent floor: the settings with `campaignRequired`, the account asks for a campaign on every call
- * (`docs/call-log.md` §5), so the settings of a call logged to none are not used and the page
- * greys them.
+ * The settings with what "Follow" gives the untagged outcomes (`outcomes_template`, CT11). The
+ * server sends it whenever campaign templates are on, whether or not the soft phone sets its own
+ * list; `undefined` when the answer has no such field (an older server), `null` when it says
+ * there is none to follow, or the field is malformed.
  */
-export async function getSoftphoneSettingsWithRule(
+export interface SoftphoneSettingsRead {
+  settings: AgencySoftphoneSettings;
+  outcomesTemplate: SoftphoneOutcomesTemplate | null | undefined;
+}
+
+function settingsRead(res: AgencySoftphoneSettingsResponse): SoftphoneSettingsRead {
+  if (!('outcomes_template' in res) || res.outcomes_template === undefined) return { settings: res.settings, outcomesTemplate: undefined };
+  const follows = res.outcomes_template;
+  const usable = follows && typeof follows === 'object' && Array.isArray(follows.disposition_catalog) ? follows : null;
+  return { settings: res.settings, outcomesTemplate: usable };
+}
+
+/**
+ * `GET /settings` with what the outcomes follow (`outcomes_template`; null when the answer names
+ * none) and `campaignRequired`: the account asks for a campaign on every call (`docs/call-log.md`
+ * §5), so the settings of a call logged to none are not used and the page greys them.
+ */
+export async function readSoftphoneSettings(
   tenantId?: string,
   accountId?: string,
-): Promise<{ settings: AgencySoftphoneSettings; campaignRequired: boolean }> {
-  const res = await apiFetch<AgencySoftphoneSettingsResponse>(`${SOFTPHONE_BASE}/settings`, {}, tenantId, accountId);
-  return { settings: res.settings, campaignRequired: res.campaign_required === true };
+): Promise<{ settings: AgencySoftphoneSettings; outcomesTemplate: SoftphoneOutcomesTemplate | null; campaignRequired: boolean }> {
+  const res = await apiFetch<AgencySoftphoneSettingsResponse>(
+    `${SOFTPHONE_BASE}/settings`,
+    {},
+    tenantId,
+    accountId,
+  );
+  const read = settingsRead(res);
+  return { settings: read.settings, outcomesTemplate: read.outcomesTemplate ?? null, campaignRequired: res.campaign_required === true };
 }
 
 /**
@@ -508,12 +541,12 @@ export function markManualCallDnc(
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
-/** `PUT /settings`: replaces the whole row. `agency.softphone.manage`. */
+/** `PUT /settings`: replaces the whole row, answering the settings and what the outcomes follow. `agency.softphone.manage`. */
 export function putSoftphoneSettings(
   body: AgencySoftphoneSettingsUpdateRequest,
   tenantId?: string,
   accountId?: string,
-): Promise<SoftphoneResult<AgencySoftphoneSettings>> {
+): Promise<SoftphoneResult<SoftphoneSettingsRead>> {
   return attempt(async () => {
     const res = await apiFetch<AgencySoftphoneSettingsResponse>(
       `${SOFTPHONE_BASE}/settings`,
@@ -521,6 +554,7 @@ export function putSoftphoneSettings(
       tenantId,
       accountId,
     );
-    return res.settings;
+    // The answer carries what "Follow" now gives, as the read does (CT11).
+    return settingsRead(res);
   });
 }
