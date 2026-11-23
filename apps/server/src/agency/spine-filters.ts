@@ -133,6 +133,16 @@ export interface AgencyAttemptFilters {
   dialedTo?: Date;
 }
 
+/**
+ * Filters without their `from`/`to` window: what a view that ignores the dates reads (the call
+ * log's To follow up: a caller still owed a call is owed it whatever day they rang).
+ */
+export function withoutDates<T extends { from?: unknown; to?: unknown }>(filters: T): Omit<T, 'from' | 'to'> {
+  const { from: _from, to: _to, ...undated } = filters;
+  void _from; void _to;
+  return undated;
+}
+
 /** `?waiting=`: the insights roster's waiting buckets (`waitingContactSql`). */
 export const CONTACT_WAITING_BUCKETS = vocabulary<ContactWaitingBucket>({
   due_now: true, retry: true, callback: true,

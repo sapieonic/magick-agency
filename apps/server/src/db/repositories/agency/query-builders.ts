@@ -15,7 +15,7 @@ import {
 } from '../../../agency/spine-filters.js';
 import type { AgencyPromiseFilter, AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
-import { contactPhoneDigitsSql, inboundAnsweredSql, inboundMissedSql } from './sql-fragments.js';
+import { contactPhoneDigitsSql, inboundAnsweredSql, inboundFromDigitsSql, inboundMissedSql } from './sql-fragments.js';
 import { endsWithDigitsSql } from '../../sql-utils.js';
 import {
   agentManualAttemptSql,
@@ -557,7 +557,7 @@ export function inboundLogFilterConditions(
   }
   if (f.contactId) conditions.push(`i.matched_contact_id = ${bind.add(f.contactId)}::uuid`);
   if (f.phone) {
-    const digits = "regexp_replace(i.from_e164, '[^0-9]', '', 'g')";
+    const digits = inboundFromDigitsSql('i');
     const term = f.phone.value.replace(/\D/g, '');
     conditions.push(term.length === 0
       ? 'FALSE'

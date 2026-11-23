@@ -22,6 +22,7 @@ import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { inboundCampaignRowConditions } from './sql-fragments.js';
+import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -174,7 +175,7 @@ export class AgencyCallSettingsRepository {
       `SELECT (
           (SELECT count(*) FROM agency_manual_calls m
             WHERE m.tenant_id = $1::uuid AND m.account_id = $2::uuid AND m.created_at >= $3::timestamptz
-              AND m.campaign_id IS NULL AND m.dialed_at IS NOT NULL)
+              AND m.campaign_id IS NULL AND ${SOFTPHONE_PLACED_SQL})
         + (SELECT count(*) FROM agency_inbound_calls i
             WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.arrived_at >= $3::timestamptz
               AND i.campaign_id IS NULL AND ${inboundCampaignRowConditions('i').join(' AND ')})

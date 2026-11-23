@@ -60,7 +60,9 @@ import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/ke
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
-import { contactNameContextSql, inboundFromDigitsSql, inboundMissedOpenSql, inboundNumberBusySql } from './sql-fragments.js';
+import {
+  contactNameContextSql, inboundFromDigitsSql, inboundMissedOpenSql, inboundMissedSql, inboundNumberBusySql,
+} from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -987,7 +989,7 @@ export class AgencyInboundCallRepository {
     const { rows } = await getPool().query(
       `SELECT 1 FROM agency_inbound_calls c
         WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid AND c.account_id = $3::uuid
-          AND c.follow_up_status IS NOT NULL AND c.from_e164 IS NOT NULL
+          AND ${inboundMissedSql('c')} AND c.from_e164 IS NOT NULL
           AND ${inboundFromDigitsSql('c')} = regexp_replace($4::text, '[^0-9]', '', 'g')`,
       [id, tenantId, accountId, phoneE164],
     );

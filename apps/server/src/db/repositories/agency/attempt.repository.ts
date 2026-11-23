@@ -17,7 +17,7 @@ import {
 // MICROSECOND precision — see that module for why a millisecond round-trip
 // silently drops rows.
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
-import type { AgencyAttemptFilters } from '../../../agency/spine-filters.js';
+import { withoutDates, type AgencyAttemptFilters } from '../../../agency/spine-filters.js';
 import { PRIOR_ATTEMPT_LIMIT } from '@magick-agency/domain/retry-campaign-bounds';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import type {
@@ -140,34 +140,35 @@ const SOFTPHONE_LOG_EXTRA_SQL = `CASE WHEN m.callback_of_inbound_call_id IS NOT 
                    'arrived_at', (SELECT cb.arrived_at FROM agency_inbound_calls cb
                                    WHERE cb.id = m.callback_of_inbound_call_id AND cb.tenant_id = m.tenant_id))) END`;
 
+/** The leading terms of one campaign's inbound rows in the tenant (`idx_agency_inbound_calls_campaign`). */
+function campaignInboundScopeTerms(campaignId: string, tenantId: string, bind: ReturnType<typeof params>): string[] {
+  return [
+    `i.campaign_id = ${bind.add(campaignId)}::uuid`,
+    `i.tenant_id = ${bind.add(tenantId)}::uuid`,
+  ];
+}
+
 /**
  * The WHERE terms of the call log's inbound rows, shared by the page, the counts and the Call
- * page's read so all three mean one thing by "an inbound call on this campaign": filed under it
- * (`campaign_id`, 0067) in the tenant, ENDED, and served (never `rejected`); then the filters
- * (`inboundLogFilterConditions`). `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`,
- * the Missed list's rule), drops the dates (a caller still owed a call is owed it whatever day
- * they rang), and reads the agent filter as the row's ASSIGNEE: nobody answered a missed call, and
- * "who still owes these" is what that view is asked.
+ * page's read so all three mean one thing by "an inbound call": `scopeTerms` first (whose calls:
+ * a campaign's, filed under it in the tenant by `campaign_id`, 0067; or the account's), then
+ * ENDED and served (never `rejected`), then the filters (`inboundLogFilterConditions`).
+ * `toFollowUp` keeps the OPEN Missed rows (`inboundMissedOpenSql`, the Missed list's rule), drops
+ * the dates (a caller still owed a call is owed it whatever day they rang), and reads the agent
+ * filter as the row's ASSIGNEE: nobody answered a missed call, and "who still owes these" is
+ * what that view is asked.
  */
 function inboundLogConditions(
-  q: {
-    campaignId: string;
-    tenantId: string;
-    filters: AgencyAttemptFilters;
-    inboundOutcomes: readonly string[];
-    toFollowUp: boolean;
-  },
+  scopeTerms: readonly string[],
+  q: { filters: AgencyAttemptFilters; inboundOutcomes: readonly string[]; toFollowUp: boolean },
   bind: ReturnType<typeof params>,
 ): string[] {
-  const { from: _from, to: _to, ...undated } = q.filters;
-  void _from; void _to;
   return [
-    `i.campaign_id = ${bind.add(q.campaignId)}::uuid`,
-    `i.tenant_id = ${bind.add(q.tenantId)}::uuid`,
+    ...scopeTerms,
     // Ended and served, the rule the campaign's inbound figures share (`inboundCampaignRowConditions`).
     ...inboundCampaignRowConditions('i'),
     ...inboundLogFilterConditions(
-      q.toFollowUp ? undated : q.filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer',
+      q.toFollowUp ? withoutDates(q.filters) : q.filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer',
     ),
     ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
   ];
@@ -306,24 +307,16 @@ function scopedInboundConditions(
   bind: ReturnType<typeof params>,
 ): string[][] {
   if (scope.kind === 'campaign') {
-    return [inboundLogConditions({ campaignId: scope.campaignId, tenantId: scope.tenantId, ...q }, bind)];
+    return [inboundLogConditions(campaignInboundScopeTerms(scope.campaignId, scope.tenantId, bind), q, bind)];
   }
-  const { from: _from, to: _to, ...undated } = q.filters;
-  void _from; void _to;
-  const filters = q.toFollowUp ? undated : q.filters;
-  const base = (): string[] => [
+  const accountTerms = (): string[] => [
     `i.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
     `i.account_id = ${bind.add(scope.accountId)}::uuid`,
     ...scopedCampaignTerm(scope, 'i', bind),
-    ...inboundCampaignRowConditions('i'),
   ];
-  if (scope.kind === 'account') {
-    return [[
-      ...base(),
-      ...inboundLogFilterConditions(filters, q.inboundOutcomes, bind, q.toFollowUp ? 'assignee' : 'answerer'),
-      ...(q.toFollowUp ? [inboundMissedOpenSql('i')] : []),
-    ]];
-  }
+  if (scope.kind === 'account') return [inboundLogConditions(accountTerms(), q, bind)];
+  const base = (): string[] => [...accountTerms(), ...inboundCampaignRowConditions('i')];
+  const filters = q.toFollowUp ? withoutDates(q.filters) : q.filters;
   const { agentUserId: _asked, ...mine } = filters;
   void _asked;
   const me = (): string => `${bind.add(scope.agentUserId)}::uuid`;
@@ -339,11 +332,7 @@ function scopedInboundConditions(
   // agent that share no call (measured 223 ms on 300,000 inbound calls, against the campaign's own
   // few thousand rows). The campaign is the account's (see `CallLogScope`).
   const answeredBase = scope.campaign && scope.campaign !== 'none'
-    ? [
-      `i.campaign_id = ${bind.add(scope.campaign)}::uuid`,
-      `i.tenant_id = ${bind.add(scope.tenantId)}::uuid`,
-      ...inboundCampaignRowConditions('i'),
-    ]
+    ? [...campaignInboundScopeTerms(scope.campaign, scope.tenantId, bind), ...inboundCampaignRowConditions('i')]
     : base();
   return [
     [...answeredBase, `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
@@ -1257,7 +1246,9 @@ export class AgencyAttemptRepository {
    */
   async findInboundForCampaign(campaignId: string, tenantId: string, inboundCallId: string): Promise<CampaignInboundLogRow | null> {
     const bind = params();
-    const conditions = inboundLogConditions({ campaignId, tenantId, filters: {}, inboundOutcomes: [], toFollowUp: false }, bind);
+    const conditions = inboundLogConditions(
+      campaignInboundScopeTerms(campaignId, tenantId, bind), { filters: {}, inboundOutcomes: [], toFollowUp: false }, bind,
+    );
     conditions.push(`i.id = ${bind.add(inboundCallId)}::uuid`);
     const { rows } = await getPool().query<InboundLogRaw>(
       `SELECT ${INBOUND_LOG_SELECT_SQL} FROM agency_inbound_calls i WHERE ${conditions.join(' AND ')}`,
