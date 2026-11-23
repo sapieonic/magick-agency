@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../../core/api/api_error.dart';
 import '../../core/softphone/call_labels.dart' show formatDialNumber, recentCallWhen;
+import '../performance/logic/en_in_format.dart';
 
 /// The Missed list's words, the console's own (`utils/inbound/missedCopy.ts`,
 /// `inboundCopy.ts`, `components/agency/inbound/MissedCallsList.tsx`,
@@ -160,11 +161,12 @@ abstract final class MissedCopy {
         InboundMissedReason.unknown => raw,
       };
 
-  /// Why a row was missed: the reason's label, or for a closed call the cause
-  /// when it was not the hours (`missedReasonLabel`).
-  static String whyMissed(InboundMissedCall call) {
-    if (call.reason == InboundMissedReason.closed) {
-      switch (call.closedCause) {
+  /// Why a call was missed: the reason's label, or for a closed call the cause
+  /// when it was not the hours (`missedReasonLabel`). The Missed list's row,
+  /// My calls' card and the customer history's entry all say it through this.
+  static String reasonFor(InboundMissedReason reason, String reasonRaw, InboundClosedCause? closedCause) {
+    if (reason == InboundMissedReason.closed) {
+      switch (closedCause) {
         case InboundClosedCause.switchedOff:
           return 'Inbound switched off';
         case InboundClosedCause.noRoute:
@@ -175,7 +177,30 @@ abstract final class MissedCopy {
           break;
       }
     }
-    return reasonLabel(call.reason, call.reasonRaw);
+    return reasonLabel(reason, reasonRaw);
+  }
+
+  /// Why a row was missed ([reasonFor]).
+  static String whyMissed(InboundMissedCall call) => reasonFor(call.reason, call.reasonRaw, call.closedCause);
+
+  /// [reasonFor] in lower case, to sit after "Missed", with the wait when the
+  /// caller queued and it is known: "nobody free to answer · waited 1:40",
+  /// "hung up while waiting · 0:52" (which already says it was a wait).
+  static String missedDetail({
+    required InboundMissedReason reason,
+    required String reasonRaw,
+    required InboundClosedCause? closedCause,
+    required bool queued,
+    required int? waitSeconds,
+  }) {
+    final label = reasonFor(reason, reasonRaw, closedCause);
+    final lower = label.isEmpty ? label : '${label[0].toLowerCase()}${label.substring(1)}';
+    final waited = !queued || waitSeconds == null
+        ? null
+        : reason == InboundMissedReason.abandonedInQueue
+            ? EnIn.talkTime(waitSeconds.toDouble())
+            : 'waited ${EnIn.talkTime(waitSeconds.toDouble())}';
+    return [lower, ?waited].join(' · ');
   }
 
   /// The matched contact's name (IQ54, `match_name`), shown above the number;

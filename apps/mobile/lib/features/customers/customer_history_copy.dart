@@ -305,21 +305,13 @@ String personName(CustomerHistoryUser? u, {String none = 'Nobody'}) =>
 String inboundMissedWhy(CustomerTimelineInboundCall c) {
   final followUp = c.followUp;
   if (followUp == null) return '';
-  final label = followUp.reason == InboundMissedReason.closed
-      ? switch (followUp.closedCause) {
-          InboundClosedCause.switchedOff => 'Inbound switched off',
-          InboundClosedCause.noRoute => 'Number not on a route',
-          InboundClosedCause.credentialInactive => 'Phone line not active',
-          _ => MissedCopy.reasonLabel(followUp.reason, followUp.reasonRaw),
-        }
-      : MissedCopy.reasonLabel(followUp.reason, followUp.reasonRaw);
-  final reason = label.isEmpty ? label : '${label[0].toLowerCase()}${label.substring(1)}';
-  final waited = !c.queued
-      ? null
-      : followUp.reason == InboundMissedReason.abandonedInQueue
-          ? EnIn.talkTime(c.waitSeconds.toDouble())
-          : 'waited ${EnIn.talkTime(c.waitSeconds.toDouble())}';
-  return [reason, ?waited].join(' · ');
+  return MissedCopy.missedDetail(
+    reason: followUp.reason,
+    reasonRaw: followUp.reasonRaw,
+    closedCause: followUp.closedCause,
+    queued: c.queued,
+    waitSeconds: c.waitSeconds,
+  );
 }
 
 /// What happened on an inbound call (the console's `inboundWhatHappened`):

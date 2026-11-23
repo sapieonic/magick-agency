@@ -69,7 +69,7 @@ abstract final class MyCallsCopy {
     if (row.type == CallLogType.inbound) return row.isMissed ? 'Missed' : 'Answered';
     if (row.neverDialled) return 'Not dialled';
     if (row.type == CallLogType.softPhone && row.stateRaw != 'ended') return 'On a call now';
-    if (row.type == CallLogType.dialler && row.dispositionCode == 'inbound_call') return 'Stopped: customer rang us';
+    if (row.type == CallLogType.dialler && row.dispositionCode == inboundTookOverDispositionCode) return 'Stopped: customer rang us';
     final raw = row.outcomeRaw;
     if (raw == null) return 'Not classified';
     return attemptOutcomeLabels[AttemptOutcome.fromWire(raw)] ?? raw;
@@ -80,28 +80,19 @@ abstract final class MyCallsCopy {
   static String? missedWhy(MyCallRow row) {
     final followUp = row.followUp;
     if (followUp == null) return null;
-    final label = followUp.reason == InboundMissedReason.closed
-        ? switch (followUp.closedCause) {
-            InboundClosedCause.switchedOff => 'Inbound switched off',
-            InboundClosedCause.noRoute => 'Number not on a route',
-            InboundClosedCause.credentialInactive => 'Phone line not active',
-            _ => MissedCopy.reasonLabel(followUp.reason, followUp.reasonRaw),
-          }
-        : MissedCopy.reasonLabel(followUp.reason, followUp.reasonRaw);
-    final reason = label.isEmpty ? label : '${label[0].toLowerCase()}${label.substring(1)}';
-    final wait = row.waitSeconds;
-    final waited = !row.queued || wait == null
-        ? null
-        : followUp.reason == InboundMissedReason.abandonedInQueue
-            ? EnIn.talkTime(wait.toDouble())
-            : 'waited ${EnIn.talkTime(wait.toDouble())}';
-    return [reason, ?waited].join(' · ');
+    return MissedCopy.missedDetail(
+      reason: followUp.reason,
+      reasonRaw: followUp.reasonRaw,
+      closedCause: followUp.closedCause,
+      queued: row.queued,
+      waitSeconds: row.waitSeconds,
+    );
   }
 
   /// The saved outcome in the campaign's words, with its day: "Will pay · 25 Nov".
   static String? outcome(MyCallRow row) {
     final code = row.dispositionCode ?? row.autoDispositionCode;
-    if (code == null || code == 'inbound_call') return null;
+    if (code == null || code == inboundTookOverDispositionCode) return null;
     final label = code == 'no_disposition'
         ? 'No outcome chosen'
         : (row.dispositionCode != null ? row.dispositionLabel : null) ?? code;
