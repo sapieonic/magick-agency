@@ -17,6 +17,7 @@ import { hasPermission } from '../../utils/permissions';
 import { inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
 import { softphonePrefillState } from '../../utils/softphone/prefill';
 import { formatCallTimestamp, formatTalkTime } from '../../utils/agencySpineCopy';
+import { dayOfInstant } from '../../utils/format/date';
 import { formatCount } from '../../utils/format/number';
 import {
   AGENCY_CALLS_NO_CAMPAIGN,
@@ -87,12 +88,12 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
   /** The campaigns the reader has worked, for the Campaign filter. A courtesy: rows name theirs. */
   const [campaigns, setCampaigns] = useState<Array<{ id: string; name: string }>>([]);
   const [draftCampaign, setDraftCampaign] = useState(() => filters.campaign ?? '');
-  const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
-  const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
+  const [draftFrom, setDraftFrom] = useState(() => dayOfInstant(filters.from));
+  const [draftTo, setDraftTo] = useState(() => dayOfInstant(filters.to));
   useEffect(() => {
     setDraftCampaign(filters.campaign ?? '');
-    setDraftFrom(dayOf(filters.from));
-    setDraftTo(dayOf(filters.to));
+    setDraftFrom(dayOfInstant(filters.from));
+    setDraftTo(dayOfInstant(filters.to));
   }, [filters]);
 
   const [rows, setRows] = useState<AgencyMyCallRow[]>([]);
@@ -510,13 +511,4 @@ function sent(filters: MyCallsFilters): { campaign?: string; from?: string; to?:
     ...(filters.from ? { from: filters.from } : {}),
     ...(filters.to ? { to: filters.to } : {}),
   };
-}
-
-/** A `YYYY-MM-DD` for a date picker from an instant the URL carries, in the viewer's zone. */
-function dayOf(iso: string | null): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

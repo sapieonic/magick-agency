@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { localDay } from '../utils/agency/home';
+import { localDay } from '../utils/format/date';
 import { errorStatus } from '../utils/agencyErrors';
 import { useAtLocalMidnight } from './useAtLocalMidnight';
 import { useLatestRef } from './useLatestRef';

@@ -23,7 +23,7 @@ import {
   isCampaignAttemptFiltered,
 } from '../agencyCampaignAttemptParams';
 import { formatCount } from '../format/number';
-import { dateFormatter, upperDayPeriod } from '../format/date';
+import { dateFormatter, localDay, upperDayPeriod } from '../format/date';
 import { formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
 import { missedReasonLabel } from '../inbound/missedCopy';
@@ -162,12 +162,6 @@ export function callLogStatusLabel(status: AgencyCallLogStatus): string {
 }
 
 // ─── The dates the list opens on ────────────────────────────────────────────
-
-/** `YYYY-MM-DD` on the reader's calendar. */
-export function localDay(now: Date = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
 
 /** What a URL with no filter shows: today's calls, or every call. */
 export type CallLogOpening = 'today' | 'all';

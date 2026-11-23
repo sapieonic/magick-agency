@@ -33,7 +33,7 @@ vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null 
 import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 import { PageCrumbsProvider } from '../../components/layout/PageCrumbs';
 import { homeAcksKey, resetHomeAcksForTests } from '../../hooks/useHomeAcks';
-import { localDay } from '../../utils/agency/home';
+import { localDay } from '../../utils/format/date';
 
 async function renderBar() {
   render(

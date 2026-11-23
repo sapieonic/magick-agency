@@ -1,4 +1,5 @@
-import { localDay, type HomeAttentionItem, type HomeTone } from './home';
+import { localDay } from '../format/date';
+import type { HomeAttentionItem, HomeTone } from './home';
 
 /**
  * Home's "Got it" (decision B28a, acknowledgements): a reader can put an attention row aside, so
@@ -15,7 +16,7 @@ import { localDay, type HomeAttentionItem, type HomeTone } from './home';
  *    automatic pause's kind carries its instant, so a campaign resumed and paused again is back.
  *    A row whose count cannot grow (`ackable` false: missed calls past 99) is never put aside.
  *  - **Until tomorrow**: every acknowledgement is dropped at the viewer's next local midnight,
- *    the same day boundary as Today so far (`localDay` in `home.ts`).
+ *    the same day boundary as Today so far (`localDay` in `utils/format/date.ts`).
  *  - **Nothing is lost**: acknowledged rows are listed behind a "N acknowledged · Show" toggle.
  */
 

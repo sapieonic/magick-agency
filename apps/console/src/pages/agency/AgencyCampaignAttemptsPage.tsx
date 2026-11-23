@@ -72,6 +72,7 @@ import {
   phoneFilterDraftError,
   INVERTED_RANGE_COPY,
 } from '../../utils/agencyCampaignAttemptParams';
+import { dayOfInstant, localDay } from '../../utils/format/date';
 import { formatCount } from '../../utils/format/number';
 import {
   ALL_CALLS_DESCRIPTION,
@@ -105,7 +106,6 @@ import {
   isMissedInbound,
   isNotDialled,
   lastSevenDays,
-  localDay,
   manualCallsRedirectPath,
   onOpeningView,
   pairedRowKey,
@@ -310,8 +310,8 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
   /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
   const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
-  const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
-  const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
+  const [draftFrom, setDraftFrom] = useState(() => dayOfInstant(filters.from));
+  const [draftTo, setDraftTo] = useState(() => dayOfInstant(filters.to));
   const [draftStatus, setDraftStatus] = useState<AgencyCallLogStatus | ''>(() => status ?? '');
   const [draftCampaign, setDraftCampaign] = useState(() => campaignFilter ?? '');
 
@@ -322,8 +322,8 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     setDraftOutcomes(filters.outcome ?? []);
     setDraftPhone(filters.phone ?? '');
     setDraftAgent(filters.agent_user_id ?? '');
-    setDraftFrom(dayOf(filters.from));
-    setDraftTo(dayOf(filters.to));
+    setDraftFrom(dayOfInstant(filters.from));
+    setDraftTo(dayOfInstant(filters.to));
     setDraftStatus(status ?? '');
     setDraftCampaign(campaignFilter ?? '');
   }, [filters, status, campaignFilter]);
@@ -1273,15 +1273,6 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
 }
 
 export default AgencyCampaignAttemptsPage;
-
-/** A `YYYY-MM-DD` for a date picker from an instant the URL carries, in the viewer's zone. */
-function dayOf(iso: string | undefined): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
 
 function withQuery(params: URLSearchParams): string {
   const qs = params.toString();

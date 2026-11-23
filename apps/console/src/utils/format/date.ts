@@ -55,6 +55,23 @@ export function formatDayMonthYear(date: Date): string {
 }
 
 /**
+ * `YYYY-MM-DD` on the reader's calendar (the browser's zone): the day Today so far counts
+ * (`todayWindow` in `utils/agency/home.ts`), the one "Got it" lasts for (`homeAcks.ts`) and the
+ * one the Call log opens on.
+ */
+export function localDay(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** A `YYYY-MM-DD` for a date picker from an instant the URL carries, in the viewer's zone; '' for none or one that does not parse. */
+export function dayOfInstant(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : localDay(date);
+}
+
+/**
  * An instant as a time when it fell on `now`'s calendar day ("11:03 am"), else as its date and
  * time: Live floor's Needs you now rows and its campaign cards.
  */

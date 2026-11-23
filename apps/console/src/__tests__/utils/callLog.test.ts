@@ -24,7 +24,6 @@ import {
   isMissedInbound,
   isNotDialled,
   lastSevenDays,
-  localDay,
   manualCallsRedirectPath,
   onOpeningView,
   onlyDatesNarrow,
@@ -34,6 +33,7 @@ import {
   visibleCallLogChips,
   type CallLogView,
 } from '../../utils/agency/callLog';
+import { localDay } from '../../utils/format/date';
 import { ALL_CALLS_CAMPAIGN_PARAM, allCallsPath, softphoneCallsRedirectPath, unfiledCallsPath } from '../../utils/agency/callLog';
 import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
 import type { AgencyCallLogDiallerRow, AgencyCallLogInboundRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
