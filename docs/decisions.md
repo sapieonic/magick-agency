@@ -1105,3 +1105,14 @@ ruling is decided; the full table, CT1–CT23, is in [`campaign-templates.md`](c
 |---|---|---|
 | CT22 | A template never holds roster-card fact keys: its script may use only the legacy six keys a script with no card takes. Copying from a campaign (Save as template, Copy from a campaign, New template › A copy of a campaign) keeps What agents see but leaves out a script that uses the card's facts, and says so | **Decided** (2026-11-22) |
 | CT23 | The task's outcome "categories" are the outcome's behaviour, which the outcome editor already sets per outcome: Success (`is_success`), Call back (`requires_datetime`), Ends the contact (`terminal`) and Do Not Call (`suppress`). There is no separate category field; a template's outcomes carry these as a campaign's do | **Decided** (2026-11-22) |
+
+## Campaign setup (CS)
+
+The rulings CS1–CS21 (four steps shared by New campaign and Settings, purpose presets, one
+sentence per button, the agent's view beside the buttons, no languages yet, bad rows counted and
+left out, CSV only for now, the phone column found not asked, the card picked at upload, agents
+picked in the builder, hours as choices, one "doesn't pick up" rule, Advanced folded, only what
+exists, Start from the builder, Settings anchors kept, and with campaign templates: Start from
+above the steps, source chips where each setting is edited, a template's script on Purpose &
+buttons, starting points not called templates, the template editor on the same steps) are in
+[`campaign-setup.md`](campaign-setup.md) §1. Asked for by Manas on 2026-11-22.

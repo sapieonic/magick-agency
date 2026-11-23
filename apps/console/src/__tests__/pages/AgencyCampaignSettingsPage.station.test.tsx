@@ -11,7 +11,8 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  * target, the card merged into the stored display with `facts` and without the old amount-due and
  * due-date roles, the card with a script that needs it), what holds Save as it is typed (a script
  * key the card does not have, a fact the stored script uses), and each server refusal on the field
- * it names.
+ * it names. Since the page became the four setup steps as tabs (CS1), the card is on Customers,
+ * the script on Purpose & buttons, and the target and the number on Agents & timing.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -51,6 +52,15 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     loading: false, error: null, reload: vi.fn(), defaultNumber: '+912200000001',
   }),
 }));
+// Who calls (CS10): nobody on the campaign, nobody in the team; this file is not about staffing.
+vi.mock('../../api/agency', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agency')>()),
+  listCampaignAgents: async () => ({ agents: [] }),
+}));
+vi.mock('../../api/tenants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/tenants')>()),
+  listTenantMembers: async () => [],
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
@@ -72,7 +82,7 @@ vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
 }));
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
-import { saveSettings } from '../helpers/settingsForm';
+import { currentTab, openTab, saveSettings } from '../helpers/settingsForm';
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   return {
@@ -144,7 +154,7 @@ const save = () => fireEvent.click(screen.getByRole('button', { name: /save chan
 const refusal = (details: Record<string, string>) =>
   new ApiError(400, { error: 'Bad Request', code: 'validation_failed', message: 'Invalid campaign config', details });
 
-describe('Settings › What agents see: the daily target (AS6)', () => {
+describe('Settings › Agents & timing: the daily target (AS6)', () => {
   it('sends a typed target, and nothing about the station when nothing of it changed', async () => {
     renderPage();
     await screen.findByTestId('daily-target');
@@ -186,28 +196,38 @@ describe('Settings › What agents see: the daily target (AS6)', () => {
   });
 
   it('shows the server’s refusal on the field', async () => {
-    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ daily_target_calls: 'Daily target must be a whole number from 1 to 2,000. Leave it empty for no target.' }));
+    const said = 'Daily target must be a whole number from 1 to 2,000. Leave it empty for no target.';
+    mocks.updateAgencyCampaign.mockRejectedValue(refusal({ daily_target_calls: said }));
     renderPage();
     await screen.findByTestId('daily-target');
+    openTab('basics');
     fireEvent.change(target(), { target: { value: '50' } });
     save();
-    const message = await screen.findByText(/Leave it empty for no target/);
+    const message = await screen.findByText(said);
+    // Its tab comes forward, and the field has focus.
+    expect(currentTab()).toBe('agents');
+    await waitFor(() => expect(document.activeElement).toBe(target()));
     expect(target().getAttribute('aria-describedby')).toContain(message.closest('p')!.id);
   });
 });
 
-describe('Settings › What agents see: the customer’s number (AS9)', () => {
-  it('previews both, and sends masked when chosen', async () => {
+describe('Settings › Agents & timing: the customer’s number (AS9)', () => {
+  /*
+    The old page offered two radios with a preview each; the step's agent screen has one switch,
+    "Show full phone number to agents", whose line shows the number as agents will see it.
+  */
+  it('shows the whole number or hides it, saying how it reads, and sends masked when chosen', async () => {
     renderPage();
-    await screen.findByTestId('phone-display-full');
-    // One word for each choice, as the activity log says it (never "Masked").
-    expect(screen.getByRole('radio', { name: /^Full number/ })).toBe(screen.getByTestId('phone-display-full'));
-    expect(screen.getByRole('radio', { name: /^Hidden number/ })).toBe(screen.getByTestId('phone-display-masked'));
-    expect(screen.getByTestId('phone-display-masked').closest('fieldset')!.textContent).not.toMatch(/mask/i);
-    expect(screen.getByTestId('phone-display-preview-masked').textContent).toBe('98••• ••321');
-    expect(screen.getByTestId('phone-display-preview-full').textContent).toBe('+91 98765 43321');
-    expect((screen.getByTestId('phone-display-full') as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByTestId('phone-display-masked'));
+    await screen.findByTestId('daily-target');
+    openTab('agents');
+    const full = screen.getByRole('switch', { name: 'Show full phone number to agents' });
+    expect(full.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByTestId('phone-display-row').textContent).toContain('+91 98765 43321');
+    fireEvent.click(full);
+    expect(full.getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByTestId('phone-display-row').textContent).toContain('98••• ••321');
+    // Never "Masked" on screen: the activity log says Hidden number.
+    expect(screen.getByTestId('phone-display-row').textContent).not.toMatch(/mask/i);
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody()).toMatchObject({ phone_display: 'masked' });
@@ -217,14 +237,16 @@ describe('Settings › What agents see: the customer’s number (AS9)', () => {
 /** The card's rows, once the roster's columns have opened it. */
 const factRows = () => within(screen.getByTestId('fact-rows')).queryAllByRole('listitem');
 const factKeys = () => factRows().map((row) => row.querySelector('code')!.textContent);
-/** Waits for the columns' read to open the card (an old-model campaign's pre-fill needs them). */
+/** Opens Customers, and waits for the columns' read to open the card (an old-model campaign's pre-fill needs them). */
 async function cardReady() {
+  await screen.findByLabelText(/campaign name/i);
+  if (currentTab() !== 'contacts') openTab('contacts');
   const name = await screen.findByTestId('fact-role-name');
   await waitFor(() => expect(within(name).queryByRole('option', { name: 'City' })).not.toBeNull());
   return name as HTMLSelectElement;
 }
 
-describe('Settings › Script (BE-8, AS19)', () => {
+describe('Settings › Purpose & buttons: Script (BE-8, AS19)', () => {
   it('adds steps, inserts a key at the caret of the field last typed in, counts, and sends it trimmed', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ context_display: { facts: [{ column: 'Due Amount', label: 'Amount due', key: 'amount_due' }], hidden: ['PAN'] } }));
     renderPage();
@@ -292,6 +314,8 @@ describe('Settings › Script (BE-8, AS19)', () => {
       context_display: { roles: { name: 'Borrower' }, facts: [{ column: 'Due Amount', label: 'Amount due', key: 'due_amount' }], types: { 'Due Amount': 'money' } },
     }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('purpose');
     await waitFor(() => expect(screen.getByTestId('script-preview-opening').textContent).toBe('Namaste Lakshmi Narayana, ₹1,25,000 is due.'));
     fireEvent.click(screen.getByRole('button', { name: 'Next sample customer' }));
     expect(screen.getByTestId('script-preview-opening').textContent).toBe('Namaste Ravi, Amount due not given is due.');
@@ -314,7 +338,7 @@ describe('Settings › Script (BE-8, AS19)', () => {
   });
 });
 
-describe('Settings › What agents see: the customer card (AS19)', () => {
+describe('Settings › Customers: the customer card (AS19)', () => {
   it('offers the newest completed imports’ columns, hidden ones left out', async () => {
     renderPage();
     const name = await cardReady();
@@ -468,6 +492,8 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
       'context_display.types.Due Date': 'Not this type.',
     }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('contacts');
     const place = await screen.findByTestId('fact-role-place');
     await waitFor(() => expect(within(place).queryByRole('option', { name: 'City' })).not.toBeNull());
     fireEvent.change(place, { target: { value: 'City' } });
@@ -495,6 +521,8 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
       context_display: { hero: ['Due Amount', 'Loan No'], roles: { amount_due: 'Due Amount' } },
     }));
     renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openTab('contacts');
     const state = await screen.findByTestId('customer-facts-columns');
     expect(state.textContent).toBe('Loading the customer list’s columns…');
     expect(screen.queryByTestId('fact-rows')).toBeNull();
@@ -541,7 +569,10 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
     fireEvent.click(screen.getByTestId('fact-remove-1'));
     // The one message: on the facts, not again on the put-back row.
     expect(await screen.findAllByText('The script uses {due_date}. Take it out of the script first, or keep the fact.')).toHaveLength(1);
+    // From the script, on Purpose & buttons: the card's tab comes forward with the row.
+    openTab('purpose');
     fireEvent.click(await screen.findByTestId('script-fix-opening-due_date-put-back'));
+    expect(currentTab()).toBe('contacts');
     expect(factKeys()).toEqual(['{amount_due}', '{due_date}']);
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('fact-grip-1')));
     expect(screen.getByTestId('facts-announce').textContent).toBe('Due date put back on the card.');
@@ -551,8 +582,11 @@ describe('Settings › What agents see: the customer card (AS19)', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ context_display: { facts: [{ column: 'Due Amount', label: 'Amount', key: 'amount_due' }] } }));
     renderPage();
     await cardReady();
+    openTab('purpose');
     fireEvent.change(screen.getByTestId('script-opening'), { target: { value: 'Hello {borrower}' } });
     fireEvent.click(await screen.findByTestId('script-fix-opening-borrower-add'));
+    // The card's tab comes forward with the new fact.
+    expect(currentTab()).toBe('contacts');
     expect(factKeys()).toEqual(['{amount_due}', '{borrower}']);
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('fact-label-1')));
     expect(screen.getByTestId('facts-announce').textContent).toBe('Borrower added to the card.');

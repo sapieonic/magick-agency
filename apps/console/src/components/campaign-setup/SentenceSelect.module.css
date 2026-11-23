@@ -1,0 +1,83 @@
+.sentence {
+  margin: 0;
+  font-size: 14px;
+  /* Tall enough that a chip on a wrapped line does not touch the chip above it. */
+  line-height: 2.1;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  vertical-align: baseline;
+  margin: 0 2px;
+  line-height: 1.4;
+  color: var(--accent);
+}
+
+/* `.wrap > .chip` (two classes) to outrank the global `select` and light-theme `select` rules,
+   which set a full-width field, its own caret and its own background. */
+.wrap > .chip {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 26px 2px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  background-image: none;
+  box-shadow: none;
+  color: var(--accent);
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color var(--transition), background-color var(--transition);
+}
+
+.wrap > .chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.wrap > .chip:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--border-focus);
+}
+
+.wrap > .chip:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.wrap[data-disabled='true'] {
+  color: var(--text-muted);
+}
+
+.wrap[data-invalid='true'] > .chip {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.wrap[data-invalid='true'] {
+  color: var(--danger);
+}
+
+.caret {
+  position: absolute;
+  right: 9px;
+  pointer-events: none;
+}
+
+/* Native option lists draw on the system surface; keep their text legible in both themes. */
+.chip option {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}

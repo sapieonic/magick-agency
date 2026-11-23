@@ -537,11 +537,24 @@ export function buildIngestRequest(
 }
 
 /**
+ * Whether two mappings send the same ingest: the same phone, timezone and ignored columns, the
+ * same country code and the same duplicate key (what `buildIngestRequest` reads). Which kept
+ * columns are "On the card" is not part of it: the card is campaign config (AS19), written as the
+ * import starts, so picking the card's columns after a check leaves the check standing.
+ */
+export function sameIngestMapping(a: MappingState | null, b: MappingState | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  const body = (state: MappingState) => JSON.stringify(buildIngestRequest(state, { s3Key: '', fileName: '' }));
+  return body(a) === body(b);
+}
+
+/**
  * The columns the card guesses as the customer's name and the line under it, by the domain's one
  * guess (`@magick-agency/domain/customer-name`, AS19 S1), from the columns the contact keeps (not
  * the phone, the timezone or an ignored one), in file order. One column is never both.
  */
-function cardRoleColumns(state: MappingState): { name?: string; place?: string } {
+export function cardRoleColumns(state: MappingState): { name?: string; place?: string } {
   const kept = Object.keys(state.roles).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
   const name = guessNameColumn(kept);
   const place = guessPlaceColumn(kept, { exclude: name ? [name] : [] });

@@ -16,31 +16,38 @@ interface WrapupFieldsProps {
   allowRedial: boolean;
   onChange: (patch: { wrapupSeconds?: number; autoReturn?: boolean; allowWrapupRedial?: boolean }) => void;
   errors: ConfigFieldErrors;
+  /**
+   * `false` leaves the wrap-up seconds out, for a page that offers them its own way (the campaign
+   * setup's "Time to choose" row). Shown by default.
+   */
+  seconds?: boolean;
 }
 
 /** The wrap-up allowance, and whether the countdown returns an agent to the pool by itself. */
-export function WrapupFields({ wrapupSeconds, autoReturn, allowRedial, onChange, errors }: WrapupFieldsProps) {
+export function WrapupFields({ wrapupSeconds, autoReturn, allowRedial, onChange, errors, seconds = true }: WrapupFieldsProps) {
   return (
     <>
       <h3 className={styles.subhead}>Wrap-up</h3>
-      <div className="form-group">
-        <label htmlFor="wrapup-seconds">Wrap-up seconds (0 = none)</label>
-        <input
-          id="wrapup-seconds"
-          type="number"
-          min={0}
-          max={600}
-          value={wrapupSeconds}
-          onChange={(event) => onChange({ wrapupSeconds: Number(event.target.value) })}
-          aria-describedby={errors.describedBy('wrapup_seconds')}
-        />
-        {errors.render('wrapup_seconds')}
-        <p className={styles.hint}>
-          {wrapupSeconds === 0
-            ? 'Agents go straight back to available after a call.'
-            : `Agents get ${wrapupSeconds}s to finish their write-up before the next call.`}
-        </p>
-      </div>
+      {seconds ? (
+        <div className="form-group">
+          <label htmlFor="wrapup-seconds">Wrap-up seconds (0 = none)</label>
+          <input
+            id="wrapup-seconds"
+            type="number"
+            min={0}
+            max={600}
+            value={wrapupSeconds}
+            onChange={(event) => onChange({ wrapupSeconds: Number(event.target.value) })}
+            aria-describedby={errors.describedBy('wrapup_seconds')}
+          />
+          {errors.render('wrapup_seconds')}
+          <p className={styles.hint}>
+            {wrapupSeconds === 0
+              ? 'Agents go straight back to available after a call.'
+              : `Agents get ${wrapupSeconds}s to finish their write-up before the next call.`}
+          </p>
+        </div>
+      ) : null}
 
       {/*
         The other half of wrap-up, and the half that decides how an agent's
@@ -67,7 +74,7 @@ export function WrapupFields({ wrapupSeconds, autoReturn, allowRedial, onChange,
             Greying it out would lose that stored choice.
           */}
           {wrapupSeconds === 0
-            ? 'With no wrap-up window there is no countdown, so this only takes effect once you set one above.'
+            ? `With no wrap-up window there is no countdown, so this only takes effect once you set one${seconds ? ' above' : ''}.`
             : autoReturn
               ? `After ${wrapupSeconds}s an agent becomes available again on their own — they can be handed a new call without touching anything.`
               : 'An agent stays in wrap-up until they mark themselves ready, however long that takes. Nothing hands them a new call in the meantime.'}

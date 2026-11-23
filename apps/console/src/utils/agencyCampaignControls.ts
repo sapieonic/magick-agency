@@ -23,7 +23,9 @@
  */
 
 import type { AgencyCampaignStatus } from '../types/agency-campaign';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { ARCHIVED_START_REASON } from './agencyCampaignArchive';
+import { withCarrierRefusalCopy } from './agencyCarriers';
 
 /**
  * Narrows `AgencyCampaign.status` — deliberately `string` (the server's CHECK
@@ -209,4 +211,18 @@ export const PAUSE_IN_FLIGHT_NOTE =
  */
 export function showsPauseInFlightNote(status: string): boolean {
   return status === 'running' || status === 'paused';
+}
+
+/** What a refused lifecycle action says when the refusal carries no words of its own. */
+export const LIFECYCLE_REFUSAL_FALLBACK = 'Could not change the campaign state.';
+
+/**
+ * A refused start, pause, resume or stop, in words: a carrier refusal (start or resume on a
+ * carrier account that is no longer active, or gone) gets the console's own sentence, which says
+ * who can fix it (`withCarrierRefusalCopy`); anything else the API's message, which names the
+ * problem (no customers to call, a draft archived elsewhere, no caller ID left), never its code.
+ * The campaign header (`useCampaignLifecycle`) and New campaign's Start both say it this way.
+ */
+export function lifecycleRefusalMessage(err: unknown): string {
+  return getErrorMessage(withCarrierRefusalCopy(err), LIFECYCLE_REFUSAL_FALLBACK);
 }

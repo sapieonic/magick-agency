@@ -1,0 +1,167 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 20px 24px 8px;
+}
+
+.headText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+/* Focus lands here on a step change; ring it only for a keyboard reader. */
+.title:focus {
+  outline: none;
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.helper {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  padding: 24px;
+}
+
+.header + .body {
+  padding-top: 12px;
+}
+
+/* A card with nothing under its header (a template section left unset) is its header alone. */
+.body:empty {
+  display: none;
+}
+
+/* A slim card: one line of controls and a note (New campaign's "Start from"). */
+.card[data-density='slim'] .header {
+  padding: 12px 16px 4px;
+}
+
+.card[data-density='slim'] .body {
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.card[data-density='slim'] .header + .body {
+  padding-top: 6px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.sectionHelper {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.columnsOuter {
+  container-type: inline-size;
+  container-name: setupcolumns;
+  min-width: 0;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.columns > * {
+  min-width: 0;
+}
+
+@container setupcolumns (min-width: 760px) {
+  .columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+  }
+
+  .columns[data-split='main-aside'] {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .card {
+    border-radius: var(--radius-lg);
+  }
+
+  .header {
+    padding: 16px 16px 6px;
+  }
+
+  .body {
+    padding: 16px;
+  }
+
+  .header + .body {
+    padding-top: 10px;
+  }
+}

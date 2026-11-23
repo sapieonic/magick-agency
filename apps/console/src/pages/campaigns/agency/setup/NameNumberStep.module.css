@@ -1,0 +1,41 @@
+.field {
+  margin: 0;
+}
+
+.field input {
+  max-width: 32rem;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* A compact select: the carrier is a side choice, the numbers are the step. */
+.carrier {
+  max-width: 24rem;
+}
+
+.carrier :global(.form-group) {
+  margin: 0;
+}
+
+.numbers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Where the numbers came from (a template's chip and Reset, CS18), at the head of the block. */
+.sectionSource {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.sectionSource:empty {
+  display: none;
+}

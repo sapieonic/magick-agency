@@ -1,0 +1,320 @@
+/*
+  Step 3, Purpose & buttons (CS2–CS4). The cards, columns, chips, sentence chips and the fold are
+  the shared campaign-setup parts; this file draws only what is this step's own: the button rows,
+  the row editor and the agent's-view frame around the station's tiles.
+*/
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.presetIcon {
+  display: inline-flex;
+}
+
+/* ── The buttons ── */
+
+.countNote {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  min-width: 0;
+}
+
+.row[data-open='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--border-focus);
+}
+
+.row[data-invalid='true'] {
+  border-color: var(--danger-border);
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.key {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* The tile's picture on its tint: the same tokens the station's tile gives each picture. */
+.iconCircle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.iconCircle[data-icon='rupee'],
+.iconCircle[data-icon='thumbs_up'],
+.iconCircle[data-icon='check'] {
+  background: var(--st-ready-soft);
+  color: var(--st-ready-deep);
+}
+
+.iconCircle[data-icon='clock'],
+.iconCircle[data-icon='calendar'] {
+  background: var(--st-coming-soft);
+  color: var(--st-coming-deep);
+}
+
+.iconCircle[data-icon='stop'] {
+  background: var(--st-problem-soft);
+  color: var(--st-problem-deep);
+}
+
+.iconCircle[data-icon='thumbs_down'],
+.iconCircle[data-icon='cross'] {
+  background: var(--st-over-soft);
+  color: var(--st-over-deep);
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rowLabel {
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.rowLabelEmpty {
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.rowSummary {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.rowFix {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.rowActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iconBtn {
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.iconBtn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.editBtn {
+  min-width: 64px;
+  padding: 6px 12px;
+}
+
+.rowErrors {
+  padding: 0 12px 8px;
+}
+
+.rowErrors:empty {
+  display: none;
+}
+
+.addBtn {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.addBtn:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+/* ── The row editor ── */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 12px 14px;
+  border-top: 1px solid var(--border-light);
+}
+
+.nameRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 14rem;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pictureField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.lockNote {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.editorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ── What the agent will see ── */
+
+.previewTitle {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/*
+  The station's own tiles at the station's own size, shown smaller: `zoom` scales the layout too,
+  so the grid wraps as it would on a screen this many times wider.
+*/
+.previewScreen {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.previewScale {
+  zoom: 0.58;
+}
+
+.previewBand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 22px;
+  background: var(--st-happened);
+  color: var(--st-happened-ink);
+}
+
+.previewBandIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.previewBandTitle {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.previewBandSub {
+  display: block;
+  font-size: 17px;
+  font-weight: 500;
+  opacity: 0.95;
+}
+
+.previewTiles {
+  padding: 22px;
+}
+
+.previewEmpty {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-muted);
+}
+
+.previewNote {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}

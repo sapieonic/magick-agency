@@ -426,6 +426,16 @@ describe('the campaign Settings sections search links to', () => {
     const agent = ALL_ON('agent');
     expect(ids(agent)).not.toContain('roster-uploads');
   });
+
+  it('links a setting the tabs moved to the section on the tab that has it now (CS16)', () => {
+    const keys = (query: string) => searchConsole({
+      query, gate: ALL_ON('account_admin'), accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }],
+    }).groups.flatMap((g) => g.results).map((r) => r.key).filter((key) => key.startsWith('campaign-section:'));
+    // The daily target left the customer card's section for Agents & timing's agent screen.
+    expect(keys('diwali daily target')).toEqual(['campaign-section:c-1:recording']);
+    expect(keys('diwali customer card')).toEqual(['campaign-section:c-1:agent-screen']);
+    expect(keys('diwali wrap-up')).toEqual(['campaign-section:c-1:recording']);
+  });
 });
 
 describe('everything together', () => {

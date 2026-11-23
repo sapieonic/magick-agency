@@ -7,6 +7,7 @@ import { withCarrierRefusalCopy } from '../../../utils/agencyCarriers';
 import {
   isKnownCampaignStatus,
   isLifecycleActionEnabled,
+  LIFECYCLE_REFUSAL_FALLBACK,
   type AgencyCampaignAction as Action,
 } from '../../../utils/agencyCampaignControls';
 import type { CampaignTabId } from '../../../utils/agencyCampaignTabs';
@@ -96,12 +97,12 @@ export function useCampaignLifecycle({
   const busyRef = useRef(false);
 
   /**
-   * Say why a lifecycle action was refused. A carrier refusal (start or resume on a
-   * carrier account that is no longer active, or gone) gets the console's own sentence,
-   * which says who can fix it; anything else shows the API's message.
+   * Say why a lifecycle action was refused, by the rule `lifecycleRefusalMessage` states (New
+   * campaign's Start says it the same way): a carrier refusal in the console's own sentence,
+   * which says who can fix it; anything else in the API's message.
    */
   const reportRefusal = useCallback(
-    (err: unknown) => showErrorToast(withCarrierRefusalCopy(err), 'Could not change the campaign state.'),
+    (err: unknown) => showErrorToast(withCarrierRefusalCopy(err), LIFECYCLE_REFUSAL_FALLBACK),
     [showErrorToast],
   );
 

@@ -200,10 +200,11 @@ describe('the outcome card’s own copy', () => {
      * it.
      */
     it('states the contact’s fate even in the plain case', () => {
-      // An absent sentence reads as "nothing happens", which is a different
-      // configuration from "stays in the queue".
+      // An absent sentence reads as "nothing happens". The server finishes a contact
+      // after a plain outcome (`resolveDispositionDecision`: `disposition_recorded`,
+      // `completed`), so the summary must not promise more calls.
       expect(dispositionSummary({ code: 'sale', label: 'Sale' })).toBe(
-        'The contact stays in the queue with its remaining attempts. It does not count as a success.',
+        'The contact is finished on this campaign — no follow-up call. It does not count as a success.',
       );
     });
 
@@ -249,7 +250,8 @@ describe('the outcome card’s own copy', () => {
         label: 'Sale',
         retry: { max_attempts: 0, delay_minutes: 30 },
       });
-      expect(summary).toContain('stays in the queue');
+      // `max_attempts: 0` is `disposition_not_retryable` on the server: `completed`.
+      expect(summary).toContain('finished on this campaign — no follow-up call');
       expect(summary).not.toContain('every 30 minutes');
     });
 

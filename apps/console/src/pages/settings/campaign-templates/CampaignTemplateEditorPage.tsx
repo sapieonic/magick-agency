@@ -27,7 +27,7 @@ import styles from '../../../components/agency/campaignTemplates/CampaignTemplat
 
 /**
  * Settings › Campaign templates › one template (`docs/campaign-templates.md` §7): the form
- * (`TemplateEditorForm`, one card per section), its state and saving (`useTemplateEditor`, whose
+ * (`TemplateEditorForm`: the campaign setup's step tabs with one card per section, CS21), its state and saving (`useTemplateEditor`, whose
  * reads are `useTemplateEditorData`), and around them the header, the conflict banner ("Reload the
  * latest version", CT6), History, Copy from a campaign, Apply to draft campaigns and the
  * unsaved-changes guard. This page only composes them.

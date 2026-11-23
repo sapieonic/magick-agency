@@ -1,21 +1,21 @@
-import { useImperativeHandle, useRef, useState, type RefObject } from 'react';
-import { Ban, Banknote, Calendar, Check, Clock, MoreHorizontal, Volume2 } from 'lucide-react';
+import { useImperativeHandle, useRef, type RefObject } from 'react';
+import { Ban, Banknote, Calendar, Clock } from 'lucide-react';
 import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
 import { addDays, formatPromiseDay } from '@magick-agency/domain/promise-to-pay';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
-import { NUMBER_KEY_COUNT, findDisposition, localDay, type DispositionFormState, type DispositionPadHandle } from '../../../utils/agencyDispositionForm';
+import { findDisposition, localDay, type DispositionFormState, type DispositionPadHandle } from '../../../utils/agencyDispositionForm';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
 import { calendarDay, clockTime, halfAmount, promisedAmount, sameDay, weekdayDayMonth } from '../../../utils/agency/stationFormat';
-import { outcomeIcon, outcomeTileLayout } from '../../../utils/agency/stationTiles';
+import { outcomeTileLayout } from '../../../utils/agency/stationTiles';
 import type { AgencyDisposition } from '../../../types/agency';
-import { StationTileIcon } from './stationIcons';
+import { OutcomeTileGrid } from './OutcomeTileGrid';
 import styles from './Station.module.css';
 
 /**
  * 05 What happened? (spec §3 05, §6.2): one picture tile per outcome of this campaign's own list,
  * in the server's order (number keys 1–9 by index, never re-sorted), each with a speaker that reads
- * its label aloud (AS13); then the follow-up the picked outcome needs (pay date and amount, or
- * when to call), inline under the tiles.
+ * its label aloud (AS13), drawn by `OutcomeTileGrid`; then the follow-up the picked outcome needs
+ * (pay date and amount, or when to call), inline under the tiles.
  *
  * Picking "Don't call again" (an outcome that stops calls, `suppress`) asks first (05c): the
  * page's confirm, which picks the tile on Yes. The `C` key picks the call-later tile and focuses its
@@ -66,14 +66,8 @@ export function WhatHappened({
   callLaterLine?: (when: string) => string;
 }) {
   const layout = outcomeTileLayout(catalog);
-  const [showAll, setShowAll] = useState(false);
-  const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const callWhenRef = useRef<HTMLButtonElement | null>(null);
   const selected = findDisposition(catalog, form.selectedCode);
-  const selectedIndex = catalog.findIndex((e) => e.code === form.selectedCode);
-  // An outcome behind More that is picked (by its key or a click) keeps the rest open.
-  const expanded = showAll || selectedIndex >= layout.shown.length;
-  const tiles = expanded ? catalog : layout.shown;
 
   const select = (entry: AgencyDisposition) => {
     if (!enabled) return;
@@ -105,78 +99,14 @@ export function WhatHappened({
       {rejection ? <p className={styles.refusal} role="alert" data-testid="pad-rejection">{rejection}</p> : null}
       {keysRemapped ? <p className={styles.fine} data-testid="pad-keys-remapped">{STATION_COPY.keysMoved}</p> : null}
 
-      <div
-        className={styles.picks}
-        role="group"
-        aria-label={STATION_COPY.happenedTitle}
-        data-testid="outcome-tiles"
-        data-size={layout.size}
-        // Keyed on the press count, so each early Save restarts the shake.
-        key={shake}
-        data-shake={shake > 0 ? 'true' : undefined}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-          event.preventDefault();
-          const at = tileRefs.current.indexOf(document.activeElement as HTMLButtonElement);
-          const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
-          const next = (Math.max(at, 0) + step + tiles.length) % tiles.length;
-          tileRefs.current[next]?.focus();
-        }}
-      >
-        {tiles.map((entry, index) => {
-          const icon = outcomeIcon(entry);
-          const on = entry.code === form.selectedCode;
-          return (
-            <div key={entry.code} className={styles.pickWrap}>
-              <button
-                ref={(node) => {
-                  tileRefs.current[index] = node;
-                }}
-                type="button"
-                className={`${styles.pick} ${layout.size === 'small' ? styles.pickSmall : ''}`}
-                data-icon={icon}
-                data-stop={entry.suppress ? 'true' : undefined}
-                data-testid={`outcome-${entry.code}`}
-                aria-pressed={on}
-                // `aria-disabled`, never `disabled`: a frame that locks the tiles must not throw focus to the page.
-                aria-disabled={!enabled || undefined}
-                onClick={() => select(entry)}
-              >
-                {index < NUMBER_KEY_COUNT ? <span className={styles.key} aria-hidden="true">{index + 1}</span> : null}
-                <span className={styles.pickIcon} aria-hidden="true"><StationTileIcon icon={icon} size={layout.size === 'small' ? 24 : 32} /></span>
-                <b>{entry.label}</b>
-                {on ? <span className={styles.tick} aria-hidden="true"><Check size={18} strokeWidth={3} /></span> : null}
-              </button>
-              {readAloud.available ? (
-                <button
-                  type="button"
-                  className={styles.say}
-                  aria-label={STATION_COPY.readAloud(entry.label)}
-                  title={STATION_COPY.readAloud(entry.label)}
-                  onClick={() => readAloud.say(entry.label)}
-                  data-testid={`read-aloud-${entry.code}`}
-                >
-                  <Volume2 size={20} aria-hidden="true" />
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-        {!expanded && layout.overflow.length > 0 ? (
-          <div className={styles.pickWrap}>
-            <button
-              type="button"
-              className={`${styles.pick} ${styles.pickSmall}`}
-              onClick={() => setShowAll(true)}
-              data-testid="outcome-more"
-            >
-              <span className={styles.pickIcon} aria-hidden="true"><MoreHorizontal size={24} /></span>
-              <b>{STATION_COPY.moreOutcomes}</b>
-              <small>{STATION_COPY.moreOutcomesHint(layout.overflow.length)}</small>
-            </button>
-          </div>
-        ) : null}
-      </div>
+      <OutcomeTileGrid
+        catalog={catalog}
+        selectedCode={form.selectedCode}
+        onSelect={select}
+        enabled={enabled}
+        readAloud={readAloud}
+        shake={shake}
+      />
 
       {layout.dontCallAgainRow && dontCallAgainOffered ? (
         <button

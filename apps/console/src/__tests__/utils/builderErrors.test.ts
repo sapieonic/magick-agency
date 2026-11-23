@@ -3,137 +3,60 @@ import {
   findingsByStep,
   firstOtherStepWithFindings,
   goToStepLabel,
-  reviewFindings,
-  reviewRowForConfigField,
   saveBlockCopy,
   stepForConfigField,
 } from '../../pages/campaigns/agency/builderErrors';
 import { emptyCampaignConfig, validateConfig } from '../../utils/agencyCampaignConfigForm';
 
 /*
-  Where a config finding belongs in the campaign builder. The builder disables Save on any
-  finding, so a finding the operator cannot locate is a campaign that cannot be saved: every
-  key `validateConfig` produces has to land on a step and a Review row.
+  Where a config finding belongs in New campaign. The page disables Save on any finding, so a
+  finding the operator cannot locate is a campaign that cannot be saved: every key
+  `validateConfig` produces has to land on the step that shows it.
 */
 
 describe('stepForConfigField', () => {
-  it('puts the calling window on Hours, the basics on Basics, and the rest on How agents work', () => {
-    expect(stepForConfigField('calling_window_start')).toBe('hours');
-    expect(stepForConfigField('calling_window_end')).toBe('hours');
-    expect(stepForConfigField('calling_days')).toBe('hours');
-    expect(stepForConfigField('default_timezone')).toBe('hours');
+  it('puts the buttons and the automatic outcomes on Purpose & buttons, the basics on Name & number, the rest on Agents & timing', () => {
     expect(stepForConfigField('name')).toBe('basics');
     expect(stepForConfigField('caller_ids')).toBe('basics');
-    expect(stepForConfigField('disposition_catalog[4].requires_promise')).toBe('behaviour');
-    expect(stepForConfigField('retry_policy.busy.max_attempts')).toBe('behaviour');
-    expect(stepForConfigField('outcome_dispositions.invalid')).toBe('behaviour');
-    expect(stepForConfigField('abandonment_ceiling_pct')).toBe('behaviour');
-    expect(stepForConfigField('agent_retry_rounds')).toBe('behaviour');
-  });
-});
-
-describe('reviewRowForConfigField', () => {
-  it('names the Review row that summarises each setting', () => {
-    expect(reviewRowForConfigField('calling_days')).toBe('hours');
-    expect(reviewRowForConfigField('disposition_catalog[0].label')).toBe('outcomes');
-    expect(reviewRowForConfigField('retry_policy.no_answer.delay_minutes')).toBe('unanswered');
-    expect(reviewRowForConfigField('outcome_dispositions.busy')).toBe('unanswered');
-    expect(reviewRowForConfigField('wrapup_seconds')).toBe('wrapup');
-    expect(reviewRowForConfigField('callback_fallback')).toBe('assignment');
-    expect(reviewRowForConfigField('abandonment_ceiling_pct')).toBe('abandonment');
-    expect(reviewRowForConfigField('record_calls')).toBe('recording');
-    expect(reviewRowForConfigField('analysis_profile_id')).toBe('summary');
-    expect(reviewRowForConfigField('name')).toBe('name');
-    expect(reviewRowForConfigField('caller_ids')).toBe('callFrom');
-  });
-});
-
-describe('saveBlockCopy', () => {
-  it('says nothing when nothing holds the save', () => {
-    expect(saveBlockCopy(new Map(), 'review')).toBeNull();
-  });
-
-  it('points at the highlighted fields only on the step that has them all', () => {
-    expect(saveBlockCopy(new Map([['behaviour', 1]]), 'behaviour')).toBe('Fix the highlighted field to save.');
-    expect(saveBlockCopy(new Map([['behaviour', 3]]), 'behaviour')).toBe('Fix the 3 highlighted fields to save.');
-  });
-
-  it('names the step anywhere else, so nobody is told to fix a field they cannot see', () => {
-    expect(saveBlockCopy(new Map([['behaviour', 1]]), 'review')).toBe(
-      'Can’t save yet: 1 setting on How agents work needs fixing.',
-    );
-    expect(saveBlockCopy(new Map([['hours', 1], ['behaviour', 2]]), 'review')).toBe(
-      'Can’t save yet: 3 settings on When to call and How agents work need fixing.',
-    );
-    expect(saveBlockCopy(new Map([['hours', 1], ['behaviour', 2]]), 'behaviour')).toBe(
-      'Can’t save yet: 3 settings on When to call and this step need fixing.',
-    );
-  });
-});
-
-describe('findingsByStep and firstOtherStepWithFindings', () => {
-  it('counts findings per step in step order, and offers the first step that is not on screen', () => {
-    const byStep = findingsByStep({
-      'disposition_catalog[1].label': 'x',
-      calling_window_end: 'y',
-      wrapup_seconds: 'z',
-    });
-    expect([...byStep.entries()]).toEqual([['hours', 1], ['behaviour', 2]]);
-    expect(firstOtherStepWithFindings(byStep, 'review')).toBe('hours');
-    expect(firstOtherStepWithFindings(byStep, 'hours')).toBe('behaviour');
-    expect(firstOtherStepWithFindings(new Map([['behaviour', 1]]), 'behaviour')).toBeNull();
-    expect(goToStepLabel('behaviour')).toBe('Go to How agents work');
-  });
-});
-
-describe('reviewFindings', () => {
-  it('says which outcome a catalog finding is about, by label, code or place', () => {
-    const config = emptyCampaignConfig();
-    config.dispositions = [
-      ...config.dispositions,
-      { code: 'ptp', label: 'Promise to pay', requires_promise: true, requires_datetime: true },
-      { code: '', label: '' },
-    ];
-    const blankIndex = config.dispositions.length - 1;
-    const rows = reviewFindings(validateConfig(config), config);
-    const outcomes = rows.get('outcomes') ?? [];
-    expect(outcomes.some((line) => line.startsWith('Promise to pay: An outcome cannot ask for both'))).toBe(true);
-    expect(outcomes.some((line) => line.startsWith(`Outcome ${blankIndex + 1}: Every outcome needs a label`))).toBe(true);
-  });
-
-  it('names the unanswered call a retry rule or an automatic outcome is for', () => {
-    const config = emptyCampaignConfig();
-    const rows = reviewFindings(
-      {
-        'retry_policy.busy.max_attempts': 'Set how many attempts — a whole number from 0 to 20.',
-        'outcome_dispositions.invalid': '“Do not call” stops calling the contact.',
-      },
-      config,
-    );
-    expect(rows.get('unanswered')).toEqual([
-      'Busy retries: Set how many attempts — a whole number from 0 to 20.',
-      'Invalid number: “Do not call” stops calling the contact.',
-    ]);
+    expect(stepForConfigField('telephony_credential_id')).toBe('basics');
+    expect(stepForConfigField('disposition_catalog')).toBe('purpose');
+    expect(stepForConfigField('disposition_catalog[4].requires_promise')).toBe('purpose');
+    expect(stepForConfigField('outcome_dispositions.invalid')).toBe('purpose');
+    expect(stepForConfigField('agent_script.opening')).toBe('purpose');
+    expect(stepForConfigField('agent_script.steps[1].text')).toBe('purpose');
+    expect(stepForConfigField('calling_window_start')).toBe('agents');
+    expect(stepForConfigField('calling_window_end')).toBe('agents');
+    expect(stepForConfigField('calling_days')).toBe('agents');
+    expect(stepForConfigField('default_timezone')).toBe('agents');
+    expect(stepForConfigField('retry_policy.busy.max_attempts')).toBe('agents');
+    expect(stepForConfigField('wrapup_seconds')).toBe('agents');
+    expect(stepForConfigField('agent_retry_rounds')).toBe('agents');
+    expect(stepForConfigField('inbound_sticky_enabled')).toBe('agents');
+    expect(stepForConfigField('abandonment_ceiling_pct')).toBe('agents');
+    expect(stepForConfigField('record_calls')).toBe('agents');
+    expect(stepForConfigField('analysis_profile_id')).toBe('agents');
+    expect(stepForConfigField('daily_target_calls')).toBe('agents');
+    expect(stepForConfigField('break_reasons')).toBe('agents');
   });
 
   /*
-    Every kind of key `validateConfig` produces, from a config broken everywhere, with the
-    step and row each one belongs on. The mappers have catch-alls; this pins that no real
-    key reaches them by accident. A key this config produces whose prefix is not in the
-    table fails here; a new rule is caught only if the config below is broken enough to
-    trigger it, so extend the config with the rule.
+    Every kind of key `validateConfig` produces, from a config broken everywhere, with the step
+    each one belongs on. The mapper has a catch-all; this pins that no real key reaches it by
+    accident. A key this config produces whose prefix is not in the table fails here; a new rule
+    is caught only if the config below is broken enough to trigger it, so extend the config with
+    the rule.
   */
-  const EXPECTED: ReadonlyArray<[RegExp, string, string]> = [
-    [/^calling_window_(start|end)$|^calling_days$|^default_timezone$/, 'hours', 'hours'],
-    [/^disposition_catalog\[\d+\]/, 'behaviour', 'outcomes'],
-    [/^retry_policy\./, 'behaviour', 'unanswered'],
-    [/^outcome_dispositions\./, 'behaviour', 'unanswered'],
-    [/^wrapup_seconds$/, 'behaviour', 'wrapup'],
-    [/^abandonment_ceiling_pct$/, 'behaviour', 'abandonment'],
-    [/^(assignment_mode|on_unstaff|callback_owner_grace_minutes|callback_fallback|agent_retry_rounds|agent_retry_cooldown_minutes)$/, 'behaviour', 'assignment'],
+  const EXPECTED: ReadonlyArray<[RegExp, string]> = [
+    [/^calling_window_(start|end)$|^calling_days$|^default_timezone$/, 'agents'],
+    [/^disposition_catalog\[\d+\]/, 'purpose'],
+    [/^retry_policy\./, 'agents'],
+    [/^outcome_dispositions\./, 'purpose'],
+    [/^wrapup_seconds$/, 'agents'],
+    [/^abandonment_ceiling_pct$/, 'agents'],
+    [/^(assignment_mode|on_unstaff|callback_owner_grace_minutes|callback_fallback|agent_retry_rounds|agent_retry_cooldown_minutes)$/, 'agents'],
   ];
 
-  it('places every kind of finding on the step and Review row that shows it', () => {
+  it('places every kind of finding on the step that shows it', () => {
     const config = emptyCampaignConfig();
     config.window = { start: '9am', end: '09:00', days: [], timezone: 'EST' };
     config.wrapupSeconds = 9999;
@@ -160,8 +83,46 @@ describe('reviewFindings', () => {
     for (const key of keys) {
       const row = EXPECTED.find(([pattern]) => pattern.test(key));
       expect(row, `no expectation for ${key}`).toBeDefined();
-      expect(stepForConfigField(key)).toBe(row![1]);
-      expect(reviewRowForConfigField(key)).toBe(row![2]);
+      expect(stepForConfigField(key), key).toBe(row![1]);
     }
+  });
+});
+
+describe('saveBlockCopy', () => {
+  it('says nothing when nothing holds the save', () => {
+    expect(saveBlockCopy(new Map(), 'agents')).toBeNull();
+  });
+
+  it('points at the highlighted fields only on the step that has them all', () => {
+    expect(saveBlockCopy(new Map([['purpose', 1]]), 'purpose')).toBe('Fix the highlighted field to save.');
+    expect(saveBlockCopy(new Map([['agents', 3]]), 'agents')).toBe('Fix the 3 highlighted fields to save.');
+  });
+
+  it('names the step anywhere else, so nobody is told to fix a field they cannot see', () => {
+    expect(saveBlockCopy(new Map([['purpose', 1]]), 'agents')).toBe(
+      'Can’t save yet: 1 setting on Purpose & buttons needs fixing.',
+    );
+    expect(saveBlockCopy(new Map([['purpose', 1], ['agents', 2]]), 'basics')).toBe(
+      'Can’t save yet: 3 settings on Purpose & buttons and Agents & timing need fixing.',
+    );
+    expect(saveBlockCopy(new Map([['purpose', 1], ['agents', 2]]), 'agents')).toBe(
+      'Can’t save yet: 3 settings on Purpose & buttons and this step need fixing.',
+    );
+  });
+});
+
+describe('findingsByStep and firstOtherStepWithFindings', () => {
+  it('counts findings per step in step order, and offers the first step that is not on screen', () => {
+    const byStep = findingsByStep({
+      calling_window_end: 'y',
+      'disposition_catalog[1].label': 'x',
+      wrapup_seconds: 'z',
+    });
+    expect([...byStep.entries()]).toEqual([['purpose', 1], ['agents', 2]]);
+    expect(firstOtherStepWithFindings(byStep, 'contacts')).toBe('purpose');
+    expect(firstOtherStepWithFindings(byStep, 'purpose')).toBe('agents');
+    expect(firstOtherStepWithFindings(new Map([['agents', 1]]), 'agents')).toBeNull();
+    expect(goToStepLabel('purpose')).toBe('Go to Purpose & buttons');
+    expect(goToStepLabel('agents')).toBe('Go to Agents & timing');
   });
 });

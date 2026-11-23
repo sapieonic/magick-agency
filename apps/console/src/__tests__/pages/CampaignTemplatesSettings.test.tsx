@@ -6,14 +6,15 @@ import type {
   AgencyCampaignTemplateSummary,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
 import { builtinTemplateSections, resolveTemplateSections } from '@magick-agency/domain/campaign-templates';
+import { purposePreset } from '../../utils/campaignSetup/purposePresets';
 
 /**
  * Settings › Campaign templates (`docs/campaign-templates.md` §7): the list (default badge, what an
  * account template is based on, the sections it sets, who changed it and its version, Make default,
- * Archive, Restore, the organisation's templates read-only), "New template", and the editor (one
- * card per section with its summary, "Use …" / "Set in this template", Save with the version it
- * opened and "Reload the latest version" on a 409, History's comparison, Apply to draft campaigns
- * with its preview and results). Hidden with the flag off, and the organisation's page from anyone
+ * Archive, Restore, the organisation's templates read-only), "New template", and the editor (the
+ * campaign setup's step cards as tabs, CS21, with one card per section on its tab, its summary,
+ * "Use …" / "Set in this template", Save with the version it opened and "Reload the latest
+ * version" on a 409, History's comparison, Apply to draft campaigns with its preview and results). Hidden with the flag off, and the organisation's page from anyone
  * without an organisation-wide seat of tenant admin or above.
  */
 
@@ -38,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   listAgencyCampaigns: vi.fn(),
   getAgencyCampaign: vi.fn(),
   track: vi.fn(),
+  phoneNumbers: [] as unknown[],
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: () => mocks.tenant }));
@@ -47,7 +49,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({ useToast: () => 
 vi.mock('../../components/common/CapabilityUnavailable', () => ({ CapabilityUnavailable: () => <div data-testid="capability-unavailable" /> }));
 vi.mock('../../components/common/PageDescription', () => ({ PageDescription: () => null }));
 vi.mock('../../hooks/useAgencyCarriers', () => ({ useAgencyCarriers: () => ({ carriers: [], error: null }) }));
-vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: () => ({ phoneNumbers: [], loading: false, error: null, reload: vi.fn() }) }));
+vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: () => ({ phoneNumbers: mocks.phoneNumbers, loading: false, error: null, reload: vi.fn() }) }));
 vi.mock('../../hooks/useCallAnalysisProfiles', () => ({ useCallAnalysisProfiles: () => ({ profiles: [], loading: false, error: null }) }));
 vi.mock('../../analytics/events', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../analytics/events')>()),
@@ -130,6 +132,11 @@ async function renderAt(path: string) {
   await act(async () => {});
 }
 
+/** Bring a step tab of the editor forward (CS21); its name may carry ", needs fixing" or ", unsaved changes". */
+function openTab(title: 'Name & number' | 'Purpose & buttons' | 'Agents & timing') {
+  fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${title}`) }));
+}
+
 const apiError = (status: number, body: Record<string, unknown>) =>
   Object.assign(new Error(String(body.message ?? 'refused')), { statusCode: status, details: body });
 
@@ -140,6 +147,7 @@ beforeEach(() => {
     tenantId: 't-1', accountId: 'a-1', role: 'account_admin', organisationRole: undefined, accounts: [{ id: 'a-1', name: 'Pune', tenant_id: 't-1' }],
   };
   mocks.flags = { agency_campaign_templates_enabled: true };
+  mocks.phoneNumbers = [];
   mocks.listCampaignTemplates.mockImplementation(async (_t: string, _a: string, o?: { archived?: boolean }) =>
     o?.archived ? [summary({ id: 'acc-9', name: 'Old Diwali', archived_at: '2026-11-10T08:00:00Z', archived_by: PRIYA })] : [ACCOUNT, SPARE, ORG]);
   mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
@@ -354,17 +362,19 @@ describe('the list', () => {
 });
 
 describe('the editor', () => {
-  it('opens each section with its summary, set or inherited, in the sections’ order', async () => {
+  it('opens each section on its step tab with its summary, set or inherited, in the tabs’ order (CS21)', async () => {
     await renderAt('/settings/campaign-templates/acc-1');
     const cards = screen.getAllByTestId(/^template-section-/).map((c) => c.getAttribute('data-testid'));
     expect(cards).toEqual([
-      'template-section-outcomes', 'template-section-retries', 'template-section-hours', 'template-section-wrapup',
-      'template-section-breaks', 'template-section-recording', 'template-section-agent_screen', 'template-section-safety',
       'template-section-numbers',
+      'template-section-outcomes', 'template-section-agent_screen',
+      'template-section-hours', 'template-section-retries', 'template-section-wrapup', 'template-section-recording',
+      'template-section-breaks', 'template-section-safety',
     ]);
     expect(screen.getByTestId('template-summary-hours').textContent).toBe('10:00 AM–8:00 PM · Mon to Sat · India time (IST)');
+    openTab('Agents & timing');
     const hours = screen.getByTestId('template-section-hours');
-    expect(within(hours).getByRole('radiogroup', { name: 'Calling hours: where it comes from' })).toBeTruthy();
+    expect(within(hours).getByRole('group', { name: 'Calling hours: where it comes from' })).toBeTruthy();
     expect((within(hours).getByRole('radio', { name: 'Set in this template' }) as HTMLInputElement).checked).toBe(true);
     const wrapup = screen.getByTestId('template-section-wrapup');
     expect((within(wrapup).getByRole('radio', { name: 'Use the organisation’s default' }) as HTMLInputElement).checked).toBe(true);
@@ -374,10 +384,11 @@ describe('the editor', () => {
 
   it('sets a section and stops setting another, then saves the version it opened', async () => {
     await renderAt('/settings/campaign-templates/acc-1');
+    openTab('Agents & timing');
     const wrapup = screen.getByTestId('template-section-wrapup');
     fireEvent.click(within(wrapup).getByRole('radio', { name: 'Set in this template' }));
-    // Set, the card opens on the existing editors, starting from what it inherited.
-    expect((within(wrapup).getByLabelText(/Wrap-up seconds/) as HTMLInputElement).value).toBe('45');
+    // Set, the card opens on Agents & timing's wrap-up row, starting from what it inherited.
+    expect((within(wrapup).getByRole('combobox', { name: 'Time to choose what happened after each call' }) as HTMLSelectElement).value).toBe('45');
     const hours = screen.getByTestId('template-section-hours');
     fireEvent.click(within(hours).getByRole('radio', { name: 'Use the organisation’s default' }));
     expect(screen.getByTestId('template-summary-hours').textContent).toBe('9:00 AM–8:00 PM · Mon to Fri · India time (IST)');
@@ -418,7 +429,7 @@ describe('the editor', () => {
     const screenCard = screen.getByTestId('template-section-agent_screen');
     expect(screenCard.getAttribute('data-invalid')).toBeNull();
     expect(screenCard.textContent).not.toMatch(/not a fact on the card/);
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Pune EMI' } });
+    fireEvent.change(screen.getByLabelText('Name*'), { target: { value: 'Pune EMI' } });
     expect(screen.queryByText('Fix the marked settings to save.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
@@ -434,7 +445,7 @@ describe('the editor', () => {
     expect(within(bar).queryAllByRole('combobox')).toEqual([]);
     expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Discard', 'Save template']);
     const about = screen.getByRole('region', { name: 'About this template' });
-    expect(within(about).getByLabelText(/^Name/)).toBeTruthy();
+    expect(within(about).getByLabelText('Name*')).toBeTruthy();
     expect(within(about).getByLabelText('Description (optional)')).toBeTruthy();
     expect(within(about).getByLabelText('Based on')).toBeTruthy();
     // Above the first section's card, so it scrolls away with the page.
@@ -492,7 +503,7 @@ describe('the editor', () => {
       code: 'campaign_template_invalid', message: 'This template cannot be saved.', details: { name: 'The name has a character that cannot be shown. Take it out.' },
     }));
     await renderAt('/settings/campaign-templates/acc-1');
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Pune\u200b' } });
+    fireEvent.change(screen.getByLabelText('Name*'), { target: { value: 'Pune\u200b' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
     await act(async () => {});
     const about = screen.getByRole('region', { name: 'About this template' });
@@ -527,6 +538,7 @@ describe('the editor', () => {
     expect(screen.getByTestId('template-summary-wrapup').textContent).toBe(
       '120s, then agents mark themselves ready · Redial from wrap-up allowed',
     );
+    openTab('Agents & timing');
     const wrapup = screen.getByTestId('template-section-wrapup');
     expect((within(wrapup).getByRole('radio', { name: 'Use Recovery' }) as HTMLInputElement).checked).toBe(true);
     // The set section keeps its own values.
@@ -686,10 +698,16 @@ describe('the editor', () => {
       template_id: 'acc-1', version: 3, name: 'Pune collections', based_on_template_id: null, sections_set: ['hours'],
       saved_at: '2026-11-10T09:00:00Z', saved_by: null, sections: { hours: HOURS },
     });
+    mocks.phoneNumbers = [{
+      phone_number_id: 'pn-1', phone_number: '+914048501001', provider_name: 'voicelink', provider_display_name: 'VoiceLink',
+      telephony_credential_id: null, label: 'Hyderabad office', is_default: true,
+    }];
     await renderAt('/settings/campaign-templates/acc-1');
     const numbers = screen.getByTestId('template-section-numbers');
     fireEvent.click(within(numbers).getByRole('radio', { name: 'Set in this template' }));
-    expect(within(numbers).getByRole('group', { name: 'Numbers to call from' })).toBeTruthy();
+    // Name & number's own numbers block: the cards' group is named as on step 1.
+    expect(within(numbers).getByRole('group', { name: /^Customers will see this number/ })).toBeTruthy();
+    expect(within(numbers).getByRole('checkbox', { name: '+91 40485 01001' })).toBeTruthy();
     expect(numbers.querySelector('label[for="template-caller-ids"]')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
@@ -754,6 +772,196 @@ describe('the editor', () => {
   });
 });
 
+describe('the editor’s step tabs (CS21)', () => {
+  type TabId = 'basics' | 'purpose' | 'agents';
+  const tabLabels = () => screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'));
+  const tab = (title: string) => screen.getByRole('tab', { name: new RegExp(`^${title}`) });
+  const panel = (id: TabId) => screen.getByTestId(`template-editor-panel-${id}`);
+  const sectionsOn = (id: TabId) => within(panel(id)).queryAllByTestId(/^template-section-/).map((c) => c.getAttribute('data-testid')!.slice('template-section-'.length));
+  const PHONE = {
+    phone_number_id: 'pn-1', phone_number: '+914048501001', provider_name: 'voicelink', provider_display_name: 'VoiceLink',
+    telephony_credential_id: null, label: 'Hyderabad office', is_default: true,
+  };
+
+  it('gives an account template the campaign steps less Customers, each holding its sections, under “About this template”', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    expect(screen.getByRole('tablist', { name: 'Template settings' })).toBeTruthy();
+    expect(tabLabels()).toEqual(['Name & number', 'Purpose & buttons', 'Agents & timing']);
+    expect(tab('Name & number').getAttribute('aria-selected')).toBe('true');
+    expect(sectionsOn('basics')).toEqual(['numbers']);
+    expect(sectionsOn('purpose')).toEqual(['outcomes', 'agent_screen']);
+    expect(sectionsOn('agents')).toEqual(['hours', 'retries', 'wrapup', 'recording', 'breaks', 'safety']);
+    const about = screen.getByRole('region', { name: 'About this template' });
+    expect(about.compareDocumentPosition(screen.getByRole('tablist')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One panel on screen at a time; the others stay mounted.
+    expect([panel('basics').hidden, panel('purpose').hidden, panel('agents').hidden]).toEqual([false, true, true]);
+    openTab('Agents & timing');
+    expect([panel('basics').hidden, panel('purpose').hidden, panel('agents').hidden]).toEqual([true, true, false]);
+    expect(tab('Agents & timing').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('gives an organisation template no Name & number, since it holds no numbers (CT15), and no call summary (CT5)', async () => {
+    mocks.tenant = { ...mocks.tenant, role: 'tenant_admin', organisationRole: 'tenant_admin' };
+    mocks.flags = { agency_campaign_templates_enabled: true, agency_contact_assignment_enabled: true, agency_inbound_enabled: true };
+    await renderAt('/settings/organisation-campaign-templates/org-1');
+    expect(tabLabels()).toEqual(['Purpose & buttons', 'Agents & timing']);
+    expect(tab('Purpose & buttons').getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('template-section-numbers')).toBeNull();
+    // Contact assignment and inbound, with their flags on, on Agents & timing.
+    expect(sectionsOn('agents')).toEqual(['hours', 'retries', 'wrapup', 'recording', 'breaks', 'safety', 'assignment', 'inbound']);
+    openTab('Agents & timing');
+    const recording = screen.getByTestId('template-section-recording');
+    fireEvent.click(within(recording).getByRole('radio', { name: 'Set in this template' }));
+    expect(within(recording).getByTestId('record-row')).toBeTruthy();
+    expect(within(recording).queryByTestId('summary-row')).toBeNull();
+  });
+
+  it('shows an organisation template from an account’s page on the same tabs, read-only (L4, N7)', async () => {
+    await renderAt('/settings/campaign-templates/org-1');
+    expect(tabLabels()).toEqual(['Purpose & buttons', 'Agents & timing']);
+    // No choice and no editor on any tab, shown or not.
+    expect(screen.queryAllByTestId(/^template-choice-/)).toEqual([]);
+    expect(screen.queryByTestId('purpose-buttons-step')).toBeNull();
+    expect(screen.getByTestId('template-from-outcomes').textContent).toBe('Built-in settings');
+    openTab('Agents & timing');
+    expect(within(panel('agents')).getByTestId('template-from-wrapup').textContent).toBe('Set in this template');
+    expect(within(panel('agents')).queryAllByRole('radio')).toEqual([]);
+    expect(within(panel('agents')).queryAllByRole('combobox')).toEqual([]);
+  });
+
+  it('keeps each section’s Use or Set choice in its card on its own tab', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    const placed: [TabId, string[]][] = [
+      ['basics', ['numbers']],
+      ['purpose', ['outcomes', 'agent_screen']],
+      ['agents', ['hours', 'retries', 'wrapup', 'recording', 'breaks', 'safety']],
+    ];
+    for (const [id, keys] of placed) {
+      for (const key of keys) {
+        const card = within(panel(id)).getByTestId(`template-section-${key}`);
+        expect(card.contains(screen.getByTestId(`template-choice-${key}`))).toBe(true);
+      }
+    }
+    openTab('Purpose & buttons');
+    const outcomes = screen.getByTestId('template-section-outcomes');
+    expect(within(outcomes).getByRole('group', { name: 'Outcomes: where it comes from' })).toBeTruthy();
+    expect(within(outcomes).queryByTestId('purpose-buttons-step')).toBeNull();
+    fireEvent.click(within(outcomes).getByRole('radio', { name: 'Set in this template' }));
+    expect(outcomes.getAttribute('data-set')).toBe('true');
+    // Set, the card opens on Purpose & buttons' own step: starting points, the buttons, the agent's view.
+    expect(within(outcomes).getByTestId('purpose-presets')).toBeTruthy();
+    expect(within(outcomes).getByTestId('buttons-block')).toBeTruthy();
+    fireEvent.click(within(outcomes).getByRole('radio', { name: 'Use the organisation’s default' }));
+    expect(outcomes.hasAttribute('data-set')).toBe(false);
+    expect(within(outcomes).queryByTestId('purpose-buttons-step')).toBeNull();
+    expect(screen.getByTestId('template-summary-outcomes').hasAttribute('data-inherited')).toBe(true);
+  });
+
+  it('marks a tab unsaved once a section on it changes, and not for the name; a save clears it', async () => {
+    await renderAt('/settings/campaign-templates/acc-1');
+    const marked = () => screen.getAllByRole('tab').filter((t) => t.hasAttribute('data-unsaved')).map((t) => t.getAttribute('data-step-id'));
+    expect(marked()).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Name*'), { target: { value: 'Pune EMI' } });
+    // The name is in "About this template", on no tab.
+    expect(marked()).toEqual([]);
+    openTab('Agents & timing');
+    fireEvent.click(within(screen.getByTestId('template-section-wrapup')).getByRole('radio', { name: 'Set in this template' }));
+    expect(marked()).toEqual(['agents']);
+    expect(tab('Agents & timing').getAttribute('aria-label')).toBe('Agents & timing, unsaved changes');
+    expect(tab('Purpose & buttons').getAttribute('aria-label')).toBe('Purpose & buttons');
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    expect(marked()).toEqual([]);
+  });
+
+  it('marks the tab holding a section to fix, and brings it forward from the bar', async () => {
+    mocks.getCampaignTemplate.mockImplementation(async (id: string) =>
+      (id === 'acc-1'
+        ? { ...DETAIL, sections: { ...DETAIL.sections, agent_screen: { agent_script: { opening: 'Your EMI {emi} is due' } } } }
+        : { ...ORG, sections: ORG_SECTIONS, follows: null }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    expect(tab('Purpose & buttons').getAttribute('aria-label')).toBe('Purpose & buttons, needs fixing');
+    expect(tab('Purpose & buttons').hasAttribute('data-invalid')).toBe(true);
+    expect(tab('Agents & timing').hasAttribute('data-invalid')).toBe(false);
+    expect(tab('Name & number').hasAttribute('data-invalid')).toBe(false);
+    expect(tab('Name & number').getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByTestId('template-show-problem'));
+    expect(tab('Purpose & buttons').getAttribute('aria-selected')).toBe('true');
+    expect(panel('purpose').hidden).toBe(false);
+    expect(document.activeElement?.tagName).toBe('TEXTAREA');
+    expect(screen.getByTestId('template-section-agent_screen').contains(document.activeElement)).toBe(true);
+  });
+
+  it('marks the tab a refused section is on', async () => {
+    mocks.replaceCampaignTemplate.mockRejectedValueOnce(apiError(400, {
+      code: 'campaign_template_section_invalid', message: 'Invalid', sections: ['hours'], details: { calling_window_end: 'The end must differ from the start.' },
+    }));
+    await renderAt('/settings/campaign-templates/acc-1');
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    expect(tab('Agents & timing').getAttribute('aria-label')).toBe('Agents & timing, needs fixing');
+    expect(tab('Purpose & buttons').hasAttribute('data-invalid')).toBe(false);
+    fireEvent.click(screen.getByTestId('template-show-problem'));
+    expect(tab('Agents & timing').getAttribute('aria-selected')).toBe('true');
+    // The custom window opens on the refusal, and its field takes the focus.
+    expect(screen.getByTestId('template-section-hours').contains(document.activeElement)).toBe(true);
+  });
+
+  it('edits each section with the setup steps’ own blocks, and saves what they wrote', async () => {
+    mocks.phoneNumbers = [PHONE];
+    await renderAt('/settings/campaign-templates/acc-1');
+
+    // Name & number: step 1's numbers, as cards.
+    const numbers = screen.getByTestId('template-section-numbers');
+    fireEvent.click(within(numbers).getByRole('radio', { name: 'Set in this template' }));
+    fireEvent.click(within(numbers).getByRole('checkbox', { name: '+91 40485 01001' }));
+
+    // Purpose & buttons: a starting point fills the buttons; the agent screen's rows and the script.
+    openTab('Purpose & buttons');
+    const outcomes = screen.getByTestId('template-section-outcomes');
+    fireEvent.click(within(outcomes).getByRole('radio', { name: 'Set in this template' }));
+    fireEvent.click(within(outcomes).getByRole('radio', { name: /Sales \/ leads/ }));
+    expect(screen.queryByRole('button', { name: 'Replace buttons' })).toBeNull();
+    const salesLabels = purposePreset('sales').outcomes().map((d) => d.label);
+    expect(screen.getByTestId('template-summary-outcomes').textContent).toContain(salesLabels[0]!);
+    const agentScreen = screen.getByTestId('template-section-agent_screen');
+    fireEvent.click(within(agentScreen).getByRole('radio', { name: 'Set in this template' }));
+    const full = within(agentScreen).getByRole('switch', { name: 'Show full phone number to agents' });
+    const wasFull = full.getAttribute('aria-checked') === 'true';
+    fireEvent.click(full);
+    expect(within(agentScreen).getByRole('region', { name: 'Script' })).toBeTruthy();
+
+    // Agents & timing: the hour presets and day pills, and the one "doesn't pick up" sentence above the table.
+    openTab('Agents & timing');
+    const hours = screen.getByTestId('template-section-hours');
+    fireEvent.click(within(hours).getByRole('radio', { name: '9 AM – 6 PM' }));
+    fireEvent.click(within(hours).getByRole('button', { name: 'Sunday' }));
+    const retries = screen.getByTestId('template-section-retries');
+    fireEvent.click(within(retries).getByRole('radio', { name: 'Set in this template' }));
+    // The built-in rules differ for busy and no answer: said, with the table right below, so no
+    // "See them in Advanced settings"; "Use one rule for all" turns them into the one sentence.
+    expect(within(retries).getByTestId('unanswered-mixed')).toBeTruthy();
+    expect(within(retries).queryByTestId('unanswered-see-advanced')).toBeNull();
+    expect(within(retries).getByTestId('retry-previews')).toBeTruthy();
+    fireEvent.click(within(retries).getByTestId('unanswered-use-one'));
+    fireEvent.change(within(retries).getByRole('combobox', { name: 'Calls in all to a customer who doesn’t pick up' }), { target: { value: '5' } });
+    expect(within(retries).getByTestId('unanswered-sentence')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await act(async () => {});
+    const { sections } = mocks.replaceCampaignTemplate.mock.calls[0]![2];
+    expect(Object.keys(sections).sort()).toEqual(['agent_screen', 'hours', 'numbers', 'outcomes', 'retries']);
+    expect(sections.numbers.caller_ids).toEqual(['+914048501001']);
+    expect(sections.outcomes.disposition_catalog.map((d: { label: string }) => d.label)).toEqual(salesLabels);
+    expect(sections.agent_screen.phone_display).toBe(wasFull ? 'masked' : 'full');
+    expect(sections.hours.calling_window_start).toMatch(/^09:00/);
+    expect(sections.hours.calling_window_end).toMatch(/^18:00/);
+    expect(sections.hours.calling_days).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    for (const outcome of ['no_answer', 'busy', 'failed']) expect(sections.retries.retry_policy[outcome].max_attempts).toBe(5);
+  });
+});
+
 describe('apply to draft campaigns (CTC7)', () => {
   const DRAFT = { id: 'c-1', name: 'Diwali renewals', status: 'draft' };
   const effective = () => {
@@ -794,6 +1002,7 @@ describe('apply to draft campaigns (CTC7)', () => {
     expect((within(dialog).getByRole('checkbox', { name: 'Wrap-up' }) as HTMLInputElement).checked).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
+    openTab('Agents & timing');
     const wrapup = screen.getByTestId('template-section-wrapup');
     fireEvent.click(within(wrapup).getByRole('radio', { name: 'Set in this template' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
@@ -1058,7 +1267,7 @@ describe('an organisation template from an account’s page (L4, N7)', () => {
     expect(screen.queryByRole('region', { name: 'Save the template' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Copy from a campaign…' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Apply to draft campaigns…' })).toBeNull();
-    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.queryByLabelText('Name*')).toBeNull();
     // An organisation template's own sections: no numbers; unset ones are the built-in settings.
     expect(screen.queryByTestId('template-section-numbers')).toBeNull();
     expect(screen.getByTestId('template-from-wrapup').textContent).toBe('Set in this template');
@@ -1100,6 +1309,7 @@ describe('who sees it', () => {
     await renderAt('/settings/organisation-campaign-templates/org-1');
     await waitFor(() => expect(screen.getByTestId('template-section-wrapup')).toBeTruthy());
     expect(screen.queryByTestId('template-section-numbers')).toBeNull();
+    openTab('Agents & timing');
     const hours = screen.getByTestId('template-section-hours');
     expect(within(hours).getByRole('radio', { name: 'Use built-in settings' })).toBeTruthy();
     expect(screen.queryByLabelText('Based on')).toBeNull();
