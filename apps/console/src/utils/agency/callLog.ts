@@ -92,12 +92,15 @@ export interface CallLogView {
 
 export const DEFAULT_CALL_LOG_VIEW: CallLogView = { type: 'all', allDates: false, status: null };
 
+/** The chip `?type=` names, or null: absent, or not a chip. The Call log's, All calls' and My calls' one reading. */
+export function callLogTypeFromParams(params: URLSearchParams): AgencyCallLogTypeFilter | null {
+  const raw = params.get(CALL_LOG_TYPE_PARAM);
+  return (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(raw ?? '') ? (raw as AgencyCallLogTypeFilter) : null;
+}
+
 /** URL → view. An unknown type is All and an unknown status none, as an unknown filter key is ignored. */
 export function callLogViewFromParams(params: URLSearchParams): CallLogView {
-  const rawType = params.get(CALL_LOG_TYPE_PARAM);
-  const type = (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(rawType ?? '')
-    ? (rawType as AgencyCallLogTypeFilter)
-    : 'all';
+  const type = callLogTypeFromParams(params) ?? 'all';
   const rawStatus = params.get(CALL_LOG_STATUS_PARAM);
   const status = (AGENCY_CALL_LOG_STATUSES as readonly string[]).includes(rawStatus ?? '')
     ? (rawStatus as AgencyCallLogStatus)
@@ -423,6 +426,9 @@ const duration = (seconds: number) => formatTalkTime(seconds);
 
 /** "3:12 PM": the hour without a leading zero (said through `upperDayPeriod`). */
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
+export function clockTime(iso: string): string {
+  return upperDayPeriod(dateFormatter(CLOCK).format(new Date(iso)));
+}
 
 /** Whether two instants fall on one calendar day for the reader. */
 function sameLocalDay(a: string, b: string): boolean {
@@ -435,7 +441,7 @@ function sameLocalDay(a: string, b: string): boolean {
  * both are on one day, else the day too ("21 Nov 2026, 03:12 PM").
  */
 export function pairedTime(other: string, own: string): string {
-  return sameLocalDay(other, own) ? upperDayPeriod(dateFormatter(CLOCK).format(new Date(other))) : formatCallTimestamp(other);
+  return sameLocalDay(other, own) ? clockTime(other) : formatCallTimestamp(other);
 }
 
 /**
@@ -479,18 +485,18 @@ export function callLogBadges(row: AgencyCallLogRow): Array<{ label: string; tit
  * before it left. Listed, greyed, and in no chip's count. A dialler attempt is never this:
  * one that did not dial says why in its own outcome. Nor is an inbound call: it was not a dial.
  */
-export function isNotDialled(row: AgencyCallLogRow): boolean {
+export function isNotDialled(row: { type: AgencyCallLogType; state: string; dialed_at?: string | null }): boolean {
   return row.type === 'soft_phone' && row.dialed_at === null && row.state === 'ended';
 }
 
 /** A dial stopped while it rang because the customer rang us (`docs/inbound.md` §5.4). */
-export function stoppedByInbound(row: AgencyCallLogRow): boolean {
+export function stoppedByInbound(row: { type: AgencyCallLogType; disposition_code?: string | null }): boolean {
   return row.type === 'dialler' && row.disposition_code === AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE;
 }
 
 /** Whether an inbound call reached nobody (it has a Missed row, or was not answered by an agent). */
-export function isMissedInbound(row: AgencyCallLogRow): boolean {
-  return row.type === 'inbound' && (row.follow_up !== null || row.outcome !== 'answered');
+export function isMissedInbound(row: { type: AgencyCallLogType; outcome?: string | null; follow_up?: object | null }): boolean {
+  return row.type === 'inbound' && ((row.follow_up ?? null) !== null || row.outcome !== 'answered');
 }
 
 /**
@@ -533,11 +539,13 @@ export function inboundWhatHappened(call: InboundHappenedFacts): { text: string;
 }
 
 /** Why an inbound call was missed, lower case to sit under "Missed", and the wait when the caller queued. */
-function missedDetail(row: InboundHappenedFacts): string {
+export function missedDetail(row: Pick<InboundHappenedFacts, 'follow_up' | 'queued'> & { wait_seconds: number | null }): string {
   const label = row.follow_up ? missedReasonLabel(row.follow_up) : null;
   const reason = label ? label.charAt(0).toLowerCase() + label.slice(1) : null;
   // "hung up while waiting · 0:52" already says it was a wait.
-  const wait = !row.queued ? null : row.follow_up?.reason === 'abandoned_in_queue' ? duration(row.wait_seconds) : `waited ${duration(row.wait_seconds)}`;
+  const wait = !row.queued || row.wait_seconds === null
+    ? null
+    : row.follow_up?.reason === 'abandoned_in_queue' ? duration(row.wait_seconds) : `waited ${duration(row.wait_seconds)}`;
   return [reason, wait].filter(Boolean).join(' · ');
 }
 
@@ -564,8 +572,14 @@ export function followUpWords(call: {
   const calledBack = call.calledBackAt ? `Called back ${pairedTime(call.calledBackAt, call.arrivedAt)}` : null;
   const followUp = call.followUp;
   if (!followUp) return { calledBack, status: null, open: false };
-  if (followUp.status === 'open') return { calledBack, status: TO_FOLLOW_UP_LABEL, open: true };
-  return { calledBack, status: calledBack ? null : followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled', open: false };
+  if (followUp.status === 'open') return { calledBack, status: followUpStatusWords(followUp), open: true };
+  return { calledBack, status: calledBack ? null : followUpStatusWords(followUp), open: false };
+}
+
+/** Where a Missed row stands, in words: still owed, closed because the customer was spoken to, or closed by hand. */
+export function followUpStatusWords(followUp: Pick<AgencyCallLogFollowUp, 'status' | 'handled_reason'>): string {
+  if (followUp.status === 'open') return TO_FOLLOW_UP_LABEL;
+  return followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled';
 }
 
 /** The Agent cell of a soft-phone row: who placed it. */

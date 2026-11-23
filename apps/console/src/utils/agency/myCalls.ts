@@ -1,7 +1,7 @@
 import {
   AGENCY_CALLS_TYPE_FILTER_LABELS,
-  AGENCY_CALL_LOG_TYPE_FILTERS,
   AGENCY_CALL_LOG_TYPE_LABELS,
+  AGENCY_MY_CALLS_NOTHING_TO_FOLLOW_UP,
   AGENCY_MY_CALLS_TYPE_FILTERS,
   AGENCY_SYSTEM_OUTCOME_LABELS,
   agencyCallbackDueLabel,
@@ -12,11 +12,19 @@ import {
 } from '../../types/agency-call-log';
 import { attemptOutcomeLabel } from '../../types/agency-spine';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
-import { dateFormatter, upperDayPeriod } from '../format/date';
+import { formatDayMonth } from '../format/date';
 import { formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
-import { missedReasonLabel } from '../inbound/missedCopy';
 import { formatDialNumber } from '../softphone/phoneInput';
-import { pairedTime } from './callLog';
+import {
+  callLogTypeFromParams,
+  clockTime,
+  followUpWords,
+  isMissedInbound,
+  isNotDialled,
+  missedDetail,
+  pairedTime,
+  stoppedByInbound,
+} from './callLog';
 
 /**
  * The agent's own My calls (`docs/call-log.md` §7, CL9): one list of their calls of every type,
@@ -36,9 +44,7 @@ export const MY_CALLS_TYPE_PARAM = 'type';
  * had two tabs until CL9): it opens the Soft phone chip. Absent, or anything else, is All.
  */
 export function myCallsTypeFromParams(params: URLSearchParams): AgencyCallLogTypeFilter {
-  const raw = params.get(MY_CALLS_TYPE_PARAM);
-  if (raw && (AGENCY_CALL_LOG_TYPE_FILTERS as readonly string[]).includes(raw)) return raw as AgencyCallLogTypeFilter;
-  return params.get('view') === 'softphone' ? 'soft_phone' : 'all';
+  return callLogTypeFromParams(params) ?? (params.get('view') === 'softphone' ? 'soft_phone' : 'all');
 }
 
 /** The URL for a chip: `type` set (All is no `type`), the old `view` dropped, everything else kept. */
@@ -118,16 +124,6 @@ export function myCallsChips(
   }));
 }
 
-/** Whether an inbound row reached nobody. */
-export function isMissed(row: AgencyMyCallRow): boolean {
-  return row.type === 'inbound' && (row.follow_up !== null || row.outcome !== 'answered');
-}
-
-/** A soft-phone row whose dial was never sent (SR2). */
-export function neverDialled(row: AgencyMyCallRow): boolean {
-  return row.type === 'soft_phone' && row.dialed_at === null && row.state === 'ended';
-}
-
 /** The type and what only that type has, on one line: "Dialler · Try 2", "Soft phone · Call back", "Inbound · missed". */
 export function myCallTypeLine(row: AgencyMyCallRow): string {
   const label = AGENCY_CALL_LOG_TYPE_LABELS[row.type];
@@ -136,7 +132,7 @@ export function myCallTypeLine(row: AgencyMyCallRow): string {
     return [label, ...facts].join(' · ');
   }
   if (row.type === 'soft_phone') return row.callback_of ? `${label} · Call back` : label;
-  return isMissed(row) ? `${label} · missed` : label;
+  return isMissedInbound(row) ? `${label} · missed` : label;
 }
 
 /** Under a call back: which missed call it answered ("to the 3:12 PM missed call"). */
@@ -160,31 +156,25 @@ export function myCallCustomer(row: Pick<AgencyMyCallRow, 'customer_name' | 'pho
 /** What happened on the line, and a second line where the type has more to say. */
 export function myCallWhatHappened(row: AgencyMyCallRow): { text: string; key: string; detail?: string } {
   if (row.type === 'inbound') {
-    if (!isMissed(row)) {
+    if (!isMissedInbound(row)) {
       return { text: 'Answered', key: 'connected', ...(row.wait_seconds !== null ? { detail: `waited ${formatTalkTime(row.wait_seconds)}` } : {}) };
     }
-    const label = row.follow_up ? missedReasonLabel(row.follow_up) : null;
-    const reason = label ? label.charAt(0).toLowerCase() + label.slice(1) : null;
-    const wait = !row.queued || row.wait_seconds === null
-      ? null
-      : row.follow_up?.reason === 'abandoned_in_queue' ? formatTalkTime(row.wait_seconds) : `waited ${formatTalkTime(row.wait_seconds)}`;
-    const detail = [reason, wait].filter(Boolean).join(' · ');
+    const detail = missedDetail(row);
     return { text: 'Missed', key: 'missed', ...(detail ? { detail } : {}) };
   }
-  if (neverDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
+  if (isNotDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
   if (row.type === 'soft_phone' && row.state !== 'ended') return { text: 'On a call now', key: 'live' };
-  if (row.type === 'dialler' && row.disposition_code === AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE) {
+  if (stoppedByInbound(row)) {
     return { text: 'Stopped: customer rang us', key: row.outcome ?? 'canceled' };
   }
   return { text: attemptOutcomeLabel(row.outcome as Parameters<typeof attemptOutcomeLabel>[0]), key: row.outcome ?? 'unknown' };
 }
 
 /** "25 Nov": a promised or booked day. */
-const DAY: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
 function shortDay(value: string): string {
   // A `YYYY-MM-DD` is a calendar day, not an instant: read at noon so no zone moves it.
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
-  return Number.isNaN(date.getTime()) ? value : dateFormatter(DAY).format(date);
+  return Number.isNaN(date.getTime()) ? value : formatDayMonth(date);
 }
 
 /**
@@ -203,22 +193,13 @@ export function myCallOutcome(row: AgencyMyCallRow): string | null {
 
 /** A missed call's Outcome cell: rung back, still owed, or closed (the Call log's words). */
 export function myCallFollowUp(row: AgencyMyCallRow): { calledBack: string | null; status: string | null; open: boolean } | null {
-  if (!isMissed(row)) return null;
-  const calledBack = row.called_back ? `Called back ${pairedTime(row.called_back.at, row.created_at)}` : null;
-  if (!row.follow_up) return { calledBack, status: null, open: false };
-  if (row.follow_up.status === 'open') return { calledBack, status: AGENCY_CALLS_TYPE_FILTER_LABELS.to_follow_up, open: true };
-  return { calledBack, status: calledBack ? null : row.follow_up.handled_reason === 'reached' ? 'Customer reached' : 'Handled', open: false };
+  if (!isMissedInbound(row)) return null;
+  return followUpWords({ calledBackAt: row.called_back?.at ?? null, arrivedAt: row.created_at, followUp: row.follow_up });
 }
 
 /** What the Outcome cell says with no outcome saved. */
 export function myCallOutcomePlaceholder(row: AgencyMyCallRow): string {
   return row.requires_disposition ? 'No outcome yet' : '—';
-}
-
-/** "4:00 PM". */
-const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
-export function clockTime(iso: string): string {
-  return upperDayPeriod(dateFormatter(CLOCK).format(new Date(iso)));
 }
 
 /** A callback's lines: "Due 4:00 PM" or "Late by 2 hours", and "you booked it for 1:45 PM". */
@@ -243,7 +224,7 @@ export function myCallsEmpty(type: AgencyCallLogTypeFilter, filtered = false): {
   switch (type) {
     case 'to_follow_up':
       return {
-        title: 'Nobody is waiting for a call from you.',
+        title: AGENCY_MY_CALLS_NOTHING_TO_FOLLOW_UP,
         description: 'A missed call that is yours to ring back, and a callback you booked that is due today or late, show here.',
       };
     case 'dialler':

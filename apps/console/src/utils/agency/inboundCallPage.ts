@@ -10,7 +10,7 @@ import { dateFormatter, upperDayPeriod } from '../format/date';
 import { formatPromise } from '../format/promise';
 import { formatDialNumber } from '../softphone/phoneInput';
 import { missedReasonLabel } from '../inbound/missedCopy';
-import { callLogWhatHappened, followUpCopy, isMissedInbound, pairedTime } from './callLog';
+import { callLogWhatHappened, followUpCopy, followUpStatusWords, isMissedInbound, pairedTime } from './callLog';
 
 /**
  * The inbound Call page's words (`docs/call-log.md` §4): one inbound call of a campaign, with
@@ -137,7 +137,7 @@ export function inboundFollowUpCard(row: AgencyCallLogInboundRow): CallFactCard 
   if (!followUp) return null;
   const copy = followUpCopy(row);
   const facts: CallFact[] = [
-    { label: 'Follow-up', value: followUp.status === 'open' ? 'To follow up' : followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled' },
+    { label: 'Follow-up', value: followUpStatusWords(followUp) },
     { label: 'Why it was missed', value: missedReasonLabel(followUp) },
     {
       label: 'Assigned to',

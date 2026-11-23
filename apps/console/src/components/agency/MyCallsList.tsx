@@ -43,9 +43,9 @@ import {
   myCallsParamsForFilters,
   myCallsParamsForType,
   myCallsTypeFromParams,
-  neverDialled,
   type MyCallsFilters,
 } from '../../utils/agency/myCalls';
+import { isNotDialled } from '../../utils/agency/callLog';
 import spine from './SpineListLayout.module.css';
 import styles from '../../pages/agency/AgencyCampaignAttemptsPage.module.css';
 import own from './MyCallsList.module.css';
@@ -388,7 +388,7 @@ export function MyCallsList({ softphone, inbound, missedOpen = null }: {
                     key={`${row.type}:${row.id}`}
                     data-testid={`my-call-row-${row.id}`}
                     data-type={row.type}
-                    className={neverDialled(row) ? styles.notDialled : undefined}
+                    className={isNotDialled(row) ? styles.notDialled : undefined}
                   >
                     <td className={styles.when}>{formatCallTimestamp(row.created_at)}</td>
                     <td>
