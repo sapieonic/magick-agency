@@ -6,12 +6,10 @@ import type {
   CustomerHistoryErrorCode,
   CustomerHistoryOpenOverride,
   CustomerRecordingState,
-  CustomerTimelineChannel,
   CustomerTimelineInboundCall,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import {
   CUSTOMER_HISTORY_ERROR_CODES,
-  CUSTOMER_TIMELINE_CHANNEL_LABELS,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import type { AgencyOverrideKind } from '@magick-agency/contracts/agency/session';
 import type { SearchCountry } from '@magick-agency/domain/customer-search-number';
@@ -134,9 +132,6 @@ export function formatWhen(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso;
   return upperDayPeriod(dateFormatter(WHEN).format(date));
 }
-
-/** The contract's words: "Campaign call", "Soft-phone call", "Inbound call". */
-export const CHANNEL_LABELS: Record<CustomerTimelineChannel, string> = CUSTOMER_TIMELINE_CHANNEL_LABELS;
 
 /** The Channel filter's choices: every channel (the default), then each alone. */
 export const CHANNEL_FILTER_ALL_LABEL = 'Every call type';

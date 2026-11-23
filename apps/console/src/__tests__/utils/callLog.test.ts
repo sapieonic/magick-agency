@@ -28,7 +28,6 @@ import {
   onOpeningView,
   onlyDatesNarrow,
   pairedRowKey,
-  selectedCallLogCount,
   stoppedByInbound,
   visibleCallLogChips,
   type CallLogView,
@@ -232,12 +231,6 @@ describe('the chips', () => {
       .toEqual(['all', 'dialler', 'soft_phone']);
   });
 
-  it('give the count of the chip that is on', () => {
-    expect(selectedCallLogCount(counts, 'all')).toBe(1326);
-    expect(selectedCallLogCount(counts, 'soft_phone')).toBe(86);
-    expect(selectedCallLogCount(null, 'all')).toBeNull();
-  });
-
   it('word the count line with a count, and without one never as "N of M"', () => {
     expect(callLogCountCopy(50, 1234, true)).toBe('1,234 calls — showing 50');
     expect(callLogCountCopy(1, 1, false)).toBe('1 call');
@@ -372,11 +365,6 @@ describe('the Inbound and To follow up chips', () => {
     // Today holds no inbound call, inbound is off, and two missed calls from earlier are still open.
     expect(visibleCallLogChips({ all: 4, dialler: 4, soft_phone: 0, inbound: 0, to_follow_up: 2 }, 'all', off).map((c) => c.id))
       .toEqual(['all', 'to_follow_up']);
-  });
-
-  it('count the chip that is on, To follow up included', () => {
-    expect(selectedCallLogCount(counts, 'inbound')).toBe(57);
-    expect(selectedCallLogCount(counts, 'to_follow_up')).toBe(6);
   });
 
   it('read the type from the URL, and put it back', () => {

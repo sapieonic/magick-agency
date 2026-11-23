@@ -58,7 +58,12 @@ import type {
   AgencyCallLogStatus,
   AgencyCallLogTypeFilter,
 } from '../../types/agency-call-log';
-import { AGENCY_CALLS_NO_CAMPAIGN, AGENCY_CALLS_NO_CAMPAIGN_LABEL, agencyNoCampaignLabel } from '../../types/agency-call-log';
+import {
+  AGENCY_CALLS_NO_CAMPAIGN,
+  AGENCY_CALLS_NO_CAMPAIGN_LABEL,
+  AGENCY_CALL_LOG_TYPE_LABELS,
+  agencyNoCampaignLabel,
+} from '../../types/agency-call-log';
 import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
@@ -68,7 +73,6 @@ import {
   campaignAttemptFilterChips,
   campaignAttemptFilterRefusal,
   campaignAttemptFiltersFromParams,
-  isCampaignAttemptFiltered,
   phoneFilterUsable,
   phoneFilterDraftError,
   INVERTED_RANGE_COPY,
@@ -78,14 +82,12 @@ import { formatCount } from '../../utils/format/number';
 import {
   ALL_CALLS_DESCRIPTION,
   ALL_CALLS_CAMPAIGN_PARAM,
-  ALL_CALLS_TO_FOLLOW_UP_NOTE,
   CALL_LOG_DESCRIPTION,
   CALL_LOG_INBOUND_OUTCOME_HINT,
   CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_HINT,
   CALL_LOG_STATUS_OPTIONS,
   TO_FOLLOW_UP_DATES_HINT,
-  TO_FOLLOW_UP_NOTE,
   callLogAgentCell,
   callLogBadges,
   callLogCountCopy,
@@ -98,7 +100,6 @@ import {
   callLogRowPath,
   callLogStatusLabel,
   callLogTypeFacts,
-  callLogTypeLabel,
   callLogViewFromParams,
   callLogWhatHappened,
   effectiveCallLogFilters,
@@ -110,7 +111,7 @@ import {
   manualCallsRedirectPath,
   onOpeningView,
   pairedRowKey,
-  selectedCallLogCount,
+  toFollowUpNote,
   visibleCallLogChips,
   type CallLogView,
 } from '../../utils/agency/callLog';
@@ -608,7 +609,8 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     [urlFilters, view, campaignFilter],
   );
   const typeChips = useMemo(() => visibleCallLogChips(counts, type, availability), [counts, type, availability]);
-  const total = selectedCallLogCount(counts, type);
+  /** The count for the chip that is on, or null when the server sent none. */
+  const total = counts ? counts[type] : null;
   const empty = useMemo(
     () => callLogEmptyState(filters, { type, status }, account ? { where: 'account', campaignChosen: campaignFilter !== null } : undefined),
     [filters, type, status, account, campaignFilter],
@@ -813,7 +815,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
         </div>
       )}
       {type === 'to_follow_up' && (
-        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{account ? ALL_CALLS_TO_FOLLOW_UP_NOTE : TO_FOLLOW_UP_NOTE}</p>
+        <p className={styles.followUpNote} data-testid="call-log-follow-up-note">{toFollowUpNote(account ? 'account' : 'campaign')}</p>
       )}
 
       <FiltersCard activeCount={activeFilterCount}>
@@ -1087,7 +1089,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
                       <td className={styles.when}>{formatCallTimestamp(row.created_at)}</td>
                       <td>
                         <span className={styles.type} data-type={row.type} data-testid={`call-type-${row.id}`}>
-                          {callLogTypeLabel(row.type)}
+                          {AGENCY_CALL_LOG_TYPE_LABELS[row.type]}
                         </span>
                         {facts.length > 0 && (
                           <span className={styles.secondLine} data-testid={`call-facts-${row.id}`}>{facts.join(' · ')}</span>

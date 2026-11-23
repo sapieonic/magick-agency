@@ -1,5 +1,6 @@
 import {
   AGENCY_CALLS_NO_CAMPAIGN,
+  AGENCY_CALLS_TYPE_FILTER_LABELS,
   AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS,
   AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS,
   AGENCY_CALL_LOG_STATUSES,
@@ -248,18 +249,13 @@ export interface CallLogTypeAvailability {
   inboundEnabled: boolean;
 }
 
-/** The To follow up chip's words. */
-export const TO_FOLLOW_UP_LABEL = 'To follow up';
 /** Said under the date fields while To follow up is on: why they are switched off. */
 export const TO_FOLLOW_UP_DATES_HINT = 'To follow up shows every open missed call, whatever the dates.';
-/** Said under the chips while To follow up is on: the one chip the dates do not narrow. */
-export const TO_FOLLOW_UP_NOTE =
-  'Every missed call on this campaign that is still open, whatever the dates. Call the customer back, or mark the call handled. '
-  + 'The Agent filter here is who a call is assigned to.';
-/** The same, on the account's All calls. */
-export const ALL_CALLS_TO_FOLLOW_UP_NOTE =
-  'Every missed call in this account that is still open, whatever the dates. Call the customer back, or mark the call handled. '
-  + 'The Agent filter here is who a call is assigned to.';
+/** Said under the chips while To follow up is on: the one chip the dates do not narrow. On a campaign's Call log, or the account's All calls. */
+export function toFollowUpNote(where: 'campaign' | 'account'): string {
+  return `Every missed call ${where === 'account' ? 'in this account' : 'on this campaign'} that is still open, whatever the dates. `
+    + 'Call the customer back, or mark the call handled. The Agent filter here is who a call is assigned to.';
+}
 
 /**
  * The chips to show: "All · Dialler · Soft phone · Inbound · To follow up", each with its count.
@@ -284,7 +280,7 @@ export function visibleCallLogChips(
   };
   const types = (Object.keys(AGENCY_CALL_LOG_TYPE_LABELS) as AgencyCallLogType[]).filter((type) => shown[type]);
   const followUp: CallLogChip[] = (counts?.to_follow_up ?? 0) > 0 || selected === 'to_follow_up'
-    ? [{ id: 'to_follow_up', label: TO_FOLLOW_UP_LABEL, count: counts?.to_follow_up ?? null, warning: true }]
+    ? [{ id: 'to_follow_up', label: AGENCY_CALLS_TYPE_FILTER_LABELS.to_follow_up, count: counts?.to_follow_up ?? null, warning: true }]
     : [];
   if (types.length < 2 && followUp.length === 0) return [];
   return [
@@ -310,11 +306,6 @@ export const CALL_LOG_INBOUND_OUTCOME_HINT = 'Missed, Voicemail and Abandoned (h
 /** A What happened value in words: an inbound choice's, else the attempt outcome's. */
 export function callLogOutcomeFilterLabel(value: string): string {
   return (AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTER_LABELS as Record<string, string>)[value] ?? attemptOutcomeLabel(value);
-}
-
-/** The count for the chip that is on, or null when the server sent none. */
-export function selectedCallLogCount(counts: AgencyCallLogCounts | null, type: AgencyCallLogTypeFilter): number | null {
-  return counts ? counts[type] : null;
 }
 
 /**
@@ -407,14 +398,6 @@ export function callLogEmptyState(
 }
 
 // ─── How a row reads ────────────────────────────────────────────────────────
-
-/** The type in words: the Type column. */
-export function callLogTypeLabel(type: AgencyCallLogType): string {
-  return AGENCY_CALL_LOG_TYPE_LABELS[type];
-}
-
-/** `m:ss` for a wait or a voicemail (the talk-time format). */
-const duration = (seconds: number) => formatTalkTime(seconds);
 
 /** "3:12 PM": the hour without a leading zero (said through `upperDayPeriod`). */
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
@@ -524,7 +507,7 @@ export interface InboundHappenedFacts {
  */
 export function inboundWhatHappened(call: InboundHappenedFacts): { text: string; key: string; detail: string } {
   if (call.follow_up === null && call.outcome === 'answered') {
-    const detail = [`waited ${duration(call.wait_seconds)}`, ...(call.via_sticky_agent ? ['came through their agent'] : [])];
+    const detail = [`waited ${formatTalkTime(call.wait_seconds)}`, ...(call.via_sticky_agent ? ['came through their agent'] : [])];
     return { text: 'Answered', key: 'connected', detail: detail.join(' · ') };
   }
   return { text: 'Missed', key: 'missed', detail: missedDetail(call) };
@@ -537,7 +520,7 @@ export function missedDetail(row: Pick<InboundHappenedFacts, 'follow_up' | 'queu
   // "hung up while waiting · 0:52" already says it was a wait.
   const wait = !row.queued || row.wait_seconds === null
     ? null
-    : row.follow_up?.reason === 'abandoned_in_queue' ? duration(row.wait_seconds) : `waited ${duration(row.wait_seconds)}`;
+    : row.follow_up?.reason === 'abandoned_in_queue' ? formatTalkTime(row.wait_seconds) : `waited ${formatTalkTime(row.wait_seconds)}`;
   return [reason, wait].filter(Boolean).join(' · ');
 }
 
@@ -570,7 +553,7 @@ export function followUpWords(call: {
 
 /** Where a Missed row stands, in words: still owed, closed because the customer was spoken to, or closed by hand. */
 export function followUpStatusWords(followUp: Pick<AgencyCallLogFollowUp, 'status' | 'handled_reason'>): string {
-  if (followUp.status === 'open') return TO_FOLLOW_UP_LABEL;
+  if (followUp.status === 'open') return AGENCY_CALLS_TYPE_FILTER_LABELS.to_follow_up;
   return followUp.handled_reason === 'reached' ? 'Customer reached' : 'Handled';
 }
 

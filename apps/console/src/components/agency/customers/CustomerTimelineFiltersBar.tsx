@@ -6,7 +6,8 @@ import type {
 } from '@magick-agency/contracts/api/agency/customer-history';
 import type { AgencyAttemptOutcome } from '@magick-agency/contracts/agency/enums';
 import { attemptOutcomeLabel } from '@magick-agency/contracts/api/agency/agency-spine';
-import { CHANNEL_FILTER_ALL_LABEL, CHANNEL_LABELS } from '../../../utils/customerHistoryCopy';
+import { CUSTOMER_TIMELINE_CHANNEL_LABELS } from '@magick-agency/contracts/api/agency/customer-history';
+import { CHANNEL_FILTER_ALL_LABEL } from '../../../utils/customerHistoryCopy';
 import { isInvertedDayRange } from '../../../utils/agencyAttemptFilters';
 import { actorName } from '../../../utils/agency/insights/copy';
 import styles from './CustomerHistory.module.css';
@@ -186,9 +187,9 @@ export function CustomerTimelineFiltersBar({
           onChange={(e) => set('channel', e.target.value as CustomerTimelineFilterForm['channel'])}
         >
           <option value="">{CHANNEL_FILTER_ALL_LABEL}</option>
-          <option value="campaign">{CHANNEL_LABELS.campaign}s only</option>
-          <option value="softphone">{CHANNEL_LABELS.softphone}s only</option>
-          <option value="inbound">{CHANNEL_LABELS.inbound}s only</option>
+          <option value="campaign">{CUSTOMER_TIMELINE_CHANNEL_LABELS.campaign}s only</option>
+          <option value="softphone">{CUSTOMER_TIMELINE_CHANNEL_LABELS.softphone}s only</option>
+          <option value="inbound">{CUSTOMER_TIMELINE_CHANNEL_LABELS.inbound}s only</option>
         </select>
       </div>
       <div className={`${styles.filter} ${styles.checkFilter}`}>
