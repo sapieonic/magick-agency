@@ -32,6 +32,7 @@ import {
   type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
+import { walkKeyset } from '../../helpers/call-log-seed.js';
 import { insightsCache } from '../../../src/agency/insights/cache.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_PAGE_SIZE } from '../../../src/agency/agency-spine.js';
@@ -316,17 +317,8 @@ interface LogPage { rows: LogRow[]; next_cursor: string | null; limit: number; c
 const logPage = async (params = ''): Promise<LogPage> =>
   (await get(`/proxy/agency/campaigns/${campaignId}/call-log${params ? `?${params}` : ''}`)).json() as LogPage;
 /** Every page of the Call log, walked by its cursor. */
-async function walkLog(params: string, limit: number): Promise<LogRow[]> {
-  const rows: LogRow[] = [];
-  let cursor: string | null = null;
-  for (let i = 0; i < 50; i++) {
-    const page: LogPage = await logPage(`${params}${params ? '&' : ''}limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
-    rows.push(...page.rows);
-    cursor = page.next_cursor;
-    if (!cursor) return rows;
-  }
-  throw new Error('the call log never ended');
-}
+const walkLog = (params: string, limit: number): Promise<LogRow[]> =>
+  walkKeyset((paging) => logPage(`${params}${params ? '&' : ''}${paging}`), limit);
 const TAGGED = SOFT.filter((s) => (s.campaign ?? 'self') === 'self' && (s.tenant ?? 'self') === 'self');
 
 describe('the Call log\'s JSON route: one list, every type (CL11)', () => {

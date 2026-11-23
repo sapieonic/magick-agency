@@ -25,6 +25,7 @@ import {
   call, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
+import { insertInboundCall, walkKeyset } from '../../helpers/call-log-seed.js';
 import { agencyAttemptRepository } from '../../../src/db/repositories/agency.repository.js';
 
 let loaded: LoadApp;
@@ -58,30 +59,22 @@ async function inbound(label: string, o: {
   followUp?: { status: 'open' | 'handled'; assignee?: string };
 }): Promise<void> {
   const f = o.tenant ?? floor;
-  const state = o.state ?? 'ended';
-  const ended = state === 'ended' ? new Date(o.arrived.getTime() + 90_000) : null;
-  const bridged = o.answeredBy ? new Date(o.arrived.getTime() + 10_000) : null;
-  const { rows: [row] } = await q(
-    `INSERT INTO agency_inbound_calls
-       (tenant_id, account_id, provider, provider_call_id, from_e164, to_e164, matched_contact_id, matched_campaign_id,
-        campaign_id, campaign_source, state, outcome, arrived_at, answered_at, bridged_at, answered_by_user_id, ended_at,
-        talk_seconds, disposition_code, disposition_source, dispositioned_at, dispositioned_by_user_id, settled_at,
-        follow_up_status, follow_up_reason, follow_up_assignee_user_id, handled_at, webrtc_call_id)
-     VALUES ($1, $2, 'plivo', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-             $22, $23, $24, $25, $26)
-     RETURNING id`,
-    [
-      f.tenant, f.account, `CA-${randomUUID()}`, o.from === undefined ? `+9198${String(id.size).padStart(8, '0')}` : o.from, RUNG,
-      o.matched ?? null, o.matched ? o.campaign : null, o.campaign, o.campaign ? (o.matched ? 'contact' : 'route') : null,
-      state, state === 'ended' ? (o.outcome ?? (o.answeredBy ? 'answered' : 'abandoned_in_queue')) : null,
-      o.arrived, bridged, o.answeredBy ?? null, ended, o.answeredBy ? 80 : null,
-      o.code ?? null, o.code ? (o.matched ? 'campaign' : 'route') : null, o.code ? ended : null, o.code ? o.answeredBy ?? null : null,
-      state === 'ended' && (o.code || !bridged) ? ended : null,
-      o.followUp?.status ?? null, o.followUp ? 'abandoned_in_queue' : null, o.followUp?.assignee ?? null,
-      o.followUp?.status === 'handled' ? ended : null, o.answeredBy ? randomUUID() : null,
-    ],
-  );
-  id.set(label, row.id as string);
+  // An answered call bridges after 10 s with 80 s of talk and a recording; every call ends after 90 s.
+  id.set(label, await insertInboundCall(label, {
+    tenantId: f.tenant,
+    accountId: f.account,
+    campaign: o.campaign,
+    ...(o.matched ? { matched: o.matched } : {}),
+    from: o.from === undefined ? `+9198${String(id.size).padStart(8, '0')}` : o.from,
+    to: RUNG,
+    arrived: o.arrived,
+    ...(o.state ? { state: o.state } : {}),
+    outcome: o.outcome ?? (o.answeredBy ? 'answered' : 'abandoned_in_queue'),
+    endedAfter: 90,
+    ...(o.answeredBy ? { answeredBy: o.answeredBy, bridgedAfter: 10, talk: 80, webrtcCallId: randomUUID() } : {}),
+    ...(o.code ? { code: o.code } : {}),
+    ...(o.followUp ? { followUp: { reason: 'abandoned_in_queue', ...o.followUp } } : {}),
+  }));
 }
 
 beforeAll(async () => {
@@ -182,18 +175,8 @@ afterAll(async () => {
 
 interface Row { type: string; id: string; created_at: string; [key: string]: unknown }
 interface Page { rows: Row[]; next_cursor: string | null; limit: number; counts?: Record<string, number>; [key: string]: unknown }
-async function walk(base: string, actor: Actor, limit: number): Promise<Row[]> {
-  const rows: Row[] = [];
-  let cursor: string | null = null;
-  for (let i = 0; i < 60; i++) {
-    const sep = base.includes('?') ? '&' : '?';
-    const page: Page = (await get(`${base}${sep}limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, actor)).json();
-    rows.push(...page.rows);
-    cursor = page.next_cursor;
-    if (!cursor) return rows;
-  }
-  throw new Error('the list never ended');
-}
+const walk = (base: string, actor: Actor, limit: number): Promise<Row[]> =>
+  walkKeyset(async (paging) => (await get(`${base}${base.includes('?') ? '&' : '?'}${paging}`, actor)).json() as Page, limit);
 
 const ALL_ORDER = [
   's-mine-never-dialled', 's-mine-callback', 's-theirs', 's-mine-untagged', 's-mine-masked',

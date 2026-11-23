@@ -69,6 +69,7 @@ import {
   call, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
+import { insertInboundCall, type InboundCallSeed } from '../../helpers/call-log-seed.js';
 import { insightsCache } from '../../../src/agency/insights/cache.js';
 import { REPORT_DATASET_BUILDERS, type BuiltReport } from '../../../src/agency/reports/datasets/index.js';
 import { localDateOf, localDayBounds } from '../../../src/agency/reports/schedule.js';
@@ -133,57 +134,27 @@ const activityOf = async (campaign = campaignId, f: TenantFloor = floor): Promis
 const logCounts = async (params: string, campaign = campaignId): Promise<LogCounts> =>
   (await get(`/proxy/agency/campaigns/${campaign}/call-log?${params}&include_counts=1&limit=1`) as { counts: LogCounts }).counts;
 
-/** An `agency_inbound_calls` row, straight into the table: every column a rule reads is named. */
-async function inbound(label: string, o: {
+/**
+ * An `agency_inbound_calls` row, straight into the table (`insertInboundCall`): on this floor,
+ * filed under the campaign and from a number of its own unless the test says otherwise.
+ */
+async function inbound(label: string, o: Omit<InboundCallSeed, 'tenantId' | 'accountId' | 'campaign' | 'from' | 'to'> & {
   tenant?: TenantFloor;
   campaign?: string | null;
-  matched?: string;
   from?: string | null;
-  arrived: Date;
-  state?: string;
-  outcome?: string | null;
-  bridgedAfter?: number;
-  answeredBy?: string;
-  endedAfter?: number;
-  talk?: number;
-  code?: string;
-  followUp?: { status: 'open' | 'handled'; reason: string; handledBy?: string; handledReason?: string };
-  closedCause?: string;
-  voicemailSeconds?: number;
 }): Promise<string> {
-  const f = o.tenant ?? floor;
-  const campaign = o.campaign === undefined ? campaignId : o.campaign;
-  const state = o.state ?? 'ended';
-  const after = (s: number | undefined) => (s === undefined ? null : new Date(o.arrived.getTime() + s * 1000));
-  const ended = state === 'ended' ? after(o.endedAfter ?? 5) : null;
-  const bridged = after(o.bridgedAfter);
-  const { rows: [row] } = await q(
-    `INSERT INTO agency_inbound_calls
-       (tenant_id, account_id, provider, provider_call_id, from_e164, to_e164,
-        matched_contact_id, matched_campaign_id, campaign_id, campaign_source,
-        state, outcome, arrived_at, answered_at, bridged_at, answered_by_user_id,
-        ended_at, talk_seconds, disposition_code, disposition_source, dispositioned_at, dispositioned_by_user_id, settled_at,
-        follow_up_status, follow_up_reason, handled_at, handled_by_user_id, handled_reason,
-        closed_cause, voicemail_key, voicemail_seconds)
-     VALUES ($1, $2, 'plivo', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14,
-             $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
-     RETURNING id`,
-    [
-      f.tenant, f.account, `CA-${randomUUID()}`, o.from === undefined ? `+9198${String(id.size).padStart(8, '0')}` : o.from, RUNG,
-      // A caller on the campaign's list is matched AND filed (`contact`); any other is filed by
-      // its route and matched to nothing: only `campaign_id` puts it under the campaign.
-      o.matched ?? null, o.matched ? campaign : null, campaign, campaign ? (o.matched ? 'contact' : 'route') : null,
-      state, state === 'ended' ? (o.outcome ?? 'answered') : null,
-      o.arrived, bridged, bridged ? o.answeredBy ?? null : null,
-      ended, o.talk ?? null, o.code ?? null, o.code ? (o.matched ? 'campaign' : 'route') : null, o.code ? ended : null,
-      o.code ? o.answeredBy ?? null : null, state === 'ended' && (o.code || !bridged) ? ended : null,
-      o.followUp?.status ?? null, o.followUp?.reason ?? null,
-      o.followUp?.status === 'handled' ? ended : null, o.followUp?.handledBy ?? null, o.followUp?.handledReason ?? null,
-      o.closedCause ?? null, o.voicemailSeconds === undefined ? null : `inbound-voicemail/${label}.wav`, o.voicemailSeconds ?? null,
-    ],
-  );
-  id.set(label, row.id as string);
-  return row.id as string;
+  const { tenant, campaign, from, ...seed } = o;
+  const f = tenant ?? floor;
+  const rowId = await insertInboundCall(label, {
+    ...seed,
+    tenantId: f.tenant,
+    accountId: f.account,
+    campaign: campaign === undefined ? campaignId : campaign,
+    from: from === undefined ? `+9198${String(id.size).padStart(8, '0')}` : from,
+    to: RUNG,
+  });
+  id.set(label, rowId);
+  return rowId;
 }
 
 /** Run the Insights rollup until it has nothing left to fold in. */
