@@ -26,7 +26,7 @@ export function getCallSettings(tenantId?: string, accountId?: string): Promise<
   return apiFetch<AgencyCallSettingsResponse>(CALL_SETTINGS, {}, tenantId, accountId);
 }
 
-export interface CallSettingsRefusal {
+interface CallSettingsRefusal {
   /** `default_campaign_required`, or `unknown` (a network failure, a masked 5xx, an RBAC 403). */
   code: 'default_campaign_required' | 'unknown';
   status: number | null;
@@ -36,10 +36,10 @@ export interface CallSettingsRefusal {
   routes: AgencyCallSettingsRouteRef[];
 }
 
-export type CallSettingsResult = { ok: true; value: AgencyCallSettingsResponse } | { ok: false; refusal: CallSettingsRefusal };
+type CallSettingsResult = { ok: true; value: AgencyCallSettingsResponse } | { ok: false; refusal: CallSettingsRefusal };
 
 /** Read a call-settings refusal off whatever `apiFetch` threw (`ApiError.details` / `.statusCode`). */
-export function parseCallSettingsRefusal(err: unknown): CallSettingsRefusal {
+function parseCallSettingsRefusal(err: unknown): CallSettingsRefusal {
   const raw = err && typeof err === 'object' ? (err as { details?: unknown }).details : undefined;
   const body = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const fallback = err instanceof Error && err.message ? err.message : 'That didn’t go through. Try again in a moment.';

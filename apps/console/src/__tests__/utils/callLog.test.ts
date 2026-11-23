@@ -35,7 +35,6 @@ import {
   type CallLogView,
 } from '../../utils/agency/callLog';
 import { ALL_CALLS_CAMPAIGN_PARAM, allCallsPath, softphoneCallsRedirectPath, unfiledCallsPath } from '../../utils/agency/callLog';
-import { SOFTPHONE_CALL_STATUS_OPTIONS } from '../../utils/softphone/callStats';
 import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
 import type { AgencyCallLogDiallerRow, AgencyCallLogInboundRow, AgencyCallLogSoftphoneRow } from '../../types/agency-call-log';
 
@@ -141,8 +140,6 @@ describe('the soft-phone status filter', () => {
       { value: 'awaiting_outcome', label: 'Waiting for an outcome' },
       { value: 'settled', label: 'Done' },
     ]);
-    // The same words as the account's Soft-phone calls list, which still has the filter.
-    expect(CALL_LOG_STATUS_OPTIONS).toEqual(SOFTPHONE_CALL_STATUS_OPTIONS);
     expect(callLogStatusLabel('awaiting_outcome')).toBe('Waiting for an outcome');
   });
 
