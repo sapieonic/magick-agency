@@ -1,6 +1,10 @@
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignRepository } from '../db/repositories/agency.repository.js';
-import { abandonmentRatePct, type AgencyAbandonmentWindowRow } from '@magick-agency/domain/abandonment-predicate';
+import {
+  abandonmentRatePct,
+  singleAbandonSampleFloor,
+  type AgencyAbandonmentWindowRow,
+} from '@magick-agency/domain/abandonment-predicate';
 import { auditLogger } from '../audit/audit-logger.js';
 
 const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
@@ -57,39 +61,12 @@ const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
  */
 
 /**
- * The smallest answered-call count in which ONE abandoned call does not, by
- * itself, exceed the ceiling.
- *
- * At the default 3% ceiling this is 34: one abandon out of 34 answered is 2.94%
- * and clears, one out of 33 is 3.03% and breaches. Below that threshold the rate
- * is too coarse to express the ceiling at all — a single call necessarily
- * overshoots it — so a one-call breach there is an artefact of the sample size
- * rather than evidence about how the campaign is pacing.
- *
- * Derived from the campaign's OWN ceiling rather than a constant, so a campaign
- * configured at 1% gets a floor of 100 and one at 10% gets 10. A fixed number
- * would be right for exactly one ceiling.
- *
- * ⚠️ **The `ceilingPct <= 0` guard is defensive, NOT a supported setting.** A
- * zero ceiling is refused in two places: the schema CHECKs
- * `abandonment_ceiling_pct > 0`, and the campaign-config validation
- * (`campaign-config.ts`) rejects it with the rationale written out — *"a ceiling of
- * 0 would read as a strict setting and behave as a kill switch. An operator who
- * wants no dialing has `pause`."*
- *
- * The guard stays regardless, because what it protects against is not a setting:
- * `100 / 0` is `Infinity`, which would make the floor infinite and suppress the
- * pause for **every** breach — a compliance guardrail silently disabled, and the
- * kind of thing found in an audit rather than by a test. `ceiling_pct` also
- * arrives here from a LEFT JOIN and is typed nullable, so a non-positive value
- * reaching this function is a real possibility even though no row can hold one.
- * Returning 0 makes such a campaign pause on its first abandon, which is the
- * fail-closed direction.
+ * The smallest answered-call count in which ONE abandoned call does not, by itself, exceed the
+ * ceiling: 34 at the default 3%. Lives in `@magick-agency/domain/abandonment-predicate` (its note
+ * has the whole argument, the non-positive guard included) so the console's Resume warning reads
+ * the same floor (decision AW2); re-exported here for the guardrail's tests.
  */
-export function singleAbandonSampleFloor(ceilingPct: number): number {
-  if (!Number.isFinite(ceilingPct) || ceilingPct <= 0) return 0;
-  return Math.ceil(100 / ceilingPct);
-}
+export { singleAbandonSampleFloor };
 
 /** One breach, as decided. Returned so the caller can report without re-deriving. */
 export interface AbandonmentBreach {

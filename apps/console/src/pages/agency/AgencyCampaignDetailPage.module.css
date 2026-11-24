@@ -176,6 +176,31 @@ a.actionButton {
   color: var(--info);
 }
 
+/*
+  Why the guardrail paused it (decision AW1), from the campaign row, on a screen whose health strip
+  does not already say so. The warning tone, like the strip's own abandonment headline.
+*/
+.abandonmentPauseNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warning-subtle);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.abandonmentPauseNote svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--warning);
+}
+
 /* An archived campaign's notice (AR1–AR6): what it is, and Restore. Wraps on a phone. */
 .archivedNote {
   display: flex;

@@ -119,6 +119,8 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'context_display', 'break_reasons', 'record_calls', 'analysis_profile_id',
   'abandon_announcement_id', 'abandonment_ceiling_pct', 'allow_wrapup_redial',
+  // The abandonment grace (0075, AG4): the child's calls are judged as the parent's are.
+  'abandonment_grace_ms',
   // Contact assignment and agent-led retry (0009): how the child's pacing reads the
   // owners its contacts keep (`keep_assignments` on the retry create), and the agents'
   // retry allowance. Inherited like every other way the parent dials.

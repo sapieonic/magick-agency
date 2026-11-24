@@ -377,6 +377,30 @@ describe('campaign settings — saving', () => {
     );
   });
 
+  it('loads the campaign’s abandonment grace beside the limit and PATCHes the one chosen (AG2)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_grace_ms: 5000 }));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
+
+    const select = screen.getByTestId('abandonment-grace-select') as HTMLSelectElement;
+    expect(select.value).toBe('5');
+    fireEvent.change(select, { target: { value: '2' } });
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_grace_ms).toBe(2000);
+  });
+
+  it('sends the stored grace back on a save that did not touch it', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_grace_ms: 4000 }));
+    renderPage();
+    const start = await screen.findByDisplayValue('10:00');
+    fireEvent.change(start, { target: { value: '11:00' } });
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_grace_ms).toBe(4000);
+  });
+
   it.each([25, 7.25])(
     'keeps a stored limit of %s outside the offered range, and still saves another edit (AC1)',
     async (stored) => {
@@ -1018,6 +1042,46 @@ describe('the campaign header on Settings', () => {
     expect(screen.queryByRole('link', { name: 'Add contacts' })).toBeNull();
   });
 
+  it('says why the abandonment guardrail paused it, since this page has no health strip (AW1)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      status: 'paused',
+      pause_reason: 'abandonment_ceiling',
+      pause_abandonment_rate_pct: 4.24,
+      abandonment_ceiling_pct: 3,
+    }));
+    renderPage();
+
+    expect((await screen.findByTestId('campaign-abandonment-pause-note')).textContent)
+      .toBe('Paused automatically: abandonment over the last 24 hours reached 4.2%, over the 3% limit.');
+  });
+
+  it('asks before resuming it, and resumes on confirm (AW1)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      status: 'paused',
+      pause_reason: 'abandonment_ceiling',
+      pause_abandonment_rate_pct: 4.24,
+      abandonment_ceiling_pct: 3,
+    }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /resume/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('paused this campaign automatically');
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Resume anyway' }));
+    await waitFor(() => expect(mocks.transitionAgencyCampaign)
+      .toHaveBeenCalledWith('camp-1', 'resume', 'tenant-1', 'account-1'));
+  });
+
+  it('says nothing of the guardrail on a supervisor’s pause', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused', pause_reason: 'supervisor' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.queryByTestId('campaign-abandonment-pause-note')).toBeNull();
+  });
+
   it('pauses the campaign without touching edits in progress', async () => {
     // Loaded running; read again (after the pause) as paused.
     mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }))
@@ -1430,6 +1494,8 @@ describe('the tabs and the sections links land on', () => {
     expect(inSection('recording', '[data-testid="daily-target"]')).toBeTruthy();
     expect(inSection('recording', '[data-testid="phone-display-row"]')).toBeTruthy();
     expect(inSection('dialling-retries', '[data-testid="abandonment-ceiling-input"]')).toBeTruthy();
+    // The grace beside the limit (AG4).
+    expect(inSection('dialling-retries', '[data-testid="abandonment-grace-select"]')).toBeTruthy();
   });
 
   it('leaves Lifecycle and uploads out below `agency.supervise`', async () => {

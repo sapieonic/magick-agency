@@ -123,8 +123,10 @@ export const ANDROID_INPUTS = [/^apps\/mobile\/(packages\/[^/]+\/)?android\//, .
 export const IOS_INPUTS = [/^apps\/mobile\/(packages\/[^/]+\/)?ios\//, ...MOBILE_BUILD_INPUTS];
 
 /**
- * `pnpm test:grafana` reads grafana/, the metric declarations and the server's OTel setup, and
- * scans `apps/server/src` and every `packages/<name>/src` for a stray instrument.
+ * `pnpm test:grafana` reads grafana/, the metric declarations, the server's OTel setup and the
+ * abandonment grace (`packages/domain/src/abandonment-predicate.ts`, which the dashboard draws),
+ * and scans `apps/server/src` and every `packages/<name>/src` for a stray instrument. Not a
+ * READ_BY rule: those name the packages whose suites read a file, and this check is no package.
  */
 const isGrafanaInput = (f) =>
   f.startsWith('grafana/')

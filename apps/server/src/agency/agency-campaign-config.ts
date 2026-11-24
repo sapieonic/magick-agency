@@ -7,6 +7,7 @@ import {
   dispositionOverrideIssues,
   dispositionPromiseIssues,
   reservedDispositionCodeMessage,
+  validateAbandonmentGrace,
   validateAssignmentSettings,
   validateBreakReasons,
   validateDailyTargetCalls,
@@ -684,6 +685,10 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   // internal handler's rule, imported, so the wizard hears the same refusal before the round trip.
   if (record['break_reasons'] !== undefined) {
     issues.push(...validateBreakReasons(record['break_reasons']));
+  }
+  // The abandonment grace (0075, AG2): whole seconds 1–5 in ms, the internal handler's rule, imported.
+  if (record['abandonment_grace_ms'] !== undefined) {
+    issues.push(...validateAbandonmentGrace(record['abandonment_grace_ms']));
   }
   // Contact assignment and agent retry (0009): the internal handler's rules, imported.
   issues.push(...validateAssignmentSettings(record));

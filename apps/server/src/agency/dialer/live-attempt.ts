@@ -24,7 +24,7 @@ export interface LiveAttempt {
    *
    * Held here rather than read back from `agency_call_attempts.dialed_at` because
    * every consumer is on a hot path that must not take a DB round trip: the answer
-   * arm has a 1000ms compliance budget, and the settle site is the one place that
+   * arm has the attempt's grace as its compliance budget, and the settle site is the one place that
    * knows both this instant and the outcome the seat time should be attributed to.
    * The column stays the durable record; this is the in-process twin, on the same
    * pattern as `answeredAt` above it.
@@ -81,8 +81,9 @@ export interface LiveAttempt {
    * The agent's panel, built at dial time and sent at dial (early binding) or at
    * the carrier answer (late binding).
    *
-   * Held here rather than rebuilt at the answer because the bind has a 1000ms
-   * budget (`ABANDONMENT_BRIDGE_GRACE_MS`) measured from the answer, and the
+   * Held here rather than rebuilt at the answer because the bind has a budget of
+   * the attempt's abandonment grace (`cmd.bridgeGraceMs`, 1–5 s, 3 s by default, AG3)
+   * measured from the answer, and the
    * priors read behind this panel is two joins over a contact lineage. Building
    * it at dial time is what makes late binding affordable at all.
    */

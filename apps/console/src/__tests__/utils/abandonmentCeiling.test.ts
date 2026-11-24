@@ -22,6 +22,7 @@ import {
   insightsScaleMaxPct,
   meterPosition,
   rateAboveCeiling,
+  rateOverCeilingText,
 } from '../../utils/agency/abandonmentCeiling';
 import { AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT } from '@magick-agency/contracts/agency';
 
@@ -318,5 +319,21 @@ describe('a rate against the ceiling', () => {
     expect(abandonmentTone(3.1, 3)).toBe('bad');
     expect(abandonmentTone(4, 5)).toBe('warn');
     expect(abandonmentTone(3.9, 5)).toBeUndefined();
+  });
+
+  it('says a rate over the ceiling with enough decimals to read as over it', () => {
+    // One decimal would say "reached 3%, over the 3% limit".
+    expect(rateOverCeilingText(3.03, 3)).toBe('3.03%');
+    expect(rateOverCeilingText(3.004, 3)).toBe('3.004%');
+    // 2.949 to one decimal is 2.9%, under a 2.94% ceiling: two decimals make it 2.95%.
+    expect(rateOverCeilingText(2.949, 2.94)).toBe('2.95%');
+    // One decimal is enough when it already reads as over.
+    expect(rateOverCeilingText(4.24, 3)).toBe('4.2%');
+  });
+
+  it('says a rate at or under the ceiling, or with none, on one decimal as usual', () => {
+    expect(rateOverCeilingText(3, 3)).toBe('3%');
+    expect(rateOverCeilingText(2.96, 3)).toBe('3%');
+    expect(rateOverCeilingText(3.03, null)).toBe('3%');
   });
 });

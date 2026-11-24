@@ -383,6 +383,14 @@ export class AgencyAttemptRepository {
    * genuine, self-correcting race caught by the index and retried on the next tick,
    * rather than a permanent wedge, and `uq_agency_attempt_live` already makes two
    * live attempts per contact impossible.
+   *
+   * ── `bridge_grace_ms` is STAMPED HERE, from the campaign row, in the same statement ──
+   * The abandonment grace this attempt will be judged by (0075, AG3) is the campaign's
+   * `abandonment_grace_ms` as the INSERT reads it: never a value the caller passes, so no
+   * dial path can stamp a stale or default grace, and a PATCH to the setting reaches the
+   * very next attempt. The row it returns carries it, and the dial command takes it from
+   * there (`DialCommand.bridgeGraceMs`), so the settle site's in-process twin judges the
+   * call by the same number the table does. {@link beginWrapupRedial} stamps the same way.
    */
   async create(input: {
     campaignId: string;
@@ -421,12 +429,13 @@ export class AgencyAttemptRepository {
          )
          INSERT INTO agency_call_attempts
            (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id, state,
-            agent_manual, override_applied, override_note, agent_reopened)
-         SELECT $1, $2, $3, $4,
+            agent_manual, override_applied, override_note, agent_reopened, bridge_grace_ms)
+         SELECT $1::uuid, $2, $3, $4,
                 COALESCE(MAX(attempt_number), 0) + 1,
                 $5, $6, 'queued',
                 $7::boolean, $8::text[], $9::text,
-                EXISTS (SELECT 1 FROM reopen)
+                EXISTS (SELECT 1 FROM reopen),
+                (SELECT c.abandonment_grace_ms FROM agency_campaigns c WHERE c.id = $1::uuid)
            FROM agency_call_attempts
           WHERE contact_id = $2
          RETURNING *`,
@@ -480,7 +489,9 @@ export class AgencyAttemptRepository {
    *     outcome is left as it is (`connected`): the call happened, and stats keep it;
    *  4. insert the redial attempt, linked back (`redial_of_attempt_id`) and numbered
    *     (`redial_number` = the redialled attempt's + 1), with `attempt_number` derived as
-   *     {@link create} derives it, carrying the agent's notes so far.
+   *     {@link create} derives it, carrying the agent's notes so far, and stamped with the
+   *     campaign's abandonment grace as it stands now (0075, AG3), as {@link create} stamps it:
+   *     the redial is a new call to the customer, judged by today's setting.
    *
    * A disposition racing the redial meets the lock: whichever commits first wins, and
    * the other is refused (`disposition_already_submitted` here, `already_dispositioned`
@@ -542,10 +553,11 @@ export class AgencyAttemptRepository {
         const { rows: [attempt] } = await client.query<AgencyCallAttemptRecord>(
           `INSERT INTO agency_call_attempts
              (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id,
-              reserved_agent_id, state, redial_of_attempt_id, redial_number, notes)
-           SELECT $1, $2, $3, $4,
+              reserved_agent_id, state, redial_of_attempt_id, redial_number, notes, bridge_grace_ms)
+           SELECT $1::uuid, $2, $3, $4,
                   COALESCE(MAX(attempt_number), 0) + 1,
-                  $5, $6, 'queued', $7, $8, $9
+                  $5, $6, 'queued', $7, $8, $9,
+                  (SELECT c.abandonment_grace_ms FROM agency_campaigns c WHERE c.id = $1::uuid)
              FROM agency_call_attempts
             WHERE contact_id = $2
            RETURNING *`,

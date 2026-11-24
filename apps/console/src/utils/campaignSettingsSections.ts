@@ -96,12 +96,12 @@ export const CAMPAIGN_SETTINGS_SECTIONS: CampaignSettingsSectionDef[] = [
     ],
   },
   {
-    // CS12–CS13: the full retry table and the abandonment limit.
+    // CS12–CS13: the full retry table and the abandonment limit, with its grace (AG2).
     id: 'dialling-retries',
     label: 'Dialling and retries',
     tab: 'agents',
     advanced: true,
-    keywords: ['retry', 'retries', 'redial', 'attempts', 'busy', 'no answer', 'gap between tries', 'abandonment', 'abandon rate', 'ceiling', 'auto pause', 'pacing'],
+    keywords: ['retry', 'retries', 'redial', 'attempts', 'busy', 'no answer', 'gap between tries', 'abandonment', 'abandon rate', 'ceiling', 'auto pause', 'pacing', 'abandonment grace', 'audio connects'],
   },
   {
     // CS13: contact assignment and inbound callers (each behind its flag) and the break limits.

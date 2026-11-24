@@ -15,6 +15,7 @@ import type { InviteUnavailableStatus } from '../types/invite';
 import type { DispositionBlockReason } from '../utils/agencyDispositionForm';
 import type { AudioCaptureFailureKind } from '../hooks/useAudioCapture';
 import type { CampaignTabId } from '../utils/agencyCampaignTabs';
+import type { ResumeWarningKind } from '../utils/agency/resumeWarning';
 import type { AgencyPersona } from '../utils/agencyPersona';
 import type { AgentStatsWindow } from '../utils/agencyAgentPerformance';
 import type { SetupStepId } from '../utils/campaignSetup/setupSteps';
@@ -446,6 +447,17 @@ export function trackAgencyCampaignLifecycleAction(props: EventCatalog['agency_c
 
 export function trackAgencyCampaignLifecycleFailed(props: EventCatalog['agency_campaign_lifecycle_failed']): void {
   track('agency_campaign_lifecycle_failed', props);
+}
+
+/**
+ * The Resume warning (decisions AW1–AW3) was shown and the supervisor pressed Cancel. A warning
+ * they confirmed is on `agency_campaign_lifecycle_action` (`resume_warning`, `confirmed: true`),
+ * so the two together say how often it stops a resume.
+ */
+export function trackAgencyCampaignResumeWarningCancelled(
+  props: EventCatalog['agency_campaign_resume_warning_cancelled'],
+): void {
+  track('agency_campaign_resume_warning_cancelled', props);
 }
 
 export function trackAgencyCampaignArchiveAction(props: EventCatalog['agency_campaign_archive_action']): void {
@@ -1213,12 +1225,30 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     action: 'start' | 'pause' | 'resume' | 'stop';
     from_status: AgencyCampaignStatus;
     to_status: AgencyCampaignStatus;
+    /**
+     * The action went through a dialog the supervisor confirmed: always for `stop`, and for a
+     * `resume` whose warning (`resume_warning`) they confirmed.
+     */
     confirmed: boolean;
     /**
      * The campaign tab whose header it was taken from, `live_floor` for a Live floor card, or
      * `new_campaign` for New campaign's Start campaign (CS15).
      */
     from_tab: CampaignTabId | 'live_floor' | 'new_campaign';
+    /**
+     * Sent by the campaign header and Live floor (`useCampaignLifecycle`): the Resume warning the
+     * supervisor confirmed (decisions AW1–AW3), `abandonment_pause` when the guardrail had paused
+     * it, `over_ceiling` when the 24-hour rate was over the ceiling after another pause,
+     * `unchecked` when the campaign could not be re-read to check why it was paused; null when
+     * none was shown (every other action, and a Resume that did not warn). Left out by New campaign.
+     */
+    resume_warning?: ResumeWarningKind | null;
+  };
+  /** {@link trackAgencyCampaignResumeWarningCancelled} */
+  agency_campaign_resume_warning_cancelled: {
+    campaign_id: string;
+    resume_warning: ResumeWarningKind;
+    from_tab: CampaignTabId | 'live_floor';
   };
   /**
    * {@link trackAgencyCampaignArchiveAction}: a campaign archived or restored (AR1–AR7), on
@@ -1237,6 +1267,11 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     action: 'start' | 'pause' | 'resume' | 'stop';
     from_status: AgencyCampaignStatus;
     status_code: number;
+    /**
+     * As on `agency_campaign_lifecycle_action`: the Resume warning the supervisor confirmed before
+     * the action failed, null when none was shown. Left out by New campaign.
+     */
+    resume_warning?: ResumeWarningKind | null;
   };
   /** {@link trackAgencyCampaignStallSurfaced} */
   agency_campaign_stall_surfaced: {
@@ -1341,6 +1376,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     wrapup_redial: boolean;
     /** The abandonment ceiling as saved, in percent: a setting, not PII, like `wrapup_seconds`. */
     abandonment_ceiling_pct: number;
+    /** The abandonment grace as saved, in ms (AG2): a setting, not PII. */
+    abandonment_grace_ms: number;
     /** Contact assignment (only while its flag is on): the mode as saved. */
     assignment_mode?: AgencyAssignmentMode;
     /** `allow_agent_retry` as saved. */

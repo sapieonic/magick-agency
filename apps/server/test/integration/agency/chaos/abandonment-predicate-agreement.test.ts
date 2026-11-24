@@ -22,7 +22,7 @@ const {
   createChaosWorld, attempts, abandonedCount, abandonedCountByProductPredicate,
   assertAbandonmentPredicatesAgree,
 } = await import('./harness.js');
-const { ABANDONMENT_BRIDGE_GRACE_MS, ABANDONED_ATTEMPT_PREDICATE_SQL } =
+const { DEFAULT_ABANDONMENT_GRACE_MS, ABANDONED_ATTEMPT_PREDICATE_SQL } =
   await import('@magick-agency/domain/abandonment-predicate');
 
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
@@ -119,8 +119,10 @@ describe('the audit predicate and the product predicate agree, on data where the
    */
   it("the product predicate filters on terminal state, and takes no bound parameter", () => {
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toMatch(/state\s*=\s*'ended'/);
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(1000);
-    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain(`${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds`);
+    expect(DEFAULT_ABANDONMENT_GRACE_MS).toBe(3000);
+    // The grace is the attempt's own column (AG3), never a constant spliced in.
+    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain('bridge_grace_ms');
+    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).not.toMatch(/\d+ milliseconds/);
 
     // No `$n` placeholder — the independence guarantee, mechanically. The predicate
     // reads raw columns only; feeding a counter or any in-process value into the
@@ -151,14 +153,14 @@ describe('the audit predicate and the product predicate agree, on data where the
     expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
 
     // Now push this row's answer instant back past N. Written directly rather than
-    // waited out: N is a business threshold, and a test that slept 1s to cross it
+    // waited out: N is a business threshold, and a test that slept 3s to cross it
     // would be measuring the clock rather than the predicate. An EXACT offset, not
     // a generous one — `+1ms` past the boundary is what distinguishes `>` from
     // `>=`, and a 5s offset would pass against either.
     await getTestPool().query(
       `UPDATE agency_call_attempts SET answered_at = bridged_at - ($2::int || ' milliseconds')::interval
         WHERE id = $1`,
-      [fast!.id, ABANDONMENT_BRIDGE_GRACE_MS + 1],
+      [fast!.id, DEFAULT_ABANDONMENT_GRACE_MS + 1],
     );
     expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
 
@@ -166,8 +168,45 @@ describe('the audit predicate and the product predicate agree, on data where the
     await getTestPool().query(
       `UPDATE agency_call_attempts SET answered_at = bridged_at - ($2::int || ' milliseconds')::interval
         WHERE id = $1`,
-      [fast!.id, ABANDONMENT_BRIDGE_GRACE_MS],
+      [fast!.id, DEFAULT_ABANDONMENT_GRACE_MS],
     );
+    expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
+  });
+
+  /**
+   * The campaign's grace, through the real dial path (AG2, AG3): a campaign set to 5 s stamps
+   * 5000 on the attempt pacing creates, both halves judge that attempt by its stamp, and a later
+   * change to the setting leaves the stamp (and so the call's verdict) as it was.
+   */
+  it('a campaign set to 5 s stamps its attempts with 5000, and both halves judge by the stamp', async () => {
+    world = await createChaosWorld({ agents: 1, contacts: 2, maxConcurrentCalls: 1 });
+    const w = world;
+    await getTestPool().query('UPDATE agency_campaigns SET abandonment_grace_ms = 5000 WHERE id = $1', [w.campaignId]);
+    w.bridge.setDefaultScript({ answer: true, bridge: true, status: 'completed', talkTimeSeconds: 5 });
+    await w.bringOnline(w.agents[0]!);
+    await w.tick();
+
+    const [row] = await attempts(w.campaignId);
+    expect(row!.bridged_at).not.toBeNull();
+    const stamp = async () => (await getTestPool().query<{ g: number }>(
+      'SELECT bridge_grace_ms AS g FROM agency_call_attempts WHERE id = $1', [row!.id])).rows[0]!.g;
+    expect(await stamp()).toBe(5000);
+    const late = async (ms: number) => getTestPool().query(
+      `UPDATE agency_call_attempts SET answered_at = bridged_at - ($2::int || ' milliseconds')::interval WHERE id = $1`,
+      [row!.id, ms]);
+
+    // 4 s: late under the default, in time under this campaign's 5 s.
+    await late(4000);
+    expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
+    await late(5001);
+    expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
+    await late(5000);
+    expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
+
+    // The setting moves back to 1 s: the call already made keeps its 5 s verdict.
+    await getTestPool().query('UPDATE agency_campaigns SET abandonment_grace_ms = 1000 WHERE id = $1', [w.campaignId]);
+    await late(4000);
+    expect(await stamp()).toBe(5000);
     expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
   });
 });

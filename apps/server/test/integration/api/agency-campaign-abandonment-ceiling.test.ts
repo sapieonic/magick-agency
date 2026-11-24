@@ -249,7 +249,7 @@ describe('the guardrail pauses at the ceiling the supervisor set', () => {
   /**
    * `answered` ended attempts inside the 24h window, the first `abandoned` of them
    * answered and never bridged (abandoned by the shared predicate), the rest bridged
-   * 200 ms after answer (inside the 1 s grace, so not abandoned).
+   * 200 ms after answer (inside the 3 s grace, so not abandoned).
    */
   async function seedWindow(campaignId: string, accountId: string, answered: number, abandoned: number): Promise<void> {
     const contact = await insertAgencyContact(campaignId, { tenant_id: w.tenant, account_id: accountId });

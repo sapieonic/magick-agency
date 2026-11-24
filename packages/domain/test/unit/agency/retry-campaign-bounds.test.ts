@@ -59,13 +59,16 @@ describe('the retry bound constants', () => {
     expect(RETRY_IDEMPOTENCY_KEY_PATTERN.test('')).toBe(false);
   });
 
-  it('inherits exactly the twenty-eight listed config columns, and no lifecycle column', () => {
+  it('inherits exactly the twenty-nine listed config columns, and no lifecycle column', () => {
     // The list is what a retry copies from its parent. A LIFECYCLE column
     // landing in it would carry the parent's run onto a campaign that has never
     // dialled — a terminal status, a start time, or a stale auto-pause record on
     // a draft. `campaign-retry-repository.test.ts` asserts they are absent from
     // the INSERT; this asserts they are absent from the SOURCE of that list.
-    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(28);
+    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(29);
+    // The abandonment grace (0075, AG4): the child's calls are judged as the parent's, as its ceiling is.
+    expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('abandonment_ceiling_pct');
+    expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('abandonment_grace_ms');
     expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('telephony_credential_id');
     // Inbound calls (0024): the retry's customers are the parent's, so is their sticky routing.
     expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('inbound_sticky_enabled');

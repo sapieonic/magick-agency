@@ -121,6 +121,7 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   phone_display: 'how the number is shown',
   daily_target_calls: 'the daily target',
   abandonment_ceiling_pct: 'the abandonment limit',
+  abandonment_grace_ms: 'the time for the audio to connect',
   assignment_mode: 'the assignment mode',
   on_unstaff: 'what happens when an agent is taken off',
   callback_owner_grace_minutes: 'how long a callback waits for its agent',
@@ -287,7 +288,12 @@ export function withSectionFrom(target: TemplateForm, source: TemplateForm, key:
     case 'safety':
       return {
         ...target,
-        config: { ...target.config, abandonmentCeilingPct: c.abandonmentCeilingPct, abandonmentCeilingStoredPct: c.abandonmentCeilingStoredPct },
+        config: {
+          ...target.config,
+          abandonmentCeilingPct: c.abandonmentCeilingPct,
+          abandonmentCeilingStoredPct: c.abandonmentCeilingStoredPct,
+          abandonmentGraceMs: c.abandonmentGraceMs,
+        },
       };
     case 'assignment':
       return { ...target, config: { ...target.config, assignment: { ...c.assignment } } };

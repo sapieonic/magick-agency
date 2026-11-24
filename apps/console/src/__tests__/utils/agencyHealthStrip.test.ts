@@ -87,6 +87,22 @@ describe('sortStallCodes', () => {
   });
 });
 
+describe('stallCopy — the abandonment guardrail’s pause', () => {
+  const pause = (measured: number): AgencyStall => ({
+    code: 'auto_paused_abandonment', measured_pct: measured, ceiling_pct: 3, paused_at: '2026-11-23T05:33:00.000Z',
+  });
+
+  it('says it as the Resume warning and the header line do: "the dialler", "the 3% limit"', () => {
+    const copy = stallCopy(pause(4.24), at);
+    expect(copy.headline).toBe('Paused automatically — abandonment reached 4.2%, over the 3% limit.');
+    expect(copy.advice).toBe('Get more agents on shift before resuming, or the dialler will pause it again.');
+  });
+
+  it('never says a rate over the limit as the limit itself', () => {
+    expect(stallCopy(pause(3.03), at).headline).toBe('Paused automatically — abandonment reached 3.03%, over the 3% limit.');
+  });
+});
+
 describe('stallCopy — the carrier-account diagnoses', () => {
   const VENDOR = /plivo|voicelink|vobiz/i;
 

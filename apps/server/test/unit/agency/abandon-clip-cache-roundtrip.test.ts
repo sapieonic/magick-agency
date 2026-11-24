@@ -301,7 +301,7 @@ function makeCmd(campaign: any = CAMPAIGN): DialCommand {
   return {
     attemptId: 'att-1', campaignId: 'camp-1', contactId: 'contact-1',
     sessionId: 's1', ownerReplica: 'r1', tenantId: 't1', accountId: 'a1',
-    callerId: '+14155550100', attemptNumber: 1,
+    callerId: '+14155550100', attemptNumber: 1, bridgeGraceMs: 3000,
     campaign,
     contact: { id: 'contact-1', phone_e164: '+919876543210', context: {}, attempt_count: 0 } as any,
   };

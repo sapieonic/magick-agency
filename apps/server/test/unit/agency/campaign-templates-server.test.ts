@@ -125,6 +125,11 @@ describe('the template routes\' body checks (CT4)', () => {
     const issues = sectionConfigIssues({ safety: { abandonment_ceiling_pct: 0 }, hours: { calling_window_start: '20:00:00' } });
     expect(issues?.sections).toEqual(['hours', 'safety']);
     expect(Object.keys(issues!.details).sort()).toEqual(['abandonment_ceiling_pct', 'calling_window_end']);
+    // A template's grace is held to the campaign's rule (AG4): whole seconds 1–5 only.
+    expect(sectionConfigIssues({ safety: { abandonment_ceiling_pct: 3, abandonment_grace_ms: 4000 } })).toBeNull();
+    const grace = sectionConfigIssues({ safety: { abandonment_ceiling_pct: 3, abandonment_grace_ms: 2500 } });
+    expect(grace?.sections).toEqual(['safety']);
+    expect(Object.keys(grace!.details)).toEqual(['abandonment_grace_ms']);
   });
 });
 
@@ -133,6 +138,8 @@ describe('the apply\'s body and record (CT16)', () => {
     const config = filled({ wrapup: { wrapup_seconds: 90 } }).config;
     expect(applyPatchBody(config, ['wrapup', 'safety'])).toEqual({
       wrapup_seconds: 90, wrapup_auto_return: true, allow_wrapup_redial: false, abandonment_ceiling_pct: 3,
+      // The safety section's second field (AG4), its built-in 3 s.
+      abandonment_grace_ms: 3000,
     });
   });
 

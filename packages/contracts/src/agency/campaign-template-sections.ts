@@ -34,7 +34,8 @@ export const AGENCY_CAMPAIGN_TEMPLATE_SECTIONS = {
   // `analysis_profile_id` is an account's thing: an organisation template holds `record_calls` only (CT5).
   recording: ['record_calls', 'analysis_profile_id'],
   agent_screen: ['agent_script', 'phone_display', 'daily_target_calls'],
-  safety: ['abandonment_ceiling_pct'],
+  // The abandonment limit and the grace that decides which calls count against it (AG4).
+  safety: ['abandonment_ceiling_pct', 'abandonment_grace_ms'],
   // Only where contact assignment is on (`AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS`).
   assignment: [
     'assignment_mode',

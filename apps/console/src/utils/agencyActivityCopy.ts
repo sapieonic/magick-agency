@@ -10,6 +10,7 @@ import { AGENCY_CALL_ORIGINS, type AgencyCallOrigin, type AgencyListenEndReason 
 import { durationWords } from './format/duration';
 import { shortName } from './listen/listenCopy';
 import { PHONE_DISPLAY_LABELS } from './agency/stationSettings';
+import { graceSecondsText } from './agency/abandonmentGrace';
 import { liveCallPagePath } from './listen/liveCallsTable';
 
 /**
@@ -176,6 +177,7 @@ export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
   analysis_profile_id: 'analysis profile',
   abandon_announcement_id: 'abandon announcement',
   abandonment_ceiling_pct: 'abandonment ceiling',
+  abandonment_grace_ms: 'time for the audio to connect',
   inbound_sticky_enabled: 'putting callers through to their agent',
   // Agent station (AS6, AS9, BE-8): campaign Settings › What agents see, and Script.
   daily_target_calls: 'daily target',
@@ -222,6 +224,11 @@ function configChangeValues(field: string, change: ConfigFieldChange): string {
   if (field === 'telephony_credential_id') {
     return `${carrierAccountValue(change.from, change.from_label, 'from_label' in change)} → `
       + carrierAccountValue(change.to, change.to_label, 'to_label' in change);
+  }
+  if (field === 'abandonment_grace_ms') {
+    // Stored in ms; said in seconds, as the setting reads (`3 seconds → 5 seconds`).
+    const words = (v: unknown) => (typeof v === 'number' ? graceSecondsText(v) : configValue(v));
+    return `${words(change.from)} → ${words(change.to)}`;
   }
   if (field === 'phone_display') {
     // A value this console does not know is spelled out rather than dropped (an audit row hides nothing).

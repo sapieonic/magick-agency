@@ -54,6 +54,7 @@ function Harness({
 }
 
 const slider = () => screen.getByRole('slider', { name: 'Abandonment limit' });
+const graceName = 'Count a call as abandoned if the agent’s audio connects more than seconds after the customer answers.';
 const input = () => screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement;
 const stateValue = () => screen.getByTestId('state-ceiling').textContent;
 const lineLeft = () => (screen.getByTestId('abandonment-meter-ceiling') as HTMLElement).style.left;
@@ -423,5 +424,61 @@ describe('the read-only meter', () => {
     expect(screen.getByTestId('abandonment-meter-value').getAttribute('data-align')).toBe('end');
     rerender(<AbandonmentMeter ceilingPct={3} />);
     expect(screen.getByTestId('abandonment-meter-value').getAttribute('data-align')).toBe('center');
+  });
+});
+
+describe('the abandonment grace beside the limit (AG2)', () => {
+  /** Mirrors the state's grace, so a test sees what a save would send. */
+  function GraceHarness({ campaign, readOnly, fieldErrors }: {
+    campaign?: Partial<AgencyCampaign>; readOnly?: boolean; fieldErrors?: Record<string, string>;
+  }) {
+    const [state, setState] = useState<CampaignConfigState>(() =>
+      configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft', ...campaign }),
+    );
+    return (
+      <>
+        <CampaignBehaviourSection
+          state={state}
+          onChange={setState}
+          fieldErrors={fieldErrors ?? validateConfig(state)}
+          layout="plain"
+          include={['ceiling']}
+          readOnly={readOnly}
+        />
+        <output data-testid="state-grace">{String(state.abandonmentGraceMs)}</output>
+      </>
+    );
+  }
+  const select = () => screen.getByRole('combobox', { name: graceName }) as HTMLSelectElement;
+
+  it('is named by its sentence, offers 1–5 seconds, and starts at 3', () => {
+    render(<GraceHarness />);
+    expect(select().value).toBe('3');
+    expect([...select().options].map((o) => o.textContent)).toEqual(['1', '2', '3', '4', '5']);
+    // Described by the hint, which says the default and what a shorter time does.
+    const hint = screen.getByTestId('abandonment-grace-hint');
+    expect(select().getAttribute('aria-describedby')).toContain(hint.id);
+    expect(hint.textContent).toContain('The default is 3 seconds.');
+    expect(hint.textContent).toContain('a shorter time counts more calls as abandoned');
+  });
+
+  it('a choice reaches the state in ms, and the sentence follows it', () => {
+    render(<GraceHarness campaign={{ abandonment_grace_ms: 5000 }} />);
+    expect(select().value).toBe('5');
+    fireEvent.change(select(), { target: { value: '1' } });
+    expect(screen.getByTestId('state-grace').textContent).toBe('1000');
+    expect(screen.getByText('second after the customer answers.')).toBeTruthy();
+  });
+
+  it('is disabled for a user who cannot write campaigns', () => {
+    render(<GraceHarness readOnly />);
+    expect(select().disabled).toBe(true);
+  });
+
+  it('shows the server\'s refusal under the select and points the select at it', () => {
+    render(<GraceHarness fieldErrors={{ abandonment_grace_ms: 'abandonment_grace_ms must be a whole number of seconds from 1 to 5' }} />);
+    expect(select().getAttribute('aria-invalid')).toBe('true');
+    const ids = select().getAttribute('aria-describedby')!.split(' ');
+    expect(ids.map((id) => document.getElementById(id)?.textContent ?? '').join(' ')).toContain('whole number of seconds');
   });
 });

@@ -126,6 +126,8 @@ test('release-please and grafana checks run on their inputs only', () => {
   // The stray-instrument scan reads every package's src, not only observability's.
   assert.equal(scope('packages/db/src/pool.ts').grafana, true);
   assert.equal(scope('packages/db/test/pool.test.ts').grafana, false);
+  // validate-dashboard.test.mjs holds the Answer → Audio Connected panel to the abandonment grace.
+  assert.equal(scope('packages/domain/src/abandonment-predicate.ts').grafana, true);
   assert.equal(scope('apps/console/src/x.ts').grafana, false);
 });
 

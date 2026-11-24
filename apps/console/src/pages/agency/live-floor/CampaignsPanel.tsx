@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Pause, Play, Send, TriangleAlert } from 'lucide-react';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
@@ -22,7 +23,9 @@ const whenShort = (iso: string) => formatTimeOrDate(iso, new Date());
  * and Pause or Resume. Every reader of Live floor holds `agency.supervise`, the campaign header's
  * gate for the lifecycle buttons (`canControl`), so the buttons need no other check. A card's
  * action is the header's own (`useCampaignLifecycle`: the click lock, the re-read before Resume,
- * the refusals and their toasts); Pause and Resume ask for no confirmation there, so none here.
+ * the refusals and their toasts, and the warning before resuming a campaign the abandonment
+ * guardrail paused or one over its ceiling, AW1–AW3); Pause asks for no confirmation there, so
+ * none here.
  * The board is read again after a change, and at once when the card's re-read of the campaign
  * (before Resume, after a 409) finds a status other than the board's. `willPay` is each promise-recording campaign's
  * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay". A
@@ -76,7 +79,12 @@ function CampaignCard({ card, onChanged, willPay }: {
 }) {
   const { tenantId, accountId } = useTenant();
   const { campaign } = card;
-  // The status the board last said: the hook reads it at click time.
+  /*
+    The status the board last said: the hook reads it at click time. The board carries no pause
+    reason (its `status_changed.automatic` does not tell the guardrail from the carrier account),
+    so when the re-read below fails the hook cannot know why the campaign is paused, and Resume
+    asks anyway (`unchecked`, AW1) rather than resume a guardrail pause unasked.
+  */
   const campaignRef = useRef<Pick<AgencyCampaign, 'status'>>({ status: campaign.status });
   campaignRef.current = { status: campaign.status };
   /*
@@ -159,7 +167,12 @@ function CampaignCard({ card, onChanged, willPay }: {
       >
         <i style={{ width: `${Math.min(Math.max(card.list.percent ?? 0, 0), 100)}%` }} />
       </div>
-      {lifecycle.confirmDialog}
+      {/*
+        On <body>, not in the card: the card sits in the pane's scroll box, whose fade
+        (`mask-image`) would mask a fixed overlay drawn inside it and hold it in its stacking
+        context, under the console's top bar.
+      */}
+      {lifecycle.confirmDialog && createPortal(lifecycle.confirmDialog, document.body)}
     </li>
   );
 }

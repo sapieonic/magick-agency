@@ -29,6 +29,7 @@ import type {
   AgencyOnUnstaff,
 } from '@magick-agency/contracts/agency';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../../agency/campaign-thresholds.js';
+import { DEFAULT_ABANDONMENT_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import { CAMPAIGN_INSERT_COLUMNS_SQL } from './sql-fragments.js';
 import { iso } from './projections.js';
 import { createRetryCampaign, previewRetry } from './campaign-retry.js';
@@ -79,6 +80,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // a DEFAULT, so "unset it" means "put it back to the default", which the
   // caller expresses by sending the default rather than by sending null.
   'abandonment_ceiling_pct',
+  // The abandonment grace (0075, AG2), patchable at any status like the ceiling and NOT nullable
+  // the same way. A change reaches new attempts only: each is stamped with it as it is created.
+  'abandonment_grace_ms',
   // The abandon announcement. Patchable, and `null` legitimately clears it back to
   // "hang up without an apology" — so this key must survive `v === undefined`
   // filtering in `update()`, which it does, and must not be defaulted anywhere.
@@ -161,6 +165,8 @@ export class AgencyCampaignRepository {
     record_calls?: boolean; analysis_profile_id?: string | null; created_by?: string | null;
     abandon_announcement_id?: string | null;
     abandonment_ceiling_pct?: number;
+    /** The abandonment grace in ms (0075). Omitted ⇒ `DEFAULT_ABANDONMENT_GRACE_MS`, the column DEFAULT. */
+    abandonment_grace_ms?: number;
     assignment_mode?: AgencyAssignmentMode; on_unstaff?: AgencyOnUnstaff;
     callback_owner_grace_minutes?: number; callback_fallback?: AgencyCallbackFallback;
     allow_agent_retry?: boolean; agent_retry_rounds?: number; agent_retry_cooldown_minutes?: number;
@@ -205,8 +211,8 @@ export class AgencyCampaignRepository {
                $19, $20, $21::boolean,
                $22::varchar,$23::varchar,$24::integer,
                $25::varchar,$26::boolean,$27::smallint,
-               $28::integer,$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),$31::boolean,
-               $32::integer,$33::varchar,COALESCE($34::jsonb,'{}'::jsonb),$35::jsonb)
+               $28::integer,$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),$31::boolean,$32::integer,
+               $33::integer,$34::varchar,COALESCE($35::jsonb,'{}'::jsonb),$36::jsonb)
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -246,6 +252,8 @@ export class AgencyCampaignRepository {
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
         // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
         input.inbound_sticky_enabled ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.inbound_sticky_enabled,
+        // The abandonment grace (0075). Omitted ⇒ the column DEFAULT, from the one constant.
+        input.abandonment_grace_ms ?? DEFAULT_ABANDONMENT_GRACE_MS,
         // The agent station's settings (0056): outside the shared column list, so the retry
         // create's positions do not move (it copies the parent's itself). The target NULL (none),
         // the number display `'full'` and the script `{}` (none) when omitted: the column DEFAULTs.

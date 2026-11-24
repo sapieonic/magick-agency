@@ -30,7 +30,7 @@ const {
   createChaosWorld, attempts, abandonedCount, assertAbandonmentPredicatesAgree,
   metricValue, SCRIPTED_ANSWER_LEAD_MS,
 } = await import('./harness.js');
-const { ABANDONMENT_BRIDGE_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
+const { DEFAULT_ABANDONMENT_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
 const { refreshAbandonmentWindow } = await import('../../../../src/agency/abandonment-metrics.js');
 
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
@@ -153,7 +153,8 @@ describe('the Prometheus counter and the SQL table agree', () => {
       // upper bound is `N`, because a bridged call must NOT be abandoned and a
       // delta past the grace would make this row satisfy the predicate.
       expect(deltaMs).toBeGreaterThanOrEqual(SCRIPTED_ANSWER_LEAD_MS);
-      expect(deltaMs).toBeLessThan(ABANDONMENT_BRIDGE_GRACE_MS);
+      expect(row!.bridge_grace_ms).toBe(DEFAULT_ABANDONMENT_GRACE_MS);
+      expect(deltaMs).toBeLessThan(row!.bridge_grace_ms);
 
       // Which is the consumed form of the claim: the row is compliant, both halves
       // agree it is, and the counter never fired.

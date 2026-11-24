@@ -10,6 +10,7 @@ import { ScriptEditor } from '../../../pages/campaigns/agency/ScriptEditor';
 import { RetryPolicyTable } from '../../../pages/campaigns/agency/RetryPolicyTable';
 import { WrapupFields } from '../../../pages/campaigns/agency/WrapupFields';
 import { AbandonmentCeilingFields } from '../../../pages/campaigns/agency/AbandonmentCeilingFields';
+import { AbandonmentGraceField } from '../../../pages/campaigns/agency/AbandonmentGraceField';
 import { AssignmentFields } from '../../../pages/campaigns/agency/AssignmentFields';
 import { InboundStickyField } from '../../../pages/campaigns/agency/InboundStickyField';
 import { useConfigFieldErrors, type ConfigFieldErrors } from '../../../pages/campaigns/agency/configFieldErrors';
@@ -186,12 +187,19 @@ export function TemplateSectionEditors({
       );
     case 'safety':
       return (
-        <AbandonmentCeilingFields
-          ceilingPct={config.abandonmentCeilingPct}
-          storedPct={config.abandonmentCeilingStoredPct}
-          onChange={(abandonmentCeilingPct) => setConfig({ ...config, abandonmentCeilingPct })}
-          errors={errors}
-        />
+        <>
+          <AbandonmentCeilingFields
+            ceilingPct={config.abandonmentCeilingPct}
+            storedPct={config.abandonmentCeilingStoredPct}
+            onChange={(abandonmentCeilingPct) => setConfig({ ...config, abandonmentCeilingPct })}
+            errors={errors}
+          />
+          <AbandonmentGraceField
+            graceMs={config.abandonmentGraceMs}
+            onChange={(abandonmentGraceMs) => setConfig({ ...config, abandonmentGraceMs })}
+            errors={errors}
+          />
+        </>
       );
     case 'assignment':
       return (

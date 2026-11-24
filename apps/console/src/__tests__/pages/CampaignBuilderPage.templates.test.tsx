@@ -403,7 +403,7 @@ describe('New campaign starts from a template (CS17)', () => {
     expect(screen.queryByTestId(/^sourced-/)).toBeNull();
     await save();
     expect(Object.keys(createBody()).sort()).toEqual(
-      ['abandonment_ceiling_pct', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider'],
+      ['abandonment_ceiling_pct', 'abandonment_grace_ms', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider'],
     );
   });
 
@@ -625,7 +625,7 @@ describe('the draft a roster upload makes (CTC1)', () => {
     fireEvent.change(startInput(), { target: { value: '20:00' } });
     await addCustomers();
     expect(Object.keys(createBody()).sort()).toEqual([
-      'abandonment_ceiling_pct', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider', 'template_id',
+      'abandonment_ceiling_pct', 'abandonment_grace_ms', 'caller_ids', 'name', 'telephony_credential_id', 'telephony_provider', 'template_id',
     ]);
     expect(createBody().template_id).toBe('acc-1');
     goToStep('Agents & timing');

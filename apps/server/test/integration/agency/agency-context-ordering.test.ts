@@ -253,6 +253,7 @@ async function setup(mode: AnswerMode, delayMs = 0, context?: Record<string, unk
     accountId: campaign.account_id,
     callerId: '+919000000001',
     attemptNumber: 1,
+    bridgeGraceMs: attempt!.bridge_grace_ms,
     campaign,
     contact,
   };
@@ -382,8 +383,10 @@ describe('agency context-panel ordering (integration)', () => {
   });
 
   it('T-P2d: a bridged attempt is never counted as abandoned by the predicate', async () => {
-    // The compliance-facing check, asserted against the exact query the
-    // abandonment metric and auto-pause guardrail use. It PASSES today, and it
+    // The compliance-facing check, asserted against the arms of the query the
+    // abandonment metric and auto-pause guardrail use (with their grace, not a
+    // copy of its value), without the terminal-state filter: the attempt is still
+    // live here, and that filter alone would make the count 0. It PASSES today, and it
     // is here to bound T-P2c's blast radius: the state clobber does not reach
     // this number, because `setState` COALESCEs the timestamps. If a future
     // "fix" for T-P2c starts nulling timestamps, this is what catches it.
@@ -396,7 +399,7 @@ describe('agency context-panel ordering (integration)', () => {
         WHERE campaign_id = $1
           AND answered_at IS NOT NULL
           AND (outcome = 'abandoned' OR bridged_at IS NULL
-               OR bridged_at - answered_at > interval '1 second')`,
+               OR bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond')`,
       [cmd.campaignId],
     );
     expect(
@@ -485,7 +488,7 @@ describe('agency context-panel ordering (integration)', () => {
       attemptId: attempt!.id, campaignId: campaign.id, contactId: contact.id,
       sessionId: session.id, ownerReplica: 'replica-test',
       tenantId: campaign.tenant_id, accountId: campaign.account_id,
-      callerId: '+919000000001', attemptNumber: 2, campaign, contact,
+      callerId: '+919000000001', attemptNumber: 2, bridgeGraceMs: attempt!.bridge_grace_ms, campaign, contact,
     } as never);
 
     const reserved = socket.frames.find((f) => f.event === 'reserved');

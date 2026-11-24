@@ -29,6 +29,11 @@ import {
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
 import { AGENCY_DAILY_TARGET_CALLS_MAX, AGENCY_DAILY_TARGET_CALLS_MIN } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { autoDispositionRefusal, isAutoDispositionOutcome } from '@magick-agency/domain/auto-disposition';
+import {
+  MAX_ABANDONMENT_GRACE_MS,
+  MIN_ABANDONMENT_GRACE_MS,
+  isAllowedAbandonmentGraceMs,
+} from '@magick-agency/domain/abandonment-predicate';
 import { contextDisplayIssues } from './customer-facts.js';
 import { agentScriptIssues } from './agent-script.js';
 import { stationTileIssues } from './station-tiles.js';
@@ -816,6 +821,9 @@ export function validateAgencyCampaignConfig(
   if (record['abandonment_ceiling_pct'] !== undefined) {
     issues.push(...validateAbandonmentCeiling(record['abandonment_ceiling_pct']));
   }
+  if (record['abandonment_grace_ms'] !== undefined) {
+    issues.push(...validateAbandonmentGrace(record['abandonment_grace_ms']));
+  }
   if (record['break_reasons'] !== undefined) {
     issues.push(...validateBreakReasons(record['break_reasons']));
   }
@@ -1001,6 +1009,25 @@ function validateAbandonmentCeiling(value: unknown): CampaignConfigIssue[] {
     return [{ field, message: `${field} must be greater than 0 and at most 100.` }];
   }
   return [];
+}
+
+/**
+ * The per-campaign abandonment grace (AG2), in milliseconds.
+ *
+ * Whole seconds from 1 to 5 and nothing else, as `ck_agency_campaign_abandonment_grace` (0075)
+ * allows: the five values are `ALLOWED_ABANDONMENT_GRACE_MS` in the domain leaf the predicate
+ * lives in, read here rather than restated. Whole seconds because each is a bucket boundary of
+ * `agency_answer_to_bridge_seconds`, so the share of calls past a campaign's grace is exact. Not
+ * nullable, like the ceiling: "back to the default" is sending 3000. The message speaks the
+ * wire's unit (ms), since only an API caller can send anything else; the console offers seconds.
+ */
+export function validateAbandonmentGrace(value: unknown): CampaignConfigIssue[] {
+  const field = 'abandonment_grace_ms';
+  if (isAllowedAbandonmentGraceMs(value)) return [];
+  return [{
+    field,
+    message: `${field} must be a whole number of seconds from ${MIN_ABANDONMENT_GRACE_MS / 1000} to ${MAX_ABANDONMENT_GRACE_MS / 1000}, in milliseconds (${MIN_ABANDONMENT_GRACE_MS}, ${MIN_ABANDONMENT_GRACE_MS + 1000}, … ${MAX_ABANDONMENT_GRACE_MS}).`,
+  }];
 }
 
 /** `{ field: message }`, the shape the internal handler's routes already send as `details`. */

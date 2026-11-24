@@ -517,6 +517,14 @@ type AgencyCampaignStatsShapedField =
   | 'concurrency_in_use'
   | 'abandonment_ceiling_pct';
 
+/**
+ * Why a campaign is paused (`agency_campaigns.pause_reason`): `supervisor`, a person pressed
+ * Pause; `abandonment_ceiling`, the abandonment guardrail paused it; otherwise one of
+ * `CARRIER_ACCOUNT_PAUSE_REASONS`, its carrier account cannot dial. The column's CHECK is the
+ * authority; a console reads an unknown value as "not the guardrail's".
+ */
+export type AgencyCampaignPauseReason = 'supervisor' | 'abandonment_ceiling' | Core.CarrierAccountPauseReason;
+
 export interface AgencyCampaign {
   id: string;
   name: string;
@@ -622,6 +630,17 @@ export interface AgencyCampaign {
    * PATCH at any status; a PATCH that changes it is recorded in the campaign's activity.
    */
   abandonment_ceiling_pct?: number;
+  /**
+   * The abandonment grace, in milliseconds (decisions AG1–AG5): a call whose agent's audio
+   * connects more than this long after the carrier's answer counts as abandoned. Whole seconds
+   * from 1000 to 5000; the column is `NOT NULL DEFAULT 3000` with a CHECK of exactly those five
+   * values (0075). Settable on create and by PATCH at any status, inherited by a retry campaign,
+   * and held by a template's `safety` section beside the ceiling. A change applies to calls
+   * placed from then on: each attempt carries the grace it is judged by (stamped when it is
+   * created), so the figures of calls already made never change. Anything else is a 400
+   * (`details.abandonment_grace_ms`).
+   */
+  abandonment_grace_ms?: number;
   /** Contact assignment (0009): how pacing reads each contact's owner. Changed only while draft or paused. */
   assignment_mode?: AgencyAssignmentMode;
   /** When an agent is unstaffed: their open contacts return to the pool (default) or stay theirs. */
@@ -745,6 +764,27 @@ export interface AgencyCampaign {
    * blank and never as an unattributed dash.
    */
   last_transition_by?: AgencyCampaignActor | null;
+
+  // ── Why it is paused ───────────────────────────────────────────────────────
+  //
+  // Columns of the row that `formatAgencyCampaignResponse` has always spread onto the wire,
+  // typed here for the console's Resume warning (decisions AW1–AW3). Every transition writes
+  // all three: a pause sets them, any other move clears them (`transitionStatus`), so on a
+  // campaign that is not `paused` each is null.
+
+  /**
+   * Why the campaign is paused ({@link AgencyCampaignPauseReason}), or null when it is not.
+   * `abandonment_ceiling` is the guardrail's own pause, which `pause_abandonment_rate_pct` explains.
+   */
+  pause_reason?: AgencyCampaignPauseReason | null;
+  /** ISO-8601. When the current pause began; null when not paused. */
+  paused_at?: string | null;
+  /**
+   * The rolling 24-hour abandonment rate, as a percentage, as the guardrail measured it when it
+   * paused the campaign, frozen: it does not move while the campaign stays paused. Null for any
+   * other pause and when not paused.
+   */
+  pause_abandonment_rate_pct?: number | null;
 
   // ── Retry campaigns ────────────────────────────────────
   //

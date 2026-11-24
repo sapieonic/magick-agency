@@ -270,6 +270,9 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       // Omitted ⇒ the repository applies
       // `DEFAULT_ABANDONMENT_CEILING_PCT`, which is also the column's DEFAULT.
       abandonment_ceiling_pct: body?.abandonment_ceiling_pct as number | undefined,
+      // The abandonment grace (0075, AG2), checked by `configRejected` (whole seconds 1–5, in ms).
+      // Omitted ⇒ `DEFAULT_ABANDONMENT_GRACE_MS`, the column's DEFAULT.
+      abandonment_grace_ms: body?.abandonment_grace_ms as number | undefined,
       // The originator: the signed-in creator's user id when the public layer
       // creates it (IN8), any other caller's label verbatim, NULL with none.
       created_by: getOriginator(request) ?? null,

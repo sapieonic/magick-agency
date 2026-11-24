@@ -12,6 +12,7 @@ import type { AgencyCampaignDetail } from './useAgencyCampaignDetail';
 import { useCampaignLifecycle } from './useCampaignLifecycle';
 import { useCampaignArchive } from './useCampaignArchive';
 import type { AgencyCampaignStats } from '../../../types/agency-campaign';
+import { abandonmentPauseLine } from '../../../utils/agency/resumeWarning';
 
 /**
  * What the chrome reads off the screen's campaign: `useAgencyCampaignDetail` as it is (the
@@ -28,6 +29,12 @@ export type CampaignChromeSource = Pick<
    * reads none (Settings): no health strip and no lines in use, the header alone.
    */
   stats?: AgencyCampaignStats | null;
+  /**
+   * Why the last stats read failed (`useAgencyCampaignDetail`'s `statsError`), null when it did
+   * not: `stats` is null both before the first read and after a failed one, and only the second
+   * leaves the header to say why the guardrail paused the campaign.
+   */
+  statsError?: string | null;
   /** The screen polls the campaign: said beside the header's "Updated" stamp. */
   shouldPoll?: boolean;
 };
@@ -135,6 +142,21 @@ export function useCampaignChrome({
   const openRetry = () => setRetryOpenFor(campaignId ?? null);
   const retryOpen = retryOpenFor !== null && retryOpenFor === campaignId;
 
+  /*
+    Why the guardrail paused it, said once per screen (decision AW1): by the health strip's
+    diagnosis on a screen that reads stats, in the header on one that reads none (Settings) and
+    after a failed stats read (the strip then has no diagnosis). A screen whose stats have not
+    answered yet waits for them rather than show the line and take it away a moment later; one
+    whose stats carry no such stall (an older server) gets the line.
+  */
+  const headerSaysAbandonmentPause = !readsStats
+    || (stats !== null
+      ? stats.stall?.code !== 'auto_paused_abandonment'
+      : (detail.statsError ?? null) !== null);
+  const abandonmentPauseNote = campaign && headerSaysAbandonmentPause
+    ? abandonmentPauseLine(campaign, new Date())
+    : null;
+
   const header = campaign ? (
     <CampaignDetailHeader
       campaign={campaign}
@@ -153,6 +175,7 @@ export function useCampaignChrome({
       onRefresh={onRefresh ?? (() => void load())}
       historyCurrent={active === 'activity'}
       archive={canAddContacts ? archive : undefined}
+      abandonmentPauseNote={abandonmentPauseNote}
     />
   ) : null;
 

@@ -122,7 +122,7 @@ export type AgencyAttemptOutcome =
  *   WARN line's `announced` field keeps them apart.
  * - `bind_failed` — the socket was live and the bridge refused the bind. **The
  *   one that means roll the flag back**, as against slow the pacing down.
- * - `bridge_late` — it DID bridge, but outside `ABANDONMENT_BRIDGE_GRACE_MS`. A
+ * - `bridge_late` — it DID bridge, but outside the attempt's abandonment grace (`bridge_grace_ms`). A
  *   conversation happened; it was merely late.
  * - `unattributed` — abandoned by the predicate with no arm having observed a
  *   cause. **The honest residual, and it exists because the alternative caused a

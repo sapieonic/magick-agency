@@ -46,7 +46,10 @@ import {
   enforceAbandonmentCeiling,
 } from '../../../src/agency/abandonment-guardrail.js';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../../src/agency/campaign-config.js';
-import type { AgencyAbandonmentWindowRow } from '@magick-agency/domain/abandonment-predicate';
+import {
+  abandonmentBreachesCeiling,
+  type AgencyAbandonmentWindowRow,
+} from '@magick-agency/domain/abandonment-predicate';
 
 function row(patch: Partial<AgencyAbandonmentWindowRow> = {}): AgencyAbandonmentWindowRow {
   return {
@@ -340,6 +343,29 @@ describe('refusal 4 — one abandoned call in too coarse a sample', () => {
     expect(
       breachedRows([row({ answered: 100, abandoned: 99, ceiling_pct: Number.POSITIVE_INFINITY })]),
     ).toEqual([]);
+  });
+});
+
+describe('the console reads the same rule (decisions AW1, AW2)', () => {
+  /*
+    The console's Resume warning says a resumed campaign "will be paused again within about a
+    minute" only when `abandonmentBreachesCeiling` (domain) says the guardrail would pause it. That
+    promise is true only while the domain rule and `breachedRows` agree on every running row, so
+    they are swept together here: ceilings across the console's range and beyond, samples small
+    enough to hit refusal 4 and large enough to clear it.
+  */
+  it('agrees with breachedRows on every running row of the sweep', () => {
+    for (const ceiling of [0.5, 1, 2.5, 3, 3.3, 7.25, 10, 25]) {
+      for (let answered = 0; answered <= 120; answered += 1) {
+        for (const abandoned of [0, 1, 2, 3, 5, Math.floor(answered / 10)]) {
+          if (abandoned > answered) continue;
+          const sample = { abandoned, answered };
+          const tag = `${abandoned} of ${answered} at ${ceiling}%`;
+          expect(abandonmentBreachesCeiling(sample, ceiling), tag)
+            .toBe(breachedRows([row({ ...sample, ceiling_pct: ceiling })]).length === 1);
+        }
+      }
+    }
   });
 });
 

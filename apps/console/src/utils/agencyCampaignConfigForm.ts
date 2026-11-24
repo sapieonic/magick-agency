@@ -11,6 +11,7 @@ import { hhmm } from './format/weekdays';
 import { AGENCY_NEW_CAMPAIGN_TIMEZONE, type AgencyDispositionOverride } from '@magick-agency/contracts/agency';
 import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from './agency/abandonmentCeiling';
+import { DEFAULT_ABANDONMENT_GRACE_MS } from './agency/abandonmentGrace';
 import { dispositionLabel } from './agencySpineCopy';
 import {
   type AssignmentConfigState,
@@ -207,6 +208,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   inboundSticky: true,
   abandonmentCeilingPct: DEFAULT_ABANDONMENT_CEILING_PCT,
   abandonmentCeilingStoredPct: null,
+  abandonmentGraceMs: DEFAULT_ABANDONMENT_GRACE_MS,
   assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
   outcomeDispositions: {},
 };
@@ -430,6 +432,8 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     // range"); the settings page re-seeds from each save's response.
     abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
     abandonmentCeilingStoredPct: campaign.abandonment_ceiling_pct ?? null,
+    // Absent on a campaign read from a server that predates the setting: 3 s, the grace it judges by.
+    abandonmentGraceMs: campaign.abandonment_grace_ms ?? EMPTY_CAMPAIGN_CONFIG.abandonmentGraceMs,
     assignment: assignmentFromCampaign(campaign),
     // Absent on a campaign read from a server that predates the setting: maps nothing.
     outcomeDispositions: { ...(campaign.outcome_dispositions ?? {}) },
@@ -750,6 +754,10 @@ export function buildConfigPayload(
     // campaign's activity with its old and new value (`agency_campaign.config_changed`).
     // `abandonmentCeilingStoredPct` is the form's own bookkeeping and is not sent.
     abandonment_ceiling_pct: state.abandonmentCeilingPct,
+    // Sent on every save, as the ceiling is, so the value on screen is the grace the campaign's
+    // next calls are judged by (each new attempt is stamped with it, AG3). A change is written to
+    // the campaign's activity with its old and new value.
+    abandonment_grace_ms: state.abandonmentGraceMs,
     // Sent on every save, whatever the assignment scope: it is not an assignment
     // setting, and the whole map is sent because a PATCH replaces it.
     outcome_dispositions: outcomeDispositionsPayload(state.outcomeDispositions),

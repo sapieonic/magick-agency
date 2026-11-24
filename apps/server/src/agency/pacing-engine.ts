@@ -2390,6 +2390,8 @@ export class PacingEngine {
           accountId: campaign.account_id,
           callerId: attempt.caller_id,
           attemptNumber: attempt.attempt_number,
+          // The grace the INSERT stamped from the campaign (AG3), the row's own value.
+          bridgeGraceMs: attempt.bridge_grace_ms,
           campaign,
           contact,
           clearance: gate.clearance,

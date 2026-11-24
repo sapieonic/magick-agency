@@ -42,10 +42,20 @@ export const s3OperationDurationSeconds = histogram<'operation'>(meter, 's3_oper
 // is exactly how an abandonment metric once went unnoticed returning 0 for
 // months. Do not re-point either side at the other's source.
 
+/**
+ * The compliance denominator. Read it with the first-increment arm, never a plain
+ * `rate()`/`increase()`: a series is born at 1 on each campaign's first answer after each
+ * release (`service_version` is a label too), and those functions drop that first sample
+ * ({@link agencyAbandonedReasonTotal} says why, and why the series are not pre-created at 0).
+ */
 export const agencyAnsweredTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_answered_total', {
   description: 'Agency dialer attempts the carrier reported answered',
 });
 
+/**
+ * The compliance numerator. Read it with the first-increment arm, never a plain
+ * `rate()`/`increase()`, for the same reason as {@link agencyAnsweredTotal}.
+ */
 export const agencyAbandonedTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_abandoned_total', {
   description: 'Agency dialer attempts a customer answered that reached no agent',
 });
@@ -227,8 +237,10 @@ observableGauge<'tenant_id' | 'campaign_id'>(meter, 'agency_abandonment_window_a
 // dashboard queries that one `max by (campaign_id)` for precisely this reason.
 // The distinction to hold on to is per-metric-kind, not per-metric: fleet-wide
 // SQL-derived GAUGES take `max`; per-replica COUNTERS (`agency_answered_total`,
-// `agency_abandoned_total`) take `sum(rate(...))` because their increments are
-// genuinely disjoint. A leader gate would remove the hazard but is deliberately
+// `agency_abandoned_total`) are summed, because their increments are genuinely
+// disjoint: `sum(...)` over the first-increment arm (`rate(x[w]) and x offset w`, or
+// the series born inside the window at its whole value; grafana/README.md, "Counting a
+// sparse counter's first increment"), never a plain `sum(rate(...))`. A leader gate would remove the hazard but is deliberately
 // NOT used — it would make the export go dark whenever leadership moved, and an
 // operator gauge that vanishes during a failover is worse than one with a
 // documented aggregator.
@@ -569,22 +581,27 @@ export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_his
 // attempt.** These series exist so the next pacing decision reads a dashboard
 // instead of re-deriving a model.
 //
-// The four questions they answer, and nothing else:
+// The five questions they answer, and nothing else:
 //
 //  1. Where does seat time actually go?          `agency_attempt_hold_seconds`
 //  2. How long does a dial take to answer?       `agency_answer_latency_seconds`
-//  3. Is the late bind inside its 1s budget?     `agency_bind_latency_seconds`
-//  4. When we abandon, why?                      `agency_abandoned_reason_total`
+//  3. Is the late bind inside its 3s budget?     `agency_bind_latency_seconds`
+//  4. Does the audio connect inside the grace?   `agency_answer_to_bridge_seconds`
+//  5. When we abandon, why?                      `agency_abandoned_reason_total`
 //
 // **All of these are per-replica COUNTERS and HISTOGRAMS, not SQL-derived gauges.**
-// So they aggregate with `sum(rate(...))` / `histogram_quantile(...)` over the
+// So they aggregate with `sum(...)` / `histogram_quantile(...)` over the
 // fleet, NOT with `max` — the opposite of `agency_abandonment_rate_24h` and
 // `agency_live_attempts_current`, which every replica publishes identically. The
 // distinction is already written up at length above; it is repeated here only
 // because these two families now sit next to each other on the same dashboard and
-// the wrong aggregator on either is silent.
+// the wrong aggregator on either is silent. What is summed is a `rate()` on most of
+// them, but `agency_abandoned_reason_total` takes the first-increment arm (its own
+// comment below), and every series here, histograms included, starts afresh at each
+// release (`service_version`), so a plain `rate()` misses each label set's first export
+// after one (grafana/README.md, "Counting a sparse counter's first increment").
 //
-// **The four HISTOGRAMS here carry `tenant_id` but NOT `campaign_id`** (removed
+// **The HISTOGRAMS here carry `tenant_id` but NOT `campaign_id`** (removed
 // 2026-09-29). Each histogram costs `buckets + 3` series per label set — 18 for
 // the hold series — and campaigns are created continuously, so `campaign_id`
 // minted a fresh block of never-expiring series (cumulative OTLP temporality) per
@@ -698,7 +715,8 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
 /**
  * Carrier answer → the agent's station socket attached, under late binding.
  *
- * ⚠️ **The whole budget is `ABANDONMENT_BRIDGE_GRACE_MS` = 1000ms.** Everything
+ * ⚠️ **The whole budget is the attempt's abandonment grace: 3000ms by default
+ * (`DEFAULT_ABANDONMENT_GRACE_MS`), as little as 1000ms on a campaign set to 1 s (AG2).** Everything
  * this measures is time the compliance predicate counts as abandonment, so the
  * buckets are deliberately sub-second and crowd the region that matters: p99 above
  * 150ms is the documented abort criterion for the late-binding rollout, and until
@@ -709,9 +727,55 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
  * attempted".
  */
 export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bind_latency_seconds', {
-  description: 'Seconds from the carrier answer to the agent station socket attaching (budget: 1s)',
+  description: 'Seconds from the carrier answer to the agent station socket attaching (budget: 3s)',
   unit: 's',
   buckets: [0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1, 2],
+});
+
+/**
+ * Carrier answer → the bridge (audio connected both ways): `bridged_at − answered_at`,
+ * the interval the abandonment predicate compares with the attempt's grace (`bridge_grace_ms`:
+ * the campaign's setting when the call was placed, whole seconds 1–5, 3 s by default;
+ * AG1–AG3). Observed where the dialer records `bridged_at` (`onBridged`), from the same two
+ * instants the settle site's `isAbandonedAttempt` reads, so an observation above the
+ * attempt's grace (3 s on a campaign left at the default) is a call the compliance rate
+ * counts as abandoned (`bridge_late`).
+ *
+ * **Why it exists beside {@link agencyBindLatencySeconds}.** The bind (answer → the
+ * agent's socket attached) is our own share of this interval and was under 25 ms on every
+ * call of 23 Nov; the carrier's media stream connecting is the rest, and on VoiceLink it
+ * came 1.06–1.25 s or ~5 s after the answer on ~8% of answered calls, which took the
+ * abandonment rate to ~10%. Nothing measured it: it was rebuilt from log timestamps.
+ *
+ * **Only calls that bridged are observed**: one that never bridged has no value. Those are
+ * the abandonments with any reason but `bridge_late` on `agency_abandoned_reason_total`,
+ * so "the share of bridges over 3 s" here is a share of bridged calls, not of answered ones.
+ *
+ * Labels: `tenant_id`, not `campaign_id` (the series-cost rule at the head of this block),
+ * and `provider`, because the lag is the carrier's. `provider` is the campaign's
+ * `telephony_provider` the dial was placed on, folded by the dialer to the carriers the
+ * code declares (`carrierRingingDeclarations()`) or `other`: the column is free text, and
+ * label values are bounded by source code, never by data.
+ *
+ * Only the pacing dialler's attempts are observed (`onBridged`); the soft phone's and
+ * inbound calls' bridges are not.
+ *
+ * Buckets crowd the 3 s default grace and split the two clusters seen on 23 Nov (~1.1 s,
+ * ~5 s). Every grace a campaign may hold (1, 2, 3, 4 and 5 s, AG2) is a boundary on purpose,
+ * so `le="<grace>"` reads the share over any campaign's grace exactly; the panel draws the
+ * default's (`le="3"`). The server's unit test pins every allowed grace as a boundary, so a
+ * change to the range or the buckets cannot leave one between two buckets, and
+ * `pnpm test:grafana` pins the panel's `le` bucket, threshold and text to the default.
+ *
+ * Each release starts every tenant × provider series afresh (`service_version`), and a
+ * `rate()` misses a new series' first export, so the panel's quantiles miss the first
+ * bridge(s) of each tenant and carrier after a release: small. Its share over the grace
+ * reads a rolling hour with the first-increment arm and misses none.
+ */
+export const agencyAnswerToBridgeSeconds = histogram<'tenant_id' | 'provider'>(meter, 'agency_answer_to_bridge_seconds', {
+  description: 'Seconds from the carrier answer to the bridge (audio connected both ways), for attempts that bridged (grace: 3s)',
+  unit: 's',
+  buckets: [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10],
 });
 
 /**
@@ -752,9 +816,35 @@ export const agencyBindTotal = counter<'tenant_id' | 'campaign_id' | 'result'>(m
  * genuine no-agent-free abandonment are the same increment in the counting series,
  * and they call for opposite responses — roll back, or slow the pacing down.
  *
- * `sum(rate(agency_abandoned_reason_total[5m]))` should track
- * `sum(rate(agency_abandoned_total[5m]))`. A persistent gap means an abandon path
- * that reaches the compliance counter without declaring a reason.
+ * Summed over reasons it should track `agency_abandoned_total`. A persistent gap
+ * means an abandon path that reaches the compliance counter without declaring a
+ * reason — provided both are read with the first-increment arm below, or the gap
+ * is an artefact: plain `rate()` loses one per new series, and this counter has a
+ * series per campaign AND reason where the compliance counter has one per campaign.
+ *
+ * ⚠️ **A plain `rate()` / `increase()` over this, `agency_abandoned_total` or
+ * `agency_answered_total` undercounts by one per new series.** Each series is
+ * born at its first increment with its first sample already 1, and those
+ * functions count growth after their first sample. A series is new for each new
+ * campaign (and reason), and again for every one at each release, since every
+ * series also carries `service_version`. On 23 Nov on Staging
+ * `increase(…[16h])` read 7 abandonments where the counters held 11. The dashboard
+ * adds a series born inside the window at its whole value
+ * (`max_over_time(x[w]) unless x offset w`), and `pnpm test:grafana` holds every
+ * panel over these three to it; grafana/README.md, "Counting a sparse counter's
+ * first increment", has the arm for ad-hoc queries and the stack setting that
+ * would make it unnecessary.
+ *
+ * Pre-creating the series at 0 here (`inc(labels, 0)` when a campaign is first
+ * led) was weighed and NOT done. A zero recorded within the same 60 s export as
+ * the first increment never reaches Grafana (the export carries the sum), and a
+ * campaign's first abandonment often lands inside its first minute of dialling,
+ * so it would narrow the loss rather than end it. It would also mint a series
+ * per campaign for every reason, `no_agent_available` included, which cannot
+ * occur, on a stack at its active-series cap. Holding the first increment back
+ * until a zero has been exported
+ * would delay the compliance numerator in process, which the counter-versus-SQL
+ * cross-checks read.
  */
 export const agencyAbandonedReasonTotal = counter<
   'tenant_id' | 'campaign_id' | 'reason'

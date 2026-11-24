@@ -10,7 +10,11 @@
  * label matcher, label list and `{{legend}}` placeholder must resolve, every
  * query must survive the 60s OTLP export interval, and every query must be
  * scoped to agency's deployments only: every selector must carry
- * `$service_name`, whose All value is agency's regex.
+ * `$service_name`, whose All value is agency's regex. A rate()/increase() over
+ * the compliance and abandonment-cause counters must count a series' first
+ * increment (`FIRST_INCREMENT_COUNTERS`), in the one structure that does, and the
+ * Answer → Audio Connected panel must draw the grace
+ * `packages/domain/src/abandonment-predicate.ts` applies.
  *
  * Product names in titles and descriptions (B17) are the repo-wide branding
  * guard's job (`apps/server/test/unit/branding/no-external-references.test.ts`
@@ -24,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   root, loadDeclarations, scraperProblems, stripComments, RETIRED_SERIES,
-  parsePromQL, promqlFacts, outputLabels, labelsInScope,
+  parsePromQL, promqlFacts, outputLabels, labelsInScope, walkPromQL,
 } from './metric-declarations.mjs';
 
 const dashboardPath = join(root, 'grafana/dashboards/magick-agency-overview.json');
@@ -35,7 +39,7 @@ const IMPLICIT_LABELS = new Set([
 ]);
 
 const BUILTIN_VARIABLES = new Set([
-  '__rate_interval', '__range', '__range_s', '__range_ms', '__interval', '__interval_ms', '__all',
+  '__rate_interval', '__rate_interval_ms', '__range', '__range_s', '__range_ms', '__interval', '__interval_ms', '__all',
   '__from', '__to', '__dashboard', '__org', '__user',
 ]);
 
@@ -132,6 +136,142 @@ function ownLabels(sel, { declarations, series }) {
 }
 
 const hasMatcher = (sel, m) => sel.matchers.some((x) => x.label === m.label && x.op === m.op && x.value === m.value);
+
+/**
+ * Counters whose every increment is a number someone reconciles against SQL: the compliance
+ * numerator and denominator and the abandonment causes. A series is born at its first increment,
+ * already at 1 (a new campaign, and every label set again on each release, which changes
+ * `service_version`), and `rate()` / `increase()` take that first sample as the baseline: the
+ * increment is lost (23 Nov on Staging: `agency_abandoned_reason_total` read 7 of 11, one lost
+ * per new series). Few increments per series, so the loss is a large share of these. A panel
+ * over one of these must add the new-series arm (grafana/README.md, "Counting a sparse
+ * counter's first increment").
+ */
+const FIRST_INCREMENT_COUNTERS = new Set(['agency_answered_total', 'agency_abandoned_total', 'agency_abandoned_reason_total']);
+
+const unparen = (n) => { while (n?.type === 'paren') n = n.expr; return n; };
+
+/** A selector's identity: its name and its matchers, order-free. */
+function selectorKey(n) {
+  const s = unparen(n);
+  if (s?.type !== 'selector') return null;
+  return `${s.name}{${s.matchers.map((m) => `${m.label}${m.op}${JSON.stringify(m.value)}`).sort().join(',')}}`;
+}
+
+const childrenOf = (n) => [n.expr, n.left, n.right, ...(n.args ?? [])].filter(Boolean);
+
+/** Each node's parent, for walking up from a call to the operators around it. */
+function parentsOf(ast) {
+  const parents = new Map();
+  walkPromQL(ast, (n) => { for (const c of childrenOf(n)) parents.set(c, n); });
+  return parents;
+}
+
+/** The nearest ancestor of `node` that is not a parenthesis. */
+function enclosing(parents, node) {
+  let p = parents.get(node);
+  while (p?.type === 'paren') p = parents.get(p);
+  return p;
+}
+
+/** `key offset range`, as `node` (parentheses aside). */
+const isOffsetOf = (node, key, range) => {
+  const o = unparen(node);
+  return o?.type === 'offset' && o.offset === range && selectorKey(o.expr) === key;
+};
+
+/** `fn(key[range])`, as `node` (parentheses aside). */
+const isCallOver = (node, fn, key, range) => {
+  const c = unparen(node);
+  return c?.type === 'call' && c.fn === fn && c.args.length === 1 && c.args[0].type === 'range'
+    && !c.args[0].subquery && c.args[0].range === range && selectorKey(c.args[0].expr) === key;
+};
+
+/** A plain binary `op`: no `on`/`ignoring`, no `group_*`, no `bool`. */
+const isBinary = (node, op) => node?.type === 'binary' && node.op === op && !node.matching && !node.group && !node.bool;
+
+/** Grafana's interval variables, and the variables that give each in seconds or in milliseconds. */
+const INTERVAL_IN_SECONDS = {
+  __rate_interval: { s: null, ms: '__rate_interval_ms' },
+  __interval: { s: null, ms: '__interval_ms' },
+  __range: { s: '__range_s', ms: '__range_ms' },
+};
+const variableName = (raw) => /^\$(?:\{(\w+)\}|(\w+))$/.exec(raw ?? '')?.slice(1).find(Boolean);
+
+/**
+ * Whether `node` is `range` in seconds: `($__rate_interval_ms / 1000)` for `$__rate_interval`
+ * (likewise `$__interval`; `$__range_s` or `$__range_ms / 1000` for `$__range`), or the number
+ * of seconds for a fixed range (`3600` for `1h`).
+ */
+function isRangeSeconds(node, range) {
+  const n = unparen(node);
+  const v = INTERVAL_IN_SECONDS[variableName(range)];
+  if (!v) return n?.type === 'number' && durationSeconds(range) > 0 && Number(n.raw) === durationSeconds(range);
+  if (n?.type === 'number') return v.s !== null && variableName(n.raw) === v.s;
+  const [l, r] = [unparen(n?.left), unparen(n?.right)];
+  return isBinary(n, '/') && l?.type === 'number' && variableName(l.raw) === v.ms && r?.type === 'number' && Number(r.raw) === 1000;
+}
+
+/**
+ * Why `call`, a `rate()`/`increase()` over a first-increment counter, does not count the series
+ * born in its window, or null when it does. It must be the old-series arm of exactly
+ *
+ *   (rate(X[r]) and X offset r) or ((max_over_time(X[r]) unless X offset r) / (r in seconds))
+ *   (increase(X[r]) and X offset r) or (max_over_time(X[r]) unless X offset r)
+ *
+ * with X the same selector throughout. The structure is the point: a search for the two arms
+ * anywhere in the expression passes an undivided new-series arm beside a rate (a count added to
+ * a per-second rate), `+` in place of `or` (each old series then counted twice wherever both
+ * arms have a value) and a correct pair beside a second, plain `rate(X)`.
+ */
+function firstIncrementProblem(parents, call) {
+  const { fn } = call;
+  const key = selectorKey(call.args[0].expr);
+  const { range } = call.args[0];
+  const and = enclosing(parents, call);
+  if (!isBinary(and, 'and') || unparen(and.left) !== call || !isOffsetOf(and.right, key, range)) {
+    return `is not the left of \`and <the same selector> offset ${range}\``;
+  }
+  const or = enclosing(parents, and);
+  if (!isBinary(or, 'or') || unparen(or.left) !== and) return 'and its `and` is not the left of an `or`';
+  let arm = unparen(or.right);
+  if (fn === 'rate') {
+    if (!isBinary(arm, '/') || !isRangeSeconds(arm.right, range)) {
+      return `and the new-series arm is not divided by [${range}] in seconds (a count added to a per-second rate)`;
+    }
+    arm = unparen(arm.left);
+  }
+  if (!isBinary(arm, 'unless') || !isCallOver(arm.left, 'max_over_time', key, range) || !isOffsetOf(arm.right, key, range)) {
+    return `and the right of its \`or\` is not \`max_over_time(<the same selector>[${range}]) unless <it> offset ${range}\`${fn === 'rate' ? ' over the window in seconds' : ''}`;
+  }
+  return null;
+}
+
+/** Every `rate()`/`increase()` over a first-increment counter in `ast`, and what is wrong with each. */
+function firstIncrementProblems(ast) {
+  const parents = parentsOf(ast);
+  const calls = promqlFacts(ast).calls.filter((c) => ['rate', 'increase'].includes(c.fn) && c.args[0]?.type === 'range'
+    && FIRST_INCREMENT_COUNTERS.has(unparen(c.args[0].expr)?.name));
+  const problems = calls.flatMap((c) => {
+    const why = firstIncrementProblem(parents, c);
+    return why ? [`${c.fn}(${unparen(c.args[0].expr).name}[${c.args[0].range}]) ${why}`] : [];
+  });
+  return { seen: calls.length, problems };
+}
+
+/**
+ * The default abandonment grace in seconds, read from the domain rule itself
+ * (`DEFAULT_ABANDONMENT_GRACE_MS`, AG1), so the dashboard cannot drift from it. A campaign may
+ * set another (AG2); the panel draws the default, and says so.
+ */
+function abandonmentGraceSeconds() {
+  const source = readFileSync(join(root, 'packages/domain/src/abandonment-predicate.ts'), 'utf8');
+  const ms = /export const DEFAULT_ABANDONMENT_GRACE_MS\s*=\s*([\d_]+)\s*;/.exec(source)?.[1];
+  assert.ok(ms, 'packages/domain/src/abandonment-predicate.ts: no `export const DEFAULT_ABANDONMENT_GRACE_MS = <number>;`');
+  return Number(ms.replaceAll('_', '')) / 1000;
+}
+
+const ANSWER_TO_BRIDGE_BUCKET = 'agency_answer_to_bridge_seconds_bucket';
 
 describe('agency Grafana dashboard', () => {
   test('reads agency\'s declarations (a scraper that misreads would pass or fail everything below)', () => {
@@ -255,6 +395,110 @@ describe('agency Grafana dashboard', () => {
       }
     }
     assert.deepEqual(problems, [], `queries that read empty at a 60s export interval:\n  ${problems.join('\n  ')}`);
+  });
+
+  // A counter series is created by its first increment, already at 1, and rate()/increase()
+  // measure only growth after their first sample in the window, so the first increment of every
+  // new series is lost. On the counters someone reconciles against SQL, every rate()/increase()
+  // carries the arm that counts a series born inside its window at its whole value.
+  test('every rate()/increase() over a first-increment counter counts the series born in its window', () => {
+    const problems = [];
+    let seen = 0;
+    for (const e of allExpressions(loadDashboard()).filter((x) => x.ast && x.target)) {
+      const found = firstIncrementProblems(e.ast);
+      seen += found.seen;
+      problems.push(...found.problems.map((p) => `${e.where}: ${p}`));
+    }
+    // Canary: the Throughput and Abandonment Causes panels read these three counters.
+    assert.ok(seen >= 3, `only ${seen} rate()/increase() over ${[...FIRST_INCREMENT_COUNTERS].join(', ')} found`);
+    assert.deepEqual(problems, [], `panels that undercount by one per new series:\n  ${problems.join('\n  ')}`);
+  });
+
+  // The check above on queries written to pass it and to fail it. A check that looks only for an
+  // `and` arm and an `unless` arm somewhere in the expression passes the first four broken ones.
+  describe('the first-increment check', () => {
+    const X = 'agency_abandoned_total{tenant_id=~"$tenant_id"}';
+    const NEW = `(max_over_time(${X}[$__rate_interval]) unless ${X} offset $__rate_interval)`;
+    const OLD = `(rate(${X}[$__rate_interval]) and ${X} offset $__rate_interval)`;
+    const passing = {
+      'the panels\' rate form': `sum(${OLD} or (${NEW} / ($__rate_interval_ms / 1000)))`,
+      'the rate form per minute': `sum by (reason) (${OLD} or (${NEW} / ($__rate_interval_ms / 1000))) * 60`,
+      'a fixed window over its seconds': `sum((rate(${X}[1h]) and ${X} offset 1h) or ((max_over_time(${X}[1h]) unless ${X} offset 1h) / 3600))`,
+      'the increase form': `sum((increase(${X}[16h]) and ${X} offset 16h) or (max_over_time(${X}[16h]) unless ${X} offset 16h))`,
+      'the increase form over $__range': `sum((increase(${X}[$__range]) and ${X} offset $__range) or (max_over_time(${X}[$__range]) unless ${X} offset $__range))`,
+    };
+    const failing = {
+      'a plain rate': `sum(rate(${X}[$__rate_interval]))`,
+      'a plain increase': `sum(increase(${X}[1h]))`,
+      'a rate whose new-series arm is not divided by the window': `sum(${OLD} or ${NEW})`,
+      '+ in place of or': `sum(${OLD} + (${NEW} / ($__rate_interval_ms / 1000)))`,
+      'a correct pair beside a plain rate': `sum(${OLD} or (${NEW} / ($__rate_interval_ms / 1000))) + sum(rate(${X}[$__rate_interval]))`,
+      'a new-series arm over the wrong seconds': `sum((rate(${X}[1h]) and ${X} offset 1h) or ((max_over_time(${X}[1h]) unless ${X} offset 1h) / 60))`,
+      'the arms swapped round the or': `sum((${NEW} / ($__rate_interval_ms / 1000)) or ${OLD})`,
+      'an offset over another range': `sum((increase(${X}[1h]) and ${X} offset 5m) or (max_over_time(${X}[1h]) unless ${X} offset 1h))`,
+      'a new-series arm over another selector': `sum((increase(${X}[1h]) and ${X} offset 1h) or (max_over_time(agency_abandoned_total[1h]) unless agency_abandoned_total offset 1h))`,
+      'an and under a matching clause': `sum((rate(${X}[$__rate_interval]) and on (campaign_id) ${X} offset $__rate_interval) or (${NEW} / ($__rate_interval_ms / 1000)))`,
+    };
+    for (const [name, expr] of Object.entries(passing)) {
+      test(`passes ${name}`, () => {
+        const { seen, problems } = firstIncrementProblems(parsePromQL(expr));
+        assert.equal(seen, 1);
+        assert.deepEqual(problems, []);
+      });
+    }
+    for (const [name, expr] of Object.entries(failing)) {
+      test(`fails ${name}`, () => {
+        const { seen, problems } = firstIncrementProblems(parsePromQL(expr));
+        assert.ok(seen >= 1, 'the fixture reads no first-increment counter');
+        assert.notDeepEqual(problems, [], `passed: ${expr}`);
+      });
+    }
+  });
+
+  // The Answer → Audio Connected panel draws the default abandonment grace three ways: the `le`
+  // bucket its share reads, the threshold line, and the text that names it. All must be the default
+  // the compliance predicate applies to a campaign left at it, or changing the default leaves a
+  // panel that measures another rule. The title says it is the default (AG2: a campaign may hold
+  // another, judged by its own).
+  test('the answer → audio connected panel reads the default abandonment grace (DEFAULT_ABANDONMENT_GRACE_MS)', () => {
+    const grace = abandonmentGraceSeconds();
+    assert.ok(grace > 0, `DEFAULT_ABANDONMENT_GRACE_MS reads as ${grace}s`);
+    const d = loadDashboard();
+    const panels = allPanels(d).filter((p) => (p.targets ?? []).some((t) => (t.expr ?? '').includes(ANSWER_TO_BRIDGE_BUCKET)));
+    assert.equal(panels.length, 1, `${panels.length} panels read ${ANSWER_TO_BRIDGE_BUCKET}`);
+    const [panel] = panels;
+    const problems = [];
+    const shareTargets = new Set();
+    for (const t of panel.targets) {
+      for (const sel of promqlFacts(parsePromQL(t.expr)).selectors.filter((x) => x.name === ANSWER_TO_BRIDGE_BUCKET)) {
+        for (const m of sel.matchers.filter((x) => x.label === 'le')) {
+          shareTargets.add(t);
+          if (m.op !== '=' || m.value !== String(grace)) problems.push(`${t.refId} reads le${m.op}"${m.value}"`);
+        }
+      }
+    }
+    assert.equal(shareTargets.size, 1, `${shareTargets.size} targets read an le bucket of ${ANSWER_TO_BRIDGE_BUCKET}`);
+    const steps = (panel.fieldConfig.defaults.thresholds?.steps ?? []).filter((s) => s.value !== null);
+    if (steps.length !== 1 || steps[0].value !== grace) problems.push(`threshold steps at ${JSON.stringify(steps.map((s) => s.value))}`);
+    const legend = [...shareTargets][0].legendFormat ?? '';
+    if (!legend.startsWith(`share over ${grace}s`)) problems.push(`share legend ${JSON.stringify(legend)}`);
+    const rendered = legend.replace(/\{\{\s*\w+\s*\}\}/g, 'voicelink');
+    const overrides = panel.fieldConfig.overrides.filter((o) => o.matcher.id === 'byRegexp' && /share over/.test(o.matcher.options));
+    if (overrides.length !== 1 || !overrides[0].matcher.options.includes(`share over ${grace}s`) || !new RegExp(overrides[0].matcher.options).test(rendered)) {
+      problems.push(`share override ${JSON.stringify(overrides.map((o) => o.matcher.options))} for the series ${JSON.stringify(rendered)}`);
+    }
+    if (!panel.title.includes(`default ${grace}s grace`)) problems.push(`title ${JSON.stringify(panel.title)}`);
+    if (!/judged by its own/.test(panel.description ?? '')) problems.push('description does not say a campaign set to another grace is judged by its own');
+    // Every "Ns grace" and "share over Ns" on the dashboard, and every le="N" this panel's text
+    // names, is the grace.
+    for (const p of allPanels(d)) {
+      const texts = [p.title ?? '', p.description ?? ''];
+      const mentions = texts.flatMap((text) => [...text.matchAll(/(\d+(?:\.\d+)?)s grace|share over (\d+(?:\.\d+)?)s\b/g)]);
+      if (p === panel) mentions.push(...texts.flatMap((text) => [...text.matchAll(/le="(\d+(?:\.\d+)?)"/g)]));
+      for (const m of mentions) if (Number(m[1] ?? m[2]) !== grace) problems.push(`${p.title}: "${m[0]}"`);
+    }
+    const distinct = [...new Set(problems)];
+    assert.deepEqual(distinct, [], `the panel does not read the ${grace}s grace:\n  ${distinct.join('\n  ')}`);
   });
 
   test('every template variable referenced by a query is declared', () => {

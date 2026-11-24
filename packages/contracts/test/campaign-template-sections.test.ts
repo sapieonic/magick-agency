@@ -30,7 +30,7 @@ const SPEC_TABLE: Record<string, string[]> = {
   breaks: ['break_reasons'],
   recording: ['record_calls', 'analysis_profile_id'],
   agent_screen: ['agent_script', 'phone_display', 'daily_target_calls'],
-  safety: ['abandonment_ceiling_pct'],
+  safety: ['abandonment_ceiling_pct', 'abandonment_grace_ms'],
   assignment: [
     'assignment_mode', 'on_unstaff', 'callback_owner_grace_minutes', 'callback_fallback',
     'allow_agent_retry', 'agent_retry_rounds', 'agent_retry_cooldown_minutes',

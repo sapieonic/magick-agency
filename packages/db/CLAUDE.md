@@ -42,7 +42,10 @@ before writing a repository or a migration.
   the account's call settings ("Every call must belong to a campaign") and the campaign an inbound
   route files its unknown callers under (`default_campaign_id`), with its index, 0072 an account's
   dialler attempts by when they were created, for the account's All calls and the agent's My calls,
-  0073 an account's inbound calls by caller, for the inbound calls in customer history).
+  0073 an account's inbound calls by caller, for the inbound calls in customer history, 0074
+  marks every Insights rollup bucket dirty so it is rebuilt with the 3 s abandonment grace, 0075
+  the abandonment grace per campaign (`abandonment_grace_ms`) and the grace stamped on each
+  attempt (`bridge_grace_ms`), 0076 validates 0075's attempt CHECK).
   node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one

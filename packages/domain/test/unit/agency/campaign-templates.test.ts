@@ -52,7 +52,7 @@ const ORG_VALUES: Required<AgencyCampaignTemplateSections> = {
   breaks: { break_reasons: [{ code: 'lunch', label: 'Lunch', limit_minutes: 30 }] },
   recording: { record_calls: true, analysis_profile_id: '11111111-1111-4111-8111-111111111111' },
   agent_screen: { agent_script: { opening: 'Hello' }, phone_display: 'masked', daily_target_calls: 40 },
-  safety: { abandonment_ceiling_pct: 2 },
+  safety: { abandonment_ceiling_pct: 2, abandonment_grace_ms: 4000 },
   assignment: {
     assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 60, callback_fallback: 'wait',
     allow_agent_retry: true, agent_retry_rounds: 2, agent_retry_cooldown_minutes: 10,
@@ -73,7 +73,7 @@ const ACCOUNT_VALUES: Required<AgencyCampaignTemplateSections> = {
   breaks: { break_reasons: [{ code: 'tea', label: 'Tea' }] },
   recording: { record_calls: false, analysis_profile_id: '33333333-3333-4333-8333-333333333333' },
   agent_screen: { agent_script: { steps: [{ text: 'Ask' }] }, phone_display: 'full', daily_target_calls: 25 },
-  safety: { abandonment_ceiling_pct: 2.5 },
+  safety: { abandonment_ceiling_pct: 2.5, abandonment_grace_ms: 2000 },
   assignment: {
     assignment_mode: 'preferred', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 15, callback_fallback: 'pool',
     allow_agent_retry: false, agent_retry_rounds: 3, agent_retry_cooldown_minutes: 5,
@@ -120,7 +120,7 @@ describe('builtinTemplateSections', () => {
       breaks: { break_reasons: [] },
       recording: { record_calls: false, analysis_profile_id: null },
       agent_screen: { agent_script: {}, phone_display: AGENCY_PHONE_DISPLAY_DEFAULT, daily_target_calls: null },
-      safety: { abandonment_ceiling_pct: AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT },
+      safety: { abandonment_ceiling_pct: AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT, abandonment_grace_ms: 3000 },
       assignment: { ...AGENCY_CONTACT_ASSIGNMENT_DEFAULTS },
       inbound: { inbound_sticky_enabled: true },
       numbers: { caller_ids: [], telephony_provider: 'voicelink', telephony_credential_id: null },
@@ -328,11 +328,11 @@ describe('diffSections', () => {
     const b = {
       ...ACCOUNT_VALUES,
       hours: { ...ACCOUNT_VALUES.hours, default_timezone: 'UTC', calling_days: [1] },
-      safety: { abandonment_ceiling_pct: 3 },
+      safety: { ...ACCOUNT_VALUES.safety, abandonment_grace_ms: 5000 },
     };
     expect(diffSections(ACCOUNT_VALUES, b)).toEqual([
       { section: 'hours', change: 'changed', fields: ['calling_days', 'default_timezone'] },
-      { section: 'safety', change: 'changed', fields: ['abandonment_ceiling_pct'] },
+      { section: 'safety', change: 'changed', fields: ['abandonment_grace_ms'] },
     ]);
   });
 
@@ -455,10 +455,11 @@ describe('the rules the server reuses (D13)', () => {
   });
 
   it('withBuiltinFields leaves out what is not a field of the section, and reads the builtin passed', () => {
+    // The grace is absent, so it is the built-in's (an absent field of a set section, CT2).
     expect(withBuiltinFields('safety', { abandonment_ceiling_pct: 2, wrapup_seconds: 9 } as Record<string, unknown>))
-      .toStrictEqual({ abandonment_ceiling_pct: 2 });
-    const other = { ...BUILTIN, safety: { abandonment_ceiling_pct: 1.5 } };
-    expect(withBuiltinFields('safety', {}, other)).toStrictEqual({ abandonment_ceiling_pct: 1.5 });
+      .toStrictEqual({ abandonment_ceiling_pct: 2, abandonment_grace_ms: 3000 });
+    const other = { ...BUILTIN, safety: { abandonment_ceiling_pct: 1.5, abandonment_grace_ms: 5000 } };
+    expect(withBuiltinFields('safety', {}, other)).toStrictEqual({ abandonment_ceiling_pct: 1.5, abandonment_grace_ms: 5000 });
   });
 
   it('normaliseSection is withBuiltinFields normalised', () => {

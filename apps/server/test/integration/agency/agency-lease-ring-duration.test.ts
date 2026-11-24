@@ -283,6 +283,7 @@ describe('agency lease lifecycle — ring duration (integration, slow)', () => {
         accountId: campaign.account_id,
         callerId: '+919000000001',
         attemptNumber: 1,
+        bridgeGraceMs: attempt!.bridge_grace_ms,
         campaign,
         contact,
       } as never);
@@ -359,13 +360,15 @@ describe('agency lease lifecycle — ring duration (integration, slow)', () => {
       expect(row?.state).toBe('bridged');
       expect(row?.outcome).not.toBe('abandoned');
 
-      // Zero-abandonment, measured by the abandonment predicate.
+      // Zero-abandonment, measured by the abandonment predicate's arms. Restated without its
+      // `state = 'ended'` filter (the call is still bridged here), with the grace imported so
+      // a grace change cannot leave this copy behind.
       const { rows } = await getTestPool().query<{ n: string }>(
         `SELECT COUNT(*)::text AS n FROM agency_call_attempts
           WHERE campaign_id = $1
             AND answered_at IS NOT NULL
             AND (outcome = 'abandoned' OR bridged_at IS NULL
-                 OR bridged_at - answered_at > interval '1 second')`,
+                 OR bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond')`,
         [campaign.id],
       );
       expect(Number(rows[0]!.n)).toBe(0);

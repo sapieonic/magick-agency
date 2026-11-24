@@ -1283,3 +1283,58 @@ describe('abandonment_ceiling_pct (the per-campaign auto-pause ceiling)', () => 
     expect(internal.validateAgencyCampaignConfig({ abandonment_ceiling_pct: 0 })).toEqual([OUT_OF_RANGE]);
   });
 });
+
+describe('abandonment_grace_ms (the per-campaign abandonment grace, AG2)', () => {
+  const REFUSED = {
+    field: 'abandonment_grace_ms',
+    message: 'abandonment_grace_ms must be a whole number of seconds from 1 to 5, in milliseconds (1000, 2000, … 5000).',
+  };
+
+  it('accepts whole seconds 1–5 in ms and refuses the rest, the column CHECK\'s five values, on both layers', async () => {
+    const pub = await import('../../../src/agency/agency-campaign-config.js');
+    const internal = await import('../../../src/agency/campaign-config.js');
+    for (const validate of [pub.validateAgencyCampaignConfig, internal.validateAgencyCampaignConfig]) {
+      for (const ok of [1000, 2000, 3000, 4000, 5000]) expect(validate({ abandonment_grace_ms: ok }), String(ok)).toEqual([]);
+      expect(validate({})).toEqual([]);
+      for (const bad of [0, 500, 999, 1001, 2500, 6000, -1000, 3, '3000', '', null, true, {}, [], Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(validate({ abandonment_grace_ms: bad }), String(bad)).toEqual([REFUSED]);
+      }
+    }
+  });
+
+  it('POST passes it to the repository, and leaves it unset when omitted (the repository applies 3000)', async () => {
+    const app = await makeApp();
+    const set = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, abandonment_grace_ms: 2000 },
+    });
+    expect(set.statusCode, set.body).toBe(201);
+    expect(campaigns.create.mock.calls[0]![0].abandonment_grace_ms).toBe(2000);
+
+    const omitted = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS, payload: MINIMAL,
+    });
+    expect(omitted.statusCode, omitted.body).toBe(201);
+    expect(campaigns.create.mock.calls[1]![0].abandonment_grace_ms).toBeUndefined();
+  });
+
+  it('POST refuses 2500 and creates nothing; PATCH refuses 6000 and writes nothing', async () => {
+    const app = await makeApp();
+    const post = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, abandonment_grace_ms: 2500 },
+    });
+    expect(post.statusCode).toBe(400);
+    expect(post.json().details).toEqual({ abandonment_grace_ms: REFUSED.message });
+    expect(campaigns.create).not.toHaveBeenCalled();
+
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running' });
+    const patch = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { abandonment_grace_ms: 6000 },
+    });
+    expect(patch.statusCode).toBe(400);
+    expect(patch.json().details).toEqual({ abandonment_grace_ms: REFUSED.message });
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+});

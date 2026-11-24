@@ -118,11 +118,14 @@ describe('0014 — insights rollup first dials and carrier errors', () => {
       const triggers = await pool().query(`SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_agency_calls_insights_error%'`);
       expect(triggers.rowCount).toBe(0);
       await clearMarks();
+      // 0014 alone, so its own backfill is what is read: a later migration that marks every
+      // rolled-up bucket too (0074) would otherwise hide a 0014 that marked nothing.
+      await migrate('up', 1);
+      // The backfill: one mark per rolled-up bucket, so the job rebuilds each with the new facet.
+      expect(await marks()).toEqual([key(c, '2026-11-03T05:00:00Z'), key(c, '2026-11-04T05:00:00Z')]);
+      expect(await facetCheck()).toContain("'carrier_error'");
     } finally {
       await migrate('up');
     }
-    // The backfill: one mark per rolled-up bucket, so the job rebuilds each with the new facet.
-    expect(await marks()).toEqual([key(c, '2026-11-03T05:00:00Z'), key(c, '2026-11-04T05:00:00Z')]);
-    expect(await facetCheck()).toContain("'carrier_error'");
   });
 });

@@ -22,7 +22,7 @@ vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
 import {
   ABANDONED_ATTEMPT_PREDICATE_SQL,
   ABANDONMENT_WINDOW_HOURS,
-  ABANDONMENT_BRIDGE_GRACE_MS,
+  DEFAULT_ABANDONMENT_GRACE_MS,
   abandonmentRatePct,
   isAbandonedAttempt,
 } from '@magick-agency/domain/abandonment-predicate';
@@ -50,7 +50,7 @@ describe('INDEPENDENCE LOCK (do not prune) — the parts that need no metrics', 
 
     // And it reads the raw columns the design names, so it can contradict the
     // counter rather than restate it.
-    for (const column of ['state', 'answered_at', 'bridged_at', 'outcome']) {
+    for (const column of ['state', 'answered_at', 'bridged_at', 'outcome', 'bridge_grace_ms']) {
       expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain(column);
     }
   });
@@ -109,8 +109,11 @@ describe('the rolling window', () => {
   });
 
   it('uses the grace threshold, expressed in the SQL and not as a TTL', () => {
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(1000);
-    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain("interval '1000 milliseconds'");
+    // AG1 (Manas, 2026-11-24): 3 s by default, was 1 s. AG3: each attempt is judged by the grace
+    // stamped on its own row, read from the column, never a constant spliced into the SQL.
+    expect(DEFAULT_ABANDONMENT_GRACE_MS).toBe(3000);
+    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain("bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond'");
+    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).not.toMatch(/\d+ milliseconds/);
   });
 });
 
@@ -133,47 +136,54 @@ describe('isAbandonedAttempt mirrors the ratified SQL definition', () => {
   const cases: Array<{ name: string; facts: Parameters<typeof isAbandonedAttempt>[0]; want: boolean }> = [
     {
       name: 'never answered ⇒ not abandoned, whatever the outcome says',
-      facts: { answeredAt: null, bridgedAt: null, outcome: 'no_answer' },
+      facts: { answeredAt: null, bridgedAt: null, outcome: 'no_answer', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: false,
     },
     {
       // The negative control. Without it every case below could pass against a
       // function that returns `true` unconditionally.
       name: 'answered and bridged promptly ⇒ a healthy conversation',
-      facts: { answeredAt: t0, bridgedAt: at(40), outcome: 'connected' },
+      facts: { answeredAt: t0, bridgedAt: at(40), outcome: 'connected', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: false,
     },
     {
       name: "outcome 'abandoned' ⇒ abandoned (the label arm, still honoured)",
-      facts: { answeredAt: t0, bridgedAt: null, outcome: 'abandoned' },
+      facts: { answeredAt: t0, bridgedAt: null, outcome: 'abandoned', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: true,
     },
     {
       name: 'THE FIX: answered, never bridged, ended `failed` ⇒ abandoned',
-      facts: { answeredAt: t0, bridgedAt: null, outcome: 'failed' },
+      facts: { answeredAt: t0, bridgedAt: null, outcome: 'failed', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: true,
     },
     {
       name: 'THE FIX: answered, never bridged, filed `connected` ⇒ still abandoned',
-      facts: { answeredAt: t0, bridgedAt: null, outcome: 'connected' },
+      facts: { answeredAt: t0, bridgedAt: null, outcome: 'connected', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: true,
     },
     {
       name: 'bridged beyond the grace window ⇒ abandoned',
-      facts: { answeredAt: t0, bridgedAt: at(ABANDONMENT_BRIDGE_GRACE_MS + 1), outcome: 'connected' },
+      facts: { answeredAt: t0, bridgedAt: at(DEFAULT_ABANDONMENT_GRACE_MS + 1), outcome: 'connected', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: true,
+    },
+    {
+      // AG1: the 1.06–1.25 s audio-stream lag seen on VoiceLink on 23 Nov. A call
+      // that reached an agent this late was abandoned under the old 1 s grace.
+      name: 'bridged 1.25 s after the answer ⇒ NOT abandoned (inside the 3 s grace)',
+      facts: { answeredAt: t0, bridgedAt: at(1250), outcome: 'connected', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
+      want: false,
     },
     {
       name: 'ON the grace boundary ⇒ NOT abandoned (the SQL is `>`, not `>=`)',
       // The boundary case the clock rule demands: a threshold tested only at
       // 40ms and 5s can be off by one and never show it, and the arithmetic here is
       // the same subtraction the SQL does.
-      facts: { answeredAt: t0, bridgedAt: at(ABANDONMENT_BRIDGE_GRACE_MS), outcome: 'connected' },
+      facts: { answeredAt: t0, bridgedAt: at(DEFAULT_ABANDONMENT_GRACE_MS), outcome: 'connected', bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: false,
     },
     {
       name: 'a null outcome is not a free pass — the timestamps still decide',
-      facts: { answeredAt: t0, bridgedAt: null, outcome: null },
+      facts: { answeredAt: t0, bridgedAt: null, outcome: null, bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS },
       want: true,
     },
   ];
@@ -184,13 +194,24 @@ describe('isAbandonedAttempt mirrors the ratified SQL definition', () => {
     });
   }
 
+  it('judges each attempt by its own stamped grace (AG3), at every grace a campaign may hold', () => {
+    for (const grace of [1000, 2000, 3000, 4000, 5000]) {
+      const facts = (late: number) => ({ answeredAt: t0, bridgedAt: at(late), outcome: 'connected', bridgeGraceMs: grace });
+      expect(isAbandonedAttempt(facts(grace)), `${grace} on its boundary`).toBe(false);
+      expect(isAbandonedAttempt(facts(grace + 1)), `${grace} 1 ms past`).toBe(true);
+    }
+    // 4 s after the answer: late for the default, in time for a campaign set to 5 s.
+    expect(isAbandonedAttempt({ answeredAt: t0, bridgedAt: at(4000), outcome: 'connected', bridgeGraceMs: 3000 })).toBe(true);
+    expect(isAbandonedAttempt({ answeredAt: t0, bridgedAt: at(4000), outcome: 'connected', bridgeGraceMs: 5000 })).toBe(false);
+  });
+
   it('reads NO state field, so it cannot be called anywhere but the settle site', () => {
     // The SQL's `state = 'ended'` arm keeps live traffic out of the compliance rate
     // (a call mid-bridge is answered with no `bridged_at` yet). The in-process twin
     // has no equivalent, so its safety rests entirely on having exactly one caller
     // — the moment the attempt goes terminal. A `state` parameter would advertise
     // that it is safe to ask elsewhere, and it is not.
-    expect(Object.keys(cases[0]!.facts)).toEqual(['answeredAt', 'bridgedAt', 'outcome']);
+    expect(Object.keys(cases[0]!.facts)).toEqual(['answeredAt', 'bridgedAt', 'outcome', 'bridgeGraceMs']);
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain("state = 'ended'");
   });
 
@@ -199,7 +220,7 @@ describe('isAbandonedAttempt mirrors the ratified SQL definition', () => {
     // the SQL over a fourth column, the twin no longer mirrors it and the counter
     // silently diverges from the table again. The cross-check that can actually
     // catch that is the integration tier's; this reds in the same commit.
-    for (const column of ['answered_at', 'bridged_at', 'outcome']) {
+    for (const column of ['answered_at', 'bridged_at', 'outcome', 'bridge_grace_ms']) {
       expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain(column);
     }
   });

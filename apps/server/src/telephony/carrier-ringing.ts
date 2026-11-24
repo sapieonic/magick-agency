@@ -2,7 +2,7 @@
 // the capability each carrier declares in its own folder (`<carrier>/<carrier>.capabilities.ts`;
 // each carrier module reads its own declaration for `CarrierModule.cancelsRinging`). Codec-free
 // and free of the carrier modules, so a reader that needs only this (the agency repository's
-// manual-call projection) does not load the carrier modules and the codec tables they build at
+// manual-call projection; the dialer's `provider` metric label) does not load the carrier modules and the codec tables they build at
 // load. `carrier-modules.test.ts` holds it equal to the registry.
 import { plivoCapabilities } from './plivo/plivo.capabilities.js';
 import { voicelinkCapabilities } from './voicelink/voicelink.capabilities.js';
@@ -28,7 +28,11 @@ export function carrierCancelsRinging(provider: string | null | undefined): bool
   return provider ? DECLARATIONS.get(provider)?.cancelsRinging === true : false;
 }
 
-/** Every carrier with a declaration, for the conformance test. */
+/**
+ * Every carrier with a declaration: what the conformance test holds equal to the carrier
+ * registry, and the whole vocabulary of the dialer's `provider` metric label besides `other`
+ * (`providerLabel` in `agency/agency-dialer.ts`), so a carrier added here is a new label value.
+ */
 export function carrierRingingDeclarations(): string[] {
   return [...DECLARATIONS.keys()];
 }

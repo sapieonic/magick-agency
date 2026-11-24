@@ -113,6 +113,9 @@ const ALL_MIGRATIONS = [
   '0071_call_settings',
   '0072_attempts_account_created_index',
   '0073_inbound_calls_from_index',
+  '0074_abandonment_grace_rollup_rebuild',
+  '0075_abandonment_grace_setting',
+  '0076_abandonment_grace_check_validate',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

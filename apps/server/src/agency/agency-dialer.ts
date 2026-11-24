@@ -34,7 +34,7 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
 } from '@magick-agency/contracts/agency';
-import { carrierCancelsRinging } from '../telephony/carrier-ringing.js';
+import { carrierCancelsRinging, carrierRingingDeclarations } from '../telephony/carrier-ringing.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -64,6 +64,7 @@ import {
   agencyAbandonedTotal,
   agencyAttemptHoldSeconds,
   agencyAnswerLatencySeconds,
+  agencyAnswerToBridgeSeconds,
   agencyBindLatencySeconds,
   agencyBindTotal,
   agencyAbandonedReasonTotal,
@@ -179,6 +180,9 @@ export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
 /** Far above the agents one process serves: bounds only what departed agents leave behind. */
 const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 
+/** The carriers the code declares: the `provider` label's whole vocabulary, with `other`. */
+const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
+
 /**
  * How long a campaign's import column order (AS20, More details) is reused before it is read
  * again: a new upload's columns reach the panel within this long.
@@ -188,10 +192,14 @@ const COLUMN_ORDER_TTL_MS = 60_000;
 const COLUMN_ORDER_MAX_ENTRIES = 2_000;
 
 /**
- * Await a write to the durable agent-session mirror without letting it fail the
- * caller: Redis is the authority on agent state, so a mirror that could not be
- * written is a stale dashboard column, logged and never a reason to stop.
+ * A campaign's `telephony_provider` as a metric label: the carrier name when the code
+ * declares that carrier, else `other`. The column is free text (a CHECK on its shape, not
+ * its values), and a label's values are bounded by source code, never by data.
  */
+export function providerLabel(provider: string | null | undefined): string {
+  return provider && PROVIDER_LABELS.has(provider) ? provider : 'other';
+}
+
 /** A number's digits, as the busy probe compares them (`CONTACT_PHONE_DIGITS_SQL`). */
 function phoneDigits(phone: string | null | undefined): string {
   return (phone ?? '').replace(/[^0-9]/g, '');
@@ -207,6 +215,11 @@ function isSupersedable(live: LiveAttempt): boolean {
     && !live.cmd.redial && !live.supersededByInbound;
 }
 
+/**
+ * Await a write to the durable agent-session mirror without letting it fail the
+ * caller: Redis is the authority on agent state, so a mirror that could not be
+ * written is a stale dashboard column, logged and never a reason to stop.
+ */
 async function mirrored(write: Promise<unknown>, sessionId: string, failure: string): Promise<void> {
   await write.catch((err) => log.warn({ err, sessionId }, failure));
 }
@@ -395,8 +408,8 @@ export class AgencyDialer {
    *    provokes, and still precedes any audio the agent can hear.
    *
    * What the move costs, stated because it is the reason the panel is not simply
-   * built at the answer: the bind runs inside the 1000ms
-   * `ABANDONMENT_BRIDGE_GRACE_MS` budget, so nothing that can be done here may be
+   * built at the answer: the bind runs inside the attempt's abandonment grace
+   * (`bridge_grace_ms`, 3 s by default and 1 s at the least, AG1–AG3), so nothing that can be done here may be
    * deferred to there. The priors read below is two joins over a contact lineage
    * and would spend that budget outright.
    *
@@ -1126,8 +1139,8 @@ export class AgencyDialer {
      * The whole of the change, and its ORDERING is the change. Everything here
      * is synchronous — no `await`, nothing read from Redis or the DB, the panel
      * already built at dial time — because the abandonment predicate measures
-     * from the instant above and gives the entire path a 1000ms budget
-     * (`ABANDONMENT_BRIDGE_GRACE_MS`). A connected call that spends more than
+     * from the instant above and gives the entire path the attempt's grace as its
+     * budget (`cmd.bridgeGraceMs`, 3 s by default, as little as 1 s; AG1–AG3). A connected call that spends more than
      * that between the answer and the bind is recorded as a call that reached
      * nobody, against a 3% regulatory ceiling.
      *
@@ -1209,7 +1222,7 @@ export class AgencyDialer {
        *
        * `answeredAt` is the CARRIER's instant, not ours, so this interval
        * includes webhook transit. That is deliberate and it is the honest
-       * measure: `ABANDONMENT_BRIDGE_GRACE_MS` counts that time too, so a
+       * measure: the abandonment grace (`bridge_grace_ms`) counts that time too, so a
        * latency measured from our own receipt would clear a budget the
        * compliance predicate says we blew.
        *
@@ -1401,6 +1414,17 @@ export class AgencyDialer {
     // `answeredAt: null`, read "never answered", and skip a call the table counts.
     // `??=` so a real `answered` phase's value is never displaced.
     live.answeredAt ??= ev.answeredAt ?? null;
+    // Answer → bridge: the interval the abandonment predicate compares with the attempt's grace (AG3),
+    // from the same two instants the settle site's `isAbandonedAttempt` reads (after the
+    // back-fill above). Synchronous and before any await, so a teardown racing the writes
+    // below cannot cost the reading. No answer anchor at all: the predicate reads "never
+    // answered", so there is no interval to observe.
+    if (live.answeredAt !== null) {
+      agencyAnswerToBridgeSeconds.observe(
+        { tenant_id: cmd.tenantId, provider: providerLabel(cmd.campaign.telephony_provider) },
+        elapsedSeconds(live.answeredAt, bridgedAt),
+      );
+    }
     // ── This write must not RESURRECT a settled attempt ─────────────────────
     //
     // It carries `only_from` just as the `answered` write above it does, on the
@@ -1807,14 +1831,17 @@ export class AgencyDialer {
       answeredAt: live.answeredAt,
       bridgedAt: live.bridgedAt,
       outcome,
+      // The grace stamped on this attempt's row (AG3), never the campaign's setting now: the
+      // SQL predicate reads the row's `bridge_grace_ms`, and the two must agree.
+      bridgeGraceMs: cmd.bridgeGraceMs,
     });
     /**
      * ⚠️ **The residual is `unattributed`, NOT `no_agent_available`** (corrected
      * on the second review pass, and this was a real defect rather than a wording
      * nit).
      *
-     * An abandoned attempt WITH a bridge timestamp beat the grace, which we did
-     * observe — `bridge_late`. One without it, where no arm above claimed a
+     * An abandoned attempt WITH a bridge timestamp missed the grace (the attempt's
+     * own, `cmd.bridgeGraceMs`, AG3), which we did observe — `bridge_late`. One without it, where no arm above claimed a
      * cause, is a call we abandoned for a reason we did not see: the customer
      * answered, the station was fine, and media never came up. Reporting that as
      * `no_agent_available` asserted a *pacing* cause for what is a bridge or

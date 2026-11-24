@@ -316,6 +316,7 @@ export async function startMyContactCall(
       accountId: campaign.account_id,
       callerId: attempt.caller_id,
       attemptNumber: attempt.attempt_number,
+      bridgeGraceMs: attempt.bridge_grace_ms,
       campaign,
       contact: claim.contact,
       clearance: gate.clearance,

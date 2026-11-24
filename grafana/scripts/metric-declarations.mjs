@@ -451,7 +451,8 @@ const unquote = (s) => s.slice(1, -1).replace(/\\(.)/g, '$1');
  * Parse a PromQL expression into a tree of `{ type, … }` nodes: `selector`
  * (`name` or null, `matchers`), `range` (`range`, `step`), `call` (`fn`,
  * `args`), `aggregation` (`op`, `grouping`, `args`), `binary` (`op`,
- * `matching`, `group`, `left`, `right`), `paren`, `unary`, `offset`, `number`,
+ * `matching`, `group`, `left`, `right`), `paren`, `unary`, `offset`, `number`
+ * (its `raw` token: a literal, or a Grafana variable such as `$__rate_interval_ms`),
  * `string` (`value`, and its `raw` literal at `pos`). Throws a SyntaxError on
  * anything else.
  */
@@ -567,7 +568,7 @@ export function parsePromQL(expr) {
     if (is('(')) { i += 1; const e = expression(); expect(')'); return { type: 'paren', expr: e }; }
     if (is('{')) return { type: 'selector', name: null, matchers: matchers() };
     i += 1;
-    if (t.type === 'number' || t.type === 'var') return { type: 'number' }; // `> $threshold` stands in for a scalar
+    if (t.type === 'number' || t.type === 'var') return { type: 'number', raw: t.v }; // `> $threshold` stands in for a scalar
     if (t.type === 'string') return { type: 'string', value: unquote(t.v), pos: t.pos, raw: t.v };
     if (t.type !== 'ident') fail(`unexpected ${t.v}`);
     if (AGGREGATIONS.has(t.v) && (is('(') || is('by') || is('without'))) {
@@ -578,7 +579,7 @@ export function parsePromQL(expr) {
       return { type: 'aggregation', op: t.v, grouping, args: a };
     }
     if (is('(')) return { type: 'call', fn: t.v, args: args() };
-    if (['Inf', 'NaN', 'inf', 'nan'].includes(t.v)) return { type: 'number' };
+    if (['Inf', 'NaN', 'inf', 'nan'].includes(t.v)) return { type: 'number', raw: t.v };
     return { type: 'selector', name: t.v, matchers: is('{') ? matchers() : [] };
   }
 

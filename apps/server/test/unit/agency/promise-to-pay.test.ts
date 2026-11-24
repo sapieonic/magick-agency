@@ -214,7 +214,7 @@ describe('PT6, PT7: the contact\'s copy and its state', () => {
 describe('PT9: the agent\'s panel', () => {
   function cmd(contact: Record<string, unknown>): DialCommand {
     return {
-      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 2,
+      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 2, bridgeGraceMs: 3000,
       campaign: { name: 'Collections' },
       contact: { phone_e164: '+919811100001', context: {}, ...contact },
     } as unknown as DialCommand;

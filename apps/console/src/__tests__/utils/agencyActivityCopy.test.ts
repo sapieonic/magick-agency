@@ -277,6 +277,18 @@ describe('activityDetailSummary', () => {
       .toBe('Changed customer’s number on screen (Full number → last_four).');
   });
 
+  it('says the abandonment grace in seconds, as the setting reads (AG2)', () => {
+    const changed = (fields: string[], changes: Record<string, unknown> = {}) => activityDetailSummary(row({
+      action: 'agency_campaign.config_changed',
+      detail: { fields, changes },
+    }));
+    expect(changed(['abandonment_grace_ms'], { abandonment_grace_ms: { from: 3000, to: 1000 } }))
+      .toBe('Changed time for the audio to connect (3 seconds → 1 second).');
+    expect(changed(['abandonment_ceiling_pct', 'abandonment_grace_ms'], {
+      abandonment_ceiling_pct: { from: 3, to: 2.5 }, abandonment_grace_ms: { from: 5000, to: 4000 },
+    })).toBe('Changed abandonment ceiling (3 → 2.5) and time for the audio to connect (5 seconds → 4 seconds).');
+  });
+
   it('reads out a roster upload: the file and its rule, then how it ended (IN8)', () => {
     const started = row({
       source: 'master',

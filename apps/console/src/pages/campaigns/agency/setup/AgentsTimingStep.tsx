@@ -8,6 +8,7 @@ import type { StaffingAgent } from '../../../../hooks/useCampaignStaffing';
 import { useConfigFieldErrors } from '../configFieldErrors';
 import { RetryPolicyTable } from '../RetryPolicyTable';
 import { AbandonmentCeilingFields } from '../AbandonmentCeilingFields';
+import { AbandonmentGraceField } from '../AbandonmentGraceField';
 import { WrapupFields } from '../WrapupFields';
 import { OutcomeDispositionMap } from '../OutcomeDispositionMap';
 import { AssignmentFields } from '../AssignmentFields';
@@ -256,13 +257,21 @@ export function AgentsTimingStep({
             <div className={styles.advanced} id={anchors?.retries}>
               {sourced('retries', <RetryPolicyTable retryPolicy={config.retryPolicy} onChange={setRetry} errors={errors} />)}
               {sourced('safety', (
-                <AbandonmentCeilingFields
-                  ceilingPct={config.abandonmentCeilingPct}
-                  storedPct={config.abandonmentCeilingStoredPct}
-                  onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
-                  errors={errors}
-                  readOnly={readOnly}
-                />
+                <>
+                  <AbandonmentCeilingFields
+                    ceilingPct={config.abandonmentCeilingPct}
+                    storedPct={config.abandonmentCeilingStoredPct}
+                    onChange={(abandonmentCeilingPct) => onChange({ ...config, abandonmentCeilingPct })}
+                    errors={errors}
+                    readOnly={readOnly}
+                  />
+                  <AbandonmentGraceField
+                    graceMs={config.abandonmentGraceMs}
+                    onChange={(abandonmentGraceMs) => onChange({ ...config, abandonmentGraceMs })}
+                    errors={errors}
+                    readOnly={readOnly}
+                  />
+                </>
               ))}
             </div>
             {unansweredOutcomes ? (

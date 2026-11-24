@@ -82,6 +82,7 @@ const PARENT = {
   context_display: {}, break_reasons: [],
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
+  abandonment_grace_ms: 2000,
   status: 'completed', contacts_total: 4000,
   parent_campaign_id: null, root_campaign_id: null, retry_generation: 0, retry_selector: null,
 };
@@ -118,7 +119,7 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
     expect(input).not.toHaveProperty('sip_connection_id');
     // The create input, key for key, minus `sip_connection_id`.
     expect(Object.keys(input).sort()).toEqual([
-      'abandon_announcement_id', 'abandonment_ceiling_pct', 'account_id', 'agent_retry_cooldown_minutes',
+      'abandon_announcement_id', 'abandonment_ceiling_pct', 'abandonment_grace_ms', 'account_id', 'agent_retry_cooldown_minutes',
       'agent_retry_rounds', 'agent_script', 'allow_agent_retry', 'allow_wrapup_redial',
       'analysis_profile_id', 'assignment_mode', 'break_reasons', 'callback_fallback', 'callback_owner_grace_minutes',
       'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',

@@ -132,11 +132,19 @@ describe('insights rollup — every read equals the attempts table', () => {
               count(*) FILTER (WHERE state <> 'ended')::text AS live,
               count(*) FILTER (WHERE cardinality(override_applied) > 0)::text AS overrides,
               count(*) FILTER (WHERE callback_at IS NOT NULL)::text AS callbacks,
-              count(*) FILTER (WHERE dialed_at = agency_insights_bucket(dialed_at))::text AS on_boundary
+              count(*) FILTER (WHERE dialed_at = agency_insights_bucket(dialed_at))::text AS on_boundary,
+              count(*) FILTER (WHERE outcome = 'connected'
+                AND bridged_at - answered_at > make_interval(secs => bridge_grace_ms / 1000.0))::text AS late_bridge,
+              count(*) FILTER (WHERE outcome = 'connected' AND bridged_at - answered_at > interval '1 second'
+                AND bridged_at - answered_at <= make_interval(secs => bridge_grace_ms / 1000.0))::text AS slow_bridge,
+              count(DISTINCT bridge_grace_ms) FILTER (WHERE outcome = 'connected'
+                AND bridged_at - answered_at > make_interval(secs => bridge_grace_ms / 1000.0))::text AS late_graces
          FROM agency_call_attempts`);
     const n = rows[0]!;
     expect(Number(n['n'])).toBeGreaterThan(2500);
-    for (const k of ['at_limit', 'live', 'overrides', 'callbacks', 'on_boundary']) expect(Number(n[k]), k).toBeGreaterThan(0);
+    for (const k of ['at_limit', 'live', 'overrides', 'callbacks', 'on_boundary', 'late_bridge', 'slow_bridge']) expect(Number(n[k]), k).toBeGreaterThan(0);
+    // Late bridges judged by more than one grace (AG3): a rollup reading a constant would disagree.
+    expect(Number(n['late_graces']), 'late_graces').toBeGreaterThan(1);
   });
 
   it('after the backfill job, every read matches', async () => {
@@ -236,7 +244,7 @@ describe('insights rollup — every read equals the attempts table', () => {
     const plus = (s: number) => new Date(t0.getTime() + s * 1000);
     const base = { campaign_id: c.id, contact_id: contactId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId,
       caller_id: '+919000000001', reserved_agent_id: agent.sessionId, state: 'ended', redial_number: 0,
-      agent_reopened: false, agent_manual: false, override_applied: [] as string[] };
+      agent_reopened: false, agent_manual: false, override_applied: [] as string[], bridge_grace_ms: 3000 };
     await bulkInsert(pool(), 'agency_call_attempts', ATTEMPT_COLUMNS, [
       // 1. A conversation written up with a code that grants an override.
       { ...base, id: randomUUID(), attempt_number: 1, outcome: 'connected', disposition_code: 'retry_later',

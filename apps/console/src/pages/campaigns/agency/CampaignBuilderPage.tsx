@@ -415,6 +415,9 @@ export default function CampaignBuilderPage() {
           telephony_provider: carrier.telephony_provider,
           telephony_credential_id: carrier.telephony_credential_id,
           abandonment_ceiling_pct: ceilingForCreate,
+          // The abandonment grace rides on the create for the same reason (AG2). The select offers
+          // only the allowed values, so it needs no check of its own here.
+          abandonment_grace_ms: config.abandonmentGraceMs,
           ...template.createFields,
         },
         tenantId ?? undefined,
@@ -448,7 +451,7 @@ export default function CampaignBuilderPage() {
     };
     return created.id;
   }, [
-    campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, template.createFields, template.draft,
+    campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, config.abandonmentGraceMs, template.createFields, template.draft,
     breakReasons, agentScreen, tenantId, accountId,
   ]);
 
@@ -625,6 +628,7 @@ export default function CampaignBuilderPage() {
           auto_return: config.autoReturn,
           wrapup_redial: config.allowWrapupRedial,
           abandonment_ceiling_pct: config.abandonmentCeilingPct,
+          abandonment_grace_ms: config.abandonmentGraceMs,
           ...(assignmentEnabled
             ? {
               assignment_mode: config.assignment.mode,

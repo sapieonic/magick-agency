@@ -285,13 +285,13 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "expr": "sum((rate(agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) and agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) or ((max_over_time(agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) unless agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) / ($__rate_interval_ms / 1000)))",
           "interval": "1m",
           "legendFormat": "answered",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "expr": "sum((rate(agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) and agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) or ((max_over_time(agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) unless agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) / ($__rate_interval_ms / 1000)))",
           "interval": "1m",
           "legendFormat": "abandoned",
           "refId": "B"
@@ -303,7 +303,7 @@
           "refId": "D"
         }
       ],
-      "description": "Answered vs abandoned, plus why the pacing engine dialed nothing on a tick. (No billing series: agency has no billing.)"
+      "description": "Answered vs abandoned, plus why the pacing engine dialed nothing on a tick. (No billing series: agency has no billing.)\n\nANSWERED AND ABANDONED COUNT EVERY CALL, the first one included. Both counters carry `campaign_id` and, like every series, `service_version`, so a series is born at 1 on a campaign's first answer or abandon after each release, and plain `rate()` takes that first sample as its baseline and drops it: on 23 Nov on Staging it read 8 abandoned of 11, one lost in each of three campaign series. Each query therefore adds a series that did not exist `$__rate_interval` ago at its whole value (`max_over_time … unless … offset`), spread over the window as `rate()` spreads the rest. Copy that arm into any query of your own over these counters, or read the counts from SQL; grafana/README.md, 'Counting a sparse counter's first increment'."
     },
     {
       "datasource": {
@@ -621,7 +621,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "THE LATE-BINDING ROLLOUT GATE, finally measurable. §7.3 gates the week-long hold on 'bind-latency p99 <150ms and zero bind failures', and §11 carried that criterion as NOT INSTRUMENTED from the day the flag shipped — a refused bind was a WARN line and nothing else.\n\n⚠️ THE WHOLE BUDGET IS 1000ms (`ABANDONMENT_BRIDGE_GRACE_MS`). Every millisecond here is time the compliance predicate counts as abandonment. Measured from the CARRIER's answer instant, so it includes webhook transit — deliberately, because the predicate counts that too.\n\nREAD BOTH SERIES TOGETHER. A bind that never happened records no latency, so a rollout watching only the p99 sees it IMPROVE as binds start failing. `result` is exactly one of three: `bound` is the success; `station_lost` means the station was not there — either gone before we reached for the socket, or the `reserved` frame was refused; `bind_failed` means the socket was live and the bridge declined it, and it is the one that means ROLL THE FLAG BACK rather than slow the pacing down.\n\nNothing else appears. An earlier version of this description named `no_agent` and `refused`, neither of which the code has ever emitted, and handed `station_lost` only half its meaning — worth knowing because the Grafana validator checks metric and label NAMES, not description prose, so a query written against that text would have returned nothing and looked like a healthy rollout.\n\nABORT if p99 crosses 150ms or any non-`bound` result is sustained.",
+      "description": "THE LATE-BINDING ROLLOUT GATE, finally measurable. §7.3 gates the week-long hold on 'bind-latency p99 <150ms and zero bind failures', and §11 carried that criterion as NOT INSTRUMENTED from the day the flag shipped — a refused bind was a WARN line and nothing else.\n\n⚠️ THE WHOLE BUDGET IS THE ABANDONMENT GRACE: 3000ms by default (`DEFAULT_ABANDONMENT_GRACE_MS`), as little as 1000ms on a campaign set to 1 second (AG2). Every millisecond here is time the compliance predicate counts as abandonment. Measured from the CARRIER's answer instant, so it includes webhook transit — deliberately, because the predicate counts that too.\n\nREAD BOTH SERIES TOGETHER. A bind that never happened records no latency, so a rollout watching only the p99 sees it IMPROVE as binds start failing. `result` is exactly one of three: `bound` is the success; `station_lost` means the station was not there — either gone before we reached for the socket, or the `reserved` frame was refused; `bind_failed` means the socket was live and the bridge declined it, and it is the one that means ROLL THE FLAG BACK rather than slow the pacing down.\n\nNothing else appears. An earlier version of this description named `no_agent` and `refused`, neither of which the code has ever emitted, and handed `station_lost` only half its meaning — worth knowing because the Grafana validator checks metric and label NAMES, not description prose, so a query written against that text would have returned nothing and looked like a healthy rollout.\n\nABORT if p99 crosses 150ms or any non-`bound` result is sustained.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -686,7 +686,146 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "WHY abandoned calls reached no agent. Until this shipped, a bind failure and every other cause were the same increment in `agency_abandoned_total`, and they call for opposite responses.\n\n`station_lost` — the agent's station was not there. A WORKSTATION problem: check sockets and wifi, do not touch the pacing. `bind_failed` — the socket was live and the bridge refused it: **roll the late-binding flag back.** `bridge_late` — it DID bridge, outside the 1s grace; a conversation happened and was merely late. `unattributed` — abandoned with no cause observed, which on the flag-off default path is the ordinary residual: the customer answered, an agent was bound at dial, and media never came up.\n\n⚠️ `no_agent_available` is declared and **cannot currently occur**. Pacing is strictly 1:1 and the dialer refuses to dial once the station has gone, so nothing can dial with nobody free; it is the name reserved for a future pacing controller. If it ever appears without over-dialing having shipped, that is a bug, not a pacing signal. An earlier version of this panel told you it meant \"slow the pacing down\" — and the code was then labelling every flag-off station loss with it.\n\n⚠️ A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`. Labelling that one would terminate it, and it is the compliance numerator read by the auto-pause guardrail's own cross-check. So `sum(rate(agency_abandoned_reason_total))` should TRACK `sum(rate(agency_abandoned_total))`; a persistent gap means an abandon path that reaches the compliance counter without declaring a reason.\n\n`bridge_late` is the one that is not a failure to reach anybody — the call DID bridge, outside the 1s grace. It is still an abandoned call for compliance.\n\nThis panel is diagnosis. The compliance number is `agency_abandonment_rate_24h`, which is SQL-derived and taken with `max`.",
+      "description": "ANSWER → AUDIO CONNECTED: the interval the compliance rule measures, `bridged_at − answered_at`, for every pacing-dialler call that bridged, by carrier. The soft phone's and inbound calls' bridges are not observed. A call past its grace counts as abandoned even though the agent then talks to the customer: it is `bridge_late` on Abandonment Causes below.\n\nTHIS PANEL DRAWS THE DEFAULT 3s grace (`DEFAULT_ABANDONMENT_GRACE_MS`, AG1). The grace is a campaign setting (whole seconds, 1 to 5; AG2), and each call is judged by the grace stamped on its attempt when it was placed (`bridge_grace_ms`, AG3). A campaign set to another value is judged by its own: its `bridge_late` count on Abandonment Causes uses its own grace, so a call to the right of this line may be in time for it, and one to the left may be late. Every whole second from 1 to 5 is a bucket boundary, so that campaign's share is the same query on its own `le` bucket.\n\nREAD IT WITH LATE BIND ABOVE. The bind is OUR share of this interval (answer → the agent's station socket attached; under 25ms on every call of 23 Nov); the rest is the carrier connecting its audio stream. Bind fast and this slow ⇒ the carrier, not us: on 23 Nov VoiceLink's stream connected 1.06–1.25s or ~5s after its answer on ~8% of answered calls, and the abandonment rate went to ~10%. Bind slow as well ⇒ ours: start at Late Bind.\n\nThe dashed red line is the 3s grace. `share over 3s, last 1h` (right axis) is, per carrier, the fraction of the calls BRIDGED in the hour before each point that were past it: each one an abandoned call an agent actually took. A rolling hour, not a per-window ratio: at today's volume (~110 answered calls a day) a `$__rate_interval` window holds 0 or 1 bridge, and a share per window reads only 0, 100% or nothing. It counts a series born inside the hour at its whole value (`max_over_time … unless … offset 1h`; grafana/README.md, 'Counting a sparse counter's first increment'). An hour with no bridge is a gap. In the legend, Last is the latest hour and Max the worst hour in the time range. Healthy is the share near 0 and p99 under the line. A share that rises while p50 stays flat is a tail on one carrier: list the calls from the attempts table (`bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond'`, each call against its own grace) and take them to that carrier. p50 rising is every call slower: read the bridge's logs (`webrtc-bridge-manager`, 'PSTN leg connected' against 'Borrowed browser leg bound'). Raising a campaign's grace (its Settings, AG2) is a compliance decision, not a fix.\n\nTHE QUANTILE LINES ARE SPARSE AT LOW VOLUME. p50 / p90 / p99 are per `$__rate_interval`, and at today's volume most windows hold no bridge (a gap) or one (every quantile is then that call's value, interpolated within its bucket): they show single calls, not a distribution. Read the share for how many calls were late, the lines for how late. Each release (a new `service_version`) starts every tenant × carrier series afresh and `rate()` misses a series' first observation, so the lines also miss the first bridge of each tenant and carrier after a release; the share does not.\n\nOnly calls that bridged are here: a call answered and never bridged has no interval. Those are every reason but `bridge_late` on Abandonment Causes. `provider=other` is a campaign whose carrier the code does not declare.\n\nThe buckets crowd the default grace (… 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6 …), so a quantile between two boundaries is interpolated; the share reads the `le=\"3\"` bucket and is exact. `pnpm test:grafana` holds that bucket, the threshold and the 3s in this text to `DEFAULT_ABANDONMENT_GRACE_MS`. Tenant-scoped, no campaign (series cost): a per-campaign figure is the same SQL on `agency_call_attempts`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^share over 3s.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 20
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 161,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Answer → Audio Connected (against the default 3s grace)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, provider) (rate(agency_answer_to_bridge_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50 {{provider}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum by (le, provider) (rate(agency_answer_to_bridge_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90 {{provider}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, provider) (rate(agency_answer_to_bridge_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p99 {{provider}}",
+          "refId": "C"
+        },
+        {
+          "expr": "1 - (sum by (provider) ((increase(agency_answer_to_bridge_seconds_bucket{le=\"3\", deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[1h]) and agency_answer_to_bridge_seconds_bucket{le=\"3\", deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset 1h) or (max_over_time(agency_answer_to_bridge_seconds_bucket{le=\"3\", deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[1h]) unless agency_answer_to_bridge_seconds_bucket{le=\"3\", deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset 1h)) / sum by (provider) ((increase(agency_answer_to_bridge_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[1h]) and agency_answer_to_bridge_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset 1h) or (max_over_time(agency_answer_to_bridge_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[1h]) unless agency_answer_to_bridge_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset 1h)))",
+          "interval": "1m",
+          "legendFormat": "share over 3s, last 1h {{provider}}",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "WHY abandoned calls reached no agent. Until this shipped, a bind failure and every other cause were the same increment in `agency_abandoned_total`, and they call for opposite responses.\n\n`station_lost` — the agent's station was not there. A WORKSTATION problem: check sockets and wifi, do not touch the pacing. `bind_failed` — the socket was live and the bridge refused it: **roll the late-binding flag back.** `bridge_late` — it DID bridge, outside the 3s grace; a conversation happened and was merely late. `unattributed` — abandoned with no cause observed, which on the flag-off default path is the ordinary residual: the customer answered, an agent was bound at dial, and media never came up.\n\n⚠️ `no_agent_available` is declared and **cannot currently occur**. Pacing is strictly 1:1 and the dialer refuses to dial once the station has gone, so nothing can dial with nobody free; it is the name reserved for a future pacing controller. If it ever appears without over-dialing having shipped, that is a bug, not a pacing signal. An earlier version of this panel told you it meant \"slow the pacing down\" — and the code was then labelling every flag-off station loss with it.\n\n⚠️ A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`. Labelling that one would terminate it, and it is the compliance numerator read by the auto-pause guardrail's own cross-check. So the causes here, stacked, should equal the abandoned line on Throughput ×60: this panel is per minute (`* 60`), Throughput is per second. A persistent gap means an abandon path that reaches the compliance counter without declaring a reason.\n\nEVERY ABANDONMENT IS COUNTED, the first of each series included. Each (campaign, reason) series is born at 1, and born again on each release (a new `service_version`), and plain `rate()` or `increase()` takes that first sample as its baseline and drops it: on 23 Nov on Staging `increase(…[16h])` summed to 7 where the counters held 11, one lost per new series, and the gap against `agency_abandoned_total` (which loses one per campaign, not per campaign and reason) was an artefact. The query adds a series that did not exist `$__rate_interval` ago at its whole value (`max_over_time … unless … offset`). Copy that arm into any ad-hoc query over this counter; grafana/README.md, 'Counting a sparse counter's first increment'.\n\n`bridge_late` is the one that is not a failure to reach anybody — the call DID bridge, outside the 3s grace. It is still an abandoned call for compliance.\n\nThis panel is diagnosis. The compliance number is `agency_abandonment_rate_24h`, which is SQL-derived and taken with `max`.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -712,7 +851,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 41
       },
       "id": 82,
       "options": {
@@ -733,7 +872,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum by (reason) (rate(agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) * 60)",
+          "expr": "sum by (reason) ((rate(agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) and agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) or ((max_over_time(agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) unless agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"} offset $__rate_interval) / ($__rate_interval_ms / 1000))) * 60",
           "interval": "1m",
           "legendFormat": "{{reason}}/min",
           "refId": "A"
@@ -771,7 +910,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 41
       },
       "id": 83,
       "options": {
@@ -836,7 +975,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 41
+        "y": 49
       },
       "id": 84,
       "options": {
@@ -894,7 +1033,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 41
+        "y": 49
       },
       "id": 105,
       "options": {
@@ -970,7 +1109,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 49
+        "y": 57
       },
       "id": 116,
       "options": {
@@ -1035,7 +1174,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 49
+        "y": 57
       },
       "id": 117,
       "options": {
@@ -1120,7 +1259,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 57
+        "y": 65
       },
       "id": 118,
       "options": {
@@ -1207,7 +1346,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 57
+        "y": 65
       },
       "id": 119,
       "options": {
@@ -1292,7 +1431,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 73
       },
       "id": 120,
       "options": {
@@ -1357,7 +1496,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 73
       },
       "id": 121,
       "options": {
@@ -1391,7 +1530,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 81
       },
       "id": 154,
       "panels": [],
@@ -1429,7 +1568,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 74
+        "y": 82
       },
       "id": 155,
       "options": {
@@ -1488,7 +1627,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 74
+        "y": 82
       },
       "id": 156,
       "options": {
@@ -1547,7 +1686,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 82
+        "y": 90
       },
       "id": 157,
       "options": {
@@ -1587,7 +1726,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 98
       },
       "id": 124,
       "title": "Reports",
@@ -1625,7 +1764,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "id": 125,
       "options": {
@@ -1701,7 +1840,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 99
       },
       "id": 126,
       "options": {
@@ -1766,7 +1905,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 99
+        "y": 107
       },
       "id": 127,
       "options": {
@@ -1831,7 +1970,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 99
+        "y": 107
       },
       "id": 128,
       "options": {
@@ -1877,7 +2016,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 107
+        "y": 115
       },
       "id": 158,
       "title": "Compare agents",
@@ -1915,7 +2054,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 108
+        "y": 116
       },
       "id": 159,
       "options": {
@@ -1974,7 +2113,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 116
       },
       "id": 160,
       "options": {
@@ -2008,7 +2147,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 124
       },
       "id": 129,
       "title": "Inbound calls",
@@ -2046,7 +2185,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 117
+        "y": 125
       },
       "id": 130,
       "options": {
@@ -2122,7 +2261,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 117
+        "y": 125
       },
       "id": 131,
       "options": {
@@ -2187,7 +2326,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 133
       },
       "id": 132,
       "options": {
@@ -2252,7 +2391,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 133
       },
       "id": 133,
       "options": {
@@ -2317,7 +2456,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 133
+        "y": 141
       },
       "id": 134,
       "options": {
@@ -2376,7 +2515,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 133
+        "y": 141
       },
       "id": 135,
       "options": {
@@ -2416,7 +2555,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 141
+        "y": 149
       },
       "id": 136,
       "title": "Mode B: ringing away phones",
@@ -2454,7 +2593,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 142
+        "y": 150
       },
       "id": 137,
       "options": {
@@ -2513,7 +2652,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 142
+        "y": 150
       },
       "id": 138,
       "options": {
@@ -2578,7 +2717,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 158
       },
       "id": 139,
       "options": {
@@ -2637,7 +2776,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 158
       },
       "id": 140,
       "options": {
@@ -2696,7 +2835,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 158
+        "y": 166
       },
       "id": 141,
       "options": {
@@ -2761,7 +2900,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 158
+        "y": 166
       },
       "id": 142,
       "options": {
@@ -2795,7 +2934,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 166
+        "y": 174
       },
       "id": 146,
       "title": "Live call listening",
@@ -2833,7 +2972,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 167
+        "y": 175
       },
       "id": 147,
       "options": {
@@ -2898,7 +3037,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 167
+        "y": 175
       },
       "id": 148,
       "options": {
@@ -2957,7 +3096,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 183
       },
       "id": 149,
       "options": {
@@ -3022,7 +3161,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 183
       },
       "id": 150,
       "options": {
@@ -3087,7 +3226,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 183
+        "y": 191
       },
       "id": 151,
       "options": {
@@ -3152,7 +3291,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 183
+        "y": 191
       },
       "id": 152,
       "options": {
@@ -3186,7 +3325,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 191
+        "y": 199
       },
       "id": 2,
       "title": "Voice, capacity and storage",
@@ -3223,7 +3362,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 192
+        "y": 200
       },
       "id": 10,
       "options": {
@@ -3312,7 +3451,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 192
+        "y": 200
       },
       "id": 73,
       "options": {
@@ -3401,7 +3540,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 192
+        "y": 200
       },
       "id": 67,
       "options": {
@@ -3460,7 +3599,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 200
+        "y": 208
       },
       "id": 102,
       "options": {
@@ -3548,7 +3687,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 200
+        "y": 208
       },
       "id": 76,
       "options": {
@@ -3645,7 +3784,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 208
+        "y": 216
       },
       "id": 122,
       "options": {
@@ -3732,7 +3871,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 208
+        "y": 216
       },
       "id": 123,
       "options": {
@@ -3766,7 +3905,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 216
+        "y": 224
       },
       "id": 143,
       "title": "Recordings",
@@ -3835,7 +3974,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 217
+        "y": 225
       },
       "id": 144,
       "options": {
@@ -3910,7 +4049,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 217
+        "y": 225
       },
       "id": 145,
       "options": {
@@ -3944,7 +4083,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 225
+        "y": 233
       },
       "id": 3,
       "title": "Identity and mail",
@@ -3981,7 +4120,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 226
+        "y": 234
       },
       "id": 103,
       "options": {
@@ -4039,7 +4178,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 226
+        "y": 234
       },
       "id": 104,
       "options": {
@@ -4079,7 +4218,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 234
+        "y": 242
       },
       "id": 4,
       "title": "Analysis",
@@ -4147,7 +4286,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 235
+        "y": 243
       },
       "id": 68,
       "options": {
@@ -4211,7 +4350,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 235
+        "y": 243
       },
       "id": 69,
       "options": {
@@ -4287,7 +4426,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 243
+        "y": 251
       },
       "options": {
         "legend": {
@@ -4369,7 +4508,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 243
+        "y": 251
       },
       "options": {
         "legend": {
@@ -4457,7 +4596,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 251
+        "y": 259
       },
       "options": {
         "legend": {
@@ -4492,7 +4631,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 259
+        "y": 267
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -4529,7 +4668,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 260
+        "y": 268
       },
       "id": 106,
       "options": {
@@ -4593,7 +4732,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 260
+        "y": 268
       },
       "id": 107,
       "options": {
@@ -4651,7 +4790,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 260
+        "y": 268
       },
       "id": 108,
       "options": {
@@ -4711,7 +4850,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 268
+        "y": 276
       },
       "id": 87,
       "options": {
@@ -4768,7 +4907,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 268
+        "y": 276
       },
       "id": 74,
       "options": {
@@ -4826,7 +4965,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 276
+        "y": 284
       },
       "id": 50,
       "options": {
@@ -4864,7 +5003,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 284
+        "y": 292
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -4901,7 +5040,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 285
+        "y": 293
       },
       "id": 112,
       "options": {
@@ -4959,7 +5098,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 285
+        "y": 293
       },
       "id": 113,
       "options": {
@@ -5017,7 +5156,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 293
+        "y": 301
       },
       "id": 114,
       "options": {
@@ -5075,7 +5214,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 293
+        "y": 301
       },
       "id": 115,
       "options": {

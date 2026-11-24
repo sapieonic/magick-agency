@@ -299,7 +299,15 @@ describe('the abandonment limit on a draft created by the roster import', () => 
       caller_ids: ['+912200000001'],
       telephony_provider: 'voicelink',
       telephony_credential_id: null,
+      // The abandonment grace rides on the create whatever the limit's box holds (AG2).
+      abandonment_grace_ms: 3000,
     });
+  });
+
+  it('sends the abandonment grace chosen on the create (AG2)', async () => {
+    const body = await importWithCeiling(() => fireEvent.change(screen.getByTestId('abandonment-grace-select'), { target: { value: '4' } }));
+    expect(body.abandonment_grace_ms).toBe(4000);
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 });
 

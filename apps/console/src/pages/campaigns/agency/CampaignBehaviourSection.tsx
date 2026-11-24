@@ -13,6 +13,7 @@ import { RetryPolicyTable } from './RetryPolicyTable';
 import { OutcomeDispositionMap } from './OutcomeDispositionMap';
 import { WrapupFields } from './WrapupFields';
 import { AbandonmentCeilingFields } from './AbandonmentCeilingFields';
+import { AbandonmentGraceField } from './AbandonmentGraceField';
 import { AssignmentFields } from './AssignmentFields';
 import { InboundStickyField } from './InboundStickyField';
 
@@ -218,14 +219,24 @@ export function CampaignBehaviourSection({
       onChange={(inboundSticky) => onChange({ ...state, inboundSticky })}
     />
   ) : null;
+  // The limit and the grace that decides which calls count against it (AG4): one group wherever
+  // the limit is shown (the settings page's Retries, the builder, a template's safety section).
   const ceiling = (
-    <AbandonmentCeilingFields
-      ceilingPct={state.abandonmentCeilingPct}
-      storedPct={state.abandonmentCeilingStoredPct}
-      onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
-      errors={errors}
-      readOnly={readOnly}
-    />
+    <>
+      <AbandonmentCeilingFields
+        ceilingPct={state.abandonmentCeilingPct}
+        storedPct={state.abandonmentCeilingStoredPct}
+        onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
+        errors={errors}
+        readOnly={readOnly}
+      />
+      <AbandonmentGraceField
+        graceMs={state.abandonmentGraceMs}
+        onChange={(abandonmentGraceMs) => onChange({ ...state, abandonmentGraceMs })}
+        errors={errors}
+        readOnly={readOnly}
+      />
+    </>
   );
   const assignmentFields = assignment ? (
     <AssignmentFields

@@ -165,7 +165,12 @@ count − 1, since `count_over_time` is exact.
 and `service_name=~"$service_name"`. The rows:
 - **Agency dialer**: live attempts by state, 24h abandonment, throughput,
   pre-dial gate outcomes, settled attempts by outcome, where seat time goes,
-  hold time, answer latency, late bind, abandonment causes, wrap-up,
+  hold time, answer latency, late bind, answer to audio connected
+  (`agency_answer_to_bridge_seconds` p50 / p90 / p99 by carrier against the default 3 s
+  grace, and the share of the last hour's bridged calls past it; a campaign set to another
+  grace, 1–5 s, is judged by its own; no rule yet; `pnpm test:grafana` holds the panel to
+  `DEFAULT_ABANDONMENT_GRACE_MS`), abandonment
+  causes, wrap-up,
   our-fault retirements, campaign-completion emails; the insights rollup
   (backlog and oldest dirty mark, batch duration, batches, buckets and
   failures) and pacing-history write failures and drops; the pacing share
@@ -255,4 +260,74 @@ an OTel instrument created outside the facades.
 - the routing contract above.
 
 `validate-dashboard.test.mjs` checks the dashboard the same way, plus the 1m Min
-step and 5m windows the 60s OTLP export needs, and agency-only scoping.
+step and 5m windows the 60s OTLP export needs, agency-only scoping, and the
+first-increment arm on every `rate()`/`increase()` over `agency_answered_total`,
+`agency_abandoned_total` and `agency_abandoned_reason_total`, in the one structure that
+counts it (below; the test runs fixtures that must pass and fail through the same check),
+and that the Answer → Audio Connected panel's `le` bucket, threshold and the grace its text names are
+`DEFAULT_ABANDONMENT_GRACE_MS`, read from `packages/domain/src/abandonment-predicate.ts`, and that its
+title and text say it is the default (a campaign may set 1–5 s and is judged by its own, AG2).
+
+## Counting a sparse counter's first increment
+
+Agency's counters and histograms reach Grafana Cloud over OTLP with cumulative
+temporality, and a series exists from its first increment or observation: its first
+sample already holds every event of its first 60 s export, usually 1. `rate()` and
+`increase()` count growth after their first sample, so those events are never
+counted. A series is new more often than its own labels suggest: every series also
+carries `service_version` (the server's version, a resource attribute), so each
+release starts every counter and histogram afresh, for every label set, besides each
+new `campaign_id` or other label value. On 23 Nov on Staging
+`increase(agency_abandoned_reason_total[16h])` summed to 7 where the counters held 11
+(four new series), and `agency_abandoned_total` read 8 of 11 (three series).
+
+What that costs depends on how many events a series holds:
+- **The three counters reconciled against SQL** (`agency_answered_total`,
+  `agency_abandoned_total`, `agency_abandoned_reason_total`): a series per campaign,
+  and a handful of events in each, so the loss is a large share. They get the arm below.
+- **Every other counter panel** loses one export's events per label set at each
+  release, and per new label value. At today's volume many of agency's series are
+  sparse, so expect a dip in the window after a release on those panels; they show
+  trends, and they keep plain `rate()`.
+- **Histograms** lose the observations of each label set's first export after a
+  release from their quantiles. `agency_answer_to_bridge_seconds` (tenant × provider)
+  misses the first bridge of each tenant and carrier after each release from its
+  p50 / p90 / p99: small at a release every few days. Its share over the grace reads
+  a rolling hour with the arm, so it does not.
+
+- **Alert rules**: every firing `increase()` carries the new-series guard
+  (header of `terraform/alert-rules.tf`), and the validator holds them to it. No
+  rule reads the abandonment counters.
+- **Dashboard**: Throughput (answered, abandoned) and Abandonment Causes read
+  `X` (with the panel's matchers) as
+
+  ```promql
+  (rate(X[$__rate_interval]) and X offset $__rate_interval)
+  or ((max_over_time(X[$__rate_interval]) unless X offset $__rate_interval) / ($__rate_interval_ms / 1000))
+  ```
+
+  A series that existed a window ago goes through `rate()`; one born inside the
+  window started at 0, so its whole value is its events, spread over the window as
+  `rate()` spreads the rest. Integrated over the same 16h of 23 Nov, the causes read
+  ~11 of 11 where plain `rate()` read 7, abandoned ~10.8 of 11 and answered ~121.7 of
+  123: a series' second increment that lands inside its first window is counted only in
+  part at the hand-off between the two arms. For an ad-hoc total over a range `R`, sum
+  `(increase(X[R]) and X offset R) or (max_over_time(X[R]) unless X offset R)`; a rate
+  over a fixed range divides the new-series arm by its seconds (`/ 3600` for `[1h]`).
+  `pnpm test:grafana` holds every `rate()` / `increase()` over the three counters to
+  exactly this structure.
+- **What the arm cannot fix**: a series born and then reset by a restart inside one
+  window counts only its larger part; across a restart, a series whose new value is
+  at or above its old one reads as `new − old` (no reset is seen); an export gap of
+  more than 5 minutes just before the window makes an old series look new.
+- **The fix for all of it is a stack setting, outside this repo.** Grafana Cloud's
+  metrics tenant limit `otel_created_timestamp_zero_ingestion_enabled` (Mimir's
+  `-distributor.otel-created-timestamp-zero-ingestion-enabled`, experimental, off by
+  default) writes a 0 sample at each OTLP point's start time. The OTel JS SDK
+  stamps a new label set's start time at its first increment, so with it on every
+  counter and histogram counts from 0 in every query, restarts included. It is off
+  on this stack (every `agency_abandoned_reason_total` series' `min_over_time` on
+  23 Nov is 1, never 0); Grafana Cloud support turns it on for the stack. The arm
+  stays correct with it on (a series whose zero lands inside the window is still
+  new; one whose zero lands before it goes through `rate()`), so the panels need
+  no change either way.

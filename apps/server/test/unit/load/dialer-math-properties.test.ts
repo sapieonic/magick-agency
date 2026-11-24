@@ -26,7 +26,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn
 const { resolveRetryDecision, resolveOurFaultRedial, DEFAULT_RETRY_POLICY, OUR_FAULT_REDIAL_BOUND, DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES } =
   await import('../../../src/agency/retry-policy.js');
 const { breachedRows, singleAbandonSampleFloor } = await import('../../../src/agency/abandonment-guardrail.js');
-const { abandonmentRatePct, isAbandonedAttempt, ABANDONMENT_BRIDGE_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
+const { abandonmentRatePct, isAbandonedAttempt, ALLOWED_ABANDONMENT_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
 const { callingWindowState, nextWindowOpen } = await import('../../../src/agency/calling-hours.js');
 const { pickCallerId, usableCallerIds } = await import('../../../src/agency/pacing/caller-id-pool.js');
 
@@ -154,18 +154,25 @@ describe('abandonment math, as properties (load)', () => {
     const rng = createRng(SEED + 3);
     for (let k = 0; k < scaled(4000); k++) {
       const answered = rng.chance(0.8) ? new Date(1_700_000_000_000 + rng.int(0, 1e6)) : null;
-      const delay = rng.int(-50, 3 * ABANDONMENT_BRIDGE_GRACE_MS);
+      // Any grace a campaign may hold (AG2), stamped on the attempt (AG3).
+      const bridgeGraceMs = rng.pick(ALLOWED_ABANDONMENT_GRACE_MS);
+      const delay = rng.int(-50, 3 * bridgeGraceMs);
       const bridged = answered && rng.chance(0.8) ? new Date(answered.getTime() + delay) : null;
       const outcome = rng.pick(['connected', 'abandoned', 'no_answer', null] as const);
-      const tag = `case ${k}, seed ${SEED}: answered=${!!answered} delay=${bridged ? delay : 'none'} outcome=${outcome}`;
-      const v = isAbandonedAttempt({ answeredAt: answered, bridgedAt: bridged, outcome });
+      const tag = `case ${k}, seed ${SEED}: answered=${!!answered} delay=${bridged ? delay : 'none'} outcome=${outcome} grace=${bridgeGraceMs}`;
+      const v = isAbandonedAttempt({ answeredAt: answered, bridgedAt: bridged, outcome, bridgeGraceMs });
       if (!answered) expect(v, tag).toBe(false);
       else if (outcome === 'abandoned' || !bridged) expect(v, tag).toBe(true);
-      else expect(v, tag).toBe(delay > ABANDONMENT_BRIDGE_GRACE_MS);
+      else expect(v, tag).toBe(delay > bridgeGraceMs);
       // Bridging later never makes an abandoned call compliant.
       if (answered && bridged && v) {
-        const later = isAbandonedAttempt({ answeredAt: answered, bridgedAt: new Date(bridged.getTime() + rng.int(1, 5000)), outcome });
+        const later = isAbandonedAttempt({ answeredAt: answered, bridgedAt: new Date(bridged.getTime() + rng.int(1, 5000)), outcome, bridgeGraceMs });
         expect(later, tag).toBe(true);
+      }
+      // A shorter grace never makes an abandoned call compliant.
+      if (answered && v) {
+        const shorter = ALLOWED_ABANDONMENT_GRACE_MS.filter((g) => g < bridgeGraceMs);
+        for (const g of shorter) expect(isAbandonedAttempt({ answeredAt: answered, bridgedAt: bridged, outcome, bridgeGraceMs: g }), tag).toBe(true);
       }
     }
   });
