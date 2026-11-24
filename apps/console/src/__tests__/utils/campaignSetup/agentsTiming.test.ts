@@ -110,5 +110,9 @@ describe('the Advanced fold’s fields', () => {
     }
     expect(hasAdvancedFinding({ wrapup_seconds: 'x' })).toBe(false);
     expect(hasAdvancedFinding({ wrapup_seconds: 'x', 'retry_policy.no_answer.max_attempts': 'y' })).toBe(true);
+    // Where the step does not show the automatic outcomes, their findings are not the fold's.
+    expect(hasAdvancedFinding({ 'outcome_dispositions.no_answer': 'x' })).toBe(true);
+    expect(hasAdvancedFinding({ 'outcome_dispositions.no_answer': 'x' }, false)).toBe(false);
+    expect(hasAdvancedFinding({ 'outcome_dispositions.no_answer': 'x', abandonment_ceiling_pct: 'y' }, false)).toBe(true);
   });
 });

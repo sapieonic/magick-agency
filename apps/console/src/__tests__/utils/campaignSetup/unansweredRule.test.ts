@@ -4,12 +4,12 @@ import {
   UNANSWERED_OUTCOMES,
   attemptOptions,
   attemptsLabel,
-  delayLabel,
   delayOptions,
   startingRuleOf,
   unansweredRuleOf,
   withUnansweredRule,
 } from '../../../utils/campaignSetup/unansweredRule';
+import { delayLabel } from '../../../utils/campaignSetup/ruleOptions';
 import {
   FIXED_ZERO_OUTCOMES,
   OUR_FAULT_RETRY_OUTCOMES,

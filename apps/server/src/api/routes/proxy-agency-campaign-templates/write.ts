@@ -51,8 +51,8 @@ import {
   sectionConfigIssues,
   sectionsShapeIssues,
   storedTemplateSections,
-  zodDetails,
 } from './validate.js';
+import { zodDetails } from '../../../utils/zod-details.js';
 
 /** A repository refusal every content write can meet. */
 type ContentRefusal =
@@ -194,7 +194,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
   // ── POST /campaign-templates ────────────────────────────────────────────────
   app.post('/campaign-templates', manage, async (request, reply) => {
     const parsed = createTemplateSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     const body = parsed.data;
 
     // The scope and the request's context agree: an organisation template is sent without
@@ -239,7 +239,7 @@ export async function registerCampaignTemplateWriteRoutes(app: FastifyInstance):
   app.put<{ Params: { id: string } }>('/campaign-templates/:id', manage, async (request, reply) => {
     // The body first, its size included, before anything is read.
     const parsed = replaceTemplateSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     const body = parsed.data;
     const row = await writableTemplate(request, reply);
     if (!row) return reply;

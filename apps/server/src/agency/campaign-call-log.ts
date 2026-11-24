@@ -48,6 +48,7 @@ import {
   type AgencyCallLogTypeFilter,
   type AgencyInboundJourneyStep,
 } from '@magick-agency/contracts/api/agency/call-log';
+import { multiParam } from './spine-filters.js';
 
 /**
  * Where a call-log row came from: the campaign's dialler, an agent's soft phone, or the
@@ -73,13 +74,11 @@ export function isCampaignCallLogSourceFilter(value: unknown): value is Campaign
  * `?outcome=` on the call log holds two vocabularies: the attempt list's outcomes, and what only
  * an inbound call can have happened to it (`AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS`). Split
  * here, before the attempt filters are parsed (which know only their own): `attempt` goes on to
- * `parseAttemptFilters` as `outcome`, `inbound` to the read as `inboundOutcomes`. Blank items
- * are dropped as `multiParam` drops them.
+ * `parseAttemptFilters` as `outcome`, `inbound` to the read as `inboundOutcomes`. Items are
+ * read by `multiParam` (either form, blanks dropped).
  */
 export function splitCallLogOutcomes(raw: unknown): { attempt: string | undefined; inbound: AgencyCallLogInboundOutcomeFilter[] } {
-  if (raw === undefined || raw === null) return { attempt: undefined, inbound: [] };
-  const items = (Array.isArray(raw) ? raw : [raw]).flatMap((value) => String(value).split(','))
-    .map((item) => item.trim()).filter((item) => item.length > 0);
+  const items = multiParam(raw) ?? [];
   const inbound = items.filter((item): item is AgencyCallLogInboundOutcomeFilter =>
     (AGENCY_CALL_LOG_INBOUND_OUTCOME_FILTERS as readonly string[]).includes(item));
   const attempt = items.filter((item) => !(inbound as string[]).includes(item));

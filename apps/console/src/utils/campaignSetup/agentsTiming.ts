@@ -1,6 +1,7 @@
 import type { AssignmentConfigState, CallingWindowState } from '../agencyCampaignConfigForm';
 import { formatCount } from '../format/number';
 import { daysPerWeekLabel, windowLabel } from './hoursPresets';
+import { optionsOf, type RuleOption } from './ruleOptions';
 
 /*
   The rules step 4 ("Agents & timing") says in words: the line under the agent list, the
@@ -86,11 +87,8 @@ export function wrapupLabel(seconds: number): string {
 }
 
 /** The wrap-up select, with the current value kept as an option when it is not a choice. */
-export function wrapupOptions(current: number): { value: string; label: string }[] {
-  const values: number[] = WRAPUP_CHOICES.includes(current as (typeof WRAPUP_CHOICES)[number])
-    ? [...WRAPUP_CHOICES]
-    : [...WRAPUP_CHOICES, current].sort((a, b) => a - b);
-  return values.map((n) => ({ value: String(n), label: wrapupLabel(n) }));
+export function wrapupOptions(current: number): RuleOption[] {
+  return optionsOf(WRAPUP_CHOICES, current, wrapupLabel);
 }
 
 /* ── The Advanced fold ────────────────────────────────────────────────────── */
@@ -122,8 +120,14 @@ export function isAdvancedField(field: string): boolean {
   );
 }
 
-export function hasAdvancedFinding(errors: Record<string, string>): boolean {
-  return Object.keys(errors).some(isAdvancedField);
+/**
+ * Whether a finding is inside the fold. `unansweredOutcomes` false: the step does not show the
+ * automatic outcomes for unanswered calls, so their findings are not the fold's.
+ */
+export function hasAdvancedFinding(errors: Record<string, string>, unansweredOutcomes = true): boolean {
+  return Object.keys(errors).some(
+    (field) => isAdvancedField(field) && (unansweredOutcomes || !field.startsWith('outcome_dispositions')),
+  );
 }
 
 /** The calling-window findings that only Custom's fields can show. */

@@ -1,7 +1,6 @@
 import {
   AGENCY_CAMPAIGN_TEMPLATE_ACCOUNT_ONLY_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_FLAG_GATED_SECTIONS,
-  AGENCY_CAMPAIGN_TEMPLATE_SECTIONS,
   AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS,
   type AgencyCampaignTemplateConfig,
   type AgencyCampaignTemplateScope,
@@ -13,6 +12,7 @@ import {
   builtinTemplateSections,
   diffSections,
   resolveTemplateSections,
+  sectionOfPath,
   sectionsFromCampaign,
 } from '@magick-agency/domain/campaign-templates';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
@@ -190,22 +190,6 @@ export function templateSectionsFromCampaign(
 /** What would stop a template's script saving, keyed by its field path. */
 export function templateScriptErrors(script: ScriptForm): Record<string, string> {
   return scriptErrors(script, templateScriptKeys(), templateUnknownKeysMessage);
-}
-
-/** The campaign field `path` names (`disposition_catalog[2].code` → `disposition_catalog`). */
-export function fieldOfPath(path: string): string {
-  return path.split(/[.[]/)[0] ?? path;
-}
-
-const SECTION_OF_FIELD: ReadonlyMap<string, AgencyCampaignTemplateSectionKey> = new Map(
-  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((key) =>
-    (AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[]).map((field) => [field, key] as const),
-  ),
-);
-
-/** The section a campaign field path belongs to, or null (a field no section holds). */
-export function sectionOfPath(path: string): AgencyCampaignTemplateSectionKey | null {
-  return SECTION_OF_FIELD.get(fieldOfPath(path)) ?? null;
 }
 
 /** The editors' state for a complete config: the filled-in form, or any campaign's settings. */

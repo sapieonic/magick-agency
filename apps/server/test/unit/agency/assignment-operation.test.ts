@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   agentOrder,
   assignmentCommitSchema,
-  zodDetails,
   decodePreviewToken,
   encodePreviewToken,
   parseAssignmentOperation,
@@ -14,6 +13,7 @@ import {
   historyReasonOf,
   lateCallbackQuotas,
 } from '../../../src/agency/assignment/operation.js';
+import { zodDetails } from '../../../src/utils/zod-details.js';
 
 /**
  * Contact assignment's pure rules: the operation validator (`400 assignment_invalid` with
@@ -97,7 +97,9 @@ describe('parseAssignmentOperation', () => {
     if (bad.success) throw new Error('expected a refusal');
     const out = zodDetails(bad.error, 'body');
     expect(Object.keys(out).sort()).toEqual(['body', 'preview_token']);
-    expect(zodDetails(bad.error)).toHaveProperty('operation');
+    // The operation's own parse keys a root issue `operation`.
+    const root = parseAssignmentOperation(42, 'preview');
+    expect(root.ok ? null : root.details).toHaveProperty('operation');
   });
 
   it('orders `per_agent` by the operation\'s own agents, givers included', () => {

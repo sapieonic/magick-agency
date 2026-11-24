@@ -140,29 +140,7 @@ export function sectionIdOfHash(hash: string): string {
   }
 }
 
-/* ── Which tab a field or a change is on ─────────────────────────────────── */
-
-const BASICS_FIELDS = new Set(['name', 'caller_ids', 'telephony_provider', 'telephony_credential_id']);
-
-/**
- * The tab whose fields show this finding: a body path as the server keys its `details` and
- * `validateConfig` its findings (`calling_window_end`, `disposition_catalog[3].label`,
- * `context_display.facts.0.key`). Anything not named here is on Agents & timing, which holds
- * the rest of the behaviour block (hours, retries, wrap-up, recording, assignment, breaks, the
- * daily target and the number display).
- */
-export function settingsTabOfField(field: string): SetupStepId {
-  if (BASICS_FIELDS.has(field)) return 'basics';
-  if (field.startsWith('context_display')) return 'contacts';
-  if (
-    field.startsWith('disposition_catalog')
-    || field.startsWith('outcome_dispositions')
-    || field.startsWith('agent_script')
-  ) {
-    return 'purpose';
-  }
-  return 'agents';
-}
+/* ── Which tab a change is on (a finding's: `setupStepOfField`) ──────────── */
 
 /**
  * The tab holding an unsaved change, as `changedSettings` names it (`name`, `window.start`,

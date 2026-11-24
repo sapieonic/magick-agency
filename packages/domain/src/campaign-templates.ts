@@ -22,6 +22,8 @@
  *    section's absent field is its built-in value), {@link configOfSections} (the flat config of
  *    complete sections) and {@link followedBy} (only an account template follows an organisation
  *    template).
+ *  - {@link sectionOfPath}: the section a campaign field path belongs to. The server marks a
+ *    refused field's section by it and the template editor reads the marks back.
  *
  * ── Normalisation: an untouched section never reads as changed ─────────────────
  * Every comparison here is of {@link normaliseSection}'s output, which:
@@ -91,6 +93,25 @@ const ORGANISATION_EXCLUDED: ReadonlySet<string> = new Set(AGENCY_CAMPAIGN_TEMPL
 
 function fieldsOf<K extends Key>(key: K): readonly AgencyCampaignTemplateSectionField<K>[] {
   return AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly AgencyCampaignTemplateSectionField<K>[];
+}
+
+/** Each campaign field a section holds → that section. */
+const SECTION_OF_FIELD: ReadonlyMap<string, Key> = new Map(
+  AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS.flatMap((key) => fieldsOf(key).map((field) => [field as string, key] as const)),
+);
+
+/** The campaign field `path` names (`disposition_catalog[2].code` → `disposition_catalog`). */
+function fieldOfPath(path: string): string {
+  return path.split(/[.[]/)[0] ?? path;
+}
+
+/**
+ * The section a campaign field path (`calling_window_end`, `disposition_catalog[2].code`) belongs
+ * to, or null (a field no section holds). The server marks refused fields by it and the editor
+ * reads them back, so both call this one.
+ */
+export function sectionOfPath(path: string): Key | null {
+  return SECTION_OF_FIELD.get(fieldOfPath(path)) ?? null;
 }
 
 /** A deep copy of JSON data (every template value is JSON), so nothing returned shares a constant's objects. */

@@ -84,6 +84,7 @@ import {
   CALL_LOG_INBOUND_OUTCOME_OPTIONS,
   CALL_LOG_STATUS_HINT,
   CALL_LOG_STATUS_OPTIONS,
+  DEFAULT_CALL_LOG_VIEW,
   TO_FOLLOW_UP_DATES_HINT,
   callLogAgentCell,
   callLogBadges,
@@ -572,7 +573,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
 
   /** Clear: back to the opening view (or the pinned contact), the chip kept. */
   const clearFilters = useCallback(() => {
-    writeUrl(pinnedContact ? { contact_id: pinnedContact } : {}, { type, allDates: false, status: null }, null);
+    writeUrl(pinnedContact ? { contact_id: pinnedContact } : {}, { ...DEFAULT_CALL_LOG_VIEW, type }, null);
   }, [writeUrl, pinnedContact, type]);
 
   /** An empty day's first way out: the last seven days, today included. */

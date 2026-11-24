@@ -117,19 +117,10 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
   const [script, setScript] = useState<ScriptForm | null>(null);
   const builderForm = useMemo<TemplateForm | null>(
     () => (startForm
-      ? {
-        ...startForm,
-        config,
-        recording,
-        breakReasons,
-        station: {
-          dailyTarget: agentScreen.dailyTarget,
-          phoneDisplay: agentScreen.phoneDisplay,
-          script: script ?? startForm.station.script,
-        },
-        callerIds,
-        carrier,
-      }
+      ? typedForm(
+        script ? { ...startForm, station: { ...startForm.station, script } } : startForm,
+        { config, recording, breakReasons, agentScreen, callerIds, carrier },
+      )
       : null),
     [startForm, config, recording, breakReasons, agentScreen, script, callerIds, carrier],
   );
@@ -159,7 +150,7 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
     template's profile. It is left out (the template's, as the server filled it in) when either
     field would be refused: recording switched on, or a profile set, where the account may not.
   */
-  const scriptNow = script ?? startForm?.station.script ?? null;
+  const scriptNow = builderForm?.station.script ?? null;
   const createFields = useMemo(() => {
     if (!startFrom || !builderFields) return {};
     const fixing = Object.keys(validateConfig(config)).length > 0
@@ -434,7 +425,6 @@ export function useBuilderTemplate(input: BuilderTemplateInput) {
 
   return {
     startFrom,
-    builderFields,
     panel,
     confirm,
     sourceProps,
