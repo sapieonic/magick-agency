@@ -49,7 +49,7 @@ const { repos } = vi.hoisted(() => ({
   },
 }));
 const { ingest } = vi.hoisted(() => ({
-  ingest: { knownContextColumns: vi.fn().mockResolvedValue([]) },
+  ingest: { contextColumnOrder: vi.fn().mockResolvedValue([]) },
 }));
 vi.mock('../../../src/agency/agency-ingest-job.repository.js', () => ({ agencyIngestJobRepository: ingest }));
 
@@ -150,7 +150,7 @@ async function dial(contact: any = COPIED_CONTACT) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  ingest.knownContextColumns.mockResolvedValue([]);
+  ingest.contextColumnOrder.mockResolvedValue([]);
 });
 
 describe('the panel reads the CHAIN, not the contact row', () => {
@@ -287,25 +287,25 @@ describe('More details follow the imports\' column order (AS20)', () => {
   }
 
   it('lists them in the order the lineage\'s imports named them', async () => {
-    ingest.knownContextColumns.mockResolvedValue(['Loan No', 'Ab', 'Zone']);
+    ingest.contextColumnOrder.mockResolvedValue(['Loan No', 'Ab', 'Zone']);
     const attempt = await dialWith(newDialer());
-    expect(ingest.knownContextColumns).toHaveBeenCalledWith(['camp-child', 'camp-root']);
+    expect(ingest.contextColumnOrder).toHaveBeenCalledWith(['camp-child', 'camp-root']);
     expect(attempt.facts.more.map((t: any) => t.column)).toEqual(['Loan No', 'Ab', 'Zone']);
   });
 
   it('reads the order once a minute per campaign, not on every dial', async () => {
-    ingest.knownContextColumns.mockResolvedValue(['Zone', 'Loan No', 'Ab']);
+    ingest.contextColumnOrder.mockResolvedValue(['Zone', 'Loan No', 'Ab']);
     const dialer = newDialer();
     await dialWith(dialer);
     const second = await dialWith(dialer);
-    expect(ingest.knownContextColumns).toHaveBeenCalledTimes(1);
+    expect(ingest.contextColumnOrder).toHaveBeenCalledTimes(1);
     expect(second.facts.more.map((t: any) => t.column)).toEqual(['Zone', 'Loan No', 'Ab']);
   });
 
   it('a failed read costs the order, never the call: the panel goes in the row\'s order', async () => {
-    ingest.knownContextColumns.mockRejectedValueOnce(new Error('db down'));
+    ingest.contextColumnOrder.mockRejectedValueOnce(new Error('db down'));
     const attempt = await dialWith(newDialer(), CAMPAIGN);
-    expect(ingest.knownContextColumns).toHaveBeenCalledWith(['camp-child']);
+    expect(ingest.contextColumnOrder).toHaveBeenCalledWith(['camp-child']);
     expect(attempt.facts.more.map((t: any) => t.column)).toEqual(['Zone', 'Loan No', 'Ab']);
   });
 });

@@ -582,6 +582,27 @@ describe('More details (AS20): the panel carries the row\'s other columns', () =
     } as unknown as DialCommand, []);
     expect(panel.facts?.more?.map((t) => t.column)).toEqual(['Loan No']);
   });
+
+  it('the import\'s column order moves More details only: a legacy card guesses the same tiles with or without it', () => {
+    // No hero, roles or facts, and two columns the amount guess matches: the guess goes through the
+    // row's own keys (as the contact page's does, with no order), never the import's order.
+    const row = { 'Loan No': 'LN-1', 'EMI Amount': '5,000', 'Amount Due': '25,000' };
+    const order = ['Amount Due', 'Loan No', 'EMI Amount'];
+    const without = customerFacts(row, {});
+    const withOrder = customerFacts(row, {}, order);
+    expect(without.tiles.map((t) => t.column)).toEqual(['EMI Amount', 'Loan No']);
+    expect(withOrder.tiles).toEqual(without.tiles);
+    expect(without.more?.map((t) => t.column)).toEqual(['Loan No', 'EMI Amount', 'Amount Due']);
+    expect(withOrder.more?.map((t) => t.column)).toEqual(order);
+    // The same through the panel built at dial time.
+    const panel = buildPanel({
+      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 1,
+      campaign: { name: 'Collections', context_display: {} },
+      contact: { phone_e164: '+919811100001', context: row, promise_date: null },
+    } as unknown as DialCommand, [], order);
+    expect(panel.facts?.tiles.map((t) => t.column)).toEqual(['EMI Amount', 'Loan No']);
+    expect(panel.facts?.more?.map((t) => t.column)).toEqual(order);
+  });
 });
 
 describe('the write: context_display.more_hidden (AS20)', () => {

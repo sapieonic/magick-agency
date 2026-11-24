@@ -203,7 +203,8 @@ export function isUnannounced(live: LiveAttempt): boolean {
  * The agent's panel for an attempt: everything the console shows about the call.
  * Built once at dial time (see `LiveAttempt.panel`) and reused for the resume.
  * `columnOrder` is the campaign's imports' column order (AS20: More details follows it after
- * `context_display.order`, since the database keeps no key order in a row); null when unknown.
+ * `context_display.order`, since the database keeps no key order in a row; the card's tiles never
+ * read it); null when unknown.
  */
 export function buildPanel(
   cmd: DialCommand,

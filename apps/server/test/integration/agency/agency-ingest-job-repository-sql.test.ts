@@ -216,4 +216,50 @@ describe('AgencyIngestJobRepository on real Postgres', () => {
     expect((await row(fresh.id)).status).toBe('pending');
     expect((await row(finished.id)).error_code).toBe('unexpected_error');
   });
+
+  describe('contextColumnOrder (AS20): the order More details lists a row\'s columns in', () => {
+    /** An import of `campaignId` that kept `columns`, made at `createdAt`. */
+    async function imported(campaignId: string, columns: string[] | null, createdAt: string, over: { dry_run?: boolean } = {}) {
+      const job = await create({ campaign_id: campaignId, ...over });
+      await getTestPool().query(
+        'UPDATE agency_ingest_jobs SET context_columns = $2, created_at = $3 WHERE id = $1',
+        [job.id, columns, createdAt],
+      );
+      return job;
+    }
+
+    it('the newest import\'s order first, then an older import\'s columns it did not name', async () => {
+      const campaign = randomUUID();
+      await imported(campaign, ['Name', 'Loan No', 'Branch', 'Old Notes'], '2026-11-01T10:00:00Z');
+      await imported(campaign, ['Branch', 'loan no', 'Name', 'Amount Due'], '2026-11-20T10:00:00Z');
+
+      expect(await repo.contextColumnOrder([campaign])).toEqual(['Branch', 'loan no', 'Name', 'Amount Due', 'Old Notes']);
+      // The write's check keeps reading every spelling, oldest import first.
+      expect(await repo.knownContextColumns([campaign])).toEqual(['Name', 'Loan No', 'Branch', 'Old Notes', 'loan no', 'Amount Due']);
+    });
+
+    it('a check (dry run) and an import that kept no columns are not imports of the roster', async () => {
+      const campaign = randomUUID();
+      await imported(campaign, ['Name', 'Branch'], '2026-11-01T10:00:00Z');
+      await imported(campaign, ['Branch', 'Zone', 'Name'], '2026-11-20T10:00:00Z', { dry_run: true });
+      await imported(campaign, null, '2026-11-21T10:00:00Z');
+
+      expect(await repo.contextColumnOrder([campaign])).toEqual(['Name', 'Branch']);
+      expect(await repo.contextColumnOrder([randomUUID()])).toEqual([]);
+      expect(await repo.contextColumnOrder([])).toEqual([]);
+    });
+
+    it('a retry\'s lineage: the newest import of either campaign first, another campaign\'s never', async () => {
+      const root = randomUUID();
+      const retry = randomUUID();
+      await imported(root, ['Name', 'Loan No', 'Zone'], '2026-11-01T10:00:00Z');
+      await imported(retry, ['Zone', 'Name', 'Tenure'], '2026-11-10T10:00:00Z');
+      await imported(randomUUID(), ['Other'], '2026-11-30T10:00:00Z');
+
+      expect(await repo.contextColumnOrder([retry, root])).toEqual(['Zone', 'Name', 'Tenure', 'Loan No']);
+      // The root's own newer upload leads once it is the newest.
+      await imported(root, ['Loan No', 'Name'], '2026-11-15T10:00:00Z');
+      expect(await repo.contextColumnOrder([retry, root])).toEqual(['Loan No', 'Name', 'Zone', 'Tenure']);
+    });
+  });
 });

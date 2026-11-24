@@ -776,13 +776,14 @@ export class AgencyDialer {
    * AS20: the column order of the campaign's imports (and its lineage root's, for a retry), which
    * More details follows after `context_display.order`: the database keeps no key order in a row,
    * so without it a campaign no one has saved in Settings would list its columns shortest name
-   * first. Cached per campaign for {@link COLUMN_ORDER_TTL_MS}. Nice to have, like the history: a
-   * failed read costs the order, never the call (null: the row's own order).
+   * first. The latest upload's order first (`contextColumnOrder`), as Settings saves it. Cached per
+   * campaign for {@link COLUMN_ORDER_TTL_MS}. Nice to have, like the history: a failed read costs
+   * the order, never the call (null: the row's own order).
    */
   private async columnOrderOf(campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>): Promise<string[] | null> {
     const lineage = campaignImportLineage(campaign);
     try {
-      return await this.columnOrders.getOrLoad(lineage.join(','), () => agencyIngestJobRepository.knownContextColumns(lineage));
+      return await this.columnOrders.getOrLoad(lineage.join(','), () => agencyIngestJobRepository.contextColumnOrder(lineage));
     } catch (err) {
       log.warn({ err, campaignId: campaign.id }, 'Could not read the import column order — More details in the row order');
       return null;

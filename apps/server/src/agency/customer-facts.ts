@@ -14,11 +14,12 @@
  *    spaces, `_`, `-` and `.`), never a fact's column nor one `types` reads as a phone number;
  *    with `facts`, the place is the role's or none (no guess). Trimmed, at most the domain's
  *    `CUSTOMER_TEXT_MAX` characters; absent when blank or a placeholder (`-`, `N/A`).
- *  - `tiles`: the hero columns (`heroColumnsFor`: `context_display.hero`, else its guess; never
- *    the first columns nobody chose, as the contact panel reads it), minus the columns already
- *    shown as the name and the place, then the `amount_due` and `due_date` role columns when the
- *    heroes did not include them; at most `MAX_HERO_FIELDS`, the role tiles kept when the cap
- *    bites (the "Full / Half" amount chips need the `amount_due` tile).
+ *  - `tiles`: the hero columns (`heroColumnsFor`: `context_display.hero`, else its guess over the
+ *    row's own key order, never the import's; never the first columns nobody chose, as the contact
+ *    panel reads it), minus the columns already shown as the name and the place, then the
+ *    `amount_due` and `due_date` role columns when the heroes did not include them; at most
+ *    `MAX_HERO_FIELDS`, the role tiles kept when the cap bites (the "Full / Half" amount chips need
+ *    the `amount_due` tile).
  *  - A tile's type: its role's (`amount_due` money, `due_date` date) whatever `types` says, else
  *    `types[column]`, else text. `value` is the domain's parse (`@magick-agency/domain/context-facts`):
  *    null for text and for anything it cannot read for certain; `raw` always.
@@ -42,9 +43,10 @@
  * ── More details (AS20) ──────────────────────────────────────────────────────
  * On both paths `more` carries the row's other columns, which the agent opens under the card: the
  * domain's one rule (`moreDetailTiles`, `@magick-agency/domain/more-details`), always sent (`[]`
- * when there is nothing more). `context_display.more_hidden` leaves a column out of More details only; the write
- * checks its shape ({@link contextDisplayIssues}), never the roster (a column may come back with
- * the next upload).
+ * when there is nothing more), in the imports' column order when the caller knows it (only More
+ * details reads that order: the tiles above never do). `context_display.more_hidden` leaves a
+ * column out of More details only; the write checks its shape ({@link contextDisplayIssues}),
+ * never the roster (a column may come back with the next upload).
  */
 import {
   AGENCY_CONTEXT_FIELD_TYPES,
@@ -95,7 +97,9 @@ function columnType(
  *
  * @param context     the contact's roster row (`agency_contacts.context`)
  * @param display     the campaign's `context_display` (possibly hand-edited JSON)
- * @param columnOrder the import's column order, when known (the hero guess reads it)
+ * @param columnOrder the campaign's imports' column order, when known: More details follows it
+ *                    (AS20). The legacy card's hero guess never reads it, so its tiles stay as the
+ *                    contact page (`heroColumnsFor` with no order) picks them.
  */
 export function customerFacts(
   context: Record<string, unknown> | null | undefined,
@@ -126,8 +130,9 @@ export function customerFacts(
     if (key !== undefined && !tileRoleOf.has(key)) tileRoleOf.set(key, role);
   }
 
-  // Two extra heroes, so dropping the name and place columns can still leave a full set.
-  const heroes = heroColumnsFor(row, shown, columnOrder, { max: MAX_HERO_FIELDS + 2, fallbackToFirstColumns: false });
+  // Two extra heroes, so dropping the name and place columns can still leave a full set. No column
+  // order: the guess goes through the row's own keys, as the contact page's does, so the two agree.
+  const heroes = heroColumnsFor(row, shown, null, { max: MAX_HERO_FIELDS + 2, fallbackToFirstColumns: false });
   const columns = heroes.filter((k) => k !== nameKey && k !== placeKey);
   for (const key of tileRoleOf.keys()) if (!columns.includes(key)) columns.push(key);
   // Over the cap: drop the last column that plays no tile role, until it fits.
