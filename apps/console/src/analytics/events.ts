@@ -15,6 +15,7 @@ import type { InviteUnavailableStatus } from '../types/invite';
 import type { DispositionBlockReason } from '../utils/agencyDispositionForm';
 import type { AudioCaptureFailureKind } from '../hooks/useAudioCapture';
 import type { CampaignTabId } from '../utils/agencyCampaignTabs';
+import type { ResumeWarningKind } from '../utils/agency/resumeWarning';
 import type { AgencyPersona } from '../utils/agencyPersona';
 import type { AgentStatsWindow } from '../utils/agencyAgentPerformance';
 import type { SetupStepId } from '../utils/campaignSetup/setupSteps';
@@ -446,6 +447,17 @@ export function trackAgencyCampaignLifecycleAction(props: EventCatalog['agency_c
 
 export function trackAgencyCampaignLifecycleFailed(props: EventCatalog['agency_campaign_lifecycle_failed']): void {
   track('agency_campaign_lifecycle_failed', props);
+}
+
+/**
+ * The Resume warning (decisions AW1–AW3) was shown and the supervisor pressed Cancel. A warning
+ * they confirmed is on `agency_campaign_lifecycle_action` (`resume_warning`, `confirmed: true`),
+ * so the two together say how often it stops a resume.
+ */
+export function trackAgencyCampaignResumeWarningCancelled(
+  props: EventCatalog['agency_campaign_resume_warning_cancelled'],
+): void {
+  track('agency_campaign_resume_warning_cancelled', props);
 }
 
 export function trackAgencyCampaignArchiveAction(props: EventCatalog['agency_campaign_archive_action']): void {
@@ -1219,6 +1231,19 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
      * `new_campaign` for New campaign's Start campaign (CS15).
      */
     from_tab: CampaignTabId | 'live_floor' | 'new_campaign';
+    /**
+     * Sent by the campaign header and Live floor (`useCampaignLifecycle`): the Resume warning the
+     * supervisor confirmed (decisions AW1–AW3), `abandonment_pause` when the guardrail had paused
+     * it, `over_ceiling` when the 24-hour rate was over the ceiling after another pause; null when
+     * none was shown (every other action, and a Resume that did not warn). Left out by New campaign.
+     */
+    resume_warning?: ResumeWarningKind | null;
+  };
+  /** {@link trackAgencyCampaignResumeWarningCancelled} */
+  agency_campaign_resume_warning_cancelled: {
+    campaign_id: string;
+    resume_warning: ResumeWarningKind;
+    from_tab: CampaignTabId | 'live_floor';
   };
   /**
    * {@link trackAgencyCampaignArchiveAction}: a campaign archived or restored (AR1–AR7), on

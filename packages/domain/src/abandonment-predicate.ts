@@ -153,3 +153,60 @@ export function abandonmentRatePct(row: Pick<AbandonmentWindowRow, 'answered' | 
   if (row.answered <= 0) return null;
   return (row.abandoned / row.answered) * 100;
 }
+
+/**
+ * The smallest answered-call count in which ONE abandoned call does not, by
+ * itself, exceed the ceiling.
+ *
+ * At the default 3% ceiling this is 34: one abandon out of 34 answered is 2.94%
+ * and clears, one out of 33 is 3.03% and breaches. Below that threshold the rate
+ * is too coarse to express the ceiling at all — a single call necessarily
+ * overshoots it — so a one-call breach there is an artefact of the sample size
+ * rather than evidence about how the campaign is pacing.
+ *
+ * Derived from the campaign's OWN ceiling rather than a constant, so a campaign
+ * configured at 1% gets a floor of 100 and one at 10% gets 10. A fixed number
+ * would be right for exactly one ceiling.
+ *
+ * ⚠️ **The `ceilingPct <= 0` guard is defensive, NOT a supported setting.** A
+ * zero ceiling is refused in two places: the schema CHECKs
+ * `abandonment_ceiling_pct > 0`, and the server's campaign-config validation
+ * rejects it with the rationale written out — *"a ceiling of 0 would read as a
+ * strict setting and behave as a kill switch. An operator who wants no dialing
+ * has `pause`."*
+ *
+ * The guard stays regardless, because what it protects against is not a setting:
+ * `100 / 0` is `Infinity`, which would make the floor infinite and suppress the
+ * pause for **every** breach — a compliance guardrail silently disabled, and the
+ * kind of thing found in an audit rather than by a test. `ceiling_pct` also
+ * arrives at the guardrail from a LEFT JOIN and is typed nullable, so a
+ * non-positive value reaching this function is a real possibility even though no
+ * row can hold one. Returning 0 makes such a campaign pause on its first abandon,
+ * which is the fail-closed direction.
+ *
+ * Here rather than in the server's guardrail (`abandonment-guardrail.ts`, which
+ * re-exports it) so the console's Resume warning (decision AW2) reads the same
+ * floor the guardrail pauses by.
+ */
+export function singleAbandonSampleFloor(ceilingPct: number): number {
+  if (!Number.isFinite(ceilingPct) || ceilingPct <= 0) return 0;
+  return Math.ceil(100 / ceilingPct);
+}
+
+/**
+ * Whether the abandonment guardrail would pause a RUNNING campaign with this rolling 24-hour
+ * window: the rate is above the ceiling (not at it), and the breach is not a single abandoned call
+ * in a sample too coarse to measure ({@link singleAbandonSampleFloor}). The rule the server's
+ * `breachedRows` applies branch by branch, with a log line on the suppressed case; its unit test
+ * holds the two equal over a sweep. The console reads it to say that a resumed campaign will be
+ * paused again (decisions AW1, AW2); it never pauses anything itself.
+ */
+export function abandonmentBreachesCeiling(
+  row: Pick<AbandonmentWindowRow, 'answered' | 'abandoned'>,
+  ceilingPct: number,
+): boolean {
+  const measured = abandonmentRatePct(row);
+  if (measured === null) return false;
+  if (measured <= ceilingPct) return false;
+  return !(row.abandoned <= 1 && row.answered < singleAbandonSampleFloor(ceilingPct));
+}

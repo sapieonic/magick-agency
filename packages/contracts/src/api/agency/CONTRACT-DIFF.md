@@ -163,7 +163,9 @@ union stay declared in `api/agency/agency.ts`.
 ## 4. Console wire types with no dialer-contract counterpart
 
 Shapes the public API layer owns outright: the campaign object (`AgencyCampaign`, which carries
-`inbound_sticky_enabled?` from P2 of inbound calls; the internal
+`inbound_sticky_enabled?` from P2 of inbound calls, and `pause_reason?`
+(`AgencyCampaignPauseReason`), `paused_at?` and `pause_abandonment_rate_pct?`, row columns always
+served and typed for the console's Resume warning, decisions AW1–AW3; the internal
 handlers serialise it in `apps/server/src/api/responses/agency-campaign.response.ts`), the carriers a
 campaign may dial on (`AgencyCarrier`, `AgencyCarriersResponse`; served by the public layer itself), ingest
 (`AgencyIngest*`, `AgencyUploadResponse`, `AgencyColumn*`), retry policy

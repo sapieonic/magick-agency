@@ -11,6 +11,7 @@ import {
   RefreshCw,
   RotateCcw,
   Square,
+  TriangleAlert,
   Upload,
 } from 'lucide-react';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
@@ -80,6 +81,12 @@ interface CampaignDetailHeaderProps {
    * an archived campaign still says it is archived, with no button.
    */
   archive?: Pick<CampaignArchive, 'busy' | 'onArchive' | 'onRestore'>;
+  /**
+   * Why the abandonment guardrail paused it (`abandonmentPauseLine`, decision AW1), given only
+   * when the health strip below does not already say so (Settings, which reads no stats, or a
+   * failed stats read), so the reason is on every campaign screen exactly once.
+   */
+  abandonmentPauseNote?: string | null;
 }
 
 /**
@@ -108,6 +115,7 @@ export function CampaignDetailHeader({
   onRefresh,
   historyCurrent = false,
   archive,
+  abandonmentPauseNote = null,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
   const archived = isArchivedCampaign(campaign);
@@ -382,6 +390,12 @@ export function CampaignDetailHeader({
           </button>
         )}
       </div>
+    )}
+    {abandonmentPauseNote && (
+      <p className={styles.abandonmentPauseNote} data-testid="campaign-abandonment-pause-note">
+        <TriangleAlert size={15} aria-hidden="true" />
+        <span>{abandonmentPauseNote}</span>
+      </p>
     )}
     {canControl && showsPauseInFlightNote(campaign.status) && (
       <p className={styles.pauseNote}>

@@ -1018,6 +1018,46 @@ describe('the campaign header on Settings', () => {
     expect(screen.queryByRole('link', { name: 'Add contacts' })).toBeNull();
   });
 
+  it('says why the abandonment guardrail paused it, since this page has no health strip (AW1)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      status: 'paused',
+      pause_reason: 'abandonment_ceiling',
+      pause_abandonment_rate_pct: 4.24,
+      abandonment_ceiling_pct: 3,
+    }));
+    renderPage();
+
+    expect((await screen.findByTestId('campaign-abandonment-pause-note')).textContent)
+      .toBe('Paused automatically: abandonment over the last 24 hours reached 4.2%, over the 3% limit.');
+  });
+
+  it('asks before resuming it, and resumes on confirm (AW1)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      status: 'paused',
+      pause_reason: 'abandonment_ceiling',
+      pause_abandonment_rate_pct: 4.24,
+      abandonment_ceiling_pct: 3,
+    }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /resume/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('paused this campaign automatically');
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Resume anyway' }));
+    await waitFor(() => expect(mocks.transitionAgencyCampaign)
+      .toHaveBeenCalledWith('camp-1', 'resume', 'tenant-1', 'account-1'));
+  });
+
+  it('says nothing of the guardrail on a supervisor’s pause', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused', pause_reason: 'supervisor' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.queryByTestId('campaign-abandonment-pause-note')).toBeNull();
+  });
+
   it('pauses the campaign without touching edits in progress', async () => {
     // Loaded running; read again (after the pause) as paused.
     mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }))

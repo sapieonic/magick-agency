@@ -517,6 +517,14 @@ type AgencyCampaignStatsShapedField =
   | 'concurrency_in_use'
   | 'abandonment_ceiling_pct';
 
+/**
+ * Why a campaign is paused (`agency_campaigns.pause_reason`): `supervisor`, a person pressed
+ * Pause; `abandonment_ceiling`, the abandonment guardrail paused it; otherwise one of
+ * `CARRIER_ACCOUNT_PAUSE_REASONS`, its carrier account cannot dial. The column's CHECK is the
+ * authority; a console reads an unknown value as "not the guardrail's".
+ */
+export type AgencyCampaignPauseReason = 'supervisor' | 'abandonment_ceiling' | Core.CarrierAccountPauseReason;
+
 export interface AgencyCampaign {
   id: string;
   name: string;
@@ -745,6 +753,27 @@ export interface AgencyCampaign {
    * blank and never as an unattributed dash.
    */
   last_transition_by?: AgencyCampaignActor | null;
+
+  // ── Why it is paused ───────────────────────────────────────────────────────
+  //
+  // Columns of the row that `formatAgencyCampaignResponse` has always spread onto the wire,
+  // typed here for the console's Resume warning (decisions AW1–AW3). Every transition writes
+  // all three: a pause sets them, any other move clears them (`transitionStatus`), so on a
+  // campaign that is not `paused` each is null.
+
+  /**
+   * Why the campaign is paused ({@link AgencyCampaignPauseReason}), or null when it is not.
+   * `abandonment_ceiling` is the guardrail's own pause, which `pause_abandonment_rate_pct` explains.
+   */
+  pause_reason?: AgencyCampaignPauseReason | null;
+  /** ISO-8601. When the current pause began; null when not paused. */
+  paused_at?: string | null;
+  /**
+   * The rolling 24-hour abandonment rate, as a percentage, as the guardrail measured it when it
+   * paused the campaign, frozen: it does not move while the campaign stays paused. Null for any
+   * other pause and when not paused.
+   */
+  pause_abandonment_rate_pct?: number | null;
 
   // ── Retry campaigns ────────────────────────────────────
   //

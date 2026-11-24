@@ -22,7 +22,9 @@ const whenShort = (iso: string) => formatTimeOrDate(iso, new Date());
  * and Pause or Resume. Every reader of Live floor holds `agency.supervise`, the campaign header's
  * gate for the lifecycle buttons (`canControl`), so the buttons need no other check. A card's
  * action is the header's own (`useCampaignLifecycle`: the click lock, the re-read before Resume,
- * the refusals and their toasts); Pause and Resume ask for no confirmation there, so none here.
+ * the refusals and their toasts, and the warning before resuming a campaign the abandonment
+ * guardrail paused or one over its ceiling, AW1–AW3); Pause asks for no confirmation there, so
+ * none here.
  * The board is read again after a change, and at once when the card's re-read of the campaign
  * (before Resume, after a 409) finds a status other than the board's. `willPay` is each promise-recording campaign's
  * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay". A
