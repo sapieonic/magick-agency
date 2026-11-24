@@ -179,11 +179,6 @@ export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
 /** Far above the agents one process serves: bounds only what departed agents leave behind. */
 const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 
-/**
- * Await a write to the durable agent-session mirror without letting it fail the
- * caller: Redis is the authority on agent state, so a mirror that could not be
- * written is a stale dashboard column, logged and never a reason to stop.
- */
 /** The carriers the code declares: the `provider` label's whole vocabulary, with `other`. */
 const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
 
@@ -211,6 +206,11 @@ function isSupersedable(live: LiveAttempt): boolean {
     && !live.cmd.redial && !live.supersededByInbound;
 }
 
+/**
+ * Await a write to the durable agent-session mirror without letting it fail the
+ * caller: Redis is the authority on agent state, so a mirror that could not be
+ * written is a stale dashboard column, logged and never a reason to stop.
+ */
 async function mirrored(write: Promise<unknown>, sessionId: string, failure: string): Promise<void> {
   await write.catch((err) => log.warn({ err, sessionId }, failure));
 }
