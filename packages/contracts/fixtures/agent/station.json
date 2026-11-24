@@ -1278,6 +1278,9 @@
         "Tenure (months)": "24",
         "Alt Phone": "098765 43210",
         "Auto Debit": "Haan",
+        "Branch": "Nashik Road",
+        "Office Phone": "+91 98220 11223",
+        "Remark": "N/A",
         "Internal ID": "x-991"
       },
       "prior_attempts": [
@@ -1329,6 +1332,26 @@
             "type": "yes_no",
             "raw": "Haan",
             "value": "yes"
+          }
+        ],
+        "more": [
+          {
+            "column": "Due Date",
+            "type": "date",
+            "raw": "20/11/2026",
+            "value": "2026-11-20"
+          },
+          {
+            "column": "Branch",
+            "type": "text",
+            "raw": "Nashik Road",
+            "value": null
+          },
+          {
+            "column": "Office Phone",
+            "type": "phone",
+            "raw": "+91 98220 11223",
+            "value": "+919822011223"
           }
         ]
       }

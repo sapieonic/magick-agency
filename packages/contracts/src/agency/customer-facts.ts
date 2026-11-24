@@ -190,4 +190,20 @@ export interface AgencyCustomerFacts {
    * `text` with a null `value`, so a campaign set up before BE-6 shows as today.
    */
   tiles: AgencyFactTile[];
+  /**
+   * AS20, "More details": the row's other columns, which the agent opens under the card. Built by
+   * the domain's one rule (`moreDetailTiles`, `packages/domain/src/more-details.ts`): every column
+   * of the row with a value, minus `hidden`, minus `more_hidden`, minus the columns sent as `name`
+   * and `place`, minus the chosen facts' columns (`facts`; on the BE-6 path a client also leaves
+   * out the columns it drew as tiles); in `context_display.order`, then the row's own order; at
+   * most {@link AGENCY_MORE_DETAILS_MAX}. Each tile has `column`, `type`, `raw` and `value` only
+   * (no `label`, `key`, `highlight` or `role`): a client names it by its column. Its type is
+   * `types[column]`; a column `types` does not name whose value reads as a phone number (an Indian
+   * mobile, or `+` and 8 or more digits) is sent as `phone`, so a campaign that hides numbers
+   * (`phone_display: masked`) masks it too. Absent from an older server: no More details.
+   */
+  more?: AgencyFactTile[];
 }
+
+/** The most columns More details carries (AS20): a bound on the frame, far above a real roster's. */
+export const AGENCY_MORE_DETAILS_MAX = 100;

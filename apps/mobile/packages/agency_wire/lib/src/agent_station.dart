@@ -408,10 +408,33 @@ final class FactTile {
 /// Contract: `AgencyCustomerFacts` (`AgencyReservedAttempt.facts`).
 @immutable
 final class CustomerFacts {
-  CustomerFacts({this.name, this.place, required List<FactTile> tiles}) : tiles = List.unmodifiable(tiles);
+  CustomerFacts({this.name, this.place, required List<FactTile> tiles, List<FactTile> more = const []})
+    : tiles = List.unmodifiable(tiles),
+      more = List.unmodifiable(more);
 
-  factory CustomerFacts.fromJson(Map<String, Object?> j) =>
-      CustomerFacts(name: j.strOrNull('name'), place: j.strOrNull('place'), tiles: j.list('tiles', FactTile.fromJson));
+  factory CustomerFacts.fromJson(Map<String, Object?> j) => CustomerFacts(
+    name: j.strOrNull('name'),
+    place: j.strOrNull('place'),
+    tiles: j.list('tiles', FactTile.fromJson),
+    more: _moreFromJson(j['more']),
+  );
+
+  /// AS20: More details, read leniently: an entry that is not a tile is
+  /// skipped, and anything but a list is none, so a bad `more` never costs the
+  /// card its name and tiles.
+  static List<FactTile> _moreFromJson(Object? raw) {
+    if (raw is! List<Object?>) return const [];
+    final out = <FactTile>[];
+    for (final e in raw) {
+      if (e is! Map<String, Object?>) continue;
+      try {
+        out.add(FactTile.fromJson(e));
+      } on FormatException {
+        continue;
+      }
+    }
+    return out;
+  }
 
   /// [raw] as facts, or null when absent or unreadable: the station then reads
   /// `context` through `ContextDisplay` as before.
@@ -432,6 +455,11 @@ final class CustomerFacts {
   /// highlighted one first), at most 4.
   final List<FactTile> tiles;
 
+  /// AS20, More details: the row's other columns the agent opens under the
+  /// card, in the server's order (`AgencyCustomerFacts.more`). Each names
+  /// itself by its column (no label, key or role). Empty from an older server.
+  final List<FactTile> more;
+
   /// The tile playing [role], or null.
   FactTile? tileFor(FactTileRole role) {
     for (final t in tiles) {
@@ -449,10 +477,14 @@ final class CustomerFacts {
 
   @override
   bool operator ==(Object other) =>
-      other is CustomerFacts && other.name == name && other.place == place && listEquals(other.tiles, tiles);
+      other is CustomerFacts &&
+      other.name == name &&
+      other.place == place &&
+      listEquals(other.tiles, tiles) &&
+      listEquals(other.more, more);
 
   @override
-  int get hashCode => Object.hash(name, place, listHash(tiles));
+  int get hashCode => Object.hash(name, place, listHash(tiles), listHash(more));
 }
 
 // ─── The script (BE-8) ──────────────────────────────────────────────────────

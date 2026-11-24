@@ -165,6 +165,15 @@ export interface AgencyContextDisplay {
    * placeholders.
    */
   facts?: AgencyFactField[];
+  /**
+   * AS20 (`./customer-facts.ts`, "More details"): columns the agent's More details leaves out,
+   * matched ignoring case. More details lists every other column of the row (minus `hidden`, the
+   * name, the line under it and the chosen facts), so ABSENT or `[]` shows them all. Unlike
+   * `hidden` it reaches the agent's More details only: supervisors still see these columns on the
+   * contact page and in customer history, and a column here may still be a fact, the name or the
+   * line under it. Column names as in the roster's header, 1 to 200 characters each.
+   */
+  more_hidden?: string[];
 }
 
 /**

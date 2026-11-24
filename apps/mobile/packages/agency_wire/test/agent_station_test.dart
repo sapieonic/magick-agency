@@ -233,6 +233,32 @@ void main() {
       expect(byKey('due_date'), isNull);
     });
 
+    test('AS20: More details decode in the server\'s order, named by their columns', () {
+      final f = StationFrame.decode(fixtureText('station.json', 'reserved_facts_chosen')) as ReservedFrame;
+      final more = f.attempt.facts!.more;
+      expect(more.map((t) => t.name), ['Due Date', 'Branch', 'Office Phone']);
+      expect(more.map((t) => t.type), [ContextFieldType.date, ContextFieldType.text, ContextFieldType.phone]);
+      expect(more.every((t) => t.label == null && t.key == null && !t.highlight && t.role == null), isTrue);
+      // Absent from an older server: none, and the card decodes as before.
+      final older = StationFrame.decode(fixtureText('station.json', 'reserved_call_later')) as ReservedFrame;
+      expect(older.attempt.facts!.more, isEmpty);
+    });
+
+    test('AS20: a bad More details entry is skipped, and a bad list costs nothing else', () {
+      final facts = CustomerFacts.fromJson({
+        'name': 'Asha',
+        'tiles': <Object?>[],
+        'more': [
+          {'column': 'Branch', 'type': 'text', 'raw': 'Kothrud', 'value': null},
+          'not a tile',
+          {'type': 'text'},
+        ],
+      });
+      expect(facts.more.map((t) => t.column), ['Branch']);
+      expect(CustomerFacts.fromJson({'name': 'Asha', 'tiles': <Object?>[], 'more': 'all'}).more, isEmpty);
+      expect(CustomerFacts.fromJson({'name': 'Asha', 'tiles': <Object?>[], 'more': 'all'}).name, 'Asha');
+    });
+
     test('a BE-6 tile has no label, key or highlight, and is named by its column', () {
       final f = StationFrame.decode(fixtureText('station.json', 'reserved_call_later')) as ReservedFrame;
       for (final t in f.attempt.facts!.tiles) {

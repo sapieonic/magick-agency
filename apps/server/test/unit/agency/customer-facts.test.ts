@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { AgencyContextDisplay } from '@magick-agency/contracts/agency';
+import type { AgencyContextDisplay, AgencyCustomerFacts } from '@magick-agency/contracts/agency';
 import { AGENCY_FACT_FIELDS_MAX } from '@magick-agency/contracts/agency';
 import { MAX_HERO_FIELDS } from '@magick-agency/domain/context-hero';
 import {
   canonicalContextColumns,
   contextDisplayIssues,
   customerFacts,
+  MORE_HIDDEN_MAX,
   namesContextColumns,
 } from '../../../src/agency/customer-facts.js';
 import { agentScriptIssues } from '../../../src/agency/agent-script.js';
@@ -38,9 +39,12 @@ const ROLES: AgencyContextDisplay = {
   roles: { name: 'Customer Name', place: 'City', amount_due: 'Amount Due', due_date: 'Due Date' },
 };
 
+/** The card's part of the facts: name, place and tiles, without More details (AS20, tested on its own below). */
+const card = ({ more: _more, ...rest }: AgencyCustomerFacts): Omit<AgencyCustomerFacts, 'more'> => rest;
+
 describe('customerFacts: the panel\'s facts', () => {
   it('reads the roles: name and place by their columns, the amount and the date parsed, raw kept', () => {
-    expect(customerFacts(ROW, ROLES)).toEqual({
+    expect(card(customerFacts(ROW, ROLES))).toEqual({
       name: 'Ramesh Goud',
       place: 'Hyderabad',
       tiles: [
@@ -88,7 +92,7 @@ describe('customerFacts: the panel\'s facts', () => {
     // Nothing configured at all: the hero guess, minus the columns shown as the name and the place.
     const guessed = customerFacts(ROW, {});
     expect(guessed.tiles.map((t) => t.column)).toEqual(['Amount Due', 'Loan No']);
-    expect(customerFacts({ name: 'Asha', amount: '10' }, undefined)).toEqual({
+    expect(card(customerFacts({ name: 'Asha', amount: '10' }, undefined))).toEqual({
       name: 'Asha', tiles: [{ column: 'amount', type: 'text', raw: '10', value: null }],
     });
   });
@@ -267,7 +271,7 @@ const CHOSEN: AgencyContextDisplay = {
 
 describe('customerFacts with facts (AS19): the tiles are the chosen facts', () => {
   it('in order, highlighted first, each with label, key and the role its key gives; typed by `types` alone', () => {
-    expect(customerFacts(FACTS_ROW, CHOSEN)).toEqual({
+    expect(card(customerFacts(FACTS_ROW, CHOSEN))).toEqual({
       name: 'Ramesh Goud',
       place: 'Hyderabad',
       tiles: [
@@ -303,7 +307,7 @@ describe('customerFacts with facts (AS19): the tiles are the chosen facts', () =
   it('S2: no place guess, and the name is never a fact\'s column; a role still names them', () => {
     const row = { Name: 'Branch Name', 'Full Name': 'Ramesh Goud', City: 'Hyderabad', Loan: 'LN-1' };
     const facts = [{ column: 'name', label: 'Branch', key: 'branch' }, { column: 'Loan', label: 'Loan', key: 'loan' }];
-    expect(customerFacts(row, { facts })).toEqual({
+    expect(card(customerFacts(row, { facts }))).toEqual({
       name: 'Ramesh Goud',
       tiles: [
         { column: 'Name', label: 'Branch', key: 'branch', type: 'text', raw: 'Branch Name', value: null },
@@ -313,13 +317,13 @@ describe('customerFacts with facts (AS19): the tiles are the chosen facts', () =
     // The same row without facts guesses both, from the first name column.
     expect(customerFacts(row, {})).toMatchObject({ name: 'Branch Name', place: 'Hyderabad' });
     // Roles still name them on the facts path.
-    expect(customerFacts(row, { roles: { name: 'Full Name', place: 'city' }, facts: [] })).toEqual({ name: 'Ramesh Goud', place: 'Hyderabad', tiles: [] });
+    expect(card(customerFacts(row, { roles: { name: 'Full Name', place: 'city' }, facts: [] }))).toEqual({ name: 'Ramesh Goud', place: 'Hyderabad', tiles: [] });
     // A name role blank on this row is no name, never a guess (S1, S16).
-    expect(customerFacts({ ...row, 'Full Name': ' ' }, { roles: { name: 'Full Name' }, facts: [] })).toEqual({ tiles: [] });
+    expect(card(customerFacts({ ...row, 'Full Name': ' ' }, { roles: { name: 'Full Name' }, facts: [] }))).toEqual({ tiles: [] });
   });
 
   it('`facts: []` means no tiles at all, whatever `hero` and the roles say', () => {
-    expect(customerFacts(FACTS_ROW, { ...CHOSEN, facts: [] })).toEqual({ name: 'Ramesh Goud', place: 'Hyderabad', tiles: [] });
+    expect(card(customerFacts(FACTS_ROW, { ...CHOSEN, facts: [] }))).toEqual({ name: 'Ramesh Goud', place: 'Hyderabad', tiles: [] });
   });
 
   it('read leniently: an entry with no column is skipped, a label or key that is not text left off', () => {
@@ -533,5 +537,74 @@ describe('the own-contacts list\'s hero values (AS19 S3(d))', () => {
 describe('the caps agree', () => {
   it('a campaign\'s facts and its legacy heroes have one cap (AGENCY_FACT_FIELDS_MAX === MAX_HERO_FIELDS)', () => {
     expect(AGENCY_FACT_FIELDS_MAX).toBe(MAX_HERO_FIELDS);
+  });
+});
+
+describe('More details (AS20): the panel carries the row\'s other columns', () => {
+  it('with facts: every other column with a value, minus hidden, the name, the place and the facts', () => {
+    expect(customerFacts(FACTS_ROW, CHOSEN).more).toEqual([
+      { column: 'Loan No', type: 'text', raw: 'LN-0042', value: null },
+    ]);
+  });
+
+  it('more_hidden leaves a column out of More details only: it can still be a fact or the name', () => {
+    const display: AgencyContextDisplay = { ...CHOSEN, hidden: [], more_hidden: ['loan no', 'Customer Name', 'Due Date'] };
+    const facts = customerFacts(FACTS_ROW, display);
+    expect(facts.more).toEqual([{ column: 'Aadhaar', type: 'text', raw: '1234 5678 9012', value: null }]);
+    expect(facts.name).toBe('Ramesh Goud');
+    expect(facts.tiles.map((t) => t.column)).toEqual(['Amount Due', 'Due Date', 'Branch']);
+  });
+
+  it('without facts: the name and place left out, the tile columns sent (each client leaves out what it drew)', () => {
+    expect(customerFacts(ROW, ROLES).more?.map((t) => t.column)).toEqual(['Loan No', 'Amount Due', 'Due Date', 'Aadhaar']);
+  });
+
+  it('in context_display.order first, typed by types, a phone-looking text value sent as a phone', () => {
+    const row = { Name: 'Asha', Remark: 'N/A', 'Alt Mobile': '98765 43210', Tenure: '24', Branch: 'Kothrud' };
+    const more = customerFacts(row, { facts: [], order: ['Branch'], types: { Tenure: 'number' } }).more;
+    expect(more).toEqual([
+      { column: 'Branch', type: 'text', raw: 'Kothrud', value: null },
+      { column: 'Alt Mobile', type: 'phone', raw: '98765 43210', value: '9876543210' },
+      { column: 'Tenure', type: 'number', raw: '24', value: '24' },
+    ]);
+  });
+
+  it('absent when the row has nothing more to show', () => {
+    expect(customerFacts({ Name: 'Asha', Notes: '' }, { facts: [] })).toEqual({ name: 'Asha', tiles: [] });
+  });
+
+  it('rides on the panel built at dial time', () => {
+    const panel = buildPanel({
+      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 1,
+      campaign: { name: 'Collections', context_display: CHOSEN },
+      contact: { phone_e164: '+919811100001', context: FACTS_ROW, promise_date: null },
+    } as unknown as DialCommand, []);
+    expect(panel.facts?.more?.map((t) => t.column)).toEqual(['Loan No']);
+  });
+});
+
+describe('the write: context_display.more_hidden (AS20)', () => {
+  const fields = (moreHidden: unknown, known: string[] | null = null) =>
+    contextDisplayIssues({ context_display: { more_hidden: moreHidden } }, known).map((i) => i.field);
+
+  it('accepts a list of column names, [] and a name the roster does not have (it may come back)', () => {
+    expect(fields(['Branch', 'Loan No'])).toEqual([]);
+    expect(fields([])).toEqual([]);
+    expect(fields(['Old Column'], ['Branch'])).toEqual([]);
+  });
+
+  it('refuses anything but a list, a bad name, and more than MORE_HIDDEN_MAX names', () => {
+    expect(fields('Branch')).toEqual(['context_display.more_hidden']);
+    expect(fields(['Branch', '', 7, 'x'.repeat(201)])).toEqual([
+      'context_display.more_hidden.1', 'context_display.more_hidden.2', 'context_display.more_hidden.3',
+    ]);
+    expect(fields(Array.from({ length: MORE_HIDDEN_MAX + 1 }, (_, i) => `c${i}`))).toEqual(['context_display.more_hidden']);
+  });
+
+  it('both campaign-config validators refuse what the rule refuses, keyed on the field', () => {
+    for (const validate of [validateInternal, validatePublic]) {
+      expect(validate({ context_display: { more_hidden: [''] } }).map((i) => i.field)).toEqual(['context_display.more_hidden.0']);
+      expect(validate({ context_display: { more_hidden: ['Branch'] } })).toEqual([]);
+    }
   });
 });

@@ -80,6 +80,11 @@
  * `phone` and `yes_no` (a client that does not know one shows the column as text), and
  * `AGENCY_SCRIPT_FIXED_PLACEHOLDERS` (`./agency/agent-script.ts`): with `facts`, the script's
  * placeholders are those plus the facts' keys.
+ *
+ * **More details amendment (2026-11-24, `docs/agent-station.md`, AS20).** Optional fields only:
+ * `AgencyCustomerFacts.more` (the row's other columns, which the agent opens under the card) and
+ * `AgencyContextDisplay.more_hidden` (the columns More details leaves out), with
+ * `AGENCY_MORE_DETAILS_MAX`. An older client ignores both.
  */
 
 export * from './agency/enums';

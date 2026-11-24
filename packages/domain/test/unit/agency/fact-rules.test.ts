@@ -11,6 +11,7 @@ import {
 import { legacyFactFields, scriptPieces, scriptPlaceholdersFor, uniqueFactLabels } from '../../../src/fact-fields';
 import { formatFactPhone, maskFactPhone } from '../../../src/fact-phone';
 import { chosenFactTiles } from '../../../src/fact-tiles';
+import { looksLikePhoneNumber, moreDetailTiles } from '../../../src/more-details';
 
 /**
  * AS19 S5: the card's rules against the shared cases (`packages/contracts/fixtures/agent/fact-rules.json`),
@@ -37,6 +38,8 @@ interface Rules {
   chosen_fact_tiles: Array<{ context: Row; display: unknown; now: string; tiles: unknown[] }>;
   unique_fact_labels: Array<{ headers: string[]; taken: string[]; labels: string[] }>;
   legacy_fact_fields: Array<{ display: unknown; columns: string[] | null; facts: unknown[] }>;
+  more_detail_tiles: Array<{ context: Row | null; display: unknown; column_order?: string[]; now: string; tiles: unknown[] }>;
+  looks_like_phone: Array<{ raw: string; phone: boolean }>;
 }
 
 const RULES = JSON.parse(
@@ -137,6 +140,18 @@ describe('fact-rules.json: customerNameFrom and the place (S1, S2)', () => {
 describe('fact-rules.json: chosenFactTiles (S6)', () => {
   it.each(RULES.chosen_fact_tiles.map((c) => [title(c.display), c] as const))('%s', (_t, c) => {
     expect(chosenFactTiles(c.context, display(c.display), new Date(c.now))).toEqual(c.tiles);
+  });
+});
+
+describe('fact-rules.json: moreDetailTiles (AS20)', () => {
+  it.each(RULES.more_detail_tiles.map((c) => [title(c.display), c] as const))('%s', (_t, c) => {
+    expect(moreDetailTiles(c.context, display(c.display), c.column_order ?? null, new Date(c.now))).toEqual(c.tiles);
+  });
+});
+
+describe('fact-rules.json: looksLikePhoneNumber (AS20)', () => {
+  it.each(RULES.looks_like_phone.map((c) => [c.raw, c] as const))('%s', (_t, c) => {
+    expect(looksLikePhoneNumber(c.raw)).toBe(c.phone);
   });
 });
 
