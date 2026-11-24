@@ -415,7 +415,7 @@ their ceilings, and 9 of their 11 abandoned calls had reached an agent and been 
 VoiceLink's audio stream connected 1.06–1.25 s or about 5 s after its answer event, past the 1 s
 grace the predicate allowed. Asked whether it should be one value or a setting, Manas answered
 "Configurable, but default to 3" (2026-11-24); AG2–AG5 are the choices the build made for that,
-pending his ratification.
+pending Manas's ratification.
 
 | # | Topic | Ruling | Status |
 |---|---|---|---|
