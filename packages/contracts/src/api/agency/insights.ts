@@ -55,7 +55,8 @@ import type {
   AgencyCampaignStatus,
 } from '../../agency/enums';
 import type { AgencyAssignmentMode } from '../../agency/assignment';
-import type { AgencyInboundCampaignCounts, AgencySoftphoneCampaignCounts, AgencyStall, AgencyStallCode, CarrierAccountPauseReason } from '../../agency/campaign-stats';
+import type { AgencyInboundCampaignCounts, AgencySoftphoneCampaignCounts, AgencyStall, AgencyStallCode } from '../../agency/campaign-stats';
+import type { AgencyCampaignPauseReason } from './agency-campaign';
 import type { AllListed } from '../../primitives';
 
 /** Rates on the insights page are withheld below this many calls in the denominator (decision 5). */
@@ -172,13 +173,14 @@ export interface AgencyInsightsHeadline {
     paused_at: string;
     actor: AgencyInsightsActor | null;
     /**
-     * `supervisor`: a person pressed Pause. `abandonment_ceiling`: the abandonment guardrail.
-     * Otherwise a {@link CarrierAccountPauseReason}: the campaign's carrier account cannot dial
+     * The row's `pause_reason` ({@link AgencyCampaignPauseReason}). `supervisor`: a person pressed
+     * Pause. `abandonment_ceiling`: the abandonment guardrail. Otherwise a carrier-account reason
+     * (`CarrierAccountPauseReason`): the campaign's carrier account cannot dial
      * (`carrier_auth`: the carrier refused its credential; `carrier_account_unavailable`: that
      * credential is no longer active; `carrier_refusing_calls`: the carrier refused its dials
      * several times in a row with none placed in between, PL11).
      */
-    reason: 'supervisor' | 'abandonment_ceiling' | CarrierAccountPauseReason;
+    reason: AgencyCampaignPauseReason;
     /** The 24 h abandonment rate the guardrail measured, for an auto-pause. */
     abandonment_rate_pct_at_pause: number | null;
     calls_finishing: number;
