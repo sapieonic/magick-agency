@@ -115,12 +115,15 @@ List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateT
   final more = call.facts?.more;
   if (more == null) return call.otherFields;
   final pinned = {for (final f in call.heroFields) foldColumnName(f.label)};
-  // The place's column is the roster column holding the place the server sent (never a phone
-  // number, S3(e)); More details leaves it out, as the card shows it.
+  // The place's column is the one the server read the place from ([CallView.placeColumn], the
+  // domain's rule), matched by its name ignoring case, never by its value (another column may hold
+  // the same text, and the server cuts a long place); More details leaves it out, as the card shows
+  // it. Only when the server read a place: a blank or placeholder value is none.
   final place = call.facts?.place?.trim() ?? '';
-  final placeField = place.isEmpty
+  final column = call.placeColumn;
+  final placeField = place.isEmpty || column == null || pinned.contains(foldColumnName(column))
       ? null
-      : call.otherFields.where((f) => f.value.trim() == place && !pinned.contains(foldColumnName(f.label))).firstOrNull;
+      : call.otherFields.where((f) => foldColumnName(f.label) == foldColumnName(column) && f.value.trim().isNotEmpty).firstOrNull;
   final skip = {...pinned, if (placeField != null) foldColumnName(placeField.label)};
   return List.unmodifiable([
     ?placeField,

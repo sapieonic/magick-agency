@@ -223,6 +223,7 @@ class CallView {
     this.promise,
     this.callback,
     this.facts,
+    this.placeColumn,
   });
 
   final String attemptId;
@@ -268,6 +269,11 @@ class CallView {
   /// does not send them: the card then reads the hero fields.
   final FactsView? facts;
 
+  /// The roster column the line under the name is read from (`wire.customerPlaceColumn` of the
+  /// attempt's row and the campaign's display, the server's own reading); null when none. Details
+  /// lists that column first by its name, as More details leaves it out (AS20).
+  final String? placeColumn;
+
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
@@ -304,7 +310,8 @@ class CallView {
       other.redialLimit == redialLimit &&
       other.promise == promise &&
       other.callback == callback &&
-      other.facts == facts;
+      other.facts == facts &&
+      other.placeColumn == placeColumn;
 
   @override
   int get hashCode =>

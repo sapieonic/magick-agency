@@ -16,6 +16,12 @@ const moreDetailsStep = 4;
 /// quick flicks open one step.
 const moreDetailsPause = Duration(milliseconds: 300);
 
+/// How long the More details row at [index] waits before it fades in, when the rows from [from]
+/// are new: 60 ms a row, over one step's slots (0 to 180 ms), so a longer list ("Show all") does not
+/// keep the agent waiting; as the console's `Math.min(i - from, MORE_DETAILS_STEP - 1)`.
+Duration moreDetailRowDelay(int index, {required int from}) =>
+    Duration(milliseconds: 60 * (index - from).clamp(0, moreDetailsStep - 1));
+
 /// How far the last More details was opened, and whether the agent closed it with "Hide", so the
 /// card drawn again for the same call (Call coming, then On call: two screens) opens as far as the
 /// agent left it. One entry: the newest.
@@ -196,7 +202,7 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
                   label: tile.column,
                   value: factText(tile, masked: masked),
                   fadeIn: !still && i >= _from,
-                  delay: Duration(milliseconds: 60 * (i - _from).clamp(0, moreDetailsStep)),
+                  delay: moreDetailRowDelay(i, from: _from),
                 ),
               if (!all) ...[
                 const SizedBox(height: Space.sm),

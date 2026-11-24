@@ -566,6 +566,7 @@ class StationViewMapper {
         promise: previous.promise,
         callback: previous.callback,
         facts: previous.facts,
+        placeColumn: previous.placeColumn,
       );
     }
     _callOffset = _offset;
@@ -598,6 +599,7 @@ class StationViewMapper {
           ? null
           : CallLaterTag(dueAt: correctedInstant(attempt.callback!.dueAt, _offset)!, bookedByMe: attempt.callback!.bookedByMe),
       facts: factsOf(attempt.facts, chosen: display?.facts != null),
+      placeColumn: wire.customerPlaceColumn(attempt.context, display),
     );
   }
 

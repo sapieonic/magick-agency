@@ -77,9 +77,44 @@ void main() {
       expect(detailsOtherFields(older), same(older.otherFields));
     });
 
-    test('Details puts the line under the name first, in full, from the roster column that holds it', () {
-      final facts = FactsView(name: 'Sunita Patil', place: 'Value 2', tiles: [amount], chosen: true, more: [rows[0], more('Field 2', 'Value 2')]);
-      expect([for (final f in detailsOtherFields(call(facts: facts))) '${f.label}=${f.value}'], ['Field 2=Value 2', 'Loan No=LN-4471']);
+    test('Details puts the line under the name first, from the column the server read it from (ignoring case)', () {
+      final facts = FactsView(name: 'Sunita Patil', place: 'Value 2', tiles: [amount], chosen: true, more: [rows[0]]);
+      expect([for (final f in detailsOtherFields(call(facts: facts, placeColumn: 'FIELD 2'))) '${f.label}=${f.value}'], ['Field 2=Value 2', 'Loan No=LN-4471']);
+    });
+
+    test('Details picks the place by its column, not its value: Branch before City, both Pune, City the place', () {
+      // The server leaves City (the place) out of More details and keeps Branch.
+      final facts = FactsView(name: 'Sunita Patil', place: 'Pune', tiles: [amount], chosen: true, more: [more('Branch', 'Pune'), rows[0]]);
+      const others = [
+        ContactField(key: 'Branch', label: 'Branch', value: 'Pune'),
+        ContactField(key: 'City', label: 'City', value: 'Pune'),
+        ContactField(key: 'Loan No', label: 'Loan No', value: 'LN-4471'),
+      ];
+      const heroes = [ContactField(key: 'Card', label: 'Card', value: 'Platinum')];
+      expect([for (final f in detailsOtherFields(call(facts: facts, heroes: heroes, others: others, placeColumn: 'City'))) '${f.label}=${f.value}'],
+          ['City=Pune', 'Branch=Pune', 'Loan No=LN-4471']);
+    });
+
+    test('Details lists a place longer than the server\'s 100 characters in full', () {
+      const long = 'Plot 14, Shivaji Nagar, near the old bus stand, behind the temple, Pune district, Maharashtra 411005, India';
+      expect(long.length, greaterThan(100));
+      final facts = FactsView(name: 'Sunita Patil', place: long.substring(0, 100), tiles: [amount], chosen: true, more: [rows[0]]);
+      const others = [ContactField(key: 'Address', label: 'Address', value: long), ContactField(key: 'Loan No', label: 'Loan No', value: 'LN-4471')];
+      expect([for (final f in detailsOtherFields(call(facts: facts, others: others, placeColumn: 'Address'))) '${f.label}=${f.value}'],
+          ['Address=$long', 'Loan No=LN-4471']);
+    });
+
+    test('Details adds nothing for the place when the server read none', () {
+      const others = [ContactField(key: 'City', label: 'City', value: 'N/A'), ContactField(key: 'Loan No', label: 'Loan No', value: 'LN-4471')];
+      final noPlace = FactsView(name: 'Sunita Patil', tiles: [amount], chosen: true, more: [rows[0]]);
+      expect([for (final f in detailsOtherFields(call(facts: noPlace, others: others, placeColumn: 'City'))) f.label], ['Loan No']);
+      final noColumn = FactsView(name: 'Sunita Patil', place: 'Pune', tiles: [amount], chosen: true, more: [rows[0]]);
+      expect([for (final f in detailsOtherFields(call(facts: noColumn, others: others))) f.label], ['Loan No']);
+    });
+
+    test('a row waits 60 ms a slot after the first new one, over one step\'s slots (0 to 180 ms), as the console', () {
+      expect([for (var i = 2; i < 10; i++) moreDetailRowDelay(i, from: 2).inMilliseconds], [0, 60, 120, 180, 180, 180, 180, 180]);
+      expect(moreDetailRowDelay(0, from: 2), Duration.zero);
     });
   });
 

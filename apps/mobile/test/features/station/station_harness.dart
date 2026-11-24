@@ -497,6 +497,9 @@ CallView call({
   List<PriorAttempt>? priorAttempts,
   CallLaterTag? callback,
   FactsView? facts,
+  List<ContactField>? heroes,
+  List<ContactField>? others,
+  String? placeColumn,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -504,16 +507,18 @@ CallView call({
   callerId: '+918047182200',
   campaignName: 'Q4 Card Renewals',
   displayName: name,
-  heroFields: const [
-    ContactField(key: 'city', label: 'City', value: 'Chennai'),
-    ContactField(key: 'card', label: 'Card', value: 'Platinum'),
-    ContactField(key: 'due', label: 'Amount due', value: '₹12,400'),
-    ContactField(key: 'renewal', label: 'Renewal', value: '15 Nov'),
-  ],
+  heroFields: heroes ??
+      const [
+        ContactField(key: 'city', label: 'City', value: 'Chennai'),
+        ContactField(key: 'card', label: 'Card', value: 'Platinum'),
+        ContactField(key: 'due', label: 'Amount due', value: '₹12,400'),
+        ContactField(key: 'renewal', label: 'Renewal', value: '15 Nov'),
+      ],
   heroesConfigured: true,
-  otherFields: [
-    for (var i = 0; i < otherFields; i++) ContactField(key: 'f$i', label: 'Field $i', value: i == 3 ? 'Policy 7781' : 'Value $i'),
-  ],
+  otherFields: others ??
+      [
+        for (var i = 0; i < otherFields; i++) ContactField(key: 'f$i', label: 'Field $i', value: i == 3 ? 'Policy 7781' : 'Value $i'),
+      ],
   priorAttempts: priorAttempts ??
       [
         PriorAttempt(at: DateTime(2026, 10, 20, 9, 30), outcomeLabel: 'Busy', sameCampaign: false, campaignName: 'Diwali Offers'),
@@ -527,6 +532,7 @@ CallView call({
   promise: promise,
   callback: callback,
   facts: facts,
+  placeColumn: placeColumn,
 );
 
 StationView station({
