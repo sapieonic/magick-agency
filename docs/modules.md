@@ -1548,7 +1548,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 | Test file | Cases |
 |---|---|
 | `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 17 |
-| `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 16 |
+| `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 32 |
 
 ## `tooling` and release configuration
 
