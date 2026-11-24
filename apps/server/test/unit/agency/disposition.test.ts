@@ -37,7 +37,7 @@ function attempt(patch: Partial<AgencyCallAttemptRecord> = {}): AgencyCallAttemp
     dialed_at: new Date(), answered_at: new Date(), bridged_at: new Date(),
     ended_at: new Date(), talk_seconds: 42, wrapup_seconds: 30,
     wrapup_started_at: null, wrapup_ended_at: null, wrapup_resolution: null,
-    abandon_reason: null, redial_of_attempt_id: null, redial_number: 0,
+    abandon_reason: null, bridge_grace_ms: 3000, redial_of_attempt_id: null, redial_number: 0,
     agent_manual: false, agent_reopened: false, override_applied: [], override_note: null,
     created_at: new Date(), updated_at: new Date(),
     ...patch,

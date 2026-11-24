@@ -116,8 +116,8 @@ export const AGENCY_FLAGS = Object.freeze({
   //     adapter capability, never a branch on a provider name. A per-provider
   //     branch here is how the next carrier gets the wrong behaviour by default.
   //
-  // ⚠️ The bind runs INSIDE the 3s `ABANDONMENT_BRIDGE_GRACE_MS` budget
-  // (`src/agency/abandonment-predicate.ts`): everything after the answer and
+  // ⚠️ The bind runs INSIDE the attempt's abandonment grace (3 s by default, 1 s at the
+  // least; `bridge_grace_ms`, `packages/domain/src/abandonment-predicate.ts`): everything after the answer and
   // before the socket is attached is time the compliance predicate counts as a
   // call that reached nobody. That is why the bind path is synchronous and why the
   // panel's contact context is fetched at dial time rather than at the answer.

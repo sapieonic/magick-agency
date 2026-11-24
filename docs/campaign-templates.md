@@ -65,7 +65,7 @@ campaign fields belong to which section. Nothing else lists them.
 | `breaks` | `break_reasons` | yes | yes | The create path learns `break_reasons` |
 | `recording` | `record_calls`, `analysis_profile_id` | `record_calls` only | yes | CT5 |
 | `agent_screen` | `agent_script`, `phone_display`, `daily_target_calls` | yes | yes | |
-| `safety` | `abandonment_ceiling_pct` | yes | yes | AC2's note above 3% |
+| `safety` | `abandonment_ceiling_pct`, `abandonment_grace_ms` | yes | yes | AC2's note above 3%; the grace beside the limit (AG4). A template saved before the grace that sets `safety` reads 3 s, the built-in |
 | `assignment` | `assignment_mode`, `on_unstaff`, `callback_owner_grace_minutes`, `callback_fallback`, `allow_agent_retry`, `agent_retry_rounds`, `agent_retry_cooldown_minutes` | yes | yes | Only where contact assignment is on |
 | `inbound` | `inbound_sticky_enabled` | yes | yes | Only where inbound is on |
 | `numbers` | `caller_ids`, `telephony_provider`, `telephony_credential_id` | no | yes | CT15 |

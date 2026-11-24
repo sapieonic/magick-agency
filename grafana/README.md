@@ -166,9 +166,10 @@ and `service_name=~"$service_name"`. The rows:
 - **Agency dialer**: live attempts by state, 24h abandonment, throughput,
   pre-dial gate outcomes, settled attempts by outcome, where seat time goes,
   hold time, answer latency, late bind, answer to audio connected
-  (`agency_answer_to_bridge_seconds` p50 / p90 / p99 by carrier against the 3 s
-  grace, and the share of the last hour's bridged calls past it; no rule yet;
-  `pnpm test:grafana` holds the panel to `ABANDONMENT_BRIDGE_GRACE_MS`), abandonment
+  (`agency_answer_to_bridge_seconds` p50 / p90 / p99 by carrier against the default 3 s
+  grace, and the share of the last hour's bridged calls past it; a campaign set to another
+  grace, 1–5 s, is judged by its own; no rule yet; `pnpm test:grafana` holds the panel to
+  `DEFAULT_ABANDONMENT_GRACE_MS`), abandonment
   causes, wrap-up,
   our-fault retirements, campaign-completion emails; the insights rollup
   (backlog and oldest dirty mark, batch duration, batches, buckets and
@@ -264,7 +265,8 @@ first-increment arm on every `rate()`/`increase()` over `agency_answered_total`,
 `agency_abandoned_total` and `agency_abandoned_reason_total`, in the one structure that
 counts it (below; the test runs fixtures that must pass and fail through the same check),
 and that the Answer → Audio Connected panel's `le` bucket, threshold and the grace its text names are
-`ABANDONMENT_BRIDGE_GRACE_MS`, read from `packages/domain/src/abandonment-predicate.ts`.
+`DEFAULT_ABANDONMENT_GRACE_MS`, read from `packages/domain/src/abandonment-predicate.ts`, and that its
+title and text say it is the default (a campaign may set 1–5 s and is judged by its own, AG2).
 
 ## Counting a sparse counter's first increment
 

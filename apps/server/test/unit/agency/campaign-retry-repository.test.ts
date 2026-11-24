@@ -50,6 +50,7 @@ const PARENT = {
   outcome_dispositions: { busy: 'retry_later' },
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
+  abandonment_grace_ms: 3000,
   status: 'completed', contacts_total: 4000,
   parent_campaign_id: null, root_campaign_id: null, retry_generation: 0, retry_selector: null,
 } as unknown as AgencyCampaignRecord;
@@ -70,6 +71,7 @@ const CONFIG: AgencyCampaignConfigColumns = {
   outcome_dispositions: PARENT.outcome_dispositions,
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
+  abandonment_grace_ms: 4000,
 };
 
 /**
@@ -361,6 +363,14 @@ describe('the child campaign row', () => {
       });
       expect(campaignInsert()['allow_wrapup_redial']).toBe(value);
     }
+  });
+
+  it('copies the abandonment grace from the config (AG4), beside the ceiling', async () => {
+    stubTransaction();
+    await new AgencyCampaignRepository().retryFromCampaign({
+      parent: PARENT, name: 'r1', selector: { never_attempted: true }, config: CONFIG, createdBy: null, idempotencyKey: null,
+    });
+    expect(campaignInsert()).toMatchObject({ abandonment_ceiling_pct: 3, abandonment_grace_ms: 4000 });
   });
 
   it('copies the seven contact-assignment settings from the config', async () => {

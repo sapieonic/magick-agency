@@ -7,7 +7,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  */
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { ABANDONMENT_BRIDGE_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import Redis from 'ioredis';
 import {
   closeTestPool,
@@ -284,6 +283,7 @@ describe('agency lease lifecycle — ring duration (integration, slow)', () => {
         accountId: campaign.account_id,
         callerId: '+919000000001',
         attemptNumber: 1,
+        bridgeGraceMs: attempt!.bridge_grace_ms,
         campaign,
         contact,
       } as never);
@@ -368,7 +368,7 @@ describe('agency lease lifecycle — ring duration (integration, slow)', () => {
           WHERE campaign_id = $1
             AND answered_at IS NOT NULL
             AND (outcome = 'abandoned' OR bridged_at IS NULL
-                 OR bridged_at - answered_at > interval '${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds')`,
+                 OR bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond')`,
         [campaign.id],
       );
       expect(Number(rows[0]!.n)).toBe(0);

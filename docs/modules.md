@@ -72,7 +72,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/agency/abandonment-invariants.test.ts` | ~4 |
+| `apps/server/test/integration/agency/abandonment-invariants.test.ts` | 5 |
 | `apps/server/test/integration/agency/agency-activity-service.test.ts` (with a listen row's `detail.agent_name`, LS19) | 7 |
 | `apps/server/test/integration/agency/agency-agent-cas.test.ts` | ~6 |
 | `apps/server/test/integration/agency/agency-agent-identity.test.ts` | ~4 |
@@ -146,8 +146,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/campaign-wrapup-redial-setting.test.ts` | 8 |
 | `apps/server/test/integration/agency/campaign-outcome-dispositions-setting.test.ts` | 23 |
 | `apps/server/test/integration/agency/auto-disposition-settle.test.ts` | 20 |
-| `apps/server/test/integration/agency/chaos/abandonment-counter-vs-table.test.ts` | ~9 |
-| `apps/server/test/integration/agency/chaos/abandonment-predicate-agreement.test.ts` | ~3 |
+| `apps/server/test/integration/agency/chaos/abandonment-counter-vs-table.test.ts` | 9 |
+| `apps/server/test/integration/agency/chaos/abandonment-predicate-agreement.test.ts` | 4 |
 | `apps/server/test/integration/agency/chaos/attempt-number-collision.test.ts` | ~6 |
 | `apps/server/test/integration/agency/chaos/dnc-self-heal-loop.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/lease-renewer-killed.test.ts` | ~5 |
@@ -180,12 +180,12 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/wrapup-redial-repository.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` (also `agency_answer_to_bridge_seconds`: observed once per bridged call from the predicate's two instants, the bounded `provider`, nothing for a call never bridged, the grace a bucket boundary) | 53 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` (also `agency_answer_to_bridge_seconds`: observed once per bridged call from the predicate's two instants, the bounded `provider`, nothing for a call never bridged, every grace a campaign may hold a bucket boundary; `bridge_late` judged by the attempt's own grace, AG3) | 54 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 29 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
 | `apps/server/test/unit/agency/abandonment-otlp-export.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandonment-window.test.ts` | 20 |
+| `apps/server/test/unit/agency/abandonment-window.test.ts` | 21 |
 | `apps/server/test/unit/agency/agency-activity-actions.test.ts` | 8 |
 | `apps/server/test/unit/agency/agent-script.test.ts` (BE-8: the write's rules, the trimmed store, the bootstrap's reading, the audit; AS19: the keys per campaign against the resulting display, both ways and as a pair, a case or space typo told how to write it (S13)) | 18 |
 | `apps/server/test/unit/agency/station-tiles.test.ts` (BE-13, AS9: every listed icon accepted on an outcome and a break reason, anything else (an unknown key, `null`, a number, another case) refused with the entry named; both campaign-config validators refuse alike; `phone_display` `full` or `masked` only; the bootstrap's catalog drops an unknown icon; an unknown display reads as `full`) | 6 |
@@ -234,7 +234,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-concurrency.test.ts` | ~8 |
 | `apps/server/test/unit/agency/campaign-config-audit.test.ts` | 8 |
 | `apps/server/test/unit/agency/caller-id-resolver.test.ts` | 13 |
-| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 100 |
+| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 103 |
 | `apps/server/test/unit/agency/campaign-list-route.test.ts` | 7 |
 | `apps/server/test/unit/agency/campaign-archive-route-helpers.test.ts` (who archived it: a session user's UUID and trimmed name, else unattributed, AR5) | 4 |
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
@@ -244,7 +244,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-insert-param-types.test.ts` | 3 |
 | `apps/server/test/unit/agency/campaign-lifecycle-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/campaign-lifecycle-timestamps.test.ts` | 20 |
-| `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 22 |
+| `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 23 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` (with AS19 R4, S13: a `context_display` override that drops a key the parent's script uses is refused) | 63 |
 | `apps/server/test/unit/agency/campaign-series-parse.test.ts` | 13 |
 | `apps/server/test/unit/agency/campaign-stats-reads.test.ts` (the hard drops, `contacts_changed`'s join-but-not-kept and a burst never running two scans, the `fresh` read) | 17 |
@@ -490,7 +490,7 @@ Files: `create-fill.ts`, `resolve-effective.ts`, `template-source.ts`; `agency/c
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/campaign-templates-server.test.ts` (`filledCreateBody`, CT8: an omitted section whole, a sent one kept with its absent fields built-in, never mutated; `withoutTemplateKeys`; `templateSourceIssue`; the routes' body checks, CT4; `applyPatchBody`; `templateSourceFor`, CT9 as amended; the apply header round-tripped and which PATCH bodies name a section field, D1, D5) | ~14 |
+| `apps/server/test/unit/agency/campaign-templates-server.test.ts` (`filledCreateBody`, CT8: an omitted section whole, a sent one kept with its absent fields built-in, never mutated; `withoutTemplateKeys`; `templateSourceIssue`; the routes' body checks, CT4; `applyPatchBody`; `templateSourceFor`, CT9 as amended; the apply header round-tripped and which PATCH bodies name a section field, D1, D5) | 21 |
 | `apps/server/test/unit/agency/campaign-templates-runtime-reach.test.ts` (CT1, held structurally: only the template modules, each listed with why, name the template tables, the template repository or a template module, comments and type-only imports aside; each entry must still name something) | ~1 |
 | `apps/server/test/integration/agency/campaign-template-repository.test.ts` (versions and the stale save, CT6, under a race too; the history a page at a time with section keys only and the live cap, D4; names, CT13, two creates at once; one default per scope; based-on and archive, CT10, CT14, a follower in an account marked `deleted` not counted (L17), archive and a create naming it serialised; tenant and account scope; the list's order; the campaign side: `template_source` stored, the column defaults pinned to the DEFAULTs, the built-in settings) | ~24 |
 | `apps/server/test/integration/agency/campaign-template-list-index.test.ts` (the repository's own list statement planned on 0067's live index and 0068's archived index, D8) | ~1 |
@@ -663,6 +663,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-campaign-attribution.test.ts` | 5 |
 | `apps/server/test/integration/api/agency-campaign-abandonment-ceiling.test.ts` | 21 |
+| `apps/server/test/integration/api/agency-campaign-abandonment-grace.test.ts` (AG2–AG4: create and PATCH through the real app, the 400s, the audit row, a retry inheriting it, each attempt insert stamping the campaign's grace and a later change leaving the stamp) | 25 |
 | `apps/server/test/integration/api/agency-campaign-several-running.test.ts` | 3 |
 | `apps/server/test/integration/api/agency-join-staffing.test.ts` | ~4 |
 | `apps/server/test/integration/api/agency-runtime-routes.test.ts` | 38 |
@@ -1842,6 +1843,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/inbound-from-index-migration.test.ts` (0073: an account's inbound calls by caller; the definition, a number's keyset page of missed calls planned on it with no sort, the invalid-index refusal, down then up) | 4 |
 | `packages/db/test/integration/db/abandonment-grace-rollup-migration.test.ts` (0074, the 3 s abandonment grace, AG1: every bucket the rollup holds marked for a rebuild and no rollup row changed; nothing marked on an empty rollup; down then up) | 2 |
+| `packages/db/test/integration/db/abandonment-grace-setting-migration.test.ts` (0075 and 0076, AG2–AG3: both columns `INTEGER NOT NULL DEFAULT 3000`, the CHECKs both ways, the attempt CHECK NOT VALID after 0075 and validated by 0076, a row from before 0075 reading 3000, the pre-run DEPLOYMENT.md describes found and a wrong one refused, down then up) | 10 |
 | `packages/db/test/integration/db/attempts-account-index-migration.test.ts` (0072: an account's dialler attempts by when they were created; the definition, an account's keyset page planned on it with no sort, the invalid-index refusal, down then up) | 4 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
 | `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~34 |
@@ -1883,8 +1885,9 @@ Files: `abandonment-predicate.ts`, `agent-compare.ts` (and `agent-compare/`), `a
 | `packages/domain/test/unit/agent-compare/percentiles.test.ts` (against Postgres `percentile_cont` values) | 7 |
 | `packages/domain/test/unit/agent-compare/wilson.test.ts` | 15 |
 | `packages/domain/test/unit/agency/abandonment-breach.test.ts` (the guardrail's pause rule and its single-abandon floor, read by the console's Resume warning, AW1–AW2) | ~11 |
+| `packages/domain/test/unit/agency/abandonment-grace.test.ts` (AG1–AG5: the default 3 s and the 1–5 s range, the allowed values, the SQL reading the attempt's `bridge_grace_ms`, the in-process twin judging by the grace in its facts) | 4 |
 | `packages/domain/test/unit/agency/auto-disposition.test.ts` | 5 |
-| `packages/domain/test/unit/agency/campaign-templates.test.ts` (campaign templates §5: the built-in settings, CT2's chain with a section won whole, the account's limits (CT5, CT15) and their notes, agent overrides without contact assignment (CT20), `sectionsFromCampaign`, `diffSections`, `sectionSourcesForCreate`, the one comparison) | ~36 |
+| `packages/domain/test/unit/agency/campaign-templates.test.ts` (campaign templates §5: the built-in settings, CT2's chain with a section won whole, the account's limits (CT5, CT15) and their notes, agent overrides without contact assignment (CT20), `sectionsFromCampaign`, `diffSections`, `sectionSourcesForCreate`, the one comparison) | 90 |
 | `packages/domain/test/unit/agency/break-manager.test.ts` (with BE-12's `breakOverrun`: past the limit in whole seconds, never at or under it or under a second over, never without a limit; BE-13: the break menu drops an icon the contract does not list) | 34 |
 | `packages/domain/test/unit/agency/context-facts.test.ts` (BE-6: money and dates, a table of real values each way; AS19: numbers, phone numbers and yes / no, and the types held equal to the contract's) | 169 |
 | `packages/domain/test/unit/agency/context-hero.test.ts` (with AS19's `facts`: the name role then the facts' columns, `hero` not read, the old rule unchanged without them; with no name role the name guess's column (S1), from the row or else from `hero` (R1), never a fact's; the cap the name and four facts (R2); `facts: []` and no name is the guessed name alone (S2); a column merely like a name (`Customer ID`, `Client`) never the name) | 22 |
@@ -2104,7 +2107,7 @@ Campaign setup's presentation pieces (CS, `docs/campaign-setup.md` §2), with no
 | `apps/console/src/__tests__/components/CallFieldsForm.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | ~7 |
 | `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
-| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 23 |
+| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 27 |
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` (and live findings, quiet, under the server's announced answer) | 17 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
@@ -2241,11 +2244,11 @@ Files: `ApplyToDraftsDialog.tsx`, `CampaignTemplateSource.tsx`, `CampaignTemplat
 | `apps/console/src/__tests__/pages/CampaignTemplatesSettings.test.tsx` (the list, the organisation's rows with View, each view's rows, "New campaigns in this account start from", default and archive; the editor: its step tabs (CS21: which appear for an account and an organisation template and read-only, each section's Use/Set on its tab, the needs-fixing and unsaved marks, a finding brought forward, the steps' own blocks editing and saving the sections), set and unset sections, save on the version opened, a script with `{amount_due}` (U1), the layout and the bar (U4), a marked section (U13), unset numbers (U8), an unreadable followed template (U9), the name's refusal, History with name and Based on; apply: sections set only, Numbers only when set, refusal details, a late answer dropped; New template and Copy from a campaign with a card script left out (CT22); the read-only view; who sees it) | — |
 | `apps/console/src/__tests__/pages/CampaignTemplateEditor.organisation.test.tsx` (an organisation template on its two tabs, saved without the account header, with the version it opened) | ~1 |
 | `apps/console/src/__tests__/utils/campaignTemplateTabs.test.ts` (every section on one tab, never Customers; the agent screen whole on Purpose & buttons; the tabs for an account and an organisation template) | — |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.templates.test.tsx` (New campaign with templates, CS17–CS20: Start from above the step cards, filled from the default; each section's chip and Reset at the block that edits it on its step, the unanswered calls with the buttons, the agent screen and the break limits; Purpose & buttons' rows started afresh by a Reset; switching with "Replace your changes?"; what the create sends; flag off and a failed read; step 3's starting points never called templates; the numbers picked on Name & number (CTC2); a late default read (CTC8); the roster upload's draft (CTC1); the built-in settings; a template's script under the buttons, and held there with the step marked and the saves waiting when the card cannot fill it (CTC10); the call summary profile a template sets: filled in, sent, changed, Reset, replaced, unavailable) | — |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.templates.test.tsx` (New campaign with templates, CS17–CS20: Start from above the step cards, filled from the default; each section's chip and Reset at the block that edits it on its step, the unanswered calls with the buttons, the agent screen and the break limits; Purpose & buttons' rows started afresh by a Reset; switching with "Replace your changes?"; what the create sends; flag off and a failed read; step 3's starting points never called templates; the numbers picked on Name & number (CTC2); a late default read (CTC8); the roster upload's draft (CTC1); the built-in settings; a template's script under the buttons, and held there with the step marked and the saves waiting when the card cannot fill it (CTC10); the call summary profile a template sets: filled in, sent, changed, Reset, replaced, unavailable) | 31 |
 | `apps/console/src/__tests__/components/SectionSource.test.tsx` (a section's chip in words, Reset only once changed and named by the section, nothing without a source; one piece per section, none without a template) | — |
 | `apps/console/src/__tests__/components/CampaignTemplateSource.test.tsx` (Started from and its notes, What's different without numbers the template leaves unset and after a save (U7), Save as template new and replacing with its 409, a card script left out (CT22), archived, no record, flag off) | ~16 |
 | `apps/console/src/__tests__/pages/SoftphoneSettingsPage.templates.test.tsx` (Follow and Set, the followed template or the built-in outcomes named, an older server, the save's answer kept, flag off) | ~7 |
-| `apps/console/src/__tests__/utils/campaignTemplateForm.test.ts` (the form round trip, all 11 sections included; a section taken whole; an organisation template without the account's parts; the checks per set section; a template script's keys, the legacy six (U1); the words) | ~11 |
+| `apps/console/src/__tests__/utils/campaignTemplateForm.test.ts` (the form round trip, all 11 sections included; a section taken whole; an organisation template without the account's parts; the checks per set section; a template script's keys, the legacy six (U1); the words) | 11 |
 
 ### `apps/console/src/components/agency/compare/` (Compare agents)
 
@@ -2441,7 +2444,7 @@ Campaign setup (CS1–CS21, `docs/campaign-setup.md`): the four steps New campai
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.carrier.test.tsx` | ~7 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 109 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 111 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.station.test.tsx` (What agents see and Script, AS6, AS9, BE-6, BE-8, BE-13: nothing of the station sent when untouched, a target sent and cleared with `null`, held out of 1–2,000, its refusal on the field; both number previews and masked sent; the script's chips at the caret, counters, twelve steps, an unknown placeholder held, refusals on the opening and the step; the facts' columns from the newest completed imports, read once after the campaign loads (a retry campaign's one read naming its root), hidden ones left out, merged into the stored display, one column in two roles held, refusals on the role and the column, no list yet; outcome and break pictures picked, removed and sent, a refused picture on its row; AS19: the script held on a key the card lacks, "Add as a fact" saving card and script together, the sample read with "not given"; a legacy card pre-filled once the columns are read (loading, Try again), sending nothing until changed, saved as facts with the old roles dropped and their columns typed; Save held while a removed fact is in the script, "Put it back", a removal and its key in one save; the server's refusals on the role, the fact and its column, cleared when the facts move; focus and announcements after a fix (S9); the save's words "Saved. Agents see this when they next start work." (S8)) | 29 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.breakLimits.test.tsx` (Settings › Agents' break limits, LF27: the built-ins for a campaign with none, typed limits checked and holding Save, every other field kept, a cleared limit's key left out, nothing sent when no limit changed, the server's 400 on the row it names, a reserved entry) | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 40 |
@@ -2474,10 +2477,10 @@ Campaign setup (CS1–CS21, `docs/campaign-setup.md`): the four steps New campai
 | `apps/console/src/__tests__/pages/AnalysisProfilesPage.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/AppHomeRedirect.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.carrier.test.tsx` (the carrier beside the numbers: shown only with a choice, sent in full, the numbers filtered by it, locked once the draft exists, a refusal said in words on Name & number) | — |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` (the editors under Purpose & buttons and Agents & timing and what Save as draft sends: the outcome editor, wrap-up, the abandonment limit, the retry table, the hours, the agent screen and break limits, recording and the call summary with their refusals, and the Payment reminder starting point (the Collections set, AS4)) | — |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` (the editors under Purpose & buttons and Agents & timing and what Save as draft sends: the outcome editor, wrap-up, the abandonment limit, the retry table, the hours, the agent screen and break limits, recording and the call summary with their refusals, and the Payment reminder starting point (the Collections set, AS4)) | 59 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.findings.test.tsx` (a setting that holds the save: on its field live, on its step card, beside Save with Show me or Go to, held back while Name & number is incomplete; a server refusal sent to the step with its field) | — |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` (the header and Cancel, the four step cards and the Name & number gate, the footer from step to step and on a phone, focus and the step analytics, the double-drop lock, the leave guard) | — |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (Customers and the draft: the check that starts itself, Add N customers and the draft it creates, a failed check or import and the retry, the card’s columns saved before the import, the mapper and the summary as composed, the draft notes and the leave dialog; staffing on save, the Ready line, and Start: its order, its refusals and a staffing failure) | — |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (Customers and the draft: the check that starts itself, Add N customers and the draft it creates, a failed check or import and the retry, the card’s columns saved before the import, the mapper and the summary as composed, the draft notes and the leave dialog; staffing on save, the Ready line, and Start: its order, its refusals and a staffing failure) | 45 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/ColumnMapper.card.test.tsx` (AS19: "On the card" on New campaign only, its picks as the first facts) | 3 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` (the add's stated scope, the scope filter, what a removal un-blocks and what still blocks it where; DS1–DS7) | 42 |
@@ -2543,7 +2546,7 @@ Campaign setup's rules (CS, `docs/campaign-setup.md`), pure, in `campaignSetup/`
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/agencyActionErrorCodes.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 107 |
+| `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 110 |
 | `apps/console/src/__tests__/utils/agencyOutcomeDispositions.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyAgentCallerIdCopy.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` (and the long-break risk on the reason's limit, never on the soft phone, LF33) | 72 |
@@ -2561,8 +2564,9 @@ Campaign setup's rules (CS, `docs/campaign-setup.md`), pure, in `campaignSetup/`
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 89 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 93 |
 | `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 38 |
+| `apps/console/src/__tests__/utils/abandonmentGrace.test.ts` (AG2: the 1–5 s choices, the words, the field's error) | 3 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/resumeWarning.test.ts` (the warning before Resume and the header's line on a guardrail pause, AW1–AW3) | 25 |

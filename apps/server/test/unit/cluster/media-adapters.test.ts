@@ -147,7 +147,7 @@ describe('StationDirectory', () => {
 describe('IpcDialDispatcher', () => {
   const cmd = (over: Record<string, unknown> = {}) => ({
     attemptId: 'a1', campaignId: 'c1', contactId: 'k1', sessionId: 's1', ownerReplica: 'r0', tenantId: 't', accountId: 'acc',
-    callerId: '+911', attemptNumber: 1, campaign: { id: 'c1' }, contact: { id: 'k1' }, clearance: { contactId: 'k1' }, ...over,
+    callerId: '+911', attemptNumber: 1, bridgeGraceMs: 3000, campaign: { id: 'c1' }, contact: { id: 'k1' }, clearance: { contactId: 'k1' }, ...over,
   }) as never;
 
   function dispatcher(request: (...a: unknown[]) => Promise<unknown>, opts: { channel?: boolean; grant?: number | null } = {}) {
@@ -214,7 +214,7 @@ describe('record codecs', () => {
   const at = '2026-11-02T10:00:00.000Z';
   const command = {
     attemptId: 'a1', campaignId: 'c1', contactId: 'k1', sessionId: 's1', ownerReplica: 'r0', tenantId: 't', accountId: 'acc',
-    callerId: '+911', attemptNumber: 2,
+    callerId: '+911', attemptNumber: 2, bridgeGraceMs: 4000,
     campaign: { id: 'c1', tenant_id: 't', account_id: 'acc', paused_at: null, started_at: at, ended_at: null, completed_at: null, created_at: at, updated_at: at },
     contact: { id: 'k1', campaign_id: 'c1', next_attempt_at: at, created_at: at, updated_at: at, phone_e164: '+911' },
     clearance: { forged: true },
@@ -232,6 +232,10 @@ describe('record codecs', () => {
   it('refuses a missing id, a bad attempt number or a date that is not one', () => {
     expect(decodeDialCommand({ ...command, sessionId: '' })).toBeNull();
     expect(decodeDialCommand({ ...command, attemptNumber: 1.5 })).toBeNull();
+    // The attempt's grace crosses whole, or the command is refused (AG3): never a default.
+    for (const bridgeGraceMs of [undefined, 2500, 6000, '3000']) {
+      expect(decodeDialCommand({ ...command, bridgeGraceMs })).toBeNull();
+    }
     expect(decodeDialCommand({ ...command, contact: { ...command.contact, next_attempt_at: 'soon' } })).toBeNull();
     expect(decodeManualCallRecord({ id: 'm1', session_id: 's1', settled_at: 'x' })).toBeNull();
     expect(decodeManualCallRecord({ id: 'm1', session_id: 's1', settled_at: at })!.settled_at).toEqual(new Date(at));

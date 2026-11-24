@@ -88,7 +88,7 @@ const CONTACT = { id: 'contact-1', phone_e164: '+919876543210', context: {}, att
 function makeCmd(campaign: any = CAMPAIGN, extra: Partial<DialCommand> = {}): DialCommand {
   return {
     attemptId: 'att-1', campaignId: 'camp-1', contactId: 'contact-1', sessionId: 's1', ownerReplica: 'r1',
-    tenantId: 't1', accountId: 'a1', callerId: '+14155550100', attemptNumber: 3, campaign, contact: CONTACT, ...extra,
+    tenantId: 't1', accountId: 'a1', callerId: '+14155550100', attemptNumber: 3, bridgeGraceMs: 3000, campaign, contact: CONTACT, ...extra,
   };
 }
 

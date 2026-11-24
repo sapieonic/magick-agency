@@ -715,7 +715,8 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
 /**
  * Carrier answer → the agent's station socket attached, under late binding.
  *
- * ⚠️ **The whole budget is `ABANDONMENT_BRIDGE_GRACE_MS` = 3000ms.** Everything
+ * ⚠️ **The whole budget is the attempt's abandonment grace: 3000ms by default
+ * (`DEFAULT_ABANDONMENT_GRACE_MS`), as little as 1000ms on a campaign set to 1 s (AG2).** Everything
  * this measures is time the compliance predicate counts as abandonment, so the
  * buckets are deliberately sub-second and crowd the region that matters: p99 above
  * 150ms is the documented abort criterion for the late-binding rollout, and until
@@ -733,10 +734,12 @@ export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bi
 
 /**
  * Carrier answer → the bridge (audio connected both ways): `bridged_at − answered_at`,
- * the interval the abandonment predicate compares with `ABANDONMENT_BRIDGE_GRACE_MS`
- * (3000 ms, AG1). Observed where the dialer records `bridged_at` (`onBridged`), from the
- * same two instants the settle site's `isAbandonedAttempt` reads, so an observation above
- * 3 s is a call the compliance rate counts as abandoned (`bridge_late`).
+ * the interval the abandonment predicate compares with the attempt's grace (`bridge_grace_ms`:
+ * the campaign's setting when the call was placed, whole seconds 1–5, 3 s by default;
+ * AG1–AG3). Observed where the dialer records `bridged_at` (`onBridged`), from the same two
+ * instants the settle site's `isAbandonedAttempt` reads, so an observation above the
+ * attempt's grace (3 s on a campaign left at the default) is a call the compliance rate
+ * counts as abandoned (`bridge_late`).
  *
  * **Why it exists beside {@link agencyBindLatencySeconds}.** The bind (answer → the
  * agent's socket attached) is our own share of this interval and was under 25 ms on every
@@ -757,11 +760,12 @@ export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bi
  * Only the pacing dialler's attempts are observed (`onBridged`); the soft phone's and
  * inbound calls' bridges are not.
  *
- * Buckets crowd the 3 s grace and split the two clusters seen on 23 Nov (~1.1 s, ~5 s);
- * 3 is a boundary on purpose, so `le="3"` reads the share over the grace exactly. The
- * server's unit test pins that the grace is a boundary, so a grace change cannot leave the
- * panel's threshold between two buckets, and `pnpm test:grafana` pins the panel's `le`
- * bucket, threshold and text to the grace.
+ * Buckets crowd the 3 s default grace and split the two clusters seen on 23 Nov (~1.1 s,
+ * ~5 s). Every grace a campaign may hold (1, 2, 3, 4 and 5 s, AG2) is a boundary on purpose,
+ * so `le="<grace>"` reads the share over any campaign's grace exactly; the panel draws the
+ * default's (`le="3"`). The server's unit test pins every allowed grace as a boundary, so a
+ * change to the range or the buckets cannot leave one between two buckets, and
+ * `pnpm test:grafana` pins the panel's `le` bucket, threshold and text to the default.
  *
  * Each release starts every tenant × provider series afresh (`service_version`), and a
  * `rate()` misses a new series' first export, so the panel's quantiles miss the first

@@ -54,7 +54,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     agent_script: {},
     phone_display: 'full',
     status: 'running',
-    abandonment_ceiling_pct: 3, pause_reason: null, paused_at: null,
+    abandonment_ceiling_pct: 3, abandonment_grace_ms: 3000, pause_reason: null, paused_at: null,
     pause_abandonment_rate_pct: null,
     contacts_total: 100, created_by: null,
     started_at: null, ended_at: null, stopping_at: null, completed_at: null,

@@ -130,7 +130,7 @@ export const AGENT_DISCONNECT_OUTCOME = 'agent_disconnected';
  * repeated in four emit sites with a comment claiming the property; a test
  * asserting the property had nothing to compare against but its own copy of 40.
  *
- * Well inside `ABANDONMENT_BRIDGE_GRACE_MS` (3000) on purpose: a bridged call
+ * Well inside the abandonment grace (1000ms at the least, 3000 by default; AG1–AG3) on purpose: a bridged call
  * must NOT be abandoned, so the lead has to be observable and compliant at once.
  */
 export const SCRIPTED_ANSWER_LEAD_MS = 40;
@@ -1612,12 +1612,14 @@ export interface AttemptRow {
   ended_at: Date | null;
   reserved_agent_id: string | null;
   attempt_number: number;
+  /** The abandonment grace stamped on the row when it was created (AG3). */
+  bridge_grace_ms: number;
 }
 
 export async function attempts(campaignId: string): Promise<AttemptRow[]> {
   const { rows } = await getTestPool().query<AttemptRow>(
     `SELECT id, contact_id, state, outcome, answered_at, bridged_at, ended_at,
-            reserved_agent_id, attempt_number
+            reserved_agent_id, attempt_number, bridge_grace_ms
        FROM agency_call_attempts WHERE campaign_id = $1
       ORDER BY created_at, id`,
     [campaignId],
@@ -1814,9 +1816,14 @@ export async function agentsWithConcurrentLiveAttempts(campaignId: string): Prom
  * only misbehaves under the concurrency real dialing introduces, and it fails in the
  * direction that **looks like caution**.
  *
- * `N` is 3000ms, matching `ABANDONMENT_BRIDGE_GRACE_MS` (AG1; it was 1000ms). Written
- * as `3000 milliseconds` rather than `3 seconds` so the two halves are comparable by
- * eye as well as by result. Restated, not imported: this is the independent half.
+ * `N` is the grace stamped on each attempt row, `bridge_grace_ms` (AG3: its campaign's
+ * `abandonment_grace_ms` when the attempt was created, 3000ms by default; AG1, it was one
+ * 1000ms constant). Read from the row, never from the campaign (a campaign's setting may
+ * have changed since) and never a constant: a grace the product stamped wrongly is then
+ * the product's to own, and a predicate that read a constant again instead of the column
+ * disagrees with this one on any attempt stamped with something else. Written with
+ * `make_interval` rather than the product's `* interval '1 millisecond'` so the two halves
+ * are two spellings. Restated, not imported: this is the independent half.
  */
 export async function abandonedCount(campaignId: string): Promise<number> {
   const { rows } = await getTestPool().query<{ n: string }>(
@@ -1825,7 +1832,7 @@ export async function abandonedCount(campaignId: string): Promise<number> {
         AND state = 'ended'
         AND answered_at IS NOT NULL
         AND (outcome = 'abandoned' OR bridged_at IS NULL
-             OR bridged_at - answered_at > interval '3000 milliseconds')`,
+             OR bridged_at - answered_at > make_interval(secs => bridge_grace_ms / 1000.0))`,
     [campaignId],
   );
   return Number(rows[0]!.n);

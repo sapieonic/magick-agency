@@ -395,8 +395,8 @@ export class AgencyDialer {
    *    provokes, and still precedes any audio the agent can hear.
    *
    * What the move costs, stated because it is the reason the panel is not simply
-   * built at the answer: the bind runs inside the 3000ms
-   * `ABANDONMENT_BRIDGE_GRACE_MS` budget, so nothing that can be done here may be
+   * built at the answer: the bind runs inside the attempt's abandonment grace
+   * (`bridge_grace_ms`, 3 s by default and 1 s at the least, AG1–AG3), so nothing that can be done here may be
    * deferred to there. The priors read below is two joins over a contact lineage
    * and would spend that budget outright.
    *
@@ -1106,8 +1106,8 @@ export class AgencyDialer {
      * The whole of the change, and its ORDERING is the change. Everything here
      * is synchronous — no `await`, nothing read from Redis or the DB, the panel
      * already built at dial time — because the abandonment predicate measures
-     * from the instant above and gives the entire path a 3000ms budget
-     * (`ABANDONMENT_BRIDGE_GRACE_MS`). A connected call that spends more than
+     * from the instant above and gives the entire path the attempt's grace as its
+     * budget (`cmd.bridgeGraceMs`, 3 s by default, as little as 1 s; AG1–AG3). A connected call that spends more than
      * that between the answer and the bind is recorded as a call that reached
      * nobody, against a 3% regulatory ceiling.
      *
@@ -1189,7 +1189,7 @@ export class AgencyDialer {
        *
        * `answeredAt` is the CARRIER's instant, not ours, so this interval
        * includes webhook transit. That is deliberate and it is the honest
-       * measure: `ABANDONMENT_BRIDGE_GRACE_MS` counts that time too, so a
+       * measure: the abandonment grace (`bridge_grace_ms`) counts that time too, so a
        * latency measured from our own receipt would clear a budget the
        * compliance predicate says we blew.
        *
@@ -1381,7 +1381,7 @@ export class AgencyDialer {
     // `answeredAt: null`, read "never answered", and skip a call the table counts.
     // `??=` so a real `answered` phase's value is never displaced.
     live.answeredAt ??= ev.answeredAt ?? null;
-    // Answer → bridge: the interval the abandonment predicate compares with the 3 s grace,
+    // Answer → bridge: the interval the abandonment predicate compares with the attempt's grace (AG3),
     // from the same two instants the settle site's `isAbandonedAttempt` reads (after the
     // back-fill above). Synchronous and before any await, so a teardown racing the writes
     // below cannot cost the reading. No answer anchor at all: the predicate reads "never
@@ -1798,14 +1798,17 @@ export class AgencyDialer {
       answeredAt: live.answeredAt,
       bridgedAt: live.bridgedAt,
       outcome,
+      // The grace stamped on this attempt's row (AG3), never the campaign's setting now: the
+      // SQL predicate reads the row's `bridge_grace_ms`, and the two must agree.
+      bridgeGraceMs: cmd.bridgeGraceMs,
     });
     /**
      * ⚠️ **The residual is `unattributed`, NOT `no_agent_available`** (corrected
      * on the second review pass, and this was a real defect rather than a wording
      * nit).
      *
-     * An abandoned attempt WITH a bridge timestamp beat the grace, which we did
-     * observe — `bridge_late`. One without it, where no arm above claimed a
+     * An abandoned attempt WITH a bridge timestamp missed the grace (the attempt's
+     * own, `cmd.bridgeGraceMs`, AG3), which we did observe — `bridge_late`. One without it, where no arm above claimed a
      * cause, is a call we abandoned for a reason we did not see: the customer
      * answered, the station was fine, and media never came up. Reporting that as
      * `no_agent_available` asserted a *pacing* cause for what is a bridge or

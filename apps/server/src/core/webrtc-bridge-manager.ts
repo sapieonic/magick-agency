@@ -1085,7 +1085,8 @@ export class WebRtcBridgeManager {
    * path).
    *
    * **Synchronous, deliberately and non-negotiably.** The abandonment predicate
-   * gives the whole bind path a 3000ms budget (`ABANDONMENT_BRIDGE_GRACE_MS`),
+   * gives the whole bind path the attempt's abandonment grace as its budget (3 s by
+   * default, as little as 1 s: `bridge_grace_ms`, AG1–AG3),
    * measured from the carrier answer, and every connected call would otherwise
    * count against a 3% regulatory ceiling. So there is no `await` here, nothing
    * is read from Redis or the DB, and everything the caller needs to send its

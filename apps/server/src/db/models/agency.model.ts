@@ -162,6 +162,13 @@ export interface AgencyCampaignRecord {
    */
   abandonment_ceiling_pct: number;
   /**
+   * The abandonment grace, in ms (0075, AG2): how long after the carrier's answer the agent's
+   * audio may connect before a call counts as abandoned. Whole seconds 1–5 (the column CHECK),
+   * `DEFAULT_ABANDONMENT_GRACE_MS` (3000) by default. Stamped on each new attempt as
+   * `bridge_grace_ms` (AG3); nothing else reads it to judge a call.
+   */
+  abandonment_grace_ms: number;
+  /**
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
    * Five values are writable (CHECK-constrained): `supervisor`,
@@ -364,6 +371,7 @@ export type AgencyCampaignConfigColumns = Pick<
   | 'analysis_profile_id'
   | 'abandon_announcement_id'
   | 'abandonment_ceiling_pct'
+  | 'abandonment_grace_ms'
 >;
 
 export interface AgencyContactRecord {
@@ -636,6 +644,13 @@ export interface AgencyCallAttemptRecord {
    * ratified definition and deliberately catches attempts nobody labelled.
    */
   abandon_reason: AgencyAbandonReason | null;
+  /**
+   * The abandonment grace this attempt is judged by, in ms (0075, AG3): its campaign's
+   * `abandonment_grace_ms` when the row was created, stamped by the INSERT itself and never
+   * rewritten. `ABANDONED_ATTEMPT_PREDICATE_SQL` reads it; the settle site's in-process twin reads
+   * the same value through `DialCommand.bridgeGraceMs`.
+   */
+  bridge_grace_ms: number;
   /** Wrap-up redial (0008): the attempt this one redials, or null for a paced dial. */
   redial_of_attempt_id: string | null;
   /** Wrap-up redial (0008): 0 for a paced dial; 1, 2 for the redials of one call. */

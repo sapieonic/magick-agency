@@ -1052,6 +1052,47 @@ INSERT INTO agency_insights_rollup_dirty (campaign_id, bucket_start)
 SELECT campaign_id, bucket_start FROM agency_insights_rollup_buckets ORDER BY bucket_start DESC, campaign_id;
 ```
 
+**Deploying the per-campaign abandonment grace** (`0075_abandonment_grace_setting.sql`,
+`0076_abandonment_grace_check_validate.sql`, decisions AG2–AG5). 0075 adds a column with a constant
+default to `agency_campaigns` and to `agency_call_attempts` (on Postgres 11 and later the default is
+stored once, so there is no rewrite and no scan, but each takes its table's ACCESS EXCLUSIVE for the
+moment it takes, under a 10-second `lock_timeout`) and the attempt CHECK `NOT VALID`. 0076 validates
+that CHECK: **one read of the whole of `agency_call_attempts`**, which lets reads and writes through
+but runs while the server is down for the deploy. On a small database nothing is needed. Where
+`agency_call_attempts` holds more than about a million rows (`db-hygiene.md` §2 has the size query),
+do all three first, **with the server running**, each statement on its own:
+
+```sql
+SET lock_timeout = '10s';
+```
+
+```sql
+ALTER TABLE agency_call_attempts ADD COLUMN IF NOT EXISTS bridge_grace_ms INTEGER NOT NULL DEFAULT 3000;
+```
+
+```sql
+ALTER TABLE agency_call_attempts
+  ADD CONSTRAINT ck_agency_attempt_bridge_grace
+    CHECK (bridge_grace_ms IN (1000, 2000, 3000, 4000, 5000)) NOT VALID;
+```
+
+```sql
+SET statement_timeout = 0;
+```
+
+```sql
+ALTER TABLE agency_call_attempts VALIDATE CONSTRAINT ck_agency_attempt_bridge_grace;
+```
+
+The running image never names the column, so its dials take the default (3000, the grace every
+call is judged by until the deploy). Then deploy: 0075 finds the column and the CHECK (it refuses,
+changing nothing, either one added with another definition) and 0076 finds the CHECK already
+validated. Every existing call keeps 3 s, so no figure changes and Insights needs no rebuild.
+**Going back** past this release needs no `migrate:down`: an older image ignores both columns,
+inserts attempts with the default, and judges every call by its own constant (3 s), so a campaign
+set to another grace is judged by 3 s again until the newer image returns; the setting itself is
+kept.
+
 **A migration that fails on its lock timeout.** Migrations that lock a busy table give up after
 10 s (`SET LOCAL lock_timeout`) rather than queue every query behind them; the server then does
 not start. Find and end what holds the lock, then start it again ([`db-hygiene.md`](db-hygiene.md)

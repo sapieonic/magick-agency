@@ -25,7 +25,7 @@ function cmd(ownerReplica: string, override: Partial<ClearedDialCommand> = {}): 
   return {
     attemptId: 'att-1', campaignId: 'camp-1', contactId: 'c1',
     sessionId: 's1', ownerReplica, tenantId: 't1', accountId: 'a1',
-    callerId: '+14155550100', attemptNumber: 1,
+    callerId: '+14155550100', attemptNumber: 1, bridgeGraceMs: 3000,
     campaign: {} as any, contact: {} as any,
     clearance: clearance('c1'),
     ...override,

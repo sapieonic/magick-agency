@@ -13,6 +13,7 @@ import { describeIsoDays } from '../../format/weekdays';
 import { currentZoneName, formatDayMonth, formatDayMonthYear } from '../../format/date';
 import { ASSIGNMENT_MODE_COPY } from '../../agencyAssignmentCopy';
 import { ceilingSummary } from '../abandonmentCeiling';
+import { graceSummary } from '../abandonmentGrace';
 import { PHONE_DISPLAY_LABELS } from '../stationSettings';
 import { carrierName } from '../../agencyCarriers';
 import { plural } from '../../format/number';
@@ -116,7 +117,7 @@ export function sectionSummary(
       } · ${scriptWords}`;
     }
     case 'safety':
-      return ceilingSummary(Number(values.abandonment_ceiling_pct));
+      return `${ceilingSummary(Number(values.abandonment_ceiling_pct))} · ${graceSummary(Number(values.abandonment_grace_ms))}`;
     case 'assignment': {
       const mode = values.assignment_mode as keyof typeof ASSIGNMENT_MODE_COPY;
       return `${ASSIGNMENT_MODE_COPY[mode]?.label ?? String(mode)}${values.allow_agent_retry === true ? ' · Agents may retry missed contacts' : ''}`;

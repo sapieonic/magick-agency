@@ -630,6 +630,17 @@ export interface AgencyCampaign {
    * PATCH at any status; a PATCH that changes it is recorded in the campaign's activity.
    */
   abandonment_ceiling_pct?: number;
+  /**
+   * The abandonment grace, in milliseconds (decisions AG1–AG5): a call whose agent's audio
+   * connects more than this long after the carrier's answer counts as abandoned. Whole seconds
+   * from 1000 to 5000; the column is `NOT NULL DEFAULT 3000` with a CHECK of exactly those five
+   * values (0075). Settable on create and by PATCH at any status, inherited by a retry campaign,
+   * and held by a template's `safety` section beside the ceiling. A change applies to calls
+   * placed from then on: each attempt carries the grace it is judged by (stamped when it is
+   * created), so the figures of calls already made never change. Anything else is a 400
+   * (`details.abandonment_grace_ms`).
+   */
+  abandonment_grace_ms?: number;
   /** Contact assignment (0009): how pacing reads each contact's owner. Changed only while draft or paused. */
   assignment_mode?: AgencyAssignmentMode;
   /** When an agent is unstaffed: their open contacts return to the pool (default) or stay theirs. */

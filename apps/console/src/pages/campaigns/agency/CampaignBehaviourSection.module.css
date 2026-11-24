@@ -456,6 +456,23 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── The abandonment grace (`AbandonmentGraceField`) ───────────────────── */
+
+/* The select sits inside the sentence it completes, so the line wraps around it. */
+.graceSentence {
+  margin: 16px 0 0;
+  font-size: 13px;
+  line-height: 2.2;
+  color: var(--text-primary);
+}
+
+.graceSelect {
+  width: auto;
+  min-width: 64px;
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The `.zeroWarning` idea at the size of a field note: amber, not error red,
    because the save goes through. */
 .ceilingWarning {

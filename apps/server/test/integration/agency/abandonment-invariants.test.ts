@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
 import {
-  ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_BRIDGE_GRACE_MS, isAbandonedAttempt,
+  ABANDONED_ATTEMPT_PREDICATE_SQL, ALLOWED_ABANDONMENT_GRACE_MS, DEFAULT_ABANDONMENT_GRACE_MS, isAbandonedAttempt,
 } from '@magick-agency/domain/abandonment-predicate';
 
 vi.mock('@magick-agency/db', async (orig) => ({
@@ -73,15 +73,15 @@ describe('abandonment invariants (real Postgres)', () => {
   });
 
   it('the SQL predicate and the in-process predicate agree on every shared arm', async () => {
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(3000);
+    expect(DEFAULT_ABANDONMENT_GRACE_MS).toBe(3000);
     const campaign = await insertAgencyCampaign();
     const cases: Array<{ name: string; answered: number | null; bridged: number | null; outcome: string | null }> = [
       { name: 'never answered', answered: null, bridged: null, outcome: 'no_answer' },
       { name: 'answered, outcome abandoned', answered: 0, bridged: 400, outcome: 'abandoned' },
       { name: 'answered, never bridged', answered: 0, bridged: null, outcome: 'completed' },
       { name: 'bridged inside grace', answered: 0, bridged: 400, outcome: 'completed' },
-      { name: 'bridged exactly AT grace', answered: 0, bridged: ABANDONMENT_BRIDGE_GRACE_MS, outcome: 'completed' },
-      { name: 'bridged 1ms past grace', answered: 0, bridged: ABANDONMENT_BRIDGE_GRACE_MS + 1, outcome: 'completed' },
+      { name: 'bridged exactly AT grace', answered: 0, bridged: DEFAULT_ABANDONMENT_GRACE_MS, outcome: 'completed' },
+      { name: 'bridged 1ms past grace', answered: 0, bridged: DEFAULT_ABANDONMENT_GRACE_MS + 1, outcome: 'completed' },
       { name: 'bridged, never answered', answered: null, bridged: 500, outcome: 'completed' },
     ];
     let abandoned = 0;
@@ -91,11 +91,14 @@ describe('abandonment invariants (real Postgres)', () => {
         answered_at: c.answered === null ? null : at(c.answered),
         bridged_at: c.bridged === null ? null : at(c.bridged),
       });
+      // Left at the column default: the default grace.
+      expect(row['bridge_grace_ms']).toBe(DEFAULT_ABANDONMENT_GRACE_MS);
       const sql = await sqlSays(row.id);
       const inProcess = isAbandonedAttempt({
         answeredAt: c.answered === null ? null : at(c.answered),
         bridgedAt: c.bridged === null ? null : at(c.bridged),
         outcome: c.outcome,
+        bridgeGraceMs: row['bridge_grace_ms'] as number,
       });
       expect(sql, c.name).toBe(inProcess);
       if (sql) abandoned++;
@@ -104,13 +107,32 @@ describe('abandonment invariants (real Postgres)', () => {
     expect(abandoned).toBe(3);
   });
 
+  it('the two halves agree at every grace a campaign may hold, each attempt judged by its own (AG3)', async () => {
+    const campaign = await insertAgencyCampaign();
+    let abandoned = 0;
+    for (const grace of ALLOWED_ABANDONMENT_GRACE_MS) {
+      for (const late of [grace - 1, grace, grace + 1]) {
+        const row = await attemptWith(campaign.id, {
+          state: 'ended', outcome: 'completed', ended_at: at(20_000),
+          answered_at: at(0), bridged_at: at(late), bridge_grace_ms: grace,
+        });
+        const sql = await sqlSays(row.id);
+        const inProcess = isAbandonedAttempt({ answeredAt: at(0), bridgedAt: at(late), outcome: 'completed', bridgeGraceMs: grace });
+        expect(sql, `grace ${grace}, bridged at ${late}`).toBe(inProcess);
+        expect(sql, `grace ${grace}, bridged at ${late}`).toBe(late > grace);
+        if (sql) abandoned++;
+      }
+    }
+    expect(abandoned).toBe(ALLOWED_ABANDONMENT_GRACE_MS.length);
+  });
+
   it('the terminal filter is the SQL half\'s alone: a LIVE answered-but-unbridged attempt counts zero', async () => {
     const campaign = await insertAgencyCampaign();
     const live = await attemptWith(campaign.id, { state: 'answered', answered_at: new Date(), bridged_at: null });
     expect(await sqlSays(live.id)).toBe(false);
     // the in-process half would say "abandoned" for the same facts — it is only ever
     // called at the settle site, i.e. once the attempt is terminal
-    expect(isAbandonedAttempt({ answeredAt: new Date(), bridgedAt: null, outcome: null })).toBe(true);
+    expect(isAbandonedAttempt({ answeredAt: new Date(), bridgedAt: null, outcome: null, bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS })).toBe(true);
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toMatch(/state\s*=\s*'ended'/);
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).not.toMatch(/\$\d/);
   });

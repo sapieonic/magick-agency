@@ -2792,9 +2792,14 @@ Nine of the eleven abandoned calls were calls an agent took and talked through: 
 stream connected 1.06–1.25 s (or about 5 s) after its answer event, outside the 1 s grace. Supervisors
 pressed Resume 87 times, each paused again within a minute.
 
-- **The grace is 3 s (AG1, decided by Manas).** `ABANDONMENT_BRIDGE_GRACE_MS` 1000 → 3000. Every
+- **The grace is 3 s (AG1, decided by Manas).** `ABANDONMENT_BRIDGE_GRACE_MS` 1000 → 3000 (now `DEFAULT_ABANDONMENT_GRACE_MS`). Every
   figure read from the attempts changes with the deploy, history included; 0074 rebuilds the
   Insights rollup (`DEPLOYMENT.md` 12, "Deploying or going back past the 3 s abandonment grace").
+- **The grace is a campaign setting (AG1 "configurable, but default to 3"; AG2–AG5 pending Manas).**
+  Whole seconds 1–5 beside the abandonment limit in New campaign and Settings, 3 by default. Each
+  attempt is stamped with its campaign's grace when it is created (`bridge_grace_ms`, 0075/0076) and
+  judged by it, so a change applies to new calls only; retries inherit it, templates carry it in
+  `safety`; the dashboard panel draws the default and says a campaign set otherwise is judged by its own.
 - **Resume warns first (AW1–AW3, decided: defaults kept, Manas, 2026-11-24).** A campaign the guardrail paused, or any
   paused campaign whose rolling 24 h rate is over its ceiling, asks before Resume, with the numbers
   and that the dialler will pause it again within about a minute. Never a block; `/resume` is

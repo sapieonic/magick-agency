@@ -372,6 +372,12 @@ export interface CampaignConfigState {
    * "The range").
    */
   abandonmentCeilingStoredPct: number | null;
+  /**
+   * `abandonment_grace_ms` (AG1–AG5): how long after the customer answers the agent's audio may
+   * connect before the call counts as abandoned, in ms: whole seconds 1–5, 3 by default. Rules and
+   * copy: `utils/agency/abandonmentGrace.ts`.
+   */
+  abandonmentGraceMs: number;
   /** Contact assignment (0009): how contacts reach agents, and the agent's own retry. */
   assignment: AssignmentConfigState;
   /**

@@ -148,6 +148,9 @@ describe('the words', () => {
     expect(sectionSummary('recording', config)).toBe('Off');
     expect(sectionSummary('numbers', config)).toMatch(/^No numbers · /);
     expect(sectionSummary('outcomes', config)).toMatch(/^\d+ outcomes: Voicemail, /);
+    // The limit and the grace, the safety section's two settings (AG4).
+    expect(sectionSummary('safety', config)).toBe('Pauses above 3% · Abandoned after 3 seconds');
+    expect(sectionSummary('safety', { abandonment_ceiling_pct: 2.5, abandonment_grace_ms: 5000 })).toBe('Pauses above 2.5% · Abandoned after 5 seconds');
   });
 
   it('writes times and stamps as Indian English does', () => {

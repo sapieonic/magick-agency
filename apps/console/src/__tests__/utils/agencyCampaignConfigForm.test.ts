@@ -391,6 +391,30 @@ describe('the abandonment ceiling', () => {
   });
 });
 
+describe('the abandonment grace (AG2)', () => {
+  it('starts at 3000 ms on a new campaign, and sends it', () => {
+    expect(EMPTY_CAMPAIGN_CONFIG.abandonmentGraceMs).toBe(3000);
+    expect(buildConfigPayload(config()).abandonment_grace_ms).toBe(3000);
+  });
+
+  it('round-trips a stored value through load and save, and sends a changed one', () => {
+    const state = configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'running', abandonment_grace_ms: 5000 });
+    expect(state.abandonmentGraceMs).toBe(5000);
+    expect(buildConfigPayload(state).abandonment_grace_ms).toBe(5000);
+    expect(buildConfigPayload({ ...state, abandonmentGraceMs: 1000 }).abandonment_grace_ms).toBe(1000);
+  });
+
+  it('reads a campaign without the field as the default', () => {
+    expect(configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' }).abandonmentGraceMs).toBe(3000);
+  });
+
+  it('keys a value the server would refuse as the API does, and blocks the save', () => {
+    expect(validateConfig(config({ abandonmentGraceMs: 2500 }))).toEqual({ abandonment_grace_ms: 'Choose 1 to 5 seconds.' });
+    expect(configBlockReason(config({ abandonmentGraceMs: 6000 }))).toBe('invalid_fields');
+    for (const ms of [1000, 2000, 3000, 4000, 5000]) expect(validateConfig(config({ abandonmentGraceMs: ms }))).toEqual({});
+  });
+});
+
 describe('validation, keyed exactly as the API keys its details', () => {
   it('accepts the default configuration', () => {
     expect(validateConfig(config())).toEqual({});

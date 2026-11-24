@@ -106,7 +106,7 @@ import { AgentStateMachine, AGENT_LEASE_MS } from '../../../src/agency/agent-sta
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { collectMetric } from '../../helpers/otel-metric-reader.js';
 import { AGENCY_ABANDON_REASONS } from '@magick-agency/contracts/agency';
-import { ABANDONMENT_BRIDGE_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
+import { ALLOWED_ABANDONMENT_GRACE_MS, DEFAULT_ABANDONMENT_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 /**
@@ -239,7 +239,7 @@ function makeCmd(): DialCommand {
   return {
     attemptId: 'att-1', campaignId: 'camp-1', contactId: 'contact-1',
     sessionId: 's1', ownerReplica: 'r1', tenantId: 't1', accountId: 'a1',
-    callerId: '+14155550100', attemptNumber: 1,
+    callerId: '+14155550100', attemptNumber: 1, bridgeGraceMs: DEFAULT_ABANDONMENT_GRACE_MS,
     campaign: CAMPAIGN, contact: CONTACT,
   };
 }
@@ -341,7 +341,7 @@ describe('abandon_reason — the cause, on the row', () => {
     // `no_agent_available` would report a talked-to customer as one nobody
     // reached, and would send a pacing signal for a latency problem.
     const world = await dialedWorld();
-    const longAgo = new Date(Date.now() - (ABANDONMENT_BRIDGE_GRACE_MS + 4_000));
+    const longAgo = new Date(Date.now() - (DEFAULT_ABANDONMENT_GRACE_MS + 4_000));
     await world.bridge.emit({
       callId: 'call-1', correlationId: 'att-1', phase: 'answered',
       answered: true, answeredAt: longAgo,
@@ -358,6 +358,27 @@ describe('abandon_reason — the cause, on the row', () => {
     expect(persistedReason()).toBe('bridge_late');
     expect(persistedReason(), 'a bridged conversation was reported as reaching nobody')
       .not.toBe('no_agent_available');
+  });
+
+  it('judges the bridge by the attempt\'s own grace (AG3), not the default', async () => {
+    // Bridged 4 s after the answer: abandoned (`bridge_late`) under the 3 s default, but not on
+    // an attempt stamped with a campaign's 5 s; and 2 s is late for one stamped with 1 s.
+    const bridgedAfter = async (ms: number, bridgeGraceMs: number) => {
+      vi.clearAllMocks();
+      const world = await dialedWorld({ ...makeCmd(), bridgeGraceMs });
+      const answeredAt = new Date(Date.now() - ms);
+      await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true, answeredAt });
+      await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+      await world.bridge.emit({
+        callId: 'call-1', correlationId: 'att-1', phase: 'ended',
+        status: 'completed', outcome: 'remote_hangup', answered: true, talkTimeSeconds: 30,
+      });
+      return { outcome: persistedOutcome(), reason: persistedReason() ?? null };
+    };
+    expect(await bridgedAfter(4_000, 5000)).toEqual({ outcome: 'connected', reason: null });
+    expect(await bridgedAfter(4_000, 3000)).toEqual({ outcome: 'connected', reason: 'bridge_late' });
+    expect(await bridgedAfter(2_000, 1000)).toEqual({ outcome: 'connected', reason: 'bridge_late' });
+    expect(await bridgedAfter(2_000, 3000)).toEqual({ outcome: 'connected', reason: null });
   });
 
   it('writes NO reason on an attempt that is not abandoned', async () => {
@@ -1538,7 +1559,7 @@ function atOrUnder(point: HistogramValue, le: number): number {
   return point.buckets.counts.slice(0, i + 1).reduce((a, b) => a + b, 0);
 }
 
-const GRACE_S = ABANDONMENT_BRIDGE_GRACE_MS / 1000;
+const GRACE_S = DEFAULT_ABANDONMENT_GRACE_MS / 1000;
 
 describe('agency_answer_to_bridge_seconds', () => {
   const VOICELINK = { tenant_id: 't1', provider: 'voicelink' };
@@ -1638,13 +1659,16 @@ describe('agency_answer_to_bridge_seconds', () => {
     expect(providerLabel('')).toBe('other');
   });
 
-  it('has the grace as a bucket boundary, so the dashboard\'s share over it is exact', async () => {
-    // The panel reads `le="3"`. A grace moved off every boundary would leave its threshold
-    // interpolated between two buckets: move the buckets with the grace (AG1).
+  it('has every grace a campaign may hold as a bucket boundary, so the share over any of them is exact', async () => {
+    // The panel reads `le="3"`, the default; a campaign may hold 1–5 s (AG2), and the share past
+    // its own grace is `le="<grace>"`. A grace off every boundary would leave its threshold
+    // interpolated between two buckets: move the buckets with the range.
     const world = await dialedWorld();
     const answeredAt = new Date();
     await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
     const point = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
-    expect(point.buckets.boundaries).toContain(GRACE_S);
+    expect(ALLOWED_ABANDONMENT_GRACE_MS).toEqual([1000, 2000, 3000, 4000, 5000]);
+    for (const ms of ALLOWED_ABANDONMENT_GRACE_MS) expect(point.buckets.boundaries).toContain(ms / 1000);
+    expect(GRACE_S).toBe(3);
   });
 });

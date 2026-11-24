@@ -377,6 +377,30 @@ describe('campaign settings — saving', () => {
     );
   });
 
+  it('loads the campaign’s abandonment grace beside the limit and PATCHes the one chosen (AG2)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_grace_ms: 5000 }));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    openAgentsAdvanced();
+
+    const select = screen.getByTestId('abandonment-grace-select') as HTMLSelectElement;
+    expect(select.value).toBe('5');
+    fireEvent.change(select, { target: { value: '2' } });
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_grace_ms).toBe(2000);
+  });
+
+  it('sends the stored grace back on a save that did not touch it', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_grace_ms: 4000 }));
+    renderPage();
+    const start = await screen.findByDisplayValue('10:00');
+    fireEvent.change(start, { target: { value: '11:00' } });
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_grace_ms).toBe(4000);
+  });
+
   it.each([25, 7.25])(
     'keeps a stored limit of %s outside the offered range, and still saves another edit (AC1)',
     async (stored) => {
@@ -1470,6 +1494,8 @@ describe('the tabs and the sections links land on', () => {
     expect(inSection('recording', '[data-testid="daily-target"]')).toBeTruthy();
     expect(inSection('recording', '[data-testid="phone-display-row"]')).toBeTruthy();
     expect(inSection('dialling-retries', '[data-testid="abandonment-ceiling-input"]')).toBeTruthy();
+    // The grace beside the limit (AG4).
+    expect(inSection('dialling-retries', '[data-testid="abandonment-grace-select"]')).toBeTruthy();
   });
 
   it('leaves Lifecycle and uploads out below `agency.supervise`', async () => {

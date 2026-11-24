@@ -77,7 +77,7 @@ function makeCmd(contact: any = COPIED_CONTACT): DialCommand {
   return {
     attemptId: 'att-1', campaignId: 'camp-child', contactId: contact.id,
     sessionId: 's1', ownerReplica: 'r1', tenantId: 't1', accountId: 'a1',
-    callerId: '+14155550100', attemptNumber: 1,
+    callerId: '+14155550100', attemptNumber: 1, bridgeGraceMs: 3000,
     campaign: CAMPAIGN, contact,
   };
 }

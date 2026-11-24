@@ -339,6 +339,7 @@ function commandFor(
     accountId: campaign.account_id,
     callerId: redial.caller_id,
     attemptNumber: redial.attempt_number,
+    bridgeGraceMs: redial.bridge_grace_ms,
     campaign,
     contact: { ...contact, state: 'in_flight' },
     clearance,

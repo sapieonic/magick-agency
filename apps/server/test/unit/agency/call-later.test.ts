@@ -84,7 +84,7 @@ describe('attemptCallbackOf (BE-4)', () => {
 
 describe('buildPanel: the reserved attempt carries the call-later tag (BE-4)', () => {
   const cmd = (over: Partial<DialCommand> = {}, contactOver: Record<string, unknown> = {}) => ({
-    attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 2,
+    attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 2, bridgeGraceMs: 3000,
     campaign: { name: 'Collections', context_display: {}, disposition_catalog: CATALOG },
     contact: {
       phone_e164: '+919811100001', context: {}, promise_date: null,

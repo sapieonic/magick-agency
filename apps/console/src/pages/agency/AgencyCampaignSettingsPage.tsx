@@ -676,6 +676,7 @@ export function AgencyCampaignSettingsPage() {
         auto_return: config.autoReturn,
         wrapup_redial: config.allowWrapupRedial,
         abandonment_ceiling_pct: config.abandonmentCeilingPct,
+        abandonment_grace_ms: config.abandonmentGraceMs,
         ...(assignmentEnabled ? assignmentAnalytics(config) : {}),
         recording_enabled: recording.record,
         analysis_profile_set: resolveProfileId(recording.profileId) !== null,

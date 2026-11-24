@@ -41,7 +41,6 @@ const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/
 const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
 const { WrapupManager } = await import('../../../src/agency/wrapup-manager.js');
 const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
-const { ABANDONMENT_BRIDGE_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
 const { agencyAttemptRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
 /**
@@ -254,6 +253,7 @@ async function setup(mode: AnswerMode, delayMs = 0, context?: Record<string, unk
     accountId: campaign.account_id,
     callerId: '+919000000001',
     attemptNumber: 1,
+    bridgeGraceMs: attempt!.bridge_grace_ms,
     campaign,
     contact,
   };
@@ -399,7 +399,7 @@ describe('agency context-panel ordering (integration)', () => {
         WHERE campaign_id = $1
           AND answered_at IS NOT NULL
           AND (outcome = 'abandoned' OR bridged_at IS NULL
-               OR bridged_at - answered_at > interval '${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds')`,
+               OR bridged_at - answered_at > bridge_grace_ms * interval '1 millisecond')`,
       [cmd.campaignId],
     );
     expect(
@@ -488,7 +488,7 @@ describe('agency context-panel ordering (integration)', () => {
       attemptId: attempt!.id, campaignId: campaign.id, contactId: contact.id,
       sessionId: session.id, ownerReplica: 'replica-test',
       tenantId: campaign.tenant_id, accountId: campaign.account_id,
-      callerId: '+919000000001', attemptNumber: 2, campaign, contact,
+      callerId: '+919000000001', attemptNumber: 2, bridgeGraceMs: attempt!.bridge_grace_ms, campaign, contact,
     } as never);
 
     const reserved = socket.frames.find((f) => f.event === 'reserved');

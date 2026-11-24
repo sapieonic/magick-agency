@@ -145,7 +145,7 @@ describe('customerFacts: the panel\'s facts', () => {
 describe('buildPanel: the reserved attempt carries the facts', () => {
   it('built from the dial\'s contact and campaign', () => {
     const panel = buildPanel({
-      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 1,
+      attemptId: 'a1', campaignId: 'c1', contactId: 'k1', callerId: '+919000000001', attemptNumber: 1, bridgeGraceMs: 3000,
       campaign: { name: 'Collections', context_display: ROLES },
       contact: { phone_e164: '+919811100001', context: ROW, promise_date: null },
     } as unknown as DialCommand, []);

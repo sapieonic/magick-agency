@@ -316,6 +316,30 @@ describe('wrap-up (Agents & timing)', () => {
   });
 });
 
+describe('the abandonment grace (Agents & timing › Advanced, AG2)', () => {
+  const grace = () => screen.getByRole('combobox', {
+    name: 'Count a call as abandoned if the agent’s audio connects more than seconds after the customer answers.',
+  }) as HTMLSelectElement;
+
+  it('is at 3 seconds beside the limit, and sends 3000 when left alone', async () => {
+    await openAgents({ advanced: true });
+    expect(grace().value).toBe('3');
+    expect([...grace().options].map((o) => o.value)).toEqual(['1', '2', '3', '4', '5']);
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent().abandonment_grace_ms).toBe(3000);
+  });
+
+  it('sends the seconds chosen, in ms', async () => {
+    await openAgents({ advanced: true });
+    fireEvent.change(grace(), { target: { value: '5' } });
+    expect(screen.getByText('second', { exact: false, selector: 'span' }).textContent).toBe('seconds after the customer answers.');
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sent().abandonment_grace_ms).toBe(5000);
+  });
+});
+
 describe('the abandonment limit (Agents & timing › Advanced)', () => {
   /*
     Every campaign pauses itself past `abandonment_ceiling_pct`. The builder's first save is a
@@ -578,6 +602,8 @@ describe('the campaign a builder actually creates', () => {
       telephony_credential_id: null,
       // The create carries the limit too (see the roster-first case in CampaignBuilderPage.test.tsx).
       abandonment_ceiling_pct: 3,
+      // And the abandonment grace, for the same reason (AG2).
+      abandonment_grace_ms: 3000,
     });
   });
 });

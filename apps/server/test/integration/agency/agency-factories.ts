@@ -138,9 +138,12 @@ export async function dialCommandFor(d: {
 }, extra: Record<string, unknown> = {}): Promise<never> {
   const { rows: [c] } = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [d.campaignId]);
   const { rows: [k] } = await getTestPool().query('SELECT * FROM agency_contacts WHERE id = $1', [d.contactId]);
+  // The grace stamped on the attempt row (AG3), as the dial paths take it from the INSERT.
+  const { rows: [a] } = await getTestPool().query('SELECT bridge_grace_ms FROM agency_call_attempts WHERE id = $1', [d.attemptId]);
   return {
     attemptId: d.attemptId, campaignId: c.id, contactId: d.contactId, sessionId: d.sessionId, ownerReplica: 'r1',
     tenantId: c.tenant_id, accountId: c.account_id, callerId: '+919000000001', attemptNumber: d.attemptNumber,
+    bridgeGraceMs: a?.bridge_grace_ms ?? 3000,
     campaign: c, contact: k, ...extra,
   } as never;
 }

@@ -21,6 +21,7 @@ import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
 import { ceilingFieldError } from '../abandonmentCeiling';
+import { abandonmentGraceError } from '../abandonmentGrace';
 import { dispositionLabel } from '../../agencySpineCopy';
 
 /*
@@ -115,6 +116,9 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
 
   const ceiling = ceilingStateError(state);
   if (ceiling !== null) errors['abandonment_ceiling_pct'] = ceiling;
+  // The select offers only the five allowed values; a value from elsewhere is named, not sent.
+  const grace = abandonmentGraceError(state.abandonmentGraceMs);
+  if (grace !== null) errors['abandonment_grace_ms'] = grace;
 
   Object.assign(errors, validateAssignment(state.assignment));
 

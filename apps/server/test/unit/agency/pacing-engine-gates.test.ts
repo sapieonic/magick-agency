@@ -157,7 +157,7 @@ beforeEach(() => {
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.attempt.countLive.mockResolvedValue(0);
   repos.attempt.create.mockImplementation(async (p: { contactId: string; callerId: string; attemptNumber: number }) => ({
-    id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: p.attemptNumber,
+    id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: p.attemptNumber, bridge_grace_ms: 3000,
   }));
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
 });

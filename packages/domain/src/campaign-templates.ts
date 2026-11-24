@@ -4,7 +4,7 @@
  * sections, the difference between two sets of sections, and where each section of a created
  * campaign came from. The server's routes and create path and the console's New campaign and
  * template editor all call these, so the two sides cannot disagree. A LEAF: it imports only the
- * contract.
+ * contract and one other leaf, `abandonment-predicate.ts`, for the abandonment grace's default.
  *
  *  - {@link builtinTemplateSections}: every section as a campaign create stores it when the field
  *    is omitted, from the contract's constants (`AGENCY_CAMPAIGN_COLUMN_DEFAULTS` and its
@@ -63,6 +63,7 @@ import {
   type AgencyCampaignTemplateSectionValues,
 } from '@magick-agency/contracts/agency';
 import type { AgencyCampaign } from '@magick-agency/contracts/api/agency/agency-campaign';
+import { DEFAULT_ABANDONMENT_GRACE_MS } from './abandonment-predicate';
 import type { AgencyCampaignTemplateScope } from '@magick-agency/contracts/api/agency/campaign-templates';
 
 type Key = AgencyCampaignTemplateSectionKey;
@@ -144,7 +145,10 @@ const BUILTIN: CompleteTemplateSections = deepFreeze({
   breaks: { break_reasons: [] },
   recording: { record_calls: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.record_calls, analysis_profile_id: null },
   agent_screen: { agent_script: {}, phone_display: AGENCY_PHONE_DISPLAY_DEFAULT, daily_target_calls: null },
-  safety: { abandonment_ceiling_pct: AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT },
+  safety: {
+    abandonment_ceiling_pct: AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT,
+    abandonment_grace_ms: DEFAULT_ABANDONMENT_GRACE_MS,
+  },
   assignment: { ...AGENCY_CONTACT_ASSIGNMENT_DEFAULTS },
   inbound: { inbound_sticky_enabled: AGENCY_CAMPAIGN_COLUMN_DEFAULTS.inbound_sticky_enabled },
   numbers: {

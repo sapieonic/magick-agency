@@ -260,13 +260,14 @@ function firstIncrementProblems(ast) {
 }
 
 /**
- * The abandonment grace in seconds, read from the domain rule itself
- * (`ABANDONMENT_BRIDGE_GRACE_MS`, AG1), so the dashboard cannot drift from it.
+ * The default abandonment grace in seconds, read from the domain rule itself
+ * (`DEFAULT_ABANDONMENT_GRACE_MS`, AG1), so the dashboard cannot drift from it. A campaign may
+ * set another (AG2); the panel draws the default, and says so.
  */
 function abandonmentGraceSeconds() {
   const source = readFileSync(join(root, 'packages/domain/src/abandonment-predicate.ts'), 'utf8');
-  const ms = /export const ABANDONMENT_BRIDGE_GRACE_MS\s*=\s*([\d_]+)\s*;/.exec(source)?.[1];
-  assert.ok(ms, 'packages/domain/src/abandonment-predicate.ts: no `export const ABANDONMENT_BRIDGE_GRACE_MS = <number>;`');
+  const ms = /export const DEFAULT_ABANDONMENT_GRACE_MS\s*=\s*([\d_]+)\s*;/.exec(source)?.[1];
+  assert.ok(ms, 'packages/domain/src/abandonment-predicate.ts: no `export const DEFAULT_ABANDONMENT_GRACE_MS = <number>;`');
   return Number(ms.replaceAll('_', '')) / 1000;
 }
 
@@ -454,12 +455,14 @@ describe('agency Grafana dashboard', () => {
     }
   });
 
-  // The Answer → Audio Connected panel draws the abandonment grace three ways: the `le` bucket its
-  // share reads, the threshold line, and the text that names it. All must be the grace the
-  // compliance predicate applies, or changing the grace leaves a panel that measures another rule.
-  test('the answer → audio connected panel reads the abandonment grace (ABANDONMENT_BRIDGE_GRACE_MS)', () => {
+  // The Answer → Audio Connected panel draws the default abandonment grace three ways: the `le`
+  // bucket its share reads, the threshold line, and the text that names it. All must be the default
+  // the compliance predicate applies to a campaign left at it, or changing the default leaves a
+  // panel that measures another rule. The title says it is the default (AG2: a campaign may hold
+  // another, judged by its own).
+  test('the answer → audio connected panel reads the default abandonment grace (DEFAULT_ABANDONMENT_GRACE_MS)', () => {
     const grace = abandonmentGraceSeconds();
-    assert.ok(grace > 0, `ABANDONMENT_BRIDGE_GRACE_MS reads as ${grace}s`);
+    assert.ok(grace > 0, `DEFAULT_ABANDONMENT_GRACE_MS reads as ${grace}s`);
     const d = loadDashboard();
     const panels = allPanels(d).filter((p) => (p.targets ?? []).some((t) => (t.expr ?? '').includes(ANSWER_TO_BRIDGE_BUCKET)));
     assert.equal(panels.length, 1, `${panels.length} panels read ${ANSWER_TO_BRIDGE_BUCKET}`);
@@ -484,7 +487,8 @@ describe('agency Grafana dashboard', () => {
     if (overrides.length !== 1 || !overrides[0].matcher.options.includes(`share over ${grace}s`) || !new RegExp(overrides[0].matcher.options).test(rendered)) {
       problems.push(`share override ${JSON.stringify(overrides.map((o) => o.matcher.options))} for the series ${JSON.stringify(rendered)}`);
     }
-    if (!panel.title.includes(`${grace}s grace`)) problems.push(`title ${JSON.stringify(panel.title)}`);
+    if (!panel.title.includes(`default ${grace}s grace`)) problems.push(`title ${JSON.stringify(panel.title)}`);
+    if (!/judged by its own/.test(panel.description ?? '')) problems.push('description does not say a campaign set to another grace is judged by its own');
     // Every "Ns grace" and "share over Ns" on the dashboard, and every le="N" this panel's text
     // names, is the grace.
     for (const p of allPanels(d)) {

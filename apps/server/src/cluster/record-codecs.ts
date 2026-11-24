@@ -6,6 +6,7 @@
  * date, or a missing id, refuses the whole record.
  */
 import type { DialCommand } from '../agency/dial-dispatcher.js';
+import { isAllowedAbandonmentGraceMs } from '@magick-agency/domain/abandonment-predicate';
 import type { AgencyCampaignRecord, AgencyContactRecord, AgencyManualCallRecord } from '../db/models/agency.model.js';
 
 const CAMPAIGN_DATES = ['paused_at', 'started_at', 'ended_at', 'completed_at', 'created_at', 'updated_at'] as const;
@@ -53,6 +54,9 @@ export function decodeDialCommand(raw: unknown): DialCommand | null {
     if (!isId(raw[k])) return null;
   }
   if (typeof raw['attemptNumber'] !== 'number' || !Number.isInteger(raw['attemptNumber'])) return null;
+  // The grace the attempt row was stamped with (AG3): the settle site judges the call by it, so a
+  // command without a usable one is refused rather than judged by a default the row does not hold.
+  if (!isAllowedAbandonmentGraceMs(raw['bridgeGraceMs'])) return null;
   const campaign = decodeCampaignRecord(raw['campaign']);
   const contact = decodeContactRecord(raw['contact']);
   if (!campaign || !contact) return null;
@@ -68,6 +72,7 @@ export function decodeDialCommand(raw: unknown): DialCommand | null {
     accountId: raw['accountId'] as string,
     callerId: raw['callerId'] as string,
     attemptNumber: raw['attemptNumber'],
+    bridgeGraceMs: raw['bridgeGraceMs'],
     campaign,
     contact,
   };

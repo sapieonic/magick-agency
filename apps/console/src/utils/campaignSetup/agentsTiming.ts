@@ -98,6 +98,7 @@ export function wrapupOptions(current: number): { value: string; label: string }
 /** The body paths of the settings inside "Advanced settings" (CS13). */
 const ADVANCED_FIELDS = new Set([
   'abandonment_ceiling_pct',
+  'abandonment_grace_ms',
   'wrapup_auto_return',
   'allow_wrapup_redial',
   'inbound_sticky_enabled',

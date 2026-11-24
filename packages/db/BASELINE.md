@@ -2038,6 +2038,36 @@ attempts settled before the deploy keeps `bridge_late` for a 1–3 s bridge: dia
 nothing. **Down** is a no-op. **Tests**: `test/integration/db/abandonment-grace-rollup-migration.test.ts`
 (every held bucket marked, no rollup row changed, down then up) and the down → up inventory suite.
 
+### 0075 — `migrations/0075_abandonment_grace_setting.sql`
+
+The abandonment grace per campaign (AG1–AG5: "configurable, but default to 3").
+**`agency_campaigns.abandonment_grace_ms`** (INTEGER NOT NULL DEFAULT 3000): how long after the
+carrier's answer the agent's audio may connect before a call counts as abandoned, in ms.
+`ck_agency_campaign_abandonment_grace`: exactly 1000, 2000, 3000, 4000 or 5000 (whole seconds, each a
+bucket boundary of `agency_answer_to_bridge_seconds`), validated here (a small table).
+**`agency_call_attempts.bridge_grace_ms`** (INTEGER NOT NULL DEFAULT 3000): the grace the attempt is
+judged by, stamped from its campaign's setting when the row is created (`AgencyAttemptRepository.create`
+and `.beginWrapupRedial` read it from the campaign in the INSERT) and never rewritten.
+`ABANDONED_ATTEMPT_PREDICATE_SQL` compares `bridged_at - answered_at` with it, so the predicate stays
+one row of one table (no join), and a change to the campaign's setting applies to new calls only.
+Named apart from the campaign's column because the predicate's names are unqualified. Rows before 0075
+read 3000, the grace AG1 counts them with: no figure changes. `ck_agency_attempt_bridge_grace` (the same
+five values) is added `NOT VALID`; 0076 validates it. Both ADD COLUMNs have a constant default
+(catalogue only on Postgres 11+, no rewrite) under `SET LOCAL lock_timeout = '10s'`. The attempts
+column is `IF NOT EXISTS` and its CHECK is added only when missing, so a large table can have both
+added and validated before the deploy (`DEPLOYMENT.md` 12); one found with another definition is
+refused. **Down** drops both CHECKs and columns. **Tests**:
+`test/integration/db/abandonment-grace-setting-migration.test.ts` (types and defaults, the CHECKs both
+ways, NOT VALID after 0075 alone and validated after 0076, a row from before 0075 reading 3000, the
+pre-run found and a wrong one refused, down then up) and the down → up inventory suite.
+
+### 0076 — `migrations/0076_abandonment_grace_check_validate.sql`
+
+Validates 0075's `ck_agency_attempt_bridge_grace` in its own transaction (0041 / 0044's split): one scan
+of `agency_call_attempts` under SHARE UPDATE EXCLUSIVE, reads and writes proceeding; every older row
+holds the default, so it cannot fail. **Down** is a no-op (0075's Down drops the CHECK). **Tests**: as
+0075.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

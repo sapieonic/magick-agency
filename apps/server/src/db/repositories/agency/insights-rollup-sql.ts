@@ -46,7 +46,8 @@ export const INSIGHTS_BUCKET_SQL_INTERVAL = `interval '${INSIGHTS_BUCKET_MINUTES
  *
  * Evaluated over the recompute's `src a` ONLY: `ABANDONED_ATTEMPT_PREDICATE_SQL` names its
  * columns unqualified, and `src` is the one relation in that FROM clause (its sources join the
- * session, contact and call rows, which carry a `state` and an `outcome` of their own).
+ * session, contact and call rows, which carry a `state` and an `outcome` of their own). So `src`
+ * must project every column the predicate reads, `bridge_grace_ms` included (AG3).
  */
 export const INSIGHTS_MEASURES: ReadonlyArray<readonly [column: string, aggregate: string]> = [
   // Every placed dial (src holds only rows with dialed_at in the bucket), wrap-up redials included.
@@ -199,6 +200,8 @@ export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
          SELECT k.campaign_id, k.bucket_start,
                 a.state, a.outcome, a.disposition_code, a.redial_number, a.caller_id,
                 a.answered_at, a.bridged_at, a.ended_at,
+                -- The grace each attempt is judged by (AG3): ABANDONED_ATTEMPT_PREDICATE_SQL reads it.
+                a.bridge_grace_ms,
                 a.wrapup_started_at, a.wrapup_ended_at, a.wrapup_resolution,
                 a.agent_reopened, a.agent_manual, a.override_applied, a.callback_at, a.updated_at,
                 s.agent_user_id,

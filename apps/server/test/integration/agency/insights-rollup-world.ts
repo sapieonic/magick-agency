@@ -7,7 +7,7 @@
  * run is reproducible from `LOAD_SEED`.
  */
 import { randomUUID } from 'node:crypto';
-import { ABANDONMENT_BRIDGE_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
+import { ALLOWED_ABANDONMENT_GRACE_MS, DEFAULT_ABANDONMENT_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import type pg from 'pg';
 import { createRng, type Rng } from '../../helpers/load-scale.js';
 import { DEFAULTS } from '../setup/factories.js';
@@ -39,7 +39,7 @@ export const ATTEMPT_COLUMNS: Array<[string, string]> = [
   ['dialed_at', 'timestamptz'], ['answered_at', 'timestamptz'], ['bridged_at', 'timestamptz'], ['ended_at', 'timestamptz'],
   ['wrapup_started_at', 'timestamptz'], ['wrapup_ended_at', 'timestamptz'], ['wrapup_resolution', 'text'],
   ['redial_of_attempt_id', 'uuid'], ['redial_number', 'int'], ['agent_reopened', 'boolean'], ['agent_manual', 'boolean'],
-  ['override_applied', 'text[]'],
+  ['override_applied', 'text[]'], ['bridge_grace_ms', 'int'],
 ];
 
 /** INSERT rows as one statement from a JSON array (so statement triggers see one statement). */
@@ -59,7 +59,7 @@ const at = (minutes: number, seconds = 0): Date => new Date(WORLD_BASE.getTime()
 const plus = (d: Date, seconds: number): Date => new Date(d.getTime() + seconds * 1000);
 
 /** One attempt's lifecycle columns for a dial at `dialed`. */
-function lifecycle(rng: Rng, dialed: Date, opts: { forceConnected?: boolean; allowLive: boolean }): Record<string, unknown> {
+function lifecycle(rng: Rng, dialed: Date, opts: { forceConnected?: boolean; allowLive: boolean; graceMs: number }): Record<string, unknown> {
   const live = opts.allowLive && !opts.forceConnected && rng.chance(0.03);
   const kind = opts.forceConnected ? 'connected' : rng.pick(['connected', 'connected', 'connected', 'no_answer', 'busy', 'failed', 'abandoned', 'canceled', 'orphaned', 'invalid']);
   const row: Record<string, unknown> = { state: 'ended', outcome: kind };
@@ -71,8 +71,9 @@ function lifecycle(rng: Rng, dialed: Date, opts: { forceConnected?: boolean; all
     const answered = plus(dialed, rng.int(3, 25));
     // Some bridges land after the grace (AG1): abandoned by the predicate though outcome says
     // connected. The rest land anywhere inside it, so a slow bridge the grace still allows is
-    // seeded too. Both derive from the grace, and the oracle's "not vacuous" case counts each.
-    const grace = ABANDONMENT_BRIDGE_GRACE_MS / 1000;
+    // seeded too. Both derive from the attempt's own grace (AG3, `bridge_grace_ms`), and the
+    // oracle's "not vacuous" case counts each.
+    const grace = opts.graceMs / 1000;
     const bridged = plus(answered, rng.chance(0.08) ? grace + 0.5 + rng.next() : rng.next() * (grace - 0.1));
     const ended = plus(bridged, rng.int(5, 600) + rng.next());
     row['answered_at'] = answered;
@@ -144,13 +145,18 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
           number += 1;
           const attemptId = randomUUID();
           const dialedAt = redial === 0 ? dialed : plus(dialed, redial * 700);
+          const graceMs = number % 4 === 0 ? ALLOWED_ABANDONMENT_GRACE_MS[minute % ALLOWED_ABANDONMENT_GRACE_MS.length]! : DEFAULT_ABANDONMENT_GRACE_MS;
           const row: Record<string, unknown> = {
             id: attemptId, campaign_id: id, contact_id: contact.id, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId,
             attempt_number: number, caller_id: rng.pick(CALLER_IDS), reserved_agent_id: agent?.sessionId ?? null,
             dialed_at: dialedAt, redial_of_attempt_id: chainOf, redial_number: redial,
             agent_reopened: redial === 0 && rng.chance(0.06), agent_manual: redial === 0 && rng.chance(0.06),
             override_applied: redial === 0 && rng.chance(0.07) ? rng.pick([['extra_attempts'], ['retry_delay', 'calling_hours']]) : [],
-            ...lifecycle(rng, dialedAt, { forceConnected: redial > 0 && rng.chance(0.5), allowLive: d === dials - 1 }),
+            // The grace stamped on the attempt (AG3): mostly the default, every fourth dial one of the
+            // others a campaign may hold. From the attempt and minute numbers, not a new rng draw, so
+            // the rest of the world is the seed it always was.
+            bridge_grace_ms: graceMs,
+            ...lifecycle(rng, dialedAt, { forceConnected: redial > 0 && rng.chance(0.5), allowLive: d === dials - 1, graceMs }),
           };
           if (row['disposition_code'] === 'callback') row['callback_at'] = plus(dialedAt, rng.int(600, 30 * 3600));
           if (row['bridged_at']) {

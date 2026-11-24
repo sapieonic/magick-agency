@@ -21,6 +21,14 @@ export interface DialCommand {
   accountId: string;
   callerId: string;
   attemptNumber: number;
+  /**
+   * The abandonment grace this attempt is judged by, in ms: its row's `bridge_grace_ms`, as the
+   * attempt INSERT stamped it from the campaign (0075, AG3). Taken from the attempt row, never
+   * from `campaign.abandonment_grace_ms` (a PATCH can land between the campaign read and the
+   * insert), so the settle site's `isAbandonedAttempt` and `ABANDONED_ATTEMPT_PREDICATE_SQL`
+   * judge the call by the same number.
+   */
+  bridgeGraceMs: number;
   campaign: AgencyCampaignRecord;
   contact: AgencyContactRecord;
   /**

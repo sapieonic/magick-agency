@@ -1376,6 +1376,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     wrapup_redial: boolean;
     /** The abandonment ceiling as saved, in percent: a setting, not PII, like `wrapup_seconds`. */
     abandonment_ceiling_pct: number;
+    /** The abandonment grace as saved, in ms (AG2): a setting, not PII. */
+    abandonment_grace_ms: number;
     /** Contact assignment (only while its flag is on): the mode as saved. */
     assignment_mode?: AgencyAssignmentMode;
     /** `allow_agent_retry` as saved. */
