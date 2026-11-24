@@ -73,7 +73,7 @@ describe('abandonment invariants (real Postgres)', () => {
   });
 
   it('the SQL predicate and the in-process predicate agree on every shared arm', async () => {
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(1000);
+    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(3000);
     const campaign = await insertAgencyCampaign();
     const cases: Array<{ name: string; answered: number | null; bridged: number | null; outcome: string | null }> = [
       { name: 'never answered', answered: null, bridged: null, outcome: 'no_answer' },

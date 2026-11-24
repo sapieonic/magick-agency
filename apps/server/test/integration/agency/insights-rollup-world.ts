@@ -68,8 +68,8 @@ function lifecycle(rng: Rng, dialed: Date, opts: { forceConnected?: boolean; all
   }
   if (kind === 'connected' || kind === 'orphaned') {
     const answered = plus(dialed, rng.int(3, 25));
-    // Some bridges land after the 1 s grace: abandoned by the predicate though outcome says connected.
-    const bridged = plus(answered, rng.chance(0.08) ? 1.5 + rng.next() : rng.next() * 0.9);
+    // Some bridges land after the 3 s grace (AG1): abandoned by the predicate though outcome says connected.
+    const bridged = plus(answered, rng.chance(0.08) ? 3.5 + rng.next() : rng.next() * 0.9);
     const ended = plus(bridged, rng.int(5, 600) + rng.next());
     row['answered_at'] = answered;
     row['bridged_at'] = bridged;

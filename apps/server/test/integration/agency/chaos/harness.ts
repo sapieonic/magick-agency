@@ -130,7 +130,7 @@ export const AGENT_DISCONNECT_OUTCOME = 'agent_disconnected';
  * repeated in four emit sites with a comment claiming the property; a test
  * asserting the property had nothing to compare against but its own copy of 40.
  *
- * Well inside `ABANDONMENT_BRIDGE_GRACE_MS` (1000) on purpose: a bridged call
+ * Well inside `ABANDONMENT_BRIDGE_GRACE_MS` (3000) on purpose: a bridged call
  * must NOT be abandoned, so the lead has to be observable and compliant at once.
  */
 export const SCRIPTED_ANSWER_LEAD_MS = 40;
@@ -1814,9 +1814,9 @@ export async function agentsWithConcurrentLiveAttempts(campaignId: string): Prom
  * only misbehaves under the concurrency real dialing introduces, and it fails in the
  * direction that **looks like caution**.
  *
- * `N` is 1000ms, matching `ABANDONMENT_BRIDGE_GRACE_MS`. Written as
- * `1000 milliseconds` rather than `1 second` so the two halves are comparable by
- * eye as well as by result.
+ * `N` is 3000ms, matching `ABANDONMENT_BRIDGE_GRACE_MS` (AG1; it was 1000ms). Written
+ * as `3000 milliseconds` rather than `3 seconds` so the two halves are comparable by
+ * eye as well as by result. Restated, not imported: this is the independent half.
  */
 export async function abandonedCount(campaignId: string): Promise<number> {
   const { rows } = await getTestPool().query<{ n: string }>(
@@ -1825,7 +1825,7 @@ export async function abandonedCount(campaignId: string): Promise<number> {
         AND state = 'ended'
         AND answered_at IS NOT NULL
         AND (outcome = 'abandoned' OR bridged_at IS NULL
-             OR bridged_at - answered_at > interval '1000 milliseconds')`,
+             OR bridged_at - answered_at > interval '3000 milliseconds')`,
     [campaignId],
   );
   return Number(rows[0]!.n);
