@@ -14,23 +14,47 @@ import 'package:magick_agency_agent/core/telemetry/floor_assist_telemetry.dart';
 import 'package:magick_agency_agent/core/telemetry/telemetry.dart';
 
 import '../inbound/inbound_fixtures.dart';
+import '../softphone/manual_calls.dart' as mc;
 import '../telemetry/fake_telemetry_sink.dart';
 import 'controller_harness.dart';
 import 'station_floor_assist_test.dart' show answered, cleared, helpBody, helpPath, message, raisedAt, raisedInstant;
 
 /// Floor assist's half of LF39 in the station core: Need help on the Phone tab's soft-phone session
 /// (the help state on the session seam, where the campaign view is null), the vibration when a
-/// supervisor's message arrives, and the telemetry events, each Need help event at most once per
-/// request (`raised_at`). The controller is driven only with the frame sequences the server sends
-/// (`apps/server/src/agency/floor-assist.ts`): every request that ends sends one `help_cleared`;
-/// an answer sends `help_answered` then `help_cleared {answered}`; a cancel that wins sends
-/// `help_cleared {cancelled}`, one that loses finds nothing open and answers `help: null`.
+/// supervisor's message arrives, and the telemetry events (the spec's amendment 2: each raised and
+/// end event at most once per request, `raised_at`).
+///
+/// The controller is driven only with frame orders the server sends
+/// (`apps/server/src/agency/floor-assist.ts`): each request that ends sends exactly one
+/// `help_cleared`; an answer sends `help_answered` then `help_cleared {answered}`; a cancel that
+/// wins sends `help_cleared {cancelled}`, one that loses finds nothing open and answers
+/// `help: null`; a raise that finds an older request lapsed expires it and sends its
+/// `help_cleared {expired}` before the new request's reply. A frame no socket took is not resent:
+/// a reconnect's `ready` states the request (or none), and a frame can be lost with the old socket
+/// or land on the new one ahead of `ready`. No frame is sent twice. The once-per-request end
+/// memory is reached by every answer (`answered` is sent on `help_answered`, and its
+/// `help_cleared {answered}` must not send it again); the raised memory, and a second end of
+/// another kind, by no real order: the unit test at the end covers those.
 
 const _spHelpPath = '/proxy/agency/sessions/sess-sp/help';
 
 /// The `ready` a soft-phone session's socket sends.
 void _spReady(App app, {Map<String, Object?>? extra}) =>
     app.frame({'event': 'ready', 'session_id': 'sess-sp', 'state': 'break', 'break_reason': 'soft_phone', ...?extra});
+
+/// The socket drops and the station reconnects: a new socket, and its `ready` (the request it
+/// states open at [help], or none).
+void _reconnect(App app, String state, {String? help}) {
+  final first = app.socket;
+  first.serverClose(1006);
+  app.async.elapse(const Duration(seconds: 5));
+  expect(identical(app.socket, first), isFalse, reason: 'reconnected');
+  app.readyFrame(state, extra: {if (help != null) 'help': {'raised_at': help, 'call_id': 'call-1'}});
+}
+
+/// The soft-phone session's call one step on (`manual_call`).
+Map<String, Object?> _spCall(int seconds, Map<String, Object?> over) =>
+    mc.manualCallJson({'updated_at': '2026-10-30T10:00:${seconds.toString().padLeft(2, '0')}.000Z', ...over});
 
 /// The help events sent, in order.
 List<String> _help(FakeTelemetrySink sink) => [for (final n in sink.names) if (n.startsWith('agency_help_')) n];
@@ -99,23 +123,36 @@ void main() {
   });
 
   group('the Need help events', () {
-    test('raised once: the repeated frames, a ready restating it and a duplicate help_cleared add nothing', () {
+    test('raised once, ended once: a reconnect restating the request, then its answer (help_answered, help_cleared)', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) => json(200, helpBody());
         app.onCall('a1');
         app.run(app.controller.raiseHelp());
         expect(sink.last('agency_help_raised'), {'surface': 'station', 'on_call': true});
-        // A reconnect restates it; then the answer, its frames twice, and a stale snapshot.
-        app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
+        _reconnect(app, 'on_call', help: raisedAt);
+        expect(app.view!.help.stage, HelpStage.open);
         app.frame(answered());
-        app.frame(answered());
+        expect(_help(sink), ['agency_help_raised', 'agency_help_answered'], reason: 'sent on help_answered');
         app.frame(cleared());
-        app.frame(cleared());
-        app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
-        app.frame(cleared());
-        expect(_help(sink), ['agency_help_raised', 'agency_help_answered']);
+        _reconnect(app, 'on_call');
+        expect(_help(sink), ['agency_help_raised', 'agency_help_answered'], reason: 'its help_cleared sends nothing more');
         expect(sink.last('agency_help_answered'), {'how': 'listen', 'wait_bucket': 'under_60'});
+        app.dispose();
+      });
+    });
+
+    test('help_answered, then the socket drops before its help_cleared and the reconnect\'s ready has none: answered', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.onCall('a1');
+        app.run(app.controller.raiseHelp());
+        app.frame(answered(how: 'message'));
+        _reconnect(app, 'on_call');
+        expect(app.view!.help.stage, HelpStage.none);
+        expect(_help(sink), ['agency_help_raised', 'agency_help_answered']);
+        expect(sink.last('agency_help_answered'), {'how': 'message', 'wait_bucket': 'under_60'});
         app.dispose();
       });
     });
@@ -134,6 +171,20 @@ void main() {
       });
     });
 
+    test('a raise whose reply failed is not in flight: the frames about the request it opened send nothing', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        // The proxy failed the reply; the server had opened the request all the same.
+        app.routes['POST $helpPath'] = (_) => json(502, {'error': 'Bad Gateway', 'message': ''});
+        app.run(app.controller.raiseHelp());
+        app.frame(answered());
+        app.frame(cleared());
+        expect(_help(sink), ['agency_help_refused']);
+        app.dispose();
+      });
+    });
+
     test('off a call on the waiting screen: on_call false; in wrap-up: on_call true', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -147,6 +198,47 @@ void main() {
         app.run(app.controller.raiseHelp());
         expect(sink.last('agency_help_raised'), {'surface': 'station', 'on_call': true});
         expect(_help(sink), ['agency_help_raised', 'agency_help_expired', 'agency_help_raised']);
+        app.dispose();
+      });
+    });
+
+    test('the Phone tab: dialling and ringing are not on a call; connected and owing the outcome are', () {
+      fakeAsync((async) {
+        final app = App(async)..openSoftphone();
+        _spReady(app);
+        var n = 0;
+        app.routes['POST $_spHelpPath'] = (_) =>
+            json(200, {'session_id': 'sess-sp', 'help': {'raised_at': '2026-11-01T09:0$n:00.000Z', 'call_id': 'mc-1'}});
+        // Raise on each step of the call, the request expiring before the next.
+        bool onCallAt(Map<String, Object?> call) {
+          app.manualCallFrame(call);
+          app.run(app.controller.raiseHelp());
+          final at = '2026-11-01T09:0$n:00.000Z';
+          n++;
+          app.frame(cleared(raised: at, reason: 'expired'));
+          return sink.last('agency_help_raised')['on_call']! as bool;
+        }
+
+        expect(onCallAt(_spCall(1, {'state': 'dialing'})), isFalse, reason: 'dialling');
+        expect(onCallAt(_spCall(2, {'state': 'ringing'})), isFalse, reason: 'ringing');
+        app.frame(message('m-ringing'));
+        expect(sink.last('agency_supervisor_message_shown'), {'on_call': false});
+        expect(onCallAt(_spCall(5, {'state': 'bridged', 'answered_at': '2026-10-30T10:00:04.000Z', 'bridged_at': '2026-10-30T10:00:05.000Z'})),
+            isTrue, reason: 'connected');
+        expect(
+          onCallAt(_spCall(40, {
+            'state': 'ended',
+            'end_reason': 'remote_hangup',
+            'answered_at': '2026-10-30T10:00:04.000Z',
+            'bridged_at': '2026-10-30T10:00:05.000Z',
+            'ended_at': '2026-10-30T10:00:40.000Z',
+            'requires_disposition': true,
+            'outcome_due_at': '2026-11-01T09:30:00.000Z',
+          })),
+          isTrue,
+          reason: 'owing its outcome',
+        );
+        expect(sink.last('agency_help_raised')['surface'], 'softphone');
         app.dispose();
       });
     });
@@ -175,7 +267,7 @@ void main() {
       });
     });
 
-    test('a slow raise reply: answered and cleared first, the reply opens nothing: still the raise, and answered once', () {
+    test('a slow raise reply: answered and cleared first, the reply opens nothing: answered, then still the raise', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) async {
@@ -189,7 +281,6 @@ void main() {
         app.frame(cleared());
         async.elapse(const Duration(seconds: 2));
         app.run(pending);
-        app.frame(cleared());
         expect(_help(sink), ['agency_help_answered', 'agency_help_raised']);
         expect(sink.last('agency_help_raised'), {'surface': 'station', 'on_call': true});
         app.dispose();
@@ -200,18 +291,47 @@ void main() {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) async {
-          await Future<void>.delayed(const Duration(seconds: 2));
+          await Future<void>.delayed(const Duration(seconds: 6));
           return json(200, helpBody());
         };
         app.onCall('a1');
         final pending = app.controller.raiseHelp();
         async.flushMicrotasks();
-        app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
+        _reconnect(app, 'on_call', help: raisedAt);
         expect(_help(sink), isEmpty, reason: 'a ready.help is never a raise');
-        async.elapse(const Duration(seconds: 2));
+        async.elapse(const Duration(seconds: 1));
         app.run(pending);
         app.frame(cleared(reason: 'expired'));
         expect(_help(sink), ['agency_help_raised', 'agency_help_expired']);
+        app.dispose();
+      });
+    });
+
+    test('an older request\'s expiry sent ahead of a new raise\'s reply: only the raise, and no expiry notice for it', () {
+      // The server (floor-assist.ts, raise) expires an older open request in the raise's own
+      // statement and sends its help_cleared {expired} before the new request's reply.
+      fakeAsync((async) {
+        final app = App(async)..start();
+        const older = '2026-11-01T08:40:00.000Z';
+        const newer = '2026-11-01T09:00:30.000Z';
+        // A relaunch onto a request already open (A): shown, never a raise.
+        app.readyFrame('on_call', extra: {'help': {'raised_at': older, 'call_id': 'call-1'}});
+        expect(app.view!.help.stage, HelpStage.open);
+        // The socket drops; A lapses meanwhile; the reconnect's ready has none.
+        _reconnect(app, 'on_call');
+        expect(app.view!.help, const HelpView());
+        app.routes['POST $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          return json(200, helpBody(raised: newer));
+        };
+        final pending = app.controller.raiseHelp();
+        async.flushMicrotasks();
+        app.frame(cleared(raised: older, reason: 'expired'));
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.raising, null], reason: 'no expiry notice for A');
+        async.elapse(const Duration(seconds: 1));
+        app.run(pending);
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.open, null]);
+        expect(_help(sink), ['agency_help_raised']);
         app.dispose();
       });
     });
@@ -232,7 +352,7 @@ void main() {
           if (frameFirst) app.frame(cleared(raised: '2026-11-01T08:57:00.000Z', reason: 'cancelled'));
           async.elapse(const Duration(seconds: 1));
           app.run(pending);
-          app.frame(cleared(raised: '2026-11-01T08:57:00.000Z', reason: 'cancelled'));
+          if (!frameFirst) app.frame(cleared(raised: '2026-11-01T08:57:00.000Z', reason: 'cancelled'));
           expect(_help(sink), ['agency_help_raised', 'agency_help_cancelled'], reason: 'frame first: $frameFirst');
           expect(sink.last('agency_help_cancelled'), {'wait_bucket': '1_5m'}, reason: 'three minutes, on the server\'s clock');
           app.dispose();
@@ -240,6 +360,30 @@ void main() {
         Telemetry.uninstall();
         sink = installFakeTelemetry();
       }
+    });
+
+    test('a cancel pressed, a reconnect\'s ready clearing the request, its help_cleared {cancelled} before the reply: cancelled', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.routes['DELETE $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 8));
+          return json(200, {'session_id': 'sess-1', 'help': null});
+        };
+        app.onCall('a1');
+        app.run(app.controller.raiseHelp());
+        final pending = app.controller.cancelHelp();
+        async.flushMicrotasks();
+        _reconnect(app, 'on_call');
+        expect(app.view!.help.stage, HelpStage.cancelling, reason: 'the cancel is still out');
+        app.frame(cleared(reason: 'cancelled'));
+        expect(_help(sink), ['agency_help_raised', 'agency_help_cancelled'], reason: 'in scope from the press');
+        async.elapse(const Duration(seconds: 3));
+        app.run(pending);
+        expect(app.view!.help, const HelpView());
+        expect(_help(sink), ['agency_help_raised', 'agency_help_cancelled']);
+        app.dispose();
+      });
     });
 
     test('a cancel that lost the race, in every order: answered once, never cancelled', () {
@@ -271,31 +415,33 @@ void main() {
       }
     });
 
-    test('answered with no help_answered seen: how unknown; the wait in its bucket', () {
+    test('help_answered lost with the old socket, help_cleared {answered} ahead of the new ready: how unknown; the wait in its bucket', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T08:52:00.000Z'));
         app.onCall('a1');
         app.run(app.controller.raiseHelp());
+        final first = app.socket;
+        first.serverClose(1006);
+        async.elapse(const Duration(seconds: 5));
+        expect(identical(app.socket, first), isFalse);
         app.frame(cleared(raised: '2026-11-01T08:52:00.000Z'));
+        app.readyFrame('on_call');
+        expect(_help(sink), ['agency_help_raised', 'agency_help_answered']);
         expect(sink.last('agency_help_answered'), {'how': 'unknown', 'wait_bucket': '5_15m'});
         app.dispose();
       });
     });
 
-    test('nothing for the session ending, a clear about another request, or a clear with nothing held', () {
+    test('the session ending sends nothing', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) => json(200, helpBody());
         app.onCall('a1');
-        // Nothing shown, no raise in flight: remembered only.
-        app.frame(cleared(raised: '2026-11-01T08:40:00.000Z', reason: 'expired'));
         app.run(app.controller.raiseHelp());
-        app.frame(cleared(raised: '2026-11-01T08:40:00.000Z', reason: 'answered'));
-        app.frame(answered(raised: '2026-11-01T08:40:00.000Z'));
         app.frame(cleared(reason: 'session_ended'));
-        app.frame(cleared(reason: 'answered'));
-        expect(_help(sink), ['agency_help_raised'], reason: 'the session_ended clear ended it; a late answered clear is stale');
+        expect(app.view!.help, const HelpView());
+        expect(_help(sink), ['agency_help_raised']);
         app.dispose();
       });
     });
@@ -330,11 +476,12 @@ void main() {
   });
 
   group('a supervisor\'s message', () {
-    test('agency_supervisor_message_shown once per id, on_call only: never its text, sender or id', () {
+    // Each id once: the server sends a message once (a frame no socket took is not resent); a resent
+    // id is the pure state's to ignore (station_floor_assist_test.dart, "each id once").
+    test('agency_supervisor_message_shown per id, on_call only: never its text, sender or id; Dismiss sends nothing', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.readyFrame('available');
-        app.frame(message('m1'));
         app.frame(message('m1'));
         expect(sink.last('agency_supervisor_message_shown'), {'on_call': false});
         app.onCall('a1');
@@ -362,7 +509,7 @@ void main() {
       });
     });
 
-    test('once per id: a resent frame, and Dismiss bringing the next up, do not vibrate again', () {
+    test('Dismiss bringing the next up does not vibrate again; on a call, a vibration and never a tone', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.onCall('a1');
@@ -370,8 +517,6 @@ void main() {
         async.elapse(const Duration(seconds: 5));
         app.frame(message('m2'));
         expect(app.vibrations, 2, reason: 'on a call too: a vibration, never a sound');
-        async.elapse(const Duration(seconds: 5));
-        app.frame(message('m1'));
         app.container.read(dismissSupervisorMessageProvider)('m1');
         expect(app.container.read(supervisorMessagesProvider).single.id, 'm2');
         app.container.read(dismissSupervisorMessageProvider)('m2');
@@ -428,7 +573,8 @@ void main() {
           ['under_60', 'under_60', 'under_60', '1_5m', '1_5m', '5_15m', '5_15m', 'over_15m', 'over_15m']);
     });
 
-    test('each end once per request, whichever is reported first', () {
+    // The once-per-request memories, where no real frame order reaches them in the controller.
+    test('each end once per request, whichever is reported first; raised once per request', () {
       final t = FloorAssistTelemetry();
       final at = DateTime.utc(2026, 11, 1, 9);
       t.answered(at, null, now: at);

@@ -1450,26 +1450,36 @@ the flag is on). Break limits are not behind it.
     up; messages arriving within 2 seconds of the one before are one burst and vibrate once
     (`StationController.messageBuzzQuiet`). The preference and the vibration are the core's seams
     `stationHapticsProvider` and `stationVibrateProvider` (`station_deps.dart`).
-- **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names and
-  properties as the console's, closed values, counts and booleans only (never a message's text,
-  a name, a number or who answered): `agency_help_raised` (`surface`: `station`, `inbound` or
-  `softphone`, where the agent pressed it; `on_call`, both as at the press) on the first raise
-  answer (the `POST …/help` reply with a request) naming a `raised_at` this phone has not reported,
-  whether or not the request is still on screen when it lands (the frames may have ended it, or a
-  `ready.help` shown it, first); a `ready.help` or a frame never sends it by itself;
-  `agency_help_cancelled` (`wait_bucket`) when the agent's cancel ended it (its
-  `help_cleared {cancelled}`, on either side of the reply); `agency_help_answered` (`how`:
-  `listen`, `message`, or `unknown` with no `help_answered` seen; `wait_bucket`), a cancel that
-  lost the race to an answer included; `agency_help_expired`; `agency_help_refused` (`action`:
-  `raise` or `cancel`; `code`: `floor_assist_disabled`, `help_not_on_call`, `session_ended`,
-  `not_found`, `network` or `other`); `agency_supervisor_message_shown` (`on_call`) once per
-  message id. `wait_bucket` is the time from the request's `raised_at` to the moment this phone
-  learnt it ended, on the server-aligned clock, in `agency_floor_intervention`'s buckets
-  (`under_60`, `1_5m`, `5_15m`, `over_15m`). The controller sends an end event only for the
-  request it holds (`FloorAssistState.ends`: the one shown, the one a raise in flight is opening,
-  or the one its cancel just ended); `session_ended` and a frame about another request send
-  nothing; and each Need help event is sent at most once per `raised_at` in the process, across
-  reconnects, repeated frames and a repeated raise answered with the same request.
+- **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names,
+  properties and rules as the console's, closed values, counts and booleans only (never a
+  message's text, a name, a number or who answered):
+  - `agency_help_raised` (`surface`: `station`, `inbound` or `softphone`, where the agent pressed
+    it; `on_call`; both as at the press) on the first raise answer (the `POST …/help` reply with a
+    request) naming a `raised_at` this phone has not reported, whether or not the request is still
+    on screen when it lands (the frames may have ended it, or a `ready.help` shown it, first). A
+    `ready.help` or a frame never sends it.
+  - The end events count a `help_answered` or `help_cleared` only for a request **in scope** when
+    it lands: the one on screen, the one a raise in flight is opening (a raise whose reply failed
+    is no longer in flight), or one the agent pressed Cancel for (from the press, not the
+    cancel's reply). A request a reconnect's `ready` said is over is remembered as ended, so an
+    older request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply,
+    is never taken for the new one (nor shown as its expiry).
+  - `agency_help_answered` (`how`: `listen` or `message` from the frame; `wait_bucket`) on
+    `help_answered`, a cancel that lost the race to the answer included; on `help_cleared
+    {answered}` only when no `help_answered` was seen for it (`how: unknown`).
+    `agency_help_expired` on `help_cleared {expired}`, `agency_help_cancelled` (`wait_bucket`) on
+    `help_cleared {cancelled}` (the cancel won), on either side of the cancel's reply. At most one
+    end event per request; `session_ended` sends none.
+  - `agency_help_refused` (`action`: `raise` or `cancel`; `code`: `floor_assist_disabled`,
+    `help_not_on_call`, `session_ended`, `not_found`, `network` or `other`), once per refusal.
+  - `agency_supervisor_message_shown` (`on_call`) once per message id.
+  - `on_call`: on a campaign or inbound call or in its wrap-up; on the soft phone only while its
+    call is connected or owes its outcome (dialling and ringing are not on a call).
+    `wait_bucket`: the time from the request's `raised_at` to the moment this phone learnt it
+    ended, on the server-aligned clock, in `agency_floor_intervention`'s buckets (`under_60`,
+    `1_5m`, `5_15m`, `over_15m`).
+  - Each raised and end event is sent at most once per `raised_at` in the process, across
+    reconnects and a repeated raise answered with the same request.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
   `break_reasons`, found by the break's code as its label is), On break counts from the
   `agent_state` frame's `since`: "4:18 / 15:00", a bar, "10:42 left of your 15 minutes." (rounded up,
@@ -1725,9 +1735,15 @@ from the browser or file manager it was opened from.
   banner and the break countdown are unit- and widget-tested with the contract's sample frames in the
   server's order (`flutter test`, `dart test`), and the server's side drives a simulated phone station
   declaring `caps=floor_assist` (`floor-assist-e2e.test.ts`); nothing has run on a phone or against a
-  running server with this app build. The message's vibration (LF39) has not been felt on a phone:
-  whether an Android phone with touch feedback off, or an iPhone while the call's audio session
-  records, lets `HapticFeedback.vibrate` through is unverified.
+  running server with this app build. The message's vibration (LF39) has not been felt on a phone,
+  and has two known risks there. On iOS, the system mutes vibration while the call's
+  `.playAndRecord` audio session records, so a message on a call may not buzz; the fix would be
+  `setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift` `configureSession`
+  (`packages/agent_audio`). On Android, `HapticFeedback.vibrate` is
+  `performHapticFeedback(LONG_PRESS)`, which follows the system's touch feedback setting, so a
+  phone with it off does not buzz; the fix would be the `Vibrator` service through a platform
+  channel (`VIBRATE` is already in the manifest). Neither is made: there is no Android SDK here to
+  compile the Kotlin, and iOS does not build.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

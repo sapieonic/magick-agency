@@ -113,21 +113,20 @@ final class FloorAssistState {
   /// The answer held for [raisedAt], if any.
   HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
-  /// The answer held for the request raised at [raisedAt] (`help_answered`), if any.
-  HelpAnswer? answerOf(DateTime raisedAt) => _answerOf(raisedAt);
-
-  /// Whether a `help_cleared` for [raisedAt] ends a request this station holds (what the end
-  /// events of LF39 are sent for): the one shown, the one a raise in flight ([raising]) is opening,
-  /// or the one the cancel's answer just ended. A frame about any other request (an earlier one, or
-  /// one seen to end already) ends nothing here.
-  bool ends(DateTime raisedAt, {bool raising = false}) =>
+  /// Whether a `help_answered` or `help_cleared` for [raisedAt] is about a request this station
+  /// holds (part of what LF39's end events count): the one shown, the one a raise in flight
+  /// ([raising]) is opening, or the one the cancel's answer just ended. A frame about any other
+  /// request (an earlier one, or one seen to end already, a `ready` without it included) is not.
+  bool holds(DateTime raisedAt, {bool raising = false}) =>
       _shows(raisedAt) || _inFlight(raisedAt, raising) || _cancelledFirst(raisedAt);
 
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
-  /// one shown, with no notice (the frame that ended it was missed; nothing says how). One this
-  /// station already saw end ([ended]) is stale and ignored.
+  /// one shown, with no notice (the frame that ended it was missed; nothing says how), and
+  /// remembers it as [ended]: a `help_cleared` about it that comes later (the server sends an older
+  /// request's expiry ahead of a new raise's reply) is about a request already over, never the one
+  /// a raise in flight is opening. One this station already saw end ([ended]) is stale and ignored.
   FloorAssistState onReady(SessionHelp? open) {
-    if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null);
+    if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null, ended: help!.raisedAt);
     if (_same(ended, open.raisedAt)) return this;
     if (_shows(open.raisedAt)) return help == open ? this : _with(help: open);
     return _open(open);
