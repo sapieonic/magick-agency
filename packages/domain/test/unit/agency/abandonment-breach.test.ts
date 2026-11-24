@@ -18,7 +18,7 @@ describe('abandonmentBreachesCeiling', () => {
     [20, 25, 3, true], // a catastrophic small campaign still stops
     [1, 20, 10, false], // 5%, under a 10% ceiling
     [3, 20, 10, true], // 15%, over it
-  ])('%i abandoned of %i answered at a %d%% ceiling → %s', (abandoned, answered, ceiling, breaches) => {
+  ])('%i abandoned of %i answered, ceiling %d → %s', (abandoned, answered, ceiling, breaches) => {
     expect(abandonmentBreachesCeiling({ abandoned, answered }, ceiling)).toBe(breaches);
   });
 
