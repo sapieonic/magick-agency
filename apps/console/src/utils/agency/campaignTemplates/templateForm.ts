@@ -136,7 +136,7 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** A template's script editor has no customer card (no facts to name a key by). */
-export const TEMPLATE_FACTS: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {} }) as FactsForm;
+export const TEMPLATE_FACTS: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {}, moreHidden: [] }) as FactsForm;
 
 /**
  * The keys a template's script may use: the server's rule for a script with no card

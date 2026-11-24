@@ -9,6 +9,7 @@ import '../../../core/softphone/softphone_host.dart';
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_copy.dart' show leftOfflineCopy;
 import '../../../core/station/station_view.dart';
+import '../logic/facts.dart' show detailsOtherFields;
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_reads.dart';
@@ -395,6 +396,8 @@ IconData routeIcon(AudioRouteKind? kind) => switch (kind) {
 Future<void> showDetailsSheet(BuildContext context, CallView call) {
   final view = ProviderScope.containerOf(context, listen: false).read(stationViewProvider);
   final scope = wholeCall(call.attemptId);
+  // AS20: the server's More details when it sends them (what the supervisor lets agents see).
+  final others = detailsOtherFields(call, masked: view?.maskPhone ?? false);
   return showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
@@ -423,7 +426,7 @@ Future<void> showDetailsSheet(BuildContext context, CallView call) {
               if (call.promise != null) ...[PromiseLine(promise: call.promise!), const SizedBox(height: Space.md)],
               HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
               const SizedBox(height: Space.md),
-              ContactFieldList(fields: call.otherFields, alwaysFilter: call.otherFields.length > 8),
+              ContactFieldList(fields: others, alwaysFilter: others.length > 8),
               const SizedBox(height: Space.md),
               PriorAttemptsCard(attempts: call.priorAttempts),
             ],

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/contact_context.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
+import 'package:magick_agency_agent/features/station/logic/facts.dart' show detailsOtherFields;
 
 import '../inbound/inbound_fixtures.dart' show contractSample, stationFrame;
 import 'controller_harness.dart';
@@ -42,6 +43,33 @@ void main() {
       expect([for (final t in facts.tiles) t.kind], [FactKind.money, FactKind.number, FactKind.phone, FactKind.yesNo]);
       expect([for (final t in facts.tiles) t.highlight], [true, false, false, false]);
       expect(facts.tiles.first.amountDue, isTrue, reason: 'the role rides along, for the Full / Half chips');
+      app.dispose();
+    });
+  });
+
+  test('AS20: More details reach the view in the server\'s order, named by their columns', () {
+    fakeAsync((async) {
+      final app = App(async);
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, bootstrap());
+      app.start();
+      app.frame(reserved());
+      final more = app.view!.call!.facts!.more!;
+      expect([for (final t in more) t.column], ['Due Date', 'Branch', 'Office Phone']);
+      expect([for (final t in more) t.kind], [FactKind.date, FactKind.text, FactKind.phone]);
+      expect(more.every((t) => t.label == t.column && t.key == null && !t.highlight), isTrue);
+      app.dispose();
+    });
+  });
+
+  test('AS20: the place\'s column is the place role\'s, by the domain\'s rule; Details lists it first', () {
+    fakeAsync((async) {
+      final app = App(async);
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, bootstrap());
+      app.start();
+      app.frame(reserved());
+      final call = app.view!.call!;
+      expect(call.placeColumn, 'City');
+      expect([for (final f in detailsOtherFields(call)) '${f.label}=${f.value}'].first, 'City=Nashik');
       app.dispose();
     });
   });

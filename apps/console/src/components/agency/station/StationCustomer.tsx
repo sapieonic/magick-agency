@@ -1,9 +1,22 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
-import { Calendar, Clock, IndianRupee, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronUp, Clock, IndianRupee, ListPlus, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
 import { NotesField, type NotesFieldProps } from '../NotesField';
+import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useDictation } from '../../../hooks/useSpeech';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
-import { FACT_POP_MIN_WIDTH, factPopPlacement, fitFontSize, type CustomerCard, type CustomerFact, type LastCallRow } from '../../../utils/agency/stationCustomer';
+import {
+  FACT_POP_MIN_WIDTH,
+  factPopPlacement,
+  fitFontSize,
+  MORE_DETAILS_GESTURE_GAP_MS,
+  MORE_DETAILS_PAUSE_MS,
+  MORE_DETAILS_STEP,
+  nextMoreShown,
+  type CustomerCard,
+  type CustomerFact,
+  type LastCallRow,
+  type MoreDetail,
+} from '../../../utils/agency/stationCustomer';
 import styles from './Station.module.css';
 
 const FACT_ICON: Record<CustomerFact['kind'], typeof Phone | null> = {
@@ -196,6 +209,188 @@ function ChosenFacts({ facts }: { facts: CustomerFact[] }) {
 }
 
 /**
+ * How far the last More details was opened, and whether the agent closed it with "Hide", so the
+ * card drawn again for the same call (Call coming, then On call: two mounts) opens as far as the
+ * agent left it. One entry: the newest.
+ */
+let rememberedMore: { key: string; shown: number; held: boolean } | null = null;
+
+/** Forgets {@link rememberedMore}: for tests, which draw one call many times. */
+export function forgetMoreDetails(): void {
+  rememberedMore = null;
+}
+
+/**
+ * The bottom of the part of the window the agent can see: the top of the station's footer while it
+ * is stuck to the bottom of the window, else the window's own bottom.
+ */
+function visibleBottom(): number {
+  const foot = document.querySelector<HTMLElement>('[data-station-foot]');
+  if (foot && getComputedStyle(foot).position === 'sticky') {
+    return Math.min(window.innerHeight, foot.getBoundingClientRect().top);
+  }
+  return window.innerHeight;
+}
+
+/** True when the element is at least partly in sight (above the stuck footer). */
+function onScreen(el: HTMLElement): boolean {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < visibleBottom();
+}
+
+/** Where a scroll aimed at something else starts: a field, a dialog, a widget that takes arrows. */
+const NOT_THE_PAGE =
+  'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="dialog"], [aria-modal="true"], [role="listbox"], [role="menu"], [role="radiogroup"], [role="slider"], [role="tablist"]';
+
+/**
+ * True when a wheel, touch or key starting at `target` moves the page, not something inside it: not
+ * in a field, a dialog or an arrow-key widget, and not in an inner box that can still scroll down.
+ */
+function movesThePage(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true;
+  if (target.closest(NOT_THE_PAGE)) return false;
+  for (let el: Element | null = target; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (el.scrollHeight <= el.clientHeight + 1) continue;
+    const overflow = getComputedStyle(el).overflowY;
+    if ((overflow === 'auto' || overflow === 'scroll') && el.scrollTop + el.clientHeight < el.scrollHeight - 1) return false;
+  }
+  return true;
+}
+
+/** The keys that move the page down. */
+const DOWN_KEYS = new Set(['PageDown', 'ArrowDown', 'End', ' ']);
+
+/**
+ * More details (AS20): the customer's other columns, under the card. Closed at first, with a count
+ * and "Scroll down to see them."; while its end is in sight, each downward gesture aimed at the page
+ * (a turn of the wheel or a trackpad swipe, a finger pushing up, Page Down, the down arrow or the
+ * space bar) opens {@link MORE_DETAILS_STEP} more rows: one step per gesture (a gesture's wheel
+ * events end with a pause of {@link MORE_DETAILS_GESTURE_GAP_MS}) and at most one step every
+ * {@link MORE_DETAILS_PAUSE_MS} ms, each new row fading in (no motion under reduced motion). A
+ * scroll inside a field, a dialog or an inner box, and a zoom (ctrl and the wheel), open nothing.
+ * "Show all" opens them at once and "Hide" closes them until "Show all" again, for the keyboard
+ * and the mouse. Values are uploaded text: plain text, wrapped, never markup.
+ */
+function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: string }) {
+  const total = rows.length;
+  const remembered = rememberedMore?.key === key ? rememberedMore : null;
+  const [shown, setShown] = useState(() => (remembered ? Math.min(remembered.shown, total) : 0));
+  const [held, setHeld] = useState(() => remembered?.held ?? false);
+  const [from, setFrom] = useState(shown);
+  const endRef = useRef<HTMLDivElement>(null);
+  const lastStep = useRef(0);
+  const lastWheel = useRef(0);
+  const listId = useId();
+  // The listeners are bound once and read these from the latest render.
+  const latest = useLatestRef({ shown, total, held });
+
+  useEffect(() => {
+    rememberedMore = { key, shown, held };
+  }, [key, shown, held]);
+
+  useEffect(() => {
+    const step = () => {
+      const { shown, total, held } = latest.current;
+      const end = endRef.current;
+      const now = Date.now();
+      if (shown >= total || held || !end || now - lastStep.current < MORE_DETAILS_PAUSE_MS || !onScreen(end)) return;
+      lastStep.current = now;
+      setFrom(shown);
+      setShown(nextMoreShown(shown, total));
+    };
+    const onWheel = (event: WheelEvent) => {
+      const now = Date.now();
+      const newGesture = now - lastWheel.current >= MORE_DETAILS_GESTURE_GAP_MS;
+      lastWheel.current = now;
+      if (newGesture && event.deltaY > 0 && !event.ctrlKey && movesThePage(event.target)) step();
+    };
+    let touchY: number | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = movesThePage(event.target) ? (event.touches[0]?.clientY ?? null) : null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (touchY !== null && y !== undefined && y < touchY - 8) {
+        touchY = null; // one step per touch
+        step();
+      }
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.repeat || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!DOWN_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey)) return;
+      const target = event.target;
+      // A space on a button presses it; it does not scroll.
+      if (event.key === ' ' && target instanceof Element && target.closest('button, a, summary, [role="button"]')) return;
+      if (movesThePage(target)) step();
+    };
+    window.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [latest]);
+
+  const all = shown >= total;
+  const toggle = () => {
+    setFrom(all ? 0 : shown);
+    setShown(all ? 0 : total);
+    setHeld(all);
+  };
+  const state = shown === 0 ? 'closed' : all ? 'open' : 'partial';
+  return (
+    <div className={styles.more} data-state={state} data-testid="more-details">
+      <div className={styles.moreHead}>
+        <h3 className={styles.moreTitle}>
+          <ListPlus size={18} aria-hidden="true" />
+          {STATION_COPY.moreDetails}{' '}
+          <span className={styles.moreCount} data-testid="more-details-count">{STATION_COPY.moreDetailsCount(total)}</span>
+        </h3>
+        <button
+          type="button"
+          className={styles.moreToggle}
+          aria-expanded={shown > 0}
+          aria-controls={shown > 0 ? listId : undefined}
+          onClick={toggle}
+          data-testid="more-details-toggle"
+        >
+          {all ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
+          {all ? STATION_COPY.moreDetailsHide : STATION_COPY.moreDetailsShowAll}
+        </button>
+      </div>
+      {shown > 0 ? (
+        <dl id={listId} className={styles.moreList}>
+          {rows.slice(0, shown).map((row, i) => (
+            <div
+              key={row.column}
+              className={styles.moreRow}
+              // A step's rows come in one after another; "Show all" brings the rest in together after
+              // the first few, so a long list is never blank for long.
+              style={i >= from ? ({ '--more-i': Math.min(i - from, MORE_DETAILS_STEP - 1) } as CSSProperties) : undefined}
+              data-new={i >= from ? 'true' : undefined}
+              data-testid="more-detail"
+            >
+              <dt data-testid="more-detail-label">{row.column}</dt>
+              <dd className={row.kind === 'text' ? undefined : styles.num} data-testid="more-detail-value">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {all ? null : (
+        <p className={styles.moreHint} data-testid="more-details-hint">
+          {shown === 0 ? STATION_COPY.moreDetailsHint : STATION_COPY.moreDetailsShown(shown, total)}
+        </p>
+      )}
+      <div ref={endRef} className={styles.moreEnd} aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
  * The customer card (spec 03/04): who, where, the number, the facts and what they said last time.
  * A campaign that chose its facts (AS19) shows up to four, its chosen ones; a legacy card shows up
  * to three big facts, the last of them Last call when there is one. It does not move between Call
@@ -290,6 +485,7 @@ export function CustomerCardView({
           {showLastSaid && card.lastSaid ? <LastSaid text={card.lastSaid} /> : null}
         </div>
       ) : null}
+      {card.more.length > 0 ? <MoreDetails key={card.moreKey} callKey={card.moreKey} rows={card.more} /> : null}
     </section>
   );
 }

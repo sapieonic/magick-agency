@@ -239,31 +239,32 @@ class StationViewMapper {
   static FactsView? factsOf(wire.CustomerFacts? facts, {bool chosen = false}) {
     if (facts == null) return chosen ? const FactsView(chosen: true) : null;
     String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+    FactTileView tileOf(wire.FactTile t) => FactTileView(
+      label: t.name,
+      column: t.column,
+      raw: t.raw,
+      kind: switch (t.type) {
+        wire.ContextFieldType.money => FactKind.money,
+        wire.ContextFieldType.date => FactKind.date,
+        wire.ContextFieldType.number => FactKind.number,
+        wire.ContextFieldType.phone => FactKind.phone,
+        wire.ContextFieldType.yesNo => FactKind.yesNo,
+        wire.ContextFieldType.text || wire.ContextFieldType.unknown => FactKind.text,
+      },
+      parsed: t.value,
+      amountDue: t.role == wire.FactTileRole.amountDue,
+      dueDate: t.role == wire.FactTileRole.dueDate,
+      key: t.key,
+      highlight: t.highlight,
+    );
+    final more = facts.more;
     return FactsView(
       chosen: chosen,
       name: clean(facts.name),
       place: clean(facts.place),
-      tiles: List.unmodifiable([
-        for (final t in facts.tiles)
-          FactTileView(
-            label: t.name,
-            column: t.column,
-            raw: t.raw,
-            kind: switch (t.type) {
-              wire.ContextFieldType.money => FactKind.money,
-              wire.ContextFieldType.date => FactKind.date,
-              wire.ContextFieldType.number => FactKind.number,
-              wire.ContextFieldType.phone => FactKind.phone,
-              wire.ContextFieldType.yesNo => FactKind.yesNo,
-              wire.ContextFieldType.text || wire.ContextFieldType.unknown => FactKind.text,
-            },
-            parsed: t.value,
-            amountDue: t.role == wire.FactTileRole.amountDue,
-            dueDate: t.role == wire.FactTileRole.dueDate,
-            key: t.key,
-            highlight: t.highlight,
-          ),
-      ]),
+      tiles: List.unmodifiable([for (final t in facts.tiles) tileOf(t)]),
+      // AS20: More details, as the server sent it (null from an older server).
+      more: more == null ? null : List.unmodifiable([for (final t in more) tileOf(t)]),
     );
   }
 
@@ -565,6 +566,7 @@ class StationViewMapper {
         promise: previous.promise,
         callback: previous.callback,
         facts: previous.facts,
+        placeColumn: previous.placeColumn,
       );
     }
     _callOffset = _offset;
@@ -597,6 +599,7 @@ class StationViewMapper {
           ? null
           : CallLaterTag(dueAt: correctedInstant(attempt.callback!.dueAt, _offset)!, bookedByMe: attempt.callback!.bookedByMe),
       facts: factsOf(attempt.facts, chosen: display?.facts != null),
+      placeColumn: wire.customerPlaceColumn(attempt.context, display),
     );
   }
 

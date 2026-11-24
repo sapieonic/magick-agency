@@ -14,6 +14,7 @@ import 'call_band.dart';
 import 'contact_details.dart';
 import 'fact_grid.dart';
 import 'layouts.dart';
+import 'more_details_card.dart';
 import 'script_cards.dart' show OpeningLineCard;
 import 'sheets.dart';
 
@@ -64,12 +65,15 @@ class RingingView extends ConsumerWidget {
     // speaker can reach them through the microphone.
     final connected = call?.bridgedAt != null;
     return CallPage(
+      revealOnPush: true,
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),
           OpeningLineCard(
             trailing: connected ? null : (line) => ReadAloudButton(key: const Key('read-aloud-opening'), text: line),
           ),
+          // AS20: the customer's other columns, opened as the agent scrolls down.
+          MoreDetailsCard(call: call),
         ],
       ],
       actions: const ConnectsByItself(),
@@ -181,13 +185,13 @@ class CustomerCard extends ConsumerWidget {
     final ordered = orderPriorAttempts(call.priorAttempts);
     final last = ordered.firstOrNull;
     final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
-    final room = last == null ? 3 : 2;
+    final room = legacyTileRoom(hasLastCall: last != null);
     // BE-6 and older servers: three tiles in a row, as before AS19.
     final tiles = chosen
         ? const <Widget>[]
         : <Widget>[
             if (facts != null)
-              for (final f in factTilesInOrder(facts).take(room)) NumberTile(label: f.label, value: factText(f, masked: masked))
+              for (final f in legacyCardTiles(facts, hasLastCall: last != null)) NumberTile(label: f.label, value: factText(f, masked: masked))
             else
               for (final f in call.heroFields.where((f) => f.value.trim().isNotEmpty && f.value.trim() != name).take(room))
                 NumberTile(label: f.label, value: f.value),

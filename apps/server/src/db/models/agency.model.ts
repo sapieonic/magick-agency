@@ -329,6 +329,16 @@ export interface AgencyCampaignRecord {
 }
 
 /**
+ * The campaigns whose imports count as this campaign's roster: itself, and for a retry its
+ * lineage root, which its contacts were copied from (`knownContextColumns`).
+ */
+export function campaignImportLineage(campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>): string[] {
+  return campaign.root_campaign_id && campaign.root_campaign_id !== campaign.id
+    ? [campaign.id, campaign.root_campaign_id]
+    : [campaign.id];
+}
+
+/**
  * The campaign columns that describe HOW it dials, as opposed to how its run went.
  *
  * Derived from {@link AgencyCampaignRecord} with a `Pick` rather than written out,

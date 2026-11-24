@@ -2483,6 +2483,17 @@ reviewed twice and fixed (rulings R1–R13 and S1–S16, with what was accepted 
 [`agent-station.md`](agent-station.md) §1), then a third round; per-stream status in §3, the test
 counts in the PR. Not verified: nothing has run on a real phone or with real agents.
 
+### Agent station, More details 2026-11-24 (AS20, [`agent-station.md`](agent-station.md))
+
+Every other column of the customer's row is shown to agents under the card as More details, on
+Call coming and On call, on the console and the app: closed at first, opened four rows at a time
+as the agent scrolls down, "Show all" and "Hide". The server sends them on the panel
+(`facts.more`, one domain rule), in the file's column order; a supervisor turns columns off for
+agents only in Settings → What agents see (`more_hidden`), and a phone-looking value is masked on
+a campaign that hides numbers unless the supervisor gives the column a type. The console's station
+footer stays at the bottom of the window. Not built: More details on the side views (inbound, the
+soft phone). Not verified: nothing has run on a real phone or with real agents.
+
 ### Archived campaigns 2026-11-21 (AR1–AR7, [`decisions.md`](decisions.md) "Archived campaigns (AR)")
 
 A supervisor archives a draft or a stopped campaign to take it off the Campaigns page; it is

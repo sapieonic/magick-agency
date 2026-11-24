@@ -1,6 +1,7 @@
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { PoolClient } from 'pg';
+import { fold } from '@magick-agency/domain/context-columns';
 import type { AgencyIngestFailureCode } from './agency-csv-ingest.js';
 import { auditRosterUploadEnded } from './agency-ingest-audit.js';
 
@@ -992,6 +993,34 @@ export class AgencyIngestJobRepository {
       [[...campaignIds]],
     );
     return [...new Set(rows.flatMap((r) => r.context_columns))];
+  }
+
+  /**
+   * The order More details lists a row's columns in (AS20): the newest real import's columns in
+   * its file's order, then each older import's columns it did not name, newest import first.
+   * Names compare ignoring case and surrounding space (the domain's `fold`, the ingest's own header
+   * rule: one file never holds two columns equal so), and the newest spelling is kept. The same
+   * imports as {@link knownContextColumns} (real imports of any status, never a check), which the
+   * write's check reads instead (every spelling, oldest import first). Empty when none kept any
+   * columns. A retry campaign passes its lineage root too.
+   */
+  async contextColumnOrder(campaignIds: readonly string[]): Promise<string[]> {
+    if (campaignIds.length === 0) return [];
+    const { rows } = await getPool().query<{ context_columns: string[] }>(
+      `SELECT context_columns FROM agency_ingest_jobs
+        WHERE campaign_id = ANY($1::uuid[]) AND dry_run = FALSE AND context_columns IS NOT NULL
+        ORDER BY created_at DESC, id DESC`,
+      [[...campaignIds]],
+    );
+    const named = new Set<string>();
+    const order: string[] = [];
+    for (const column of rows.flatMap((r) => r.context_columns)) {
+      const key = fold(column);
+      if (named.has(key)) continue;
+      named.add(key);
+      order.push(column);
+    }
+    return order;
   }
 }
 

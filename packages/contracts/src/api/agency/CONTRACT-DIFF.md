@@ -103,7 +103,9 @@ package root.
   `AgencyScriptFixedPlaceholder` / `AGENCY_SCRIPT_FIXED_PLACEHOLDERS`; `AgencyFactTile.label` /
   `.key` / `.highlight` and the three new `AgencyContextFieldType` members ride on the shapes
   above unchanged. The campaign wire type's `context_display` is the same `AgencyContextDisplay`,
-  so it carries `facts` with no second edit. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
+  so it carries `facts` with no second edit. More details (AS20): `AGENCY_MORE_DETAILS_MAX`;
+  `AgencyCustomerFacts.more` and `AgencyContextDisplay.more_hidden` ride on the shapes above
+  unchanged. The console's `AgencySessionBootstrap` (§1) inherits `script` and `phone_display` from
   the dialer type with no second edit, pinned by `console-wire-derived.test.ts`.
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,

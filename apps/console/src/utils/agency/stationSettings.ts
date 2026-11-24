@@ -16,9 +16,10 @@ import {
   type AgencyFactField,
   type AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
-import { fold } from '@magick-agency/domain/context-columns';
+import { fold, isNonBlankString } from '@magick-agency/domain/context-columns';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
 import { guessNameColumn, guessPlaceColumn } from '@magick-agency/domain/customer-name';
+import { looksLikePhoneNumber } from '@magick-agency/domain/more-details';
 import {
   defaultFactLabel,
   factKeyFromColumn,
@@ -96,8 +97,13 @@ export interface FactsForm {
   place: string | null;
   /** The facts on the card, in order (at most {@link AGENCY_FACT_FIELDS_MAX}). */
   list: AgencyFactField[];
-  /** Each column's type; absent is text. */
+  /** Each column's type; absent is text (on More details, a phone-looking value reads as a phone, AS20). */
   types: Record<string, AgencyContextFieldType>;
+  /**
+   * AS20: the columns agents do not see under More details (`context_display.more_hidden`), as
+   * stored or ticked off. Every other column of the latest upload is shown there.
+   */
+  moreHidden: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -178,7 +184,10 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
     ].filter((c): c is string => c !== undefined);
   // On the old model, in the old card's order (S9: the amount due, the due date, then the other heroes).
   const list = legacyFactFields(shown, columns, { exclude });
-  let form: FactsForm = { name, place, list, types };
+  const moreHidden = Array.isArray(shown.more_hidden)
+    ? shown.more_hidden.filter(isNonBlankString)
+    : [];
+  let form: FactsForm = { name, place, list, types, moreHidden };
   if (!chosen) {
     // AS19 R10: the old role overrode `types`, so the role's column is read as money or a date
     // whatever `types` stored; the first save then changes nothing agents see.
@@ -639,24 +648,144 @@ function factsPayload(facts: FactsForm, columns: readonly string[] | null = null
  * facts, always written (AS19: the campaign is on the new model from its first save of the card).
  * An empty roles or types map is left out. With `columns` (the columns the card's selects offer,
  * the roster's first), a name or line under it left on "Guess from the column names" is written as
- * the column guessed (AS19 R1, S2), and every column in the roster's spelling.
+ * the column guessed (AS19 R1, S2), and every column in the roster's spelling. AS20: the columns
+ * ticked off More details are written as `more_hidden` (left out when none), and `order` gains
+ * the latest upload's columns it does not name yet ({@link orderPayload}).
  */
 export function contextDisplayPayload(
   stored: AgencyContextDisplay | null | undefined,
   facts: FactsForm,
   columns: readonly string[] | null = null,
+  uploaded: readonly string[] | null = null,
 ): AgencyContextDisplay {
   const { roles: _roles, types: _types, facts: _facts, ...rest } = isRecord(stored) ? stored : {};
   void _roles;
   void _types;
   void _facts;
   const roles = rolesToWrite(facts, columns, hiddenColumns(stored));
-  return {
+  const card: AgencyContextDisplay = {
     ...rest,
     ...(Object.keys(roles).length > 0 ? { roles } : {}),
     ...(Object.keys(facts.types).length > 0 ? { types: { ...facts.types } } : {}),
     facts: factsPayload(facts, columns),
   };
+  return moreDetailsDisplayPayload(card, facts, columns, uploaded);
+}
+
+/**
+ * AS20: the `context_display` a save sends when only More details changed: the stored one with the
+ * form's `more_hidden` (and `order`, {@link orderPayload}), and the form's type of each of `typed`
+ * (More details columns whose type changed: {@link StationPlan.moreTyped}) set, changed or taken
+ * off in the stored `types`, in the roster's spelling; nothing else. The card is left exactly as
+ * stored, so a campaign that has not chosen its facts stays on the old card (AS19's model is taken
+ * only by a save of the card itself).
+ */
+export function moreDetailsDisplayPayload(
+  stored: AgencyContextDisplay | null | undefined,
+  facts: FactsForm,
+  columns: readonly string[] | null = null,
+  uploaded: readonly string[] | null = null,
+  typed: readonly string[] = [],
+): AgencyContextDisplay {
+  const { more_hidden: _moreHidden, ...rest } = isRecord(stored) ? stored : {};
+  void _moreHidden;
+  const moreHidden = moreHiddenPayload(facts, columns);
+  const order = orderPayload(rest.order, uploaded);
+  const out: AgencyContextDisplay = { ...rest, ...(order ? { order } : {}), ...(moreHidden.length > 0 ? { more_hidden: moreHidden } : {}) };
+  if (typed.length === 0) return out;
+  const types = moreTypesPayload(rest.types, facts, columns, typed);
+  const { types: _types, ...untyped } = out;
+  void _types;
+  return Object.keys(types).length > 0 ? { ...untyped, types } : untyped;
+}
+
+/**
+ * The stored `types` with each of `typed` as the form reads it: the stored entry for the column
+ * (ignoring case) dropped, and the form's put back under the roster's spelling when it has one.
+ */
+function moreTypesPayload(
+  stored: unknown,
+  facts: FactsForm,
+  columns: readonly string[] | null,
+  typed: readonly string[],
+): Record<string, AgencyContextFieldType> {
+  const kept = Object.entries(isRecord(stored) ? stored : {})
+    .filter(([column]) => !typed.some((c) => sameColumn(c, column)));
+  const out = Object.fromEntries(kept) as Record<string, AgencyContextFieldType>;
+  for (const column of typed) {
+    const key = columnNamed(Object.keys(facts.types), column);
+    if (key === undefined) continue;
+    out[(columns ? columnNamed(columns, column) : undefined) ?? key] = facts.types[key]!;
+  }
+  return out;
+}
+
+/**
+ * AS20: the `order` a save writes. More details follows `order`, then the row's own order, which
+ * the database does not keep, so a save writes the stored order followed by each of the latest
+ * upload's columns it does not name yet (ignoring case), in the file's order: a column a later
+ * upload added reads as the file does. Undefined (the stored one is kept as it is) when there is
+ * no upload to read.
+ */
+function orderPayload(stored: unknown, uploaded: readonly string[] | null): string[] | undefined {
+  if (!uploaded || uploaded.length === 0) return undefined;
+  const out = Array.isArray(stored) ? stored.filter(isNonBlankString) : [];
+  for (const column of uploaded) if (!out.some((c) => sameColumn(c, column))) out.push(column);
+  return out;
+}
+
+/** AS20: `more_hidden` as a save sends it: each column once (ignoring case), in the roster's spelling when known. */
+function moreHiddenPayload(facts: FactsForm, columns: readonly string[] | null): string[] {
+  const out: string[] = [];
+  for (const column of facts.moreHidden) {
+    const name = (columns ? columnNamed(columns, column) : undefined) ?? column.trim();
+    if (name !== '' && !out.some((c) => sameColumn(c, name))) out.push(name);
+  }
+  return out;
+}
+
+// ─── More details (AS20) ────────────────────────────────────────────────────
+
+/** Whether agents see `column` under More details: not in {@link FactsForm.moreHidden} (ignoring case). */
+export function moreShown(facts: FactsForm, column: string): boolean {
+  return !facts.moreHidden.some((c) => sameColumn(c, column));
+}
+
+/** A copy of `facts` with `column` shown or not under More details. */
+export function withMoreShown(facts: FactsForm, column: string, shown: boolean): FactsForm {
+  const rest = facts.moreHidden.filter((c) => !sameColumn(c, column));
+  return { ...facts, moreHidden: shown ? rest : [...rest, column] };
+}
+
+/** A copy of `facts` with every one of `columns` shown, or none of them, under More details. */
+export function withMoreAll(facts: FactsForm, columns: readonly string[], shown: boolean): FactsForm {
+  const rest = facts.moreHidden.filter((c) => !columns.some((col) => sameColumn(col, c)));
+  return { ...facts, moreHidden: shown ? rest : [...rest, ...columns] };
+}
+
+/**
+ * How More details reads `column`, as the server will (`moreDetailTypeOf`, the domain's, which reads
+ * each customer's value): its type when the form sets one (Text included), else a phone number when
+ * any of `samples` (the column's sample values) reads as one, so the supervisor sees what some agents
+ * will, else text.
+ */
+export function moreTypeOf(facts: FactsForm, column: string, samples: readonly string[]): AgencyContextFieldType {
+  const key = columnNamed(Object.keys(facts.types), column);
+  if (key !== undefined) return facts.types[key]!;
+  return samples.some(looksLikePhoneNumber) ? 'phone' : 'text';
+}
+
+/**
+ * A copy of `facts` with `column` read as `type` on More details. Unlike {@link withColumnType},
+ * Text is written too: on a More details column a column with no type is read as a phone number
+ * wherever its value looks like one, so choosing Text is the supervisor saying "this is not a phone
+ * number", and it is kept.
+ */
+export function withMoreType(facts: FactsForm, column: string, type: AgencyContextFieldType): FactsForm {
+  const next = withColumnType(facts, column, type);
+  if (type !== 'text') return next;
+  const key = columnNamed(Object.keys(facts.types), column) ?? column;
+  return { ...next, types: { ...next.types, [key]: 'text' } };
 }
 
 /** The keys the card's facts make: the fixed four, then each fact's key (`scriptPlaceholdersFor`). */
@@ -782,16 +911,60 @@ function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function sortedTypes(types: Record<string, AgencyContextFieldType>): Array<[string, AgencyContextFieldType]> {
-  return Object.entries(types).sort(([a], [b]) => a.localeCompare(b));
+/** Whether the card or More details differ between two forms (spaces round a name ignored). */
+export function factsChanged(saved: FactsForm, now: FactsForm): boolean {
+  return cardChanged(saved, now, null, []) || !same(foldedSorted(saved.moreHidden), foldedSorted(now.moreHidden));
 }
 
-/** Whether the card differs between two forms (spaces round a name ignored). */
-export function factsChanged(saved: FactsForm, now: FactsForm): boolean {
+/** The type `facts` gives `column` (ignoring case), or undefined when it gives none. */
+function typeEntry(facts: FactsForm, column: string): AgencyContextFieldType | undefined {
+  const key = columnNamed(Object.keys(facts.types), column);
+  return key === undefined ? undefined : facts.types[key];
+}
+
+/** The columns whose type differs between two forms (ignoring case; Text chosen differs from none), each once. */
+function typesChanged(saved: FactsForm, now: FactsForm): string[] {
+  const out: string[] = [];
+  for (const column of [...Object.keys(now.types), ...Object.keys(saved.types)]) {
+    if (out.some((c) => sameColumn(c, column))) continue;
+    if (typeEntry(saved, column) !== typeEntry(now, column)) out.push(column);
+  }
+  return out;
+}
+
+/** The columns the card shows: the name and the line under it (chosen or guessed over `columns`), and each fact's. */
+function cardColumnsOf(facts: FactsForm, columns: readonly string[], hidden: readonly string[]): string[] {
+  return [nameColumnOf(facts, columns, hidden), placeColumnOf(facts, columns, hidden), ...facts.list.map((f) => f.column)]
+    .filter((c): c is string => c !== undefined && c.trim() !== '');
+}
+
+/**
+ * The columns whose type changed that the card does not show, before or after (AS20): More details
+ * columns, whose type a save merges into the stored display without writing the card. None while
+ * `columns` is not known, as the name and the line under it may be guessed from any column (and a
+ * column read as a phone is never guessed, so a type can move a guess).
+ */
+function offCardTypesChanged(saved: FactsForm, now: FactsForm, columns: readonly string[] | null, hidden: readonly string[]): string[] {
+  if (columns === null) return [];
+  const card = [...cardColumnsOf(saved, columns, hidden), ...cardColumnsOf(now, columns, hidden)];
+  return typesChanged(saved, now).filter((column) => !card.some((c) => sameColumn(c, column)));
+}
+
+/**
+ * Whether the card itself (the name, the line under it, the facts, the type of a column it shows)
+ * differs; not More details' ticks, nor the type of a column only More details shows (AS20). With
+ * `columns` unknown, any type change is the card's.
+ */
+function cardChanged(saved: FactsForm, now: FactsForm, columns: readonly string[] | null, hidden: readonly string[]): boolean {
   return !same(rolesPayload(saved), rolesPayload(now))
     || placeMode(saved) !== placeMode(now)
     || !same(factsPayload(saved), factsPayload(now))
-    || !same(sortedTypes(saved.types), sortedTypes(now.types));
+    || typesChanged(saved, now).length > offCardTypesChanged(saved, now, columns, hidden).length;
+}
+
+/** Column names folded and sorted, each once: two lists that name the same columns compare equal. */
+function foldedSorted(columns: readonly string[]): string[] {
+  return [...new Set(columns.map(fold))].sort();
 }
 
 /** Each setting here that differs between the saved form and the one on screen. */
@@ -813,6 +986,15 @@ export interface StationPlan {
   /** The card (`context_display`) is sent: it changed, or the script names a key only the form's card has. */
   displaySent: boolean;
   /**
+   * The card itself is written ({@link contextDisplayPayload}). False when only More details
+   * changed (its ticks, or the type of a column only it shows): then only `more_hidden`, `order`
+   * and those columns' types are merged into the stored display ({@link moreDetailsDisplayPayload}).
+   * Only a card that is sent is judged ({@link stationErrors}).
+   */
+  cardSent: boolean;
+  /** AS20: the More details columns whose type changed, merged into the stored types when the card is not sent. */
+  moreTyped: string[];
+  /**
    * The keys the script may use as things stand: the form's card's when the card is sent; else the
    * stored display's (with the form's, which then equal them or are not yet written).
    */
@@ -821,19 +1003,29 @@ export interface StationPlan {
   offered: string[];
 }
 
-/** {@link StationPlan} for this form against what is saved and the stored display. */
+/**
+ * {@link StationPlan} for this form against what is saved and the stored display. `columns`, the
+ * columns the card's selects offer, tell which columns the card shows (the name and the line under
+ * it may be guessed from them), so a type change to a column only More details shows does not send
+ * the card; null (not known) counts every type change as the card's.
+ */
 export function stationPlan(
   saved: StationSettingsForm,
   now: StationSettingsForm,
   storedDisplay: AgencyContextDisplay | null | undefined,
+  columns: readonly string[] | null = null,
 ): StationPlan {
   const changes = stationChanges(saved, now);
   const scriptSent = changes.includes('script');
   const stored = scriptPlaceholdersFor(isRecord(storedDisplay) ? storedDisplay : {});
   const offered = cardKeys(now.facts);
-  const displaySent = changes.includes('customerFacts') || (scriptSent && scriptUnknowns(now.script, stored).length > 0);
-  const allowed = displaySent ? offered : [...stored, ...offered.filter((k) => !stored.includes(k))];
-  return { changes, scriptSent, displaySent, allowed, offered };
+  const scriptNeedsCard = scriptSent && scriptUnknowns(now.script, stored).length > 0;
+  const displaySent = changes.includes('customerFacts') || scriptNeedsCard;
+  const hidden = hiddenColumns(storedDisplay);
+  const cardSent = scriptNeedsCard || cardChanged(saved.facts, now.facts, columns, hidden);
+  const moreTyped = cardSent ? [] : offCardTypesChanged(saved.facts, now.facts, columns, hidden);
+  const allowed = cardSent ? offered : [...stored, ...offered.filter((k) => !stored.includes(k))];
+  return { changes, scriptSent, displaySent, cardSent, moreTyped, allowed, offered };
 }
 
 /**
@@ -841,21 +1033,29 @@ export function stationPlan(
  * saved, so an untouched one is never sent back over someone else's newer edit, and the card with
  * a script that needs it ({@link stationPlan}). `storedDisplay` is the campaign's `context_display`
  * as last read, which the card is merged into; `columns`, the columns the card's selects offer,
- * name the guessed name column the card writes ({@link contextDisplayPayload}).
+ * name the guessed name column the card writes ({@link contextDisplayPayload}); `uploaded`, the
+ * latest upload's columns, are its `order` when it has none (AS20).
  */
 export function stationPayload(
   saved: StationSettingsForm,
   now: StationSettingsForm,
   storedDisplay: AgencyContextDisplay | null | undefined,
   columns: readonly string[] | null = null,
+  uploaded: readonly string[] | null = null,
 ): Partial<AgencyCampaign> {
-  const plan = stationPlan(saved, now, storedDisplay);
+  const plan = stationPlan(saved, now, storedDisplay, columns);
   const changed = new Set(plan.changes);
   return {
     ...(changed.has('dailyTarget') ? { daily_target_calls: dailyTargetPayload(now.dailyTarget) } : {}),
     ...(changed.has('phoneDisplay') ? { phone_display: now.phoneDisplay } : {}),
     ...(plan.scriptSent ? { agent_script: scriptPayload(now.script) } : {}),
-    ...(plan.displaySent ? { context_display: contextDisplayPayload(storedDisplay, now.facts, columns) } : {}),
+    ...(plan.displaySent
+      ? {
+          context_display: plan.cardSent
+            ? contextDisplayPayload(storedDisplay, now.facts, columns, uploaded)
+            : moreDetailsDisplayPayload(storedDisplay, now.facts, columns, uploaded, plan.moreTyped),
+        }
+      : {}),
   };
 }
 
@@ -935,8 +1135,11 @@ export interface StationContext extends FactsContext {
 /**
  * Every finding here that holds Save, keyed by field path; empty when it may be saved. Only what is
  * sent is judged: one stored before a rule existed (or written another way) is not sent back, so
- * it does not hold a save of something else. A card that is sent while the stored script (not sent)
- * loses a key it uses is said on the facts list, as the server says it ({@link lostKeysMessage}).
+ * it does not hold a save of something else. The card is judged only when it is sent
+ * ({@link StationPlan.cardSent}): a save of More details alone merges its ticks and types into the
+ * stored display and leaves the card as stored, so a finding about the card (shown on its rows all
+ * the same) does not hold it. A card that is sent while the stored script (not sent) loses a key it
+ * uses is said on the facts list, as the server says it ({@link lostKeysMessage}).
  */
 export function stationErrors(
   saved: StationSettingsForm,
@@ -944,16 +1147,16 @@ export function stationErrors(
   storedDisplay: AgencyContextDisplay | null | undefined,
   context: StationContext,
 ): Record<string, string> {
-  const plan = stationPlan(saved, now, storedDisplay);
+  const plan = stationPlan(saved, now, storedDisplay, context.columns ?? null);
   const target = plan.changes.includes('dailyTarget') ? dailyTargetError(now.dailyTarget) : null;
   const errors: Record<string, string> = {
     ...(target ? { daily_target_calls: target } : {}),
     ...(plan.scriptSent ? scriptErrors(now.script, plan.allowed) : {}),
-    ...(plan.displaySent ? factsErrors(now.facts, context) : {}),
+    ...(plan.cardSent ? factsErrors(now.facts, context) : {}),
   };
-  if (plan.displaySent && context.cardWaiting) {
+  if (plan.cardSent && context.cardWaiting) {
     errors[FACTS_FIELD] = context.cardWaiting;
-  } else if (plan.displaySent && !plan.scriptSent && errors[FACTS_FIELD] === undefined) {
+  } else if (plan.cardSent && !plan.scriptSent && errors[FACTS_FIELD] === undefined) {
     // The server's refusal of a card that takes a key from the stored script, in its words, on its field.
     const lost = lostKeysMessage(now.script, storedDisplay, now.facts);
     if (lost !== null) errors[FACTS_FIELD] = lost;

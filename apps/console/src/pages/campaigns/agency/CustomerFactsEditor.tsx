@@ -21,7 +21,10 @@ import {
   columnType,
   factField,
   firstSample,
+  sampleRaw,
   labelLength,
+  moreShown,
+  moreTypeOf,
   moveFact,
   nameColumnOf,
   newFact,
@@ -32,11 +35,16 @@ import {
   withAmountDue,
   withColumnType,
   withHighlight,
+  withMoreAll,
+  withMoreShown,
+  withMoreType,
   type FactsForm,
   type RemovedFact,
   type SampleRow,
 } from '../../../utils/agency/stationSettings';
 import type { ConfigFieldErrors } from './configFieldErrors';
+import { fold } from '@magick-agency/domain/context-columns';
+import { looksLikePhoneNumber } from '@magick-agency/domain/more-details';
 import styles from './StationSettings.module.css';
 
 /** A control of a fact's row that can take focus. */
@@ -87,6 +95,11 @@ const PLACE_NONE = '\u0000none';
  * with its reason when it cannot go back), under the one message that holds Save. Errors come
  * keyed as the server keys them (`context_display.roles.<role>`, `context_display.facts.<i>.<part>`,
  * `context_display.types.<column>`), so the server's refusal lands on the field it is about.
+ *
+ * AS20: under the facts, More details lists every other column of the latest upload (not the
+ * name, the line under it or a fact), each shown to agents unless ticked off (`more_hidden`), with
+ * its sample as agents will see it and how it is read; a column read as a phone number only
+ * because its values look like one says so, and Text or Number takes that back.
  *
  * Column names match as the server matches them, ignoring case. Ids are made from places in the
  * list, never from column names, so two names an id would spell alike never share one.
@@ -182,8 +195,19 @@ export function CustomerFactsEditor({
   const placeColumn = placeColumnOf(value, shown, hidden);
   const usedColumns = [nameColumn, placeColumn, ...list.map((f) => f.column)].filter((c): c is string => Boolean(c));
   const offerable = uploaded === undefined ? shown : shown.filter((c) => uploaded.some((u) => sameColumn(u, c)));
+  // The columns free for a fact; AS20: also More details, the latest upload's columns that are not
+  // the name, the line under it or a fact.
   const free = offerable.filter((c) => !usedColumns.some((u) => sameColumn(u, c)));
   const typeOf = (column: string): AgencyContextFieldType => columnType(value, column);
+  const moreOn = free.filter((c) => moreShown(value, c));
+  // Each More details column's sample values (the server reads each customer's own) and how it is
+  // read, once per render, by its folded name.
+  const moreRead = new Map<string, { values: string[]; type: AgencyContextFieldType }>();
+  for (const column of free) {
+    const values = samples.map((row) => sampleRaw(row, column)).filter((raw) => raw !== '');
+    moreRead.set(fold(column), { values, type: moreTypeOf(value, column, values) });
+  }
+  const moreOf = (column: string) => moreRead.get(fold(column));
   const sampleOf = (column: string): string => sampleText(firstSample(samples, column), typeOf(column), phoneDisplay);
   const nameOf = (fact: AgencyFactField): string => fact.label.trim() || fact.column;
 
@@ -683,6 +707,107 @@ export function CustomerFactsEditor({
 
       <div className={styles.srOnly} role="status" aria-live="polite" data-testid="facts-announce">{announcement}</div>
 
+      {/* AS20: every other column of the latest upload, which agents open under the card. */}
+      <section className={styles.more} aria-labelledby={`${id}-more`} data-testid="more-details-settings">
+        <div className={styles.moreHead}>
+          <h4 className={styles.minorHead} id={`${id}-more`}>More details</h4>
+          {columnsRead === 'done' && free.length > 0 ? (
+            <span className={styles.hint} data-testid="more-details-shown">{`${moreOn.length} of ${free.length} shown`}</span>
+          ) : null}
+        </div>
+        <p className={styles.hint}>
+          Agents open these under the card, below its facts. Every other column of the customer list is
+          shown to them unless it is turned off here. A column turned off is hidden from agents only:
+          supervisors still see it on the contact page.
+        </p>
+        {columnsRead !== 'done' ? columnsState('more-details-columns') : free.length === 0 ? (
+          <p className={styles.hint} data-testid="more-details-none">
+            {readOnly
+              ? value.moreHidden.length > 0
+                ? `Turned off for agents: ${value.moreHidden.join(', ')}.`
+                : 'Agents see every other column of the customer list.'
+              : (uploaded ?? shown).length === 0
+                ? 'This campaign has no customer list yet. Upload one first.'
+                : 'Every column agents may see is already on the card.'}
+          </p>
+        ) : (
+          <>
+            {readOnly ? null : (
+              <div className={styles.moreAll}>
+                <button
+                  type="button"
+                  className={styles.fixBtn}
+                  disabled={moreOn.length === free.length}
+                  onClick={() => onChange(withMoreAll(value, free, true))}
+                  data-testid="more-details-all-on"
+                >
+                  Show all
+                </button>
+                <button
+                  type="button"
+                  className={styles.fixBtn}
+                  disabled={moreOn.length === 0}
+                  onClick={() => onChange(withMoreAll(value, free, false))}
+                  data-testid="more-details-all-off"
+                >
+                  Hide all
+                </button>
+              </div>
+            )}
+            <ul className={styles.typeRows} aria-labelledby={`${id}-more`}>
+              {free.map((column, index) => {
+                const checkId = `${id}-more-${index}`;
+                const typeId = `${id}-more-type-${index}`;
+                const noteId = `${id}-more-note-${index}`;
+                const { values, type } = moreOf(column)!;
+                // The sample shown is one that reads as a phone number when the note says some do.
+                const raw = (type === 'phone' ? values.find((v) => looksLikePhoneNumber(v)) : undefined) ?? values[0] ?? '';
+                const sample = sampleText(raw, type, phoneDisplay);
+                const looksPhone = type === 'phone' && typeOf(column) !== 'phone';
+                const on = moreShown(value, column);
+                return (
+                  <li key={column} className={styles.moreRow} data-testid={`more-detail-setting-${column}`}>
+                    <label htmlFor={checkId} className={styles.moreCheck}>
+                      <input
+                        id={checkId}
+                        type="checkbox"
+                        checked={on}
+                        disabled={readOnly}
+                        onChange={(event) => onChange(withMoreShown(value, column, event.target.checked))}
+                        aria-describedby={looksPhone ? noteId : undefined}
+                        data-testid={`more-detail-show-${column}`}
+                      />
+                      <b>{column}</b>
+                      <span className={styles.sample}>{sample !== '' ? `e.g. ${sample}` : ''}</span>
+                    </label>
+                    <label htmlFor={typeId} className={styles.srOnly}>{`How ${column} is read`}</label>
+                    <select
+                      id={typeId}
+                      className={styles.typeSelect}
+                      value={type}
+                      disabled={readOnly}
+                      onChange={(event) => onChange(withMoreType(value, column, event.target.value as AgencyContextFieldType))}
+                      aria-describedby={looksPhone ? noteId : undefined}
+                      data-testid={`more-detail-type-${column}`}
+                    >
+                      {AGENCY_CONTEXT_FIELD_TYPES.map((t) => (
+                        <option key={t} value={t}>{CONTEXT_TYPE_LABELS[t]}</option>
+                      ))}
+                    </select>
+                    {looksPhone ? (
+                      <span id={noteId} className={styles.typeError} data-testid={`more-detail-phone-note-${column}`}>
+                        This looks like a phone number, so agents see it as one{phoneDisplay === 'masked' ? ', with the middle digits hidden' : ''}. Choose Text or Number if it is not.
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+        {errors.render('context_display.more_hidden')}
+      </section>
+
       <details className={styles.types} open={typesOpen || typeErrorShown} onToggle={(event) => setTypesOpen((event.target as HTMLDetailsElement).open)}>
         <summary className={styles.minorHead} id={`${id}-types`}>How each column is read</summary>
         <p className={styles.hint}>One setting per column. Changing it here or on a fact above is the same change.</p>
@@ -695,9 +820,13 @@ export function CustomerFactsEditor({
                 <label htmlFor={selectId} className={styles.typeColumn}>{column}</label>
                 <select
                   id={selectId}
-                  value={typeOf(column)}
+                  value={moreOf(column)?.type ?? typeOf(column)}
                   disabled={readOnly}
-                  onChange={(event) => onChange(withColumnType(value, column, event.target.value as AgencyContextFieldType))}
+                  onChange={(event) => {
+                    const type = event.target.value as AgencyContextFieldType;
+                    // A More details column is read as More details reads it (AS20), the same select as there.
+                    onChange(moreOf(column) ? withMoreType(value, column, type) : withColumnType(value, column, type));
+                  }}
                   aria-invalid={errors.message(field) ? true : undefined}
                   aria-describedby={errors.describedBy(field)}
                   data-testid={`fact-type-${column}`}

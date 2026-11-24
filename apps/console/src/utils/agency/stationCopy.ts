@@ -138,6 +138,13 @@ export const STATION_COPY = {
   /** AS19 S11: what a screen reader hears for a fact this customer has no value for (the tile shows "—"). */
   factNotGiven: (name: string) => `${name}: not given`,
   callAgainTag: (n: number, of: number) => `Calling again · ${n} of ${of}`,
+  /** AS20: the card's More details, the customer's other columns. */
+  moreDetails: 'More details',
+  moreDetailsCount: (n: number) => (n === 1 ? '1 more' : `${n} more`),
+  moreDetailsHint: 'Scroll down to see them.',
+  moreDetailsShown: (shown: number, of: number) => `Showing ${shown} of ${of}. Scroll down for more.`,
+  moreDetailsShowAll: 'Show all',
+  moreDetailsHide: 'Hide',
 
   // 04 On call
   onCallTitle: 'On call',

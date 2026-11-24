@@ -18,6 +18,7 @@ import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 // The pure row → wire projection, imported from its leaf rather than the barrel: the
 // dialer's unit tests replace the barrel wholesale, and the panel's shape is not a mock's to make.
 import { projectPriorAttempt } from '../db/repositories/agency/projections.js';
+import { agencyIngestJobRepository } from './agency-ingest-job.repository.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
 import { holdOutcomeUnknownContact, parkRedialContact, settleContact } from './dialer/contact-settlement.js';
 import { wrapupRedialRemaining } from './wrapup-redial-rules.js';
@@ -47,7 +48,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import type { WrapupManager } from './wrapup-manager.js';
-import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
+import { campaignImportLineage, isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
@@ -183,6 +184,14 @@ const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
 
 /**
+ * How long a campaign's import column order (AS20, More details) is reused before it is read
+ * again: a new upload's columns reach the panel within this long.
+ */
+const COLUMN_ORDER_TTL_MS = 60_000;
+/** Far above the campaigns one process dials at once. */
+const COLUMN_ORDER_MAX_ENTRIES = 2_000;
+
+/**
  * A campaign's `telephony_provider` as a metric label: the carrier name when the code
  * declares that carrier, else `other`. The column is free text (a CHECK on its shape, not
  * its values), and a label's values are bounded by source code, never by data.
@@ -310,6 +319,10 @@ export class AgencyDialer {
    */
   private readonly unansweredInARow = new TtlCache<number>({
     ttlMs: DIAL_ACTIVITY_TTL_MS, maxEntries: DIAL_ACTIVITY_MAX_ENTRIES, name: 'dial-activity',
+  });
+  /** AS20: each campaign's import column order, which More details follows ({@link columnOrderOf}). */
+  private readonly columnOrders = new TtlCache<string[]>({
+    ttlMs: COLUMN_ORDER_TTL_MS, maxEntries: COLUMN_ORDER_MAX_ENTRIES, name: 'column-order',
   });
   private unsubscribeLifecycle: (() => void) | null = null;
   /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
@@ -461,6 +474,8 @@ export class AgencyDialer {
     // $1` and match nothing (NULL is never equal to anything) — the fallback makes
     // that case degrade to "this contact's own history" instead of silently to
     // "no history", which is the same class of answer the catch below produces.
+    // The import's column order (AS20) is read beside the history; it never throws.
+    const columnOrder = this.columnOrderOf(cmd.campaign);
     let priors: AgencyPriorAttempt[] = [];
     try {
       const rows = await agencyAttemptRepository.findPriorForContactLineage(
@@ -479,7 +494,7 @@ export class AgencyDialer {
       log.warn({ err, attemptId }, 'Could not load prior attempts — sending panel without history');
     }
 
-    const attempt = buildPanel(cmd, priors);
+    const attempt = buildPanel(cmd, priors, await columnOrder);
 
     // ── 2. Push the panel. SYNCHRONOUS, and before the dial. ────────────────
     //
@@ -768,6 +783,24 @@ export class AgencyDialer {
         'Could not attach the media leg to the agency attempt — call is live but uncorrelated',
       ),
     );
+  }
+
+  /**
+   * AS20: the column order of the campaign's imports (and its lineage root's, for a retry), which
+   * More details follows after `context_display.order`: the database keeps no key order in a row,
+   * so without it a campaign no one has saved in Settings would list its columns shortest name
+   * first. The latest upload's order first (`contextColumnOrder`), as Settings saves it. Cached per
+   * campaign for {@link COLUMN_ORDER_TTL_MS}. Nice to have, like the history: a failed read costs
+   * the order, never the call (null: the row's own order).
+   */
+  private async columnOrderOf(campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>): Promise<string[] | null> {
+    const lineage = campaignImportLineage(campaign);
+    try {
+      return await this.columnOrders.getOrLoad(lineage.join(','), () => agencyIngestJobRepository.contextColumnOrder(lineage));
+    } catch (err) {
+      log.warn({ err, campaignId: campaign.id }, 'Could not read the import column order — More details in the row order');
+      return null;
+    }
   }
 
   /**

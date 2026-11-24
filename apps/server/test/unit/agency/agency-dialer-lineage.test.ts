@@ -48,6 +48,11 @@ const { repos } = vi.hoisted(() => ({
     session: { setState: vi.fn().mockResolvedValue(undefined) },
   },
 }));
+const { ingest } = vi.hoisted(() => ({
+  ingest: { contextColumnOrder: vi.fn().mockResolvedValue([]) },
+}));
+vi.mock('../../../src/agency/agency-ingest-job.repository.js', () => ({ agencyIngestJobRepository: ingest }));
+
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyContactRepository: repos.contact,
@@ -143,7 +148,10 @@ async function dial(contact: any = COPIED_CONTACT) {
   return ws;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  ingest.contextColumnOrder.mockResolvedValue([]);
+});
 
 describe('the panel reads the CHAIN, not the contact row', () => {
   it('keys the history read on root_contact_id', async () => {
@@ -250,5 +258,54 @@ describe('a failed lineage read still costs only the history', () => {
     expect(bridge.createBridgedCall).toHaveBeenCalledTimes(1);
     const reserved = ws.sent.find((f) => f.event === 'reserved');
     expect(reserved.attempt.prior_attempts).toEqual([]);
+  });
+});
+
+describe('More details follow the imports\' column order (AS20)', () => {
+  // The database keeps no key order in a row (jsonb: shorter keys first), so the panel's More
+  // details read the order the campaign's imports kept, the lineage root's too for a retry.
+  const ROW = { ...COPIED_CONTACT, context: { Zone: 'North', 'Loan No': 'LN-1', Ab: 'x' } };
+  const RETRY = { ...CAMPAIGN, root_campaign_id: 'camp-root' };
+
+  async function dialWith(dialer: AgencyDialer, campaign = RETRY) {
+    const stations = (dialer as any).stations as StationRegistry;
+    const ws = fakeWs();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-child', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: ws as any,
+    });
+    await dialer.executeDial({ ...makeCmd(ROW), campaign });
+    return ws.sent.find((f) => f.event === 'reserved').attempt;
+  }
+
+  function newDialer() {
+    const stations = new StationRegistry(null, '', 'r1');
+    const dialer = new AgencyDialer(fakeBridge() as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any);
+    (dialer as any).stations = stations;
+    dialer.start();
+    return dialer;
+  }
+
+  it('lists them in the order the lineage\'s imports named them', async () => {
+    ingest.contextColumnOrder.mockResolvedValue(['Loan No', 'Ab', 'Zone']);
+    const attempt = await dialWith(newDialer());
+    expect(ingest.contextColumnOrder).toHaveBeenCalledWith(['camp-child', 'camp-root']);
+    expect(attempt.facts.more.map((t: any) => t.column)).toEqual(['Loan No', 'Ab', 'Zone']);
+  });
+
+  it('reads the order once a minute per campaign, not on every dial', async () => {
+    ingest.contextColumnOrder.mockResolvedValue(['Zone', 'Loan No', 'Ab']);
+    const dialer = newDialer();
+    await dialWith(dialer);
+    const second = await dialWith(dialer);
+    expect(ingest.contextColumnOrder).toHaveBeenCalledTimes(1);
+    expect(second.facts.more.map((t: any) => t.column)).toEqual(['Zone', 'Loan No', 'Ab']);
+  });
+
+  it('a failed read costs the order, never the call: the panel goes in the row\'s order', async () => {
+    ingest.contextColumnOrder.mockRejectedValueOnce(new Error('db down'));
+    const attempt = await dialWith(newDialer(), CAMPAIGN);
+    expect(ingest.contextColumnOrder).toHaveBeenCalledWith(['camp-child']);
+    expect(attempt.facts.more.map((t: any) => t.column)).toEqual(['Zone', 'Loan No', 'Ab']);
   });
 });

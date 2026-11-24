@@ -170,7 +170,9 @@ class _ContactFieldListState extends State<ContactFieldList> {
   }
 }
 
-/// "More details (6) ▾" on the ringing screen.
+/// "More details (6) ▾": the roster row's other fields, on the side views (an inbound caller, the
+/// soft phone), which list the row themselves. The station's Call coming and On call draw the
+/// server's More details instead (AS20, `more_details_card.dart`).
 class MoreDetails extends StatefulWidget {
   const MoreDetails({super.key, required this.fields});
 

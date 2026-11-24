@@ -466,7 +466,7 @@ function CompletedJob({
 }
 
 /**
- * "Tick what agents should see on their screen" (CS9): the sample rows with a switch on each
+ * "Tick what goes on the customer card" (CS9): the sample rows with a switch on each
  * column. The rules are `utils/campaignSetup/cardColumns.ts`; this is assembly.
  */
 function CardPicker({
@@ -492,7 +492,7 @@ function CardPicker({
 
   return (
     <SetupSection
-      title="Tick what agents should see on their screen"
+      title="Tick what goes on the customer card"
       helper={cardSummaryLine(mapping)}
       actions={actions}
       testId="card-columns"
@@ -517,7 +517,7 @@ function CardPicker({
                       <Switch
                         checked={column.on}
                         disabled={!editable || column.locked}
-                        ariaLabel={`Show ${column.name} to agents`}
+                        ariaLabel={`Put ${column.name} on the card`}
                         describedBy={fullReason ? fullId : column.lockedReason ? reasonId : undefined}
                         testId={`card-switch-${index}`}
                         onChange={(next) => setMapping(toggleCardColumn(mapping, column.name, next))}
@@ -550,8 +550,9 @@ function CardPicker({
         </table>
       </div>
       <p className={styles.muted} id={hintId}>
-        The ticked columns become the customer card on the agent screen. Phone numbers stay partly
-        hidden from agents unless you change it in step 4.
+        The ticked columns become the customer card on the agent screen. Agents see every other
+        column under More details, below the card; you can turn any of them off in the campaign's
+        Settings. Phone numbers stay partly hidden from agents unless you change it in step 4.
       </p>
       {!editable && lockedNote ? (
         <p className={styles.muted} data-testid="card-locked">

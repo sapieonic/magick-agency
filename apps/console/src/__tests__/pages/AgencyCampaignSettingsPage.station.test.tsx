@@ -394,6 +394,8 @@ describe('Settings › Customers: the customer card (AS19)', () => {
     expect(sentBody().context_display).toEqual({
       hero: ['Due Amount'],
       hidden: ['PAN'],
+      // AS20: no stored order, so the latest upload's, in the file's order (More details follows it).
+      order: ['Borrower', 'City', 'Due Amount', 'Due Date', 'PAN'],
       // The line under the name it guessed (City) is written too (S2): with facts none is guessed.
       roles: { name: 'Borrower', place: 'City' },
       types: { 'Due Amount': 'money', 'Due Date': 'date' },
@@ -557,6 +559,61 @@ describe('Settings › Customers: the customer card (AS19)', () => {
     expect(await screen.findByText('This column is not in the latest upload. Choose another or remove the fact.')).toBeTruthy();
     expect(screen.getByTestId('fact-row-0').hasAttribute('data-error')).toBe(true);
     expect(screen.getByTestId('fact-row-1').hasAttribute('data-error')).toBe(false);
+  });
+
+  // AS20: an old-model card whose form would not make {due_date}, which the stored script uses.
+  const oldCardWithScript = () => campaign({
+    agent_script: { opening: 'Pay by {due_date}' },
+    context_display: { hero: ['Due Amount'], hidden: ['PAN'], roles: { name: 'Borrower', amount_due: 'Due Amount' } },
+  });
+
+  it('saves a column turned off under More details though the card has a finding: the card is not sent (AS20)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(oldCardWithScript());
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}']));
+    fireEvent.click(await screen.findByTestId('more-detail-show-Due Date'));
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody()).not.toHaveProperty('agent_script');
+    expect(sentBody().context_display).toEqual({
+      hero: ['Due Amount'],
+      hidden: ['PAN'],
+      roles: { name: 'Borrower', amount_due: 'Due Amount' },
+      order: ['Borrower', 'City', 'Due Amount', 'Due Date', 'PAN'],
+      more_hidden: ['Due Date'],
+    });
+  });
+
+  it('merges a type chosen under More details into the stored types, leaving the campaign on the old card (AS20)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(oldCardWithScript());
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}']));
+    fireEvent.change(await screen.findByTestId('more-detail-type-Due Date'), { target: { value: 'number' } });
+    // R5: the card is not being written, so the script is still read as agents on the old card hear it.
+    openTab('purpose');
+    await waitFor(() => expect(screen.getByText(/as agents see it until the customer card is saved here/)).toBeTruthy());
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody().context_display).toEqual({
+      hero: ['Due Amount'],
+      hidden: ['PAN'],
+      roles: { name: 'Borrower', amount_due: 'Due Amount' },
+      order: ['Borrower', 'City', 'Due Amount', 'Due Date', 'PAN'],
+      types: { 'Due Date': 'number' },
+    });
+  });
+
+  it('still holds a change to the card that takes a key the stored script uses (AS20)', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(oldCardWithScript());
+    renderPage();
+    await cardReady();
+    await waitFor(() => expect(factKeys()).toEqual(['{amount_due}']));
+    fireEvent.change(screen.getByTestId('fact-label-0'), { target: { value: 'Amount due' } });
+    save();
+    expect(await screen.findByText('The script uses {due_date}. Take it out of the script first, or keep the fact.')).toBeTruthy();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
   it('puts a fact back from the script’s fix row: its row takes focus, and it is said (S9)', async () => {

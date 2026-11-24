@@ -253,7 +253,7 @@ assist") are sent on every connect, a re-minted one included.
 
 ## The station's screens (the agent station redesign, phases 0 to 2)
 
-The station follows the redesign ([`agent-station.md`](agent-station.md), rulings AS1–AS19;
+The station follows the redesign ([`agent-station.md`](agent-station.md), rulings AS1–AS20;
 [`agent-station/design-spec.md`](agent-station/design-spec.md), the phone column of its §4). Phase 0
 built the screens on the data every server sends (backend plan BE-0); phases 1–2 read stream F's
 optional fields (the list at the end of this section). Every one of them is optional (AS18): from a
@@ -346,8 +346,11 @@ text the band scrolls with the content and the main action keeps its place.
   exactly as written; else the campaign's hero fields; the last call's date takes the third tile.
   A booked call-later coming due is tagged above the name, "Call later · You said you will call
   at 3:00 PM" (BE-4). A campaign that masks the number (AS9) shows `98••• ••321` on the card, the
-  band, Details and the Don't call again sheets. A tap opens every field (Details: the hero cap is
-  the name and 4 facts on a chosen campaign, R2). The compact card (What happened?, the soft
+  band, Details and the Don't call again sheets. A tap opens Details (the hero cap is the name and
+  4 facts on a chosen campaign, R2; under them the line under the name, then the server's More
+  details, or every field from an older server). Under the card on Call coming and On call, More
+  details (AS20, `parts/more_details_card.dart`): closed at first, 4 more rows per drag down while
+  its end is on screen (at most one step per 300 ms), "Show all" / "Hide" (after which a drag opens nothing until "Show all"). The compact card (What happened?, the soft
   phone's) of a chosen campaign with no name is "Customer" over the number and then the first fact
   with a value (S4).
 - **The script** (BE-8), when the campaign has one: "First, say this" with the opening line on Call
@@ -367,7 +370,8 @@ text the band scrolls with the content and the main action keeps its place.
   Don't call again is a row on the call and on What happened? when the campaign's outcomes have no
   such tile (the server marks an attempt after it ended too: `POST /attempts/:id/dnc` checks only
   that it is this account's), until the outcome is saved; its result never shows the number (AS9).
-  Details shows every field and the history, without "Attempt N" or "Calling from" (spec §8).
+  Details shows the fields (the server's More details when it sends them, AS20) and the history,
+  without "Attempt N" or "Calling from" (spec §8).
 - **What happened?**: one tile per outcome of the campaign's own list, two across (ten or more: the
   first eight and a More tile that opens the rest, spec §6.2), with the picture
   the supervisor chose (BE-13; else one by the outcome's flags: ₹, a clock, a stop sign, a
