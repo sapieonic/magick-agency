@@ -10,7 +10,9 @@
  * label matcher, label list and `{{legend}}` placeholder must resolve, every
  * query must survive the 60s OTLP export interval, and every query must be
  * scoped to agency's deployments only: every selector must carry
- * `$service_name`, whose All value is agency's regex.
+ * `$service_name`, whose All value is agency's regex. A rate()/increase() over
+ * the compliance and abandonment-cause counters must count a series' first
+ * increment (`FIRST_INCREMENT_COUNTERS`).
  *
  * Product names in titles and descriptions (B17) are the repo-wide branding
  * guard's job (`apps/server/test/unit/branding/no-external-references.test.ts`
@@ -24,7 +26,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   root, loadDeclarations, scraperProblems, stripComments, RETIRED_SERIES,
-  parsePromQL, promqlFacts, outputLabels, labelsInScope,
+  parsePromQL, promqlFacts, outputLabels, labelsInScope, walkPromQL,
 } from './metric-declarations.mjs';
 
 const dashboardPath = join(root, 'grafana/dashboards/magick-agency-overview.json');
@@ -35,7 +37,7 @@ const IMPLICIT_LABELS = new Set([
 ]);
 
 const BUILTIN_VARIABLES = new Set([
-  '__rate_interval', '__range', '__range_s', '__range_ms', '__interval', '__interval_ms', '__all',
+  '__rate_interval', '__rate_interval_ms', '__range', '__range_s', '__range_ms', '__interval', '__interval_ms', '__all',
   '__from', '__to', '__dashboard', '__org', '__user',
 ]);
 
@@ -132,6 +134,55 @@ function ownLabels(sel, { declarations, series }) {
 }
 
 const hasMatcher = (sel, m) => sel.matchers.some((x) => x.label === m.label && x.op === m.op && x.value === m.value);
+
+/**
+ * Counters whose every increment is a number someone reconciles against SQL: the compliance
+ * numerator and denominator and the abandonment causes. Each carries `campaign_id`, so each
+ * series is born at its first increment, already at 1, and `rate()` / `increase()` take that
+ * first sample as the baseline: the increment is lost (23 Nov on Staging: 7 of 11 abandoned
+ * calls shown, one lost per new series). A panel over one of these must add the new-series arm
+ * (grafana/README.md, "Counting a sparse counter's first increment").
+ */
+const FIRST_INCREMENT_COUNTERS = new Set(['agency_answered_total', 'agency_abandoned_total', 'agency_abandoned_reason_total']);
+
+const unparen = (n) => { while (n?.type === 'paren') n = n.expr; return n; };
+
+/** A selector's identity: its name and its matchers, order-free. */
+function selectorKey(n) {
+  const s = unparen(n);
+  if (s?.type !== 'selector') return null;
+  return `${s.name}{${s.matchers.map((m) => `${m.label}${m.op}${JSON.stringify(m.value)}`).sort().join(',')}}`;
+}
+
+function allNodes(ast) {
+  const out = [];
+  walkPromQL(ast, (n) => out.push(n));
+  return out;
+}
+
+/** `key offset range`, as `node` (parentheses aside). */
+const isOffsetOf = (node, key, range) => {
+  const o = unparen(node);
+  return o?.type === 'offset' && o.offset === range && selectorKey(o.expr) === key;
+};
+
+/**
+ * Whether `ast` counts the first increment of `key` over `range`: the old series through
+ * `(rate|increase)(key[range]) and key offset range`, and the series born inside the window
+ * through `max_over_time(key[range]) unless key offset range`.
+ */
+function hasFirstIncrementArm(ast, fn, key, range) {
+  const nodes = allNodes(ast);
+  const oldArm = nodes.some((n) => n.type === 'binary' && n.op === 'and' && !n.matching
+    && unparen(n.left)?.type === 'call' && unparen(n.left).fn === fn
+    && selectorKey(unparen(n.left).args[0]?.expr) === key && unparen(n.left).args[0]?.range === range
+    && isOffsetOf(n.right, key, range));
+  const newArm = nodes.some((n) => n.type === 'binary' && n.op === 'unless' && !n.matching
+    && unparen(n.left)?.type === 'call' && unparen(n.left).fn === 'max_over_time'
+    && selectorKey(unparen(n.left).args[0]?.expr) === key && unparen(n.left).args[0]?.range === range
+    && isOffsetOf(n.right, key, range));
+  return oldArm && newArm;
+}
 
 describe('agency Grafana dashboard', () => {
   test('reads agency\'s declarations (a scraper that misreads would pass or fail everything below)', () => {
@@ -255,6 +306,30 @@ describe('agency Grafana dashboard', () => {
       }
     }
     assert.deepEqual(problems, [], `queries that read empty at a 60s export interval:\n  ${problems.join('\n  ')}`);
+  });
+
+  // A counter series is created by its first increment, already at 1, and rate()/increase()
+  // measure only growth after their first sample in the window, so the first increment of every
+  // new series is lost. On the counters someone reconciles against SQL, every rate()/increase()
+  // carries the arm that counts a series born inside its window at its whole value.
+  test('every rate()/increase() over a first-increment counter counts the series born in its window', () => {
+    const problems = [];
+    let seen = 0;
+    for (const e of allExpressions(loadDashboard()).filter((x) => x.ast && x.target)) {
+      for (const c of promqlFacts(e.ast).calls) {
+        if (!['rate', 'increase'].includes(c.fn) || c.args[0]?.type !== 'range') continue;
+        const sel = unparen(c.args[0].expr);
+        if (sel?.type !== 'selector' || !FIRST_INCREMENT_COUNTERS.has(sel.name)) continue;
+        seen += 1;
+        const key = selectorKey(sel);
+        if (!hasFirstIncrementArm(e.ast, c.fn, key, c.args[0].range)) {
+          problems.push(`${e.where}: ${c.fn}(${sel.name}[${c.args[0].range}]) drops each new series' first increment`);
+        }
+      }
+    }
+    // Canary: the Throughput and Abandonment Causes panels read these three counters.
+    assert.ok(seen >= 3, `only ${seen} rate()/increase() over ${[...FIRST_INCREMENT_COUNTERS].join(', ')} found`);
+    assert.deepEqual(problems, [], `panels that undercount by one per new series:\n  ${problems.join('\n  ')}`);
   });
 
   test('every template variable referenced by a query is declared', () => {

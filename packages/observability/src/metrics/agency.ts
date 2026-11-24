@@ -46,6 +46,9 @@ export const agencyAnsweredTotal = counter<'tenant_id' | 'campaign_id'>(meter, '
   description: 'Agency dialer attempts the carrier reported answered',
 });
 
+// Read both with the first-increment arm, never a plain `rate()`/`increase()`: each
+// campaign's series is born at 1 and those functions drop that first sample
+// (`agencyAbandonedReasonTotal` below says why, and why the series are not pre-created at 0).
 export const agencyAbandonedTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_abandoned_total', {
   description: 'Agency dialer attempts a customer answered that reached no agent',
 });
@@ -787,9 +790,33 @@ export const agencyBindTotal = counter<'tenant_id' | 'campaign_id' | 'result'>(m
  * genuine no-agent-free abandonment are the same increment in the counting series,
  * and they call for opposite responses — roll back, or slow the pacing down.
  *
- * `sum(rate(agency_abandoned_reason_total[5m]))` should track
- * `sum(rate(agency_abandoned_total[5m]))`. A persistent gap means an abandon path
- * that reaches the compliance counter without declaring a reason.
+ * Summed over reasons it should track `agency_abandoned_total`. A persistent gap
+ * means an abandon path that reaches the compliance counter without declaring a
+ * reason — provided both are read with the first-increment arm below, or the gap
+ * is an artefact: plain `rate()` loses one per new series, and this counter has a
+ * series per campaign AND reason where the compliance counter has one per campaign.
+ *
+ * ⚠️ **A plain `rate()` / `increase()` over this, `agency_abandoned_total` or
+ * `agency_answered_total` undercounts by one per new series.** Each series is
+ * born at its first increment with its first sample already 1, and those
+ * functions count growth after their first sample. On 23 Nov on Staging
+ * `increase(…[16h])` read 7 abandonments where the counters held 11. The dashboard
+ * adds a series born inside the window at its whole value
+ * (`max_over_time(x[w]) unless x offset w`), and `pnpm test:grafana` holds every
+ * panel over these three to it; grafana/README.md, "Counting a sparse counter's
+ * first increment", has the arm for ad-hoc queries and the stack setting that
+ * would make it unnecessary.
+ *
+ * Pre-creating the series at 0 here (`inc(labels, 0)` when a campaign is first
+ * led) was weighed and NOT done. A zero recorded within the same 60 s export as
+ * the first increment never reaches Grafana (the export carries the sum), and a
+ * campaign's first abandonment often lands inside its first minute of dialling,
+ * so it would narrow the loss rather than end it. It would also mint a series
+ * per campaign for every reason, `no_agent_available` included, which cannot
+ * occur, on a stack at its active-series cap. Holding the first increment back
+ * until a zero has been exported
+ * would delay the compliance numerator in process, which the counter-versus-SQL
+ * cross-checks read.
  */
 export const agencyAbandonedReasonTotal = counter<
   'tenant_id' | 'campaign_id' | 'reason'

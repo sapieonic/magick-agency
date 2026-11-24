@@ -258,4 +258,48 @@ an OTel instrument created outside the facades.
 - the routing contract above.
 
 `validate-dashboard.test.mjs` checks the dashboard the same way, plus the 1m Min
-step and 5m windows the 60s OTLP export needs, and agency-only scoping.
+step and 5m windows the 60s OTLP export needs, agency-only scoping, and the
+first-increment arm on every `rate()`/`increase()` over `agency_answered_total`,
+`agency_abandoned_total` and `agency_abandoned_reason_total` (below).
+
+## Counting a sparse counter's first increment
+
+Agency's counters reach Grafana Cloud over OTLP with cumulative temporality, and a
+labelled series exists from its first increment: its first sample is already 1 (or
+more). `rate()` and `increase()` count growth after their first sample, so that
+increment is never counted. A counter with `campaign_id` loses one event per new
+series: on 23 Nov on Staging `increase(agency_abandoned_reason_total[16h])` summed to
+7 where the counters held 11 (four new series), and `agency_abandoned_total` read 8
+of 11 (three campaigns).
+
+- **Alert rules**: every firing `increase()` carries the new-series guard
+  (header of `terraform/alert-rules.tf`), and the validator holds them to it. No
+  rule reads the abandonment counters.
+- **Dashboard**: Throughput (answered, abandoned) and Abandonment Causes read
+  `X` (with the panel's matchers) as
+
+  ```promql
+  (rate(X[$__rate_interval]) and X offset $__rate_interval)
+  or ((max_over_time(X[$__rate_interval]) unless X offset $__rate_interval) / ($__rate_interval_ms / 1000))
+  ```
+
+  A series that existed a window ago goes through `rate()`; one born inside the
+  window started at 0, so its whole value is its events, spread over the window as
+  `rate()` spreads the rest. Against the 23 Nov data it reads all 11 where plain
+  `rate()` read 7. For an ad-hoc total over a range `R`, sum
+  `(increase(X[R]) and X offset R) or (max_over_time(X[R]) unless X offset R)`.
+- **What the arm cannot fix**: a series born and then reset by a restart inside one
+  window counts only its larger part; across a restart, a series whose new value is
+  at or above its old one reads as `new − old` (no reset is seen); an export gap of
+  more than 5 minutes just before the window makes an old series look new.
+- **The fix for all of it is a stack setting, outside this repo.** Grafana Cloud's
+  metrics tenant limit `otel_created_timestamp_zero_ingestion_enabled` (Mimir's
+  `-distributor.otel-created-timestamp-zero-ingestion-enabled`, experimental, off by
+  default) writes a 0 sample at each OTLP point's start time. The OTel JS SDK
+  stamps a new label set's start time at its first increment, so with it on every
+  counter and histogram counts from 0 in every query, restarts included. It is off
+  on this stack (every `agency_abandoned_reason_total` series' `min_over_time` on
+  23 Nov is 1, never 0); Grafana Cloud support turns it on for the stack. The arm
+  stays correct with it on (a series whose zero lands inside the window is still
+  new; one whose zero lands before it goes through `rate()`), so the panels need
+  no change either way.
