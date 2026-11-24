@@ -441,11 +441,59 @@ describe('the campaign cards', () => {
     renderHome();
     fireEvent.click(within(await screen.findByTestId('home-campaign-c2')).getByRole('button', { name: 'Resume Card' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('reached 4.2%, over its 3% limit');
-    expect(dialog.textContent).toContain('still over the limit. If you resume now, it will be paused again within about a minute.');
+    expect(dialog.textContent).toContain('reached 4.2%, over the 3% limit');
+    expect(dialog.textContent).toContain('still over the limit. If you resume now, the dialler will pause the campaign again within about a minute.');
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Resume anyway' }));
     await waitFor(() => expect(mocks.transitionAgencyCampaign).toHaveBeenCalledWith('c2', 'resume', 't-1', 'a-1'));
+  });
+
+  it('put the warning on the page’s body, out of the card’s scrolling pane', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c2', { name: 'Card', status: 'paused' })]));
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'c2', status: 'paused', pause_reason: 'abandonment_ceiling', pause_abandonment_rate_pct: 4.24, abandonment_ceiling_pct: 3,
+    });
+    renderHome();
+    const card = await screen.findByTestId('home-campaign-c2');
+    fireEvent.click(within(card).getByRole('button', { name: 'Resume Card' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(card.contains(dialog)).toBe(false);
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
+  it('ask, saying it could not check, when the card’s re-read of the campaign fails (the board has no pause reason)', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c2', { name: 'Card', status: 'paused' })]));
+    mocks.getAgencyCampaign.mockRejectedValue(new Error('campaign unavailable'));
+    mocks.transitionAgencyCampaign.mockResolvedValue({ id: 'c2', status: 'running' });
+    renderHome();
+    fireEvent.click(within(await screen.findByTestId('home-campaign-c2')).getByRole('button', { name: 'Resume Card' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Could not check this campaign')).toBeTruthy();
+    expect(dialog.textContent).toContain('The console could not check why this campaign is paused or what its abandonment rate is now.');
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+
+    // Asked again on the next press, and Resume anyway resumes.
+    fireEvent.click(within(screen.getByTestId('home-campaign-c2')).getByRole('button', { name: 'Resume Card' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Resume anyway' }));
+    await waitFor(() => expect(mocks.transitionAgencyCampaign).toHaveBeenCalledWith('c2', 'resume', 't-1', 'a-1'));
+  });
+
+  it('say the rate it could read when only the campaign re-read fails', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c2', { name: 'Card', status: 'paused' })]));
+    mocks.getAgencyCampaign.mockRejectedValue(new Error('campaign unavailable'));
+    mocks.getAgencyCampaignStats.mockResolvedValue({ abandoned_24h: 2, answered_24h: 316, abandonment_ceiling_pct: 3 });
+    renderHome();
+    fireEvent.click(within(await screen.findByTestId('home-campaign-c2')).getByRole('button', { name: 'Resume Card' }));
+
+    expect((await screen.findByRole('dialog')).textContent).toContain(
+      'Its abandonment rate over the last 24 hours is 0.6% (2 abandoned out of 316 answered calls), within the 3% limit.',
+    );
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
   });
 
   it('read the board again at once when Resume finds the campaign already running (resumed elsewhere)', async () => {

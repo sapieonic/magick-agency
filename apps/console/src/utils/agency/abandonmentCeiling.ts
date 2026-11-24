@@ -106,6 +106,20 @@ export function rateAboveCeiling(ratePct: number, ceilingPct: number): boolean {
 }
 
 /**
+ * A rate said beside the ceiling it is over ("reached 3.03%, over the 3% limit"): one decimal,
+ * as every measured rate, unless one decimal would not read as over the ceiling. Then as many
+ * more (up to four) as it takes, so the sentence stays true: 3.03% against 3% is never "3%".
+ * A rate at or under the ceiling is said on one decimal as usual.
+ */
+export function rateOverCeilingText(ratePct: number, ceilingPct: number | null): string {
+  if (ceilingPct === null || !rateAboveCeiling(ratePct, ceilingPct)) return pct(ratePct);
+  for (let decimals = 1; decimals < 4; decimals += 1) {
+    if (rateAboveCeiling(Number(ratePct.toFixed(decimals)), ceilingPct)) return pct(ratePct, decimals);
+  }
+  return pct(ratePct, 4);
+}
+
+/**
  * The tone for a measured rate against the ceiling: `bad` above it, `warn` from
  * 80% of it up to and including it, otherwise none. The band is compared as
  * `5 × rate ≥ 4 × ceiling`: `3 * 0.8` is 2.4000000000000004, which would miss a

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { getAgencyCampaignStats, transitionAgencyCampaign } from '../../../api/agencyCampaigns';
@@ -40,6 +40,13 @@ const CONFIRM_COPY: Partial<Record<Action, { title: string; message: string }>> 
   },
 };
 
+/**
+ * How long Resume's preflight waits for `/stats` before it goes on without them (the warning is
+ * then said as for a failed read). `apiFetch` has no timeout of its own, and a slow stats read
+ * must not hold Resume.
+ */
+export const RESUME_STATS_WAIT_MS = 3000;
+
 /** Where a lifecycle action can be taken: a campaign tab's header, or a card on Live floor. */
 export type CampaignLifecycleOrigin = CampaignTabId | 'live_floor';
 
@@ -55,7 +62,9 @@ export interface CampaignLifecycleSource {
   /**
    * Re-read the campaign row alone (the Start / Resume preflight and the 409 repair). Its
    * `archived_at`, when carried, keeps Start from being sent for a draft archived elsewhere (AR2),
-   * and its pause fields decide whether Resume warns first (`resumeWarning`).
+   * and its pause fields decide whether Resume warns first (`resumeWarning`). Null when the read
+   * failed: Resume then asks anyway (`unchecked`), since why the campaign is paused is not known.
+   * A page whose fallback is its own last read of the row (the campaign header) answers that.
    */
   refreshCampaign: () => Promise<(Pick<AgencyCampaign, 'status' | 'archived_at'> & Partial<ResumeWarningCampaign>) | null>;
   /** Paint a campaign the server just answered with, and fence off every older read. */
@@ -83,7 +92,10 @@ export interface CampaignLifecycle {
  * Resume's preflight reads the campaign row and its `/stats` together. When the abandonment
  * guardrail paused it, or the rolling 24-hour rate is over its ceiling now, Resume asks first
  * (`resumeWarning`) and sends nothing until the supervisor confirms; confirming always resumes.
- * A failed stats read never holds Resume: the warning is then said from the row alone.
+ * A failed or slow stats read never holds Resume (it waits {@link RESUME_STATS_WAIT_MS} at most):
+ * the warning is then said from the row alone. A failed read of the row itself asks too, saying
+ * the console could not check why the campaign is paused, rather than resume a guardrail pause
+ * unasked.
  */
 export function useCampaignLifecycle({
   id,
@@ -107,6 +119,21 @@ export function useCampaignLifecycle({
   const [warningFor, setWarningFor] = useState<{ warning: ResumeWarning; id: string | undefined } | null>(null);
   const warning = warningFor && warningFor.id === id ? warningFor.warning : null;
 
+  /*
+    The button pressed, kept for Cancel to hand focus back to. The dialog's own restore
+    (`useDialogFocus`) remembers what had focus when it opened, which for the Resume warning is
+    after the preflight: the button was disabled while it ran, and a browser moves focus off a
+    disabled control to <body>. So the trigger is taken at the click, and given focus again once
+    the warning has closed on Cancel (after the dialog's own restore, which runs first).
+  */
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const [focusTriggerAfterCancel, setFocusTriggerAfterCancel] = useState(0);
+  useEffect(() => {
+    if (focusTriggerAfterCancel === 0) return;
+    const trigger = triggerRef.current;
+    if (trigger?.isConnected) trigger.focus();
+  }, [focusTriggerAfterCancel]);
+
   /**
    * Synchronous with the click. `setBusy` is a render, so two Start clicks in
    * the same frame both see `busy === null` and both POST — the 7× `/start`
@@ -126,15 +153,24 @@ export function useCampaignLifecycle({
   );
 
   /**
-   * The rolling 24-hour pair for the Resume warning. Never throws: a stats outage must not hold
-   * Resume, so it answers null and the warning is said from the campaign row alone.
+   * The rolling 24-hour pair for the Resume warning. Never throws, and never waits longer than
+   * {@link RESUME_STATS_WAIT_MS}: a stats outage or a slow read must not hold Resume, so either
+   * answers null and the warning is said from the campaign row alone.
    */
   const readAbandonmentNow = useCallback(async (): Promise<ResumeWarningStats | null> => {
     if (!id || !tenantId || !accountId) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await getAgencyCampaignStats(id, tenantId, accountId);
+      return await Promise.race([
+        getAgencyCampaignStats(id, tenantId, accountId),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), RESUME_STATS_WAIT_MS);
+        }),
+      ]);
     } catch {
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }, [id, tenantId, accountId]);
 
@@ -161,9 +197,12 @@ export function useCampaignLifecycle({
          * are not the ones that stayed enabled across a transition.
          */
         let abandonmentNow: ResumeWarningStats | null = null;
+        // Whether the preflight read the row: when not, why the campaign is paused is not known.
+        let campaignRead = true;
         if (action === 'start' || action === 'resume') {
           const asks = action === 'resume' && warned === null;
           const [latest, now] = await Promise.all([refreshCampaign(), asks ? readAbandonmentNow() : null]);
+          campaignRead = latest !== null;
           from = latest ?? from;
           abandonmentNow = now;
         }
@@ -172,10 +211,11 @@ export function useCampaignLifecycle({
         }
         /*
           Asked on the campaign as just re-read, so a pause the guardrail made after the page last
-          painted is still caught. A warning, not a block: the dialog's confirm sends Resume.
+          painted is still caught; a row that could not be read is asked about too (`unchecked`).
+          A warning, not a block: the dialog's confirm sends Resume.
         */
         if (action === 'resume' && warned === null && from) {
-          const ask = resumeWarning(from, abandonmentNow);
+          const ask = resumeWarning(from, abandonmentNow, { campaignRead });
           if (ask) {
             setWarningFor({ warning: ask, id });
             return;
@@ -239,6 +279,7 @@ export function useCampaignLifecycle({
             // `0` is a non-`ApiError` failure (e.g. a network error) — there is
             // no HTTP status to report, and `0` cannot collide with a real one.
             status_code: statusCode,
+            resume_warning: warned?.kind ?? null,
           });
         }
       } finally {
@@ -251,6 +292,8 @@ export function useCampaignLifecycle({
 
   const onAction = useCallback(
     (action: Action) => {
+      const pressed = document.activeElement;
+      triggerRef.current = pressed instanceof HTMLElement && pressed !== document.body ? pressed : null;
       if (CONFIRM_COPY[action]) setConfirmingFor({ action, id });
       else void runAction(action);
     },
@@ -291,6 +334,7 @@ export function useCampaignLifecycle({
       }}
       onCancel={() => {
         setWarningFor(null);
+        setFocusTriggerAfterCancel((n) => n + 1);
         if (id) trackAgencyCampaignResumeWarningCancelled({ campaign_id: id, resume_warning: warning.kind, from_tab: fromTab });
       }}
     />

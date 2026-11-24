@@ -182,7 +182,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` (also `agency_answer_to_bridge_seconds`: observed once per bridged call from the predicate's two instants, the bounded `provider`, nothing for a call never bridged, the grace a bucket boundary) | 53 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
-| `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 28 |
+| `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 29 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
 | `apps/server/test/unit/agency/abandonment-otlp-export.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandonment-window.test.ts` | 20 |
@@ -2436,12 +2436,12 @@ Campaign setup (CS1–CS21, `docs/campaign-setup.md`): the four steps New campai
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` (the campaign Call log, docs/call-log.md: the rows a call list cannot show, the filters in the URL and the drill-downs' own links, the type chips and their counts, a row of each type, what a live and a finished campaign open on and the empty states, the soft-phone status filter, the old Soft-phone calls URL's redirect; the Inbound and To follow up chips, an inbound row answered and missed, Mark handled and Call back, a missed call and its call back lighting each other; every time with AM / PM in capitals, the date fields switched off under To follow up) | 103 |
 | `apps/console/src/__tests__/pages/AgencyInboundCallPage.test.tsx` (the inbound Call page: who rang and why it is in this log, the caller's path in order, the outcome or the follow-up, the voicemail, the trail, Call back's prefill with and without the missed call's id, a purged call and one that is not this campaign's; every time with AM / PM in capitals) | 11 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` (and check, review, Import N contacts, the downloads, the import compared with its check, IM1–IM3; the check's expiry, a check already imported followed to its import, the skipped download cut short, Import again after a failed or stopped import while the check is valid, analytics: a check is never a completed import, a failed check says so) | 24 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 110 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.carrier.test.tsx` | ~7 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 80 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 109 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.station.test.tsx` (What agents see and Script, AS6, AS9, BE-6, BE-8, BE-13: nothing of the station sent when untouched, a target sent and cleared with `null`, held out of 1–2,000, its refusal on the field; both number previews and masked sent; the script's chips at the caret, counters, twelve steps, an unknown placeholder held, refusals on the opening and the step; the facts' columns from the newest completed imports, read once after the campaign loads (a retry campaign's one read naming its root), hidden ones left out, merged into the stored display, one column in two roles held, refusals on the role and the column, no list yet; outcome and break pictures picked, removed and sent, a refused picture on its row; AS19: the script held on a key the card lacks, "Add as a fact" saving card and script together, the sample read with "not given"; a legacy card pre-filled once the columns are read (loading, Try again), sending nothing until changed, saved as facts with the old roles dropped and their columns typed; Save held while a removed fact is in the script, "Put it back", a removal and its key in one save; the server's refusals on the role, the fact and its column, cleared when the facts move; focus and announcements after a fix (S9); the save's words "Saved. Agents see this when they next start work." (S8)) | 29 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.breakLimits.test.tsx` (Settings › Agents' break limits, LF27: the built-ins for a campaign with none, typed limits checked and holding Save, every other field kept, a cleared limit's key left out, nothing sent when no limit changed, the server's 400 on the row it names, a reserved entry) | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 40 |
@@ -2514,7 +2514,7 @@ Files: `SoftphoneCallDetailPage.tsx`, `closeSoftphoneSession.ts`, `useSoftphoneS
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/pages/SoftphoneSupervisor.test.tsx` (a soft-phone call's page) | 5 |
-| `apps/console/src/__tests__/pages/HomePage.test.tsx` (and a card's stale Pause or Resume reading the board at once; the grouped calling-hours Got it held per campaign across the filter; Needs you now and Campaigns in their scroll panes, every row and campaign counted) | 48 |
+| `apps/console/src/__tests__/pages/HomePage.test.tsx` (and a card's stale Pause or Resume reading the board at once; the grouped calling-hours Got it held per campaign across the filter; Needs you now and Campaigns in their scroll panes, every row and campaign counted) | 52 |
 | `apps/console/src/__tests__/pages/HomePage.assist.test.tsx` (Live floor's Phase 3: Need help's row, red card and chip, the chime once per new request, muted and without storage, Talk and Send reminder and each refusal; Need help raised with no call said as it was raised on the row and the card, I'm coming in one press from either and its refusal (BE-9); a dropped screen past 20 s a row, its card saying for how long (BE-11); Give to free agents previewed then committed, only the plan's receivers counted and named, never on pool, a stale preview confirmed again, nothing while the flags are off; Needs you now not re-rendered by a floor read that only moves the server clock, Listen on the latest one) | 29 |
 | `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available and its drawer read from each floor, Join coming soon and no Talk or Send reminder with floor assist off, the fallback, Retry after a refusal, the server's clock, breaks over the limit off the badge and their Got it, a break crossing the limit on its card and in Needs you now together, an equal read re-rendering no card, an open Need help read again re-rendering none, Agents working, Will pay, who paused) | 27 |
 | `apps/console/src/__tests__/pages/FloorPane.test.tsx` (Live floor's two panes: the heading outside the scroll box, "N more below" counted and counting down as it scrolls, the reveal bringing the first hidden item to the top and focusing it or the box, less motion jumping) | 8 |
@@ -2562,10 +2562,10 @@ Campaign setup's rules (CS, `docs/campaign-setup.md`), pure, in `campaignSetup/`
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
 | `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 89 |
-| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 36 |
+| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 38 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
-| `apps/console/src/__tests__/utils/resumeWarning.test.ts` (the warning before Resume and the header's line on a guardrail pause, AW1–AW3) | 16 |
+| `apps/console/src/__tests__/utils/resumeWarning.test.ts` (the warning before Resume and the header's line on a guardrail pause, AW1–AW3) | 25 |
 | `apps/console/src/__tests__/utils/agencyCampaignArchive.test.ts` (AR1–AR7) | 10 |
 | `apps/console/src/__tests__/utils/agencyCampaignLineage.test.ts` | 11 |
 | `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 33 |
@@ -2589,7 +2589,7 @@ Campaign setup's rules (CS, `docs/campaign-setup.md`), pure, in `campaignSetup/`
 | `apps/console/src/__tests__/utils/agencyDncCopy.test.ts` | 20 |
 | `apps/console/src/__tests__/utils/dncScopeWords.test.ts` (the scope words everywhere, and who may reach every campaign; DS3, DS7) | 6 |
 | `apps/console/src/__tests__/utils/agencyErrors.test.ts` (with `isSessionGone`) | 8 |
-| `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 17 |
+| `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` (the conflict's parse and the mid-call rule; the words are `stationCopy.ts`'s) | 12 |

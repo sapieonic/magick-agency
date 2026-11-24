@@ -36,9 +36,9 @@ describe('resumeWarning — a campaign the guardrail paused (AW1)', () => {
       title: 'Resume after an automatic pause?',
       message:
         'The dialler paused this campaign automatically: its abandonment rate over the last 24 hours '
-        + 'reached 4.2%, over its 3% limit. It is 3.8% (12 of 316 answered calls) now, still over the '
-        + 'limit. If you resume now, it will be paused again within about a minute. Get more agents on '
-        + 'shift before you resume, so fewer answered calls are left waiting.',
+        + 'reached 4.2%, over the 3% limit. The rate now is 3.8% (12 abandoned out of 316 answered calls), '
+        + 'still over the limit. If you resume now, the dialler will pause the campaign again within about '
+        + 'a minute. Get more agents on shift before you resume, so fewer answered calls are left waiting.',
       confirmLabel: RESUME_ANYWAY_LABEL,
     });
   });
@@ -46,14 +46,20 @@ describe('resumeWarning — a campaign the guardrail paused (AW1)', () => {
   it('still asks once the rate is back under the ceiling, and does not promise a pause', () => {
     const warning = resumeWarning(guardrailPaused(), now(5, 400));
     expect(warning?.kind).toBe('abandonment_pause');
-    expect(warning?.message).toContain('It is 1.3% (5 of 400 answered calls) now. If it goes over the limit again, it will be paused again within about a minute.');
+    expect(warning?.message).toContain(
+      'The rate now is 1.3% (5 abandoned out of 400 answered calls). If the rate goes over the limit again, '
+      + 'the dialler will pause the campaign within about a minute.',
+    );
     expect(warning?.message).not.toContain('still over');
   });
 
   it('asks from the campaign row alone when the stats read failed', () => {
     const warning = resumeWarning(guardrailPaused(), null);
     expect(warning?.kind).toBe('abandonment_pause');
-    expect(warning?.message).toContain('reached 4.2%, over its 3% limit. If the rate is still over the limit when you resume, it will be paused again within about a minute.');
+    expect(warning?.message).toContain(
+      'reached 4.2%, over the 3% limit. If the rate is still over the limit when you resume, the dialler will '
+      + 'pause the campaign again within about a minute.',
+    );
   });
 
   it('reads the guardrail’s rule for "still over": one abandoned call in too small a sample is not', () => {
@@ -68,8 +74,15 @@ describe('resumeWarning — a campaign the guardrail paused (AW1)', () => {
       null,
     );
     expect(warning?.message.startsWith(
-      'The dialler paused this campaign automatically: its abandonment rate over the last 24 hours went over its limit.',
+      'The dialler paused this campaign automatically: its abandonment rate over the last 24 hours went over the limit.',
     )).toBe(true);
+  });
+
+  it('never says a rate over the limit as the limit itself: 3.03% is not "3%, over the 3% limit"', () => {
+    // 3.03% at the pause; 10 of 330 answered (3.03%) now, both over a 3% ceiling.
+    const warning = resumeWarning(guardrailPaused({ pause_abandonment_rate_pct: 3.03 }), now(10, 330));
+    expect(warning?.message).toContain('reached 3.03%, over the 3% limit.');
+    expect(warning?.message).toContain('The rate now is 3.03% (10 abandoned out of 330 answered calls), still over the limit.');
   });
 });
 
@@ -80,9 +93,9 @@ describe('resumeWarning — any other pause (AW2)', () => {
       kind: 'over_ceiling',
       title: 'Abandonment is over the limit',
       message:
-        'This campaign’s abandonment rate over the last 24 hours is 3.8% (12 of 316 answered calls), '
-        + 'over its 3% limit. If you resume now, the dialler will pause it again within about a minute. '
-        + 'Get more agents on shift before you resume, so fewer answered calls are left waiting.',
+        'This campaign’s abandonment rate over the last 24 hours is 3.8% (12 abandoned out of 316 answered '
+        + 'calls), over the 3% limit. If you resume now, the dialler will pause the campaign again within '
+        + 'about a minute. Get more agents on shift before you resume, so fewer answered calls are left waiting.',
       confirmLabel: RESUME_ANYWAY_LABEL,
     });
   });
@@ -101,9 +114,52 @@ describe('resumeWarning — any other pause (AW2)', () => {
     expect(resumeWarning({ status: 'paused', pause_reason: 'carrier_auth' }, now(12, 316))?.kind).toBe('over_ceiling');
   });
 
+  it('says the rate over the limit on enough decimals to read as over it', () => {
+    expect(resumeWarning({ status: 'paused', pause_reason: 'supervisor', abandonment_ceiling_pct: 3 }, now(10, 330))?.message)
+      .toContain('is 3.03% (10 abandoned out of 330 answered calls), over the 3% limit.');
+  });
+
   it('never warns about a campaign that is not paused', () => {
     expect(resumeWarning(guardrailPaused({ status: 'running' }), now(12, 316))).toBeNull();
     expect(resumeWarning(guardrailPaused({ status: 'stopping' }), now(12, 316))).toBeNull();
+  });
+});
+
+describe('resumeWarning — the campaign could not be re-read (why it is paused is not known)', () => {
+  const unread = { campaignRead: false } as const;
+
+  it('asks rather than resume silently, saying the console could not check', () => {
+    expect(resumeWarning({ status: 'paused' }, null, unread)).toEqual({
+      kind: 'unchecked',
+      title: 'Could not check this campaign',
+      message:
+        'The console could not check why this campaign is paused or what its abandonment rate is now. If the '
+        + 'dialler paused it because the rate went over the limit, and the rate is still over, the dialler will '
+        + 'pause the campaign again within about a minute.',
+      confirmLabel: RESUME_ANYWAY_LABEL,
+    });
+  });
+
+  it('says the rate it could read, within the limit', () => {
+    const warning = resumeWarning({ status: 'paused' }, now(5, 400), unread);
+    expect(warning?.kind).toBe('unchecked');
+    expect(warning?.message).toBe(
+      'The console could not check why this campaign is paused. Its abandonment rate over the last 24 hours '
+      + 'is 1.3% (5 abandoned out of 400 answered calls), within the 3% limit.',
+    );
+  });
+
+  it('warns as over the limit when the rate it could read is over, whatever paused it', () => {
+    expect(resumeWarning({ status: 'paused' }, now(12, 316), unread)?.kind).toBe('over_ceiling');
+  });
+
+  it('does not trust a pause reason the caller held from before', () => {
+    // Held, not re-read: still the unchecked question, not the guardrail's numbers.
+    expect(resumeWarning(guardrailPaused(), null, unread)?.kind).toBe('unchecked');
+  });
+
+  it('never warns about a campaign that is not paused', () => {
+    expect(resumeWarning({ status: 'running' }, null, unread)).toBeNull();
   });
 });
 
@@ -112,15 +168,29 @@ describe('abandonmentPauseLine — the header’s reason (AW1)', () => {
 
   it('says when, the rate at the pause and the ceiling', () => {
     expect(abandonmentPauseLine(guardrailPaused(), sameDay)).toBe(
-      'Paused automatically at 05:33 AM: abandonment over the last 24 hours reached 4.2%, over the 3% limit.',
+      'Paused automatically at 5:33 AM: abandonment over the last 24 hours reached 4.2%, over the 3% limit.',
     );
+  });
+
+  it('says the day of a pause before today, and the year of one before this year', () => {
+    expect(abandonmentPauseLine(guardrailPaused(), new Date('2026-11-24T10:00:00.000Z'))).toBe(
+      'Paused automatically on 23 Nov at 5:33 AM: abandonment over the last 24 hours reached 4.2%, over the 3% limit.',
+    );
+    expect(abandonmentPauseLine(guardrailPaused({ paused_at: '2025-12-31T15:05:00.000Z' }), sameDay)).toBe(
+      'Paused automatically on 31 Dec 2025 at 3:05 PM: abandonment over the last 24 hours reached 4.2%, over the 3% limit.',
+    );
+  });
+
+  it('never says a rate over the limit as the limit itself', () => {
+    expect(abandonmentPauseLine(guardrailPaused({ pause_abandonment_rate_pct: 3.03 }), sameDay))
+      .toContain('reached 3.03%, over the 3% limit.');
   });
 
   it('leaves out what the row does not carry', () => {
     expect(abandonmentPauseLine(
       guardrailPaused({ paused_at: null, pause_abandonment_rate_pct: null, abandonment_ceiling_pct: undefined }),
       sameDay,
-    )).toBe('Paused automatically: abandonment over the last 24 hours went over its limit.');
+    )).toBe('Paused automatically: abandonment over the last 24 hours went over the limit.');
   });
 
   it('is null for any other pause, and for a campaign not paused', () => {

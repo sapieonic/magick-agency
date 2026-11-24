@@ -1,8 +1,9 @@
 import { abandonmentBreachesCeiling } from '@magick-agency/domain/abandonment-predicate';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { formatCount, pct } from '../format/number';
-import { formatTimeOrDate, upperDayPeriod } from '../format/date';
-import { ceilingPctText } from './abandonmentCeiling';
+import { formatDayMonthYear } from '../format/date';
+import { ceilingPctText, rateOverCeilingText } from './abandonmentCeiling';
+import { clockTime, dayMonth, sameDay } from './stationFormat';
 
 /**
  * The warning before Resume (decisions AW1–AW3).
@@ -18,11 +19,16 @@ import { ceilingPctText } from './abandonmentCeiling';
  *  - `over_ceiling` (AW2): paused for any other reason (a supervisor, the carrier account) while
  *    the rolling 24-hour rate is over the ceiling by the guardrail's own rule, so resuming would
  *    be paused again within about a minute.
+ *  - `unchecked` (AW1): the Resume preflight could not re-read the campaign, so why it is paused
+ *    is not known (Live floor's card holds only the board's status). Asked rather than resumed
+ *    silently: a guardrail pause must not go through unasked because a read failed.
  *
  * "Over" is the guardrail's rule (`abandonmentBreachesCeiling`, the server's `breachedRows`
  * rule), not the Insights sample floor: the copy promises a pause, so it follows what pauses.
+ * The copy names what pauses a campaign "the dialler" and its ceiling "the 3% limit", as the
+ * health strip's diagnosis does.
  */
-export type ResumeWarningKind = 'abandonment_pause' | 'over_ceiling';
+export type ResumeWarningKind = 'abandonment_pause' | 'over_ceiling' | 'unchecked';
 
 export interface ResumeWarning {
   kind: ResumeWarningKind;
@@ -46,7 +52,7 @@ export const RESUME_ANYWAY_LABEL = 'Resume anyway';
 const MORE_AGENTS = 'Get more agents on shift before you resume, so fewer answered calls are left waiting.';
 
 /** The guardrail runs once a minute (the metrics refresh), so a breach is acted on within about one. */
-const PAUSED_AGAIN = 'it will be paused again within about a minute';
+const PAUSED_AGAIN = 'the dialler will pause the campaign again within about a minute';
 
 interface RateNow {
   pct: number;
@@ -67,36 +73,55 @@ function rateNow(stats: ResumeWarningStats | null, ceilingPct: number | null): R
   };
 }
 
-/** "3.8% (12 of 316 answered calls)". */
-function rateWithSample(rate: RateNow): string {
-  return `${pct(rate.pct)} (${formatCount(rate.abandoned)} of ${formatCount(rate.answered)} answered calls)`;
+/**
+ * "3.8% (12 abandoned out of 316 answered calls)". A rate over the ceiling is said on as many
+ * decimals as it takes to read as over it (`rateOverCeilingText`).
+ */
+function rateWithSample(rate: RateNow, ceilingPct: number | null): string {
+  const text = rate.over ? rateOverCeilingText(rate.pct, ceilingPct) : pct(rate.pct);
+  return `${text} (${formatCount(rate.abandoned)} abandoned out of ${formatCount(rate.answered)} answered calls)`;
+}
+
+/** "the 3% limit", or "the limit" when no ceiling is carried. */
+function limitText(ceilingPct: number | null): string {
+  return ceilingPct === null ? 'the limit' : `the ${ceilingPctText(ceilingPct)} limit`;
+}
+
+/** The campaign's ceiling: the row's, else the one its stats carry. */
+function ceilingOf(campaign: Partial<ResumeWarningCampaign>, stats: ResumeWarningStats | null): number | null {
+  if (typeof campaign.abandonment_ceiling_pct === 'number') return campaign.abandonment_ceiling_pct;
+  return typeof stats?.abandonment_ceiling_pct === 'number' ? stats.abandonment_ceiling_pct : null;
 }
 
 /**
  * The warning Resume shows for this campaign, or null when Resume should go straight through.
  * Only a `paused` campaign is ever warned about (Resume is offered on nothing else).
+ *
+ * `campaignRead: false` says the preflight could not re-read the campaign: `campaign` is only
+ * what the caller held (on Live floor, the board's status), so why it is paused is not known.
+ * It then asks anyway (`unchecked`), unless the rate is over the ceiling now, which
+ * `over_ceiling` says whatever paused it.
  */
 export function resumeWarning(
-  campaign: ResumeWarningCampaign,
+  campaign: Partial<ResumeWarningCampaign> & Pick<ResumeWarningCampaign, 'status'>,
   stats: ResumeWarningStats | null,
+  { campaignRead = true }: { campaignRead?: boolean } = {},
 ): ResumeWarning | null {
   if (campaign.status !== 'paused') return null;
-  const ceiling = typeof campaign.abandonment_ceiling_pct === 'number'
-    ? campaign.abandonment_ceiling_pct
-    : typeof stats?.abandonment_ceiling_pct === 'number' ? stats.abandonment_ceiling_pct : null;
-  const limit = ceiling === null ? 'its limit' : `its ${ceilingPctText(ceiling)} limit`;
+  const ceiling = ceilingOf(campaign, stats);
   const now = rateNow(stats, ceiling);
 
-  if (campaign.pause_reason === 'abandonment_ceiling') {
+  if (campaignRead && campaign.pause_reason === 'abandonment_ceiling') {
     const atPause = campaign.pause_abandonment_rate_pct;
     const why = typeof atPause === 'number'
-      ? `The dialler paused this campaign automatically: its abandonment rate over the last 24 hours reached ${pct(atPause)}, over ${limit}.`
-      : `The dialler paused this campaign automatically: its abandonment rate over the last 24 hours went over ${limit}.`;
+      ? `The dialler paused this campaign automatically: its abandonment rate over the last 24 hours reached ${rateOverCeilingText(atPause, ceiling)}, over ${limitText(ceiling)}.`
+      : `The dialler paused this campaign automatically: its abandonment rate over the last 24 hours went over ${limitText(ceiling)}.`;
     let nowLine: string;
     if (now?.over) {
-      nowLine = `It is ${rateWithSample(now)} now, still over the limit. If you resume now, ${PAUSED_AGAIN}.`;
+      nowLine = `The rate now is ${rateWithSample(now, ceiling)}, still over the limit. If you resume now, ${PAUSED_AGAIN}.`;
     } else if (now) {
-      nowLine = `It is ${rateWithSample(now)} now. If it goes over the limit again, ${PAUSED_AGAIN}.`;
+      nowLine = `The rate now is ${rateWithSample(now, ceiling)}. If the rate goes over the limit again, `
+        + 'the dialler will pause the campaign within about a minute.';
     } else {
       nowLine = `If the rate is still over the limit when you resume, ${PAUSED_AGAIN}.`;
     }
@@ -113,8 +138,21 @@ export function resumeWarning(
       kind: 'over_ceiling',
       title: 'Abandonment is over the limit',
       message:
-        `This campaign’s abandonment rate over the last 24 hours is ${rateWithSample(now)}, over ${limit}. `
-        + `If you resume now, the dialler will pause it again within about a minute. ${MORE_AGENTS}`,
+        `This campaign’s abandonment rate over the last 24 hours is ${rateWithSample(now, ceiling)}, over ${limitText(ceiling)}. `
+        + `If you resume now, ${PAUSED_AGAIN}. ${MORE_AGENTS}`,
+      confirmLabel: RESUME_ANYWAY_LABEL,
+    };
+  }
+
+  if (!campaignRead) {
+    return {
+      kind: 'unchecked',
+      title: 'Could not check this campaign',
+      message: now
+        ? 'The console could not check why this campaign is paused. Its abandonment rate over the last '
+          + `24 hours is ${rateWithSample(now, ceiling)}, within ${limitText(ceiling)}.`
+        : 'The console could not check why this campaign is paused or what its abandonment rate is now. '
+          + `If the dialler paused it because the rate went over the limit, and the rate is still over, ${PAUSED_AGAIN}.`,
       confirmLabel: RESUME_ANYWAY_LABEL,
     };
   }
@@ -122,23 +160,33 @@ export function resumeWarning(
 }
 
 /**
+ * When a pause happened, as part of a sentence: " at 5:33 AM" on `now`'s day, " on 23 Nov at
+ * 5:33 AM" before it, with the year once it is not this one. Empty for a time that does not parse.
+ */
+function pausedWhen(iso: string, now: Date): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  if (sameDay(at, now)) return ` at ${clockTime(at)}`;
+  const day = at.getFullYear() === now.getFullYear() ? dayMonth(at) : formatDayMonthYear(at);
+  return ` on ${day} at ${clockTime(at)}`;
+}
+
+/**
  * The header's line on a campaign the guardrail paused, from the campaign row alone, for a screen
- * whose health strip does not already say it (Settings reads no stats; a failed stats read shows
- * no strip): "Paused automatically at 11:03 AM: abandonment over the last 24 hours reached 4.2%,
- * over the 3% limit." Null on any other campaign.
+ * whose health strip does not already say it (Settings reads no stats; after a failed stats read
+ * the strip has no diagnosis): "Paused automatically at 11:03 AM: abandonment over the last 24
+ * hours reached 4.2%, over the 3% limit." Null on any other campaign.
  */
 export function abandonmentPauseLine(
   campaign: ResumeWarningCampaign,
   now: Date,
 ): string | null {
   if (campaign.status !== 'paused' || campaign.pause_reason !== 'abandonment_ceiling') return null;
-  const at = campaign.paused_at ? ` at ${upperDayPeriod(formatTimeOrDate(campaign.paused_at, now))}` : '';
-  const ceiling = typeof campaign.abandonment_ceiling_pct === 'number'
-    ? `the ${ceilingPctText(campaign.abandonment_ceiling_pct)} limit`
-    : 'its limit';
+  const at = campaign.paused_at ? pausedWhen(campaign.paused_at, now) : '';
+  const ceiling = typeof campaign.abandonment_ceiling_pct === 'number' ? campaign.abandonment_ceiling_pct : null;
   const atPause = campaign.pause_abandonment_rate_pct;
   const what = typeof atPause === 'number'
-    ? `abandonment over the last 24 hours reached ${pct(atPause)}, over ${ceiling}`
-    : `abandonment over the last 24 hours went over ${ceiling}`;
+    ? `abandonment over the last 24 hours reached ${rateOverCeilingText(atPause, ceiling)}, over ${limitText(ceiling)}`
+    : `abandonment over the last 24 hours went over ${limitText(ceiling)}`;
   return `Paused automatically${at}: ${what}.`;
 }

@@ -638,8 +638,8 @@ describe('campaign detail — the warning before Resume (decisions AW1–AW3)', 
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Resume after an automatic pause?')).toBeTruthy();
-    expect(dialog.textContent).toContain('reached 4.2%, over its 3% limit');
-    expect(dialog.textContent).toContain('It is 3.8% (12 of 316 answered calls) now, still over the limit. If you resume now, it will be paused again within about a minute.');
+    expect(dialog.textContent).toContain('reached 4.2%, over the 3% limit');
+    expect(dialog.textContent).toContain('The rate now is 3.8% (12 abandoned out of 316 answered calls), still over the limit. If you resume now, the dialler will pause the campaign again within about a minute.');
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Resume anyway' }));
@@ -677,7 +677,7 @@ describe('campaign detail — the warning before Resume (decisions AW1–AW3)', 
     fireEvent.click(resume);
 
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('If the rate is still over the limit when you resume, it will be paused again within about a minute.');
+    expect(dialog.textContent).toContain('If the rate is still over the limit when you resume, the dialler will pause the campaign again within about a minute.');
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
   });
 
@@ -731,6 +731,107 @@ describe('campaign detail — the warning before Resume (decisions AW1–AW3)', 
     const strip = await screen.findByTestId('health-strip-diagnosis');
     expect(strip.getAttribute('data-stall-code')).toBe('auto_paused_abandonment');
     expect(screen.queryByTestId('campaign-abandonment-pause-note')).toBeNull();
+  });
+
+  it('says why in the header when the stats read failed (no diagnosis in the strip), and not while it is still loading', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(guardrailPaused());
+    let failStats!: (err: Error) => void;
+    mocks.getAgencyCampaignStats.mockReturnValue(new Promise((_resolve, reject) => { failStats = reject; }));
+
+    renderPage();
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalled());
+    // Stats not answered yet: no line, so it does not flash before the strip's diagnosis.
+    expect(screen.queryByTestId('campaign-abandonment-pause-note')).toBeNull();
+
+    failStats(new Error('stats unavailable'));
+    expect((await screen.findByTestId('campaign-abandonment-pause-note')).textContent)
+      .toMatch(/^Paused automatically (at|on) .*: abandonment over the last 24 hours reached 4\.2%, over the 3% limit\.$/);
+    expect(screen.queryByTestId('health-strip-diagnosis')).toBeNull();
+  });
+
+  /** Fake time moved on inside `act`, so the renders it causes are flushed. */
+  async function tick(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it('does not wait on a slow stats read: after 3 s it asks from the campaign row alone', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(guardrailPaused());
+    mocks.getAgencyCampaignStats.mockResolvedValue(stillOver());
+    renderPage();
+    const resume = await screen.findByRole('button', { name: 'Resume' });
+
+    vi.useFakeTimers();
+    try {
+      // The preflight's stats read never answers.
+      mocks.getAgencyCampaignStats.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(resume);
+      await tick(2_900);
+      expect(screen.queryByRole('dialog')).toBeNull();
+
+      await tick(100);
+      expect(screen.getByRole('dialog').textContent).toContain(
+        'If the rate is still over the limit when you resume, the dialler will pause the campaign again within about a minute.',
+      );
+      expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumes a supervisor’s pause after 3 s when the stats read is slow, with no question', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused', pause_reason: 'supervisor', abandonment_ceiling_pct: 3 }));
+    renderPage();
+    const resume = await screen.findByRole('button', { name: 'Resume' });
+
+    vi.useFakeTimers();
+    try {
+      mocks.getAgencyCampaignStats.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(resume);
+      await tick(2_900);
+      expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+      await tick(100);
+      expect(mocks.transitionAgencyCampaign).toHaveBeenCalledWith('camp-1', 'resume', 'tenant-1', 'account-1');
+      expect(screen.queryByRole('dialog')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives focus back to Resume after Cancel, though the browser dropped it while Resume was disabled', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(guardrailPaused());
+    renderPage();
+    const resume = await screen.findByRole('button', { name: 'Resume' }) as HTMLButtonElement;
+    resume.focus();
+    // A browser moves focus off a button disabled under it (the preflight disables Resume).
+    mocks.getAgencyCampaign.mockImplementation(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      return guardrailPaused();
+    });
+    mocks.getAgencyCampaignStats.mockResolvedValue(stillOver());
+    fireEvent.click(resume);
+
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' })));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Resume' })));
+  });
+
+  it('records a confirmed warning on a Resume that then fails', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(guardrailPaused());
+    mocks.getAgencyCampaignStats.mockResolvedValue(stillOver());
+    mocks.transitionAgencyCampaign.mockRejectedValue(new ApiError(500, { code: 'internal', message: 'Something went wrong.' }));
+
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Resume anyway' }));
+
+    await waitFor(() => expect(capture).toHaveBeenCalledWith('agency_campaign_lifecycle_failed', expect.objectContaining({
+      action: 'resume', status_code: 500, resume_warning: 'abandonment_pause',
+    })));
   });
 });
 

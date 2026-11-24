@@ -1225,6 +1225,10 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     action: 'start' | 'pause' | 'resume' | 'stop';
     from_status: AgencyCampaignStatus;
     to_status: AgencyCampaignStatus;
+    /**
+     * The action went through a dialog the supervisor confirmed: always for `stop`, and for a
+     * `resume` whose warning (`resume_warning`) they confirmed.
+     */
     confirmed: boolean;
     /**
      * The campaign tab whose header it was taken from, `live_floor` for a Live floor card, or
@@ -1234,7 +1238,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     /**
      * Sent by the campaign header and Live floor (`useCampaignLifecycle`): the Resume warning the
      * supervisor confirmed (decisions AW1–AW3), `abandonment_pause` when the guardrail had paused
-     * it, `over_ceiling` when the 24-hour rate was over the ceiling after another pause; null when
+     * it, `over_ceiling` when the 24-hour rate was over the ceiling after another pause,
+     * `unchecked` when the campaign could not be re-read to check why it was paused; null when
      * none was shown (every other action, and a Resume that did not warn). Left out by New campaign.
      */
     resume_warning?: ResumeWarningKind | null;
@@ -1262,6 +1267,11 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     action: 'start' | 'pause' | 'resume' | 'stop';
     from_status: AgencyCampaignStatus;
     status_code: number;
+    /**
+     * As on `agency_campaign_lifecycle_action`: the Resume warning the supervisor confirmed before
+     * the action failed, null when none was shown. Left out by New campaign.
+     */
+    resume_warning?: ResumeWarningKind | null;
   };
   /** {@link trackAgencyCampaignStallSurfaced} */
   agency_campaign_stall_surfaced: {

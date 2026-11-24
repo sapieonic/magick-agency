@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Pause, Play, Send, TriangleAlert } from 'lucide-react';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
@@ -78,7 +79,12 @@ function CampaignCard({ card, onChanged, willPay }: {
 }) {
   const { tenantId, accountId } = useTenant();
   const { campaign } = card;
-  // The status the board last said: the hook reads it at click time.
+  /*
+    The status the board last said: the hook reads it at click time. The board carries no pause
+    reason (its `status_changed.automatic` does not tell the guardrail from the carrier account),
+    so when the re-read below fails the hook cannot know why the campaign is paused, and Resume
+    asks anyway (`unchecked`, AW1) rather than resume a guardrail pause unasked.
+  */
   const campaignRef = useRef<Pick<AgencyCampaign, 'status'>>({ status: campaign.status });
   campaignRef.current = { status: campaign.status };
   /*
@@ -161,7 +167,12 @@ function CampaignCard({ card, onChanged, willPay }: {
       >
         <i style={{ width: `${Math.min(Math.max(card.list.percent ?? 0, 0), 100)}%` }} />
       </div>
-      {lifecycle.confirmDialog}
+      {/*
+        On <body>, not in the card: the card sits in the pane's scroll box, whose fade
+        (`mask-image`) would mask a fixed overlay drawn inside it and hold it in its stacking
+        context, under the console's top bar.
+      */}
+      {lifecycle.confirmDialog && createPortal(lifecycle.confirmDialog, document.body)}
     </li>
   );
 }
