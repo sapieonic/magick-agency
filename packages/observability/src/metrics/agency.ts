@@ -42,13 +42,20 @@ export const s3OperationDurationSeconds = histogram<'operation'>(meter, 's3_oper
 // is exactly how an abandonment metric once went unnoticed returning 0 for
 // months. Do not re-point either side at the other's source.
 
+/**
+ * The compliance denominator. Read it with the first-increment arm, never a plain
+ * `rate()`/`increase()`: a series is born at 1 on each campaign's first answer after each
+ * release (`service_version` is a label too), and those functions drop that first sample
+ * ({@link agencyAbandonedReasonTotal} says why, and why the series are not pre-created at 0).
+ */
 export const agencyAnsweredTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_answered_total', {
   description: 'Agency dialer attempts the carrier reported answered',
 });
 
-// Read both with the first-increment arm, never a plain `rate()`/`increase()`: each
-// campaign's series is born at 1 and those functions drop that first sample
-// (`agencyAbandonedReasonTotal` below says why, and why the series are not pre-created at 0).
+/**
+ * The compliance numerator. Read it with the first-increment arm, never a plain
+ * `rate()`/`increase()`, for the same reason as {@link agencyAnsweredTotal}.
+ */
 export const agencyAbandonedTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_abandoned_total', {
   description: 'Agency dialer attempts a customer answered that reached no agent',
 });
@@ -230,8 +237,10 @@ observableGauge<'tenant_id' | 'campaign_id'>(meter, 'agency_abandonment_window_a
 // dashboard queries that one `max by (campaign_id)` for precisely this reason.
 // The distinction to hold on to is per-metric-kind, not per-metric: fleet-wide
 // SQL-derived GAUGES take `max`; per-replica COUNTERS (`agency_answered_total`,
-// `agency_abandoned_total`) take `sum(rate(...))` because their increments are
-// genuinely disjoint. A leader gate would remove the hazard but is deliberately
+// `agency_abandoned_total`) are summed, because their increments are genuinely
+// disjoint: `sum(...)` over the first-increment arm (`rate(x[w]) and x offset w`, or
+// the series born inside the window at its whole value; grafana/README.md, "Counting a
+// sparse counter's first increment"), never a plain `sum(rate(...))`. A leader gate would remove the hazard but is deliberately
 // NOT used — it would make the export go dark whenever leadership moved, and an
 // operator gauge that vanishes during a failover is worse than one with a
 // documented aggregator.
@@ -581,12 +590,16 @@ export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_his
 //  5. When we abandon, why?                      `agency_abandoned_reason_total`
 //
 // **All of these are per-replica COUNTERS and HISTOGRAMS, not SQL-derived gauges.**
-// So they aggregate with `sum(rate(...))` / `histogram_quantile(...)` over the
+// So they aggregate with `sum(...)` / `histogram_quantile(...)` over the
 // fleet, NOT with `max` — the opposite of `agency_abandonment_rate_24h` and
 // `agency_live_attempts_current`, which every replica publishes identically. The
 // distinction is already written up at length above; it is repeated here only
 // because these two families now sit next to each other on the same dashboard and
-// the wrong aggregator on either is silent.
+// the wrong aggregator on either is silent. What is summed is a `rate()` on most of
+// them, but `agency_abandoned_reason_total` takes the first-increment arm (its own
+// comment below), and every series here, histograms included, starts afresh at each
+// release (`service_version`), so a plain `rate()` misses each label set's first export
+// after one (grafana/README.md, "Counting a sparse counter's first increment").
 //
 // **The HISTOGRAMS here carry `tenant_id` but NOT `campaign_id`** (removed
 // 2026-09-29). Each histogram costs `buckets + 3` series per label set — 18 for
@@ -741,10 +754,19 @@ export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bi
  * code declares (`carrierRingingDeclarations()`) or `other`: the column is free text, and
  * label values are bounded by source code, never by data.
  *
+ * Only the pacing dialler's attempts are observed (`onBridged`); the soft phone's and
+ * inbound calls' bridges are not.
+ *
  * Buckets crowd the 3 s grace and split the two clusters seen on 23 Nov (~1.1 s, ~5 s);
  * 3 is a boundary on purpose, so `le="3"` reads the share over the grace exactly. The
  * server's unit test pins that the grace is a boundary, so a grace change cannot leave the
- * panel's threshold between two buckets.
+ * panel's threshold between two buckets, and `pnpm test:grafana` pins the panel's `le`
+ * bucket, threshold and text to the grace.
+ *
+ * Each release starts every tenant × provider series afresh (`service_version`), and a
+ * `rate()` misses a new series' first export, so the panel's quantiles miss the first
+ * bridge(s) of each tenant and carrier after a release: small. Its share over the grace
+ * reads a rolling hour with the first-increment arm and misses none.
  */
 export const agencyAnswerToBridgeSeconds = histogram<'tenant_id' | 'provider'>(meter, 'agency_answer_to_bridge_seconds', {
   description: 'Seconds from the carrier answer to the bridge (audio connected both ways), for attempts that bridged (grace: 3s)',
@@ -799,7 +821,9 @@ export const agencyBindTotal = counter<'tenant_id' | 'campaign_id' | 'result'>(m
  * ⚠️ **A plain `rate()` / `increase()` over this, `agency_abandoned_total` or
  * `agency_answered_total` undercounts by one per new series.** Each series is
  * born at its first increment with its first sample already 1, and those
- * functions count growth after their first sample. On 23 Nov on Staging
+ * functions count growth after their first sample. A series is new for each new
+ * campaign (and reason), and again for every one at each release, since every
+ * series also carries `service_version`. On 23 Nov on Staging
  * `increase(…[16h])` read 7 abandonments where the counters held 11. The dashboard
  * adds a series born inside the window at its whole value
  * (`max_over_time(x[w]) unless x offset w`), and `pnpm test:grafana` holds every
