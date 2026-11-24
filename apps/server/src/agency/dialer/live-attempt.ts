@@ -24,7 +24,7 @@ export interface LiveAttempt {
    *
    * Held here rather than read back from `agency_call_attempts.dialed_at` because
    * every consumer is on a hot path that must not take a DB round trip: the answer
-   * arm has a 1000ms compliance budget, and the settle site is the one place that
+   * arm has a 3000ms compliance budget, and the settle site is the one place that
    * knows both this instant and the outcome the seat time should be attributed to.
    * The column stays the durable record; this is the in-process twin, on the same
    * pattern as `answeredAt` above it.

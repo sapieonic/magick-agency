@@ -50,7 +50,7 @@ final class AudioTarget {
 ///
 /// | station                   | engine                                         |
 /// |---------------------------|------------------------------------------------|
-/// | station opens, available  | `prepare` (pre-warm, so late binding's 1 s holds) |
+/// | station opens, available  | `prepare` (pre-warm, so late binding's 3 s holds) |
 /// | `reserved`                | CallKit `startCall`, then `armMicrophone`      |
 /// | `bridged`                 | `startUplink`, CallKit `reportConnected`       |
 /// | `released`                | CallKit `endCall`, then `stop` (kept warm)     |

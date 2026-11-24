@@ -35,7 +35,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //     agency handler for it writes `bridged_at`, which is half of the SQL
 //     abandonment predicate — so an emission at the answer (no agent yet) or on
 //     a wifi-blip re-attach (bridged minutes ago) corrupts a compliance number.
-//  3. The bind is synchronous. `ABANDONMENT_BRIDGE_GRACE_MS` is 1000ms from the
+//  3. The bind is synchronous. `ABANDONMENT_BRIDGE_GRACE_MS` is 3000ms from the
 //     answer, so every await between the answer and the socket attach is spent
 //     out of a budget that decides whether a connected call counts as abandoned.
 //

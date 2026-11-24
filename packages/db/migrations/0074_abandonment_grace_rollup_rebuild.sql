@@ -13,15 +13,25 @@
 -- Every bucket the rollup already holds is marked dirty, so the job rebuilds it with the new
 -- predicate (recompute, never increment: 0012's header), as 0014 did. A bucket not rolled up yet
 -- is marked already. One row per bucket, written to `agency_insights_rollup_dirty` only;
--- `agency_call_attempts` is not touched.
+-- `agency_call_attempts` is not touched. Newest bucket first: the job claims marks in insertion
+-- order (`ORDER BY id`), so the recent buckets a supervisor reads are rebuilt before the old ones.
 --
 -- `agency_call_attempts.abandon_reason` is left as it is: rows settled before the deploy keep
 -- `bridge_late` for a bridge between 1 s and 3 s. The column is diagnosis only and nothing reads
 -- it (its comment in 0001 says so); the compliance numerator reads the predicate.
 --
--- ── Locking ───────────────────────────────────────────────────────────────────
--- One transaction. Reads `agency_insights_rollup_buckets` and appends to the dirty table, which
--- the rollup job claims with SKIP LOCKED; nothing waits on it.
+-- ── Locking and cost ──────────────────────────────────────────────────────────
+-- One transaction. Reads `agency_insights_rollup_buckets` (its primary key, one row per campaign
+-- per 15 minutes held) and appends one row per bucket to the dirty table, which the rollup job
+-- claims with SKIP LOCKED; nothing waits on it, and the server is stopped while migrations run.
+-- The migration itself is quick (0014's backfill marked 2,880 buckets in about 1 s). The rebuild
+-- after it is not: the job drained 2,880 buckets in about 62 s at scale (docs/insights.md, "At
+-- scale"), so a database holding N rolled-up buckets has Insights saying "updating" for roughly
+-- N / 45 seconds after the deploy, and more than about 30,000 buckets will raise
+-- `agy-insights-rollup-behind` until the backlog drains (count them first:
+-- `SELECT count(*) FROM agency_insights_rollup_buckets`). Dialling and the compliance rate are
+-- unaffected: they read the attempts table, not the rollup. DEPLOYMENT.md, "Deploying a new
+-- version", says so for the deploy.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Nothing to undo: the marks are consumed by the job. Reverting the grace in code and running
@@ -33,7 +43,7 @@
 -- Up Migration
 
 INSERT INTO agency_insights_rollup_dirty (campaign_id, bucket_start)
-SELECT campaign_id, bucket_start FROM agency_insights_rollup_buckets ORDER BY bucket_start, campaign_id;
+SELECT campaign_id, bucket_start FROM agency_insights_rollup_buckets ORDER BY bucket_start DESC, campaign_id;
 
 -- Down Migration
 

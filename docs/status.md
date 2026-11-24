@@ -2785,6 +2785,35 @@ or Mark handled, and no Missed, Voicemail or Abandoned in its outcome filter; an
 shows an inbound entry as one it cannot show yet ([`call-log.md`](call-log.md) §8 "What P6 left
 as it was").
 
+### Abandonment on 23 Nov: the 3 s grace, the Resume warning, answer-to-audio 2026-11-24 (AG1, AW1–AW3)
+
+On 23 Nov two staging campaigns read about 10% abandoned and the guardrail paused them over and over.
+Nine of the eleven abandoned calls were calls an agent took and talked through: VoiceLink's audio
+stream connected 1.06–1.25 s (or about 5 s) after its answer event, outside the 1 s grace. Supervisors
+pressed Resume 87 times, each paused again within a minute.
+
+- **The grace is 3 s (AG1, decided by Manas).** `ABANDONMENT_BRIDGE_GRACE_MS` 1000 → 3000. Every
+  figure read from the attempts changes with the deploy, history included; 0074 rebuilds the
+  Insights rollup (`DEPLOYMENT.md` 12, "Deploying or going back past the 3 s abandonment grace").
+- **Resume warns first (AW1–AW3, default, pending Manas).** A campaign the guardrail paused, or any
+  paused campaign whose rolling 24 h rate is over its ceiling, asks before Resume, with the numbers
+  and that the dialler will pause it again within about a minute. Never a block; `/resume` is
+  unchanged. The campaign header says why the guardrail paused it.
+- **Answer → audio connected is measured.** `agency_answer_to_bridge_seconds` (by carrier) and its
+  dashboard panel under Late Bind, with the 3 s line and the share past it.
+- **The dashboard counts every abandoned call.** Plain `rate()` dropped each new series' first
+  increment (7 of 11 shown on 23 Nov); Throughput and Abandonment Causes now add it, and
+  `pnpm test:grafana` holds them to it. Grafana Cloud's created-timestamp zero ingestion would fix it
+  for every query; it is off on the stack and only their support can turn it on.
+- **Open:** station drops on a hidden Chrome tab (the 10 s heartbeat timer is throttled to once a
+  minute after 5 minutes hidden, the 30 s grace closes the socket every 2 minutes), and a ringing
+  dial ended as `agent_disconnected` on a tab that was still there (the pre-bind grace is not
+  cleared by a late ping). Researched, not built: clear the grace on any ping, then have the server
+  ask the console for its ping.
+
+**Not verified:** the warning has not been seen in a real browser; the new panel has no live data
+until the server is deployed.
+
 ## Not built
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
@@ -2893,6 +2922,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
+| Resume warning (2026-11-24) | Ratify AW1–AW3 (`decisions.md`, "A warning before Resume"): the guardrail's pause asks on every Resume, even once the rate is back under; any other pause asks while the rate is over by the guardrail's own rule; a Cancel is an analytics event. Ask Grafana Cloud support to turn on created-timestamp zero ingestion. Decide the hidden-tab heartbeat fix ("Abandonment on 23 Nov" above) |
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |

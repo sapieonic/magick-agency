@@ -185,7 +185,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 28 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
 | `apps/server/test/unit/agency/abandonment-otlp-export.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandonment-window.test.ts` | 19 |
+| `apps/server/test/unit/agency/abandonment-window.test.ts` | 20 |
 | `apps/server/test/unit/agency/agency-activity-actions.test.ts` | 8 |
 | `apps/server/test/unit/agency/agent-script.test.ts` (BE-8: the write's rules, the trimmed store, the bootstrap's reading, the audit; AS19: the keys per campaign against the resulting display, both ways and as a pair, a case or space typo told how to write it (S13)) | 18 |
 | `apps/server/test/unit/agency/station-tiles.test.ts` (BE-13, AS9: every listed icon accepted on an outcome and a break reason, anything else (an unknown key, `null`, a number, another case) refused with the entry named; both campaign-config validators refuse alike; `phone_display` `full` or `masked` only; the bootstrap's catalog drops an unknown icon; an unknown display reads as `full`) | 6 |
@@ -1841,6 +1841,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/inbound-from-index-migration.test.ts` (0073: an account's inbound calls by caller; the definition, a number's keyset page of missed calls planned on it with no sort, the invalid-index refusal, down then up) | 4 |
+| `packages/db/test/integration/db/abandonment-grace-rollup-migration.test.ts` (0074, the 3 s abandonment grace, AG1: every bucket the rollup holds marked for a rebuild and no rollup row changed; nothing marked on an empty rollup; down then up) | 2 |
 | `packages/db/test/integration/db/attempts-account-index-migration.test.ts` (0072: an account's dialler attempts by when they were created; the definition, an account's keyset page planned on it with no sort, the invalid-index refusal, down then up) | 4 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
 | `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~34 |

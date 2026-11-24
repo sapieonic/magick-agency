@@ -151,7 +151,7 @@ describe('the audit predicate and the product predicate agree, on data where the
     expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
 
     // Now push this row's answer instant back past N. Written directly rather than
-    // waited out: N is a business threshold, and a test that slept 1s to cross it
+    // waited out: N is a business threshold, and a test that slept 3s to cross it
     // would be measuring the clock rather than the predicate. An EXACT offset, not
     // a generous one — `+1ms` past the boundary is what distinguishes `>` from
     // `>=`, and a 5s offset would pass against either.

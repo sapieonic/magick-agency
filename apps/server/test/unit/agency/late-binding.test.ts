@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //    agent can tell a ringing dial from a stuck station;
 //  * a dial that DOES connect still puts `reserved` on the wire before
 //    `bridged`, inside a single synchronous turn, because the abandonment
-//    predicate gives the whole bind path 1000ms from the answer.
+//    predicate gives the whole bind path 3000ms from the answer.
 //
 // The bridge double therefore emits `bridged` synchronously from inside
 // `bindBorrowedBrowserLeg`, exactly as `emitBridgedIfLive` does. That

@@ -2032,7 +2032,8 @@ No schema change (AG1). `ABANDONMENT_BRIDGE_GRACE_MS` went from 1000 ms to 3000 
 `ABANDONED_ATTEMPT_PREDICATE_SQL` no longer counts a call bridged up to 3 s after the carrier's
 answer. Every read of the predicate changes with the deploy; the Insights rollup's stored
 `abandoned` does not, so the Up marks every bucket in `agency_insights_rollup_buckets` in
-`agency_insights_rollup_dirty` and the job recomputes it (0014's backfill). `abandon_reason` on
+`agency_insights_rollup_dirty`, newest bucket first, and the job recomputes it (0014's backfill;
+about 45 buckets a second, so Insights says "updating" for a while on a large database). `abandon_reason` on
 attempts settled before the deploy keeps `bridge_late` for a 1–3 s bridge: diagnosis only, read by
 nothing. **Down** is a no-op. **Tests**: `test/integration/db/abandonment-grace-rollup-migration.test.ts`
 (every held bucket marked, no rollup row changed, down then up) and the down → up inventory suite.

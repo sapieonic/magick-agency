@@ -23,11 +23,9 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-// Distinct buckets, not mark rows: the re-run applies every later migration too, and 0074 marks
-// every rolled-up bucket again (the job collapses a bucket's marks into one recompute).
 async function marks(): Promise<string[]> {
   const { rows } = await pool().query<{ campaign_id: string; bucket_start: Date }>(
-    'SELECT DISTINCT campaign_id, bucket_start FROM agency_insights_rollup_dirty');
+    'SELECT campaign_id, bucket_start FROM agency_insights_rollup_dirty ORDER BY id');
   return rows.map((r) => `${r.campaign_id}|${r.bucket_start.toISOString()}`).sort();
 }
 const clearMarks = () => pool().query('DELETE FROM agency_insights_rollup_dirty');
@@ -120,11 +118,14 @@ describe('0014 — insights rollup first dials and carrier errors', () => {
       const triggers = await pool().query(`SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_agency_calls_insights_error%'`);
       expect(triggers.rowCount).toBe(0);
       await clearMarks();
+      // 0014 alone, so its own backfill is what is read: a later migration that marks every
+      // rolled-up bucket too (0074) would otherwise hide a 0014 that marked nothing.
+      await migrate('up', 1);
+      // The backfill: one mark per rolled-up bucket, so the job rebuilds each with the new facet.
+      expect(await marks()).toEqual([key(c, '2026-11-03T05:00:00Z'), key(c, '2026-11-04T05:00:00Z')]);
+      expect(await facetCheck()).toContain("'carrier_error'");
     } finally {
       await migrate('up');
     }
-    // The backfill: one mark per rolled-up bucket, so the job rebuilds each with the new facet.
-    expect(await marks()).toEqual([key(c, '2026-11-03T05:00:00Z'), key(c, '2026-11-04T05:00:00Z')]);
-    expect(await facetCheck()).toContain("'carrier_error'");
   });
 });

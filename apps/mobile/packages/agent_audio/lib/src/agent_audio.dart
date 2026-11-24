@@ -72,7 +72,7 @@ class AgentAudio {
       );
 
   /// Configures the audio session for a voice call and pre-warms it, without opening the
-  /// microphone. Call at `available` so a late-bound call has audio within its 1 s budget.
+  /// microphone. Call at `available` so a late-bound call has audio within its 3 s budget.
   /// Calling it again with the same or another format while [AgentAudioPhase.prepared] is
   /// allowed; during a call it throws [AgentAudioErrorCode.invalidState].
   ///

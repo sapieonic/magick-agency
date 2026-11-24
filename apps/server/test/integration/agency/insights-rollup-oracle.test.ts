@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS } from '../setup/factories.js';
 import { randomUUID } from 'node:crypto';
+import { ABANDONMENT_BRIDGE_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import { ATTEMPT_COLUMNS, OVERRIDE_CODES, SUCCESS_CODES, WORLD_BASE, bulkInsert, seedWorld, type WorldCampaign } from './insights-rollup-world.js';
 import { oracleAgents, oracleFacets, oracleTotals, oracleTrend, type OracleRange } from './insights-rollup-oracle-sql.js';
 
@@ -132,11 +133,15 @@ describe('insights rollup — every read equals the attempts table', () => {
               count(*) FILTER (WHERE state <> 'ended')::text AS live,
               count(*) FILTER (WHERE cardinality(override_applied) > 0)::text AS overrides,
               count(*) FILTER (WHERE callback_at IS NOT NULL)::text AS callbacks,
-              count(*) FILTER (WHERE dialed_at = agency_insights_bucket(dialed_at))::text AS on_boundary
+              count(*) FILTER (WHERE dialed_at = agency_insights_bucket(dialed_at))::text AS on_boundary,
+              count(*) FILTER (WHERE outcome = 'connected'
+                AND bridged_at - answered_at > interval '${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds')::text AS late_bridge,
+              count(*) FILTER (WHERE outcome = 'connected' AND bridged_at - answered_at > interval '1 second'
+                AND bridged_at - answered_at <= interval '${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds')::text AS slow_bridge
          FROM agency_call_attempts`);
     const n = rows[0]!;
     expect(Number(n['n'])).toBeGreaterThan(2500);
-    for (const k of ['at_limit', 'live', 'overrides', 'callbacks', 'on_boundary']) expect(Number(n[k]), k).toBeGreaterThan(0);
+    for (const k of ['at_limit', 'live', 'overrides', 'callbacks', 'on_boundary', 'late_bridge', 'slow_bridge']) expect(Number(n[k]), k).toBeGreaterThan(0);
   });
 
   it('after the backfill job, every read matches', async () => {

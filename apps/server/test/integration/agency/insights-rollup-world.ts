@@ -7,6 +7,7 @@
  * run is reproducible from `LOAD_SEED`.
  */
 import { randomUUID } from 'node:crypto';
+import { ABANDONMENT_BRIDGE_GRACE_MS } from '@magick-agency/domain/abandonment-predicate';
 import type pg from 'pg';
 import { createRng, type Rng } from '../../helpers/load-scale.js';
 import { DEFAULTS } from '../setup/factories.js';
@@ -68,8 +69,11 @@ function lifecycle(rng: Rng, dialed: Date, opts: { forceConnected?: boolean; all
   }
   if (kind === 'connected' || kind === 'orphaned') {
     const answered = plus(dialed, rng.int(3, 25));
-    // Some bridges land after the 3 s grace (AG1): abandoned by the predicate though outcome says connected.
-    const bridged = plus(answered, rng.chance(0.08) ? 3.5 + rng.next() : rng.next() * 0.9);
+    // Some bridges land after the grace (AG1): abandoned by the predicate though outcome says
+    // connected. The rest land anywhere inside it, so a slow bridge the grace still allows is
+    // seeded too. Both derive from the grace, and the oracle's "not vacuous" case counts each.
+    const grace = ABANDONMENT_BRIDGE_GRACE_MS / 1000;
+    const bridged = plus(answered, rng.chance(0.08) ? grace + 0.5 + rng.next() : rng.next() * (grace - 0.1));
     const ended = plus(bridged, rng.int(5, 600) + rng.next());
     row['answered_at'] = answered;
     row['bridged_at'] = bridged;

@@ -1034,6 +1034,24 @@ the Listening history; restore them with
 UPDATE agency_listen_sessions SET live_at = started_at WHERE live_at IS NULL AND frames_sent > 0;
 ```
 
+**Deploying or going back past the 3 s abandonment grace** (`0074_abandonment_grace_rollup_rebuild.sql`,
+decision AG1). The release counts a call abandoned only when its audio connects more than 3 s after
+the carrier's answer (it was 1 s). Every abandonment figure read from the attempts (the rolling 24h
+rate and the auto-pause, `/stats`, call lists, Compare agents) changes with the deploy, history
+included. 0074 marks every Insights rollup bucket for a rebuild; the rollup job works through them
+newest first at about 45 buckets a second, so Insights says "updating" for a while after the
+deploy, and above about 30,000 buckets (`SELECT count(*) FROM agency_insights_rollup_buckets`)
+`agy-insights-rollup-behind` fires until the backlog drains. Dialling is unaffected. Going back to
+an image from before it needs no `migrate:down` (0074 changes no schema), but the older image
+counts with 1 s again, and only the buckets its job happens to rebuild go back to 1 s; rolling
+forward again does not re-run 0074, so Insights then mixes the two definitions. After rolling
+forward past such a rollback, mark every bucket again with the server running:
+
+```sql
+INSERT INTO agency_insights_rollup_dirty (campaign_id, bucket_start)
+SELECT campaign_id, bucket_start FROM agency_insights_rollup_buckets ORDER BY bucket_start DESC, campaign_id;
+```
+
 **A migration that fails on its lock timeout.** Migrations that lock a busy table give up after
 10 s (`SET LOCAL lock_timeout`) rather than queue every query behind them; the server then does
 not start. Find and end what holds the lock, then start it again ([`db-hygiene.md`](db-hygiene.md)

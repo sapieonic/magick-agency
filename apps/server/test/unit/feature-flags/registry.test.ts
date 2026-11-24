@@ -89,7 +89,7 @@ describe('feature-flag registry', () => {
       expect(f.type).toBe('boolean');
       // Off by default is the whole safety property: on, a campaign call reaches
       // the agent's console only at the carrier answer, and the bind runs inside
-      // the 1s abandonment grace. That is a behaviour change per tenant, not a
+      // the 3s abandonment grace. That is a behaviour change per tenant, not a
       // fleet-wide default.
       expect(f.default).toBe(false);
       expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
