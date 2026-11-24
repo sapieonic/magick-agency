@@ -23,7 +23,7 @@ only; never cite another system, repo or external design doc.
 | `docs/call-log.md` | you work on a list of calls (the campaign Call log, My calls, All calls), a call's type or campaign, a campaign's figures by call type (Calls by type, the inbound figures, "Outbound connect rate") or the "Every call must belong to a campaign" setting: the model, phases P1–P6 and their status (all built; §9 says what waits for Manas), rulings CL1–CL42 |
 | `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/listening.md` | you work on live call listening (the live calls list, the listener tap and socket, listen sessions) |
-| `docs/agent-station.md` | you work on the agent station (console or app) or its data: the redesign's rulings AS1–AS19 (AS19: the card's chosen facts, with its review rulings R1–R13 and S1–S16), the build plan and status; spec, backend plan and mock-ups in `docs/agent-station/` |
+| `docs/agent-station.md` | you work on the agent station (console or app) or its data: the redesign's rulings AS1–AS20 (AS19: the card's chosen facts, with its review rulings R1–R13 and S1–S16; AS20: More details, the row's other columns under the card), the build plan and status; spec, backend plan and mock-ups in `docs/agent-station/` |
 | `docs/campaign-setup.md` | you work on New campaign or a campaign's Settings (the four setup steps, their shared parts, rulings CS1–CS21) |
 | `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `REPORTS_SETUP.md` | you set reports up for the first time, on a dev machine or in a deployment (the renderer, the Lambda, the flag) |

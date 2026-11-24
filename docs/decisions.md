@@ -1005,6 +1005,8 @@ light by default, Indian English, supervisor alerts on every page, scope, old ap
 on 2026-11-20. AS19 (supervisors choose the card's facts, 2026-11-21) is there too, with its
 review rulings R1–R13 and S1–S16 (§1, "AS19 review rulings"); a comment that cites `AS19 R<n>` or
 `AS19 S<n>` resolves there, not to this file's S1 or to the build streams and slices named S1 to S4.
+AS20 (More details: every other column of the customer's row under the card, `more_hidden` for
+agents only, phone-looking values masked, 2026-11-24) is there too.
 
 ## Archived campaigns (AR)
 
