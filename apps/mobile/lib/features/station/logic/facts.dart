@@ -103,7 +103,8 @@ String? firstFactLine(FactsView facts, {bool masked = false, DateTime? now}) {
   return f == null ? null : '${f.label}: ${factText(f, masked: masked, now: now)}';
 }
 
-/// Details' list under the pinned fields: with More details from the server (AS20), its rows (the
+/// Details' list under the pinned fields: with More details from the server (AS20), the line under
+/// the name first (the card cuts it to one line; here it is in full), then More details' rows (the
 /// columns the supervisor turned off left out, phone numbers hidden as the campaign hides them) as
 /// fields, minus the pinned ones; from an older server, the roster row as before ([CallView.otherFields]).
 List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateTime? now}) {
@@ -111,9 +112,16 @@ List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateT
   if (more == null) return call.otherFields;
   String fold(String c) => c.trim().toLowerCase();
   final pinned = {for (final f in call.heroFields) fold(f.label)};
+  // The place's column is the roster column holding the place the server sent (never a phone
+  // number, S3(e)); More details leaves it out, as the card shows it.
+  final place = call.facts?.place?.trim() ?? '';
+  final placeField = place.isEmpty
+      ? null
+      : call.otherFields.where((f) => f.value.trim() == place && !pinned.contains(fold(f.label))).firstOrNull;
   return List.unmodifiable([
+    ?placeField,
     for (final t in more)
-      if (!factIsEmpty(t) && !pinned.contains(fold(t.column)))
+      if (!factIsEmpty(t) && !pinned.contains(fold(t.column)) && (placeField == null || fold(placeField.label) != fold(t.column)))
         ContactField(key: t.column, label: t.column, value: factText(t, masked: masked, now: now)),
   ]);
 }

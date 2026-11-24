@@ -65,6 +65,7 @@ class RingingView extends ConsumerWidget {
     // speaker can reach them through the microphone.
     final connected = call?.bridgedAt != null;
     return CallPage(
+      revealOnPush: true,
       body: [
         if (call != null) ...[
           CustomerCard(call: call, lastWords: true),

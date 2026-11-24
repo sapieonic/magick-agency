@@ -1,3 +1,4 @@
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +12,8 @@ import 'layouts.dart';
 /// How many More details rows one push down opens (AS20, as the console).
 const moreDetailsStep = 4;
 
-/// The shortest time between two of those steps, so one swipe opens one step.
+/// The shortest time between two of those steps (each push is one drag, however long), so two
+/// quick flicks open one step.
 const moreDetailsPause = Duration(milliseconds: 300);
 
 /// How far the last More details was opened, so the card drawn again for the same call (Call
@@ -96,7 +98,7 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
   /// True when the end of More details is inside the page's visible part.
   bool _endOnScreen() {
     final end = _end.currentContext?.findRenderObject() as RenderBox?;
-    final scrollable = Scrollable.maybeOf(context)?.context.findRenderObject() as RenderBox?;
+    final scrollable = context.findAncestorStateOfType<ScrollableState>()?.context.findRenderObject() as RenderBox?;
     if (end == null || !end.attached || scrollable == null || !scrollable.attached) return false;
     final y = end.localToGlobal(Offset.zero, ancestor: scrollable).dy;
     return y >= 0 && y <= scrollable.size.height;
@@ -105,7 +107,8 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
   void _onPush() {
     final total = _tiles.length;
     if (!mounted || _shown >= total) return;
-    final now = DateTime.now();
+    // `clock`, not `DateTime.now`: the same instant, and a test's fake one.
+    final now = clock.now();
     final last = _lastStep;
     if (last != null && now.difference(last) < moreDetailsPause) return;
     if (!_endOnScreen()) return;
@@ -138,32 +141,46 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
+              // Side by side when they fit; at large text on a narrow phone the button goes under the
+              // title, so neither is squeezed.
+              OverflowBar(
+                alignment: MainAxisAlignment.spaceBetween,
+                overflowAlignment: OverflowBarAlignment.start,
+                spacing: Space.sm,
+                overflowSpacing: Space.xs,
                 children: [
-                  Icon(Icons.playlist_add, size: 20, color: t.textSecondary),
-                  const SizedBox(width: Space.sm),
-                  Expanded(
-                    child: Semantics(
-                      header: true,
-                      child: Text.rich(
-                        TextSpan(
-                          text: StationCopy.moreDetailsTitle,
-                          style: text.titleSmall!.copyWith(color: t.textSecondary),
-                          children: [
-                            TextSpan(text: '  ${StationCopy.moreDetailsCount(total)}', style: text.bodySmall!.copyWith(color: t.textMuted)),
-                          ],
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.playlist_add, size: 20, color: t.textSecondary),
+                      const SizedBox(width: Space.sm),
+                      Flexible(
+                        child: Semantics(
+                          header: true,
+                          child: Text.rich(
+                            TextSpan(
+                              text: StationCopy.moreDetailsTitle,
+                              style: text.titleSmall!.copyWith(color: t.textSecondary),
+                              children: [
+                                TextSpan(text: '  ${StationCopy.moreDetailsCount(total)}', style: text.bodySmall!.copyWith(color: t.textMuted)),
+                              ],
+                            ),
+                            key: const Key('more-details-title'),
+                          ),
                         ),
-                        key: const Key('more-details-title'),
                       ),
-                    ),
+                    ],
                   ),
-                  Semantics(
-                    expanded: shown > 0,
-                    child: TextButton.icon(
-                      key: const Key('more-details-toggle'),
-                      onPressed: () => all ? _set(0, from: 0) : _set(total, from: shown),
-                      icon: Icon(all ? Icons.expand_less : Icons.expand_more),
-                      label: Text(all ? StationCopy.moreDetailsHide : StationCopy.moreDetailsShowAll),
+                  // Merged, so the button itself says whether the list is open.
+                  MergeSemantics(
+                    child: Semantics(
+                      expanded: shown > 0,
+                      child: TextButton.icon(
+                        key: const Key('more-details-toggle'),
+                        onPressed: () => all ? _set(0, from: 0) : _set(total, from: shown),
+                        icon: Icon(all ? Icons.expand_less : Icons.expand_more),
+                        label: Text(all ? StationCopy.moreDetailsHide : StationCopy.moreDetailsShowAll),
+                      ),
                     ),
                   ),
                 ],

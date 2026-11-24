@@ -22,6 +22,7 @@ class StationPage extends StatelessWidget {
     this.onCall = false,
     this.topBar = const StationTopBar(),
     this.banners = true,
+    this.revealOnPush = false,
   });
 
   final Widget band;
@@ -36,6 +37,11 @@ class StationPage extends StatelessWidget {
 
   /// The shared lines under the band; off for the screens with no station to work at.
   final bool banners;
+
+  /// AS20: the content takes a push down even when it fits the screen, so the gesture reaches More
+  /// details. Only the screens that draw it (Call coming, On call): elsewhere a page that fits stays
+  /// still (AS1), and a press and hold on a fact is not taken for a drag.
+  final bool revealOnPush;
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +71,7 @@ class StationPage extends StatelessWidget {
             child: _ScrollPushScope(
               child: SingleChildScrollView(
                 // AS20: a push down reaches More details even when the content fits the screen.
-                physics: const AlwaysScrollableScrollPhysics(),
+                physics: revealOnPush ? const AlwaysScrollableScrollPhysics() : null,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -87,9 +93,10 @@ class StationPage extends StatelessWidget {
 }
 
 /// AS20: each time the agent pushes the station's content down with a finger (it scrolls down, or
-/// it is already at the end and the finger keeps pushing), [pushes] goes up by one. More details
-/// listens, and opens a few more rows while its end is on screen. Only the page's own scroll counts,
-/// never a list inside it.
+/// it is already at the end and the finger keeps pushing), [pushes] goes up by one: once per drag,
+/// however long the finger stays down. More details listens, and opens a few more rows while its
+/// end is on screen. Only the page's own scroll counts, never a list inside it, and only a finger
+/// (a screen reader's scroll action and a fling carry no drag: "Show all" is their way).
 class StationScrollPush extends InheritedWidget {
   const StationScrollPush({super.key, required this.pushes, required super.child});
 
@@ -115,6 +122,9 @@ class _ScrollPushScope extends StatefulWidget {
 class _ScrollPushScopeState extends State<_ScrollPushScope> {
   final _pushes = ValueNotifier<int>(0);
 
+  /// Whether this drag has counted its push already.
+  bool _counted = false;
+
   @override
   void dispose() {
     _pushes.dispose();
@@ -123,12 +133,16 @@ class _ScrollPushScopeState extends State<_ScrollPushScope> {
 
   bool _onScroll(ScrollNotification n) {
     if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
+    if (n is ScrollStartNotification) _counted = false;
     final down = switch (n) {
       ScrollUpdateNotification(:final dragDetails, :final scrollDelta) => dragDetails != null && (scrollDelta ?? 0) > 0,
       OverscrollNotification(:final dragDetails, :final overscroll) => dragDetails != null && overscroll > 0,
       _ => false,
     };
-    if (down) _pushes.value++;
+    if (down && !_counted) {
+      _counted = true;
+      _pushes.value++;
+    }
     return false;
   }
 

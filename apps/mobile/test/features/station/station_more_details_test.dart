@@ -3,15 +3,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/logic/facts.dart';
 import 'package:magick_agency_agent/features/station/parts/more_details_card.dart';
+import 'package:magick_agency_agent/features/station/parts/on_call_view.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 
 import 'station_harness.dart';
 
 /// AS20 on the phone: More details under the card on Call coming and On call, the server's
 /// `facts.more` minus what the card draws; closed at first with a count; a push down on the page
-/// while its end is on screen opens a step at a time (one per pause), "Show all" and "Hide"; a
-/// phone number hidden as the campaign hides numbers; the same call keeps how far it was opened;
-/// Details lists the server's More details, not the raw row, when the server sends them.
+/// while its end is on screen opens a step at a time (one per drag and per pause), "Show all" and
+/// "Hide" (its open state read out); a phone number hidden as the campaign hides numbers; the same
+/// call keeps how far it was opened; only Call coming and On call take a push on a page that fits;
+/// Mute and Speaker stay above it at large text; the header fits a narrow phone at large text;
+/// Details lists the line under the name, then the server's More details, when the server sends them.
 void main() {
   FactTileView more(String column, String raw, {FactKind kind = FactKind.text, String? parsed}) =>
       FactTileView(label: column, column: column, raw: raw, kind: kind, parsed: parsed);
@@ -44,8 +47,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
   }
 
-  Future<void> waitPause(WidgetTester tester) =>
-      tester.runAsync(() => Future<void>.delayed(moreDetailsPause + const Duration(milliseconds: 50)));
+  // One drag, and a frame: the fake clock does not move, so the next drag is within the pause.
+  Future<void> dragOnce(WidgetTester tester) async {
+    await tester.drag(find.byType(SingleChildScrollView).first, const Offset(0, -400));
+    await tester.pump();
+  }
 
   group('the rows (logic)', () {
     test('chosen: the server\'s order, minus the card\'s tiles (ignoring case), each column once, no empty value', () {
@@ -70,6 +76,11 @@ void main() {
       final older = call(facts: chosen(null));
       expect(detailsOtherFields(older), same(older.otherFields));
     });
+
+    test('Details puts the line under the name first, in full, from the roster column that holds it', () {
+      final facts = FactsView(name: 'Sunita Patil', place: 'Value 2', tiles: [amount], chosen: true, more: [rows[0], more('Field 2', 'Value 2')]);
+      expect([for (final f in detailsOtherFields(call(facts: facts))) '${f.label}=${f.value}'], ['Field 2=Value 2', 'Loan No=LN-4471']);
+    });
   });
 
   group('the card', () {
@@ -83,12 +94,12 @@ void main() {
 
     testWidgets('a push down while its end is on screen opens a step; one step per pause; then the rest', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
-      await pushDown(tester);
+      await dragOnce(tester);
       expect(labelsShown(tester), ['Loan No', 'Alt mobile', 'Tenure', 'Branch']);
       expect(find.text(StationCopy.moreDetailsShown(4, 6)), findsOneWidget);
-      await pushDown(tester);
+      await dragOnce(tester);
       expect(labelsShown(tester), hasLength(moreDetailsStep), reason: 'within the pause');
-      await waitPause(tester);
+      await tester.pump(moreDetailsPause);
       await pushDown(tester);
       expect(labelsShown(tester), hasLength(6));
       expect(find.byKey(const Key('more-details-hint')), findsNothing);
@@ -139,6 +150,58 @@ void main() {
         size: const Size(390, 2400),
       );
       expect(labelsShown(tester), isEmpty);
+    });
+
+    testWidgets('one long, slow drag opens one step, however long the finger stays down', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
+      await tester.timedDrag(find.byType(SingleChildScrollView).first, const Offset(0, -1200), const Duration(seconds: 2));
+      await tester.pump();
+      expect(labelsShown(tester), hasLength(moreDetailsStep));
+    });
+
+    testWidgets('the toggle tells a screen reader whether the list is open', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
+      final toggle = find.byKey(const Key('more-details-toggle'));
+      expect(tester.getSemantics(toggle), containsSemantics(isButton: true, hasExpandedState: true, isExpanded: false));
+      await tester.tap(toggle);
+      await settle(tester);
+      expect(tester.getSemantics(toggle), containsSemantics(isButton: true, hasExpandedState: true, isExpanded: true));
+      semantics.dispose();
+    });
+
+    testWidgets('at large text on a narrow phone the header fits: the button goes under the title', (tester) async {
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])),
+        size: const Size(320, 2400),
+        textScale: 2,
+      );
+      expect(tester.takeException(), isNull);
+      final title = tester.getRect(find.byKey(const Key('more-details-title')));
+      final toggle = tester.getRect(find.byKey(const Key('more-details-toggle')));
+      expect(title.width, greaterThan(150));
+      expect(toggle.top, greaterThanOrEqualTo(title.bottom));
+    });
+
+    testWidgets('only the screens with More details take a push on a page that fits', (tester) async {
+      ScrollPhysics? physics() => tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView).first).physics;
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])));
+      expect(physics(), isA<AlwaysScrollableScrollPhysics>());
+      await pumpStation(tester, station(phase: AgentPhase.available));
+      expect(physics(), isNull);
+    });
+
+    testWidgets('at large text On call, Mute and Speaker sit above More details, which never pushes them away', (tester) async {
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.onCall, call: call(facts: chosen(rows), priorAttempts: const [], bridgedAt: DateTime(2026, 11, 24, 10))),
+        size: const Size(360, 640),
+        textScale: 2,
+      );
+      final controls = tester.getRect(find.byType(ControlRow).first);
+      final card = tester.getRect(find.byKey(const Key('more-details-card')));
+      expect(controls.bottom, lessThanOrEqualTo(card.top));
     });
 
     testWidgets('no card when there is nothing more, or from an older server', (tester) async {

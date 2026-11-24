@@ -268,7 +268,6 @@ class StationViewMapper {
     );
   }
 
-
   /// The inbound caller on the station, read once per copy of the call (a frame is a new copy;
   /// a pong is not).
   InboundCallView? _inboundFor(wire.InboundCall? call, String? hangupFailure, {required bool masked}) {

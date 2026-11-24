@@ -34,6 +34,7 @@ class OnCallView extends ConsumerWidget {
     final hasScript = ref.watch(stationViewProvider.select((v) => (v?.script?.steps ?? const <String>[]).isNotEmpty));
     final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
     return CallPage(
+      revealOnPush: true,
       body: [
         if (lineDown) const CallProblemSteps(),
         if (interrupted != AudioInterruption.none) ...[_InterruptionCard(kind: interrupted), const SizedBox(height: Space.md)],
@@ -50,10 +51,11 @@ class OnCallView extends ConsumerWidget {
         const SizedBox(height: Space.md),
         const QueuedBreakChip(offer: false),
         const DontCallAgainRow(),
+        // At large text Mute and Speaker scroll with the content, so End call keeps its place; they
+        // come before More details, which grows as the agent scrolls and must never push them away.
+        if (tight) ...[const SizedBox(height: Space.md), const LinkGate(child: ControlRow())],
         // AS20: the customer's other columns, at the bottom, opened as the agent scrolls down.
         if (call != null) MoreDetailsCard(call: call),
-        // At large text Mute and Speaker scroll with the content, so End call keeps its place.
-        if (tight) ...[const SizedBox(height: Space.md), const LinkGate(child: ControlRow())],
       ],
       actions: tight
           ? const HangUpBar()
