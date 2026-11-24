@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.29.0](https://github.com/sapieonic/magick-agency/compare/db-v0.28.0...db-v0.29.0) (2026-11-24)
+
+
+### Features
+
+* **domain,server,db,console,contracts,observability:** abandonment grace per campaign (default 3 s), a Resume warning and answer-to-audio on the dashboard ([#124](https://github.com/sapieonic/magick-agency/issues/124)) ([9cf0280](https://github.com/sapieonic/magick-agency/commit/9cf02808fb1101b968791a2bb4129430be91a015))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.31.0
+    * @magick-agency/domain bumped to 0.17.0
+    * @magick-agency/observability bumped to 0.19.0
+
 ## [0.28.0](https://github.com/sapieonic/magick-agency/compare/db-v0.27.0...db-v0.28.0) (2026-11-23)
 
 

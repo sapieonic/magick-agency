@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.35.0](https://github.com/sapieonic/magick-agency/compare/console-v0.34.0...console-v0.35.0) (2026-11-24)
+
+
+### Features
+
+* **domain,server,db,console,contracts,observability:** abandonment grace per campaign (default 3 s), a Resume warning and answer-to-audio on the dashboard ([#124](https://github.com/sapieonic/magick-agency/issues/124)) ([9cf0280](https://github.com/sapieonic/magick-agency/commit/9cf02808fb1101b968791a2bb4129430be91a015))
+* **server,console,mobile,contracts,domain:** More details under the agent station's customer card (AS20) ([#123](https://github.com/sapieonic/magick-agency/issues/123)) ([7fc1aa5](https://github.com/sapieonic/magick-agency/commit/7fc1aa58b09ab0475c02c733a9ce3e8e1dcf2714))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.31.0
+    * @magick-agency/domain bumped to 0.17.0
+
 ## [0.34.0](https://github.com/sapieonic/magick-agency/compare/console-v0.33.0...console-v0.34.0) (2026-11-23)
 
 

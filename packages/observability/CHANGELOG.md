@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.18.0...observability-v0.19.0) (2026-11-24)
+
+
+### Features
+
+* **domain,server,db,console,contracts,observability:** abandonment grace per campaign (default 3 s), a Resume warning and answer-to-audio on the dashboard ([#124](https://github.com/sapieonic/magick-agency/issues/124)) ([9cf0280](https://github.com/sapieonic/magick-agency/commit/9cf02808fb1101b968791a2bb4129430be91a015))
+
 ## [0.18.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.17.0...observability-v0.18.0) (2026-11-21)
 
 
