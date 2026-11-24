@@ -60,9 +60,9 @@ const MORE_PHONE_MAX_GROUPS = 12;
  * True when a text value holds a phone number, read loosely, since a roster's cells are written
  * every which way (`9876543210.0` from a spreadsheet, `Mob: 98765 43210`, two numbers in one cell,
  * `022 2345 6789`): the value is read as Unicode's compatibility form (full-width digits) without
- * zero-width characters, and a `.0` after digits dropped; each run of digits joined by spaces,
- * dashes, dots and brackets is split into its digit groups, and the value holds a phone number when
- * some consecutive groups together are
+ * zero-width characters; each run of digits joined by spaces, dashes, dots and brackets is split
+ * into its digit groups (so `9876543210.0` is `9876543210` and `0`), and the value holds a phone
+ * number when some consecutive groups together are
  *  - an Indian mobile (ten digits starting 6 to 9, with an optional `91`, `0` or `091` before them),
  *  - an Indian landline with its STD code (`0` and ten digits), or
  *  - written with a leading `+` or `00`, with {@link MORE_PHONE_MIN_INTERNATIONAL_DIGITS} to 15
@@ -75,8 +75,7 @@ const MORE_PHONE_MAX_GROUPS = 12;
 export function looksLikePhoneNumber(raw: string): boolean {
   const text = String(raw)
     .normalize('NFKC')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .replace(/(\d)\.0+(?!\d)/g, '$1');
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
   if ((text.match(/\p{L}/gu) ?? []).length > MORE_PHONE_MAX_LETTERS) return false;
   for (const run of text.match(/\+?\d[\d\s().-]*\d/g) ?? []) {
     const groups = run.split(/[\s().-]+/).filter((g) => g !== '').slice(0, MORE_PHONE_MAX_GROUPS);
