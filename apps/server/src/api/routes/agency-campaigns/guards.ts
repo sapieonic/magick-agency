@@ -9,7 +9,7 @@ import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import { announcementRepository } from '@magick-agency/db/repositories/announcement.repository';
 import { preflightAnalysisProfile } from '../../../analysis/profile-preflight.js';
-import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
+import { campaignImportLineage, type AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
@@ -281,10 +281,7 @@ export async function contextColumnsRejected(
   campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>,
 ): Promise<boolean> {
   if (!namesContextColumns(body)) return false;
-  const lineage = campaign.root_campaign_id && campaign.root_campaign_id !== campaign.id
-    ? [campaign.id, campaign.root_campaign_id]
-    : [campaign.id];
-  const known = await agencyIngestJobRepository.knownContextColumns(lineage);
+  const known = await agencyIngestJobRepository.knownContextColumns(campaignImportLineage(campaign));
   const issues = contextDisplayIssues(body, known);
   if (issues.length === 0) {
     body['context_display'] = canonicalContextColumns(body['context_display'], known);

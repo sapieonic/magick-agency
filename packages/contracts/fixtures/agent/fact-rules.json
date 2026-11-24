@@ -2,13 +2,14 @@
   "_about": [
     "AS19 S5: the card's rules as cases, read by the domain's TypeScript tests (packages/domain/test/unit/agency/fact-rules.test.ts)",
     "and by the agent app's Dart port (apps/mobile/packages/agency_wire/test/fact_rules_test.dart). Every case is run by both,",
-    "except unique_fact_labels and legacy_fact_fields (the console's Settings editor only). Edit a case here, and both sides follow.",
+    "except unique_fact_labels and legacy_fact_fields (the console's Settings editor only) and more_detail_tiles (the server builds More details and the app draws what it sent). Edit a case here, and both sides follow.",
     "phone: formatFactPhone / maskFactPhone (R6, S3). parse: parseContextFact (now: parse.now). script_pieces: scriptPieces.",
     "script_placeholders: scriptPlaceholdersFor. configured_heroes: configuredHeroNames. hero_columns: heroColumnsFor.",
     "guess_columns: guessNameColumn / guessPlaceColumn over a list of columns or a row. customer: customerNameFrom /",
     "customerNameColumn / customerPlaceFrom / customerPlaceColumn. chosen_fact_tiles: chosenFactTiles. null is none.",
     "unique_fact_labels: uniqueFactLabels. legacy_fact_fields: legacyFactFields, the pre-fill of a card saved before AS19 (S9: amount due, due date, then the other heroes).",
-    "A guess never picks a column types declares phone (the column matched ignoring case): guess_columns' types, customer's display.types."
+    "A guess never picks a column types declares phone (the column matched ignoring case): guess_columns' types, customer's display.types.",
+    "more_detail_tiles: moreDetailTiles (AS20), with column_order when given; looks_like_phone: looksLikePhoneNumber."
   ],
   "phone": [
     {
@@ -2645,6 +2646,338 @@
           "key": "loan_no"
         }
       ]
+    }
+  ],
+  "more_detail_tiles": [
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "City": "Pune",
+        "Alt Phone": "098765 43210",
+        "Loan No": "LN-4471",
+        "Aadhaar": "1234 5678 9012",
+        "Notes": "",
+        "Branch": "  Kothrud  ",
+        "Tenure": "24",
+        "Remark": "N/A",
+        "Office": "+44 20 7946 0958",
+        "Score": 7,
+        "Internal Id": "x-19"
+      },
+      "display": {},
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "Amount Due",
+          "type": "text",
+          "raw": "₹12,500.00",
+          "value": null
+        },
+        {
+          "column": "Alt Phone",
+          "type": "phone",
+          "raw": "098765 43210",
+          "value": "09876543210"
+        },
+        {
+          "column": "Loan No",
+          "type": "text",
+          "raw": "LN-4471",
+          "value": null
+        },
+        {
+          "column": "Aadhaar",
+          "type": "text",
+          "raw": "1234 5678 9012",
+          "value": null
+        },
+        {
+          "column": "Branch",
+          "type": "text",
+          "raw": "Kothrud",
+          "value": null
+        },
+        {
+          "column": "Tenure",
+          "type": "text",
+          "raw": "24",
+          "value": null
+        },
+        {
+          "column": "Office",
+          "type": "phone",
+          "raw": "+44 20 7946 0958",
+          "value": "+442079460958"
+        },
+        {
+          "column": "Score",
+          "type": "text",
+          "raw": "7",
+          "value": null
+        },
+        {
+          "column": "Internal Id",
+          "type": "text",
+          "raw": "x-19",
+          "value": null
+        }
+      ]
+    },
+    {
+      "context": {
+        "Customer Name": "Asha Rao",
+        "Amount Due": "₹12,500.00",
+        "City": "Pune",
+        "Alt Phone": "098765 43210",
+        "Loan No": "LN-4471",
+        "Aadhaar": "1234 5678 9012",
+        "Notes": "",
+        "Branch": "  Kothrud  ",
+        "Tenure": "24",
+        "Remark": "N/A",
+        "Office": "+44 20 7946 0958",
+        "Score": 7,
+        "Internal Id": "x-19"
+      },
+      "display": {
+        "hidden": [
+          "internal id"
+        ],
+        "more_hidden": [
+          "AADHAAR",
+          "Not A Column"
+        ],
+        "order": [
+          "tenure",
+          "Branch",
+          "Missing"
+        ],
+        "roles": {
+          "name": "Customer Name",
+          "place": "Branch"
+        },
+        "types": {
+          "Amount Due": "money",
+          "Tenure": "number",
+          "alt phone": "text"
+        },
+        "facts": [
+          {
+            "column": "amount due",
+            "label": "Due",
+            "key": "amount_due"
+          },
+          {
+            "column": "Loan No",
+            "label": "Loan",
+            "key": "loan_no"
+          }
+        ]
+      },
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "Tenure",
+          "type": "number",
+          "raw": "24",
+          "value": "24"
+        },
+        {
+          "column": "City",
+          "type": "text",
+          "raw": "Pune",
+          "value": null
+        },
+        {
+          "column": "Alt Phone",
+          "type": "text",
+          "raw": "098765 43210",
+          "value": null
+        },
+        {
+          "column": "Office",
+          "type": "phone",
+          "raw": "+44 20 7946 0958",
+          "value": "+442079460958"
+        },
+        {
+          "column": "Score",
+          "type": "text",
+          "raw": "7",
+          "value": null
+        }
+      ]
+    },
+    {
+      "context": {
+        "b": "2",
+        "a": "1",
+        "Name": "Ravi",
+        "c": "3"
+      },
+      "display": {
+        "facts": []
+      },
+      "column_order": [
+        "c",
+        "Name",
+        "a",
+        "b"
+      ],
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": [
+        {
+          "column": "c",
+          "type": "text",
+          "raw": "3",
+          "value": null
+        },
+        {
+          "column": "a",
+          "type": "text",
+          "raw": "1",
+          "value": null
+        },
+        {
+          "column": "b",
+          "type": "text",
+          "raw": "2",
+          "value": null
+        }
+      ]
+    },
+    {
+      "context": null,
+      "display": null,
+      "now": "2026-11-20T06:00:00.000Z",
+      "tiles": []
+    }
+  ],
+  "looks_like_phone": [
+    {
+      "raw": "9876543210",
+      "phone": true
+    },
+    {
+      "raw": "+91 98765 43210",
+      "phone": true
+    },
+    {
+      "raw": "098765 43210",
+      "phone": true
+    },
+    {
+      "raw": "919876543210",
+      "phone": true
+    },
+    {
+      "raw": "+44 20 7946 0958",
+      "phone": true
+    },
+    {
+      "raw": "+1 415",
+      "phone": false
+    },
+    {
+      "raw": "1234 5678 9012",
+      "phone": false
+    },
+    {
+      "raw": "5876543210",
+      "phone": false
+    },
+    {
+      "raw": "24",
+      "phone": false
+    },
+    {
+      "raw": "LN-4471",
+      "phone": false
+    },
+    {
+      "raw": "",
+      "phone": false
+    },
+    {
+      "raw": "9876543210.0",
+      "phone": true
+    },
+    {
+      "raw": "9876543210 / 9123456789",
+      "phone": true
+    },
+    {
+      "raw": "+91 98765 43210, +91 91234 56789",
+      "phone": true
+    },
+    {
+      "raw": "9876543210 9123456789",
+      "phone": true
+    },
+    {
+      "raw": "Mob: 9876543210",
+      "phone": true
+    },
+    {
+      "raw": "98765 43210 (home)",
+      "phone": true
+    },
+    {
+      "raw": "+91-98765-43210.",
+      "phone": true
+    },
+    {
+      "raw": "00919876543210",
+      "phone": true
+    },
+    {
+      "raw": "0919876543210",
+      "phone": true
+    },
+    {
+      "raw": "022 2345 6789",
+      "phone": true
+    },
+    {
+      "raw": "02223456789",
+      "phone": true
+    },
+    {
+      "raw": "98765​43210",
+      "phone": true
+    },
+    {
+      "raw": "９８７６５４３２１０",
+      "phone": true
+    },
+    {
+      "raw": "Paid on 12 Nov, said to call his brother on 9876543210 after six",
+      "phone": false
+    },
+    {
+      "raw": "Ref 2024 5678 9012 3456",
+      "phone": false
+    },
+    {
+      "raw": "20/11/2026",
+      "phone": false
+    },
+    {
+      "raw": "2026-11-20",
+      "phone": false
+    },
+    {
+      "raw": "12500.50",
+      "phone": false
+    },
+    {
+      "raw": "1,25,000",
+      "phone": false
+    },
+    {
+      "raw": "00 12",
+      "phone": false
     }
   ]
 }

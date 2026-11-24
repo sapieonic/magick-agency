@@ -15,7 +15,7 @@ import { NAME_PHONE_MESSAGE, factsErrors, type FactsForm, type RemovedFact } fro
  */
 
 const fact = (column: string, key: string, label = column, extra: Partial<AgencyFactField> = {}): AgencyFactField => ({ column, label, key, ...extra });
-const card = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '', list: [], types: {}, ...over });
+const card = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '', list: [], types: {}, moreHidden: [], ...over });
 
 function Harness({
   initial,
@@ -438,7 +438,9 @@ describe('how each column is read', () => {
     );
     const selects = ['a b', 'a-b', 'a.b'].map((c) => screen.getByTestId(`fact-type-${c}`));
     expect(new Set(selects.map((s) => s.id)).size).toBe(3);
-    for (const select of selects) expect(screen.getByLabelText(select.closest('li')!.querySelector('label')!.textContent!)).toBe(select);
+    // Scoped to the types list: More details (AS20) names the same columns.
+    const types = within(selects[0]!.closest('details')!);
+    for (const select of selects) expect(types.getByLabelText(select.closest('li')!.querySelector('label')!.textContent!)).toBe(select);
     const first = screen.getByText('First.').closest('[id]')!.id;
     const second = screen.getByText('Second.').closest('[id]')!.id;
     expect(first).not.toBe(second);

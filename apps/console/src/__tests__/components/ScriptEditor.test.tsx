@@ -20,6 +20,7 @@ const FACTS: FactsForm = {
     { column: 'Loan ID', label: 'Loan ID', key: 'loan_id' },
   ],
   types: { 'Loan Amount': 'money' },
+  moreHidden: [],
 };
 
 function Harness({

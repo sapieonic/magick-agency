@@ -696,6 +696,8 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
   // AS19.
   ...[0, 1, 2, 3].map((i): InboundField => ['station', 'reserved_facts_chosen', `attempt.facts.tiles.${i}.type`, 'context_field_types']),
   ['station', 'reserved_facts_chosen', 'attempt.facts.tiles.0.role', 'fact_tile_roles'],
+  // AS20: More details' tiles are typed from the same vocabulary.
+  ...[0, 1, 2].map((i): InboundField => ['station', 'reserved_facts_chosen', `attempt.facts.more.${i}.type`, 'context_field_types']),
   ...['Amount Due', 'Due Date', 'Tenure (months)', 'Alt Phone', 'Auto Debit'].map(
     (c): InboundField => ['session', 'bootstrap_facts_chosen', `context_display.types.${c}`, 'context_field_types'],
   ),

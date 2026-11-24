@@ -9,7 +9,7 @@ import {
 import { SURE_PHONE_SHARE } from './ingestChips';
 
 /**
- * Step 2's "Tick what agents should see on their screen" (CS9): one switch per column of the
+ * Step 2's "Tick what goes on the customer card" (CS9): one switch per column of the
  * sample table, over the column mapper's own card roles, so the card saved is exactly what
  * `buildContextDisplay` builds from the mapping.
  *

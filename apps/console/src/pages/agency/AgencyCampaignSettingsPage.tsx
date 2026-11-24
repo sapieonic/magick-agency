@@ -607,7 +607,7 @@ export function AgencyCampaignSettingsPage() {
     // The card's columns as its selects offer them: a name left on "Guess from the column names" is
     // saved as the column the select names (AS19 R1), so it stays a hero once the card has facts.
     const stationSent = station && saved?.station
-      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns)
+      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns, imported.latest)
       : {};
     // The ticks as they were when Save was pressed: what the save applies.
     const ticksToApply = staffingChanged ? staffingTicks : null;
@@ -753,7 +753,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons, station, factsContext, selectColumns, staffing, staffingChanged, staffingTicks, goToFinding,
+    breakReasons, station, factsContext, selectColumns, imported.latest, staffing, staffingChanged, staffingTicks, goToFinding,
   ]);
 
   /** Put back what is saved: every field and tick, and no error left from the edits. */
@@ -801,8 +801,8 @@ export function AgencyCampaignSettingsPage() {
   );
   /*
     The card's findings are said on their rows whether or not they hold Save (a fact whose column a
-    newer upload dropped is shown even while only the target changes); only those of a card that is
-    sent hold it (`stationLive`).
+    newer upload dropped is shown even while only the target or More details changes); only those
+    of a card that is sent hold it (`stationLive`).
   */
   const factsShown = useMemo(
     () => (canEdit && station ? factsErrors(station.facts, factsContext) : {}),
@@ -817,9 +817,11 @@ export function AgencyCampaignSettingsPage() {
     [factsShown, stationLive],
   );
   const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
+  // With the card's columns, as the save reads them: a type change to a More details column alone
+  // does not send the card (AS20), so the script is still read as on the old model (R5).
   const plan = useMemo(
-    () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display) : null),
-    [station, saved, campaign?.context_display],
+    () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display, selectColumns) : null),
+    [station, saved, campaign?.context_display, selectColumns],
   );
   const removedInUse = useMemo(
     () => (station && saved?.station ? removedFactsInUse(saved.station.facts, station.facts, station.script) : []),
@@ -1090,7 +1092,7 @@ export function AgencyCampaignSettingsPage() {
                 onPutBack={onPutBack}
                 onAddFact={onAddFact}
                 // R5: until the card is saved here, agents read the script as on the old model.
-                legacy={isLegacyDisplay(campaign.context_display) && !plan?.displaySent}
+                legacy={isLegacyDisplay(campaign.context_display) && !plan?.cardSent}
               />
             </SetupCard>
           </div>

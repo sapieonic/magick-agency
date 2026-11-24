@@ -124,13 +124,13 @@ export function StationFrame({
       </main>
 
       {footLeft || footRight || footHint ? (
-        <footer className={styles.foot}>
+        <StationFoot>
           <div className={styles.footLeft}>
             {footHint ? <span className={styles.footHint}>{footHint}</span> : null}
             {footLeft}
           </div>
           {footRight ? <div className={styles.footRight}>{footRight}</div> : null}
-        </footer>
+        </StationFoot>
       ) : null}
 
       {/*
@@ -367,5 +367,36 @@ export function MoreMenu({
         </div>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * The footer (AS1: its main button is always bottom right). Where it stays at the bottom of the
+ * window (AS20, `.foot` in `Station.module.css`), the page's `scroll-padding-bottom` follows its
+ * height, so the browser never scrolls a focused field to where the footer covers it (WCAG 2.4.11).
+ */
+function StationFoot({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const foot = ref.current;
+    if (!foot || typeof ResizeObserver === 'undefined') return;
+    const root = document.documentElement;
+    const fit = () => {
+      root.style.scrollPaddingBottom = getComputedStyle(foot).position === 'sticky' ? `${foot.offsetHeight}px` : '';
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(foot);
+    window.addEventListener('resize', fit);
+    fit();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', fit);
+      root.style.scrollPaddingBottom = '';
+    };
+  }, []);
+  return (
+    <footer ref={ref} className={styles.foot} data-station-foot>
+      {children}
+    </footer>
   );
 }

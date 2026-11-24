@@ -37,7 +37,8 @@ Every type cites the TypeScript type it mirrors in `packages/contracts/src`.
   the domain has them, in `lib/src/fact_rules.dart` (the name and place guess, the customer's
   name, the hero rule, the phone rule, the chosen tiles) and `lib/src/context_facts.dart`
   (the parse rule); `test/fact_rules_test.dart` runs every case of it, as the domain's
-  `fact-rules.test.ts` does.
+  `fact-rules.test.ts` does, but the console editor's tables and AS20's `more_detail_tiles` and
+  `looks_like_phone` (the server builds More details; the app draws what it sent).
 
 ```bash
 cd apps/mobile/packages/agency_wire && dart test

@@ -5,6 +5,7 @@ import {
   customerPlaceFrom,
   customerText,
 } from '@magick-agency/domain/customer-name';
+import { fold } from '@magick-agency/domain/context-columns';
 import { chosenFactTiles, factTypeOf } from '@magick-agency/domain/fact-tiles';
 import {
   AGENCY_FACT_FIELDS_MAX,
@@ -70,7 +71,10 @@ export interface CustomerFact {
   /** As the tile writes it: `₹1,25,000`, `20 Nov`, `98••• ••321`, `Yes`; `—` when empty. */
   value: string;
   kind: 'money' | 'date' | 'number' | 'phone' | 'yes_no' | 'text' | 'last_call';
-  /** AS19's chosen facts only: the roster column, for the hover card's "From column: X". */
+  /**
+   * The roster column: on AS19's chosen facts for the hover card's "From column: X"; on a typed
+   * tile so More details leaves it out (AS20). Absent on a phase 0 tile and on Last call.
+   */
   column?: string;
   /** AS19: the customer has no value for this fact; the tile stays and shows `—`. */
   empty?: boolean;
@@ -117,6 +121,27 @@ export interface CustomerCard {
   amountDue: string | null;
   /** "Calling again · 1 of 2" on a wrap-up redial. */
   redial: { number: number; of: number } | null;
+  /**
+   * AS20, More details: the row's other columns the server sent (`facts.more`), minus any column
+   * the card already draws as a tile, each named by its column and written by its type as a chosen
+   * fact is ({@link factDisplay}: a phone masked under masked). Empty when the server sent none.
+   */
+  more: MoreDetail[];
+  /**
+   * AS20: this call's More details as a key, the attempt's id: another call starts closed, and the
+   * same call's panel sent again (a changed value) keeps it as open as it was. Empty without an id:
+   * only the live panel, which always has one, sends More details.
+   */
+  moreKey: string;
+}
+
+/** One row of More details (AS20). */
+export interface MoreDetail {
+  /** The roster column: the row's name and its React key. */
+  column: string;
+  /** As the row writes it: `₹1,25,000`, `20 Nov`, `98••• ••321`, `Yes`, else as uploaded. */
+  value: string;
+  kind: CustomerFact['kind'];
 }
 
 const MONEY_LABEL = /amount|balance|due(?!.*date)|outstanding|premium|emi|total|overdue|arrear/i;
@@ -197,7 +222,7 @@ function typedFact(tile: AgencyFactTile, index: number, phoneDisplay: PhoneDispl
   // Today's card: read money, dates and phones are formatted; every other value as uploaded.
   const kind: CustomerFact['kind'] =
     tile.value !== null && (tile.type === 'money' || tile.type === 'date' || tile.type === 'phone') ? tile.type : 'text';
-  return { key: `fact-${index}`, label: tile.column, value: factText(tile, phoneDisplay), kind };
+  return { key: `fact-${index}`, label: tile.column, value: factText(tile, phoneDisplay), kind, column: tile.column };
 }
 
 // ── AS19: the campaign's chosen facts ────────────────────────────────────────
@@ -413,7 +438,7 @@ export function callLaterTagFor(callback: AgencyReservedAttempt['callback']): st
  * station's side views, `sideViewCustomer.ts`).
  */
 export type CustomerSource = Pick<AgencyReservedAttempt, 'phone_e164' | 'context' | 'prior_attempts'>
-  & Partial<Pick<AgencyReservedAttempt, 'facts' | 'callback' | 'redial'>>;
+  & Partial<Pick<AgencyReservedAttempt, 'attempt_id' | 'facts' | 'callback' | 'redial'>>;
 
 /**
  * The name or the line under it as the card shows it: from a column `types` says is a phone, it
@@ -487,6 +512,46 @@ function customerFacts(
   };
 }
 
+/** How many More details rows one downward scroll opens (AS20). */
+export const MORE_DETAILS_STEP = 4;
+
+/** The shortest time between two of those steps, so one flick of the wheel opens one step. */
+export const MORE_DETAILS_PAUSE_MS = 300;
+
+/**
+ * The quiet that ends one wheel gesture: a trackpad swipe sends wheel events for a second or more
+ * (its momentum included), and only a wheel event after this long without one starts another step.
+ */
+export const MORE_DETAILS_GESTURE_GAP_MS = 200;
+
+/** How many rows are open after one more step: {@link MORE_DETAILS_STEP} more, never past `total`. */
+export function nextMoreShown(shown: number, total: number): number {
+  return Math.min(total, shown + MORE_DETAILS_STEP);
+}
+
+/**
+ * More details (AS20): the server's `facts.more` in its order, minus the columns in `drawn` (the
+ * tiles the card shows, matched ignoring case), each written by {@link factDisplay}. A row whose
+ * value is empty after trimming is left out.
+ */
+export function moreDetails(
+  more: readonly AgencyFactTile[] | undefined,
+  drawn: Iterable<string>,
+  options: { phoneDisplay?: PhoneDisplay; now?: Date | number } = {},
+): MoreDetail[] {
+  if (!Array.isArray(more)) return [];
+  const skip = new Set([...drawn].map(fold));
+  const out: MoreDetail[] = [];
+  for (const tile of more) {
+    if (typeof tile?.column !== 'string' || skip.has(fold(tile.column))) continue;
+    const shown = factDisplay({ ...tile, raw: typeof tile.raw === 'string' ? tile.raw : '' }, options);
+    if (shown.empty) continue;
+    skip.add(fold(tile.column));
+    out.push({ column: tile.column, value: shown.text, kind: shown.kind });
+  }
+  return out;
+}
+
 export function customerCard(
   attempt: CustomerSource,
   display: AgencyContextDisplay | undefined,
@@ -501,6 +566,8 @@ export function customerCard(
     : null;
   // AS19: the chosen facts are the tiles, all of them; Last calls has its own card.
   const facts = chosen ? heroFacts : lastCall ? [...heroFacts.slice(0, 2), lastCall] : heroFacts.slice(0, 3);
+
+  const more = moreDetails(attempt.facts?.more, facts.flatMap((f) => (f.column ? [f.column] : [])), options);
 
   const withNote = [...attempt.prior_attempts]
     .filter((p) => p.notes?.trim())
@@ -517,6 +584,8 @@ export function customerCard(
     callLaterTag: callLaterTagFor(attempt.callback),
     amountDue,
     redial: attempt.redial ? { number: attempt.redial.number, of: attempt.redial.number + attempt.redial.remaining } : null,
+    more,
+    moreKey: attempt.attempt_id ?? '',
   };
 }
 

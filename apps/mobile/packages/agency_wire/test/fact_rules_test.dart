@@ -2,7 +2,8 @@
 // (packages/contracts/fixtures/agent/fact-rules.json) the TypeScript
 // originals run too (packages/domain/test/unit/agency/fact-rules.test.ts).
 // Every case of every table but unique_fact_labels and legacy_fact_fields
-// (the console's editor).
+// (the console's editor) and AS20's more_detail_tiles and looks_like_phone
+// (the server builds More details; the app draws what it sent).
 
 import 'dart:convert';
 

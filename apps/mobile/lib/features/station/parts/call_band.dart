@@ -13,13 +13,17 @@ import 'layouts.dart';
 
 /// A call screen: [StationPage] with the call's band ([CallStateBand]).
 class CallPage extends StatelessWidget {
-  const CallPage({super.key, required this.body, this.actions});
+  const CallPage({super.key, required this.body, this.actions, this.revealOnPush = false});
 
   final List<Widget> body;
   final Widget? actions;
 
+  /// [StationPage.revealOnPush]: on the screens that draw More details.
+  final bool revealOnPush;
+
   @override
-  Widget build(BuildContext context) => StationPage(band: const CallStateBand(), body: body, actions: actions, onCall: true);
+  Widget build(BuildContext context) =>
+      StationPage(band: const CallStateBand(), body: body, actions: actions, onCall: true, revealOnPush: revealOnPush);
 }
 
 /// The band of a call screen (design-spec §2): Call coming (blue), On call (deep blue, the talk

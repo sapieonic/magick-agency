@@ -1,6 +1,8 @@
 /// The customer's facts as the station's card and script show them (BE-6, AS19).
 library;
 
+import 'package:agency_wire/agency_wire.dart' show foldColumnName;
+
 import '../../../core/station/station_view.dart';
 import 'format.dart';
 
@@ -18,6 +20,29 @@ List<FactTileView> factTilesInOrder(FactsView facts) {
     ...shown.where((f) => f.dueDate),
     ...shown.where((f) => !f.amountDue && !f.dueDate),
   ];
+}
+
+/// How many tiles the BE-6 card draws in its row (before AS19): three, or two beside the Last call tile.
+int legacyTileRoom({required bool hasLastCall}) => hasLastCall ? 2 : 3;
+
+/// The BE-6 tiles the card draws in its row ([legacyTileRoom] of them).
+List<FactTileView> legacyCardTiles(FactsView facts, {required bool hasLastCall}) =>
+    factTilesInOrder(facts).take(legacyTileRoom(hasLastCall: hasLastCall)).toList(growable: false);
+
+/// AS20, More details: the server's `facts.more` minus the columns the card already draws (its
+/// chosen tiles, or the BE-6 row), matched ignoring case, each column once, empty values left out.
+/// Empty when the server sent none.
+List<FactTileView> moreDetailTiles(FactsView facts, {required bool hasLastCall}) {
+  final more = facts.more;
+  if (more == null) return const [];
+  final drawn = facts.chosen ? cardFactTiles(facts) : legacyCardTiles(facts, hasLastCall: hasLastCall);
+  final skip = {for (final t in drawn) foldColumnName(t.column)};
+  final out = <FactTileView>[];
+  for (final t in more) {
+    if (factIsEmpty(t) || !skip.add(foldColumnName(t.column))) continue;
+    out.add(t);
+  }
+  return List.unmodifiable(out);
 }
 
 /// The campaign's chosen facts (AS19) in the order the card draws them: the list's order, with the
@@ -80,4 +105,30 @@ String factText(FactTileView f, {bool masked = false, DateTime? now}) {
 String? firstFactLine(FactsView facts, {bool masked = false, DateTime? now}) {
   final f = cardFactTiles(facts).where((f) => !factIsEmpty(f)).firstOrNull;
   return f == null ? null : '${f.label}: ${factText(f, masked: masked, now: now)}';
+}
+
+/// Details' list under the pinned fields: with More details from the server (AS20), the line under
+/// the name first (the card cuts it to one line; here it is in full), then More details' rows (the
+/// columns the supervisor turned off left out, phone numbers hidden as the campaign hides them) as
+/// fields, minus the pinned ones; from an older server, the roster row as before ([CallView.otherFields]).
+List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateTime? now}) {
+  final more = call.facts?.more;
+  if (more == null) return call.otherFields;
+  final pinned = {for (final f in call.heroFields) foldColumnName(f.label)};
+  // The place's column is the one the server read the place from ([CallView.placeColumn], the
+  // domain's rule), matched by its name ignoring case, never by its value (another column may hold
+  // the same text, and the server cuts a long place); More details leaves it out, as the card shows
+  // it. Only when the server read a place: a blank or placeholder value is none.
+  final place = call.facts?.place?.trim() ?? '';
+  final column = call.placeColumn;
+  final placeField = place.isEmpty || column == null || pinned.contains(foldColumnName(column))
+      ? null
+      : call.otherFields.where((f) => foldColumnName(f.label) == foldColumnName(column) && f.value.trim().isNotEmpty).firstOrNull;
+  final skip = {...pinned, if (placeField != null) foldColumnName(placeField.label)};
+  return List.unmodifiable([
+    ?placeField,
+    for (final t in more)
+      if (!factIsEmpty(t) && !skip.contains(foldColumnName(t.column)))
+        ContactField(key: t.column, label: t.column, value: factText(t, masked: masked, now: now)),
+  ]);
 }

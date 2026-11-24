@@ -56,7 +56,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
 
 const campaign = (over: Partial<AgencyCampaign> = {}): AgencyCampaign => ({ id: 'c-1', name: 'C', status: 'draft', ...over });
 const fact = (column: string, key: string, label = column, extra: Partial<AgencyFactField> = {}): AgencyFactField => ({ column, label, key, ...extra });
-const facts = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '', list: [], types: {}, ...over });
+const facts = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '', list: [], types: {}, moreHidden: [], ...over });
 const ctx = (over: { hidden?: string[]; uploaded?: string[] } = {}) => ({ hidden: [], uploaded: [], ...over });
 
 function form(over: Partial<StationSettingsForm> = {}): StationSettingsForm {
@@ -79,7 +79,7 @@ describe('stationSettingsOf', () => {
       dailyTarget: '40',
       phoneDisplay: 'masked',
       script: { opening: 'Hello {name}', steps: ['Ask', 'Close'] },
-      facts: { name: 'Borrower', place: 'City', list, types: { Due: 'money', Ph: 'phone', Ok: 'yes_no', N: 'number' } },
+      facts: { name: 'Borrower', place: 'City', list, types: { Due: 'money', Ph: 'phone', Ok: 'yes_no', N: 'number' }, moreHidden: [] },
     }));
   });
 
@@ -113,6 +113,7 @@ describe('the card of a campaign saved before AS19 (the pre-fill)', () => {
       ],
       // Read as money and a date, as their roles read them before: the new model reads by type alone.
       types: { Amount: 'money', 'Due On': 'date' },
+      moreHidden: [],
     });
   });
 
