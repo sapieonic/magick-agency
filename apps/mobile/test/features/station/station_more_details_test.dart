@@ -163,10 +163,10 @@ void main() {
       final semantics = tester.ensureSemantics();
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
       final toggle = find.byKey(const Key('more-details-toggle'));
-      expect(tester.getSemantics(toggle), containsSemantics(isButton: true, hasExpandedState: true, isExpanded: false));
+      expect(tester.getSemantics(toggle), isSemantics(isButton: true, hasExpandedState: true, isExpanded: false));
       await tester.tap(toggle);
       await settle(tester);
-      expect(tester.getSemantics(toggle), containsSemantics(isButton: true, hasExpandedState: true, isExpanded: true));
+      expect(tester.getSemantics(toggle), isSemantics(isButton: true, hasExpandedState: true, isExpanded: true));
       semantics.dispose();
     });
 
