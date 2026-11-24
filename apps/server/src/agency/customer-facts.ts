@@ -116,9 +116,9 @@ export function customerFacts(
 
   // AS20: More details, the row's other columns (the domain's one rule). Always sent, even `[]`, so
   // a client can tell "nothing more for agents" from an older server that sends none.
-  const more = { more: moreDetailTiles(row, shown, columnOrder) };
+  const more = moreDetailTiles(row, shown, columnOrder, undefined, { nameKey, placeKey });
 
-  if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown), ...more };
+  if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown), more };
 
   const tileRoleOf = new Map<string, AgencyFactTileRole>();
   for (const role of FACT_TILE_ROLES) {
@@ -144,7 +144,7 @@ export function customerFacts(
     return { column, ...(role ? { role } : {}), type, raw, value: parseContextFact(raw, type) };
   });
 
-  return { ...person, tiles, ...more };
+  return { ...person, tiles, more };
 }
 
 // ── The write ────────────────────────────────────────────────────────────────

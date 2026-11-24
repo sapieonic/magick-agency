@@ -350,7 +350,7 @@ text the band scrolls with the content and the main action keeps its place.
   4 facts on a chosen campaign, R2; under them the line under the name, then the server's More
   details, or every field from an older server). Under the card on Call coming and On call, More
   details (AS20, `parts/more_details_card.dart`): closed at first, 4 more rows per drag down while
-  its end is on screen (at most one step per 300 ms), "Show all" / "Hide". The compact card (What happened?, the soft
+  its end is on screen (at most one step per 300 ms), "Show all" / "Hide" (after which a drag opens nothing until "Show all"). The compact card (What happened?, the soft
   phone's) of a chosen campaign with no name is "Customer" over the number and then the first fact
   with a value (S4).
 - **The script** (BE-8), when the campaign has one: "First, say this" with the opening line on Call

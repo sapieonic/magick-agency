@@ -555,13 +555,18 @@ export function sameIngestMapping(a: MappingState | null, b: MappingState | null
   return body(a) === body(b);
 }
 
+/** Of `columns`, the ones the contact keeps as its details (on the card or not), in that order. */
+function keptColumns(state: MappingState, columns: readonly string[]): string[] {
+  return columns.filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+}
+
 /**
  * The columns the card guesses as the customer's name and the line under it, by the domain's one
  * guess (`@magick-agency/domain/customer-name`, AS19 S1), from the columns the contact keeps (not
  * the phone, the timezone or an ignored one), in file order. One column is never both.
  */
 export function cardRoleColumns(state: MappingState): { name?: string; place?: string } {
-  const kept = Object.keys(state.roles).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+  const kept = keptColumns(state, Object.keys(state.roles));
   const name = guessNameColumn(kept);
   const place = guessPlaceColumn(kept, { exclude: name ? [name] : [] });
   return { ...(name ? { name } : {}), ...(place ? { place } : {}) };
@@ -629,7 +634,7 @@ export function buildContextDisplay(state: MappingState): AgencyContextDisplay {
       display.roles = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
     }
     // AS20: the kept columns in the file's order, so More details reads as the file does.
-    const order = (state.columns ?? []).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+    const order = keptColumns(state, state.columns ?? []);
     if (order.length > 0) display.order = order;
   }
   return display;

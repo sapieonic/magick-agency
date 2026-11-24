@@ -5,6 +5,7 @@ import {
   customerPlaceFrom,
   customerText,
 } from '@magick-agency/domain/customer-name';
+import { fold } from '@magick-agency/domain/context-columns';
 import { chosenFactTiles, factTypeOf } from '@magick-agency/domain/fact-tiles';
 import {
   AGENCY_FACT_FIELDS_MAX,
@@ -126,7 +127,11 @@ export interface CustomerCard {
    * fact is ({@link factDisplay}: a phone masked under masked). Empty when the server sent none.
    */
   more: MoreDetail[];
-  /** AS20: this call's More details as a key (the attempt and the rows): a new call starts closed. */
+  /**
+   * AS20: this call's More details as a key, the attempt's id: another call starts closed, and the
+   * same call's panel sent again (a changed value) keeps it as open as it was. Empty without an id:
+   * only the live panel, which always has one, sends More details.
+   */
   moreKey: string;
 }
 
@@ -521,17 +526,7 @@ export const MORE_DETAILS_GESTURE_GAP_MS = 200;
 
 /** How many rows are open after one more step: {@link MORE_DETAILS_STEP} more, never past `total`. */
 export function nextMoreShown(shown: number, total: number): number {
-  return Math.max(0, Math.min(total, shown + MORE_DETAILS_STEP));
-}
-
-/**
- * One call's More details as a key: another call starts closed, and a value that changes during a
- * call (the panel sent again) keeps it as open as it was. Without a call id (none is drawn today),
- * the rows themselves.
- */
-export function moreDetailsKey(callId: string, rows: readonly MoreDetail[]): string {
-  if (callId !== '') return `call\u0002${callId}`;
-  return `rows\u0002${rows.map((r) => `${r.column}\u0000${r.value}`).join('\u0001')}`;
+  return Math.min(total, shown + MORE_DETAILS_STEP);
 }
 
 /**
@@ -545,13 +540,13 @@ export function moreDetails(
   options: { phoneDisplay?: PhoneDisplay; now?: Date | number } = {},
 ): MoreDetail[] {
   if (!Array.isArray(more)) return [];
-  const skip = new Set([...drawn].map((c) => c.trim().toLowerCase()));
+  const skip = new Set([...drawn].map(fold));
   const out: MoreDetail[] = [];
   for (const tile of more) {
-    if (typeof tile?.column !== 'string' || skip.has(tile.column.trim().toLowerCase())) continue;
+    if (typeof tile?.column !== 'string' || skip.has(fold(tile.column))) continue;
     const shown = factDisplay({ ...tile, raw: typeof tile.raw === 'string' ? tile.raw : '' }, options);
     if (shown.empty) continue;
-    skip.add(tile.column.trim().toLowerCase());
+    skip.add(fold(tile.column));
     out.push({ column: tile.column, value: shown.text, kind: shown.kind });
   }
   return out;
@@ -590,7 +585,7 @@ export function customerCard(
     amountDue,
     redial: attempt.redial ? { number: attempt.redial.number, of: attempt.redial.number + attempt.redial.remaining } : null,
     more,
-    moreKey: moreDetailsKey(attempt.attempt_id ?? '', more),
+    moreKey: attempt.attempt_id ?? '',
   };
 }
 

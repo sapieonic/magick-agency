@@ -135,6 +135,26 @@ void main() {
       expect(labelsShown(tester), isEmpty);
     });
 
+    testWidgets('after Hide a push opens nothing until Show all; drawn again it is still held', (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
+      await tester.tap(find.byKey(const Key('more-details-toggle')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('more-details-toggle')));
+      await settle(tester);
+      await pushDown(tester);
+      expect(labelsShown(tester), isEmpty);
+      await pumpStation(
+        tester,
+        station(phase: AgentPhase.onCall, call: call(facts: chosen(rows), priorAttempts: const [], bridgedAt: DateTime(2026, 11, 24, 10))),
+        size: const Size(390, 2400),
+      );
+      await pushDown(tester);
+      expect(labelsShown(tester), isEmpty);
+      await tester.tap(find.byKey(const Key('more-details-toggle')));
+      await settle(tester);
+      expect(labelsShown(tester), hasLength(6));
+    });
+
     testWidgets('On call keeps how far Call coming opened it; another call starts closed', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 2400));
       await pushDown(tester);

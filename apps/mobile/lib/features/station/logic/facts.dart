@@ -1,6 +1,8 @@
 /// The customer's facts as the station's card and script show them (BE-6, AS19).
 library;
 
+import 'package:agency_wire/agency_wire.dart' show foldColumnName;
+
 import '../../../core/station/station_view.dart';
 import 'format.dart';
 
@@ -20,9 +22,12 @@ List<FactTileView> factTilesInOrder(FactsView facts) {
   ];
 }
 
-/// The BE-6 tiles the card draws in its row (before AS19): three, or two beside the Last call tile.
+/// How many tiles the BE-6 card draws in its row (before AS19): three, or two beside the Last call tile.
+int legacyTileRoom({required bool hasLastCall}) => hasLastCall ? 2 : 3;
+
+/// The BE-6 tiles the card draws in its row ([legacyTileRoom] of them).
 List<FactTileView> legacyCardTiles(FactsView facts, {required bool hasLastCall}) =>
-    factTilesInOrder(facts).take(hasLastCall ? 2 : 3).toList(growable: false);
+    factTilesInOrder(facts).take(legacyTileRoom(hasLastCall: hasLastCall)).toList(growable: false);
 
 /// AS20, More details: the server's `facts.more` minus the columns the card already draws (its
 /// chosen tiles, or the BE-6 row), matched ignoring case, each column once, empty values left out.
@@ -30,12 +35,11 @@ List<FactTileView> legacyCardTiles(FactsView facts, {required bool hasLastCall})
 List<FactTileView> moreDetailTiles(FactsView facts, {required bool hasLastCall}) {
   final more = facts.more;
   if (more == null) return const [];
-  String fold(String c) => c.trim().toLowerCase();
   final drawn = facts.chosen ? cardFactTiles(facts) : legacyCardTiles(facts, hasLastCall: hasLastCall);
-  final skip = {for (final t in drawn) fold(t.column)};
+  final skip = {for (final t in drawn) foldColumnName(t.column)};
   final out = <FactTileView>[];
   for (final t in more) {
-    if (factIsEmpty(t) || !skip.add(fold(t.column))) continue;
+    if (factIsEmpty(t) || !skip.add(foldColumnName(t.column))) continue;
     out.add(t);
   }
   return List.unmodifiable(out);
@@ -110,18 +114,18 @@ String? firstFactLine(FactsView facts, {bool masked = false, DateTime? now}) {
 List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateTime? now}) {
   final more = call.facts?.more;
   if (more == null) return call.otherFields;
-  String fold(String c) => c.trim().toLowerCase();
-  final pinned = {for (final f in call.heroFields) fold(f.label)};
+  final pinned = {for (final f in call.heroFields) foldColumnName(f.label)};
   // The place's column is the roster column holding the place the server sent (never a phone
   // number, S3(e)); More details leaves it out, as the card shows it.
   final place = call.facts?.place?.trim() ?? '';
   final placeField = place.isEmpty
       ? null
-      : call.otherFields.where((f) => f.value.trim() == place && !pinned.contains(fold(f.label))).firstOrNull;
+      : call.otherFields.where((f) => f.value.trim() == place && !pinned.contains(foldColumnName(f.label))).firstOrNull;
+  final skip = {...pinned, if (placeField != null) foldColumnName(placeField.label)};
   return List.unmodifiable([
     ?placeField,
     for (final t in more)
-      if (!factIsEmpty(t) && !pinned.contains(fold(t.column)) && (placeField == null || fold(placeField.label) != fold(t.column)))
+      if (!factIsEmpty(t) && !skip.contains(foldColumnName(t.column)))
         ContactField(key: t.column, label: t.column, value: factText(t, masked: masked, now: now)),
   ]);
 }

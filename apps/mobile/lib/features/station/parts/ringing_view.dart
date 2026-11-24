@@ -185,7 +185,7 @@ class CustomerCard extends ConsumerWidget {
     final ordered = orderPriorAttempts(call.priorAttempts);
     final last = ordered.firstOrNull;
     final said = ordered.firstWhereOrNull((a) => a.notes != null && a.notes!.trim().isNotEmpty)?.notes?.trim();
-    final room = last == null ? 3 : 2;
+    final room = legacyTileRoom(hasLastCall: last != null);
     // BE-6 and older servers: three tiles in a row, as before AS19.
     final tiles = chosen
         ? const <Widget>[]

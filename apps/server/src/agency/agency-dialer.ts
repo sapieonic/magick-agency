@@ -48,7 +48,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import type { WrapupManager } from './wrapup-manager.js';
-import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
+import { campaignImportLineage, isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
@@ -461,6 +461,8 @@ export class AgencyDialer {
     // $1` and match nothing (NULL is never equal to anything) — the fallback makes
     // that case degrade to "this contact's own history" instead of silently to
     // "no history", which is the same class of answer the catch below produces.
+    // The import's column order (AS20) is read beside the history; it never throws.
+    const columnOrder = this.columnOrderOf(cmd.campaign);
     let priors: AgencyPriorAttempt[] = [];
     try {
       const rows = await agencyAttemptRepository.findPriorForContactLineage(
@@ -479,7 +481,7 @@ export class AgencyDialer {
       log.warn({ err, attemptId }, 'Could not load prior attempts — sending panel without history');
     }
 
-    const attempt = buildPanel(cmd, priors, await this.columnOrderOf(cmd.campaign));
+    const attempt = buildPanel(cmd, priors, await columnOrder);
 
     // ── 2. Push the panel. SYNCHRONOUS, and before the dial. ────────────────
     //
@@ -771,12 +773,6 @@ export class AgencyDialer {
   }
 
   /**
-   * Count a dial's rejection toward the campaign's refusal breaker (PL11), and pause the
-   * campaign `carrier_refusing_calls` when the streak reaches the threshold. Only a campaign
-   * pinned to a tenant credential is counted: the service's own account is not a tenant's
-   * to fix. True when this rejection tripped the breaker. Never throws.
-   */
-  /**
    * AS20: the column order of the campaign's imports (and its lineage root's, for a retry), which
    * More details follows after `context_display.order`: the database keeps no key order in a row,
    * so without it a campaign no one has saved in Settings would list its columns shortest name
@@ -784,9 +780,7 @@ export class AgencyDialer {
    * failed read costs the order, never the call (null: the row's own order).
    */
   private async columnOrderOf(campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>): Promise<string[] | null> {
-    const lineage = campaign.root_campaign_id && campaign.root_campaign_id !== campaign.id
-      ? [campaign.id, campaign.root_campaign_id]
-      : [campaign.id];
+    const lineage = campaignImportLineage(campaign);
     try {
       return await this.columnOrders.getOrLoad(lineage.join(','), () => agencyIngestJobRepository.knownContextColumns(lineage));
     } catch (err) {
@@ -795,6 +789,12 @@ export class AgencyDialer {
     }
   }
 
+  /**
+   * Count a dial's rejection toward the campaign's refusal breaker (PL11), and pause the
+   * campaign `carrier_refusing_calls` when the streak reaches the threshold. Only a campaign
+   * pinned to a tenant credential is counted: the service's own account is not a tenant's
+   * to fix. True when this rejection tripped the breaker. Never throws.
+   */
   private async noteCarrierRefusal(cmd: DialCommand, err: unknown): Promise<boolean> {
     if (!cmd.campaign.telephony_credential_id || !countsTowardBreaker(err)) return false;
     try {

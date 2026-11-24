@@ -486,7 +486,7 @@ final class CustomerFacts {
       listEquals(other.more, more);
 
   @override
-  int get hashCode => Object.hash(name, place, listHash(tiles), more == null, listHash(more));
+  int get hashCode => Object.hash(name, place, listHash(tiles), listHash(more));
 }
 
 // ─── The script (BE-8) ──────────────────────────────────────────────────────

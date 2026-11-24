@@ -16,10 +16,10 @@ import {
   type AgencyFactField,
   type AgencyPhoneDisplay,
 } from '@magick-agency/contracts/agency';
-import { fold } from '@magick-agency/domain/context-columns';
+import { fold, isNonBlankString } from '@magick-agency/domain/context-columns';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
 import { guessNameColumn, guessPlaceColumn } from '@magick-agency/domain/customer-name';
-import { moreDetailTypeOf } from '@magick-agency/domain/more-details';
+import { looksLikePhoneNumber } from '@magick-agency/domain/more-details';
 import {
   defaultFactLabel,
   factKeyFromColumn,
@@ -185,7 +185,7 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
   // On the old model, in the old card's order (S9: the amount due, the due date, then the other heroes).
   const list = legacyFactFields(shown, columns, { exclude });
   const moreHidden = Array.isArray(shown.more_hidden)
-    ? shown.more_hidden.filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+    ? shown.more_hidden.filter(isNonBlankString)
     : [];
   let form: FactsForm = { name, place, list, types, moreHidden };
   if (!chosen) {
@@ -658,22 +658,18 @@ export function contextDisplayPayload(
   columns: readonly string[] | null = null,
   uploaded: readonly string[] | null = null,
 ): AgencyContextDisplay {
-  const { roles: _roles, types: _types, facts: _facts, more_hidden: _moreHidden, ...rest } = isRecord(stored) ? stored : {};
+  const { roles: _roles, types: _types, facts: _facts, ...rest } = isRecord(stored) ? stored : {};
   void _roles;
   void _types;
   void _facts;
-  void _moreHidden;
   const roles = rolesToWrite(facts, columns, hiddenColumns(stored));
-  const moreHidden = moreHiddenPayload(facts, columns);
-  const order = orderPayload(rest.order, uploaded);
-  return {
+  const card: AgencyContextDisplay = {
     ...rest,
-    ...(order ? { order } : {}),
     ...(Object.keys(roles).length > 0 ? { roles } : {}),
     ...(Object.keys(facts.types).length > 0 ? { types: { ...facts.types } } : {}),
     facts: factsPayload(facts, columns),
-    ...(moreHidden.length > 0 ? { more_hidden: moreHidden } : {}),
   };
+  return moreDetailsDisplayPayload(card, facts, columns, uploaded);
 }
 
 /**
@@ -704,7 +700,7 @@ export function moreDetailsDisplayPayload(
  */
 function orderPayload(stored: unknown, uploaded: readonly string[] | null): string[] | undefined {
   if (!uploaded || uploaded.length === 0) return undefined;
-  const out = Array.isArray(stored) ? stored.filter((c): c is string => typeof c === 'string' && c.trim() !== '') : [];
+  const out = Array.isArray(stored) ? stored.filter(isNonBlankString) : [];
   for (const column of uploaded) if (!out.some((c) => sameColumn(c, column))) out.push(column);
   return out;
 }
@@ -745,9 +741,9 @@ export function withMoreAll(facts: FactsForm, columns: readonly string[], shown:
  * will, else text.
  */
 export function moreTypeOf(facts: FactsForm, column: string, samples: readonly string[]): AgencyContextFieldType {
-  const declared = moreDetailTypeOf(column, '', facts.types);
-  if (declared !== 'text' || columnNamed(Object.keys(facts.types), column) !== undefined) return declared;
-  return samples.some((raw) => moreDetailTypeOf(column, raw, facts.types) === 'phone') ? 'phone' : 'text';
+  const key = columnNamed(Object.keys(facts.types), column);
+  if (key !== undefined) return facts.types[key]!;
+  return samples.some(looksLikePhoneNumber) ? 'phone' : 'text';
 }
 
 /**
@@ -896,7 +892,7 @@ export function factsChanged(saved: FactsForm, now: FactsForm): boolean {
 }
 
 /** Whether the card itself (the name, the line under it, the facts, the types) differs; not More details' ticks. */
-export function cardChanged(saved: FactsForm, now: FactsForm): boolean {
+function cardChanged(saved: FactsForm, now: FactsForm): boolean {
   return !same(rolesPayload(saved), rolesPayload(now))
     || placeMode(saved) !== placeMode(now)
     || !same(factsPayload(saved), factsPayload(now))

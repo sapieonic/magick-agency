@@ -419,7 +419,6 @@ class FactsView {
       other.place == place &&
       other.chosen == chosen &&
       _eq.equals(other.tiles, tiles) &&
-      (other.more == null) == (more == null) &&
       _eq.equals(other.more, more);
   @override
   int get hashCode => Object.hash(name, place, tiles.length, chosen, more?.length);

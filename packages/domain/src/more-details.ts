@@ -40,6 +40,7 @@ import { asRecord, contextValueText, declaredColumnType, fold, hiddenSet, isBlan
 import { parseContextFact } from './context-facts';
 import { customerNameColumn, customerPlaceColumn, factColumnsOf } from './customer-name';
 import { indianMobileDigits } from './fact-phone';
+import { FACT_TILE_ROLE_TYPE, FACT_TILE_ROLES } from './fact-tiles';
 
 /** The fewest digits a number written with `+` (or `00`) has before it reads as a phone number. */
 const MORE_PHONE_MIN_INTERNATIONAL_DIGITS = 8;
@@ -80,8 +81,12 @@ export function looksLikePhoneNumber(raw: string): boolean {
   for (const run of text.match(/\+?\d[\d\s().-]*\d/g) ?? []) {
     const groups = run.split(/[\s().-]+/).filter((g) => g !== '').slice(0, MORE_PHONE_MAX_GROUPS);
     for (let i = 0; i < groups.length; i++) {
-      for (let j = i + 1; j <= groups.length; j++) {
-        if (isPhoneDigits(groups.slice(i, j).join(''))) return true;
+      let candidate = '';
+      for (let j = i; j < groups.length; j++) {
+        candidate += groups[j];
+        // Only a leading `+` is not a digit; a longer candidate is never a phone number.
+        if (candidate.length - (candidate.startsWith('+') ? 1 : 0) > MORE_PHONE_MAX_DIGITS + 2) break;
+        if (isPhoneDigits(candidate)) return true;
       }
     }
   }
@@ -117,7 +122,11 @@ export interface MoreDetailsDisplay {
  * is not a declaration), else phone when the value holds a phone number, else text.
  */
 export function moreDetailTypeOf(column: string, raw: string, types: unknown): AgencyContextFieldType {
-  const declared = declaredColumnType(column, types);
+  return declaredOrGuessed(declaredColumnType(column, types), raw);
+}
+
+/** {@link moreDetailTypeOf} once the declaration is read. */
+function declaredOrGuessed(declared: unknown, raw: string): AgencyContextFieldType {
   if ((AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(declared)) return declared as AgencyContextFieldType;
   return looksLikePhoneNumber(raw) ? 'phone' : 'text';
 }
@@ -129,36 +138,44 @@ export function moreDetailTypeOf(column: string, raw: string, types: unknown): A
  * @param display     the campaign's `context_display`
  * @param columnOrder the import's column order, when the caller knows it
  * @param now         the clock a two-digit year is read against
+ * @param card        the card's name and place columns, when the caller has already read them
+ *                    (`customerNameColumn` / `customerPlaceColumn` of this row and display)
  */
 export function moreDetailTiles(
   context: Record<string, unknown> | null | undefined,
   display: MoreDetailsDisplay | null | undefined,
   columnOrder: readonly string[] | null = null,
   now: Date = new Date(),
+  card: { nameKey: string | undefined; placeKey: string | undefined } | null = null,
 ): AgencyFactTile[] {
   const row = asRecord(context) ?? {};
   const shown = asRecord(display) ? display! : {};
   const hidden = hiddenSet(shown);
   for (const column of hiddenSet({ hidden: shown.more_hidden })) hidden.add(column);
   const skip = new Set<string>();
-  const nameKey = customerNameColumn(row, shown);
-  const placeKey = customerPlaceColumn(row, shown);
+  const { nameKey, placeKey } = card ?? { nameKey: customerNameColumn(row, shown), placeKey: customerPlaceColumn(row, shown) };
   if (nameKey !== undefined) skip.add(fold(nameKey));
   if (placeKey !== undefined) skip.add(fold(placeKey));
   if (Array.isArray(shown.facts)) for (const column of factColumnsOf(shown)) skip.add(fold(column));
   // On a card that has not chosen its facts (BE-6), the amount-due and due-date role columns are
   // read as money and a date whatever `types` says, as the card's own tiles read them.
   const roles = Array.isArray(shown.facts) ? null : asRecord(shown.roles);
-  const roleType = (column: string): AgencyContextFieldType | undefined => {
-    if (typeof roles?.['amount_due'] === 'string' && fold(roles['amount_due']) === fold(column)) return 'money';
-    if (typeof roles?.['due_date'] === 'string' && fold(roles['due_date']) === fold(column)) return 'date';
-    return undefined;
-  };
+  const roleTypes = new Map<string, AgencyContextFieldType>();
+  for (const role of FACT_TILE_ROLES) {
+    const column = roles?.[role];
+    if (typeof column === 'string' && !roleTypes.has(fold(column))) roleTypes.set(fold(column), FACT_TILE_ROLE_TYPE[role]);
+  }
+  // `declaredColumnType` read once for the row: the exact spelling, else the first entry equal
+  // ignoring case.
+  const types = asRecord(shown.types);
+  const foldedTypes = new Map<string, unknown>();
+  for (const [name, type] of Object.entries(types ?? {})) if (!foldedTypes.has(fold(name))) foldedTypes.set(fold(name), type);
+  const declared = (column: string): unknown => (types && Object.hasOwn(types, column) ? types[column] : foldedTypes.get(fold(column)));
 
-  const ordered: string[] = [];
+  const ordered = new Set<string>();
   const take = (name: unknown): void => {
     const key = rowKey(row, name, hidden);
-    if (key !== undefined && !ordered.includes(key)) ordered.push(key);
+    if (key !== undefined) ordered.add(key);
   };
   if (Array.isArray(shown.order)) for (const name of shown.order) take(name);
   for (const name of columnOrder ?? []) take(name);
@@ -169,7 +186,7 @@ export function moreDetailTiles(
     if (tiles.length >= AGENCY_MORE_DETAILS_MAX) break;
     if (skip.has(fold(column)) || isBlankContextValue(row[column])) continue;
     const raw = (contextValueText(row[column]) ?? '').trim();
-    const type = roleType(column) ?? moreDetailTypeOf(column, raw, shown.types);
+    const type = roleTypes.get(fold(column)) ?? declaredOrGuessed(declared(column), raw);
     tiles.push({ column, type, raw, value: parseContextFact(raw, type, now) });
   }
   return tiles;

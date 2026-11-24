@@ -16,9 +16,10 @@ const moreDetailsStep = 4;
 /// quick flicks open one step.
 const moreDetailsPause = Duration(milliseconds: 300);
 
-/// How far the last More details was opened, so the card drawn again for the same call (Call
-/// coming, then On call: two screens) opens as far as the agent left it. One entry: the newest.
-({String attemptId, int shown})? _remembered;
+/// How far the last More details was opened, and whether the agent closed it with "Hide", so the
+/// card drawn again for the same call (Call coming, then On call: two screens) opens as far as the
+/// agent left it. One entry: the newest.
+({String attemptId, int shown, bool held})? _remembered;
 
 /// Forgets how far More details was opened: for tests, which draw one call many times.
 @visibleForTesting
@@ -28,7 +29,7 @@ void forgetMoreDetails() => _remembered = null;
 /// Closed at first, with a count and "Scroll down to see them."; while its end is on screen, each
 /// push down on the page ([StationScrollPush]) opens [moreDetailsStep] more rows, one step per
 /// [moreDetailsPause], each new row fading in (no motion when the phone asks for none). "Show all"
-/// opens them at once and "Hide" closes them. Values are uploaded text, plain, wrapped; a phone
+/// opens them at once and "Hide" closes them until "Show all" again (a push opens nothing). Values are uploaded text, plain, wrapped; a phone
 /// number is hidden as the campaign hides numbers (AS9).
 class MoreDetailsCard extends ConsumerStatefulWidget {
   const MoreDetailsCard({super.key, required this.call});
@@ -44,6 +45,7 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
   ValueListenable<int>? _pushes;
   int _shown = 0;
   int _from = 0;
+  bool _held = false;
   DateTime? _lastStep;
 
   List<FactTileView> get _tiles {
@@ -60,7 +62,9 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
 
   void _restore() {
     final r = _remembered;
-    _shown = r != null && r.attemptId == widget.call.attemptId ? r.shown.clamp(0, _tiles.length) : 0;
+    final same = r != null && r.attemptId == widget.call.attemptId;
+    _shown = same ? r.shown.clamp(0, _tiles.length) : 0;
+    _held = same && r.held;
     _from = _shown;
     _lastStep = null;
   }
@@ -87,12 +91,13 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
     super.dispose();
   }
 
-  void _set(int shown, {required int from}) {
+  void _set(int shown, {required int from, bool held = false}) {
     setState(() {
       _from = from;
       _shown = shown;
+      _held = held;
     });
-    _remembered = (attemptId: widget.call.attemptId, shown: shown);
+    _remembered = (attemptId: widget.call.attemptId, shown: shown, held: held);
   }
 
   /// True when the end of More details is inside the page's visible part.
@@ -106,7 +111,7 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
 
   void _onPush() {
     final total = _tiles.length;
-    if (!mounted || _shown >= total) return;
+    if (!mounted || _shown >= total || _held) return;
     // `clock`, not `DateTime.now`: the same instant, and a test's fake one.
     final now = clock.now();
     final last = _lastStep;
@@ -177,7 +182,7 @@ class _MoreDetailsCardState extends ConsumerState<MoreDetailsCard> {
                       expanded: shown > 0,
                       child: TextButton.icon(
                         key: const Key('more-details-toggle'),
-                        onPressed: () => all ? _set(0, from: 0) : _set(total, from: shown),
+                        onPressed: () => all ? _set(0, from: 0, held: true) : _set(total, from: shown),
                         icon: Icon(all ? Icons.expand_less : Icons.expand_more),
                         label: Text(all ? StationCopy.moreDetailsHide : StationCopy.moreDetailsShowAll),
                       ),

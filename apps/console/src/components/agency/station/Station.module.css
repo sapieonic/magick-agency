@@ -283,8 +283,6 @@
 }
 .cardTitle .grow { flex: 1 1 auto; }
 
-/* AS20: the footer stays at the bottom of the window when the body is taller than it (More details
-   can make it so), so the main button never moves (AS1). */
 .foot {
   display: flex;
   align-items: center;

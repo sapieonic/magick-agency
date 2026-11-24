@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Calendar, ChevronDown, ChevronUp, Clock, IndianRupee, ListPlus, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
 import { NotesField, type NotesFieldProps } from '../NotesField';
+import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useDictation } from '../../../hooks/useSpeech';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
 import {
@@ -280,19 +281,20 @@ function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: stri
   const lastStep = useRef(0);
   const lastWheel = useRef(0);
   const listId = useId();
+  // The listeners are bound once and read these from the latest render.
+  const latest = useLatestRef({ shown, total, held });
 
   useEffect(() => {
     rememberedMore = { key, shown, held };
   }, [key, shown, held]);
 
   useEffect(() => {
-    if (shown >= total || held) return;
     const step = () => {
+      const { shown, total, held } = latest.current;
       const end = endRef.current;
       const now = Date.now();
-      if (!end || now - lastStep.current < MORE_DETAILS_PAUSE_MS || !onScreen(end)) return;
+      if (shown >= total || held || !end || now - lastStep.current < MORE_DETAILS_PAUSE_MS || !onScreen(end)) return;
       lastStep.current = now;
-      // This effect runs again on every change of `shown`, so the closure holds the current one.
       setFrom(shown);
       setShown(nextMoreShown(shown, total));
     };
@@ -331,7 +333,7 @@ function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: stri
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [shown, total, held]);
+  }, [latest]);
 
   const all = shown >= total;
   const toggle = () => {
