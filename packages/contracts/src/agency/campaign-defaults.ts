@@ -153,6 +153,18 @@ export const AGENCY_OUR_FAULT_RETRY_DEFAULT = Object.freeze({
 } as const);
 
 /**
+ * The retry rows for a call the customer did not pick up, as the server applies them when a
+ * campaign leaves the row unset (every new campaign does): the server's
+ * `DEFAULT_RETRY_POLICY` is built from them, and New campaign's "doesn't pick up" sentence
+ * says them as the default (CS12). `max_attempts` counts the first call.
+ */
+export const AGENCY_UNANSWERED_RETRY_DEFAULTS = Object.freeze({
+  no_answer: Object.freeze({ delay_minutes: 60, max_attempts: 3 }),
+  busy: Object.freeze({ delay_minutes: 15, max_attempts: 4 }),
+  failed: Object.freeze({ delay_minutes: 120, max_attempts: 2 }),
+} as const);
+
+/**
  * The default abandonment ceiling, as a percentage: the `abandonment_ceiling_pct`
  * column's DEFAULT, what the server applies when a create omits the field, and what
  * the console's builder starts its abandonment limit at. A compliance threshold,

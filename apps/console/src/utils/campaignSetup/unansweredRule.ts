@@ -1,6 +1,8 @@
+import { AGENCY_UNANSWERED_RETRY_DEFAULTS } from '@magick-agency/contracts/agency';
 import type { AgencyRetryPolicy, AgencyRetryRule } from '../../types/agency-campaign';
 import { joinAnd } from '../agencyCampaignConfigForm';
-import { formatCount } from '../format/number';
+import { plural } from '../format/number';
+import { delayLabel, optionsOf, type RuleOption } from './ruleOptions';
 
 /*
   One "doesn't pick up" rule (CS12): the sentence on step 4 that writes one retry rule to every
@@ -27,7 +29,8 @@ import { formatCount } from '../format/number';
   ── An unset row is the server's default, not "never" ────────────────────────
   The server falls back per key to its built-in policy (`DEFAULT_RETRY_POLICY` in the server's
   `agency/retry-policy.ts`) when a campaign leaves an outcome unset, which every new campaign
-  does. {@link SERVER_DEFAULT_UNANSWERED_RULES} is that table's three rows; keep them equal.
+  does. {@link SERVER_DEFAULT_UNANSWERED_RULES} is that table's three rows: the contract's
+  `AGENCY_UNANSWERED_RETRY_DEFAULTS`, which the server's table is built from.
 */
 
 export const UNANSWERED_OUTCOMES = ['no_answer', 'busy', 'failed'] as const;
@@ -35,11 +38,7 @@ export type UnansweredOutcome = (typeof UNANSWERED_OUTCOMES)[number];
 
 /** What the server uses for each of the three when the campaign leaves it unset. */
 export const SERVER_DEFAULT_UNANSWERED_RULES: Readonly<Record<UnansweredOutcome, Required<AgencyRetryRule>>> =
-  Object.freeze({
-    no_answer: Object.freeze({ delay_minutes: 60, max_attempts: 3 }),
-    busy: Object.freeze({ delay_minutes: 15, max_attempts: 4 }),
-    failed: Object.freeze({ delay_minutes: 120, max_attempts: 2 }),
-  });
+  AGENCY_UNANSWERED_RETRY_DEFAULTS;
 
 /** How the step names each result in its own copy. */
 export const UNANSWERED_LABELS: Readonly<Record<UnansweredOutcome, string>> = {
@@ -141,11 +140,6 @@ export function withUnansweredRule(policy: AgencyRetryPolicy, rule: OneUnanswere
 
 /* ── The two selects ──────────────────────────────────────────────────────── */
 
-export interface RuleOption {
-  value: string;
-  label: string;
-}
-
 /** Calls in all, 1–10 (the validator allows 0–20). */
 const ATTEMPT_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
@@ -158,42 +152,17 @@ const DELAY_CHOICES = [15, 30, 60, 120, 180, 240, 360, 720, 1440, 2880] as const
  */
 export function attemptsLabel(maxAttempts: number): string {
   if (maxAttempts <= 0) return '1 call (no retry)';
-  return `${formatCount(maxAttempts)} call${maxAttempts === 1 ? '' : 's'}`;
-}
-
-/** "15 minutes", "1 hour", "1 hour 30 minutes", "2 days"; for "… apart". */
-export function delayLabel(minutes: number): string {
-  const m = Math.max(0, Math.round(minutes));
-  if (m > 0 && m % 1440 === 0) {
-    const days = m / 1440;
-    return `${formatCount(days)} day${days === 1 ? '' : 's'}`;
-  }
-  if (m > 0 && m % 60 === 0) {
-    const hours = m / 60;
-    return `${formatCount(hours)} hour${hours === 1 ? '' : 's'}`;
-  }
-  if (m > 60) {
-    const hours = Math.floor(m / 60);
-    const rest = m % 60;
-    return `${hours} hour${hours === 1 ? '' : 's'} ${rest} minute${rest === 1 ? '' : 's'}`;
-  }
-  return `${m} minute${m === 1 ? '' : 's'}`;
-}
-
-/** The choices, with the current value added in order when it is not one of them. */
-function withCurrent(choices: readonly number[], current: number | null): number[] {
-  const values = current === null || choices.includes(current) ? [...choices] : [...choices, current];
-  return values.sort((a, b) => a - b);
+  return plural(maxAttempts, 'call');
 }
 
 /** The "calls in all" select. `current` is kept as an option so a loaded rule is never rewritten. */
 export function attemptOptions(current: number | null = null): RuleOption[] {
-  return withCurrent(ATTEMPT_CHOICES, current).map((n) => ({ value: String(n), label: attemptsLabel(n) }));
+  return optionsOf(ATTEMPT_CHOICES, current, attemptsLabel);
 }
 
 /** The "how long until the next call" select, with the current value kept as for attempts. */
 export function delayOptions(current: number | null = null): RuleOption[] {
-  return withCurrent(DELAY_CHOICES, current).map((n) => ({ value: String(n), label: delayLabel(n) }));
+  return optionsOf(DELAY_CHOICES, current, delayLabel);
 }
 
 /**

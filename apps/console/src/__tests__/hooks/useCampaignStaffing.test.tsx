@@ -119,6 +119,20 @@ describe('useCampaignStaffing: who can be picked', () => {
     expect(result.current.invitePath).toBeNull();
   });
 
+  it('reads the team only when enabled: Settings turns it off for a reader below supervise', () => {
+    renderHook(() => useCampaignStaffing(null));
+    expect(mocks.useTeam).toHaveBeenLastCalledWith({ enabled: true });
+    renderHook(() => useCampaignStaffing(null, false));
+    expect(mocks.useTeam).toHaveBeenLastCalledWith({ enabled: false });
+  });
+
+  it('reads nobody’s assignment when disabled, even with a campaign', async () => {
+    const { result } = renderHook(() => useCampaignStaffing('c1', false));
+    await act(async () => { await result.current.reload(); });
+    expect(mocks.listCampaignAgents).not.toHaveBeenCalled();
+    expect(result.current.assignedIds).toEqual([]);
+  });
+
   it('says why when the team or the campaign’s staffing cannot be read', async () => {
     mocks.useTeam.mockReturnValue({ members: [], loaded: false, loading: false, error: 'Failed to load team', reload: vi.fn() });
     mocks.listCampaignAgents.mockRejectedValue(new Error('Network down'));

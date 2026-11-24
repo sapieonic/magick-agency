@@ -26,7 +26,6 @@ import { patchNamesSectionField, templateApplyRefsOf, templateSourceFor, templat
 import { templateApplyHeaderValue } from '../../../src/api/middleware/headers.js';
 import {
   sectionConfigIssues,
-  sectionOfPath,
   sectionsAsCampaignBody,
   sectionsShapeIssues,
 } from '../../../src/api/routes/proxy-agency-campaign-templates/validate.js';
@@ -112,13 +111,6 @@ describe('the template routes\' body checks (CT4)', () => {
       'sections.lunch': expect.any(String),
       'sections.hours.wrapup_seconds': expect.any(String),
     });
-  });
-
-  it('sectionOfPath: a campaign field path to its section', () => {
-    expect(sectionOfPath('calling_window_end')).toBe('hours');
-    expect(sectionOfPath('disposition_catalog[2].code')).toBe('outcomes');
-    expect(sectionOfPath('retry_policy.no_answer.max_attempts')).toBe('retries');
-    expect(sectionOfPath('name')).toBeNull();
   });
 
   it('sectionsAsCampaignBody: the set sections only, absent fields built-in', () => {

@@ -66,7 +66,8 @@ import {
   templateGuards,
   templateIdOf,
 } from './shared.js';
-import { applyTemplateSchema, zodDetails } from './validate.js';
+import { applyTemplateSchema } from './validate.js';
+import { zodDetails } from '../../../utils/zod-details.js';
 
 const log = createChildLogger({ component: 'campaign-templates' });
 
@@ -107,7 +108,7 @@ export async function registerCampaignTemplateApplyRoutes(app: FastifyInstance):
     const row = id === null ? null : await agencyCampaignTemplateRepository.findVisible(readerOf(request), id);
     if (!row) return sendTemplateRefusal(reply, 'campaign_template_not_found');
     const parsed = applyTemplateSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error) });
+    if (!parsed.success) return sendTemplateRefusal(reply, 'campaign_template_invalid', { details: zodDetails(parsed.error, 'body') });
     const body = parsed.data;
     if (row.archived_at !== null) return sendTemplateRefusal(reply, 'campaign_template_archived');
     if (body.expected_version !== undefined && body.expected_version !== row.version) {

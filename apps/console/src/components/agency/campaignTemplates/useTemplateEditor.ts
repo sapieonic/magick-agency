@@ -8,7 +8,7 @@ import {
   type AgencyCampaignTemplateSectionKey,
   type AgencyCampaignTemplateSections,
 } from '@magick-agency/contracts/api/agency/campaign-templates';
-import { diffSections, sectionKeysSet } from '@magick-agency/domain/campaign-templates';
+import { diffSections, sectionKeysSet, sectionOfPath } from '@magick-agency/domain/campaign-templates';
 import { useTenant } from '../../../contexts/TenantContext';
 import { createCampaignTemplate, replaceCampaignTemplate } from '../../../api/campaignTemplates';
 import { errorCode } from '../../../utils/agencyErrors';
@@ -17,7 +17,6 @@ import {
   formOfConfig,
   organisationRecording,
   SCRIPT_LEFT_OUT_NOTE,
-  sectionOfPath,
   sectionsOfForm,
   templateFormErrors,
   templateSectionsFromCampaign,
@@ -330,7 +329,6 @@ export function useTemplateEditor({
     blocked: Object.keys(liveErrors).length > 0,
     /** The server refused fields of the last save (shown on their cards). */
     hasFieldErrors: Object.keys(fieldErrors).length > 0,
-    shownErrors: { ...liveErrors, ...fieldErrors },
     /** The form's own findings for the sections it sets, as they are typed (quiet). */
     liveErrors,
     /** The server's refusal of the last save, by campaign field path (CT4). */

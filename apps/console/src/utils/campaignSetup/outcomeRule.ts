@@ -1,5 +1,7 @@
 import type { AgencyDispositionEntry } from '../../types/agency-campaign';
 import { DEFAULT_DISPOSITION_RETRY, isBuiltInCode } from '../agencyCampaignConfigForm';
+import { plural } from '../format/number';
+import { delayLabel, optionsOf, type RuleOption } from './ruleOptions';
 
 /**
  * One button's rule as a sentence (CS3): "When the agent picks *No one spoke* → *try again after
@@ -159,26 +161,9 @@ function withFlag(entry: AgencyDispositionEntry, flag: 'is_success' | 'requires_
 
 // ── Words ─────────────────────────────────────────────────────────────────────
 
-/** `15 minutes`, `1 hour`, `4 hours`, `1 day`, `1 hour 30 minutes`. */
-export function delayLabel(minutes: number): string {
-  if (minutes > 0 && minutes % 1440 === 0) return plural(minutes / 1440, 'day');
-  if (minutes > 0 && minutes % 60 === 0) return plural(minutes / 60, 'hour');
-  if (minutes > 60) return `${plural(Math.floor(minutes / 60), 'hour')} ${plural(minutes % 60, 'minute')}`;
-  return plural(minutes, 'minute');
-}
-
 /** `1 time`, `3 times`. */
 export function attemptsLabel(count: number): string {
   return plural(count, 'time');
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
-export interface RuleOption<V extends string = string> {
-  value: V;
-  label: string;
 }
 
 /** The waits the sentence offers, in minutes. */
@@ -189,17 +174,12 @@ export const RETRY_ATTEMPT_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 6, 8, 10
 
 /** The wait options, with `current` added in its place when it is not one of them (a loaded value). */
 export function delayOptions(current: number): RuleOption[] {
-  return withCurrent(RETRY_DELAY_CHOICES, current).map((m) => ({ value: String(m), label: delayLabel(m) }));
+  return optionsOf(RETRY_DELAY_CHOICES, current, delayLabel);
 }
 
 /** The count options, with `current` added in its place when it is not one of them. */
 export function attemptOptions(current: number): RuleOption[] {
-  return withCurrent(RETRY_ATTEMPT_CHOICES, current).map((n) => ({ value: String(n), label: attemptsLabel(n) }));
-}
-
-function withCurrent(choices: readonly number[], current: number): number[] {
-  if (!Number.isFinite(current) || choices.includes(current)) return [...choices];
-  return [...choices, current].sort((a, b) => a - b);
+  return optionsOf(RETRY_ATTEMPT_CHOICES, current, attemptsLabel);
 }
 
 /**

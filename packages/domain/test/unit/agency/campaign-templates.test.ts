@@ -22,6 +22,7 @@ import {
   resolveTemplateSections,
   sameTemplateValue,
   sectionKeysSet,
+  sectionOfPath,
   sectionSent,
   sectionSourcesForCreate,
   sectionsFromCampaign,
@@ -486,5 +487,27 @@ describe('the rules the server reuses (D13)', () => {
     expect(followedBy({ scope: 'account' }, null)).toBeNull();
     expect(followedBy({ scope: 'organisation' }, basedOn)).toBeNull();
     expect(followedBy(null, basedOn)).toBeNull();
+  });
+});
+
+describe('sectionOfPath: the section a campaign field path belongs to', () => {
+  it('reads the field a path names, its index or sub-key dropped', () => {
+    expect(sectionOfPath('calling_window_end')).toBe('hours');
+    expect(sectionOfPath('disposition_catalog')).toBe('outcomes');
+    expect(sectionOfPath('disposition_catalog[2].code')).toBe('outcomes');
+    expect(sectionOfPath('retry_policy.no_answer.max_attempts')).toBe('retries');
+  });
+
+  it('is null for a field no section holds', () => {
+    expect(sectionOfPath('name')).toBeNull();
+    expect(sectionOfPath('')).toBeNull();
+  });
+
+  it('places every field of every section in that section', () => {
+    for (const key of AGENCY_CAMPAIGN_TEMPLATE_SECTION_KEYS) {
+      for (const field of AGENCY_CAMPAIGN_TEMPLATE_SECTIONS[key] as readonly string[]) {
+        expect(sectionOfPath(field), field).toBe(key);
+      }
+    }
   });
 });

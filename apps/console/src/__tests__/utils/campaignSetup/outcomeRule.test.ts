@@ -9,7 +9,6 @@ import {
   RETRY_DELAY_CHOICES,
   attemptOptions,
   attemptsLabel,
-  delayLabel,
   delayOptions,
   lockedAction,
   outcomeFate,
@@ -19,6 +18,7 @@ import {
   type OutcomeAction,
   type OutcomeRule,
 } from '../../../utils/campaignSetup/outcomeRule';
+import { delayLabel } from '../../../utils/campaignSetup/ruleOptions';
 
 /** One button's rule as a sentence (CS3): read, written back, and summed up. */
 

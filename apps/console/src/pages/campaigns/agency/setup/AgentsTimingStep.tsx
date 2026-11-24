@@ -3,7 +3,7 @@ import type { AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
 import { AdvancedFold, SetupCard, SetupColumns, SetupSection } from '../../../../components/campaign-setup';
 import { validateConfig, type CampaignConfigState } from '../../../../utils/agencyCampaignConfigForm';
 import { dailyTargetError } from '../../../../utils/agency/stationSettings';
-import { isAdvancedField, pickedLine, staffingHint } from '../../../../utils/campaignSetup/agentsTiming';
+import { hasAdvancedFinding, pickedLine, staffingHint } from '../../../../utils/campaignSetup/agentsTiming';
 import type { StaffingAgent } from '../../../../hooks/useCampaignStaffing';
 import { useConfigFieldErrors } from '../configFieldErrors';
 import { RetryPolicyTable } from '../RetryPolicyTable';
@@ -153,9 +153,7 @@ export function AgentsTimingStep({
 
   /* ── Advanced ───────────────────────────────────────────────────────────── */
   const [ownOpen, setOwnOpen] = useState(false);
-  const advancedFinding = Object.keys(merged).some(
-    (field) => isAdvancedField(field) && (unansweredOutcomes || !field.startsWith('outcome_dispositions')),
-  );
+  const advancedFinding = hasAdvancedFinding(merged, unansweredOutcomes);
   // A fold the page opened stays open once it lets go, as one the supervisor opened does.
   useEffect(() => {
     if (forceAdvancedOpen) setOwnOpen(true);

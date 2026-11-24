@@ -10,6 +10,7 @@ import {
   AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
   AGENCY_OUR_FAULT_REDIAL_BOUND,
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
+  AGENCY_UNANSWERED_RETRY_DEFAULTS,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
   AGENCY_STATION_ALAW8_FRAME_BYTES,
   AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
@@ -207,6 +208,14 @@ describe('package surface', () => {
     for (const entry of AGENCY_DEFAULT_DISPOSITION_CATALOG) expect(Object.isFrozen(entry)).toBe(true);
     expect(Object.isFrozen(AGENCY_DEFAULT_DISPOSITION_RETRY)).toBe(true);
     expect(Object.isFrozen(AGENCY_OUR_FAULT_RETRY_DEFAULT)).toBe(true);
+    // The server's DEFAULT_RETRY_POLICY rows for a call nobody picked up, and New campaign's "(default)".
+    expect(AGENCY_UNANSWERED_RETRY_DEFAULTS).toEqual({
+      no_answer: { delay_minutes: 60, max_attempts: 3 },
+      busy: { delay_minutes: 15, max_attempts: 4 },
+      failed: { delay_minutes: 120, max_attempts: 2 },
+    });
+    expect(Object.isFrozen(AGENCY_UNANSWERED_RETRY_DEFAULTS)).toBe(true);
+    for (const row of Object.values(AGENCY_UNANSWERED_RETRY_DEFAULTS)) expect(Object.isFrozen(row)).toBe(true);
     // The console wire layer re-exports the same objects rather than copies.
     expect(AgencyApi.AGENCY_DEFAULT_DISPOSITION_CATALOG).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
     expect(AgencyApi.AGENCY_OUR_FAULT_RETRY_DEFAULT).toBe(AGENCY_OUR_FAULT_RETRY_DEFAULT);

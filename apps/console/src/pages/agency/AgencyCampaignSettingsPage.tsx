@@ -102,13 +102,12 @@ import { NameNumberStep } from '../campaigns/agency/setup/NameNumberStep';
 import { PurposeButtonsStep } from '../campaigns/agency/setup/PurposeButtonsStep';
 import { AgentsTimingStep } from '../campaigns/agency/setup/AgentsTimingStep';
 import { staffingFailureMessage, useCampaignStaffing } from '../../hooks/useCampaignStaffing';
-import { SETUP_STEPS, type SetupStepId } from '../../utils/campaignSetup/setupSteps';
+import { SETUP_STEPS, setupStepOfField, type SetupStepId } from '../../utils/campaignSetup/setupSteps';
 import { isPurposePresetId, withPreset } from '../../utils/campaignSetup/purposePresets';
 import {
   campaignSettingsSectionsFor,
   sectionIdOfHash,
   settingsTabOfChange,
-  settingsTabOfField,
 } from '../../utils/campaignSettingsSections';
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
@@ -246,7 +245,7 @@ export function AgencyCampaignSettingsPage() {
     ticks are staged here (`null` while untouched: the server's list is what shows) and applied
     with the save bar, after the PATCH (`applyStaffing`).
   */
-  const staffing = useCampaignStaffing(canSupervise && id ? id : null);
+  const staffing = useCampaignStaffing(canSupervise && id ? id : null, canSupervise);
   const [staffingTicks, setStaffingTicks] = useState<string[] | null>(null);
   /** The ticks that could not be applied by the last save (`staffingFailureMessage`). */
   const [staffingError, setStaffingError] = useState<string | null>(null);
@@ -504,7 +503,7 @@ export function AgencyCampaignSettingsPage() {
    */
   const goToFinding = useCallback(
     (fields: readonly string[]) => {
-      const tabs = new Set(fields.map(settingsTabOfField));
+      const tabs = new Set(fields.map(setupStepOfField));
       const target = tabs.has(tabRef.current) ? tabRef.current : SETUP_STEPS.find((step) => tabs.has(step.id))?.id;
       if (!target) return;
       showTab(target);
@@ -901,7 +900,7 @@ export function AgencyCampaignSettingsPage() {
     ...(breakLimitsInvalid ? ['break_reasons'] : []),
   ];
   /** The tabs holding a finding: what holds Save, what is said on a fact's row, and the server's answer. */
-  const invalidTabs = new Set([...holding, ...Object.keys(factsShown), ...Object.keys(fieldErrors)].map(settingsTabOfField));
+  const invalidTabs = new Set([...holding, ...Object.keys(factsShown), ...Object.keys(fieldErrors)].map(setupStepOfField));
   /*
     Contact assignment turned off after a campaign was set up with it: pacing still
     follows what the campaign stores (CA9 gates the surface, never the runtime), and

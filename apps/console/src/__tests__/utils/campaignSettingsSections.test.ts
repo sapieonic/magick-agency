@@ -6,7 +6,6 @@ import {
   campaignSettingsSectionsFor,
   sectionIdOfHash,
   settingsTabOfChange,
-  settingsTabOfField,
 } from '../../utils/campaignSettingsSections';
 import { SETUP_STEP_IDS, isSetupStepId } from '../../utils/campaignSetup/setupSteps';
 
@@ -119,29 +118,7 @@ describe('the sections a campaign’s page has', () => {
   });
 });
 
-describe('which tab a finding or a change is on', () => {
-  it.each([
-    ['name', 'basics'],
-    ['caller_ids', 'basics'],
-    ['telephony_credential_id', 'basics'],
-    ['context_display.facts.0.label', 'contacts'],
-    ['context_display.roles.place', 'contacts'],
-    ['disposition_catalog[2].code', 'purpose'],
-    ['outcome_dispositions.no_answer', 'purpose'],
-    ['agent_script.steps[1].text', 'purpose'],
-    ['calling_window_end', 'agents'],
-    ['retry_policy.busy.max_attempts', 'agents'],
-    ['abandonment_ceiling_pct', 'agents'],
-    ['record_calls', 'agents'],
-    ['analysis_profile_id', 'agents'],
-    ['assignment_mode', 'agents'],
-    ['break_reasons[1].icon', 'agents'],
-    ['daily_target_calls', 'agents'],
-    ['phone_display', 'agents'],
-  ])('a finding on %s is on %s', (field, tab) => {
-    expect(settingsTabOfField(field)).toBe(tab);
-  });
-
+describe('which tab a change is on', () => {
   it.each([
     ['name', 'basics'],
     ['carrier', 'basics'],

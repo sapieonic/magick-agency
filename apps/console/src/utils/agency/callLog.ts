@@ -24,10 +24,11 @@ import {
   isCampaignAttemptFiltered,
 } from '../agencyCampaignAttemptParams';
 import { formatCount } from '../format/number';
-import { dateFormatter, localDay, upperDayPeriod } from '../format/date';
+import { localDay } from '../format/date';
 import { agentCellCopy, formatCallTimestamp, formatTalkTime } from '../agencySpineCopy';
 import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE } from '../../types/inbound';
 import { missedReasonLabel } from '../inbound/missedCopy';
+import { clockTime, sameDay } from './stationFormat';
 
 /**
  * The campaign Call log's rules (`docs/call-log.md`, decisions CL1, CL11): one list of the
@@ -91,7 +92,7 @@ export interface CallLogView {
   status: AgencyCallLogStatus | null;
 }
 
-export const DEFAULT_CALL_LOG_VIEW: CallLogView = { type: 'all', allDates: false, status: null };
+export const DEFAULT_CALL_LOG_VIEW: Readonly<CallLogView> = Object.freeze({ type: 'all', allDates: false, status: null });
 
 /** The chip `?type=` names, or null: absent, or not a chip. The Call log's, All calls' and My calls' one reading. */
 export function callLogTypeFromParams(params: URLSearchParams): AgencyCallLogTypeFilter | null {
@@ -128,7 +129,7 @@ export function callLogParams(filters: AgencyAttemptFilters, view: CallLogView):
 
 /** The Call log's path for one campaign, with a chip on: where `/manual-calls` now leads. */
 export function campaignCallLogPath(campaignId: string, type: AgencyCallLogTypeFilter = 'all'): string {
-  const base = `/agency/campaigns/${campaignId}/attempts`;
+  const base = `/agency/campaigns/${encodeURIComponent(campaignId)}/attempts`;
   return type === 'all' ? base : `${base}?${CALL_LOG_TYPE_PARAM}=${type}`;
 }
 
@@ -219,7 +220,7 @@ export function lastSevenDays(now: Date = new Date()): { from?: string; to?: str
  */
 export function unfiledCallsPath(days: number, now: Date = new Date()): string {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 12);
-  const params = callLogParams(attemptDateRange(localDay(start), localDay(now)), { type: 'all', allDates: false, status: null });
+  const params = callLogParams(attemptDateRange(localDay(start), localDay(now)), DEFAULT_CALL_LOG_VIEW);
   params.set(ALL_CALLS_CAMPAIGN_PARAM, AGENCY_CALLS_NO_CAMPAIGN);
   return `/agency/calls?${params.toString()}`;
 }
@@ -399,24 +400,15 @@ export function callLogEmptyState(
 
 // ─── How a row reads ────────────────────────────────────────────────────────
 
-/** "3:12 PM": the hour without a leading zero (said through `upperDayPeriod`). */
-const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
-export function clockTime(iso: string): string {
-  return upperDayPeriod(dateFormatter(CLOCK).format(new Date(iso)));
-}
-
-/** Whether two instants fall on one calendar day for the reader. */
-function sameLocalDay(a: string, b: string): boolean {
-  const [x, y] = [new Date(a), new Date(b)];
-  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
-}
-
 /**
  * When the other half of a pair happened, as said on this row: the clock time ("3:12 PM") when
  * both are on one day, else the day too ("21 Nov 2026, 03:12 PM").
  */
-export function pairedTime(other: string, own: string): string {
-  return sameLocalDay(other, own) ? clockTime(other) : formatCallTimestamp(other);
+export function pairedTime(other: string, own: string | Date): string {
+  const at = Date.parse(other);
+  const ownAt = typeof own === 'string' ? Date.parse(own) : own.getTime();
+  // Either unreadable: the full timestamp's own fallback, never "NaN:NaN".
+  return Number.isFinite(at) && Number.isFinite(ownAt) && sameDay(at, ownAt) ? clockTime(at) : formatCallTimestamp(other);
 }
 
 /**
@@ -424,10 +416,20 @@ export function pairedTime(other: string, own: string): string {
  * soft-phone call, marked "Call back" and tied to the missed call it answered.
  */
 export function callBackFact(row: AgencyCallLogRow): string | null {
+  const to = calledBackTo(row);
+  return to ? `Call back · ${to}` : null;
+}
+
+/** Which missed call a soft-phone call back answered ("to the 3:12 PM missed call"); null for any other call. */
+export function calledBackTo(row: {
+  type: AgencyCallLogType;
+  created_at: string;
+  callback_of?: { arrived_at: string | null } | null;
+}): string | null {
   if (row.type !== 'soft_phone' || !row.callback_of) return null;
   return row.callback_of.arrived_at
-    ? `Call back · to the ${pairedTime(row.callback_of.arrived_at, row.created_at)} missed call`
-    : 'Call back · to a missed call';
+    ? `to the ${pairedTime(row.callback_of.arrived_at, row.created_at)} missed call`
+    : 'to a missed call';
 }
 
 /**
@@ -482,10 +484,21 @@ export function isMissedInbound(row: { type: AgencyCallLogType; outcome?: string
  */
 export function callLogWhatHappened(row: AgencyCallLogRow): { text: string; key: string; detail?: string } {
   if (row.type === 'inbound') return inboundWhatHappened(row);
+  return outboundWhatHappened(row);
+}
+
+/** What happened on a call we placed (dialler or soft phone), for the Call log's row and My calls'. */
+export function outboundWhatHappened(row: {
+  type: AgencyCallLogType;
+  state: string;
+  dialed_at?: string | null;
+  disposition_code?: string | null;
+  outcome: string | null;
+}): { text: string; key: string } {
   if (isNotDialled(row)) return { text: 'Not dialled', key: 'not_dialled' };
   if (row.type === 'soft_phone' && row.state !== 'ended') return { text: 'On a call now', key: 'live' };
   if (stoppedByInbound(row)) return { text: 'Stopped: customer rang us', key: row.outcome ?? 'canceled' };
-  return { text: attemptOutcomeLabel(row.outcome), key: row.outcome ?? 'unknown' };
+  return { text: attemptOutcomeLabel(row.outcome as Parameters<typeof attemptOutcomeLabel>[0]), key: row.outcome ?? 'unknown' };
 }
 
 /**

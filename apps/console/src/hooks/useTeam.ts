@@ -11,8 +11,10 @@ import type { TenantMember } from '../types/team';
  *
  * `loaded` is true once any load has answered — what lets a page show its
  * spinner for the first load only, rather than blanking the table on every reload.
+ *
+ * `enabled` false: nothing is read (a reader who may not see the team).
  */
-export function useTeam() {
+export function useTeam({ enabled = true }: { enabled?: boolean } = {}) {
   const { tenantId } = useTenant();
   const fetchMembers = useCallback(
     (): Promise<TenantMember[] | null> => listTenantMembers(tenantId!),
@@ -23,7 +25,7 @@ export function useTeam() {
   const { data, loading, error, reload } = useAsyncResource(fetchMembers, {
     initialData: null,
     errorMessage: 'Failed to load team',
-    enabled: ready,
+    enabled: ready && enabled,
   });
 
   return { members: data ?? [], loaded: data !== null, loading: loading || !ready, error, reload };
