@@ -18,6 +18,7 @@ import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 // The pure row → wire projection, imported from its leaf rather than the barrel: the
 // dialer's unit tests replace the barrel wholesale, and the panel's shape is not a mock's to make.
 import { projectPriorAttempt } from '../db/repositories/agency/projections.js';
+import { agencyIngestJobRepository } from './agency-ingest-job.repository.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
 import { holdOutcomeUnknownContact, parkRedialContact, settleContact } from './dialer/contact-settlement.js';
 import { wrapupRedialRemaining } from './wrapup-redial-rules.js';
@@ -179,6 +180,14 @@ export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
 const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 
 /**
+ * How long a campaign's import column order (AS20, More details) is reused before it is read
+ * again: a new upload's columns reach the panel within this long.
+ */
+const COLUMN_ORDER_TTL_MS = 60_000;
+/** Far above the campaigns one process dials at once. */
+const COLUMN_ORDER_MAX_ENTRIES = 2_000;
+
+/**
  * Await a write to the durable agent-session mirror without letting it fail the
  * caller: Redis is the authority on agent state, so a mirror that could not be
  * written is a stale dashboard column, logged and never a reason to stop.
@@ -297,6 +306,10 @@ export class AgencyDialer {
    */
   private readonly unansweredInARow = new TtlCache<number>({
     ttlMs: DIAL_ACTIVITY_TTL_MS, maxEntries: DIAL_ACTIVITY_MAX_ENTRIES, name: 'dial-activity',
+  });
+  /** AS20: each campaign's import column order, which More details follows ({@link columnOrderOf}). */
+  private readonly columnOrders = new TtlCache<string[]>({
+    ttlMs: COLUMN_ORDER_TTL_MS, maxEntries: COLUMN_ORDER_MAX_ENTRIES, name: 'column-order',
   });
   private unsubscribeLifecycle: (() => void) | null = null;
   /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
@@ -466,7 +479,7 @@ export class AgencyDialer {
       log.warn({ err, attemptId }, 'Could not load prior attempts — sending panel without history');
     }
 
-    const attempt = buildPanel(cmd, priors);
+    const attempt = buildPanel(cmd, priors, await this.columnOrderOf(cmd.campaign));
 
     // ── 2. Push the panel. SYNCHRONOUS, and before the dial. ────────────────
     //
@@ -763,6 +776,25 @@ export class AgencyDialer {
    * pinned to a tenant credential is counted: the service's own account is not a tenant's
    * to fix. True when this rejection tripped the breaker. Never throws.
    */
+  /**
+   * AS20: the column order of the campaign's imports (and its lineage root's, for a retry), which
+   * More details follows after `context_display.order`: the database keeps no key order in a row,
+   * so without it a campaign no one has saved in Settings would list its columns shortest name
+   * first. Cached per campaign for {@link COLUMN_ORDER_TTL_MS}. Nice to have, like the history: a
+   * failed read costs the order, never the call (null: the row's own order).
+   */
+  private async columnOrderOf(campaign: Pick<AgencyCampaignRecord, 'id' | 'root_campaign_id'>): Promise<string[] | null> {
+    const lineage = campaign.root_campaign_id && campaign.root_campaign_id !== campaign.id
+      ? [campaign.id, campaign.root_campaign_id]
+      : [campaign.id];
+    try {
+      return await this.columnOrders.getOrLoad(lineage.join(','), () => agencyIngestJobRepository.knownContextColumns(lineage));
+    } catch (err) {
+      log.warn({ err, campaignId: campaign.id }, 'Could not read the import column order — More details in the row order');
+      return null;
+    }
+  }
+
   private async noteCarrierRefusal(cmd: DialCommand, err: unknown): Promise<boolean> {
     if (!cmd.campaign.telephony_credential_id || !countsTowardBreaker(err)) return false;
     try {

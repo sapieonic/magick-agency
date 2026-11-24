@@ -202,8 +202,14 @@ export function isUnannounced(live: LiveAttempt): boolean {
 /**
  * The agent's panel for an attempt: everything the console shows about the call.
  * Built once at dial time (see `LiveAttempt.panel`) and reused for the resume.
+ * `columnOrder` is the campaign's imports' column order (AS20: More details follows it after
+ * `context_display.order`, since the database keeps no key order in a row); null when unknown.
  */
-export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): AgencyReservedAttempt {
+export function buildPanel(
+  cmd: DialCommand,
+  priors: AgencyPriorAttempt[],
+  columnOrder: readonly string[] | null = null,
+): AgencyReservedAttempt {
   const promise = contactPromise(cmd.contact);
   // Agent station (BE-4): a call-later coming due says so ("You said you will call at 3:00 PM"),
   // read from the contact as claimed. Absent on every other dial and on a wrap-up redial. An
@@ -224,7 +230,7 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
     attempt_number: cmd.attemptNumber,
     context: cmd.contact.context,
     // BE-6: the customer's name, place and fact tiles, parsed once here for both clients.
-    facts: customerFacts(cmd.contact.context, cmd.campaign.context_display),
+    facts: customerFacts(cmd.contact.context, cmd.campaign.context_display, columnOrder),
     prior_attempts: priors,
     // PT9: the contact's latest promise, so the agent sees it as they reach the customer. Only
     // when there is one: a panel without a promise is what it was before.

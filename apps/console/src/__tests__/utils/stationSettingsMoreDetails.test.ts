@@ -4,6 +4,7 @@ import {
   contextDisplayPayload,
   factsChanged,
   factsFormOf,
+  moreDetailsDisplayPayload,
   moreShown,
   moreTypeOf,
   stationPayload,
@@ -16,9 +17,10 @@ import {
 
 /**
  * AS20, campaign Settings › What agents see › More details: the form reads and writes
- * `context_display.more_hidden`, a save writes the latest upload's order when none is stored, a
- * change to it is a change of the card, and the type More details reads a column as (a
- * phone-looking value a phone, unless Text is chosen).
+ * `context_display.more_hidden`, a save writes the stored order followed by the latest upload's
+ * other columns, a change to it alone merges only More details into the stored display (the card's
+ * model untouched), and the type More details reads a column as (a phone when any sample value
+ * looks like one, unless a type is chosen; Text chosen is kept).
  */
 
 const facts = (over: Partial<FactsForm> = {}): FactsForm => ({ name: '', place: '', list: [], types: {}, moreHidden: [], ...over });
@@ -49,14 +51,16 @@ describe('More details in the Settings form (AS20)', () => {
     expect(contextDisplayPayload(stored, facts())).toEqual({ hidden: ['PAN'], order: ['B', 'A'], facts: [] });
   });
 
-  it('a display with no order takes the latest upload\'s, in the file\'s order; a stored order is kept', () => {
+  it('a save writes the stored order, then the latest upload\'s columns it does not name, in the file\'s order', () => {
     expect(contextDisplayPayload({}, facts(), null, ['Name', 'Loan No', 'Branch']).order).toEqual(['Name', 'Loan No', 'Branch']);
-    expect(contextDisplayPayload({ order: ['Branch'] }, facts(), null, ['Name', 'Branch']).order).toEqual(['Branch']);
+    expect(contextDisplayPayload({ order: ['Branch'] }, facts(), null, ['Name', 'BRANCH', 'EMI']).order).toEqual(['Branch', 'Name', 'EMI']);
+    expect(contextDisplayPayload({ order: [] }, facts(), null, ['Name']).order).toEqual(['Name']);
+    expect(contextDisplayPayload({ order: ['B'] }, facts(), null, []).order).toEqual(['B']);
     expect(contextDisplayPayload({}, facts(), null, []).order).toBeUndefined();
     expect(contextDisplayPayload({}, facts()).order).toBeUndefined();
   });
 
-  it('ticking a column off is a change of the card, and the save sends it with the upload\'s order', () => {
+  it('ticking a column off alone merges only More details into the stored display', () => {
     const campaign = { id: 'c-1', name: 'C', status: 'draft', context_display: { facts: [] } } as AgencyCampaign;
     const saved = stationSettingsOf(campaign, ['Name', 'Branch']);
     const now = { ...saved, facts: withMoreShown(saved.facts, 'Branch', false) };
@@ -64,20 +68,37 @@ describe('More details in the Settings form (AS20)', () => {
     expect(factsChanged(saved.facts, { ...saved.facts, moreHidden: [] })).toBe(false);
     expect(factsChanged(facts({ moreHidden: ['A', 'b'] }), facts({ moreHidden: ['B', 'a', 'A'] }))).toBe(false);
     expect(stationPayload(saved, now, campaign.context_display, ['Name', 'Branch'], ['Name', 'Branch'])).toEqual({
-      context_display: { order: ['Name', 'Branch'], roles: { name: 'Name' }, facts: [], more_hidden: ['Branch'] },
+      context_display: { facts: [], order: ['Name', 'Branch'], more_hidden: ['Branch'] },
+    });
+    // With a change to the card as well, the card is written.
+    const both = { ...now, facts: { ...now.facts, types: { Branch: 'number' as const } } };
+    expect(stationPayload(saved, both, campaign.context_display, ['Name', 'Branch'], ['Name', 'Branch']).context_display).toEqual({
+      order: ['Name', 'Branch'], roles: { name: 'Name' }, types: { Branch: 'number' }, facts: [], more_hidden: ['Branch'],
     });
   });
 
-  it('reads a phone-looking value as a phone; Text chosen there is written, so it stays text', () => {
+  it('on a card that has not chosen its facts, ticking a column off leaves it on the old card (no facts written)', () => {
+    const stored = { hero: ['Loan No'], roles: { amount_due: 'Due' }, more_hidden: ['Old'] };
+    const campaign = { id: 'c-1', name: 'C', status: 'draft', context_display: stored } as AgencyCampaign;
+    const saved = stationSettingsOf(campaign, ['Name', 'Loan No', 'Due', 'Branch']);
+    const now = { ...saved, facts: withMoreShown(saved.facts, 'Branch', false) };
+    const sent = stationPayload(saved, now, stored, ['Name', 'Loan No', 'Due', 'Branch'], ['Name', 'Loan No', 'Due', 'Branch']).context_display;
+    expect(sent).toEqual({ hero: ['Loan No'], roles: { amount_due: 'Due' }, order: ['Name', 'Loan No', 'Due', 'Branch'], more_hidden: ['Old', 'Branch'] });
+    expect(moreDetailsDisplayPayload(stored, facts())).toEqual({ hero: ['Loan No'], roles: { amount_due: 'Due' } });
+  });
+
+  it('reads a column as a phone when any sample looks like one; a type chosen there is written, Text included', () => {
     const form = facts({ types: { Tenure: 'number' } });
-    expect(moreTypeOf(form, 'Alt mobile', '98765 43210')).toBe('phone');
-    expect(moreTypeOf(form, 'Loan No', 'LN-1')).toBe('text');
-    expect(moreTypeOf(form, 'Tenure', '24')).toBe('number');
-    const text = withMoreType(form, 'Alt mobile', 'text', '98765 43210');
+    expect(moreTypeOf(form, 'Alt mobile', ['98765 43210'])).toBe('phone');
+    expect(moreTypeOf(form, 'Ref No', ['LN-1', 'LN-2', '9876543210'])).toBe('phone');
+    expect(moreTypeOf(form, 'Loan No', ['LN-1'])).toBe('text');
+    expect(moreTypeOf(form, 'Loan No', [])).toBe('text');
+    expect(moreTypeOf(form, 'Tenure', ['9876543210'])).toBe('number');
+    const text = withMoreType(form, 'Alt mobile', 'text');
     expect(text.types).toEqual({ Tenure: 'number', 'Alt mobile': 'text' });
-    expect(moreTypeOf(text, 'Alt mobile', '98765 43210')).toBe('text');
-    // Elsewhere Text stays off the map, as before.
-    expect(withMoreType(form, 'Loan No', 'text', 'LN-1').types).toEqual({ Tenure: 'number' });
-    expect(withMoreType(text, 'Alt mobile', 'phone', '98765 43210').types).toEqual({ Tenure: 'number', 'Alt mobile': 'phone' });
+    expect(moreTypeOf(text, 'alt mobile', ['98765 43210'])).toBe('text');
+    // Text is pinned whatever the first sample looks like: other customers' values may read as phones.
+    expect(withMoreType(form, 'Ref No', 'text').types).toEqual({ Tenure: 'number', 'Ref No': 'text' });
+    expect(withMoreType(text, 'ALT MOBILE', 'phone').types).toEqual({ Tenure: 'number', 'Alt mobile': 'phone' });
   });
 });

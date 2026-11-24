@@ -29,12 +29,15 @@ const SAMPLES = [{ 'Customer Name': 'Asha', 'Amount Due': '12500', 'Loan No': 'L
 
 let last: FactsForm | null = null;
 
-function Harness({ initial, columnsRead, serverErrors = {}, phoneDisplay = 'masked', readOnly = false }: {
+function Harness({ initial, columnsRead, serverErrors = {}, phoneDisplay = 'masked', readOnly = false, columns = COLUMNS, uploaded = UPLOADED, samples = SAMPLES }: {
   initial: FactsForm;
   columnsRead?: ColumnsRead;
   serverErrors?: Record<string, string>;
   phoneDisplay?: 'full' | 'masked';
   readOnly?: boolean;
+  columns?: string[];
+  uploaded?: string[];
+  samples?: Record<string, unknown>[];
 }) {
   const [value, setValue] = useState(initial);
   const view = useConfigFieldErrors(serverErrors);
@@ -43,12 +46,12 @@ function Harness({ initial, columnsRead, serverErrors = {}, phoneDisplay = 'mask
     <CustomerFactsEditor
       value={value}
       onChange={setValue}
-      columns={COLUMNS}
-      uploaded={UPLOADED}
+      columns={columns}
+      uploaded={uploaded}
       hidden={['PAN']}
       columnsRead={columnsRead}
       errors={view}
-      samples={SAMPLES}
+      samples={samples}
       phoneDisplay={phoneDisplay}
       readOnly={readOnly}
     />
@@ -116,5 +119,38 @@ describe('More details in Settings (AS20)', () => {
     render(<Harness initial={card()} readOnly />);
     expect(screen.queryByTestId('more-details-all-on')).toBeNull();
     expect((screen.getByTestId('more-detail-show-Branch') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('"How each column is read" reads a More details column as More details does, and a Text chosen there is kept', () => {
+    render(<Harness initial={card()} />);
+    const types = screen.getByTestId('fact-type-Alt Mobile') as HTMLSelectElement;
+    expect(types.value).toBe('phone');
+    fireEvent.change(types, { target: { value: 'number' } });
+    fireEvent.change(screen.getByTestId('fact-type-Alt Mobile'), { target: { value: 'text' } });
+    expect(last!.types['Alt Mobile']).toBe('text');
+    expect((screen.getByTestId('more-detail-type-Alt Mobile') as HTMLSelectElement).value).toBe('text');
+    // A fact's column is read as before: Text is no entry.
+    fireEvent.change(screen.getByTestId('fact-type-Amount Due'), { target: { value: 'text' } });
+    expect(last!.types['Amount Due']).toBeUndefined();
+  });
+
+  it('a column whose first sample is not a phone number but another is: the note, that sample, and its select described by it', () => {
+    const samples = [{ ...SAMPLES[0], 'Loan No': 'LN-1' }, { 'Loan No': '9123456780' }];
+    render(<Harness initial={card()} samples={samples} />);
+    const select = screen.getByTestId('more-detail-type-Loan No') as HTMLSelectElement;
+    expect(select.value).toBe('phone');
+    const note = screen.getByTestId('more-detail-phone-note-Loan No');
+    expect(select.getAttribute('aria-describedby')).toBe(note.id);
+    expect(screen.getByTestId('more-detail-setting-Loan No').textContent).toContain('e.g. 91••• ••780');
+    fireEvent.change(select, { target: { value: 'text' } });
+    expect(last!.types['Loan No']).toBe('text');
+  });
+
+  it('read-only with no columns read says what is turned off, never that there is no list', () => {
+    render(<Harness initial={card({ moreHidden: ['PAN No', 'Branch'] })} readOnly columns={[]} uploaded={[]} samples={[]} />);
+    expect(screen.getByTestId('more-details-none').textContent).toBe('Turned off for agents: PAN No, Branch.');
+    cleanup();
+    render(<Harness initial={card()} readOnly columns={[]} uploaded={[]} samples={[]} />);
+    expect(screen.getByTestId('more-details-none').textContent).toBe('Agents see every other column of the customer list.');
   });
 });

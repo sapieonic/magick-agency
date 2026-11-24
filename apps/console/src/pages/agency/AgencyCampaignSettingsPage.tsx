@@ -1090,7 +1090,7 @@ export function AgencyCampaignSettingsPage() {
                 onPutBack={onPutBack}
                 onAddFact={onAddFact}
                 // R5: until the card is saved here, agents read the script as on the old model.
-                legacy={isLegacyDisplay(campaign.context_display) && !plan?.displaySent}
+                legacy={isLegacyDisplay(campaign.context_display) && !plan?.cardSent}
               />
             </SetupCard>
           </div>
