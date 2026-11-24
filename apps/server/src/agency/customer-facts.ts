@@ -41,8 +41,8 @@
  *
  * ── More details (AS20) ──────────────────────────────────────────────────────
  * On both paths `more` carries the row's other columns, which the agent opens under the card: the
- * domain's one rule (`moreDetailTiles`, `@magick-agency/domain/more-details`), left out when there
- * are none. `context_display.more_hidden` leaves a column out of More details only; the write
+ * domain's one rule (`moreDetailTiles`, `@magick-agency/domain/more-details`), always sent (`[]`
+ * when there is nothing more). `context_display.more_hidden` leaves a column out of More details only; the write
  * checks its shape ({@link contextDisplayIssues}), never the roster (a column may come back with
  * the next upload).
  */
@@ -114,9 +114,9 @@ export function customerFacts(
   const place = placeKey !== undefined ? customerText(row[placeKey]) : undefined;
   const person = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
 
-  // AS20: More details, the row's other columns (the domain's one rule), sent only when there are some.
-  const moreTiles = moreDetailTiles(row, shown, columnOrder);
-  const more = moreTiles.length > 0 ? { more: moreTiles } : {};
+  // AS20: More details, the row's other columns (the domain's one rule). Always sent, even `[]`, so
+  // a client can tell "nothing more for agents" from an older server that sends none.
+  const more = { more: moreDetailTiles(row, shown, columnOrder) };
 
   if (Array.isArray(shown.facts)) return { ...person, tiles: chosenFactTiles(row, shown), ...more };
 

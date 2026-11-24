@@ -408,9 +408,9 @@ final class FactTile {
 /// Contract: `AgencyCustomerFacts` (`AgencyReservedAttempt.facts`).
 @immutable
 final class CustomerFacts {
-  CustomerFacts({this.name, this.place, required List<FactTile> tiles, List<FactTile> more = const []})
+  CustomerFacts({this.name, this.place, required List<FactTile> tiles, List<FactTile>? more})
     : tiles = List.unmodifiable(tiles),
-      more = List.unmodifiable(more);
+      more = more == null ? null : List.unmodifiable(more);
 
   factory CustomerFacts.fromJson(Map<String, Object?> j) => CustomerFacts(
     name: j.strOrNull('name'),
@@ -420,10 +420,10 @@ final class CustomerFacts {
   );
 
   /// AS20: More details, read leniently: an entry that is not a tile is
-  /// skipped, and anything but a list is none, so a bad `more` never costs the
-  /// card its name and tiles.
-  static List<FactTile> _moreFromJson(Object? raw) {
-    if (raw is! List<Object?>) return const [];
+  /// skipped, and anything but a list is null (as from an older server), so a
+  /// bad `more` never costs the card its name and tiles.
+  static List<FactTile>? _moreFromJson(Object? raw) {
+    if (raw is! List<Object?>) return null;
     final out = <FactTile>[];
     for (final e in raw) {
       if (e is! Map<String, Object?>) continue;
@@ -456,9 +456,11 @@ final class CustomerFacts {
   final List<FactTile> tiles;
 
   /// AS20, More details: the row's other columns the agent opens under the
-  /// card, in the server's order (`AgencyCustomerFacts.more`). Each names
-  /// itself by its column (no label, key or role). Empty from an older server.
-  final List<FactTile> more;
+  /// card, in the server's order (`AgencyCustomerFacts.more`), the columns the
+  /// supervisor turned off already left out. Each names itself by its column
+  /// (no label, key or role). Null from an older server, which sends none: the
+  /// app then reads `context` as before.
+  final List<FactTile>? more;
 
   /// The tile playing [role], or null.
   FactTile? tileFor(FactTileRole role) {
@@ -484,7 +486,7 @@ final class CustomerFacts {
       listEquals(other.more, more);
 
   @override
-  int get hashCode => Object.hash(name, place, listHash(tiles), listHash(more));
+  int get hashCode => Object.hash(name, place, listHash(tiles), more == null, listHash(more));
 }
 
 // ─── The script (BE-8) ──────────────────────────────────────────────────────

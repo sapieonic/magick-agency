@@ -482,7 +482,7 @@ function agentScreenOf(form: TemplateForm): BuilderAgentScreen {
 }
 
 /** A card with no facts: the script editor's `facts` before the import saves one. */
-const EMPTY_CARD: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {} }) as FactsForm;
+const EMPTY_CARD: FactsForm = Object.freeze({ name: '', place: null, list: [], types: {}, moreHidden: [] }) as FactsForm;
 
 /** Whether a script form says anything. */
 function hasText(script: ScriptForm): boolean {

@@ -394,6 +394,8 @@ describe('Settings › Customers: the customer card (AS19)', () => {
     expect(sentBody().context_display).toEqual({
       hero: ['Due Amount'],
       hidden: ['PAN'],
+      // AS20: no stored order, so the latest upload's, in the file's order (More details follows it).
+      order: ['Borrower', 'City', 'Due Amount', 'Due Date', 'PAN'],
       // The line under the name it guessed (City) is written too (S2): with facts none is guessed.
       roles: { name: 'Borrower', place: 'City' },
       types: { 'Due Amount': 'money', 'Due Date': 'date' },

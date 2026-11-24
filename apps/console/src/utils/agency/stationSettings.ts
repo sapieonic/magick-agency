@@ -19,6 +19,7 @@ import {
 import { fold } from '@magick-agency/domain/context-columns';
 import { parseContextFact } from '@magick-agency/domain/context-facts';
 import { guessNameColumn, guessPlaceColumn } from '@magick-agency/domain/customer-name';
+import { moreDetailTypeOf } from '@magick-agency/domain/more-details';
 import {
   defaultFactLabel,
   factKeyFromColumn,
@@ -96,8 +97,13 @@ export interface FactsForm {
   place: string | null;
   /** The facts on the card, in order (at most {@link AGENCY_FACT_FIELDS_MAX}). */
   list: AgencyFactField[];
-  /** Each column's type; absent is text. */
+  /** Each column's type; absent is text (on More details, a phone-looking value reads as a phone, AS20). */
   types: Record<string, AgencyContextFieldType>;
+  /**
+   * AS20: the columns agents do not see under More details (`context_display.more_hidden`), as
+   * stored or ticked off. Every other column of the latest upload is shown there.
+   */
+  moreHidden: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -178,7 +184,10 @@ export function factsFormOf(display: AgencyContextDisplay | null | undefined, co
     ].filter((c): c is string => c !== undefined);
   // On the old model, in the old card's order (S9: the amount due, the due date, then the other heroes).
   const list = legacyFactFields(shown, columns, { exclude });
-  let form: FactsForm = { name, place, list, types };
+  const moreHidden = Array.isArray(shown.more_hidden)
+    ? shown.more_hidden.filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+    : [];
+  let form: FactsForm = { name, place, list, types, moreHidden };
   if (!chosen) {
     // AS19 R10: the old role overrode `types`, so the role's column is read as money or a date
     // whatever `types` stored; the first save then changes nothing agents see.
@@ -639,24 +648,84 @@ function factsPayload(facts: FactsForm, columns: readonly string[] | null = null
  * facts, always written (AS19: the campaign is on the new model from its first save of the card).
  * An empty roles or types map is left out. With `columns` (the columns the card's selects offer,
  * the roster's first), a name or line under it left on "Guess from the column names" is written as
- * the column guessed (AS19 R1, S2), and every column in the roster's spelling.
+ * the column guessed (AS19 R1, S2), and every column in the roster's spelling. AS20: the columns
+ * ticked off More details are written as `more_hidden` (left out when none), and a display with
+ * no `order` takes `uploaded` (the latest upload's columns, in the file's order) as its `order`.
  */
 export function contextDisplayPayload(
   stored: AgencyContextDisplay | null | undefined,
   facts: FactsForm,
   columns: readonly string[] | null = null,
+  uploaded: readonly string[] | null = null,
 ): AgencyContextDisplay {
-  const { roles: _roles, types: _types, facts: _facts, ...rest } = isRecord(stored) ? stored : {};
+  const { roles: _roles, types: _types, facts: _facts, more_hidden: _moreHidden, ...rest } = isRecord(stored) ? stored : {};
   void _roles;
   void _types;
   void _facts;
+  void _moreHidden;
   const roles = rolesToWrite(facts, columns, hiddenColumns(stored));
+  const moreHidden = moreHiddenPayload(facts, columns);
+  // AS20: More details follows `order`, then the row's own order, which the database does not keep;
+  // a display with no `order` takes the latest upload's, so More details reads as the file does.
+  const order = !Array.isArray(rest.order) && uploaded && uploaded.length > 0 ? { order: [...uploaded] } : {};
   return {
     ...rest,
+    ...order,
     ...(Object.keys(roles).length > 0 ? { roles } : {}),
     ...(Object.keys(facts.types).length > 0 ? { types: { ...facts.types } } : {}),
     facts: factsPayload(facts, columns),
+    ...(moreHidden.length > 0 ? { more_hidden: moreHidden } : {}),
   };
+}
+
+/** AS20: `more_hidden` as a save sends it: each column once (ignoring case), in the roster's spelling when known. */
+function moreHiddenPayload(facts: FactsForm, columns: readonly string[] | null): string[] {
+  const out: string[] = [];
+  for (const column of facts.moreHidden) {
+    const name = (columns ? columnNamed(columns, column) : undefined) ?? column.trim();
+    if (name !== '' && !out.some((c) => sameColumn(c, name))) out.push(name);
+  }
+  return out;
+}
+
+// ─── More details (AS20) ────────────────────────────────────────────────────
+
+/** Whether agents see `column` under More details: not in {@link FactsForm.moreHidden} (ignoring case). */
+export function moreShown(facts: FactsForm, column: string): boolean {
+  return !facts.moreHidden.some((c) => sameColumn(c, column));
+}
+
+/** A copy of `facts` with `column` shown or not under More details. */
+export function withMoreShown(facts: FactsForm, column: string, shown: boolean): FactsForm {
+  const rest = facts.moreHidden.filter((c) => !sameColumn(c, column));
+  return { ...facts, moreHidden: shown ? rest : [...rest, column] };
+}
+
+/** A copy of `facts` with every one of `columns` shown, or none of them, under More details. */
+export function withMoreAll(facts: FactsForm, columns: readonly string[], shown: boolean): FactsForm {
+  const rest = facts.moreHidden.filter((c) => !columns.some((col) => sameColumn(col, c)));
+  return { ...facts, moreHidden: shown ? rest : [...rest, ...columns] };
+}
+
+/**
+ * How More details reads `column` for this sample, as the server will (`moreDetailTypeOf`, the
+ * domain's): its type when the form sets one (Text included), else a phone when the value reads
+ * as a phone number, else text.
+ */
+export function moreTypeOf(facts: FactsForm, column: string, raw: string): AgencyContextFieldType {
+  return moreDetailTypeOf(column, raw, facts.types);
+}
+
+/**
+ * A copy of `facts` with `column` read as `type` on More details. Unlike {@link withColumnType},
+ * Text is written when the value would otherwise read as a phone number (`raw`), so the supervisor
+ * can say "this is not a phone number"; elsewhere Text stays off the map, as before.
+ */
+export function withMoreType(facts: FactsForm, column: string, type: AgencyContextFieldType, raw: string): FactsForm {
+  const next = withColumnType(facts, column, type);
+  if (type !== 'text' || moreDetailTypeOf(column, raw, {}) !== 'phone') return next;
+  const key = columnNamed(Object.keys(facts.types), column) ?? column;
+  return { ...next, types: { ...next.types, [key]: 'text' } };
 }
 
 /** The keys the card's facts make: the fixed four, then each fact's key (`scriptPlaceholdersFor`). */
@@ -791,7 +860,13 @@ export function factsChanged(saved: FactsForm, now: FactsForm): boolean {
   return !same(rolesPayload(saved), rolesPayload(now))
     || placeMode(saved) !== placeMode(now)
     || !same(factsPayload(saved), factsPayload(now))
-    || !same(sortedTypes(saved.types), sortedTypes(now.types));
+    || !same(sortedTypes(saved.types), sortedTypes(now.types))
+    || !same(foldedSorted(saved.moreHidden), foldedSorted(now.moreHidden));
+}
+
+/** Column names folded and sorted, each once: two lists that name the same columns compare equal. */
+function foldedSorted(columns: readonly string[]): string[] {
+  return [...new Set(columns.map(fold))].sort();
 }
 
 /** Each setting here that differs between the saved form and the one on screen. */
@@ -841,13 +916,15 @@ export function stationPlan(
  * saved, so an untouched one is never sent back over someone else's newer edit, and the card with
  * a script that needs it ({@link stationPlan}). `storedDisplay` is the campaign's `context_display`
  * as last read, which the card is merged into; `columns`, the columns the card's selects offer,
- * name the guessed name column the card writes ({@link contextDisplayPayload}).
+ * name the guessed name column the card writes ({@link contextDisplayPayload}); `uploaded`, the
+ * latest upload's columns, are its `order` when it has none (AS20).
  */
 export function stationPayload(
   saved: StationSettingsForm,
   now: StationSettingsForm,
   storedDisplay: AgencyContextDisplay | null | undefined,
   columns: readonly string[] | null = null,
+  uploaded: readonly string[] | null = null,
 ): Partial<AgencyCampaign> {
   const plan = stationPlan(saved, now, storedDisplay);
   const changed = new Set(plan.changes);
@@ -855,7 +932,7 @@ export function stationPayload(
     ...(changed.has('dailyTarget') ? { daily_target_calls: dailyTargetPayload(now.dailyTarget) } : {}),
     ...(changed.has('phoneDisplay') ? { phone_display: now.phoneDisplay } : {}),
     ...(plan.scriptSent ? { agent_script: scriptPayload(now.script) } : {}),
-    ...(plan.displaySent ? { context_display: contextDisplayPayload(storedDisplay, now.facts, columns) } : {}),
+    ...(plan.displaySent ? { context_display: contextDisplayPayload(storedDisplay, now.facts, columns, uploaded) } : {}),
   };
 }
 

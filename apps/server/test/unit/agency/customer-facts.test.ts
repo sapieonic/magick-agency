@@ -99,8 +99,8 @@ describe('customerFacts: the panel\'s facts', () => {
 
   it('the name is never guessed from a column that is not a name, and absent when there is none', () => {
     expect(customerFacts({ customer_id: 'C-9', phone2: '98100' }, {})).not.toHaveProperty('name');
-    expect(customerFacts({ Name: 'N/A', City: '-' }, {})).toEqual({ tiles: [] });
-    expect(customerFacts(null, null)).toEqual({ tiles: [] });
+    expect(card(customerFacts({ Name: 'N/A', City: '-' }, {}))).toEqual({ tiles: [] });
+    expect(customerFacts(null, null)).toEqual({ tiles: [], more: [] });
   });
 
   it('the name and place guess never read a column `types` calls a phone number (the domain\'s guess)', () => {
@@ -569,8 +569,9 @@ describe('More details (AS20): the panel carries the row\'s other columns', () =
     ]);
   });
 
-  it('absent when the row has nothing more to show', () => {
-    expect(customerFacts({ Name: 'Asha', Notes: '' }, { facts: [] })).toEqual({ name: 'Asha', tiles: [] });
+  it('sent as [] when the row has nothing more to show, so a client can tell it from an older server', () => {
+    expect(customerFacts({ Name: 'Asha', Notes: '' }, { facts: [] })).toEqual({ name: 'Asha', tiles: [], more: [] });
+    expect(customerFacts({ Name: 'Asha', Branch: 'Kothrud' }, { facts: [], more_hidden: ['branch'] }).more).toEqual([]);
   });
 
   it('rides on the panel built at dial time', () => {

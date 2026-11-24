@@ -45,6 +45,8 @@ describe('ColumnMapper: On the card', () => {
         { column: 'Amount', label: 'Amount', key: 'amount' },
         { column: 'Loan No', label: 'Loan No', key: 'loan_no' },
       ],
+      // AS20: the kept columns in the file's order (not the order picked), which More details follows.
+      order: ['Loan No', 'Amount'],
     });
   });
 

@@ -134,10 +134,12 @@ describe('role arity', () => {
         { column: 'Loan Amount (₹)', label: 'Loan Amount (₹)', key: 'loan_amount' },
       ],
       roles: { name: 'Full Name' },
+      // AS20: every kept column in the file's order (not the card's), which More details follows.
+      order: ['Full Name', 'Loan Amount (₹)', 'Internal Score'],
     });
     // No column the card would guess as the name: no role.
     const nameless = setRole(initialMapping(analysis({ columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Score')] })), 'Score', 'hero');
-    expect(buildContextDisplay(nameless)).toEqual({ facts: [{ column: 'Score', label: 'Score', key: 'score' }] });
+    expect(buildContextDisplay(nameless)).toEqual({ facts: [{ column: 'Score', label: 'Score', key: 'score' }], order: ['Score'] });
   });
 
   it('leaves the column the card guesses as the name off the facts: the card shows it as the name', () => {
@@ -145,6 +147,15 @@ describe('role arity', () => {
     state = setRole(state, 'Full Name', 'hero');
     state = setRole(state, 'Internal Score', 'hero');
     expect(buildContextDisplay(state).facts).toEqual([{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }]);
+  });
+
+  it('AS20: writes the kept columns as order in the file\'s order, never the phone or an ignored column', () => {
+    let state = initialMapping(analysis());
+    state = setRole(state, 'TZ', 'ignore');
+    state = setRole(state, 'Internal Score', 'hero');
+    expect(buildContextDisplay(state).order).toEqual(['Full Name', 'Internal Score']);
+    // No facts picked: nothing is written, order included.
+    expect(buildContextDisplay(initialMapping(analysis()))).toEqual({});
   });
 
   it('writes the guessed line under the name as its role too, and leaves it off the facts (S2)', () => {
@@ -158,6 +169,7 @@ describe('role arity', () => {
     expect(buildContextDisplay(state)).toEqual({
       facts: [{ column: 'Branch', label: 'Branch', key: 'branch' }],
       roles: { name: 'Full Name', place: 'City' },
+      order: ['Full Name', 'City', 'Branch'],
     });
     expect(cardRoleNote(state)).toBe('‘City’ is shown as the line under the name, not as a fact.');
   });

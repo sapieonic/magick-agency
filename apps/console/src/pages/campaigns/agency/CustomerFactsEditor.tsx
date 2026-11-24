@@ -22,6 +22,8 @@ import {
   factField,
   firstSample,
   labelLength,
+  moreShown,
+  moreTypeOf,
   moveFact,
   nameColumnOf,
   newFact,
@@ -32,6 +34,9 @@ import {
   withAmountDue,
   withColumnType,
   withHighlight,
+  withMoreAll,
+  withMoreShown,
+  withMoreType,
   type FactsForm,
   type RemovedFact,
   type SampleRow,
@@ -87,6 +92,11 @@ const PLACE_NONE = '\u0000none';
  * with its reason when it cannot go back), under the one message that holds Save. Errors come
  * keyed as the server keys them (`context_display.roles.<role>`, `context_display.facts.<i>.<part>`,
  * `context_display.types.<column>`), so the server's refusal lands on the field it is about.
+ *
+ * AS20: under the facts, More details lists every other column of the latest upload (not the
+ * name, the line under it or a fact), each shown to agents unless ticked off (`more_hidden`), with
+ * its sample as agents will see it and how it is read; a column read as a phone number only
+ * because its values look like one says so, and Text or Number takes that back.
  *
  * Column names match as the server matches them, ignoring case. Ids are made from places in the
  * list, never from column names, so two names an id would spell alike never share one.
@@ -184,6 +194,9 @@ export function CustomerFactsEditor({
   const offerable = uploaded === undefined ? shown : shown.filter((c) => uploaded.some((u) => sameColumn(u, c)));
   const free = offerable.filter((c) => !usedColumns.some((u) => sameColumn(u, c)));
   const typeOf = (column: string): AgencyContextFieldType => columnType(value, column);
+  // AS20: More details lists the latest upload's columns that are not the name, the line under it or a fact.
+  const moreColumns = free;
+  const moreOn = moreColumns.filter((c) => moreShown(value, c));
   const sampleOf = (column: string): string => sampleText(firstSample(samples, column), typeOf(column), phoneDisplay);
   const nameOf = (fact: AgencyFactField): string => fact.label.trim() || fact.column;
 
@@ -682,6 +695,101 @@ export function CustomerFactsEditor({
       ) : null}
 
       <div className={styles.srOnly} role="status" aria-live="polite" data-testid="facts-announce">{announcement}</div>
+
+      {/* AS20: every other column of the latest upload, which agents open under the card. */}
+      <section className={styles.more} aria-labelledby={`${id}-more`} data-testid="more-details-settings">
+        <div className={styles.moreHead}>
+          <h4 className={styles.minorHead} id={`${id}-more`}>More details</h4>
+          {columnsRead === 'done' && moreColumns.length > 0 ? (
+            <span className={styles.hint} data-testid="more-details-shown">{`${moreOn.length} of ${moreColumns.length} shown`}</span>
+          ) : null}
+        </div>
+        <p className={styles.hint}>
+          Agents open these under the card, below its facts. Every other column of the latest upload is
+          shown unless you turn it off here. Turning a column off hides it from agents only: you still see
+          it on the contact page and in customer history.
+        </p>
+        {columnsRead !== 'done' ? columnsState('more-details-columns') : moreColumns.length === 0 ? (
+          <p className={styles.hint} data-testid="more-details-none">
+            {offerable.length === 0
+              ? 'This campaign has no customer list yet. Upload one first.'
+              : 'Every column agents may see is already on the card.'}
+          </p>
+        ) : (
+          <>
+            {readOnly ? null : (
+              <div className={styles.moreAll}>
+                <button
+                  type="button"
+                  className={styles.fixBtn}
+                  disabled={moreOn.length === moreColumns.length}
+                  onClick={() => onChange(withMoreAll(value, moreColumns, true))}
+                  data-testid="more-details-all-on"
+                >
+                  Show all
+                </button>
+                <button
+                  type="button"
+                  className={styles.fixBtn}
+                  disabled={moreOn.length === 0}
+                  onClick={() => onChange(withMoreAll(value, moreColumns, false))}
+                  data-testid="more-details-all-off"
+                >
+                  Hide all
+                </button>
+              </div>
+            )}
+            <ul className={styles.typeRows} aria-labelledby={`${id}-more`}>
+              {moreColumns.map((column, index) => {
+                const checkId = `${id}-more-${index}`;
+                const typeId = `${id}-more-type-${index}`;
+                const noteId = `${id}-more-note-${index}`;
+                const raw = firstSample(samples, column);
+                const type = moreTypeOf(value, column, raw);
+                const sample = sampleText(raw, type, phoneDisplay);
+                const looksPhone = type === 'phone' && typeOf(column) !== 'phone';
+                const on = moreShown(value, column);
+                return (
+                  <li key={column} className={styles.moreRow} data-testid={`more-detail-setting-${column}`}>
+                    <label htmlFor={checkId} className={styles.moreCheck}>
+                      <input
+                        id={checkId}
+                        type="checkbox"
+                        checked={on}
+                        disabled={readOnly}
+                        onChange={(event) => onChange(withMoreShown(value, column, event.target.checked))}
+                        aria-describedby={looksPhone ? noteId : undefined}
+                        data-testid={`more-detail-show-${column}`}
+                      />
+                      <b>{column}</b>
+                      <span className={styles.sample}>{sample !== '' ? `e.g. ${sample}` : ''}</span>
+                    </label>
+                    <label htmlFor={typeId} className={styles.srOnly}>{`How ${column} is read`}</label>
+                    <select
+                      id={typeId}
+                      className={styles.typeSelect}
+                      value={type}
+                      disabled={readOnly}
+                      onChange={(event) => onChange(withMoreType(value, column, event.target.value as AgencyContextFieldType, raw))}
+                      data-testid={`more-detail-type-${column}`}
+                    >
+                      {AGENCY_CONTEXT_FIELD_TYPES.map((t) => (
+                        <option key={t} value={t}>{CONTEXT_TYPE_LABELS[t]}</option>
+                      ))}
+                    </select>
+                    {looksPhone ? (
+                      <span id={noteId} className={styles.typeError} data-testid={`more-detail-phone-note-${column}`}>
+                        This looks like a phone number, so agents see it as one{phoneDisplay === 'masked' ? ', with the middle digits hidden' : ''}. Choose Text or Number if it is not.
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+        {errors.render('context_display.more_hidden')}
+      </section>
 
       <details className={styles.types} open={typesOpen || typeErrorShown} onToggle={(event) => setTypesOpen((event.target as HTMLDetailsElement).open)}>
         <summary className={styles.minorHead} id={`${id}-types`}>How each column is read</summary>

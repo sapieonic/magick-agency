@@ -200,7 +200,9 @@ export interface AgencyCustomerFacts {
    * (no `label`, `key`, `highlight` or `role`): a client names it by its column. Its type is
    * `types[column]`; a column `types` does not name whose value reads as a phone number (an Indian
    * mobile, or `+` and 8 or more digits) is sent as `phone`, so a campaign that hides numbers
-   * (`phone_display: masked`) masks it too. Absent from an older server: no More details.
+   * (`phone_display: masked`) masks it too. Always sent by a server that builds it, `[]` when there
+   * is nothing more; absent from an older server, when a client keeps its own reading of `context`
+   * for any list of the customer's columns (the app's Details).
    */
   more?: AgencyFactTile[];
 }

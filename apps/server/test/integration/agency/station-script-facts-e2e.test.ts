@@ -210,6 +210,16 @@ describe('the script on the join and the facts on the call — real app, real ru
         { column: 'Due Date', role: 'due_date', type: 'date', raw: '25/11/2026', value: '2026-11-25' },
         { column: 'Limit', type: 'money', raw: 'about 2 lakh', value: null },
       ],
+      // AS20: More details, every other column (not the name, the place or a hidden one; a legacy
+      // card's client leaves out the tiles it drew). With no `order`, in the row's own key order as
+      // the database gives it back (jsonb: shorter keys first), which is why Settings and New
+      // campaign write the upload's order.
+      more: [
+        { column: 'Limit', type: 'money', raw: 'about 2 lakh', value: null },
+        { column: 'Loan No', type: 'text', raw: 'LN-0042', value: null },
+        { column: 'Due Date', type: 'text', raw: '25/11/2026', value: null },
+        { column: 'Amount Due', type: 'text', raw: '₹1,25,000', value: null },
+      ],
     });
     expect(JSON.stringify(reserved.facts)).not.toContain('1234 5678 9012');
     // The raw row still travels as before (the hidden rule is the client's for `context`).
@@ -220,6 +230,8 @@ describe('the script on the join and the facts on the call — real app, real ru
     const display = {
       hero: ['Loan No', 'Limit'],
       hidden: ['Aadhaar'],
+      // AS20: More details follows `order` before the row's own key order.
+      order: ['Customer Name', 'Loan No', 'Limit'],
       roles: { name: 'Customer Name', place: 'City' },
       types: { 'Amount Due': 'money', 'Due Date': 'date', Tenure: 'number', 'Auto Debit': 'yes_no', 'Alt Phone': 'phone' },
       facts: [
@@ -265,6 +277,11 @@ describe('the script on the join and the facts on the call — real app, real ru
         { column: 'Due Date', label: 'Due on', key: 'due_date', role: 'due_date', type: 'date', raw: '25/11/2026', value: '2026-11-25' },
         { column: 'Tenure', label: 'Tenure (months)', key: 'tenure', type: 'number', raw: '24', value: '24' },
         { column: 'Auto Debit', label: 'Auto debit on', key: 'auto_debit', type: 'yes_no', raw: 'Haan', value: 'yes' },
+      ],
+      // AS20: the columns that are neither the name, the place, a fact nor hidden, in `order`.
+      more: [
+        { column: 'Loan No', type: 'text', raw: 'LN-0042', value: null },
+        { column: 'Limit', type: 'text', raw: 'about 2 lakh', value: null },
       ],
     });
     // `hero` is not read for tiles once `facts` is set, and a hidden column is nowhere.

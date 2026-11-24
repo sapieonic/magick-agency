@@ -607,7 +607,7 @@ export function AgencyCampaignSettingsPage() {
     // The card's columns as its selects offer them: a name left on "Guess from the column names" is
     // saved as the column the select names (AS19 R1), so it stays a hero once the card has facts.
     const stationSent = station && saved?.station
-      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns)
+      ? stationPayload(saved.station, station, campaign?.context_display, selectColumns, imported.latest)
       : {};
     // The ticks as they were when Save was pressed: what the save applies.
     const ticksToApply = staffingChanged ? staffingTicks : null;
@@ -753,7 +753,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
-    breakReasons, station, factsContext, selectColumns, staffing, staffingChanged, staffingTicks, goToFinding,
+    breakReasons, station, factsContext, selectColumns, imported.latest, staffing, staffingChanged, staffingTicks, goToFinding,
   ]);
 
   /** Put back what is saved: every field and tick, and no error left from the edits. */

@@ -235,13 +235,15 @@ void main() {
 
     test('AS20: More details decode in the server\'s order, named by their columns', () {
       final f = StationFrame.decode(fixtureText('station.json', 'reserved_facts_chosen')) as ReservedFrame;
-      final more = f.attempt.facts!.more;
+      final more = f.attempt.facts!.more!;
       expect(more.map((t) => t.name), ['Due Date', 'Branch', 'Office Phone']);
       expect(more.map((t) => t.type), [ContextFieldType.date, ContextFieldType.text, ContextFieldType.phone]);
       expect(more.every((t) => t.label == null && t.key == null && !t.highlight && t.role == null), isTrue);
-      // Absent from an older server: none, and the card decodes as before.
+      // Absent from an older server: null (the app reads `context` as before), and the card decodes as before.
       final older = StationFrame.decode(fixtureText('station.json', 'reserved_call_later')) as ReservedFrame;
-      expect(older.attempt.facts!.more, isEmpty);
+      expect(older.attempt.facts!.more, isNull);
+      // Sent empty: nothing more for agents, which is not the same.
+      expect(CustomerFacts.fromJson({'tiles': <Object?>[], 'more': <Object?>[]}).more, isEmpty);
     });
 
     test('AS20: a bad More details entry is skipped, and a bad list costs nothing else', () {
@@ -254,8 +256,8 @@ void main() {
           {'type': 'text'},
         ],
       });
-      expect(facts.more.map((t) => t.column), ['Branch']);
-      expect(CustomerFacts.fromJson({'name': 'Asha', 'tiles': <Object?>[], 'more': 'all'}).more, isEmpty);
+      expect(facts.more!.map((t) => t.column), ['Branch']);
+      expect(CustomerFacts.fromJson({'name': 'Asha', 'tiles': <Object?>[], 'more': 'all'}).more, isNull);
       expect(CustomerFacts.fromJson({'name': 'Asha', 'tiles': <Object?>[], 'more': 'all'}).name, 'Asha');
     });
 

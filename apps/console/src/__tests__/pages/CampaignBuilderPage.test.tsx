@@ -250,7 +250,8 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
     expect(mocks.updateAgencyCampaign).toHaveBeenCalledWith(
       'camp-1',
       // The guessed name column goes as the name role, so it stays a hero (AS19 R1).
-      { context_display: { facts: [{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }], roles: { name: 'Full Name' } } },
+      // AS20: the kept columns in the file's order, which More details follows.
+      { context_display: { facts: [{ column: 'Internal Score', label: 'Internal Score', key: 'internal_score' }], roles: { name: 'Full Name' }, order: ['Full Name', 'TZ', 'Internal Score'] } },
       't1',
       'a1',
     );

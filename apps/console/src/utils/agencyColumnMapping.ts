@@ -73,6 +73,12 @@ export interface MappingState {
   defaultCountryCode: string;
   /** Which rows the ingest drops as duplicates. Starts at the phone, the old behaviour. */
   dedupe: DedupeChoice;
+  /**
+   * AS20: the file's columns in the file's order, from the analysis. The card's display writes the
+   * kept ones as its `order`, which More details follows (the database keeps no column order).
+   * Absent on a state not made by {@link initialMapping}.
+   */
+  columns?: string[];
 }
 
 /**
@@ -147,7 +153,7 @@ export function initialMapping(analysis: AgencyColumnAnalysis): MappingState {
   if (suggested !== null && suggested in roles) {
     roles[suggested] = 'phone';
   }
-  return { roles, heroOrder: [], defaultCountryCode: '', dedupe: PHONE_DEDUPE };
+  return { roles, heroOrder: [], defaultCountryCode: '', dedupe: PHONE_DEDUPE, columns: analysis.columns.map((c) => c.name) };
 }
 
 /**
@@ -611,7 +617,8 @@ export function cardFactsFromMapping(state: MappingState): AgencyFactField[] {
  * server guesses, and Settings opens with it). With facts, the columns the card guesses as the
  * customer's name and the line under it are written as the `name` and `place` roles, as campaign
  * Settings writes them (AS19 R1, S2): with facts the heroes are the name role and the facts, and
- * the station guesses no line under the name, so both stay shown.
+ * the station guesses no line under the name, so both stay shown. AS20: the columns kept as the
+ * customer's details are written as `order`, in the file's order, which More details follows.
  */
 export function buildContextDisplay(state: MappingState): AgencyContextDisplay {
   const display: AgencyContextDisplay = {};
@@ -621,6 +628,9 @@ export function buildContextDisplay(state: MappingState): AgencyContextDisplay {
     if (name !== undefined || place !== undefined) {
       display.roles = { ...(name !== undefined ? { name } : {}), ...(place !== undefined ? { place } : {}) };
     }
+    // AS20: the kept columns in the file's order, so More details reads as the file does.
+    const order = (state.columns ?? []).filter((c) => state.roles[c] === 'detail' || state.roles[c] === 'hero');
+    if (order.length > 0) display.order = order;
   }
   return display;
 }
