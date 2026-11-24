@@ -591,6 +591,9 @@ describe('Settings › Customers: the customer card (AS19)', () => {
     await cardReady();
     await waitFor(() => expect(factKeys()).toEqual(['{amount_due}']));
     fireEvent.change(await screen.findByTestId('more-detail-type-Due Date'), { target: { value: 'number' } });
+    // R5: the card is not being written, so the script is still read as agents on the old card hear it.
+    openTab('purpose');
+    await waitFor(() => expect(screen.getByText(/as agents see it until the customer card is saved here/)).toBeTruthy());
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody().context_display).toEqual({
