@@ -294,9 +294,17 @@
   min-height: 100px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+}
+/* AS20: on a screen with room for it the footer stays at the bottom of the window, so the main
+   button never moves when More details makes the body taller. On a narrow or short window it would
+   cover too much, so it stays at the end of the page there. StationFrame sets the page's
+   scroll-padding-bottom to its height, so a field focused near the bottom is not hidden under it. */
+@media (min-width: 721px) and (min-height: 600px) {
+  .foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+  }
 }
 .footLeft { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
 .footRight { display: flex; align-items: center; gap: 14px; margin-left: auto; flex: none; }
@@ -681,9 +689,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
+  min-height: 48px;
+  padding: 0 16px;
+  border: 2px solid var(--border-strong);
   border-radius: 12px;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -693,7 +701,8 @@
   cursor: pointer;
 }
 .moreToggle:hover { background: var(--bg-tertiary); }
-.moreToggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent); }
+/* The transparent outline still draws in forced colours, where the box shadow does not. */
+.moreToggle:focus-visible { outline: 2px solid transparent; box-shadow: 0 0 0 3px var(--accent); }
 .moreList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 16px 0 0; }
 .moreRow { min-width: 0; padding: 10px 12px; border-radius: 12px; background: var(--bg-primary); }
 .moreRow dt { font-size: 14px; font-weight: 600; color: var(--text-muted); overflow-wrap: anywhere; }

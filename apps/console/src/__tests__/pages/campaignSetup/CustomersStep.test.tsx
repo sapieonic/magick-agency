@@ -155,23 +155,23 @@ describe('the card switches (CS9)', () => {
   it('shows sample rows with phone numbers partly hidden, and the hint', () => {
     renderStep({ ingest: reviewingIngest() });
     const section = screen.getByTestId('card-columns');
-    expect(within(section).getByRole('heading', { name: 'Tick what agents should see on their screen' })).toBeTruthy();
+    expect(within(section).getByRole('heading', { name: 'Tick what goes on the customer card' })).toBeTruthy();
     const table = within(section).getByRole('table');
     expect(table.textContent).toContain('98••• ••772');
     expect(table.textContent).not.toContain('9820041772');
     expect(table.textContent).toContain('Priya Menon');
     expect(section.textContent).toContain(
-      'The ticked columns become the customer card on the agent screen. Phone numbers stay partly hidden from agents unless you change it in step 4.',
+      "The ticked columns become the customer card on the agent screen. Agents see every other column under More details, below the card; you can turn any of them off in the campaign's Settings. Phone numbers stay partly hidden from agents unless you change it in step 4.",
     );
   });
 
   it('ticks a column onto the card through the mapper’s own roles', () => {
     const ingest = reviewingIngest();
     renderStep({ ingest });
-    const name = screen.getByRole('switch', { name: 'Show Full Name to agents' }) as HTMLButtonElement;
+    const name = screen.getByRole('switch', { name: 'Put Full Name on the card' }) as HTMLButtonElement;
     expect(name.getAttribute('aria-checked')).toBe('true');
     expect(name.disabled).toBe(true);
-    fireEvent.click(screen.getByRole('switch', { name: 'Show Amount Due to agents' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Put Amount Due on the card' }));
     const next = (ingest.setMapping as ReturnType<typeof vi.fn>).mock.calls[0]![0] as MappingState;
     expect(next.heroOrder).toEqual(['Amount Due']);
     expect(buildContextDisplay(next).roles).toEqual({ name: 'Full Name', place: 'City' });
@@ -181,11 +181,11 @@ describe('the card switches (CS9)', () => {
     let mapping = initialMapping(ANALYSIS);
     for (const column of ['Amount Due', 'Due Date', 'Loan No', 'Branch']) mapping = toggleCardColumn(mapping, column, true);
     renderStep({ ingest: reviewingIngest({ mapping }) });
-    const tz = screen.getByRole('switch', { name: 'Show TZ to agents' }) as HTMLButtonElement;
+    const tz = screen.getByRole('switch', { name: 'Put TZ on the card' }) as HTMLButtonElement;
     expect(tz.disabled).toBe(true);
     const reason = document.getElementById(tz.getAttribute('aria-describedby')!);
     expect(reason?.textContent).toBe('The card shows 4 facts at most. Untick one to show this instead.');
-    expect((screen.getByRole('switch', { name: 'Show Branch to agents' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('switch', { name: 'Put Branch on the card' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('is left out where the card is not this step’s to choose', () => {
@@ -249,7 +249,7 @@ describe('running, failed and imported', () => {
     expect(screen.queryByRole('button', { name: 'Replace file' })).toBeNull();
     expect(screen.queryByTestId('change-columns')).toBeNull();
     expect(screen.queryByTestId('dry-run-note')).toBeNull();
-    expect((screen.getByRole('switch', { name: 'Show Amount Due to agents' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('switch', { name: 'Put Amount Due on the card' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('card-locked')).toBeTruthy();
   });
 
@@ -336,8 +336,8 @@ describe('with the roster ingest itself', () => {
     await dropFile();
     await waitFor(() => expect(screen.getByTestId('footer-next').textContent).toBe('Add 1,240 customers'));
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Show Amount Due to agents' }));
-    expect(screen.getByRole('switch', { name: 'Show Amount Due to agents' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('switch', { name: 'Put Amount Due on the card' }));
+    expect(screen.getByRole('switch', { name: 'Put Amount Due on the card' }).getAttribute('aria-checked')).toBe('true');
     // The check still stands: its Add button is still offered, and it imports.
     expect(screen.getByTestId('footer-next').textContent).toBe('Add 1,240 customers');
     fireEvent.click(screen.getByTestId('footer-next'));

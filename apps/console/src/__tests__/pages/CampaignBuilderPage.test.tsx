@@ -245,7 +245,7 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
   it('saves the columns ticked for the card as the new campaign’s facts, before the import (AS19, CS9)', async () => {
     await reachCheck();
     await screen.findByRole('button', { name: 'Add 3 customers' }, { timeout: 4000 });
-    fireEvent.click(screen.getByRole('switch', { name: 'Show Internal Score to agents' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Put Internal Score on the card' }));
     await addChecked();
     expect(mocks.updateAgencyCampaign).toHaveBeenCalledWith(
       'camp-1',

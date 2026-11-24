@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { CustomerCardView, forgetMoreDetails } from '../../components/agency/station/StationCustomer';
 import {
   customerCard,
+  MORE_DETAILS_GESTURE_GAP_MS,
   MORE_DETAILS_PAUSE_MS,
   MORE_DETAILS_STEP,
   moreDetails,
@@ -13,8 +14,8 @@ import type { AgencyContextDisplay, AgencyFactTile, AgencyReservedAttempt } from
 /**
  * AS20, More details on the station's card: the server's `facts.more` minus the columns the card
  * draws, written by the station's formatter (a phone masked under masked), closed at first, opened
- * a step at a time by a downward scroll while its end is on screen (one step per pause), "Show
- * all" and "Hide", and a new customer starting closed.
+ * a step at a time by a downward gesture aimed at the page while its end is in sight (one step per
+ * gesture and per pause), "Show all" and "Hide" (which holds), and a new customer starting closed.
  */
 
 const NOW = new Date('2026-11-21T10:00:00Z');
@@ -145,6 +146,7 @@ describe('More details on the card (AS20)', () => {
 
   it('is closed at first: the title, the count and the hint, no rows', () => {
     render(<CustomerCardView card={cardFor()} />);
+    expect(screen.getByRole('heading', { name: 'More details 6 more' })).toBeTruthy();
     expect(screen.getByTestId('more-details').dataset['state']).toBe('closed');
     expect(screen.getByTestId('more-details-count').textContent).toBe('6 more');
     expect(screen.getByTestId('more-details-hint').textContent).toBe('Scroll down to see them.');
@@ -180,14 +182,122 @@ describe('More details on the card (AS20)', () => {
     expect(rowsShown()).toEqual([]);
   });
 
-  it('the page moving down opens a step too', () => {
-    render(<CustomerCardView card={cardFor()} />);
-    act(() => {
-      Object.defineProperty(window, 'scrollY', { value: 200, configurable: true });
-      window.dispatchEvent(new Event('scroll'));
+  it('Page Down, the down arrow and the space bar on the page open a step; not in a field, on a button or with Shift', () => {
+    render(
+      <>
+        <textarea data-testid="notes" />
+        <button type="button" data-testid="other">Other</button>
+        <CustomerCardView card={cardFor()} />
+      </>,
+    );
+    const key = (target: EventTarget, init: KeyboardEventInit) => act(() => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
     });
+    key(screen.getByTestId('notes'), { key: 'ArrowDown' });
+    key(screen.getByTestId('other'), { key: ' ' });
+    key(document.body, { key: ' ', shiftKey: true });
+    key(document.body, { key: 'PageDown', repeat: true });
+    expect(rowsShown()).toEqual([]);
+    key(document.body, { key: 'PageDown' });
     expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
-    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    later();
+    key(document.body, { key: ' ' });
+    expect(rowsShown()).toHaveLength(6);
+  });
+
+  it('one trackpad swipe (a burst of wheel events) opens one step; the next swipe opens the next', () => {
+    render(<CustomerCardView card={cardFor()} />);
+    for (let i = 0; i < 20; i++) {
+      wheelDown();
+      later(MORE_DETAILS_GESTURE_GAP_MS / 4);
+    }
+    expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
+    later(MORE_DETAILS_GESTURE_GAP_MS);
+    wheelDown();
+    expect(rowsShown()).toHaveLength(6);
+  });
+
+  it('a zoom, a wheel in a field, in a dialog or in a box that still scrolls opens nothing', () => {
+    render(
+      <>
+        <textarea data-testid="notes" />
+        <div role="dialog"><p data-testid="in-dialog">Sure?</p></div>
+        <div data-testid="box" style={{ overflowY: 'auto' }}><p data-testid="in-box">Long</p></div>
+        <CustomerCardView card={cardFor()} />
+      </>,
+    );
+    const box = screen.getByTestId('box');
+    Object.defineProperty(box, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(box, 'clientHeight', { value: 100, configurable: true });
+    const wheelOn = (target: EventTarget, ctrlKey = false) => {
+      later();
+      act(() => {
+        const event = new WheelEvent('wheel', { deltaY: 120, bubbles: true });
+        // This jsdom's WheelEvent drops the modifier keys from its init.
+        Object.defineProperty(event, 'ctrlKey', { value: ctrlKey });
+        target.dispatchEvent(event);
+      });
+    };
+    wheelOn(window, true);
+    expect(rowsShown()).toEqual([]);
+    wheelOn(screen.getByTestId('notes'));
+    expect(rowsShown()).toEqual([]);
+    wheelOn(screen.getByTestId('in-dialog'));
+    expect(rowsShown()).toEqual([]);
+    wheelOn(screen.getByTestId('in-box'));
+    expect(rowsShown()).toEqual([]);
+    // The box at its end passes the wheel on to the page.
+    box.scrollTop = 400;
+    wheelOn(screen.getByTestId('in-box'));
+    expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
+  });
+
+  it('a finger pushing up opens one step per touch, not from inside a field', () => {
+    render(
+      <>
+        <textarea data-testid="notes" />
+        <CustomerCardView card={cardFor()} />
+      </>,
+    );
+    const touch = (type: string, target: EventTarget, y: number) => act(() => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, 'touches', { value: [{ clientY: y }] });
+      target.dispatchEvent(event);
+    });
+    const notes = screen.getByTestId('notes');
+    touch('touchstart', notes, 400);
+    touch('touchmove', notes, 300);
+    expect(rowsShown()).toEqual([]);
+    touch('touchstart', document.body, 400);
+    touch('touchmove', document.body, 380);
+    expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
+    later();
+    touch('touchmove', document.body, 300);
+    expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
+    touch('touchstart', document.body, 400);
+    touch('touchmove', document.body, 380);
+    expect(rowsShown()).toHaveLength(6);
+  });
+
+  it('its end under the footer stuck to the bottom of the window is not in sight', () => {
+    render(
+      <>
+        <CustomerCardView card={cardFor()} />
+        <footer data-station-foot style={{ position: 'sticky' }} />
+      </>,
+    );
+    // The mock puts every box's top at 100: the footer's too, so the end of More details is under it.
+    wheelDown();
+    expect(rowsShown()).toEqual([]);
+  });
+
+  it('stops listening once drawn away', () => {
+    const removed = vi.spyOn(window, 'removeEventListener');
+    const { unmount } = render(<CustomerCardView card={cardFor()} />);
+    unmount();
+    const kinds = removed.mock.calls.map(([kind]) => kind);
+    expect(kinds).toEqual(expect.arrayContaining(['wheel', 'touchstart', 'touchmove', 'keydown']));
+    removed.mockRestore();
   });
 
   it('Show all opens every row at once and Hide closes them', () => {
@@ -199,6 +309,40 @@ describe('More details on the card (AS20)', () => {
     expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull();
     fireEvent.click(toggle);
     expect(rowsShown()).toEqual([]);
+  });
+
+  it('after Hide, scrolling opens nothing until Show all; drawn again it is still held', () => {
+    const { unmount } = render(<CustomerCardView card={cardFor()} />);
+    fireEvent.click(screen.getByTestId('more-details-toggle'));
+    fireEvent.click(screen.getByTestId('more-details-toggle'));
+    later();
+    wheelDown();
+    expect(rowsShown()).toEqual([]);
+    unmount();
+    render(<CustomerCardView card={cardFor()} />);
+    later();
+    wheelDown();
+    expect(rowsShown()).toEqual([]);
+    fireEvent.click(screen.getByTestId('more-details-toggle'));
+    expect(rowsShown()).toHaveLength(6);
+  });
+
+  it('Show all brings a long list in after a few rows at most, never one row at a time', () => {
+    const many = Array.from({ length: 40 }, (_, i) => more(`Col ${i}`, `v${i}`));
+    render(<CustomerCardView card={cardFor({ ...ATTEMPT, facts: { ...ATTEMPT.facts!, more: many } })} />);
+    fireEvent.click(screen.getByTestId('more-details-toggle'));
+    const delays = screen.getAllByTestId('more-detail').map((el) => Number(el.style.getPropertyValue('--more-i')));
+    expect(delays).toHaveLength(40);
+    expect(Math.max(...delays)).toBe(MORE_DETAILS_STEP - 1);
+  });
+
+  it('the same call sent again with a changed value stays as open as it was', () => {
+    const { rerender } = render(<CustomerCardView card={cardFor()} />);
+    wheelDown();
+    const changed = { ...ATTEMPT, facts: { ...ATTEMPT.facts!, more: [more('Loan No', 'LN-9999'), ...MORE.slice(1)] } };
+    rerender(<CustomerCardView card={cardFor(changed)} />);
+    expect(rowsShown()).toHaveLength(MORE_DETAILS_STEP);
+    expect(screen.getAllByTestId('more-detail-value')[0]!.textContent).toBe('LN-9999');
   });
 
   it('values are plain text, a masked phone included', () => {

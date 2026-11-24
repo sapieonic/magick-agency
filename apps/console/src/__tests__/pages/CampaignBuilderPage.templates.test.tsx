@@ -581,7 +581,7 @@ async function addCustomers(facts: string[] = []) {
   goToStep('Customers');
   dropCsv();
   await screen.findByRole('button', { name: 'Add 3 customers' }, { timeout: 4000 });
-  for (const fact of facts) fireEvent.click(screen.getByRole('switch', { name: `Show ${fact} to agents` }));
+  for (const fact of facts) fireEvent.click(screen.getByRole('switch', { name: `Put ${fact} on the card` }));
   fireEvent.click(footerButton('Add 3 customers'));
   await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalled());
   await waitFor(() => expect(currentStep()).toBe('purpose'), { timeout: 4000 });

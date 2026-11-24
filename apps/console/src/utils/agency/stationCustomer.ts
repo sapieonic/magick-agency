@@ -513,14 +513,25 @@ export const MORE_DETAILS_STEP = 4;
 /** The shortest time between two of those steps, so one flick of the wheel opens one step. */
 export const MORE_DETAILS_PAUSE_MS = 300;
 
+/**
+ * The quiet that ends one wheel gesture: a trackpad swipe sends wheel events for a second or more
+ * (its momentum included), and only a wheel event after this long without one starts another step.
+ */
+export const MORE_DETAILS_GESTURE_GAP_MS = 200;
+
 /** How many rows are open after one more step: {@link MORE_DETAILS_STEP} more, never past `total`. */
 export function nextMoreShown(shown: number, total: number): number {
   return Math.max(0, Math.min(total, shown + MORE_DETAILS_STEP));
 }
 
-/** One call's More details as a key: another call, or other values, starts closed. */
+/**
+ * One call's More details as a key: another call starts closed, and a value that changes during a
+ * call (the panel sent again) keeps it as open as it was. Without a call id (none is drawn today),
+ * the rows themselves.
+ */
 export function moreDetailsKey(callId: string, rows: readonly MoreDetail[]): string {
-  return `${callId}\u0002${rows.map((r) => `${r.column}\u0000${r.value}`).join('\u0001')}`;
+  if (callId !== '') return `call\u0002${callId}`;
+  return `rows\u0002${rows.map((r) => `${r.column}\u0000${r.value}`).join('\u0001')}`;
 }
 
 /**

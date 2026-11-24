@@ -7,6 +7,7 @@ import {
   FACT_POP_MIN_WIDTH,
   factPopPlacement,
   fitFontSize,
+  MORE_DETAILS_GESTURE_GAP_MS,
   MORE_DETAILS_PAUSE_MS,
   MORE_DETAILS_STEP,
   nextMoreShown,
@@ -207,44 +208,85 @@ function ChosenFacts({ facts }: { facts: CustomerFact[] }) {
 }
 
 /**
- * How far the last More details was opened, so the card drawn again for the same call (Call
- * coming, then On call: two mounts) opens as far as the agent left it. One entry: the newest.
+ * How far the last More details was opened, and whether the agent closed it with "Hide", so the
+ * card drawn again for the same call (Call coming, then On call: two mounts) opens as far as the
+ * agent left it. One entry: the newest.
  */
-let rememberedMore: { key: string; shown: number } | null = null;
+let rememberedMore: { key: string; shown: number; held: boolean } | null = null;
 
 /** Forgets {@link rememberedMore}: for tests, which draw one call many times. */
 export function forgetMoreDetails(): void {
   rememberedMore = null;
 }
 
-/** True when the element is at least partly inside the window. */
+/**
+ * The bottom of the part of the window the agent can see: the top of the station's footer while it
+ * is stuck to the bottom of the window, else the window's own bottom.
+ */
+function visibleBottom(): number {
+  const foot = document.querySelector<HTMLElement>('[data-station-foot]');
+  if (foot && getComputedStyle(foot).position === 'sticky') {
+    return Math.min(window.innerHeight, foot.getBoundingClientRect().top);
+  }
+  return window.innerHeight;
+}
+
+/** True when the element is at least partly in sight (above the stuck footer). */
 function onScreen(el: HTMLElement): boolean {
   const box = el.getBoundingClientRect();
-  return box.bottom > 0 && box.top < window.innerHeight;
+  return box.bottom > 0 && box.top < visibleBottom();
 }
+
+/** Where a scroll aimed at something else starts: a field, a dialog, a widget that takes arrows. */
+const NOT_THE_PAGE =
+  'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="dialog"], [aria-modal="true"], [role="listbox"], [role="menu"], [role="radiogroup"], [role="slider"], [role="tablist"]';
+
+/**
+ * True when a wheel, touch or key starting at `target` moves the page, not something inside it: not
+ * in a field, a dialog or an arrow-key widget, and not in an inner box that can still scroll down.
+ */
+function movesThePage(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true;
+  if (target.closest(NOT_THE_PAGE)) return false;
+  for (let el: Element | null = target; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (el.scrollHeight <= el.clientHeight + 1) continue;
+    const overflow = getComputedStyle(el).overflowY;
+    if ((overflow === 'auto' || overflow === 'scroll') && el.scrollTop + el.clientHeight < el.scrollHeight - 1) return false;
+  }
+  return true;
+}
+
+/** The keys that move the page down. */
+const DOWN_KEYS = new Set(['PageDown', 'ArrowDown', 'End', ' ']);
 
 /**
  * More details (AS20): the customer's other columns, under the card. Closed at first, with a count
- * and "Scroll down to see them."; while its end is on screen, each downward scroll (the wheel, the
- * page moving down, a finger pushing up) opens {@link MORE_DETAILS_STEP} more rows, at most one step
- * every {@link MORE_DETAILS_PAUSE_MS} ms, each new row fading in (no motion under reduced motion).
- * "Show all" opens them at once and "Hide" closes them, for the keyboard and the mouse. Values are
- * uploaded text: plain text, wrapped, never markup.
+ * and "Scroll down to see them."; while its end is in sight, each downward gesture aimed at the page
+ * (a turn of the wheel or a trackpad swipe, a finger pushing up, Page Down, the down arrow or the
+ * space bar) opens {@link MORE_DETAILS_STEP} more rows: one step per gesture (a gesture's wheel
+ * events end with a pause of {@link MORE_DETAILS_GESTURE_GAP_MS}) and at most one step every
+ * {@link MORE_DETAILS_PAUSE_MS} ms, each new row fading in (no motion under reduced motion). A
+ * scroll inside a field, a dialog or an inner box, and a zoom (ctrl and the wheel), open nothing.
+ * "Show all" opens them at once and "Hide" closes them until "Show all" again, for the keyboard
+ * and the mouse. Values are uploaded text: plain text, wrapped, never markup.
  */
 function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: string }) {
   const total = rows.length;
-  const [shown, setShown] = useState(() => (rememberedMore?.key === key ? Math.min(rememberedMore.shown, total) : 0));
+  const remembered = rememberedMore?.key === key ? rememberedMore : null;
+  const [shown, setShown] = useState(() => (remembered ? Math.min(remembered.shown, total) : 0));
+  const [held, setHeld] = useState(() => remembered?.held ?? false);
   const [from, setFrom] = useState(shown);
   const endRef = useRef<HTMLDivElement>(null);
   const lastStep = useRef(0);
+  const lastWheel = useRef(0);
   const listId = useId();
 
   useEffect(() => {
-    rememberedMore = { key, shown };
-  }, [key, shown]);
+    rememberedMore = { key, shown, held };
+  }, [key, shown, held]);
 
   useEffect(() => {
-    if (shown >= total) return;
+    if (shown >= total || held) return;
     const step = () => {
       const end = endRef.current;
       const now = Date.now();
@@ -255,41 +297,47 @@ function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: stri
       setShown(nextMoreShown(shown, total));
     };
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY > 0) step();
-    };
-    let lastY = window.scrollY;
-    const onScroll = () => {
-      const y = window.scrollY;
-      if (y > lastY) step();
-      lastY = y;
+      const now = Date.now();
+      const newGesture = now - lastWheel.current >= MORE_DETAILS_GESTURE_GAP_MS;
+      lastWheel.current = now;
+      if (newGesture && event.deltaY > 0 && !event.ctrlKey && movesThePage(event.target)) step();
     };
     let touchY: number | null = null;
     const onTouchStart = (event: TouchEvent) => {
-      touchY = event.touches[0]?.clientY ?? null;
+      touchY = movesThePage(event.target) ? (event.touches[0]?.clientY ?? null) : null;
     };
     const onTouchMove = (event: TouchEvent) => {
       const y = event.touches[0]?.clientY;
       if (touchY !== null && y !== undefined && y < touchY - 8) {
-        touchY = y;
+        touchY = null; // one step per touch
         step();
       }
     };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.repeat || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!DOWN_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey)) return;
+      const target = event.target;
+      // A space on a button presses it; it does not scroll.
+      if (event.key === ' ' && target instanceof Element && target.closest('button, a, summary, [role="button"]')) return;
+      if (movesThePage(target)) step();
+    };
     window.addEventListener('wheel', onWheel, { passive: true });
-    window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('touchstart', onTouchStart, { passive: true });
     window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('wheel', onWheel);
-      window.removeEventListener('scroll', onScroll);
       window.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('keydown', onKeyDown);
     };
-  }, [shown, total]);
+  }, [shown, total, held]);
 
   const all = shown >= total;
   const toggle = () => {
     setFrom(all ? 0 : shown);
     setShown(all ? 0 : total);
+    setHeld(all);
   };
   const state = shown === 0 ? 'closed' : all ? 'open' : 'partial';
   return (
@@ -297,7 +345,7 @@ function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: stri
       <div className={styles.moreHead}>
         <h3 className={styles.moreTitle}>
           <ListPlus size={18} aria-hidden="true" />
-          {STATION_COPY.moreDetails}
+          {STATION_COPY.moreDetails}{' '}
           <span className={styles.moreCount} data-testid="more-details-count">{STATION_COPY.moreDetailsCount(total)}</span>
         </h3>
         <button
@@ -318,7 +366,9 @@ function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: stri
             <div
               key={row.column}
               className={styles.moreRow}
-              style={i >= from ? ({ '--more-i': i - from } as CSSProperties) : undefined}
+              // A step's rows come in one after another; "Show all" brings the rest in together after
+              // the first few, so a long list is never blank for long.
+              style={i >= from ? ({ '--more-i': Math.min(i - from, MORE_DETAILS_STEP - 1) } as CSSProperties) : undefined}
               data-new={i >= from ? 'true' : undefined}
               data-testid="more-detail"
             >
