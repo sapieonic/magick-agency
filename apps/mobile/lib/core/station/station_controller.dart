@@ -1267,13 +1267,11 @@ class StationController extends Notifier<StationView?>
       if (!_live(s)) return;
       final open = answer?.help;
       if (open != null) {
-        final shown = _assist.shows(open.raisedAt);
         _assist = _assist.onRaised(open);
-        // A new raise only when its answer opened a request not already on screen: not a repeat
-        // answered with the open one, nor one a `ready.help` (or the frames) got to first.
-        if (!shown && _assist.shows(open.raisedAt)) {
-          _assistEvents.raised(open.raisedAt, surface: from.surface, onCall: from.onCall);
-        }
+        // The first raise answer naming this `raised_at` is the raise, whether or not the request
+        // is still on screen (the frames may have ended it, or a `ready.help` shown it, first). A
+        // repeat answered with the same request is not; a `ready.help` or a frame never is.
+        _assistEvents.raised(open.raisedAt, surface: from.surface, onCall: from.onCall);
       }
       _log.info('help raised', {'call': open?.callId != null});
     } catch (e) {

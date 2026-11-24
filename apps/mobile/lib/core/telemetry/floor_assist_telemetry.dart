@@ -21,8 +21,9 @@ enum HelpSurface {
 /// counts and booleans only: never a message's text, a name, a number or the supervisor who
 /// answered.
 ///
-/// * `agency_help_raised` (`surface`, `on_call`): the raise's answer opened a request that was not
-///   already on screen;
+/// * `agency_help_raised` (`surface`, `on_call`, as at the press): the first raise answer naming a
+///   `raised_at` (on screen or not by then: the frames or a `ready.help` may have got there first;
+///   never a `ready.help` or a frame by itself);
 /// * `agency_help_cancelled` (`wait_bucket`): the agent's cancel ended it;
 /// * `agency_help_answered` (`how`, `wait_bucket`): it ended answered, a cancel that lost the race
 ///   to the answer included (`how` is `unknown` when `help_answered` was not seen);

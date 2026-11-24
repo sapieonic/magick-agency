@@ -1453,9 +1453,11 @@ the flag is on). Break limits are not behind it.
 - **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names and
   properties as the console's, closed values, counts and booleans only (never a message's text,
   a name, a number or who answered): `agency_help_raised` (`surface`: `station`, `inbound` or
-  `softphone`, where the agent pressed it; `on_call`) when the raise's answer opens a request not
-  already on screen (a repeat answered with the open one, or one a `ready.help` restored, is not a
-  raise); `agency_help_cancelled` (`wait_bucket`) when the agent's cancel ended it (its
+  `softphone`, where the agent pressed it; `on_call`, both as at the press) on the first raise
+  answer (the `POST …/help` reply with a request) naming a `raised_at` this phone has not reported,
+  whether or not the request is still on screen when it lands (the frames may have ended it, or a
+  `ready.help` shown it, first); a `ready.help` or a frame never sends it by itself;
+  `agency_help_cancelled` (`wait_bucket`) when the agent's cancel ended it (its
   `help_cleared {cancelled}`, on either side of the reply); `agency_help_answered` (`how`:
   `listen`, `message`, or `unknown` with no `help_answered` seen; `wait_bucket`), a cancel that
   lost the race to an answer included; `agency_help_expired`; `agency_help_refused` (`action`:
@@ -1467,8 +1469,7 @@ the flag is on). Break limits are not behind it.
   request it holds (`FloorAssistState.ends`: the one shown, the one a raise in flight is opening,
   or the one its cancel just ended); `session_ended` and a frame about another request send
   nothing; and each Need help event is sent at most once per `raised_at` in the process, across
-  reconnects and repeated frames. A raise whose request was answered before its own reply landed
-  (the reply opens nothing) sends the answer and no raise, as the rule above reads.
+  reconnects, repeated frames and a repeated raise answered with the same request.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
   `break_reasons`, found by the break's code as its label is), On break counts from the
   `agent_state` frame's `since`: "4:18 / 15:00", a bar, "10:42 left of your 15 minutes." (rounded up,

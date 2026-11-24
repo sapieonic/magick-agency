@@ -116,9 +116,6 @@ final class FloorAssistState {
   /// The answer held for the request raised at [raisedAt] (`help_answered`), if any.
   HelpAnswer? answerOf(DateTime raisedAt) => _answerOf(raisedAt);
 
-  /// The request raised at [raisedAt] is the one on screen.
-  bool shows(DateTime raisedAt) => _shows(raisedAt);
-
   /// Whether a `help_cleared` for [raisedAt] ends a request this station holds (what the end
   /// events of LF39 are sent for): the one shown, the one a raise in flight ([raising]) is opening,
   /// or the one the cancel's answer just ended. A frame about any other request (an earlier one, or

@@ -120,6 +120,20 @@ void main() {
       });
     });
 
+    test('a raise whose reply was lost, pressed again: the server answers with the request it opened: one raise', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        app.routes['POST $helpPath'] = (_) => throw const SocketException('offline');
+        app.run(app.controller.raiseHelp());
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.run(app.controller.raiseHelp());
+        app.frame(cleared(reason: 'expired'));
+        expect(_help(sink), ['agency_help_refused', 'agency_help_raised', 'agency_help_expired']);
+        app.dispose();
+      });
+    });
+
     test('off a call on the waiting screen: on_call false; in wrap-up: on_call true', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -161,7 +175,7 @@ void main() {
       });
     });
 
-    test('a slow raise reply: answered and cleared first, the reply opens nothing: answered once, no raise (the spec\'s rule)', () {
+    test('a slow raise reply: answered and cleared first, the reply opens nothing: still the raise, and answered once', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) async {
@@ -176,12 +190,13 @@ void main() {
         async.elapse(const Duration(seconds: 2));
         app.run(pending);
         app.frame(cleared());
-        expect(_help(sink), ['agency_help_answered']);
+        expect(_help(sink), ['agency_help_answered', 'agency_help_raised']);
+        expect(sink.last('agency_help_raised'), {'surface': 'station', 'on_call': true});
         app.dispose();
       });
     });
 
-    test('a slow raise reply after a reconnect\'s ready opened the request: not a new raise', () {
+    test('a slow raise reply after a reconnect\'s ready showed the request: the reply is the raise; the ready never is', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) async {
@@ -192,10 +207,11 @@ void main() {
         final pending = app.controller.raiseHelp();
         async.flushMicrotasks();
         app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
+        expect(_help(sink), isEmpty, reason: 'a ready.help is never a raise');
         async.elapse(const Duration(seconds: 2));
         app.run(pending);
         app.frame(cleared(reason: 'expired'));
-        expect(_help(sink), ['agency_help_expired']);
+        expect(_help(sink), ['agency_help_raised', 'agency_help_expired']);
         app.dispose();
       });
     });
