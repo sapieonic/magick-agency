@@ -1,9 +1,20 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
-import { Calendar, Clock, IndianRupee, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronUp, Clock, IndianRupee, ListPlus, MapPin, MessageSquare, Mic, Phone } from 'lucide-react';
 import { NotesField, type NotesFieldProps } from '../NotesField';
 import { useDictation } from '../../../hooks/useSpeech';
 import { STATION_COPY } from '../../../utils/agency/stationCopy';
-import { FACT_POP_MIN_WIDTH, factPopPlacement, fitFontSize, type CustomerCard, type CustomerFact, type LastCallRow } from '../../../utils/agency/stationCustomer';
+import {
+  FACT_POP_MIN_WIDTH,
+  factPopPlacement,
+  fitFontSize,
+  MORE_DETAILS_PAUSE_MS,
+  MORE_DETAILS_STEP,
+  nextMoreShown,
+  type CustomerCard,
+  type CustomerFact,
+  type LastCallRow,
+  type MoreDetail,
+} from '../../../utils/agency/stationCustomer';
 import styles from './Station.module.css';
 
 const FACT_ICON: Record<CustomerFact['kind'], typeof Phone | null> = {
@@ -196,6 +207,138 @@ function ChosenFacts({ facts }: { facts: CustomerFact[] }) {
 }
 
 /**
+ * How far the last More details was opened, so the card drawn again for the same call (Call
+ * coming, then On call: two mounts) opens as far as the agent left it. One entry: the newest.
+ */
+let rememberedMore: { key: string; shown: number } | null = null;
+
+/** Forgets {@link rememberedMore}: for tests, which draw one call many times. */
+export function forgetMoreDetails(): void {
+  rememberedMore = null;
+}
+
+/** True when the element is at least partly inside the window. */
+function onScreen(el: HTMLElement): boolean {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < window.innerHeight;
+}
+
+/**
+ * More details (AS20): the customer's other columns, under the card. Closed at first, with a count
+ * and "Scroll down to see them."; while its end is on screen, each downward scroll (the wheel, the
+ * page moving down, a finger pushing up) opens {@link MORE_DETAILS_STEP} more rows, at most one step
+ * every {@link MORE_DETAILS_PAUSE_MS} ms, each new row fading in (no motion under reduced motion).
+ * "Show all" opens them at once and "Hide" closes them, for the keyboard and the mouse. Values are
+ * uploaded text: plain text, wrapped, never markup.
+ */
+function MoreDetails({ rows, callKey: key }: { rows: MoreDetail[]; callKey: string }) {
+  const total = rows.length;
+  const [shown, setShown] = useState(() => (rememberedMore?.key === key ? Math.min(rememberedMore.shown, total) : 0));
+  const [from, setFrom] = useState(shown);
+  const endRef = useRef<HTMLDivElement>(null);
+  const lastStep = useRef(0);
+  const listId = useId();
+
+  useEffect(() => {
+    rememberedMore = { key, shown };
+  }, [key, shown]);
+
+  useEffect(() => {
+    if (shown >= total) return;
+    const step = () => {
+      const end = endRef.current;
+      const now = Date.now();
+      if (!end || now - lastStep.current < MORE_DETAILS_PAUSE_MS || !onScreen(end)) return;
+      lastStep.current = now;
+      // This effect runs again on every change of `shown`, so the closure holds the current one.
+      setFrom(shown);
+      setShown(nextMoreShown(shown, total));
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY > 0) step();
+    };
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y > lastY) step();
+      lastY = y;
+    };
+    let touchY: number | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY;
+      if (touchY !== null && y !== undefined && y < touchY - 8) {
+        touchY = y;
+        step();
+      }
+    };
+    window.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [shown, total]);
+
+  const all = shown >= total;
+  const toggle = () => {
+    setFrom(all ? 0 : shown);
+    setShown(all ? 0 : total);
+  };
+  const state = shown === 0 ? 'closed' : all ? 'open' : 'partial';
+  return (
+    <div className={styles.more} data-state={state} data-testid="more-details">
+      <div className={styles.moreHead}>
+        <h3 className={styles.moreTitle}>
+          <ListPlus size={18} aria-hidden="true" />
+          {STATION_COPY.moreDetails}
+          <span className={styles.moreCount} data-testid="more-details-count">{STATION_COPY.moreDetailsCount(total)}</span>
+        </h3>
+        <button
+          type="button"
+          className={styles.moreToggle}
+          aria-expanded={shown > 0}
+          aria-controls={shown > 0 ? listId : undefined}
+          onClick={toggle}
+          data-testid="more-details-toggle"
+        >
+          {all ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
+          {all ? STATION_COPY.moreDetailsHide : STATION_COPY.moreDetailsShowAll}
+        </button>
+      </div>
+      {shown > 0 ? (
+        <dl id={listId} className={styles.moreList}>
+          {rows.slice(0, shown).map((row, i) => (
+            <div
+              key={row.column}
+              className={styles.moreRow}
+              style={i >= from ? ({ '--more-i': i - from } as CSSProperties) : undefined}
+              data-new={i >= from ? 'true' : undefined}
+              data-testid="more-detail"
+            >
+              <dt data-testid="more-detail-label">{row.column}</dt>
+              <dd className={row.kind === 'text' ? undefined : styles.num} data-testid="more-detail-value">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {all ? null : (
+        <p className={styles.moreHint} data-testid="more-details-hint">
+          {shown === 0 ? STATION_COPY.moreDetailsHint : STATION_COPY.moreDetailsShown(shown, total)}
+        </p>
+      )}
+      <div ref={endRef} className={styles.moreEnd} aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
  * The customer card (spec 03/04): who, where, the number, the facts and what they said last time.
  * A campaign that chose its facts (AS19) shows up to four, its chosen ones; a legacy card shows up
  * to three big facts, the last of them Last call when there is one. It does not move between Call
@@ -290,6 +433,7 @@ export function CustomerCardView({
           {showLastSaid && card.lastSaid ? <LastSaid text={card.lastSaid} /> : null}
         </div>
       ) : null}
+      {card.more.length > 0 ? <MoreDetails key={card.moreKey} callKey={card.moreKey} rows={card.more} /> : null}
     </section>
   );
 }
