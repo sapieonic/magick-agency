@@ -113,6 +113,19 @@ final class FloorAssistState {
   /// The answer held for [raisedAt], if any.
   HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
+  /// The answer held for the request raised at [raisedAt] (`help_answered`), if any.
+  HelpAnswer? answerOf(DateTime raisedAt) => _answerOf(raisedAt);
+
+  /// The request raised at [raisedAt] is the one on screen.
+  bool shows(DateTime raisedAt) => _shows(raisedAt);
+
+  /// Whether a `help_cleared` for [raisedAt] ends a request this station holds (what the end
+  /// events of LF39 are sent for): the one shown, the one a raise in flight ([raising]) is opening,
+  /// or the one the cancel's answer just ended. A frame about any other request (an earlier one, or
+  /// one seen to end already) ends nothing here.
+  bool ends(DateTime raisedAt, {bool raising = false}) =>
+      _shows(raisedAt) || _inFlight(raisedAt, raising) || _cancelledFirst(raisedAt);
+
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
   /// one shown, with no notice (the frame that ended it was missed; nothing says how). One this
   /// station already saw end ([ended]) is stale and ignored.

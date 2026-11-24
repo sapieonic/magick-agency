@@ -165,8 +165,8 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final callKey = callId ?? 'idle';
     final body = <Widget>[
       _Header(surface: widget.surface),
-      // Need help on the station's soft phone too (AS5): its notice or refusal under the header.
-      if (widget.surface == SoftphoneSurface.station) const NeedHelpCard(),
+      // Need help on both soft phones (AS5; the Phone tab, LF39): its notice or refusal under the header.
+      const NeedHelpCard(),
       const ListenFirstNoticeCard(),
       const _BootstrapError(),
       const _MicProblem(),
@@ -269,8 +269,9 @@ class _DialHead extends StatelessWidget {
 
 /// The title, what is disclosed (recording, muted, where the call is logged,
 /// that a supervisor may listen), and the way out: Close soft phone on the Phone tab, Return to campaign on
-/// the station, each disabled with its reason while a call is live or owed. On the station, Need help
-/// sits beside the way out (AS5), as on every working screen (the console's `StationSoftphone`).
+/// the station, each disabled with its reason while a call is live or owed. Need help sits beside the
+/// way out on both (AS5; the Phone tab's soft-phone session, LF39), as on every working screen (the
+/// console's `StationSoftphone`).
 class _Header extends ConsumerWidget {
   const _Header({required this.surface});
 
@@ -292,6 +293,8 @@ class _Header extends ConsumerWidget {
           canReturn: v.canReturn,
           returnReason: v.returnBlockedReason,
           busy: v.sessionBusy,
+          callOnScreen: v.callOnScreen,
+          linkOpen: v.link == StationLink.open,
         ),
       ),
     );
@@ -330,7 +333,10 @@ class _Header extends ConsumerWidget {
                 runSpacing: Space.xs,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  if (!phone) const NeedHelpButton(),
+                  if (phone)
+                    NeedHelpButton.phoneTab(onCall: s.callOnScreen, linkOpen: s.linkOpen)
+                  else
+                    const NeedHelpButton(),
                   // Merged, so the reason is the button's own hint, read with it.
                   MergeSemantics(
                     child: Semantics(

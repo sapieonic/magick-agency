@@ -31,7 +31,7 @@ abstract final class StationCopy {
   static const soundCalls = 'Sounds';
   static const soundCallsDetail = 'A sound when a call comes and ends.';
   static const vibration = 'Vibration';
-  static const vibrationDetail = 'Feel a call come and connect.';
+  static const vibrationDetail = 'Feel a call come and connect, and a message from your supervisor.';
   static const darkScreen = 'Dark screen';
   static const darkScreenDetail = 'On this phone only.';
   static const finishWork = 'Finish work for today';

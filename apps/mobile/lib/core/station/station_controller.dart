@@ -27,6 +27,7 @@ import '../softphone/softphone_copy.dart' show softphoneHangupFailedCopy;
 import '../softphone/softphone_host.dart';
 import '../softphone/softphone_view.dart' show SoftphonePhase;
 import '../telemetry/call_telemetry.dart';
+import '../telemetry/floor_assist_telemetry.dart';
 import '../telemetry/log.dart';
 import 'away_return.dart';
 import 'call_autosave.dart';
@@ -68,6 +69,9 @@ final List<Override> stationOverrides = [
   softphoneHostActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
   supervisorMessagesProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.messages))),
   dismissSupervisorMessageProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).dismissSupervisorMessage),
+  // Need help on either kind of session: the Phone tab's soft-phone session has no campaign view (LF39).
+  sessionHelpProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.help))),
+  sessionHelpActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
 ];
 
 final class _Session {
@@ -160,6 +164,13 @@ class StationController extends Notifier<StationView?>
   List<SupervisorMessageView> _messageViews = const [];
   List<SupervisorMessageFrame>? _messageViewsFrom;
   int _messageViewsOffset = 0;
+
+  /// Floor assist's events (LF39), each Need help event once per request. Kept across sessions
+  /// in this process, as [_chimed] is: a request is never reported twice.
+  final _assistEvents = FloorAssistTelemetry();
+
+  /// When the last new supervisor's message arrived: one vibration per burst ([messageBuzzQuiet]).
+  DateTime? _lastMessageAt;
 
   // The soft-phone call's local facts (the call itself is in the reducer).
   /// The ring is muted for [_ringCallId]; any other call rings.
@@ -931,7 +942,10 @@ class StationController extends Notifier<StationView?>
         // text: a message can hold a customer's details.
         if (_s == null) break;
         _log.info('supervisor message', {'id': frame.id, 'chars': frame.text.length});
-        _setAssist(_assist.onMessage(frame));
+        final next = _assist.onMessage(frame);
+        // A new id (a resent one is not queued again): said once, and felt once per burst.
+        if (!identical(next, _assist)) _messageArrived();
+        _setAssist(next);
       case HelpAnsweredFrame():
         if (_s == null) break;
         _log.info('help answered', {'how': frame.howRaw});
@@ -940,7 +954,9 @@ class StationController extends Notifier<StationView?>
       case HelpClearedFrame():
         if (_s == null) break;
         _log.info('help cleared', {'reason': frame.reasonRaw});
-        _setAssist(_assist.onCleared(frame, raising: _helpBusy == HelpBusy.raising));
+        final raising = _helpBusy == HelpBusy.raising;
+        if (_assist.ends(frame.raisedAt, raising: raising)) _helpEnded(frame);
+        _setAssist(_assist.onCleared(frame, raising: raising));
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});
@@ -1210,6 +1226,7 @@ class StationController extends Notifier<StationView?>
                   ),
                   softphone: _softphoneView(s),
                   messages: _supervisorMessages(),
+                  help: _helpView(),
                 ),
         );
   }
@@ -1243,15 +1260,25 @@ class StationController extends Notifier<StationView?>
     _helpBusy = HelpBusy.raising;
     _helpError = null;
     _assist = _assist.dismissNotice();
+    final from = (surface: _helpSurface(s), onCall: _onCallNow);
     _emit();
     try {
       final answer = await _api.raiseHelp(s.id);
       if (!_live(s)) return;
       final open = answer?.help;
-      if (open != null) _assist = _assist.onRaised(open);
+      if (open != null) {
+        final shown = _assist.shows(open.raisedAt);
+        _assist = _assist.onRaised(open);
+        // A new raise only when its answer opened a request not already on screen: not a repeat
+        // answered with the open one, nor one a `ready.help` (or the frames) got to first.
+        if (!shown && _assist.shows(open.raisedAt)) {
+          _assistEvents.raised(open.raisedAt, surface: from.surface, onCall: from.onCall);
+        }
+      }
       _log.info('help raised', {'call': open?.callId != null});
     } catch (e) {
       if (!_live(s)) return;
+      _assistEvents.refused(e, raising: true);
       _helpError = FloorAssistCopy.refusal(e, raising: true);
       if (errorBodyOf(e)?.floorAssistCode == FloorAssistErrorCode.helpNotOnCall) _helpOnlyOnCall = true;
       _log.warn('help raise refused', {'error': _errorTag(e)});
@@ -1273,10 +1300,17 @@ class StationController extends Notifier<StationView?>
     try {
       await _api.cancelHelp(s.id);
       if (!_live(s)) return;
+      // A supervisor's answer held for the request (`help_answered` came first): the cancel lost
+      // the race, and the request ended answered. Otherwise its `help_cleared` says how it ended
+      // (`cancelled`: the cancel won), on either side of this reply.
+      final open = _assist.help;
+      final held = open == null ? null : _assist.answerOf(open.raisedAt);
+      if (open != null && held != null) _assistEvents.answered(open.raisedAt, held.how, now: _serverInstant(_now()));
       _assist = _assist.onCancelled();
       _log.info('help cancelled');
     } catch (e) {
       if (!_live(s)) return;
+      _assistEvents.refused(e, raising: false);
       // Off for the account, or the session ended: nothing open the agent can still act on.
       final body = errorBodyOf(e);
       if (body != null &&
@@ -1302,6 +1336,53 @@ class StationController extends Notifier<StationView?>
   }
 
   void dismissSupervisorMessage(String id) => _setAssist(_assist.dismissMessage(id));
+
+  /// Messages arriving within this of the one before are one burst: felt once.
+  static const messageBuzzQuiet = Duration(seconds: 2);
+
+  /// A supervisor's message id first queued (LF39): its event, and one short vibration (never a
+  /// sound: the customer could hear one) when Vibration is on and no other message arrived in the
+  /// last [messageBuzzQuiet]. Dismissing one brings the next up without either.
+  void _messageArrived() {
+    _assistEvents.messageShown(onCall: _onCallNow);
+    final now = _now();
+    final last = _lastMessageAt;
+    _lastMessageAt = now;
+    if (last != null && now.difference(last) < messageBuzzQuiet) return;
+    if (ref.read(stationHapticsProvider)()) ref.read(stationVibrateProvider)();
+  }
+
+  /// `help_cleared` [f] ends the request this station holds ([FloorAssistState.ends]): its end
+  /// event, once per request. The session ending, and a reason this build does not know, send none.
+  void _helpEnded(HelpClearedFrame f) {
+    final now = _serverInstant(_now());
+    switch (f.reason) {
+      case HelpClearedReason.answered:
+        _assistEvents.answered(f.raisedAt, _assist.answerOf(f.raisedAt)?.how, now: now);
+      case HelpClearedReason.expired:
+        _assistEvents.expired(f.raisedAt);
+      case HelpClearedReason.cancelled:
+        _assistEvents.cancelled(f.raisedAt, now: now);
+      case HelpClearedReason.sessionEnded || HelpClearedReason.unknown:
+        break;
+    }
+  }
+
+  /// Where Need help is pressed (`surface`): the soft phone (the Phone tab's session, or the station
+  /// switched to it), an inbound call on screen, else the campaign station.
+  HelpSurface _helpSurface(_Session s) {
+    if (s.hosted.isSoftphone) return HelpSurface.softphone;
+    if (_station.inboundOnScreen != null) return HelpSurface.inbound;
+    if (_onSoftphoneBreak) return HelpSurface.softphone;
+    return HelpSurface.station;
+  }
+
+  /// On a call or owing its outcome (`on_call`): a campaign or inbound call in its call or wrap-up
+  /// phase, or a soft-phone call on screen.
+  bool get _onCallNow {
+    final state = _station.effectiveState;
+    return state == AgentState.onCall || state == AgentState.wrapup || isCallUnsettled(_station.manualCall);
+  }
 
   static String _errorTag(Object e) => switch (e) {
     ApiHttpError(:final status, :final code) => '$status ${code ?? ''}'.trim(),
