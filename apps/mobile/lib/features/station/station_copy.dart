@@ -364,6 +364,14 @@ abstract final class StationCopy {
       shown == total ? '$total field${total == 1 ? '' : 's'}' : '$shown of $total field${total == 1 ? '' : 's'}';
   static String noFieldMatches(String q) => 'No fields match “$q”.';
   static const noExtraDetails = 'No extra details were uploaded for this contact.';
+
+  // ── More details under the card (AS20) ──
+  static const moreDetailsTitle = 'More details';
+  static String moreDetailsCount(int n) => n == 1 ? '1 more' : '$n more';
+  static const moreDetailsHint = 'Scroll down to see them.';
+  static String moreDetailsShown(int shown, int of) => 'Showing $shown of $of. Scroll down for more.';
+  static const moreDetailsShowAll = 'Show all';
+  static const moreDetailsHide = 'Hide';
   static String emptyFields(int n) => '$n empty field${n == 1 ? '' : 's'}';
 
   // ── On call ──

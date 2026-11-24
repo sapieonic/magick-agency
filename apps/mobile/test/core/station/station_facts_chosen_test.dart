@@ -46,6 +46,20 @@ void main() {
     });
   });
 
+  test('AS20: More details reach the view in the server\'s order, named by their columns', () {
+    fakeAsync((async) {
+      final app = App(async);
+      app.routes['POST /proxy/agency/sessions'] = (_) => json(200, bootstrap());
+      app.start();
+      app.frame(reserved());
+      final more = app.view!.call!.facts!.more!;
+      expect([for (final t in more) t.column], ['Due Date', 'Branch', 'Office Phone']);
+      expect([for (final t in more) t.kind], [FactKind.date, FactKind.text, FactKind.phone]);
+      expect(more.every((t) => t.label == t.column && t.key == null && !t.highlight), isTrue);
+      app.dispose();
+    });
+  });
+
   test('the script may use the campaign\'s keys: the fixed four, then each fact\'s', () {
     fakeAsync((async) {
       final app = App(async);

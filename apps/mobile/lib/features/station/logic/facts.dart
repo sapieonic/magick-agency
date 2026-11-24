@@ -20,6 +20,27 @@ List<FactTileView> factTilesInOrder(FactsView facts) {
   ];
 }
 
+/// The BE-6 tiles the card draws in its row (before AS19): three, or two beside the Last call tile.
+List<FactTileView> legacyCardTiles(FactsView facts, {required bool hasLastCall}) =>
+    factTilesInOrder(facts).take(hasLastCall ? 2 : 3).toList(growable: false);
+
+/// AS20, More details: the server's `facts.more` minus the columns the card already draws (its
+/// chosen tiles, or the BE-6 row), matched ignoring case, each column once, empty values left out.
+/// Empty when the server sent none.
+List<FactTileView> moreDetailTiles(FactsView facts, {required bool hasLastCall}) {
+  final more = facts.more;
+  if (more == null) return const [];
+  String fold(String c) => c.trim().toLowerCase();
+  final drawn = facts.chosen ? cardFactTiles(facts) : legacyCardTiles(facts, hasLastCall: hasLastCall);
+  final skip = {for (final t in drawn) fold(t.column)};
+  final out = <FactTileView>[];
+  for (final t in more) {
+    if (factIsEmpty(t) || !skip.add(fold(t.column))) continue;
+    out.add(t);
+  }
+  return List.unmodifiable(out);
+}
+
 /// The campaign's chosen facts (AS19) in the order the card draws them: the list's order, with the
 /// first highlighted one moved first (the server sends it first; this holds even if it did not).
 /// Empty values stay: the card shows "—". At most [maxCardTiles].
@@ -80,4 +101,19 @@ String factText(FactTileView f, {bool masked = false, DateTime? now}) {
 String? firstFactLine(FactsView facts, {bool masked = false, DateTime? now}) {
   final f = cardFactTiles(facts).where((f) => !factIsEmpty(f)).firstOrNull;
   return f == null ? null : '${f.label}: ${factText(f, masked: masked, now: now)}';
+}
+
+/// Details' list under the pinned fields: with More details from the server (AS20), its rows (the
+/// columns the supervisor turned off left out, phone numbers hidden as the campaign hides them) as
+/// fields, minus the pinned ones; from an older server, the roster row as before ([CallView.otherFields]).
+List<ContactField> detailsOtherFields(CallView call, {bool masked = false, DateTime? now}) {
+  final more = call.facts?.more;
+  if (more == null) return call.otherFields;
+  String fold(String c) => c.trim().toLowerCase();
+  final pinned = {for (final f in call.heroFields) fold(f.label)};
+  return List.unmodifiable([
+    for (final t in more)
+      if (!factIsEmpty(t) && !pinned.contains(fold(t.column)))
+        ContactField(key: t.column, label: t.column, value: factText(t, masked: masked, now: now)),
+  ]);
 }

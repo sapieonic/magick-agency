@@ -10,6 +10,7 @@ import 'banners.dart';
 import 'call_band.dart';
 import 'hang_up.dart';
 import 'layouts.dart';
+import 'more_details_card.dart';
 import 'notes_field.dart';
 import 'ringing_view.dart' show CustomerCard, LastCallsCard;
 import 'script_cards.dart' show ScriptStepsCard;
@@ -49,6 +50,8 @@ class OnCallView extends ConsumerWidget {
         const SizedBox(height: Space.md),
         const QueuedBreakChip(offer: false),
         const DontCallAgainRow(),
+        // AS20: the customer's other columns, at the bottom, opened as the agent scrolls down.
+        if (call != null) MoreDetailsCard(call: call),
         // At large text Mute and Speaker scroll with the content, so End call keeps its place.
         if (tight) ...[const SizedBox(height: Space.md), const LinkGate(child: ControlRow())],
       ],

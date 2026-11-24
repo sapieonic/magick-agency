@@ -391,7 +391,7 @@ class FactTileView {
 /// The customer's name, place and fact tiles, as the server read them (BE-6).
 @immutable
 class FactsView {
-  const FactsView({this.name, this.place, this.tiles = const [], this.chosen = false});
+  const FactsView({this.name, this.place, this.tiles = const [], this.chosen = false, this.more});
 
   final String? name;
   final String? place;
@@ -405,13 +405,24 @@ class FactsView {
   /// missing value. False: the BE-6 card and script, as before.
   final bool chosen;
 
+  /// AS20, More details: the row's other columns, in the server's order, each named by its column;
+  /// the columns the supervisor turned off are already left out. Null from an older server (Details
+  /// then lists the roster row as before); empty when there is nothing more.
+  final List<FactTileView>? more;
+
   static const _eq = ListEquality<FactTileView>();
 
   @override
   bool operator ==(Object other) =>
-      other is FactsView && other.name == name && other.place == place && other.chosen == chosen && _eq.equals(other.tiles, tiles);
+      other is FactsView &&
+      other.name == name &&
+      other.place == place &&
+      other.chosen == chosen &&
+      _eq.equals(other.tiles, tiles) &&
+      (other.more == null) == (more == null) &&
+      _eq.equals(other.more, more);
   @override
-  int get hashCode => Object.hash(name, place, tiles.length, chosen);
+  int get hashCode => Object.hash(name, place, tiles.length, chosen, more?.length);
 }
 
 /// The `{placeholders}` a campaign without chosen facts may use: every known

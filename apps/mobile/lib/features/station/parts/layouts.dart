@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/tokens.dart';
@@ -61,16 +62,20 @@ class StationPage extends StatelessWidget {
           ColoredBox(color: t.bgSecondary, child: topBar),
           if (!tight) band,
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (tight) band,
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: content),
-                  ),
-                ],
+            child: _ScrollPushScope(
+              child: SingleChildScrollView(
+                // AS20: a push down reaches More details even when the content fits the screen.
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (tight) band,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: content),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -79,6 +84,59 @@ class StationPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// AS20: each time the agent pushes the station's content down with a finger (it scrolls down, or
+/// it is already at the end and the finger keeps pushing), [pushes] goes up by one. More details
+/// listens, and opens a few more rows while its end is on screen. Only the page's own scroll counts,
+/// never a list inside it.
+class StationScrollPush extends InheritedWidget {
+  const StationScrollPush({super.key, required this.pushes, required super.child});
+
+  final ValueListenable<int> pushes;
+
+  /// The page's pushes, or null outside a station page.
+  static ValueListenable<int>? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<StationScrollPush>()?.pushes;
+
+  @override
+  bool updateShouldNotify(StationScrollPush oldWidget) => oldWidget.pushes != pushes;
+}
+
+class _ScrollPushScope extends StatefulWidget {
+  const _ScrollPushScope({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_ScrollPushScope> createState() => _ScrollPushScopeState();
+}
+
+class _ScrollPushScopeState extends State<_ScrollPushScope> {
+  final _pushes = ValueNotifier<int>(0);
+
+  @override
+  void dispose() {
+    _pushes.dispose();
+    super.dispose();
+  }
+
+  bool _onScroll(ScrollNotification n) {
+    if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
+    final down = switch (n) {
+      ScrollUpdateNotification(:final dragDetails, :final scrollDelta) => dragDetails != null && (scrollDelta ?? 0) > 0,
+      OverscrollNotification(:final dragDetails, :final overscroll) => dragDetails != null && overscroll > 0,
+      _ => false,
+    };
+    if (down) _pushes.value++;
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) => NotificationListener<ScrollNotification>(
+    onNotification: _onScroll,
+    child: StationScrollPush(pushes: _pushes, child: widget.child),
+  );
 }
 
 /// The pinned bottom of a station screen: the last refusal (bounded, so a long one at 200% text
